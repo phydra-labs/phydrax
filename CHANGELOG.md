@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Nonaffine retained-root embedding proofs now pass the routed local coefficient
+  bank to the canonical cell-expression owner, preserving valid root ancestry
+  instead of dropping it after an argument mismatch.
 - Scoped native surface fidelity validates the full target witness before
   filtering selected source occurrences, and uses exact rational spline corner
   bounds rather than widened numerical point boxes. Surface feature tolerances

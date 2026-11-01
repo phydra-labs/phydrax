@@ -1238,9 +1238,11 @@ def validate_restricted_delaunay_boundary_witness(
             embedding.require_inputs(mesh, geometry, validity)
         elif embedding is None:
             embedding = certify_global_embedding(mesh, geometry, validity)
-        else:
+        elif type(embedding) is EmbeddingCertificate:
             embedding = EmbeddingCertificate.from_stored_fields(embedding)
             embedding.require_inputs(mesh, geometry, validity)
+        else:
+            raise TypeError("Restricted coverage has an invalid embedding proof type.")
     except RestrictedDelaunayCoverageUnavailable:
         raise
     except (

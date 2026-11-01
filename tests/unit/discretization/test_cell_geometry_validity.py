@@ -181,7 +181,11 @@ def test_validity_revalidate_reproves_and_require_current_checks_binding() -> No
     public = D.CellValidityCertificate(geometry, mesh=mesh, policy=certificate.policy)
     assert public.certificate_id == certificate.certificate_id
     with pytest.raises(TypeError):
-        D.CellValidityCertificate(geometry, mesh=mesh, status=certificate.status)
+        D.CellValidityCertificate(
+            geometry,
+            mesh=mesh,
+            status=certificate.status,  # ty: ignore[unknown-argument]
+        )
     summary = certificate.stage_summary()
     for proof in ("execution", "source"):
         assert sum(summary[proof].values()) == certificate.status.shape[0]

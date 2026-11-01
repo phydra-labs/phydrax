@@ -1392,8 +1392,10 @@ def _retained_root_charts(
                         coefficient_bank = geometry.source_coordinates()
                     root_coordinates = _cell_expressions(
                         element.source_element,
-                        np.asarray(block_route, dtype=np.int64)[row],
-                        coefficient_bank,
+                        tuple(
+                            coefficient_bank[int(index)]
+                            for index in np.asarray(block_route, dtype=np.int64)[row]
+                        ),
                         row,
                     )
                 else:
@@ -1852,7 +1854,13 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             rebuilt.certificate_id != value.certificate_id
             or any(
                 not _same_tree_content(getattr(rebuilt, name), getattr(value, name))
-                for name in ("status", "findings", "evaluated_checks", "counts", "witnesses")
+                for name in (
+                    "status",
+                    "findings",
+                    "evaluated_checks",
+                    "counts",
+                    "witnesses",
+                )
             )
             or rebuilt.nested_restriction != value.nested_restriction
             or (
