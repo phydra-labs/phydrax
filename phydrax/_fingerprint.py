@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from operator import itemgetter
 from typing import Any
 
 import jax
@@ -14,22 +15,45 @@ import numpy as np
 from jaxtyping import PyTree
 
 
+_ENCODER = json.JSONEncoder(
+    allow_nan=False,
+    ensure_ascii=True,
+    separators=(",", ":"),
+    sort_keys=True,
+)
+_JSON_SCALAR_TYPES = frozenset((str, int, float, bool, type(None)))
+_SEQUENCE_CHUNK = 4096
+_DIGEST_BUFFER_CHARACTERS = 1 << 16
+_ITEM_KEY = itemgetter(0)
+
+
 def canonical_json(value: Any, /) -> str:
     """Serialize a JSON-compatible value with one deterministic representation."""
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    return _ENCODER.encode(value)
 
 
 def canonical_fingerprint(value: Any, /) -> str:
-    """Return SHA-256 of canonical JSON, content-addressing numeric array leaves."""
-    return hashlib.sha256(
-        canonical_json(_canonical_payload(value)).encode("utf-8")
-    ).hexdigest()
+    """Return SHA-256 of canonical JSON, content-addressing numeric array leaves.
+
+    The canonical text is streamed into the digest in bounded pieces; nested
+    containers are never copied.
+    """
+    digest = hashlib.sha256()
+    parts: list[str] = []
+    buffered = 0
+
+    def write(text: str, /) -> None:
+        nonlocal buffered
+        parts.append(text)
+        buffered += len(text)
+        if buffered >= _DIGEST_BUFFER_CHARACTERS:
+            digest.update("".join(parts).encode("ascii"))
+            parts.clear()
+            buffered = 0
+
+    _write_canonical(value, write)
+    digest.update("".join(parts).encode("ascii"))
+    return digest.hexdigest()
 
 
 def iter_array_bytes(value: np.ndarray, /) -> Iterator[memoryview]:
@@ -73,7 +97,7 @@ def canonical_array_hex_fingerprint(value: np.ndarray, /) -> str:
 
 def _iter_array_list_json(value: np.ndarray, /) -> Iterator[str]:
     if value.ndim == 0:
-        yield canonical_json(_canonical_payload(value.tolist()))
+        yield _canonical_text(value.tolist())
         return
     yield "["
     if value.ndim == 1:
@@ -82,9 +106,7 @@ def _iter_array_list_json(value: np.ndarray, /) -> Iterator[str]:
         for start in range(0, value.size, 1024):
             if start:
                 yield ","
-            yield canonical_json(
-                _canonical_payload(value[start : start + 1024].tolist())
-            )[1:-1]
+            yield _canonical_text(value[start : start + 1024].tolist())[1:-1]
     else:
         for index in range(value.shape[0]):
             if index:
@@ -113,7 +135,7 @@ def _iter_array_list_payload_json(value: Any, /) -> Iterator[str]:
             yield from _iter_array_list_payload_json(item)
         yield "]"
     else:
-        yield canonical_json(_canonical_payload(value))
+        yield _canonical_text(value)
 
 
 def canonical_array_list_fingerprint(value: Any, /) -> str:
@@ -168,14 +190,81 @@ def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
     }
 
 
-def _canonical_payload(value: Any, /) -> Any:
-    if isinstance(value, (jax.Array, np.ndarray, np.generic)):
-        return {"__array__": array_tree_fingerprint(np.asarray(value))}
-    if isinstance(value, Mapping):
-        return {key: _canonical_payload(item) for key, item in value.items()}
-    if isinstance(value, (tuple, list)):
-        return [_canonical_payload(item) for item in value]
-    return value
+def _canonical_text(value: Any, /) -> str:
+    parts: list[str] = []
+    _write_canonical(value, parts.append)
+    return "".join(parts)
+
+
+def _write_canonical(value: Any, write: Callable[[str], object], /) -> None:
+    """Write canonical JSON with numeric array leaves replaced by their fingerprints.
+
+    Tuples and lists encode as JSON arrays and mappings as key-sorted objects,
+    exactly as ``canonical_json`` would encode the normalized copy, without
+    building that copy.
+    """
+    kind = type(value)
+    if kind in _JSON_SCALAR_TYPES:
+        write(_ENCODER.encode(value))
+    elif kind is tuple or kind is list:
+        _write_sequence(value, write)
+    elif kind is dict:
+        _write_mapping(value, write)
+    elif isinstance(value, (jax.Array, np.ndarray, np.generic)):
+        write(_ENCODER.encode({"__array__": array_tree_fingerprint(np.asarray(value))}))
+    elif isinstance(value, Mapping):
+        _write_mapping(value, write)
+    elif isinstance(value, (tuple, list)):
+        _write_sequence(value, write)
+    else:
+        write(_ENCODER.encode(value))
+
+
+def _write_sequence(
+    value: tuple[Any, ...] | list[Any], write: Callable[[str], object], /
+) -> None:
+    if _JSON_SCALAR_TYPES.issuperset(map(type, value)):
+        if len(value) <= _SEQUENCE_CHUNK:
+            write(_ENCODER.encode(value))
+            return
+        write("[")
+        for start in range(0, len(value), _SEQUENCE_CHUNK):
+            if start:
+                write(",")
+            write(_ENCODER.encode(value[start : start + _SEQUENCE_CHUNK])[1:-1])
+        write("]")
+        return
+    write("[")
+    for index, item in enumerate(value):
+        if index:
+            write(",")
+        _write_canonical(item, write)
+    write("]")
+
+
+def _write_mapping(value: Mapping[Any, Any], write: Callable[[str], object], /) -> None:
+    write("{")
+    # The JSON encoder sorts (key, value) items; mapping keys are unique, so the
+    # order is decided by the keys alone.
+    for index, (key, item) in enumerate(sorted(value.items(), key=_ITEM_KEY)):
+        if index:
+            write(",")
+        write(_json_key(key))
+        write(":")
+        _write_canonical(item, write)
+    write("}")
+
+
+def _json_key(key: Any, /) -> str:
+    # Same coercion as the JSON encoder: strings verbatim; floats, integers,
+    # booleans and None through their JSON scalar text.
+    if isinstance(key, str):
+        return _ENCODER.encode(key)
+    if key is None or isinstance(key, (int, float)):
+        return _ENCODER.encode(_ENCODER.encode(key))
+    raise TypeError(
+        f"keys must be str, int, float, bool or None, not {type(key).__name__}"
+    )
 
 
 def canonical_mapping(value: Mapping[str, Any], /) -> dict[str, Any]:
