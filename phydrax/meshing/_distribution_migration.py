@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
+from fractions import Fraction
 from hashlib import sha256
 from math import prod
-from typing import final
+from typing import Any, final, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -21,7 +23,16 @@ from .._execution_runtime import ExecutionGroup
 from .._fingerprint import canonical_array_hex_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._distribution_forest import SimplexForestRecords, validate_simplex_forest
+from ._distribution_forest import (
+    PeriodicSimplexForest,
+    SimplexForestRecords,
+    validate_simplex_forest,
+)
+
+if TYPE_CHECKING:
+    from ..graph._partition import GraphPartitionPlan
+    from ._assembly import MeshAssembly
+    from ._distribution import OwnerLocalGraphPartitionEvidence
 
 
 type NamedArrays = tuple[tuple[str, Array], ...]
@@ -843,6 +854,546 @@ def accept_ownerlocal_migration(
         "simplex migration acceptance",
     )
     return prepared.candidate
+
+
+def migrate_periodic_simplex_forest(
+    forest: PeriodicSimplexForest,
+    target_owned_cell_ids: ArrayLike,
+    execution_group: ExecutionGroup,
+    /,
+    *,
+    axis_name: str = "periodic_live_families",
+) -> PeriodicSimplexForest:
+    """Route live families only to owners of their current leaves.
+
+    A split family has a complete scientific replica on each participating
+    owner. The minimum current leaf owner is its single message issuer.
+    Subsequent reunification uses the same route and drops obsolete replicas.
+    All payload traffic is neighbor-local; collectives contain only directories,
+    message counts, and scalar cursor maxima.
+    """
+    from ._distribution import (
+        _owner_exchange_message_banks,
+        _owner_group_allgather,
+        _owner_group_fail_if_any,
+        _owner_group_minimum_owner_ranks,
+        _owner_local_keyed_target_owners,
+    )
+
+    rank = _rank(execution_group)
+    parts = len(execution_group.spec.process_indices)
+    records = forest.records
+    ids = np.asarray(records.cell_ids, dtype=np.int64)
+    vertex_ids = np.asarray(records.vertex_ids, dtype=np.int64)
+    cells = {name: np.asarray(values) for name, values in records.cell_fields}
+    vertices = {name: np.asarray(values) for name, values in records.vertex_fields}
+    active = np.asarray(cells["active"], dtype=np.bool_)
+    target_ids = np.asarray(target_owned_cell_ids, dtype=np.int64)
+    new_active_owners = _owner_local_keyed_target_owners(
+        ids[active, None],
+        target_ids[:, None],
+        np.full(target_ids.shape, rank, dtype=np.int32),
+        rank,
+        execution_group,
+        "periodic-live-cell",
+        f"{axis_name}_leaf_owners",
+        require_exact_coverage=False,
+        allow_duplicate_queries=True,
+    )
+    row_by_id = {int(identifier): row for row, identifier in enumerate(ids)}
+    roots: dict[int, int] = {}
+    for identifier in ids:
+        root = int(identifier)
+        while cells["parent_ids"][row_by_id[root]] >= 0:
+            root = int(cells["parent_ids"][row_by_id[root]])
+        roots[int(identifier)] = root
+    new_owner_by_id = dict(
+        zip(map(int, ids[active]), map(int, new_active_owners), strict=True)
+    )
+    old_owners = np.asarray(records.cell_owner_ranks, dtype=np.int32)
+    destinations: dict[int, set[int]] = {}
+    issuers: dict[int, int] = {}
+    for row in np.flatnonzero(active):
+        root = roots[int(ids[row])]
+        destinations.setdefault(root, set()).add(new_owner_by_id[int(ids[row])])
+        issuers[root] = min(issuers.get(root, parts), int(old_owners[row]))
+    new_cell_owners = np.asarray(
+        [
+            new_owner_by_id[int(identifier)]
+            if active[row]
+            else min(destinations[roots[int(identifier)]])
+            for row, identifier in enumerate(ids)
+        ],
+        dtype=np.int32,
+    )
+    incidence = np.asarray(
+        [
+            (int(vertex), new_owner_by_id[int(ids[row])])
+            for row in np.flatnonzero(active)
+            for vertex in cells["cells"][row]
+        ],
+        dtype=np.int64,
+    ).reshape((-1, 2))
+    new_vertex_owners = _owner_group_minimum_owner_ranks(
+        vertex_ids, incidence, rank, execution_group, f"{axis_name}_vertex_owners"
+    )
+    selected_by_owner: list[set[int]] = [set() for _ in range(parts)]
+    for root, owners in destinations.items():
+        if issuers[root] == rank:
+            for owner in owners:
+                selected_by_owner[owner].add(root)
+
+    # This is an ephemeral message envelope, not a persistence format. Each
+    # named field retains the canonical forest column and dtype.
+    def packet(selected: set[int]) -> dict[str, Any]:
+        cell_rows = np.asarray(
+            [
+                row
+                for row, identifier in enumerate(ids)
+                if roots[int(identifier)] in selected
+            ],
+            dtype=np.int64,
+        )
+        used = set(map(int, cells["cells"][cell_rows].reshape(-1)))
+        used.update(map(int, cells["tuples"][cell_rows].reshape(-1)))
+        used.update(
+            int(value) for value in cells["bisection_vertex_ids"][cell_rows] if value >= 0
+        )
+        vertex_row = {int(identifier): row for row, identifier in enumerate(vertex_ids)}
+        pending = list(used)
+        while pending:
+            for parent in vertices["parents"][vertex_row[pending.pop()]]:
+                if parent >= 0 and int(parent) not in used:
+                    used.add(int(parent))
+                    pending.append(int(parent))
+        vertex_rows = np.asarray(
+            [row for row, identifier in enumerate(vertex_ids) if int(identifier) in used],
+            dtype=np.int64,
+        )
+        edges = np.asarray(records.protected_edge_ids, dtype=np.int64)
+        edges = edges[np.all(np.isin(edges, tuple(used)), axis=1)]
+        return {
+            "cell_ids": ids[cell_rows].tolist(),
+            "cell_owners": new_cell_owners[cell_rows].tolist(),
+            "cells": {name: values[cell_rows].tolist() for name, values in cells.items()},
+            "vertex_ids": vertex_ids[vertex_rows].tolist(),
+            "vertex_owners": new_vertex_owners[vertex_rows].tolist(),
+            "vertices": {
+                name: values[vertex_rows].tolist() for name, values in vertices.items()
+            },
+            "roots": np.asarray(forest.vertex_source_ids)[vertex_rows].tolist(),
+            "windings": np.asarray(forest.vertex_absolute_windings)[vertex_rows].tolist(),
+            "exact": [
+                [
+                    [value.numerator, value.denominator]
+                    for value in forest.exact_vertex_coordinates[row]
+                ]
+                for row in vertex_rows
+            ],
+            "edges": edges.tolist(),
+        }
+
+    packets = [packet(selected) if selected else None for selected in selected_by_owner]
+    outgoing = tuple(
+        np.frombuffer(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            dtype=np.uint8,
+        ).reshape((-1, 1))
+        if owner != rank and value is not None
+        else np.zeros((0, 1), dtype=np.uint8)
+        for owner, value in enumerate(packets)
+    )
+    incoming = _owner_exchange_message_banks(outgoing, rank, execution_group, axis_name)
+    received = [
+        value
+        for owner, value in enumerate(packets)
+        if owner == rank and value is not None
+    ]
+    received.extend(
+        json.loads(bank.tobytes().decode("utf-8")) for _, bank in sorted(incoming.items())
+    )
+    cursors = np.asarray(
+        _owner_group_allgather(
+            np.asarray((records.next_vertex_id, records.next_cell_id), dtype=np.int64),
+            execution_group,
+            f"{axis_name}_cursors",
+        )
+    )
+    local_error = None
+    result = None
+    try:
+        cell_bank: dict[int, tuple[Any, ...]] = {}
+        vertex_bank: dict[int, tuple[Any, ...]] = {}
+        edges: set[tuple[int, int]] = set()
+        for value in received:
+            for row, identifier in enumerate(value["cell_ids"]):
+                record = (
+                    value["cell_owners"][row],
+                    *(value["cells"][name][row] for name in cells),
+                )
+                if identifier in cell_bank and cell_bank[identifier] != record:
+                    raise ValueError(
+                        "Migrated live family replicas disagree on cell geometry or ownership."
+                    )
+                cell_bank[identifier] = record
+            for row, identifier in enumerate(value["vertex_ids"]):
+                record = (
+                    value["vertex_owners"][row],
+                    *(value["vertices"][name][row] for name in vertices),
+                    value["roots"][row],
+                    value["windings"][row],
+                    value["exact"][row],
+                )
+                if identifier in vertex_bank and vertex_bank[identifier] != record:
+                    differing = [
+                        name
+                        for name, left, right in zip(
+                            ("owner", *vertices, "root", "winding", "exact"),
+                            vertex_bank[identifier],
+                            record,
+                            strict=True,
+                        )
+                        if left != right
+                    ]
+                    raise ValueError(
+                        f"Migrated live families disagree on vertex {identifier}: {differing}."
+                    )
+                vertex_bank[identifier] = record
+            edges.update((int(edge[0]), int(edge[1])) for edge in value["edges"])
+        ordered_cells = sorted(cell_bank)
+        ordered_vertices = sorted(vertex_bank)
+        new_cells = {
+            name: np.asarray(
+                [cell_bank[i][column + 1] for i in ordered_cells], dtype=values.dtype
+            ).reshape((len(ordered_cells), *values.shape[1:]))
+            for column, (name, values) in enumerate(cells.items())
+        }
+        new_vertices = {
+            name: np.asarray(
+                [vertex_bank[i][column + 1] for i in ordered_vertices], dtype=values.dtype
+            ).reshape((len(ordered_vertices), *values.shape[1:]))
+            for column, (name, values) in enumerate(vertices.items())
+        }
+        new_records = SimplexForestRecords(
+            np.asarray(ordered_cells, dtype=np.int64),
+            np.asarray([cell_bank[i][0] for i in ordered_cells], dtype=np.int32),
+            new_cells,
+            np.asarray(ordered_vertices, dtype=np.int64),
+            np.asarray([vertex_bank[i][0] for i in ordered_vertices], dtype=np.int32),
+            new_vertices,
+            np.asarray(sorted(edges), dtype=np.int64).reshape((-1, 2)),
+            records.dimension,
+            records.ambient_dimension,
+            int(np.max(cursors[:, 0])),
+            int(np.max(cursors[:, 1])),
+        )
+        actual_owned = np.asarray(new_records.cell_ids)[
+            np.asarray(new_records.cell_field_map()["active"])
+            & (np.asarray(new_records.cell_owner_ranks) == rank)
+        ]
+        if not np.array_equal(np.sort(target_ids), actual_owned):
+            raise ValueError(
+                "Migrated live families do not cover the accepted owned cells."
+            )
+        result = PeriodicSimplexForest(
+            new_records,
+            np.asarray([vertex_bank[i][-3] for i in ordered_vertices], dtype=np.int64),
+            np.asarray(
+                [vertex_bank[i][-2] for i in ordered_vertices], dtype=np.int64
+            ).reshape((-1, records.dimension)),
+            tuple(
+                tuple(Fraction(*coefficient) for coefficient in vertex_bank[i][-1])
+                for i in ordered_vertices
+            ),
+            forest.block_names,
+            forest.source_id,
+            forest.source_revision,
+            forest.periodic_cell_id,
+        )
+    except Exception as error:
+        local_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_if_any(
+        local_error, execution_group, axis_name, "live periodic family migration"
+    )
+    if result is None:
+        raise ValueError("Live periodic family migration failed collectively.")
+    return result
+
+
+def _partition_owner_local_periodic_families(
+    assembly: MeshAssembly,
+    plan: GraphPartitionPlan,
+    execution_group: ExecutionGroup,
+    /,
+    *,
+    axis_name: str = "periodic_family_partition",
+) -> OwnerLocalGraphPartitionEvidence:
+    """Partition the actual adjacency graph contracted by live root families.
+
+    This produces an ordinary placement proposal, not a migration or commit.
+    Expanded cell loads and nonempty constraints are checked against the same
+    authored plan; an indivisible family can make that plan infeasible.
+    """
+    from ..discretization._view_support import OwnerLocalCellGeometry
+    from ..graph._distributed_partition import (
+        DistributedGraphPartitionResult,
+        DistributedWeightedCSRGraph,
+        partition_graph_distributed,
+    )
+    from ..graph._partition import _targets_and_capacities
+    from ._distribution import (
+        _owner_exchange_message_banks,
+        _owner_group_allgather,
+        _owner_group_fail_if_any,
+        _owner_local_keyed_target_owners,
+        _owner_local_multiset_identity,
+        OwnerLocalGraphPartitionEvidence,
+    )
+
+    rank = _rank(execution_group)
+    parts = len(execution_group.spec.process_indices)
+    view = assembly.parts[0].carrier if len(assembly.parts) == 1 else None
+    error = None
+    if (
+        not assembly.owner_local
+        or assembly.local_rank != rank
+        or not isinstance(view, OwnerLocalCellGeometry)
+        or view.adaptive_result is None
+        or view.adaptive_result.live_forest is None
+        or plan.part_count != parts
+    ):
+        error = "Family placement requires a current periodic owner-local forest."
+    _owner_group_fail_if_any(error, execution_group, axis_name, "family placement input")
+    if not isinstance(view, OwnerLocalCellGeometry) or view.adaptive_result is None:
+        raise ValueError("Family placement input failed collectively.")
+    forest = view.adaptive_result.live_forest
+    if forest is None or view.periodic_face_coverage_id is None:
+        raise ValueError(
+            "Family placement requires live hierarchy and quotient coverage."
+        )
+    view.require_owner_directory_current(
+        execution_group, axis_name=f"{axis_name}_directory"
+    )
+    records = forest.records
+    ids = np.asarray(records.cell_ids, dtype=np.int64)
+    parents = np.asarray(records.cell_field_map()["parent_ids"], dtype=np.int64)
+    rows = {int(identifier): row for row, identifier in enumerate(ids)}
+    family: dict[int, tuple[int, int]] = {}
+    owners = np.asarray(records.cell_owner_ranks, dtype=np.int32)
+    for identifier in ids:
+        root = int(identifier)
+        while parents[rows[root]] >= 0:
+            root = int(parents[rows[root]])
+        family[int(identifier)] = (root, int(owners[rows[root]]))
+    owned = np.asarray(view.owned_cell_ids, dtype=np.int64)
+    neighbors = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
+    neighbor_owners = np.asarray(view.cell_neighbor_owner_ranks, dtype=np.int32)
+    offsets = np.asarray(view.cell_neighbor_offsets, dtype=np.int64)
+    weights = np.asarray(view.cell_neighbor_weights, dtype=np.int64)
+    neighbor_family = np.full((neighbors.size, 2), -1, dtype=np.int64)
+    requests: list[list[tuple[int, int]]] = [[] for _ in range(parts)]
+    for row, (identifier, owner) in enumerate(
+        zip(neighbors, neighbor_owners, strict=True)
+    ):
+        if owner == rank:
+            neighbor_family[row] = family[int(identifier)]
+        else:
+            requests[int(owner)].append((int(identifier), row))
+    incoming = _owner_exchange_message_banks(
+        tuple(np.asarray(values, dtype=np.int64).reshape((-1, 2)) for values in requests),
+        rank,
+        execution_group,
+        f"{axis_name}_neighbor_requests",
+    )
+    replies: list[list[tuple[int, int, int]]] = [[] for _ in range(parts)]
+    for sender, values in incoming.items():
+        for identifier, request_row in values:
+            root, coordinator = family[int(identifier)]
+            replies[sender].append((int(request_row), root, coordinator))
+    incoming_replies = _owner_exchange_message_banks(
+        tuple(np.asarray(values, dtype=np.int64).reshape((-1, 3)) for values in replies),
+        rank,
+        execution_group,
+        f"{axis_name}_neighbor_replies",
+    )
+    for values in incoming_replies.values():
+        for row, root, coordinator in values:
+            neighbor_family[int(row)] = (root, coordinator)
+    _owner_group_fail_if_any(
+        None
+        if np.all(neighbor_family >= 0)
+        else "Family adjacency omitted a remote neighbor.",
+        execution_group,
+        axis_name,
+        "family adjacency closure",
+    )
+    messages: list[list[tuple[int, int, int, int]]] = [[] for _ in range(parts)]
+    for row, identifier in enumerate(owned):
+        root, coordinator = family[int(identifier)]
+        # A negative neighbor marks one original cell's unit work.
+        messages[coordinator].append((root, -1, -1, 1))
+        for edge in range(int(offsets[row]), int(offsets[row + 1])):
+            neighbor_root, neighbor_coordinator = map(int, neighbor_family[edge])
+            if neighbor_root != root:
+                messages[coordinator].append(
+                    (root, neighbor_root, neighbor_coordinator, int(weights[edge]))
+                )
+    local_messages = messages[rank]
+    messages[rank] = []
+    incoming = _owner_exchange_message_banks(
+        tuple(np.asarray(values, dtype=np.int64).reshape((-1, 4)) for values in messages),
+        rank,
+        execution_group,
+        f"{axis_name}_contracted_rows",
+    )
+    root_weights: dict[int, int] = {}
+    root_edges: dict[int, dict[int, tuple[int, int]]] = {}
+    for values in (
+        np.asarray(local_messages, dtype=np.int64).reshape((-1, 4)),
+        *incoming.values(),
+    ):
+        for root_value, neighbor_value, owner_value, weight_value in values:
+            root, neighbor, owner, weight = map(
+                int, (root_value, neighbor_value, owner_value, weight_value)
+            )
+            if neighbor < 0:
+                root_weights[root] = root_weights.get(root, 0) + weight
+            else:
+                bank = root_edges.setdefault(root, {})
+                old_weight = bank.get(neighbor, (owner, 0))[1]
+                bank[neighbor] = (owner, old_weight + weight)
+    root_ids = np.asarray(sorted(root_weights), dtype=np.int64)
+    graph_offsets = [0]
+    graph_neighbors: list[int] = []
+    graph_owners: list[int] = []
+    graph_weights: list[int] = []
+    for root in root_ids:
+        for neighbor, (owner, weight) in sorted(root_edges.get(int(root), {}).items()):
+            graph_neighbors.append(neighbor)
+            graph_owners.append(owner)
+            graph_weights.append(weight)
+        graph_offsets.append(len(graph_neighbors))
+    graph = DistributedWeightedCSRGraph(
+        np.asarray(graph_offsets, dtype=np.int64),
+        np.asarray(graph_neighbors, dtype=np.int64),
+        entity_ids=root_ids,
+        owner_ranks=np.full(root_ids.shape, rank, dtype=np.int32),
+        neighbor_owner_ranks=np.asarray(graph_owners, dtype=np.int32),
+        vertex_weights=np.asarray(
+            [root_weights[int(root)] for root in root_ids], dtype=np.int64
+        ),
+        edge_weights=np.asarray(graph_weights, dtype=np.int64),
+    )
+    contracted = partition_graph_distributed(
+        graph, plan, execution_group, axis_name=f"{axis_name}_native"
+    )
+    labels = _owner_local_keyed_target_owners(
+        np.asarray(
+            [family[int(identifier)][0] for identifier in owned], dtype=np.int64
+        ).reshape((-1, 1)),
+        root_ids[:, None],
+        np.asarray(contracted.owners, dtype=np.int32),
+        rank,
+        execution_group,
+        "periodic-live-root",
+        f"{axis_name}_expand",
+        require_exact_coverage=False,
+        allow_duplicate_queries=True,
+    )
+    edge_labels = _owner_local_keyed_target_owners(
+        neighbors[:, None],
+        owned[:, None],
+        labels,
+        rank,
+        execution_group,
+        "periodic-live-cell",
+        f"{axis_name}_edge_labels",
+        require_exact_coverage=False,
+        allow_duplicate_queries=True,
+    )
+    local_cut = sum(
+        1
+        for row, identifier in enumerate(owned)
+        for edge in range(int(offsets[row]), int(offsets[row + 1]))
+        if identifier < neighbors[edge] and labels[row] != edge_labels[edge]
+    )
+    loads = np.sum(
+        np.asarray(
+            _owner_group_allgather(
+                np.bincount(labels, minlength=parts).astype(np.int64),
+                execution_group,
+                f"{axis_name}_loads",
+            ),
+            dtype=np.int64,
+        ),
+        axis=0,
+    )
+    targets, capacities = _targets_and_capacities(
+        np.asarray((np.sum(loads),), dtype=np.int64), plan
+    )
+    counts = np.asarray(
+        _owner_group_allgather(
+            np.asarray((local_cut, np.count_nonzero(labels != rank)), dtype=np.int64),
+            execution_group,
+            f"{axis_name}_observations",
+        ),
+        dtype=np.int64,
+    )
+    owner_identity = _owner_local_multiset_identity(
+        "family-constrained-cell-owners",
+        (view.source_topology_id, plan.plan_id),
+        tuple(
+            (int(identifier), int(label))
+            for identifier, label in zip(owned, labels, strict=True)
+        ),
+        view.source_id,
+        view.source_revision,
+        execution_group,
+        f"{axis_name}_identity",
+    )
+    graph_id = canonical_fingerprint(
+        {
+            "kind": "family-constrained-cell-graph",
+            "topology": view.source_topology_id,
+            "family_graph": contracted.graph_id,
+        }
+    )
+    migration_id = canonical_fingerprint(
+        {
+            "kind": "family-constrained-cell-migration",
+            "source": view.distribution_id,
+            "owners": owner_identity,
+            "plan": plan.plan_id,
+        }
+    )
+    positive = targets > 0
+    feasible = (
+        contracted.feasible
+        and bool(np.all(loads <= capacities))
+        and (not plan.require_nonempty or bool(np.all(loads > 0)))
+    )
+    result = DistributedGraphPartitionResult(
+        owned,
+        labels,
+        loads,
+        targets,
+        capacities,
+        int(np.sum(counts[:, 0])),
+        float(np.max(loads[positive] / targets[positive]))
+        if np.any(positive)
+        else float("inf"),
+        feasible,
+        int(np.sum(counts[:, 1])),
+        int(np.sum(counts[:, 1])),
+        graph_id,
+        plan.plan_id,
+        migration_id,
+        owner_identity,
+        "phydrax-owner-local-family-contraction-v1",
+    )
+    return OwnerLocalGraphPartitionEvidence(
+        result, view.local_view_id, view.periodic_face_coverage_id, view.distribution_id
+    )
 
 
 __all__ = [

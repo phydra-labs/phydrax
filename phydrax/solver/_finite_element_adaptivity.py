@@ -84,6 +84,7 @@ from ..meshing._distribution import (
     OwnerLocalGraphKeyedStateTransfer,
     OwnerLocalGraphMigrationEvidence,
     OwnerLocalGraphPartitionEvidence,
+    OwnerLocalTopologyTransferRoute,
 )
 from ..meshing._lineage import EntityLineageKind, MeshLineage, VertexInterpolationStencil
 from ..sparse import EdgeRelation, SparseLinearMap
@@ -1155,7 +1156,7 @@ class _FiniteElementRepartitionContext:
     target_compiled: CompiledFiniteElementProblem
     source_plans: tuple[FiniteElementDofIdentityPlan, ...]
     target_plans: tuple[FiniteElementDofIdentityPlan, ...]
-    migration: OwnerLocalGraphMigrationEvidence
+    migration: OwnerLocalGraphMigrationEvidence | OwnerLocalTopologyTransferRoute
     source_composition: Composition
     execution_group: ExecutionGroup
     source_geometry_view: OwnerLocalCellGeometry
@@ -2079,7 +2080,7 @@ def _transfer_finite_element_owner_local_adaptive_field(
     evidence = FiniteElementOwnerLocalFieldTransferEvidence(
         layout.layout_id,
         layout.transfer_semantics,
-        context.adaptive_result_id or context.migration.result.result_id,
+        context.adaptive_result_id or context.migration.evidence_id,
         None if metadata.vertex_stencil is None else metadata.vertex_stencil.stencil_id,
         None if metadata.lineage is None else metadata.lineage.lineage_id,
         source_plan.plan_id,
@@ -2687,7 +2688,11 @@ def _validate_finite_element_owner_local_topology_authority(
     stale = tuple(
         name
         for name, failed in (
-            ("migration-evidence", migration is not target_view.graph_migration_evidence),
+            (
+                "migration-evidence",
+                isinstance(migration, OwnerLocalGraphMigrationEvidence)
+                and migration is not target_view.graph_migration_evidence,
+            ),
             ("group", migration.group_id != context.execution_group.spec.group_id),
             ("rank", migration.local_rank != context.rank),
             ("part-count", migration.part_count != context.parts),
@@ -2697,7 +2702,10 @@ def _validate_finite_element_owner_local_topology_authority(
                 and (
                     migration.source_directory_id != source_view.distribution_id
                     or migration.target_directory_id != target_view.distribution_id
-                    or migration.target_part_id != target_view.part_id
+                    or (
+                        isinstance(migration, OwnerLocalGraphMigrationEvidence)
+                        and migration.target_part_id != target_view.part_id
+                    )
                 ),
             ),
             (
@@ -2711,7 +2719,11 @@ def _validate_finite_element_owner_local_topology_authority(
                 source_view.distribution_id != field_ownership[0].distribution_id,
             ),
             ("unchanged-topology", target_view.source_topology_id == state.topology_id),
-            ("infeasible-migration", not migration.result.feasible),
+            (
+                "infeasible-migration",
+                isinstance(migration, OwnerLocalGraphMigrationEvidence)
+                and not migration.result.feasible,
+            ),
             ("axis", not context.axis_name.strip()),
         )
         if failed
@@ -2803,7 +2815,7 @@ def _validate_finite_element_owner_local_topology_authority(
     context.target_global_geometry_id = target_manifest.source_geometry_id
 
     metadata = _finite_element_owner_local_adaptive_metadata(context.adaptive_result)
-    context.adaptive_result_id = metadata.result_id or migration.result.result_id
+    context.adaptive_result_id = metadata.result_id or migration.evidence_id
     context.vertex_stencil = metadata.vertex_stencil
     if context.adaptive_result is None:
         if (
@@ -2876,7 +2888,8 @@ def _validate_finite_element_owner_local_topology_authority(
                 ),
                 (
                     "graph-plan",
-                    adaptive.graph_partition_plan is not None
+                    isinstance(migration, OwnerLocalGraphMigrationEvidence)
+                    and adaptive.graph_partition_plan is not None
                     and adaptive.graph_partition_plan.plan_id != migration.result.plan_id,
                 ),
                 (
@@ -2931,38 +2944,45 @@ def _validate_finite_element_owner_local_topology_authority(
     else:
         raise TypeError("Owner-local FE adaptation has an unsupported result type.")
 
-    target_graph_ids = np.asarray(migration.result.entity_ids, dtype=np.int64)
-    target_graph_owners = np.asarray(migration.result.owners, dtype=np.int32)
-    target_graph_rows = np.sort(
-        target_graph_ids[target_graph_owners == context.rank], kind="stable"
-    )
-    migrated_view = source_view if in_place_after_migration else target_view
-    target_owned_rows = np.sort(
-        np.asarray(migrated_view.cell_ids, dtype=np.int64)[
-            np.asarray(migrated_view.owned, dtype=np.bool_)
-        ],
-        kind="stable",
-    )
-    # The distributed partition result lists the cells this rank held before the
-    # migration with their new owners; the evidence lists the cells it holds
-    # after it. Kept cells are a subset of the migrated rows, which must equal
-    # the view's owned rows.
-    migrated_rows = np.sort(np.asarray(migration.target_cell_ids, dtype=np.int64))
-    if (
-        not np.array_equal(migrated_rows, target_owned_rows)
-        or np.setdiff1d(target_graph_rows, migrated_rows).size
-    ):
-        raise ValueError(
-            "FE target graph partition rows differ from current ownership "
-            f"({'source' if in_place_after_migration else 'target'} view: "
-            f"{target_graph_rows.size} kept rows, {target_owned_rows.size} owned rows, "
-            f"{migrated_rows.size} migrated rows)."
+    if isinstance(migration, OwnerLocalTopologyTransferRoute):
+        if not np.array_equal(
+            np.sort(metadata.source_cell_ids),
+            np.sort(np.asarray(source_view.owned_cell_ids, dtype=np.int64)),
+        ) or not np.array_equal(
+            np.sort(metadata.target_cell_ids),
+            np.sort(np.asarray(target_view.owned_cell_ids, dtype=np.int64)),
+        ):
+            raise ValueError(
+                "Topology-only transfer changed owner-local lineage placement."
+            )
+    else:
+        target_graph_ids = np.asarray(migration.result.entity_ids, dtype=np.int64)
+        target_graph_owners = np.asarray(migration.result.owners, dtype=np.int32)
+        target_graph_rows = np.sort(
+            target_graph_ids[target_graph_owners == context.rank], kind="stable"
         )
+        migrated_view = source_view if in_place_after_migration else target_view
+        target_owned_rows = np.sort(
+            np.asarray(migrated_view.owned_cell_ids, dtype=np.int64)
+        )
+        migrated_rows = np.sort(np.asarray(migration.target_cell_ids, dtype=np.int64))
+        if (
+            not np.array_equal(migrated_rows, target_owned_rows)
+            or np.setdiff1d(target_graph_rows, migrated_rows).size
+        ):
+            raise ValueError(
+                "FE target graph partition rows differ from current ownership."
+            )
 
 
 def _validate_finite_element_repartition_identity_plans(
     context: _FiniteElementRepartitionContext, /
 ) -> None:
+    migration = context.migration
+    if not isinstance(migration, OwnerLocalGraphMigrationEvidence):
+        raise TypeError(
+            "Repartition identity validation requires graph migration evidence."
+        )
     state = context.source_state
     if any(
         not isinstance(plan, FiniteElementDofIdentityPlan)
@@ -3081,8 +3101,8 @@ def _validate_finite_element_repartition_identity_plans(
     target_vertex_owners = owner_rows(
         target_view.vertex_ids, target_view.vertex_owner_ranks
     )
-    graph_ids = np.asarray(context.migration.result.entity_ids, dtype=np.int64)
-    graph_owners = np.asarray(context.migration.result.owners, dtype=np.int32)
+    graph_ids = np.asarray(migration.result.entity_ids, dtype=np.int64)
+    graph_owners = np.asarray(migration.result.owners, dtype=np.int32)
     source_owned_rows = np.asarray(source_view.cell_ids, dtype=np.int64)[
         np.asarray(source_view.owned, dtype=np.bool_)
     ]
@@ -3092,7 +3112,7 @@ def _validate_finite_element_repartition_identity_plans(
     # appear among them, and the evidence must equal the target view's rows.
     kept_graph_rows = np.sort(graph_ids[graph_owners == context.rank], kind="stable")
     migration_rows = np.sort(
-        np.asarray(context.migration.target_cell_ids, dtype=np.int64), kind="stable"
+        np.asarray(migration.target_cell_ids, dtype=np.int64), kind="stable"
     )
     target_owned_rows = np.asarray(target_view.cell_ids, dtype=np.int64)[
         np.asarray(target_view.owned, dtype=np.bool_)
@@ -3751,7 +3771,9 @@ def _validate_finite_element_owner_local_topology_preflight(
         not context.topology_change
         or not isinstance(source_view, OwnerLocalCellGeometry)
         or not isinstance(target_view, OwnerLocalCellGeometry)
-        or not isinstance(migration, OwnerLocalGraphMigrationEvidence)
+        or not isinstance(
+            migration, (OwnerLocalGraphMigrationEvidence, OwnerLocalTopologyTransferRoute)
+        )
     ):
         raise ValueError(
             "Owner-local FE topology transition inputs are stale: it needs compact "
@@ -3763,7 +3785,8 @@ def _validate_finite_element_owner_local_topology_preflight(
         for name, failed in (
             (
                 "migration-evidence",
-                migration is not target_view.graph_migration_evidence,
+                isinstance(migration, OwnerLocalGraphMigrationEvidence)
+                and migration is not target_view.graph_migration_evidence,
             ),
             ("group", migration.group_id != context.execution_group.spec.group_id),
             ("rank", migration.local_rank != context.rank),
@@ -3774,7 +3797,10 @@ def _validate_finite_element_owner_local_topology_preflight(
                 and (
                     migration.source_directory_id != source_view.distribution_id
                     or migration.target_directory_id != target_view.distribution_id
-                    or migration.target_part_id != target_view.part_id
+                    or (
+                        isinstance(migration, OwnerLocalGraphMigrationEvidence)
+                        and migration.target_part_id != target_view.part_id
+                    )
                 ),
             ),
             (
@@ -3831,8 +3857,12 @@ def _finite_element_owner_local_topology_schema(
         "target_geometry": context.target_global_geometry_id,
         "source_directory": context.migration.source_directory_id,
         "target_directory": context.migration.target_directory_id,
-        "graph_plan": context.migration.result.plan_id,
-        "graph_result": context.migration.result.result_id,
+        "graph_plan": migration.result.plan_id
+        if isinstance((migration := context.migration), OwnerLocalGraphMigrationEvidence)
+        else None,
+        "graph_result": migration.result.result_id
+        if isinstance(migration, OwnerLocalGraphMigrationEvidence)
+        else None,
         "field_entries": context.field_ids,
         "auxiliary_entries": context.auxiliary_ids,
         "integrator_entries": context.integrator_ids,
@@ -5354,7 +5384,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 "FE topology adaptation rank is outside the execution group."
             ) from error
         local_error = None
-        migration: OwnerLocalGraphMigrationEvidence | None = None
+        migration: (
+            OwnerLocalGraphMigrationEvidence | OwnerLocalTopologyTransferRoute | None
+        ) = None
         source_plans: tuple[FiniteElementDofIdentityPlan, ...] = ()
         target_plans: tuple[FiniteElementDofIdentityPlan, ...] = ()
         field_ids: tuple[tuple[str, str], ...] = ()
@@ -5393,9 +5425,17 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     "Owner-local FE topology transaction inputs are malformed."
                 )
             migration = target_geometry_view.graph_migration_evidence
-            if not isinstance(migration, OwnerLocalGraphMigrationEvidence):
+            if migration is None:
+                migration = OwnerLocalTopologyTransferRoute(
+                    source_geometry_view.distribution_id,
+                    target_geometry_view.distribution_id,
+                    execution_group.spec.group_id,
+                    rank,
+                    len(members),
+                )
+            elif not isinstance(migration, OwnerLocalGraphMigrationEvidence):
                 raise TypeError(
-                    "Target FE topology view lacks current graph migration evidence."
+                    "Target FE topology view has invalid graph migration evidence."
                 )
             source_plans = tuple(source_identity_plans)
             target_plans = tuple(target_identity_plans)

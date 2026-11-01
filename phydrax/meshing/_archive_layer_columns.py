@@ -83,6 +83,7 @@ _COLUMNS = {
         "source_reference_chart_arguments": "expressions",
     },
     "_ExactCoordinateBankMap": {"exact_coordinates": "exact"},
+    "PeriodicSimplexForest": {"exact_vertex_coordinates": "exact"},
     "CellGeometrySpec": {"exact_coordinate_bank": "exact"},
     "PerCellRestrictedCellGeometryElement": {
         "target_cell_ids": "integer_tensor",
@@ -104,6 +105,7 @@ def _record_types() -> dict[str, type]:
     from ..geometry._source_boundary_records import SourceBoundaryChartWitness
     from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
     from ._curving import _ExactCoordinateBankMap
+    from ._distribution_forest import PeriodicSimplexForest
     from ._layer_curving_records import (
         LayerColumnProjectionIdentity,
         LayerCurvingImplicitRootTrace,
@@ -122,6 +124,7 @@ def _record_types() -> dict[str, type]:
             SourceFidelityCertificate,
             SourceBoundaryChartWitness,
             _ExactCoordinateBankMap,
+            PeriodicSimplexForest,
             LayerColumnProjectionIdentity,
             LayerCurvingImplicitRootTrace,
             LayerCurvingMappedChartTrace,

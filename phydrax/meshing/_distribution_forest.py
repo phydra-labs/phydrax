@@ -535,6 +535,31 @@ def extract_simplex_forest(
     vertex_fields = {
         name: values[keep_vertices] for name, values in vertex_fields.items()
     }
+    # Closure rounds are local executor history, not a shared vertex property.
+    # Canonical live levels are the depth of the exact parent DAG, so copies of
+    # the same vertex agree even when owners reached it in different rounds.
+    vertex_row = {int(identifier): row for row, identifier in enumerate(vertex_ids)}
+    parent_rows = vertex_fields["parents"]
+    levels = np.full(vertex_ids.shape, -1, dtype=np.int32)
+    levels[np.all(parent_rows < 0, axis=1)] = 0
+    remaining = set(map(int, np.flatnonzero(levels < 0)))
+    while remaining:
+        ready = [
+            row
+            for row in remaining
+            if all(
+                int(parent) in vertex_row and levels[vertex_row[int(parent)]] >= 0
+                for parent in parent_rows[row]
+            )
+        ]
+        if not ready:
+            raise ValueError("Live vertex parent ancestry is cyclic or incomplete.")
+        for row in ready:
+            levels[row] = 1 + max(
+                levels[vertex_row[int(parent)]] for parent in parent_rows[row]
+            )
+        remaining.difference_update(ready)
+    vertex_fields["levels"] = levels
     protected_pairs = protected_pairs[
         np.all(np.isin(protected_pairs, vertex_ids), axis=1)
     ]

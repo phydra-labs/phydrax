@@ -108,6 +108,12 @@ from ._bisection import (
     BisectionEvidence,
     BisectionHierarchy,
 )
+from ._distribution_forest import (
+    extract_simplex_forest,
+    PeriodicSimplexForest,
+    reconstruct_adaptive_simplex_state,
+    SimplexForestRecords,
+)
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._device_status import (
     DeviceEpoch,
@@ -1035,7 +1041,6 @@ class OwnerLocalAdaptivePartTransition(NamedTuple):
     source_cell_ids: np.ndarray
     target_cell_ids: np.ndarray
     target_cell_owner_ranks: np.ndarray
-    target_cell_origins: np.ndarray
     target_cell_parent_ids: np.ndarray
     target_vertex_parent_ids: np.ndarray
     source_cell_measures: tuple[Fraction, ...]
@@ -1194,8 +1199,7 @@ def _owner_local_lineage(
     source: CellMesh,
     target: CellMesh,
     stencil: VertexInterpolationStencil,
-    target_cell_ids: np.ndarray,
-    target_cell_origins: np.ndarray,
+    state: AdaptiveSimplexState,
     /,
 ) -> MeshLineage:
     target_ids = np.asarray(stencil.target_global_ids, dtype=np.int64)
@@ -1221,38 +1225,56 @@ def _owner_local_lineage(
             target_entity_ids = np.asarray(
                 target.entity_set(dimension).entity_ids, dtype=np.int64
             )
-            source_cell_set = set(int(value) for value in source_cell_ids.tolist())
-            origins_by_id = {
-                int(identifier): int(origin)
-                for identifier, origin in zip(
-                    target_cell_ids, target_cell_origins, strict=True
-                )
+            source_cell_set = set(map(int, source_cell_ids))
+            target_cell_set = set(map(int, target_entity_ids))
+            count = int(np.asarray(state.cursors)[1])
+            state_ids = np.asarray(state.mesh.cell_ids, dtype=np.int64)[:count]
+            parent_codes = np.asarray(state.parents, dtype=np.int64)[:count]
+            parents = {
+                int(identifier): (-1 if code < 0 else int(state_ids[int(code) // 2]))
+                for identifier, code in zip(state_ids, parent_codes, strict=True)
             }
-            refined_ids = np.asarray(
-                [
-                    int(identifier)
-                    for identifier in target_entity_ids.tolist()
-                    if int(identifier) not in source_cell_set
-                ],
-                dtype=np.int64,
+
+            def ancestor(identifier: int, candidates: set[int]) -> int:
+                seen: set[int] = set()
+                current = parents[identifier]
+                while current >= 0:
+                    if current in candidates:
+                        return current
+                    if current in seen:
+                        raise ValueError("Owner-local cell lineage contains a cycle.")
+                    seen.add(current)
+                    current = parents[current]
+                return -1
+
+            links: list[tuple[int, int, int]] = []
+            for identifier in sorted(target_cell_set - source_cell_set):
+                parent = ancestor(identifier, source_cell_set)
+                if parent >= 0:
+                    links.append(
+                        (parent, identifier, int(EntityLineageKind.REFINED_FROM))
+                    )
+            for identifier in sorted(source_cell_set - target_cell_set):
+                parent = ancestor(identifier, target_cell_set)
+                if parent >= 0:
+                    links.append(
+                        (identifier, parent, int(EntityLineageKind.COARSENED_INTO))
+                    )
+            covered_source = {row[0] for row in links} | (
+                source_cell_set & target_cell_set
             )
-            refined_origins = np.asarray(
-                [origins_by_id[int(identifier)] for identifier in refined_ids],
-                dtype=np.int64,
+            covered_target = {row[1] for row in links} | (
+                source_cell_set & target_cell_set
             )
-            if any(int(origin) not in source_cell_set for origin in refined_origins):
+            if covered_source != source_cell_set or covered_target != target_cell_set:
                 raise ValueError(
-                    "Owner-local target cell ancestry escapes its source part."
+                    "Owner-local nested lineage does not cover both cell domains."
                 )
             relations = EntityRelations(
                 dimension,
-                refined_origins.reshape((-1, 1)),
-                refined_ids.reshape((-1, 1)),
-                np.full(
-                    refined_ids.shape,
-                    int(EntityLineageKind.REFINED_FROM),
-                    dtype=np.int32,
-                ),
+                np.asarray([row[0] for row in links], dtype=np.int64).reshape((-1, 1)),
+                np.asarray([row[1] for row in links], dtype=np.int64).reshape((-1, 1)),
+                np.asarray([row[2] for row in links], dtype=np.int32),
             )
             records.append(_entity_lineage(source, target, relations))
             continue
@@ -1316,7 +1338,7 @@ def _owner_local_origins(
             raise ValueError("Owner-local cell ancestry contains a cycle.")
         code = int(parent_codes[row])
         if code < 0:
-            raise ValueError("An owner-local target cell lacks a source ancestor.")
+            return -1
         parent = code // 2
         if parent < 0 or parent >= cell_count:
             raise ValueError("Owner-local parent cell index is out of range.")
@@ -1478,7 +1500,6 @@ def _owner_local_part_transition(
             empty,
             empty,
             empty,
-            empty,
             empty.reshape((0, 2)),
             (),
             (),
@@ -1500,9 +1521,7 @@ def _owner_local_part_transition(
         source_local_mesh, target_mesh, host_part
     )
     target_cell_ids, origins, parents = _owner_local_origins(host_part, source_cell_ids)
-    lineage = _owner_local_lineage(
-        source_local_mesh, target_mesh, stencil, target_cell_ids, origins
-    )
+    lineage = _owner_local_lineage(source_local_mesh, target_mesh, stencil, host_part)
     source_cell_order = np.asarray(
         source_local_mesh.entity_set(source_mesh.topological_dimension).entity_ids,
         dtype=np.int64,
@@ -1513,18 +1532,10 @@ def _owner_local_part_transition(
         dtype=np.int64,
     )
     target_measures = _owner_local_exact_cell_measures(target_mesh)
-    origins_by_id = {
-        int(identifier): int(origin)
-        for identifier, origin in zip(target_cell_ids, origins, strict=True)
-    }
     parents_by_id = {
         int(identifier): int(parent)
         for identifier, parent in zip(target_cell_ids, parents, strict=True)
     }
-    target_origins = np.asarray(
-        [origins_by_id[int(identifier)] for identifier in target_order],
-        dtype=np.int64,
-    )
     target_parents = np.asarray(
         [parents_by_id[int(identifier)] for identifier in target_order],
         dtype=np.int64,
@@ -1584,7 +1595,6 @@ def _owner_local_part_transition(
         source_cell_order,
         target_order,
         target_owner_ranks,
-        target_origins,
         target_parents,
         target_vertex_parent_ids,
         source_measures,
@@ -2663,6 +2673,45 @@ def _owner_local_periodic_size_epoch(
     return _OwnerLocalPeriodicEdgeEpoch(evidence, edge_owners)
 
 
+def _owner_local_size_statistic_compare(
+    left: OwnerLocalPeriodicSizeStatistic,
+    right: OwnerLocalPeriodicSizeStatistic,
+    /,
+) -> int:
+    """Exact comparison of two nonnegative linearly interpolated edge lengths."""
+
+    def sign(value: Fraction) -> int:
+        return int(value > 0) - int(value < 0)
+
+    def rational_plus_root(
+        rational: Fraction, coefficient: Fraction, radicand: Fraction
+    ) -> int:
+        if coefficient == 0 or radicand == 0:
+            return sign(rational)
+        if rational == 0 or sign(rational) == sign(coefficient):
+            return sign(coefficient)
+        squared = rational * rational - coefficient * coefficient * radicand
+        return sign(rational) * sign(squared)
+
+    a, b = Fraction(1) - left.interpolation, left.interpolation
+    c, d = Fraction(1) - right.interpolation, right.interpolation
+    x, y = left.lower_squared_length, left.upper_squared_length
+    u, v = right.lower_squared_length, right.upper_squared_length
+    rational = a * a * x + b * b * y - c * c * u - d * d * v
+    positive_root = 4 * a * a * b * b * x * y
+    negative_root = 4 * c * c * d * d * u * v
+    left_sign = rational_plus_root(rational, Fraction(1), positive_root)
+    if left_sign < 0:
+        return -1
+    if left_sign == 0:
+        return -int(negative_root > 0)
+    return rational_plus_root(
+        rational * rational + positive_root - negative_root,
+        2 * rational,
+        positive_root,
+    )
+
+
 def _owner_local_periodic_coarsen_is_admissible(
     before: OwnerLocalPeriodicSizeEvidence,
     after: OwnerLocalPeriodicSizeEvidence,
@@ -2689,25 +2738,9 @@ def _owner_local_periodic_coarsen_is_admissible(
     for old, new in zip(before.statistics, after.statistics, strict=True):
         if (new.below and not old.below) or (new.above and not old.above):
             return False
-        if (
-            old.below
-            and new.below
-            and (
-                new.lower_squared_length < old.lower_squared_length
-                or new.upper_squared_length < old.upper_squared_length
-                or new.interpolation < old.interpolation
-            )
-        ):
+        if old.below and new.below and _owner_local_size_statistic_compare(new, old) < 0:
             return False
-        if (
-            old.above
-            and new.above
-            and (
-                new.lower_squared_length > old.lower_squared_length
-                or new.upper_squared_length > old.upper_squared_length
-                or new.interpolation > old.interpolation
-            )
-        ):
+        if old.above and new.above and _owner_local_size_statistic_compare(new, old) > 0:
             return False
     return True
 
@@ -2730,6 +2763,8 @@ def _owner_local_periodic_state(
     execution_group: ExecutionGroup,
     axis_name: str,
     /,
+    *,
+    live_forest: PeriodicSimplexForest | None = None,
 ) -> _OwnerLocalPeriodicState:
     from .._execution_runtime import ExecutionGroup
     from ._distribution import _owner_group_allgather, _owner_group_fail_if_any
@@ -3033,6 +3068,51 @@ def _owner_local_periodic_state(
             next_vertex_id=next_vertex_id,
             next_cell_id=next_cell_id,
         )
+        if live_forest is not None:
+            records = live_forest.records
+            if (
+                live_forest.source_id != candidate.source_id
+                or live_forest.source_revision != candidate.source_revision
+                or live_forest.periodic_cell_id != candidate.periodic_cell_id
+                or records.dimension != dimension
+            ):
+                raise ValueError(
+                    "Live periodic family belongs to another source or quotient."
+                )
+            fields = records.cell_field_map()
+            forest_ids = np.asarray(records.cell_ids, dtype=np.int64)
+            active_ids = forest_ids[np.asarray(fields["active"], dtype=np.bool_)]
+            if not np.array_equal(active_ids, source_cell_ids):
+                raise ValueError(
+                    "Live periodic families do not cover the current owned cells."
+                )
+            forest_vertices = np.asarray(records.vertex_ids, dtype=np.int64)
+            for row, identifier in enumerate(forest_vertices):
+                key = int(identifier)
+                exact = live_forest.exact_vertex_coordinates[row]
+                root = int(live_forest.vertex_source_ids[row])
+                winding = tuple(
+                    map(int, np.asarray(live_forest.vertex_absolute_windings)[row])
+                )
+                if (
+                    key not in exact_coordinates
+                    or exact_coordinates[key] != exact
+                    or root_ids_by_vertex[key] != root
+                    or windings_by_vertex[key] != winding
+                ):
+                    raise ValueError(
+                        "Live periodic family geometry or winding differs from the current mesh."
+                    )
+            layout = AdaptiveSimplexLayout(
+                dimension,
+                dimension,
+                vertex_capacity=adaptive_simplex_bucket(
+                    max(forest_vertices.size, 1), 1.0
+                ),
+                cell_capacity=adaptive_simplex_bucket(max(forest_ids.size, 1), 1.0),
+                protected_edge_capacity=max(records.protected_edge_ids.shape[0], 1),
+            )
+            state = reconstruct_adaptive_simplex_state(records, state, layout)
     except Exception as error:
         local_error = f"{type(error).__name__}: {error}"
     _owner_group_fail_if_any(
@@ -4190,6 +4270,7 @@ class OwnerLocalPeriodicAdaptiveExecution(NamedTuple):
     exact_cell_measures: tuple[Fraction, ...]
     size_evidence: OwnerLocalPeriodicSizeEvidence
     graph_partition_plan: GraphPartitionPlan | None
+    live_forest: PeriodicSimplexForest | None
     result_id: str
 
 
@@ -4244,7 +4325,6 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
     source_cell_ids: np.ndarray
     target_cell_ids: np.ndarray
     target_cell_owner_ranks: np.ndarray
-    target_cell_origins: np.ndarray
     target_cell_parent_ids: np.ndarray
     target_vertex_parent_ids: np.ndarray
     source_cell_measures: tuple[Fraction, ...]
@@ -4259,6 +4339,7 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
     exact_vertex_coordinates: tuple[tuple[Fraction, ...], ...]
     cell_metadata: OwnerLocalPeriodicCellMetadata
     size_evidence: OwnerLocalPeriodicSizeEvidence
+    live_forest: PeriodicSimplexForest | None
     result_id: str
 
     @classmethod
@@ -4318,7 +4399,6 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             source_cell_ids = empty.copy()
             target_cell_ids = empty.copy()
             target_cell_owner_ranks = np.zeros((0,), dtype=np.int32)
-            target_cell_origins = empty.copy()
             target_cell_parent_ids = empty.copy()
             target_vertex_parent_ids = np.zeros((0, 2), dtype=np.int64)
             source_cell_measures: tuple[Fraction, ...] = ()
@@ -4379,9 +4459,6 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             target_cell_ids = np.asarray(part.target_cell_ids, dtype=np.int64).copy()
             target_cell_owner_ranks = np.asarray(
                 part.target_cell_owner_ranks, dtype=np.int32
-            ).copy()
-            target_cell_origins = np.asarray(
-                part.target_cell_origins, dtype=np.int64
             ).copy()
             target_cell_parent_ids = np.asarray(
                 part.target_cell_parent_ids, dtype=np.int64
@@ -4482,7 +4559,6 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
                 "vertex_transfer": (None if transfer is None else transfer.transfer_id),
                 "source_cell_ids": source_cell_ids,
                 "target_cell_ids": target_cell_ids,
-                "target_cell_origins": target_cell_origins,
                 "target_cell_parent_ids": target_cell_parent_ids,
                 "target_cell_owner_ranks": target_cell_owner_ranks,
                 "target_vertex_parent_ids": target_vertex_parent_ids,
@@ -4514,6 +4590,9 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
                 ),
                 "size_evidence": execution.size_evidence.evidence_id,
                 "graph_partition_plan": plan_id,
+                "live_forest": None
+                if execution.live_forest is None
+                else execution.live_forest.forest_id,
                 "status": execution.status.value,
                 "refusal": execution.refusal,
             }
@@ -4562,7 +4641,6 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             source_cell_ids,
             target_cell_ids,
             target_cell_owner_ranks,
-            target_cell_origins,
             target_cell_parent_ids,
             target_vertex_parent_ids,
             source_cell_measures,
@@ -4577,6 +4655,7 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             exact_vertex_coordinates,
             execution.cell_metadata,
             execution.size_evidence,
+            execution.live_forest,
             result_id,
         )
         if result._computed_result_id() != result.result_id:
@@ -4641,7 +4720,6 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
                 ),
                 "source_cell_ids": self.source_cell_ids,
                 "target_cell_ids": self.target_cell_ids,
-                "target_cell_origins": self.target_cell_origins,
                 "target_cell_parent_ids": self.target_cell_parent_ids,
                 "target_cell_owner_ranks": self.target_cell_owner_ranks,
                 "target_vertex_parent_ids": self.target_vertex_parent_ids,
@@ -4675,6 +4753,9 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
                 ),
                 "size_evidence": self.size_evidence.evidence_id,
                 "graph_partition_plan": plan_id,
+                "live_forest": None
+                if self.live_forest is None
+                else self.live_forest.forest_id,
                 "status": self.status.value,
                 "refusal": self.refusal,
             }
@@ -4759,7 +4840,18 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             raise ValueError(
                 "Ownership migration changed target source geometry or periodic proof."
             )
+        from ._distribution_migration import migrate_periodic_simplex_forest
+
+        live_forest = self.live_forest
+        if live_forest is not None:
+            live_forest = migrate_periodic_simplex_forest(
+                live_forest,
+                current_view.owned_cell_ids,
+                execution_group,
+                axis_name=f"{axis_name}_live_families",
+            )
         rebound = self._replace(
+            live_forest=live_forest,
             target_local_mesh_id=current_view.local_mesh_id,
             target_local_topology_id=current_view.local_topology_id,
             target_local_geometry_id=current_view.local_geometry_id,
@@ -4787,7 +4879,6 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
         /,
     ) -> OwnerLocalPeriodicAdaptiveResult:
         from .._execution_runtime import ExecutionGroup
-        from .._model._structure import model_archive_projection
         from ..discretization._view_support import OwnerLocalCellGeometry
         from ..graph._partition import GraphPartitionPlan
         from ._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
@@ -4807,41 +4898,18 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             raise ValueError(
                 "The current periodic specification differs from the recipe."
             )
-        candidate_identity = (
-            candidate.candidate_id,
-            candidate.source_id,
-            candidate.source_revision,
-            candidate.source_distribution_id,
-            candidate.source_part_id,
-            candidate.source_mesh_id,
-            candidate.source_topology_id,
-            candidate.source_geometry_id,
-            candidate.geometry_layout_id,
-            candidate.coordinate_contract_id,
-            candidate.periodic_topology_id,
-            candidate.source_local_mesh_id,
-            candidate.source_local_topology_id,
-            candidate.source_local_geometry_id,
-        )
-        stored_identity = (
-            self.candidate_id,
-            self.source_id,
-            self.source_revision,
-            self.source_distribution_id,
-            self.source_part_id,
-            self.source_mesh_id,
-            self.source_topology_id,
-            self.source_geometry_id,
-            self.source_geometry_layout_id,
-            self.coordinate_contract_id,
-            self.source_periodic_topology_id,
-            self.source_local_mesh_id,
-            self.source_local_topology_id,
-            self.source_local_geometry_id,
-        )
-        if candidate_identity != stored_identity:
+        if (
+            candidate.source_id != self.source_id
+            or candidate.source_revision != self.source_revision
+            or candidate.source_topology_id != self.target_topology_id
+            or candidate.source_geometry_id != self.target_geometry_id
+            or candidate.source_distribution_id != self.target_distribution_id
+            or candidate.source_part_id != self.target_part_id
+            or candidate.coordinate_contract_id != self.coordinate_contract_id
+            or candidate.periodic_topology_id != self.target_periodic_topology_id
+        ):
             raise ValueError(
-                "The current periodic source operands differ from the recipe."
+                "Current periodic source, geometry, or ownership differs from accepted state."
             )
         if self.graph_partition_plan is None:
             if graph_partition_plan is not None:
@@ -4914,33 +4982,147 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             raise ValueError(
                 "The restored periodic target view is stale for this result."
             )
-        execution = _adapt_owner_local_periodic(
+        from ._distribution import _owner_group_fail_if_any
+        from ._distribution_migration import migrate_periodic_simplex_forest
+
+        forest = self.live_forest
+        local_error = None
+        rebuilt = None
+        try:
+            if forest is None:
+                raise ValueError(
+                    "Accepted periodic adaptation lacks live scientific families."
+                )
+            stored = forest.records
+            records = SimplexForestRecords(
+                stored.cell_ids,
+                stored.cell_owner_ranks,
+                dict(stored.cell_fields),
+                stored.vertex_ids,
+                stored.vertex_owner_ranks,
+                dict(stored.vertex_fields),
+                stored.protected_edge_ids,
+                stored.dimension,
+                stored.ambient_dimension,
+                stored.next_vertex_id,
+                stored.next_cell_id,
+            )
+            rebuilt = PeriodicSimplexForest(
+                records,
+                forest.vertex_source_ids,
+                forest.vertex_absolute_windings,
+                forest.exact_vertex_coordinates,
+                forest.block_names,
+                forest.source_id,
+                forest.source_revision,
+                forest.periodic_cell_id,
+            )
+            _validate_owner_local_periodic_forest(rebuilt, candidate)
+            if (
+                rebuilt.forest_id != forest.forest_id
+                or self._computed_result_id() != self.result_id
+            ):
+                raise ValueError("Accepted periodic family or result identity changed.")
+        except Exception as error:
+            local_error = f"{type(error).__name__}: {error}"
+        _owner_group_fail_if_any(
+            local_error,
+            execution_group,
+            "periodic_live_restore",
+            "live periodic family mathematics",
+        )
+        if rebuilt is None:
+            raise ValueError("Live periodic family reconstruction failed collectively.")
+        canonical = migrate_periodic_simplex_forest(
+            rebuilt,
+            current_view.owned_cell_ids,
+            execution_group,
+            axis_name="periodic_live_restore_replicas",
+        )
+        _owner_group_fail_if_any(
+            None
+            if canonical.forest_id == rebuilt.forest_id
+            else "Split-owner family replicas disagree.",
+            execution_group,
+            "periodic_live_restore_agreement",
+            "live periodic family replicas",
+        )
+        epoch = _owner_local_periodic_size_epoch(
             candidate,
             specification,
             execution_group,
             local_rank,
-            graph_partition_plan=graph_partition_plan,
+            axis_name="periodic_current_size",
         )
-        result = type(self)._from_execution_validated(execution, current_view)
-        # A result restored from a model archive holds executable values (for
-        # example finite-element specs) in their canonical archive projection,
-        # so the replay is compared in that projected form.
-        stored_projection = model_archive_projection(self)
-        replay_projection = model_archive_projection(result)
-        if not _owner_local_periodic_values_equal(stored_projection, replay_projection):
-            changed = tuple(
-                name
-                for name in type(self)._fields
-                if not _owner_local_periodic_values_equal(
-                    model_archive_projection(getattr(self, name)),
-                    model_archive_projection(getattr(result, name)),
-                )
-            )
+        if not epoch.evidence.compliant:
             raise ValueError(
-                "Periodic adaptive result fields or identities changed on cold "
-                f"replay: {changed}."
+                "Restored periodic geometry fails its current exact size constraints."
             )
-        return result
+        return self
+
+
+def _validate_owner_local_periodic_forest(
+    forest: PeriodicSimplexForest,
+    candidate: OwnerLocalPeriodicCandidate,
+    /,
+) -> None:
+    """Check owned leaves directly against the independently certified current mesh."""
+    records = forest.records
+    if (
+        forest.source_id != candidate.source_id
+        or forest.source_revision != candidate.source_revision
+        or forest.periodic_cell_id != candidate.periodic_cell_id
+    ):
+        raise ValueError("Periodic live families belong to another source or lattice.")
+    fields = records.cell_field_map()
+    owned = np.asarray(fields["active"], dtype=np.bool_) & (
+        np.asarray(records.cell_owner_ranks) == candidate.rank
+    )
+    identifiers = np.asarray(records.cell_ids)[owned]
+    if not np.array_equal(identifiers, np.asarray(candidate.owned_cell_ids)):
+        raise ValueError("Periodic live family leaves do not cover accepted ownership.")
+    mesh = candidate.local_mesh
+    if mesh is None:
+        if identifiers.size:
+            raise ValueError("Nonempty periodic family has no accepted local geometry.")
+        return
+    candidate_vertex_ids = np.asarray(candidate.vertex_ids, dtype=np.int64)
+    candidate_vertex_rows = {
+        int(identifier): row for row, identifier in enumerate(candidate_vertex_ids)
+    }
+    forest_vertex_ids = np.asarray(records.vertex_ids, dtype=np.int64)
+    forest_vertex_rows = {
+        int(identifier): row for row, identifier in enumerate(forest_vertex_ids)
+    }
+    mesh_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    mesh_cells = {
+        int(identifier): (block.name, tuple(map(int, mesh_vertex_ids[row])))
+        for block in mesh.blocks
+        for identifier, row in zip(
+            np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
+        )
+    }
+    for row in np.flatnonzero(owned):
+        vertices = tuple(map(int, np.asarray(fields["cells"])[row]))
+        expected = (forest.block_names[int(np.asarray(fields["blocks"])[row])], vertices)
+        if mesh_cells.get(int(np.asarray(records.cell_ids)[row])) != expected:
+            raise ValueError(
+                "Periodic live cell geometry differs from its accepted leaf."
+            )
+        for identifier in vertices:
+            old = forest_vertex_rows[identifier]
+            current = candidate_vertex_rows[identifier]
+            if (
+                forest.exact_vertex_coordinates[old]
+                != tuple(candidate.exact_vertex_coordinates[current])
+                or int(forest.vertex_source_ids[old])
+                != int(candidate.vertex_source_ids[current])
+                or not np.array_equal(
+                    np.asarray(forest.vertex_absolute_windings)[old],
+                    np.asarray(candidate.vertex_absolute_windings)[current],
+                )
+            ):
+                raise ValueError("Periodic live source coordinates or winding changed.")
 
 
 def _owner_local_periodic_values_equal(first: Any, second: Any, /) -> bool:
@@ -5222,8 +5404,7 @@ def _owner_local_periodic_finish(
             source_mesh,
             target_mesh,
             stencil,
-            target_cell_ids,
-            target_cell_origins,
+            state,
         )
         target_cell_order = np.asarray(
             target_mesh.entity_set(dimension).entity_ids, dtype=np.int64
@@ -5242,20 +5423,28 @@ def _owner_local_periodic_finish(
                 target_cell_ids.tolist(), exact_target_measures, strict=True
             )
         }
-        target_measure_by_origin = {
-            int(identifier): Fraction(0) for identifier in source_ids.tolist()
-        }
-        for identifier, origin in zip(
-            target_cell_ids.tolist(), target_cell_origins.tolist(), strict=True
+        source_coverage = {int(identifier): Fraction(0) for identifier in source_ids}
+        target_coverage = {int(identifier): Fraction(0) for identifier in target_cell_ids}
+        cell_lineage = lineage.entity_lineage(dimension)
+        for source_id, target_id, kind in zip(
+            np.asarray(cell_lineage.source_global_ids, dtype=np.int64),
+            np.asarray(cell_lineage.target_global_ids, dtype=np.int64),
+            np.asarray(cell_lineage.relation_kinds, dtype=np.int32),
+            strict=True,
         ):
-            if int(origin) not in target_measure_by_origin:
-                raise ValueError(
-                    "Periodic conservative cell ancestry escapes its owned source."
-                )
-            target_measure_by_origin[int(origin)] += target_measure_by_id[int(identifier)]
-        if target_measure_by_origin != source_measure_by_id:
+            measure = (
+                source_measure_by_id[int(source_id)]
+                if kind == int(EntityLineageKind.COARSENED_INTO)
+                else target_measure_by_id[int(target_id)]
+            )
+            source_coverage[int(source_id)] += measure
+            target_coverage[int(target_id)] += measure
+        if (
+            source_coverage != source_measure_by_id
+            or target_coverage != target_measure_by_id
+        ):
             raise ValueError(
-                "Periodic bisection did not preserve each source-cell content measure."
+                "Periodic nested lineage changed exact physical cell coverage."
             )
         weight_ids = np.asarray(candidate.owned_cell_ids, dtype=np.int64)
         if (
@@ -5372,7 +5561,6 @@ def _owner_local_periodic_finish(
         source_ids,
         target_cell_ids,
         target_cell_owners,
-        target_cell_origins,
         target_cell_parent_ids,
         target_vertex_parents,
         source_cell_measures,
@@ -5383,6 +5571,38 @@ def _owner_local_periodic_finish(
         status_flags,
         counters,
         transition_id,
+    )
+    records = extract_simplex_forest(
+        state,
+        cell_owner_ranks=np.full(state.mesh.cell_capacity, local_rank, dtype=np.int32),
+        vertex_owner_ranks=np.asarray(
+            [
+                vertex_owner_ranks.get(int(identifier), local_rank)
+                for identifier in np.asarray(state.mesh.vertex_ids)
+            ],
+            dtype=np.int32,
+        ),
+    )
+    forest_vertices = np.asarray(records.vertex_ids, dtype=np.int64)
+    live_forest = PeriodicSimplexForest(
+        records,
+        np.asarray(
+            [vertex_root_ids[int(identifier)] for identifier in forest_vertices],
+            dtype=np.int64,
+        ),
+        np.asarray(
+            [vertex_windings[int(identifier)] for identifier in forest_vertices],
+            dtype=np.int64,
+        ).reshape((-1, dimension)),
+        tuple(
+            exact_vertex_coordinates[int(identifier)] for identifier in forest_vertices
+        ),
+        tuple(block.name for block in source_mesh.blocks)
+        if source_mesh is not None
+        else ("periodic",),
+        candidate.source_id,
+        candidate.source_revision,
+        candidate.periodic_cell_id,
     )
     result_id = canonical_fingerprint(
         {
@@ -5438,6 +5658,7 @@ def _owner_local_periodic_finish(
         exact_target_measures,
         size_evidence,
         graph_partition_plan,
+        live_forest,
         result_id,
     )
 
@@ -5502,6 +5723,7 @@ def _owner_local_periodic_refusal(
         (),
         evidence,
         graph_partition_plan,
+        None,
         result_id,
     )
 
@@ -5566,25 +5788,68 @@ def _owner_local_periodic_try_coarsen(
             )
             if root not in attempted
         )
-        local_candidate = min(local_candidates, default=0)
-        candidate_rows = np.asarray(
+        # Stable numeric issuance depends on placement; order midpoint orbits by
+        # their exact lattice-unshifted coordinates instead.
+        import json
+
+        lattice = tuple(
+            tuple(Fraction.from_float(float(value)) for value in row)
+            for row in np.asarray(candidate.periodic_cell.vectors, dtype=np.float64)
+        )
+        root_points: dict[int, tuple[Fraction, ...]] = {}
+        for identifier, root in vertex_root_ids.items():
+            if root not in local_candidates:
+                continue
+            point = exact_vertex_coordinates[identifier]
+            winding = vertex_windings[identifier]
+            unshifted = tuple(
+                point[axis]
+                - sum(
+                    (
+                        int(winding[index]) * lattice[index][axis]
+                        for index in range(layout.dimension)
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(layout.dimension)
+            )
+            previous = root_points.setdefault(root, unshifted)
+            if previous != unshifted:
+                raise ValueError(
+                    "Periodic midpoint images disagree on their exact orbit root."
+                )
+        local_choice = min(
+            ((point, root) for root, point in root_points.items()), default=None
+        )
+        payload = json.dumps(
+            None
+            if local_choice is None
+            else (
+                [(value.numerator, value.denominator) for value in local_choice[0]],
+                local_choice[1],
+            ),
+            separators=(",", ":"),
+        ).encode("ascii")
+        lengths = np.asarray(
             _owner_group_allgather(
-                np.asarray(
-                    (int(bool(local_candidates)), local_candidate), dtype=np.int64
-                ),
-                execution_group,
-                axis_name,
+                np.asarray((len(payload),), dtype=np.int64), execution_group, axis_name
             ),
             dtype=np.int64,
-        )
-        if (
-            candidate_rows.shape != (part_count, 2)
-            or np.any(candidate_rows[:, 0] < 0)
-            or np.any(candidate_rows[:, 0] > 1)
-        ):
-            raise ValueError("Periodic coarsen candidate ranks are malformed.")
-        present = candidate_rows[candidate_rows[:, 0] == 1, 1]
-        if not present.size:
+        ).reshape((-1,))
+        width = int(np.max(lengths))
+        encoded = np.zeros((width,), dtype=np.uint8)
+        encoded[: len(payload)] = np.frombuffer(payload, dtype=np.uint8)
+        payloads = np.asarray(
+            _owner_group_allgather(encoded, execution_group, axis_name), dtype=np.uint8
+        ).reshape((part_count, width))
+        choices = []
+        for row, length in zip(payloads, lengths, strict=True):
+            value = json.loads(row[: int(length)].tobytes().decode("ascii"))
+            if value is not None:
+                choices.append(
+                    (tuple(Fraction(*item) for item in value[0]), int(value[1]))
+                )
+        if not choices:
             return (
                 state,
                 current_epoch,
@@ -5592,7 +5857,7 @@ def _owner_local_periodic_try_coarsen(
                 last_refusal
                 or "No derived periodic midpoint orbit remains eligible for coarsening.",
             )
-        selected_root = int(np.min(present))
+        selected_root = min(choices)[1]
         attempted.add(selected_root)
         trial_state, changed, trial_refusal = _owner_local_periodic_coarsen_orbit(
             layout,
@@ -5696,6 +5961,7 @@ def _adapt_owner_local_periodic(
     *,
     axis_name: str = "periodic_owner_adaptation",
     graph_partition_plan: GraphPartitionPlan | None = None,
+    live_forest: PeriodicSimplexForest | None = None,
 ) -> OwnerLocalPeriodicAdaptiveExecution:
     """Refine/coarsen fixed-site periodic Delaunay cells under exact size evidence.
 
@@ -5766,7 +6032,7 @@ def _adapt_owner_local_periodic(
     ):
         raise ValueError("Periodic repartition plans differ across owner ranks.")
     source = _owner_local_periodic_state(
-        candidate, local_rank, execution_group, axis_name
+        candidate, local_rank, execution_group, axis_name, live_forest=live_forest
     )
     layout = source.layout
     state = source.state

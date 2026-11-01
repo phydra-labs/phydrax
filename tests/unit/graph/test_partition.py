@@ -87,6 +87,32 @@ def test_weighted_graph_rejects_asymmetric_csr() -> None:
         )
 
 
+def test_distributed_candidates_evacuate_overloaded_zero_share_first() -> None:
+    from phydrax.graph._distributed_partition import _candidate_proposals
+
+    graph = DistributedWeightedCSRGraph(
+        np.asarray((0, 1, 2), dtype=np.int64),
+        np.asarray((30, 40), dtype=np.int64),
+        entity_ids=np.asarray((10, 20), dtype=np.int64),
+        owner_ranks=np.asarray((0, 0), dtype=np.int32),
+        neighbor_owner_ranks=np.asarray((0, 0), dtype=np.int32),
+        edge_weights=np.ones(2, dtype=np.int64),
+        vertex_weights=np.ones(2, dtype=np.int64),
+    )
+    proposals = _candidate_proposals(
+        graph,
+        np.asarray((0, 2), dtype=np.int32),
+        np.asarray((1, 2), dtype=np.int32),
+        np.ones(2, dtype=np.int64),
+        np.asarray((10, 10, 1), dtype=np.int64),
+        np.asarray((10, 10, 0), dtype=np.int64),
+        np.asarray((15, 15, 0), dtype=np.int64),
+        np.full(3, -1, dtype=np.int64),
+    )
+    assert [rows[:, 0].tolist() for rows in proposals] == [[20], [], []]
+    assert int(proposals[0][0, 4]) == -1
+
+
 def test_distributed_partition_one_worker_matches_serial_and_oracle() -> None:
     if jax.process_count() != 1:
         pytest.skip("The direct graph partition smoke requires one JAX process.")

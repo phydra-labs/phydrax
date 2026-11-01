@@ -5803,6 +5803,81 @@ class OwnerLocalGraphMigrationEvidence(StrictModule, NonTrainableState):
 
 
 @final
+class OwnerLocalTopologyTransferRoute(StrictModule, NonTrainableState):
+    """Current owner directories for a topology edit without graph migration."""
+
+    source_directory_id: str = eqx.field(static=True)
+    target_directory_id: str = eqx.field(static=True)
+    group_id: str = eqx.field(static=True)
+    local_rank: int = eqx.field(static=True)
+    part_count: int = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source_directory_id: str,
+        target_directory_id: str,
+        group_id: str,
+        local_rank: int,
+        part_count: int,
+        /,
+    ) -> None:
+        if (
+            not source_directory_id
+            or not target_directory_id
+            or not group_id
+            or not 0 <= local_rank < part_count
+        ):
+            raise ValueError(
+                "Topology transfer route requires current owner directories."
+            )
+        self.source_directory_id = source_directory_id
+        self.target_directory_id = target_directory_id
+        self.group_id = group_id
+        self.local_rank = local_rank
+        self.part_count = part_count
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "owner-local-topology-transfer-route",
+                "source_directory": source_directory_id,
+                "target_directory": target_directory_id,
+                "group": group_id,
+            }
+        )
+
+    def transfer_keyed_values(
+        self,
+        source_entry: CompositionEntry,
+        source_entity_keys: ArrayLike,
+        source_owner_ranks: ArrayLike,
+        source_values: ArrayLike,
+        target_entity_keys: ArrayLike,
+        target_owner_ranks: ArrayLike,
+        execution_group: ExecutionGroup,
+        /,
+        *,
+        target_structure_id: str,
+        key_identity_id: str,
+        axis_name: str = "owner_local_topology_keyed_state",
+        value_fiber_shape: tuple[int, ...] | None = None,
+    ) -> OwnerLocalGraphKeyedStateTransfer:
+        return _transfer_owner_local_graph_keyed_values(
+            self,
+            source_entry,
+            source_entity_keys,
+            source_owner_ranks,
+            source_values,
+            target_entity_keys,
+            target_owner_ranks,
+            execution_group,
+            target_structure_id=target_structure_id,
+            key_identity_id=key_identity_id,
+            axis_name=axis_name,
+            value_fiber_shape=value_fiber_shape,
+        )
+
+
+@final
 class OwnerLocalGraphKeyedStateTransfer(StrictModule, NonTrainableState):
     """Exact owner-local keyed-row migration and lifecycle ownership evidence."""
 
@@ -6281,7 +6356,7 @@ class OwnerLocalGraphKeyedStateTransfer(StrictModule, NonTrainableState):
 
 
 def _transfer_owner_local_graph_keyed_values(
-    evidence: OwnerLocalGraphMigrationEvidence,
+    evidence: OwnerLocalGraphMigrationEvidence | OwnerLocalTopologyTransferRoute,
     source_entry: CompositionEntry,
     source_entity_keys: ArrayLike,
     source_owner_ranks: ArrayLike,
@@ -6339,8 +6414,10 @@ def _transfer_owner_local_graph_keyed_values(
     logical_tail_shape: tuple[int, ...] = ()
     value_implementation: object | None = None
     try:
-        if not isinstance(evidence, OwnerLocalGraphMigrationEvidence):
-            raise TypeError("evidence must be OwnerLocalGraphMigrationEvidence.")
+        if not isinstance(
+            evidence, (OwnerLocalGraphMigrationEvidence, OwnerLocalTopologyTransferRoute)
+        ):
+            raise TypeError("evidence must be a current owner-local transfer route.")
         if not isinstance(source_entry, CompositionEntry):
             raise TypeError("source_entry must be CompositionEntry.")
         source_keys = key_rows(source_entity_keys, "source_entity_keys")
@@ -6437,16 +6514,20 @@ def _transfer_owner_local_graph_keyed_values(
         else logical_fiber_width
     ) * values.dtype.itemsize
     value_kind = "typed-prng-key" if value_implementation_id is not None else "array"
-    common_migration_id = canonical_fingerprint(
-        {
-            "source_part": evidence.source_part_id,
-            "source_face_coverage": evidence.periodic_face_coverage_id,
-            "source_directory": evidence.source_directory_id,
-            "target_part": evidence.target_part_id,
-            "target_directory": evidence.target_directory_id,
-            "group": evidence.group_id,
-            "graph_plan": evidence.result.plan_id,
-        }
+    common_migration_id = (
+        evidence.evidence_id
+        if isinstance(evidence, OwnerLocalTopologyTransferRoute)
+        else canonical_fingerprint(
+            {
+                "source_part": evidence.source_part_id,
+                "source_face_coverage": evidence.periodic_face_coverage_id,
+                "source_directory": evidence.source_directory_id,
+                "target_part": evidence.target_part_id,
+                "target_directory": evidence.target_directory_id,
+                "group": evidence.group_id,
+                "graph_plan": evidence.result.plan_id,
+            }
+        )
     )
     route_identity_id = canonical_fingerprint(
         {

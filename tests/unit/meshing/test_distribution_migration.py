@@ -127,6 +127,24 @@ def test_live_forest_discards_retired_slots_without_reusing_ids() -> None:
     )
 
 
+def test_live_forest_levels_follow_parent_depth_not_executor_rounds() -> None:
+    import equinox as eqx
+    import jax.numpy as jnp
+
+    _, state, _ = _mesh_state()
+    first = extract_simplex_forest(state)
+    changed = eqx.tree_at(
+        lambda value: value.vertex_levels,
+        state,
+        jnp.asarray(np.asarray(state.vertex_levels) + 7),
+    )
+    second = extract_simplex_forest(changed)
+    np.testing.assert_array_equal(
+        first.vertex_field_map()["levels"], second.vertex_field_map()["levels"]
+    )
+    assert first.forest_id == second.forest_id
+
+
 def test_periodic_live_forest_checks_exact_restriction_and_tiling() -> None:
     from fractions import Fraction
 
@@ -204,6 +222,91 @@ def test_periodic_live_forest_checks_exact_restriction_and_tiling() -> None:
             "revision",
             "lattice",
         )
+
+
+def test_periodic_forest_cold_restore_rejects_consistent_identity_tamper(
+    tmp_path: Path,
+) -> None:
+    import copy
+    import subprocess
+    from fractions import Fraction
+
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing._distribution_forest import PeriodicSimplexForest
+    from phydrax.meshing._model_codec import write_model_artifact
+
+    _, state, _ = _mesh_state()
+    records = extract_simplex_forest(state)
+    exact = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row)
+        for row in np.asarray(records.vertex_field_map()["coordinates"])
+    )
+    roots = np.asarray(records.vertex_ids, dtype=np.int64)
+    windings = np.zeros((roots.size, 2), dtype=np.int64)
+    valid = PeriodicSimplexForest(
+        records, roots, windings, exact, ("triangles",), "source", "revision", "lattice"
+    )
+    changed = list(exact)
+    changed[-1] = (exact[-1][0] + Fraction(1, 100), exact[-1][1])
+    vertices = {name: np.asarray(value).copy() for name, value in records.vertex_fields}
+    vertices["coordinates"][-1, 0] = float(changed[-1][0])
+    altered = SimplexForestRecords(
+        records.cell_ids,
+        records.cell_owner_ranks,
+        dict(records.cell_fields),
+        records.vertex_ids,
+        records.vertex_owner_ranks,
+        vertices,
+        records.protected_edge_ids,
+        records.dimension,
+        records.ambient_dimension,
+        records.next_vertex_id,
+        records.next_cell_id,
+    )
+    counterfeit = copy.copy(valid)
+    object.__setattr__(counterfeit, "records", altered)
+    object.__setattr__(counterfeit, "exact_vertex_coordinates", tuple(changed))
+    object.__setattr__(
+        counterfeit,
+        "forest_id",
+        canonical_fingerprint(
+            {
+                "kind": "live-periodic-simplex-forest",
+                "records": altered.forest_id,
+                "owners": (
+                    np.asarray(altered.cell_owner_ranks),
+                    np.asarray(altered.vertex_owner_ranks),
+                ),
+                "roots": roots,
+                "windings": windings,
+                "exact": tuple(
+                    tuple((value.numerator, value.denominator) for value in row)
+                    for row in changed
+                ),
+                "blocks": ("triangles",),
+                "source": ("source", "revision", "lattice"),
+            }
+        ),
+    )
+    path = write_model_artifact(tmp_path / "false-forest.phx", counterfeit, limits=None)
+    worker = (
+        "import sys\n"
+        "from phydrax.meshing._distribution_forest import PeriodicSimplexForest\n"
+        "from phydrax.meshing._model_codec import read_model_artifact, restore_model_archive_value\n"
+        "try:\n"
+        " read_model_artifact(sys.argv[1], expected_type=PeriodicSimplexForest, restore=restore_model_archive_value, limits=None)\n"
+        "except Exception as error:\n"
+        " assert 'exact parent restriction' in str(error.__cause__), repr(error.__cause__)\n"
+        "else:\n"
+        " raise AssertionError('consistent-identity false midpoint was accepted')\n"
+    )
+    result = subprocess.run(
+        (sys.executable, "-c", worker, str(path)),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _root_owners(
@@ -661,9 +764,110 @@ def _launch_phase(
         cwd=str(repository),
         timeout_seconds=900.0,
     )
+    for result in results:
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Migration phase {phase} rank {result.process_id} failed:\n"
+                f"{result.stderr.decode('utf-8', errors='replace')}"
+            )
     return [
         json.loads(result.stdout.decode().strip().splitlines()[-1]) for result in results
     ]
+
+
+def _distributed_live_family_worker(
+    group: ExecutionGroup, rank: int, /
+) -> dict[str, object]:
+    from fractions import Fraction
+    from phydrax.discretization import coarsen_adaptive_simplex
+    from phydrax.meshing._distribution_forest import PeriodicSimplexForest
+    from phydrax.meshing._distribution_migration import migrate_periodic_simplex_forest
+
+    layout, state, _ = _mesh_state()
+    extracted = extract_simplex_forest(state)
+    cell_owners, vertex_owners = _owner_maps(extracted, 3)
+    full = SimplexForestRecords(
+        extracted.cell_ids,
+        cell_owners,
+        dict(extracted.cell_fields),
+        extracted.vertex_ids,
+        vertex_owners,
+        dict(extracted.vertex_fields),
+        extracted.protected_edge_ids,
+        2,
+        2,
+        extracted.next_vertex_id,
+        extracted.next_cell_id,
+    )
+    local = _slice_forest(full, cell_owners, vertex_owners, rank)
+    original = PeriodicSimplexForest(
+        local,
+        local.vertex_ids,
+        np.zeros((local.vertex_ids.size, 2), dtype=np.int64),
+        tuple(
+            tuple(Fraction.from_float(float(value)) for value in row)
+            for row in np.asarray(local.vertex_field_map()["coordinates"])
+        ),
+        ("triangles",),
+        "migration-source",
+        "migration-revision",
+        "migration-lattice",
+    )
+    original_id = original.forest_id
+    cell_fields = full.cell_field_map()
+    active = np.asarray(cell_fields["active"], dtype=np.bool_)
+    active_ids = np.asarray(full.cell_ids)[active]
+    roots = np.asarray(cell_fields["parent_ids"])[active]
+    ordinals = np.asarray(cell_fields["parent_ordinals"])[active]
+    split_ids = active_ids[(roots + ordinals) % 3 == rank]
+    split = migrate_periodic_simplex_forest(
+        original, split_ids, group, axis_name="live_family_split"
+    )
+    split_fields = split.records.cell_field_map()
+    split_active = np.asarray(split_fields["active"], dtype=np.bool_)
+    assert np.unique(np.asarray(split.records.cell_owner_ranks)[split_active]).size == 3
+    reunited_ids = active_ids[roots % 2 == rank]
+    reunited = migrate_periodic_simplex_forest(
+        split, reunited_ids, group, axis_name="live_family_reunite"
+    )
+    np.testing.assert_array_equal(
+        np.asarray(reunited.records.cell_ids)[
+            np.asarray(reunited.records.cell_field_map()["active"])
+        ],
+        reunited_ids,
+    )
+    restored = reconstruct_adaptive_simplex_state(reunited.records, state, layout)
+    update = coarsen_adaptive_simplex(
+        layout, restored, np.asarray(restored.mesh.cell_active, dtype=np.bool_)
+    )
+    compact = extract_simplex_forest(update.state)
+    expected_roots = np.arange(3, dtype=np.int64)[np.arange(3) % 2 == rank]
+    np.testing.assert_array_equal(compact.cell_ids, expected_roots)
+    assert original.forest_id == original_id
+    assert compact.next_cell_id == full.next_cell_id
+    return {
+        "rank": rank,
+        "coarsened_roots": expected_roots.tolist(),
+        "split_owned_ids": split_ids.tolist(),
+    }
+
+
+def test_real_process_split_live_families_reunite_and_coarsen(tmp_path: Path) -> None:
+    if (
+        jax.process_count() != 1
+        or os.name != "posix"
+        or os.environ.get("PYTEST_XDIST_WORKER") is not None
+    ):
+        pytest.skip(
+            "Real-process live-family acceptance requires an isolated POSIX coordinator."
+        )
+    reports = _launch_phase("live-family3", 3, 3, tmp_path, tmp_path)
+    assert [report["coarsened_roots"] for report in reports] == [[0, 2], [1], []]
+    assert all(
+        isinstance(report["split_owned_ids"], list)
+        and len(report["split_owned_ids"]) == 2
+        for report in reports
+    )
 
 
 def _distributed_migration_worker() -> None:
@@ -676,6 +880,9 @@ def _distributed_migration_worker() -> None:
     parts = jax.process_count()
     rank = jax.process_index()
     group = _group(parts, phase)
+    if phase == "live-family3":
+        print(json.dumps(_distributed_live_family_worker(group, rank), sort_keys=True))
+        return
     if phase == "write3":
         _layout, state, _ = _mesh_state()
         full = extract_simplex_forest(state)

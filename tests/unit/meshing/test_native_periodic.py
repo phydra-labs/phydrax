@@ -40,6 +40,37 @@ from phydrax.meshing.providers._native_periodic import (
 )
 
 
+def test_exact_size_statistic_compares_interpolated_lengths() -> None:
+    from phydrax.meshing._device_adaptation import (
+        _owner_local_size_statistic_compare,
+        OwnerLocalPeriodicSizeStatistic,
+    )
+
+    def statistic(
+        lower: int, upper: int, fraction: Fraction
+    ) -> OwnerLocalPeriodicSizeStatistic:
+        return OwnerLocalPeriodicSizeStatistic(
+            "control",
+            "p50",
+            1.0,
+            Fraction(lower),
+            Fraction(upper),
+            fraction,
+            0.0,
+            True,
+            False,
+            False,
+        )
+
+    before = statistic(1, 9, Fraction(1, 10))
+    after = statistic(1, 4, Fraction(3, 5))
+    equal = statistic(4, 4, Fraction(1, 2))
+    assert _owner_local_size_statistic_compare(after, before) > 0
+    assert _owner_local_size_statistic_compare(before, after) < 0
+    assert _owner_local_size_statistic_compare(equal, equal) == 0
+    assert _owner_local_size_statistic_compare(statistic(2, 2, Fraction(0)), equal) < 0
+
+
 def _point_source() -> PeriodicPointOrbits:
     cell = PeriodicCell(np.asarray(((1.0, 0.2), (0.3, 1.1)), dtype=np.float64))
     fractional = np.asarray(
@@ -509,6 +540,57 @@ def test_owner_local_skew_periodic_partition_uses_integer_work() -> None:
     assert assembly.owner_local
     view = assembly.parts[0].carrier
     assert isinstance(view, OwnerLocalCellGeometry)
+    from phydrax.meshing._device_adaptation import OwnerLocalPeriodicAdaptiveResult
+    from phydrax.meshing.providers._native_periodic import (
+        _adapt_owner_local_periodic_assembly,
+    )
+
+    assert isinstance(view.adaptive_result, OwnerLocalPeriodicAdaptiveResult)
+    assert view.adaptive_result.live_forest is not None
+    retained = view.adaptive_result.live_forest.records
+    assert np.any(~np.asarray(retained.cell_field_map()["active"]))
+    renewed = OwnerLocalCellGeometry.from_stored_fields(
+        view,
+        group,
+        current_specification=specification,
+        graph_partition_plan=graph_plan,
+        axis_name="periodic_live_family_restore",
+    )
+    assert renewed.adaptive_result is not None
+    assert renewed.adaptive_result.live_forest is not None
+    assert (
+        renewed.adaptive_result.live_forest.forest_id
+        == view.adaptive_result.live_forest.forest_id
+    )
+    from phydrax.meshing._distribution_migration import (
+        _partition_owner_local_periodic_families,
+    )
+
+    families = _partition_owner_local_periodic_families(assembly, graph_plan, group)
+    assert families.result.feasible
+    np.testing.assert_array_equal(families.result.entity_ids, view.owned_cell_ids)
+    np.testing.assert_array_equal(families.result.owners, 0)
+    coarse_specification = SurfaceMeshingSpec(
+        specification.target,
+        scope,
+        size_controls=(UniformSizeControl(scope, 0.7),),
+        size_compliance=SizeCompliancePolicy(relative_tolerance=0.5),
+    )
+    coarse_assembly = _adapt_owner_local_periodic_assembly(
+        assembly, coarse_specification, group
+    )
+    coarse_view = coarse_assembly.parts[0].carrier
+    assert isinstance(coarse_view, OwnerLocalCellGeometry)
+    assert (
+        np.asarray(coarse_view.owned_cell_ids).size < np.asarray(view.owned_cell_ids).size
+    )
+    assert coarse_view.adaptive_result is not None
+    lineage = coarse_view.adaptive_result.lineage
+    assert lineage is not None
+    assert np.any(
+        np.asarray(lineage.entity_lineage(2).relation_kinds)
+        == int(phx.meshing.EntityLineageKind.COARSENED_INTO)
+    )
     cell_ids = np.asarray(view.cell_ids, dtype=np.int64)
     neighbor_ids = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
     neighbor_owner_ranks = np.asarray(view.cell_neighbor_owner_ranks, dtype=np.int32)

@@ -56,8 +56,8 @@ NATIVE_CASE_REGISTRY = {
     ),
     "native-polyhedral": (".scenarios.polyhedral_matrix", "native_polyhedral"),
     "native-distributed-lifecycle": (
-        ".scenarios.native_distributed",
-        "native_distributed_lifecycle",
+        ".scenarios.cold_owner_local",
+        "native_cold_owner_local",
     ),
     "native-moving-overset": (
         ".scenarios.moving_overset_matrix",
@@ -67,10 +67,6 @@ NATIVE_CASE_REGISTRY = {
     "native-cold-fe-fv-continuation": (
         ".scenarios.cold_fe_fv",
         "native_cold_fe_fv_continuation",
-    ),
-    "native-cold-owner-local": (
-        ".scenarios.cold_owner_local",
-        "native_cold_owner_local",
     ),
     "native-design-loop": (".scenarios.native_design", "native_design_loop"),
 }

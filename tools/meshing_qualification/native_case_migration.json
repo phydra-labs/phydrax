@@ -164,13 +164,13 @@
       "workflow": "distributed-lifecycle",
       "profiles": ["native-distributed-lifecycle", "native-distributed-lifecycle:larger"],
       "target_scenarios": ["native-distributed-lifecycle"],
-      "source": "Owner-local native periodic generation and adaptation on two real JAX processes; source profile is the authored unit-square native source with routine/larger resolution variants.",
+      "source": "Owner-local native periodic generation and adaptation on three real JAX processes, including an empty owner and two active owners; routine/larger resolution variants.",
       "source_provenance": "Stable global source/site IDs, explicit owner ranks and sharded owner-directory witness; per-rank result is a compact local view, not a hidden global gather.",
       "required_feature_combinations": ["owner-local generation", "refine/coarsen", "graph repartition with changed placement", "all required fields/history/RNG/clock", "fresh-process changed-placement restart", "continued physical solve"],
-      "independent_oracle": "Exact periodic quotient measure and topology, all-rank ownership counts and unique owner directory, field/history preservation, accepted continuation step and conservation ledger.",
+      "independent_oracle": "Exact periodic quotient measure and topology, all-rank ownership counts and unique owner directory, fresh serial geometry, field/history preservation, accepted continuation step and FE/FV conservation ledgers.",
       "tolerances": {"quotient_measure_absolute": 1e-10, "ownership": "every required entity has exactly one owner", "continued_solve_balance": 1e-8},
-      "target_gate_status": "failing-until-owner-local-physical-state-migration-and-cold-continuation-run",
-      "uncovered_contracts": ["distributed mesh adaptation lineage and explicit state migration", "fresh changed-placement restart of fields/material/history/RNG/clock and continued solve"]
+      "target_gate_status": "qualified-owner-local-physical-state-migration-and-cold-continuation",
+      "uncovered_contracts": []
     },
     {
       "workflow": "moving-overset",

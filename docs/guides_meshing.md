@@ -1865,6 +1865,15 @@ identity. Reconstruction verifies midpoint restrictions and that each child
 pair exactly tiles its recorded parent. Current-view validation must also check
 the active leaves against the accepted source, quotient, and owner directory.
 
+Periodic family migration routes complete live families only to owners of their
+leaves; split families retain checked replicas until an explicit reunification.
+The family-contracted graph honors the authored partition shares and capacity
+constraints, without collecting the mesh on one owner. Reunion and subsequent
+topology coarsening are separate accepted transactions. A refused coarsening
+leaves the reunited state and its history unchanged. Live vertex levels are
+canonical parent-ancestry depths rather than owner-specific closure rounds;
+coarsening orders midpoint orbits by their exact unshifted coordinates.
+
 For owner-local execution, wrap the forest and any cell- or vertex-aligned field
 rows in `OwnerLocalMigrationState`. `prepare_ownerlocal_migration` stages cell,
 vertex, protected-edge, and field packets for current target owner ranks. It

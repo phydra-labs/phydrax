@@ -244,6 +244,7 @@ class DistributedGraphPartitionResult(StrictModule, NonTrainableState):
         plan_id: str,
         migration_id: str,
         owner_identity: str,
+        provenance: str,
         /,
     ) -> None:
         self.entity_ids = jnp.asarray(entity_ids, dtype=jnp.int64)
@@ -257,7 +258,13 @@ class DistributedGraphPartitionResult(StrictModule, NonTrainableState):
         self.feasibility_status = "feasible" if feasible else "balance_not_reached"
         self.migration_count = int(migration_count)
         self.migration_weight = int(migration_weight)
-        self.provenance = "phydrax-owner-local-graph-refinement-v1"
+        if provenance not in (
+            "phydrax-owner-local-graph-refinement-v1",
+            "phydrax-owner-local-family-contraction-v1",
+            "phydrax-owner-local-authored-placement-v1",
+        ):
+            raise ValueError("Unknown distributed partition provenance.")
+        self.provenance = provenance
         self.graph_id = graph_id
         self.plan_id = plan_id
         self.migration_id = migration_id
@@ -267,6 +274,7 @@ class DistributedGraphPartitionResult(StrictModule, NonTrainableState):
                 "graph": graph_id,
                 "plan": plan_id,
                 "owners": owner_identity,
+                "provenance": provenance,
                 "part_weights": array_tree_fingerprint(part_weights),
                 "target_weights": array_tree_fingerprint(target_weights),
                 "capacity_weights": array_tree_fingerprint(capacity_weights),
@@ -999,8 +1007,11 @@ def _candidate_proposals(
     proposals: list[list[tuple[int, int, int, int, int]]] = [
         [] for _ in range(len(loads))
     ]
+    evacuating = bool(np.any(loads > capacities))
     for row, identifier in enumerate(ids):
         source = int(labels[row])
+        if evacuating and loads[source] <= capacities[source]:
+            continue
         if protected_ids[source] == int(identifier):
             continue
         start, stop = map(int, offsets[row : row + 2])
@@ -1021,9 +1032,9 @@ def _candidate_proposals(
             gain = int(support[target]) - source_support
             target_ratio = Fraction(int(loads[target]), target_target)
             balance_gain = source_ratio - target_ratio
-            if gain <= 0 and balance_gain <= 0:
+            if not evacuating and gain <= 0 and balance_gain <= 0:
                 continue
-            if gain <= 0 and loads[target] >= target_target:
+            if not evacuating and gain <= 0 and loads[target] >= target_target:
                 continue
             candidate = (gain, balance_gain, -target)
             if best is None or candidate > best:
@@ -1086,7 +1097,11 @@ def _refinement_pass(
     target_limit = int(targets[rank]) - int(loads[rank])
     accepted: list[list[tuple[int, int]]] = [[] for _ in range(mesh.devices.size)]
     for identifier, source, target, weight, gain, sender in proposals:
-        limit = available if gain > 0 else min(available, target_limit)
+        limit = (
+            available
+            if gain > 0 or loads[source] > capacities[source]
+            else min(available, target_limit)
+        )
         if weight <= limit:
             accepted[sender].append((identifier, target))
             available -= weight
@@ -1270,6 +1285,7 @@ def partition_graph_distributed(
         plan.plan_id,
         migration_id,
         owner_identity,
+        "phydrax-owner-local-graph-refinement-v1",
     )
 
 

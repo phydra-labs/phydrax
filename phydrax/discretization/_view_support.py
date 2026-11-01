@@ -2249,7 +2249,6 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
         from ..meshing._periodic import PeriodicPointOrbits
         from ..meshing.providers._native_periodic import (
             _owner_local_periodic_source_content_identity,
-            _require_owner_local_periodic_adaptive_target_current,
             _require_owner_local_periodic_view_current,
             NativePeriodicSource,
         )
@@ -2596,16 +2595,6 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
                         raise ValueError(
                             "Adaptive periodic restore lacks current typed source/map data."
                         )
-                    _require_owner_local_periodic_adaptive_target_current(
-                        renewed,
-                        source_value,
-                        source_authority,
-                        source_content_id,
-                        current_specification,
-                        execution_group,
-                        local_rank,
-                        axis_name=f"{axis_name}_target",
-                    )
                     renewed.adaptive_result.revalidate(
                         replayed_candidate,
                         current_specification,

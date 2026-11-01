@@ -460,7 +460,7 @@ def _register_model_archive_types() -> None:
         ShardedOwnerDirectoryData,
         ShardedOwnerDirectoryWitness,
     )
-    from ._distribution_forest import SimplexForestRecords
+    from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
     from ._distribution_migration import OwnerLocalMigrationState
     from ._dual_extraction import _RestrictedCoordinateMap
     from ._hex_cut_generation import _CutCoordinateMap
@@ -738,6 +738,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", BoundaryLayerCollisionPolicy),
         ("phydrax.meshing", BoundaryLayerEvidence),
         ("phydrax.meshing", SimplexForestRecords),
+        ("phydrax.meshing", PeriodicSimplexForest),
         ("phydrax.meshing", OwnerLocalMigrationState),
         ("phydrax.meshing", CellMeshTransition),
         ("phydrax.meshing", EntityLineage),
@@ -928,7 +929,7 @@ def restore_model_archive_value(
     from ..linalg._spaces import ArraySpaceArchiveRecipe
     from ..sparse._linear import SparseCoordinateOperator
     from ..sparse._relation import EdgeRelation
-    from ._distribution_forest import SimplexForestRecords
+    from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
     from ._distribution_migration import OwnerLocalMigrationState
 
     _register_model_archive_types()
@@ -1010,6 +1011,20 @@ def restore_model_archive_value(
             )
             if forest.forest_id != item.forest_id:
                 raise ValueError("Stored simplex forest identity does not reproduce.")
+            return forest
+        if type(item) is PeriodicSimplexForest:
+            forest = PeriodicSimplexForest(
+                restore(item.records),
+                item.vertex_source_ids,
+                item.vertex_absolute_windings,
+                item.exact_vertex_coordinates,
+                item.block_names,
+                item.source_id,
+                item.source_revision,
+                item.periodic_cell_id,
+            )
+            if forest.forest_id != item.forest_id:
+                raise ValueError("Stored periodic forest identity does not reproduce.")
             return forest
         if type(item) is OwnerLocalMigrationState:
             state = OwnerLocalMigrationState(
@@ -1369,8 +1384,10 @@ def restore_model_archive_value(
                 # projections; decode them before the view replays them.
                 nested_recipe_types = (
                     ArraySpaceArchiveRecipe,
+                    _FiniteElementSpecArchiveProjection,
                     OperatorPairingArchiveRecipe,
                     SparseCoordinateOperatorArchiveRecipe,
+                    PeriodicSimplexForest,
                 )
                 stored_view = jax.tree_util.tree_map(
                     lambda node: (

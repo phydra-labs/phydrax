@@ -3376,19 +3376,18 @@ def _migrate_owner_local_periodic_delaunay_data(
         ],
         dtype=np.int32,
     )
-    # The site-weight exchange is collective: every owner reaches it, after one
-    # collective verdict on the received source sites. Adapted vertices are their
-    # own quotient keys (their roots were checked through the ancestry above);
-    # only cells of ancestry-free vertices key source sites; adapted cells may
-    # cite their self-keyed resident vertices.
+    # The site-weight exchange is collective; first validate every owner's keys.
+    # Quotient keys name the vertices' represented source IDs, which need not
+    # equal resident vertex IDs after refinement or deck-image migration.
+    # Check each cell's complete key multiset against its own vertex payload;
+    # exact coordinate ancestry roots were checked above.
     local_error = None
     if any(
-        int(source_id) not in source_point_records
-        and int(source_id) not in vertex_records
+        sorted(map(int, cell["key_source_ids"]))
+        != sorted(int(vertex["source_id"]) for vertex in cell["vertices"])
         for cell in cell_records.values()
-        for source_id in cell["key_source_ids"]
     ):
-        local_error = "ValueError: Graph migration omitted a cell-key source site."
+        local_error = "ValueError: Graph migration changed a cell's quotient vertex keys."
     _owner_group_fail_if_any(
         local_error,
         execution_group,
@@ -4343,9 +4342,6 @@ def _owner_local_periodic_adaptive_mesh_data(
         }
         vertices = np.full((cell_ids.size, dimension + 1), -1, dtype=np.int32)
         vertex_valid = np.zeros(vertices.shape, dtype=np.bool_)
-        origins = np.asarray(transition.target_cell_origins, dtype=np.int64)
-        if origins.shape != cell_ids.shape:
-            raise ValueError("Periodic target lineage origins do not match its cells.")
         target_blocks: list[dict[str, Any]] = []
         exact_measure_values = np.asarray(
             tuple(float(value) for value in exact_cell_measures), dtype=np.float64
@@ -4383,7 +4379,7 @@ def _owner_local_periodic_adaptive_mesh_data(
                     "coordinate_routes": block_vertices.astype(np.int32),
                     "element": element,
                     "element_rows": np.arange(block_ids.size, dtype=np.int32),
-                    "source_cell_ids": origins[block_rows],
+                    "source_cell_ids": block_ids,
                     "chart_arguments": None,
                     "cell_measures": exact_measure_values[block_rows],
                     "face_ids": None,
@@ -5038,52 +5034,18 @@ def _owner_local_periodic_delaunay_view_mesh_data(
         if view.exact_vertex_coordinates is None
         else tuple(tuple(point) for point in view.exact_vertex_coordinates)
     )
-    if view.adaptive_result is None:
-        accepted_cell_measure_match = np.array_equal(
-            np.asarray(view.cell_measures, dtype=np.float64),
-            np.asarray(
-                tuple(float(value) for value in exact_cell_measures),
-                dtype=np.float64,
-            ),
-        )
-        accepted_cell_id_match = np.array_equal(
-            np.asarray(view.cell_ids, dtype=np.int64), cell_ids
-        )
-    else:
-        # The adaptive result binds this owner's target cells; the compact view
-        # adds read-only halo cells around them.
-        owned_rows = np.flatnonzero(np.asarray(view.owned, dtype=np.bool_))
-        measure_by_id = dict(
-            zip(
-                (int(value) for value in view.adaptive_result.target_cell_ids),
-                tuple(view.adaptive_result.target_cell_measures),
-                strict=True,
-            )
-        )
-        accepted_cell_id_match = len(measure_by_id) == owned_rows.size and set(
-            measure_by_id
-        ) == {int(cell_ids[row]) for row in owned_rows}
-        accepted_cell_measure_match = accepted_cell_id_match and all(
-            measure_by_id[int(cell_ids[row])] == exact_cell_measures[int(row)]
-            for row in owned_rows
-        )
-    if (
-        len(exact_cell_measures) != cell_ids.size
-        or not accepted_cell_id_match
-        or not accepted_cell_measure_match
+    # Adaptation transition rows retain their original execution placement;
+    # after migration they are not the current owner's cells. Validate the
+    # current materialized geometry directly, then validate the live forest
+    # independently against this view.
+    if len(exact_cell_measures) != cell_ids.size or not np.array_equal(
+        np.asarray(view.cell_measures, dtype=np.float64),
+        np.asarray(
+            tuple(float(value) for value in exact_cell_measures), dtype=np.float64
+        ),
     ):
-        adaptive_ids = (
-            None
-            if view.adaptive_result is None
-            else np.asarray(view.adaptive_result.target_cell_ids, dtype=np.int64)
-        )
         raise ValueError(
-            "Stored periodic target cells differ from their exact cell measures "
-            f"({len(exact_cell_measures)} measures for {cell_ids.size} cells; "
-            f"cell IDs match: {accepted_cell_id_match}; "
-            f"measures match: {accepted_cell_measure_match}; adaptive target "
-            f"cells: {None if adaptive_ids is None else adaptive_ids.tolist()}; "
-            f"view cells: {cell_ids.tolist()})."
+            "Stored periodic target cells differ from their exact cell measures."
         )
     if materialized.exact_vertex_coordinates != expected_exact_vertices or not (
         np.array_equal(
@@ -7429,7 +7391,6 @@ def _require_owner_local_periodic_view_current(
         _owner_local_multiset_identity,
         OwnerLocalGraphMigrationEvidence,
         ShardedOwnerDirectoryData,
-        ShardedOwnerDirectoryWitness,
     )
     from .._periodic import OwnerLocalPeriodicCandidate
     from ._native_periodic_power import (
@@ -7465,6 +7426,32 @@ def _require_owner_local_periodic_view_current(
         raise TypeError(
             "Periodic restore requires its current typed source/view authority."
         )
+    if view.adaptive_result is not None:
+        if not isinstance(source_authority, NativePeriodicSource):
+            raise TypeError(
+                "Adaptive simplex restore requires its exact periodic source."
+            )
+        _require_owner_local_periodic_adaptive_target_current(
+            view,
+            source,
+            source_authority,
+            source_manifest_id,
+            current_specification,
+            execution_group,
+            view.owner_rank,
+            axis_name=f"{axis_name}_current_target",
+        )
+        mesh_data = _owner_local_periodic_delaunay_view_mesh_data(
+            view, source_authority, source.domain.cell
+        )
+        return _owner_local_periodic_candidate_from_accepted_view(
+            view,
+            source_authority,
+            mesh_data,
+            source_manifest_id,
+            view.owner_rank,
+            len(execution_group.spec.process_indices),
+        )
     power_request = (
         isinstance(current_specification, VolumeMeshingSpec)
         and current_specification.fill_strategy is VolumeFillStrategy.POLYHEDRAL
@@ -7491,28 +7478,14 @@ def _require_owner_local_periodic_view_current(
         plan_error = "Current periodic graph plan is not GraphPartitionPlan."
     elif (graph_partition_plan is None) != (view.graph_migration_evidence is None):
         plan_error = "Current periodic graph plan differs from stored migration evidence."
-    elif (
-        graph_partition_plan is not None
-        and route == "periodic_delaunay"
-        and (
-            view.adaptive_result is None
-            or not isinstance(
-                view.adaptive_result.graph_partition_plan, GraphPartitionPlan
-            )
-            or view.adaptive_result.graph_partition_plan.plan_id
-            != graph_partition_plan.plan_id
-        )
-    ):
-        plan_error = "Current periodic graph plan differs from the adaptive recipe."
-    elif graph_partition_plan is not None and route == "periodic_power":
+    elif graph_partition_plan is not None:
         graph_evidence = view.graph_migration_evidence
         if (
-            view.adaptive_result is not None
-            or not isinstance(graph_evidence, OwnerLocalGraphMigrationEvidence)
+            not isinstance(graph_evidence, OwnerLocalGraphMigrationEvidence)
             or graph_evidence.result.plan_id != graph_partition_plan.plan_id
         ):
             plan_error = (
-                "Current periodic power graph plan differs from its migration evidence."
+                "Current periodic graph plan differs from its migration evidence."
             )
     _owner_group_fail_if_any(
         plan_error,
@@ -7596,8 +7569,8 @@ def _require_owner_local_periodic_view_current(
                     OwnerLocalGraphMigrationEvidence,
                 )
 
-                if view.adaptive_result is None or source_entry is None:
-                    raise ValueError("Graph migration restore lacks its adaptive recipe.")
+                if source_entry is None:
+                    raise ValueError("Graph migration restore lacks its current source.")
                 pre_graph_authority = _owner_local_periodic_mesh_authority(
                     mesh_data,
                     source,
@@ -7605,7 +7578,7 @@ def _require_owner_local_periodic_view_current(
                     source_entry,
                     source_content_id,
                     view.coordinate_contract_id,
-                    view.adaptive_result.specification_id,
+                    current_specification.specification_id,
                     "periodic_delaunay",
                     view.source_map_id,
                     source_context_id,
@@ -7667,7 +7640,7 @@ def _require_owner_local_periodic_view_current(
                     source_entry,
                     source_content_id,
                     view.coordinate_contract_id,
-                    view.adaptive_result.specification_id,
+                    current_specification.specification_id,
                     "periodic_delaunay",
                     view.source_map_id,
                     source_context_id,
@@ -8063,60 +8036,8 @@ def _require_owner_local_periodic_view_current(
     if route == "periodic_delaunay":
         from fractions import Fraction
 
-        adaptive_result = view.adaptive_result
         source_distribution_id = view.distribution_id
         source_part_id = view.part_id
-        if adaptive_result is not None:
-            source_directory = ShardedOwnerDirectoryWitness(
-                execution_group,
-                rank,
-                source_manifest_id,
-                "periodic-owner-directory",
-                candidate["point_ids"],
-                candidate["point_owner_ranks"],
-                candidate["source_owned"],
-                mesh_data["cell_ids"],
-                mesh_data["cell_owner_ranks"],
-                mesh_data["vertex_ids"],
-                mesh_data["vertex_owner_ranks"],
-                source_map_id=source_map_id,
-                source_context_id=source_context_id,
-                axis_name=f"{axis_name}_source_directory",
-            )
-            source_distribution_id = source_directory.directory_id
-            source_part_id = canonical_fingerprint(
-                {
-                    "kind": "owner-local-periodic-part",
-                    "source_manifest": source_content_id,
-                    "topology": topology_id,
-                    "geometry": geometry_id,
-                    "distribution": source_distribution_id,
-                    "specification": adaptive_result.specification_id,
-                    "route": "periodic_delaunay",
-                    "face_coverage_id": face_coverage_id,
-                }
-            )
-            local_error = (
-                None
-                if (
-                    source_distribution_id == adaptive_result.source_distribution_id
-                    and source_part_id == adaptive_result.source_part_id
-                    and topology_id == adaptive_result.source_topology_id
-                    and geometry_id == adaptive_result.source_geometry_id
-                    and periodic_topology_id
-                    == adaptive_result.source_periodic_topology_id
-                    and source.source_id == adaptive_result.source_id
-                    and source.source_revision == adaptive_result.source_revision
-                )
-                else "Replayed adaptive source part authority changed."
-            )
-            _owner_group_fail_if_any(
-                local_error,
-                execution_group,
-                f"{axis_name}_source_authority",
-                "stored periodic adaptive source authority",
-            )
-
         source_point_exact = tuple(
             tuple(Fraction.from_float(float(value)) for value in point)
             for point in np.asarray(candidate["points"], dtype=np.float64)
@@ -8168,33 +8089,6 @@ def _require_owner_local_periodic_view_current(
             cell_neighbor_weights=mesh_data["graph_neighbor_weights"],
         )
         shell_certificate["owner_local_candidate_id"] = replayed_candidate.candidate_id
-        if adaptive_result is not None:
-            local_error = (
-                None
-                if (
-                    replayed_candidate.candidate_id == adaptive_result.candidate_id
-                    and replayed_candidate.source_local_mesh_id
-                    == adaptive_result.source_local_mesh_id
-                    and replayed_candidate.source_local_topology_id
-                    == adaptive_result.source_local_topology_id
-                    and replayed_candidate.source_local_geometry_id
-                    == adaptive_result.source_local_geometry_id
-                    and replayed_candidate.geometry_layout_id
-                    == adaptive_result.source_geometry_layout_id
-                    and replayed_candidate.coordinate_contract_id
-                    == adaptive_result.coordinate_contract_id
-                    and replayed_candidate.source_mesh_id
-                    == adaptive_result.source_mesh_id
-                )
-                else "Replayed periodic source candidate differs from adaptive result."
-            )
-            _owner_group_fail_if_any(
-                local_error,
-                execution_group,
-                axis_name,
-                "stored periodic adaptive source candidate",
-            )
-            return replayed_candidate
     stored_shell = dict(view.periodic_shell_certificate or {})
     changed_shell_keys = sorted(
         key
@@ -8993,7 +8887,16 @@ def _repartition_owner_local_periodic_assembly(
             or np.asarray(partition_evidence.result.owners).shape
             != np.asarray(view.owned_cell_ids).shape
         ):
-            raise ValueError("Graph labels do not bind this current periodic owner view.")
+            raise ValueError(
+                "Graph labels do not bind this current periodic owner view: "
+                f"specification={view.specification_id == current_specification.specification_id}, "
+                f"view={partition_evidence.source_view_id == view.local_view_id}, "
+                f"coverage={partition_evidence.periodic_face_coverage_id == view.periodic_face_coverage_id}, "
+                f"directory={partition_evidence.owner_directory_id == view.distribution_id}, "
+                f"plan={partition_evidence.result.plan_id == graph_partition_plan.plan_id}, "
+                f"feasible={partition_evidence.result.feasible}, "
+                f"entities={np.array_equal(np.asarray(partition_evidence.result.entity_ids, dtype=np.int64), np.asarray(view.owned_cell_ids, dtype=np.int64))}."
+            )
         coordinate_contract = part.coordinate_contract
         authority = view.source_geometry_authority
         power_specification = (
@@ -9524,6 +9427,161 @@ def _repartition_owner_local_periodic_assembly(
         None,
         graph_partition_plan=graph_partition_plan,
         source_adaptive_result=view.adaptive_result,
+        axis_name=f"{axis_name}_publication",
+    )
+
+
+def _adapt_owner_local_periodic_assembly(
+    assembly: MeshAssembly,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    execution_group: ExecutionGroup,
+    /,
+    *,
+    axis_name: str = "owner_local_periodic_continuation",
+) -> MeshAssembly:
+    """Continue accepted periodic simplex geometry from its live bisection families."""
+    import jax
+
+    from ...discretization._view_support import OwnerLocalCellGeometry
+    from .._device_adaptation import _adapt_owner_local_periodic
+    from .._distribution import _owner_group_fail_if_any
+
+    rank = execution_group.spec.process_indices.index(jax.process_index())
+    view = assembly.parts[0].carrier if len(assembly.parts) == 1 else None
+    local_error = None
+    if (
+        not assembly.owner_local
+        or assembly.local_rank != rank
+        or not isinstance(view, OwnerLocalCellGeometry)
+        or not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec))
+        or view.owner_rank != rank
+        or view.adaptive_result is None
+        or view.adaptive_result.live_forest is None
+        or not isinstance(view.periodic_shell_certificate, Mapping)
+    ):
+        local_error = "Periodic continuation requires accepted owner-local live families."
+    _owner_group_fail_if_any(
+        local_error, execution_group, axis_name, "periodic continuation source"
+    )
+    if (
+        not isinstance(view, OwnerLocalCellGeometry)
+        or view.adaptive_result is None
+        or not isinstance(view.periodic_shell_certificate, Mapping)
+    ):
+        raise ValueError("Periodic continuation source validation failed.")
+    view.require_owner_directory_current(
+        execution_group, axis_name=f"{axis_name}_directory"
+    )
+    source, source_map = _owner_local_periodic_source_from_view(view)
+    if source_map is not None or not isinstance(source.domain, PeriodicPointOrbits):
+        raise ValueError(
+            "Periodic simplex continuation requires exact point-orbit geometry."
+        )
+    authored = view.source_value
+    if not isinstance(authored, NativePeriodicSource):
+        raise TypeError("Periodic continuation lacks its authored source.")
+    entry, composition, content_id = _owner_local_periodic_source_authority(
+        authored, execution_group, f"{axis_name}_source"
+    )
+    if entry is None or composition is None:
+        raise ValueError("Periodic continuation has no source composition.")
+    mesh_data = _owner_local_periodic_delaunay_view_mesh_data(
+        view, source, source.domain.cell
+    )
+    candidate = _owner_local_periodic_candidate_from_accepted_view(
+        view,
+        source,
+        mesh_data,
+        content_id,
+        rank,
+        len(execution_group.spec.process_indices),
+    )
+    execution = _adapt_owner_local_periodic(
+        candidate,
+        specification,
+        execution_group,
+        rank,
+        axis_name=axis_name,
+        live_forest=view.adaptive_result.live_forest,
+    )
+    candidate_state = {
+        "points": np.asarray(source.domain.points, dtype=np.float64),
+        "point_ids": np.asarray(source.domain.point_ids, dtype=np.int64),
+        "point_owner_ranks": np.asarray(source.point_owner_ranks, dtype=np.int32),
+        "source_owned": np.asarray(source.point_owner_ranks, dtype=np.int32) == rank,
+        "candidate_revision_id": view.candidate_revision_id,
+        "certified_periodic_margin": view.certified_periodic_margin,
+        "periodic_shell_certificate": dict(view.periodic_shell_certificate),
+    }
+    candidate_state["periodic_shell_certificate"]["owner_local_candidate_id"] = (
+        candidate.candidate_id
+    )
+    root_bank = tuple(
+        (
+            int(identifier),
+            tuple(
+                Fraction.from_float(float(value))
+                for value in np.asarray(point).reshape(-1).tolist()
+            ),
+        )
+        for identifier, point in sorted(
+            zip(
+                np.asarray(source.domain.point_ids, dtype=np.int64),
+                np.asarray(source.domain.points, dtype=np.float64),
+                strict=True,
+            ),
+            key=lambda row: int(row[0]),
+        )
+    )
+    mesh_data, authority, stencil, offsets = _owner_local_periodic_adaptive_target(
+        execution,
+        view.source_coordinate_stencil,
+        view.exact_vertex_coordinate_offsets,
+        root_bank,
+        source,
+        candidate_state,
+        entry,
+        content_id,
+        assembly.parts[0].coordinate_contract.spatial_id,
+        specification.specification_id,
+        "periodic_delaunay",
+        None,
+        source.binding_id,
+        rank,
+        execution_group,
+        source.domain.cell,
+    )
+    target_source = mesh_data.get("expanded_source_authority", source)
+    shell = candidate_state["periodic_shell_certificate"]
+    shell["exact_fundamental_volume"] = (
+        authority.exact_volume.numerator,
+        authority.exact_volume.denominator,
+    )
+    shell["expected_fundamental_volume"] = (
+        authority.expected_volume.numerator,
+        authority.expected_volume.denominator,
+    )
+    shell["quotient_face_coverage_id"] = authority.face_coverage_id
+    shell["size_evidence_id"] = execution.size_evidence.evidence_id
+    return _owner_local_periodic_assembly_from_state(
+        authored,
+        specification,
+        assembly.parts[0].coordinate_contract,
+        entry,
+        composition,
+        target_source,
+        "periodic_delaunay",
+        candidate_state,
+        mesh_data,
+        authority,
+        None,
+        target_source.binding_id,
+        rank,
+        execution_group,
+        stencil,
+        offsets,
+        None,
+        execution,
         axis_name=f"{axis_name}_publication",
     )
 

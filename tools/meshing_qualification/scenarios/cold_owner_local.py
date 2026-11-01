@@ -1608,6 +1608,998 @@ def _restore_composition(value: Any, /) -> Any:
     return rebuilt
 
 
+def _live_family_field_step(
+    source_assembly: Any,
+    target_assembly: Any,
+    restart: Any,
+    composition: Any,
+    group: Any,
+    rank: int,
+    /,
+    *,
+    topology_change: bool,
+    refuse: bool = False,
+) -> tuple[Any, tuple[Any, Any, Any, Any]]:
+    """Use the existing FE transaction for one explicit accepted transition."""
+    import jax
+    import phydrax as phx
+    from phydrax.meshing._assembly import MeshPartManifest
+
+    source_view = source_assembly.parts[0].carrier
+    target_view = target_assembly.parts[0].carrier
+    source_discretization, source_compiled, source_identities, source_layouts = (
+        _compile_owner_local_problem(source_view, group, rank)
+    )
+    target_prepared = _compile_owner_local_problem(target_view, group, rank)
+    target_discretization, target_compiled, target_identities, target_layouts = (
+        target_prepared
+    )
+    if restart.state.prepared_id != source_discretization.prepared_id:
+        raise ValueError("Live-family step source FE preparation changed on restore.")
+    auxiliary = restart.auxiliary_layouts
+    if (
+        auxiliary is None
+        or restart.integrator_layouts is None
+        or restart.material_layouts is None
+    ):
+        raise ValueError(
+            "Live-family transition omitted declared history/material roles."
+        )
+    target_auxiliary = tuple(
+        phx.solver.FiniteElementRestartStateLayout(
+            layout.name,
+            layout.role,
+            layout.association,
+            ownership=target_identities[index].ownership(),
+        )
+        if index < 2
+        else phx.solver.FiniteElementRestartStateLayout.from_stored_fields(layout)
+        for index, layout in enumerate(auxiliary)
+    )
+    target_template = _source_composition(
+        target_view,
+        MeshPartManifest.from_part(target_assembly.parts[0]),
+        restart,
+        source_layouts,
+        composition.entry("mesh/specification").value,
+        composition.entry("mesh/adaptation-specification").value,
+        composition.entry("mesh/source-graph-plan").value,
+        composition.entry("mesh/target-graph-plan").value,
+    )
+    transaction = phx.solver.FiniteElementTopologyTransaction(
+        lambda mesh, fields, materials, lineage, args: (
+            not (refuse and rank == 1)
+            and len(fields) == 2
+            and all(np.all(np.isfinite(np.asarray(field))) for field in fields)
+        ),
+        transaction_id="cold-live-family-coarsening"
+        if topology_change
+        else "cold-live-family-placement",
+    )
+    arguments: dict[str, Any] = {
+        "state_entry_id": "solver/state",
+        "geometry_entry_id": "mesh/geometry",
+        "field_entry_ids": (
+            ("u", "solver/state/field/u"),
+            ("content", "solver/state/field/content"),
+        ),
+        "material_entry_id": "solver/state/materials",
+        "auxiliary_entry_ids": tuple(
+            (layout.name, f"solver/restart/auxiliary/{layout.name}")
+            for layout in auxiliary
+        ),
+        "integrator_entry_ids": tuple(
+            (layout.name, f"solver/restart/integrator/{layout.name}")
+            for layout in restart.integrator_layouts
+        ),
+        "target_auxiliary_layouts": target_auxiliary,
+        "target_integrator_layouts": restart.integrator_layouts,
+        "target_material_layouts": restart.material_layouts,
+        "retain_entry_ids": (
+            "mesh/source",
+            "mesh/specification",
+            "mesh/adaptation-specification",
+            "mesh/source-graph-plan",
+            "mesh/target-graph-plan",
+        ),
+        "reprepare_entries": (
+            target_template.entry("mesh/topology"),
+            target_template.entry("mesh/geometry"),
+        ),
+        "axis_name": "cold_live_coarsen" if topology_change else "cold_live_repartition",
+    }
+    if topology_change:
+        result = transaction.adapt_owner_local(
+            restart,
+            source_compiled,
+            target_compiled,
+            source_identities,
+            target_identities,
+            target_view.adaptive_result,
+            composition,
+            group,
+            source_view,
+            target_view,
+            **arguments,
+        )
+    else:
+        result = transaction.repartition(
+            restart,
+            source_compiled,
+            target_compiled,
+            source_identities,
+            target_identities,
+            target_view.graph_migration_evidence,
+            composition,
+            group,
+            source_view,
+            target_view,
+            **arguments,
+        )
+    if refuse:
+        before_leaves, before_tree = jax.tree_util.tree_flatten(restart)
+        after_leaves, after_tree = jax.tree_util.tree_flatten(result.manifest)
+
+        def unchanged(first: Any, second: Any) -> bool:
+            if hasattr(first, "dtype") and jax.dtypes.issubdtype(
+                first.dtype, jax.dtypes.prng_key
+            ):
+                return np.array_equal(
+                    np.asarray(jax.random.key_data(first)),
+                    np.asarray(jax.random.key_data(second)),
+                )
+            return np.array_equal(np.asarray(first), np.asarray(second))
+
+        if (
+            bool(np.asarray(result.committed))
+            or result.state.accepted_id != restart.state.accepted_id
+            or result.manifest.manifest_id != restart.manifest_id
+            or before_tree != after_tree
+            or len(before_leaves) != len(after_leaves)
+            or any(
+                not unchanged(first, second)
+                for first, second in zip(before_leaves, after_leaves, strict=True)
+            )
+        ):
+            raise RuntimeError(
+                "Rejected collective coarsen changed the post-reunification accepted state."
+            )
+    elif not bool(np.asarray(result.committed)) or result.rebind_receipt is None:
+        raise RuntimeError(
+            f"Live-family accepted field transition refused: {result.diagnostics}"
+        )
+    return result, target_prepared
+
+
+def _live_family_geometry_root(view: Any, specification: Any, plan: Any, /) -> Any:
+    from phydrax.lifecycle import Composition, CompositionEntry
+
+    specification_entry = CompositionEntry(
+        specification,
+        entry_id="owner-local-adaptive/specification",
+        role="interface-route",
+        owner_id="phydrax.meshing",
+        structure_id=specification.target.target_id,
+        revision_id=specification.specification_id,
+        semantics_id="current-periodic-adaptive-meshing-specification",
+    )
+    plan_entry = CompositionEntry(
+        plan,
+        entry_id="owner-local-adaptive/graph-plan",
+        role="prepared-graph",
+        owner_id="phydrax.graph",
+        structure_id=plan.plan_id,
+        revision_id=plan.plan_id,
+        semantics_id="current-owner-local-graph-partition-plan",
+    )
+    view_entry = CompositionEntry(
+        view,
+        entry_id="owner-local-adaptive/view",
+        role="discretization",
+        owner_id="phydrax.discretization",
+        structure_id=view.geometry_layout_id,
+        revision_id=view.distribution_id,
+        semantics_id="native-periodic-owner-local-adaptive-cell-geometry",
+        dependencies=(
+            specification_entry.binding("revision"),
+            plan_entry.binding("revision"),
+        ),
+    )
+    return Composition(
+        (specification_entry, plan_entry, view_entry),
+        boundary_id="owner-local-periodic-adaptive-cold-restore",
+    )
+
+
+def _authored_split_placement(
+    view: Any, proposal: Any, plan: Any, group: Any, rank: int, /
+) -> Any:
+    """Exchange two equally weighted cells to author a split without changing loads."""
+    from phydrax.graph._distributed_partition import (
+        DistributedGraphPartitionResult,
+        _global_ids_and_labels_identity,
+        _global_migration_identity,
+        _group_mesh,
+    )
+    from phydrax.meshing._distribution import (
+        _owner_group_allgather,
+        _owner_group_fail_if_any,
+        _owner_local_keyed_target_owners,
+        OwnerLocalGraphPartitionEvidence,
+    )
+
+    ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
+    labels = np.asarray(proposal.result.owners, dtype=np.int32).copy()
+    forest = view.adaptive_result.live_forest.records
+    fields = forest.cell_field_map()
+    forest_ids = np.asarray(forest.cell_ids, dtype=np.int64)
+    parents = np.asarray(fields["parent_ids"], dtype=np.int64)
+    active = np.asarray(fields["active"], dtype=np.bool_)
+    rows = {int(identifier): row for row, identifier in enumerate(forest_ids)}
+    roots = {}
+    for identifier in ids:
+        root = int(identifier)
+        while parents[rows[root]] >= 0:
+            root = int(parents[rows[root]])
+        roots[int(identifier)] = root
+    error = None
+    if ids.size:
+        positions = {int(identifier): row for row, identifier in enumerate(ids)}
+        families: dict[int, list[int]] = {}
+        for identifier in forest_ids[active]:
+            identifier = int(identifier)
+            if identifier in positions:
+                families.setdefault(roots[identifier], []).append(identifier)
+        if not any(
+            len({int(labels[positions[cell]]) for cell in family}) > 1
+            for family in families.values()
+        ):
+            pair = None
+            for root, family in sorted(families.items()):
+                if len(family) < 2:
+                    continue
+                for cell in sorted(family):
+                    source = int(labels[positions[cell]])
+                    for other in sorted(positions):
+                        if (
+                            roots[other] != root
+                            and int(labels[positions[other]]) != source
+                        ):
+                            pair = (positions[cell], positions[other])
+                            break
+                    if pair is not None:
+                        break
+                if pair is not None:
+                    break
+            if pair is None:
+                error = "Authored split requires a live family and an equal-weight cell on another target."
+            else:
+                first, second = pair
+                labels[first], labels[second] = labels[second], labels[first]
+    _owner_group_fail_if_any(
+        error, group, "cold_authored_split_choice", "authored split placement"
+    )
+    neighbors = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
+    offsets = np.asarray(view.cell_neighbor_offsets, dtype=np.int64)
+    edge_labels = _owner_local_keyed_target_owners(
+        neighbors[:, None],
+        ids[:, None],
+        labels,
+        rank,
+        group,
+        "periodic-live-cell",
+        "cold_authored_split_edges",
+        require_exact_coverage=False,
+        allow_duplicate_queries=True,
+    )
+    weights = np.asarray(view.cell_neighbor_weights, dtype=np.int64)
+    local_cut = sum(
+        int(weights[edge])
+        for row, identifier in enumerate(ids)
+        for edge in range(int(offsets[row]), int(offsets[row + 1]))
+        if identifier < neighbors[edge] and labels[row] != edge_labels[edge]
+    )
+    observations = np.asarray(
+        _owner_group_allgather(
+            np.concatenate((np.bincount(labels, minlength=plan.part_count), [local_cut])),
+            group,
+            "cold_authored_split_loads",
+        ),
+        dtype=np.int64,
+    )
+    loads = np.sum(observations[:, : plan.part_count], axis=0)
+    targets = np.asarray(proposal.result.target_weights, dtype=np.int64)
+    capacities = np.asarray(proposal.result.capacity_weights, dtype=np.int64)
+    if not np.array_equal(loads, np.asarray(proposal.result.part_weights)):
+        raise ValueError("Authored split changed the native partition's measured loads.")
+    feasible = bool(np.all(loads <= capacities)) and (
+        not plan.require_nonempty or bool(np.all(loads > 0))
+    )
+    mesh, _, _ = _group_mesh(group, "cold_authored_split_identity")
+    identity = _global_ids_and_labels_identity(
+        ids, labels, mesh, "cold_authored_split_identity"
+    )
+    migration_id, migration_count, migration_weight = _global_migration_identity(
+        ids,
+        np.full(ids.shape, rank, dtype=np.int32),
+        labels,
+        np.ones(ids.shape, dtype=np.int64),
+        mesh,
+        "cold_authored_split_identity",
+        proposal.result.graph_id,
+        plan.plan_id,
+    )
+    positive = targets > 0
+    result = DistributedGraphPartitionResult(
+        ids,
+        labels,
+        loads,
+        targets,
+        capacities,
+        int(np.sum(observations[:, -1])),
+        float(np.max(loads[positive] / targets[positive])),
+        feasible,
+        migration_count,
+        migration_weight,
+        proposal.result.graph_id,
+        plan.plan_id,
+        migration_id,
+        identity,
+        "phydrax-owner-local-authored-placement-v1",
+    )
+    return OwnerLocalGraphPartitionEvidence(
+        result, view.local_view_id, view.periodic_face_coverage_id, view.distribution_id
+    )
+
+
+def _write_split_live_family_state(
+    assembly: Any,
+    restart: Any,
+    base_specification: Any,
+    specification: Any,
+    source_plan: Any,
+    target_plan: Any,
+    group: Any,
+    rank: int,
+    archive: Path,
+    /,
+) -> dict[str, Any]:
+    from jax.experimental import multihost_utils
+    from phydrax.discretization._view_support import OwnerLocalCellGeometry
+    from phydrax.graph import GraphPartitionPlan
+    from phydrax.meshing._assembly import MeshPartManifest
+    from phydrax.meshing._distribution import partition_owner_local_graph
+    from phydrax.meshing._model_codec import write_model_artifact
+    from phydrax.meshing.providers._native_periodic import (
+        _repartition_owner_local_periodic_assembly,
+    )
+
+    split_plan = GraphPartitionPlan(
+        3,
+        target_shares=np.asarray((0.5, 0.5, 0.0), dtype=np.float64),
+        maximum_imbalance=source_plan.maximum_imbalance,
+        require_nonempty=False,
+        refinement_passes=source_plan.refinement_passes,
+    )
+    proposal = partition_owner_local_graph(
+        assembly, split_plan, group, axis_name="cold_live_split_graph"
+    )
+    if not proposal.result.feasible:
+        raise RuntimeError(f"Authored split placement is infeasible: {proposal.result}")
+    proposal = _authored_split_placement(
+        assembly.parts[0].carrier, proposal, split_plan, group, rank
+    )
+    split_assembly = _repartition_owner_local_periodic_assembly(
+        assembly,
+        proposal,
+        group,
+        current_specification=specification,
+        graph_partition_plan=split_plan,
+        axis_name="cold_live_split_mesh",
+    )
+    view = assembly.parts[0].carrier
+    _, _, _, layouts = _compile_owner_local_problem(view, group, rank)
+    composition = _source_composition(
+        view,
+        MeshPartManifest.from_part(assembly.parts[0]),
+        restart,
+        layouts,
+        base_specification,
+        specification,
+        source_plan,
+        target_plan,
+    )
+    moved, target_prepared = _live_family_field_step(
+        assembly, split_assembly, restart, composition, group, rank, topology_change=False
+    )
+    split_view = split_assembly.parts[0].carrier
+    if (
+        not isinstance(split_view, OwnerLocalCellGeometry)
+        or split_view.adaptive_result is None
+        or split_view.adaptive_result.live_forest is None
+    ):
+        raise TypeError("Split placement lacks its current live family view.")
+    forest = split_view.adaptive_result.live_forest.records
+    fields = forest.cell_field_map()
+    ids = np.asarray(forest.cell_ids, dtype=np.int64)
+    rows = {int(identifier): row for row, identifier in enumerate(ids)}
+    parent_ids = np.asarray(fields["parent_ids"], dtype=np.int64)
+    owners = np.asarray(forest.cell_owner_ranks, dtype=np.int32)
+    root_owners: dict[int, set[int]] = {}
+    for row in np.flatnonzero(np.asarray(fields["active"], dtype=np.bool_)):
+        root = int(ids[row])
+        while parent_ids[rows[root]] >= 0:
+            root = int(parent_ids[rows[root]])
+        root_owners.setdefault(root, set()).add(int(owners[row]))
+    local_split_count = sum(len(values) > 1 for values in root_owners.values())
+    split_count = int(
+        np.max(
+            np.asarray(
+                multihost_utils.process_allgather(
+                    np.asarray(local_split_count, dtype=np.int64)
+                )
+            )
+        )
+    )
+    if split_count == 0:
+        raise RuntimeError(
+            "Cold continuation partition did not actually split a live family."
+        )
+    current_composition = _source_composition(
+        split_view,
+        MeshPartManifest.from_part(split_assembly.parts[0]),
+        moved.manifest,
+        target_prepared[3],
+        base_specification,
+        specification,
+        split_plan,
+        target_plan,
+        archive_safe=True,
+    )
+    from phydrax.lifecycle import Composition, CompositionEntry
+
+    p0_keys = np.asarray(target_prepared[2][1].ownership().dof_keys, dtype=np.int64)
+    density_by_id = {
+        int(key[1]): float(value) + 2.0
+        for key, value in zip(p0_keys, np.asarray(moved.state.fields[1]), strict=True)
+    }
+    from phydrax.meshing._distribution import _owner_local_multiset_identity
+
+    density_revision = _owner_local_multiset_identity(
+        "physical-cell-average-density",
+        (split_view.source_topology_id,),
+        tuple(
+            (int(identifier), density_by_id[int(identifier)])
+            for identifier in np.asarray(split_view.owned_cell_ids)
+        ),
+        split_view.source_id,
+        split_view.source_revision,
+        group,
+        "cold_live_fv_revision",
+    )
+    fv_entry = CompositionEntry(
+        np.asarray(
+            [
+                density_by_id[int(identifier)]
+                for identifier in np.asarray(split_view.owned_cell_ids)
+            ],
+            dtype=np.float64,
+        ),
+        entry_id="fv/cell-density",
+        role="physical-state",
+        owner_id="phydrax.discretization.finite_volume",
+        structure_id=split_view.source_topology_id,
+        revision_id=density_revision,
+        semantics_id="physical-cell-average-density",
+    )
+    contract = split_assembly.parts[0].coordinate_contract
+    contract_entry = CompositionEntry(
+        contract.to_dict(),
+        entry_id="mesh/coordinate-contract",
+        role="physical-state",
+        owner_id="phydrax.meshing",
+        structure_id=contract.spatial_id,
+        revision_id=contract.spatial_id,
+        semantics_id="spatial-coordinate-contract",
+    )
+    state_root = Composition(
+        (*current_composition.entries, fv_entry, contract_entry),
+        boundary_id=current_composition.boundary_id,
+    )
+    write_model_artifact(
+        archive,
+        _live_family_geometry_root(split_view, specification, split_plan),
+        limits=None,
+    )
+    write_model_artifact(Path(f"{archive}.state"), state_root, limits=None)
+    return {
+        "split_family_count": split_count,
+        "split_plan_id": split_plan.plan_id,
+        "split_accepted_id": moved.state.accepted_id,
+        "split_distribution_id": split_view.distribution_id,
+        "split_archive_bytes": archive.stat().st_size
+        + Path(f"{archive}.state").stat().st_size,
+    }
+
+
+def _live_family_geometry_identity(view: Any, group: Any, /) -> str:
+    """Partition-independent exact quotient-cell geometry, without a mesh gather."""
+    from fractions import Fraction
+    from phydrax.meshing._distribution import _owner_local_multiset_identity
+
+    vectors = tuple(
+        tuple(Fraction.from_float(float(x)) for x in row) for row in _CELL_BASIS
+    )
+    determinant = vectors[0][0] * vectors[1][1] - vectors[0][1] * vectors[1][0]
+    exact = view.exact_vertex_coordinates
+    if exact is None:
+        if np.asarray(view.cell_ids).size or np.asarray(view.vertex_ids).size:
+            raise ValueError(
+                "Nonempty live-family reference requires exact lifted geometry."
+            )
+        exact = ()
+    owners = dict(
+        zip(
+            map(int, np.asarray(view.cell_ids)),
+            map(int, np.asarray(view.cell_owner_ranks)),
+            strict=True,
+        )
+    )
+    records = []
+    for block in view.blocks:
+        for identifier, vertex_rows in zip(
+            np.asarray(block.cell_ids), np.asarray(block.vertices), strict=True
+        ):
+            if owners[int(identifier)] != view.owner_rank:
+                continue
+            fractional = tuple(
+                (
+                    (
+                        exact[int(row)][0] * vectors[1][1]
+                        - exact[int(row)][1] * vectors[1][0]
+                    )
+                    / determinant,
+                    (
+                        vectors[0][0] * exact[int(row)][1]
+                        - vectors[0][1] * exact[int(row)][0]
+                    )
+                    / determinant,
+                )
+                for row in vertex_rows
+            )
+            anchor = min(
+                fractional, key=lambda point: tuple(value % 1 for value in point)
+            )
+            shift = tuple(value.numerator // value.denominator for value in anchor)
+            key = tuple(
+                sorted(
+                    tuple(
+                        (
+                            (value - shift[axis]).numerator,
+                            (value - shift[axis]).denominator,
+                        )
+                        for axis, value in enumerate(point)
+                    )
+                    for point in fractional
+                )
+            )
+            records.append((key, key))
+    return _owner_local_multiset_identity(
+        "live-periodic-quotient-cell-reference",
+        (
+            "triangle",
+            tuple(tuple((x.numerator, x.denominator) for x in row) for row in vectors),
+        ),
+        tuple(records),
+        "native-cold-owner-local-reference",
+        None,
+        group,
+        "cold_live_geometry_reference",
+    )
+
+
+def _coarse_live_specification(specification: Any, /) -> Any:
+    from phydrax.meshing._contracts import SurfaceMeshingSpec
+    from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
+
+    return SurfaceMeshingSpec(
+        specification.target,
+        specification.scope,
+        size_controls=(
+            UniformSizeControl(
+                specification.scope, 1.8, strength=SizeControlStrength.SOFT
+            ),
+        ),
+        size_compliance=specification.size_compliance,
+    )
+
+
+def _read_coarsen_live_family_state(
+    archive: Path, group: Any, rank: int, profile: str, /
+) -> dict[str, Any]:
+    import jax
+    import phydrax as phx
+    from jax.experimental import multihost_utils
+    from phydrax.discretization._view_support import OwnerLocalCellGeometry
+    from phydrax.meshing._assembly import MeshAssembly, MeshPart, MeshPartManifest
+    from phydrax.meshing._distribution_migration import (
+        _partition_owner_local_periodic_families,
+    )
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+    )
+    from phydrax.meshing.providers._native_periodic import (
+        _adapt_owner_local_periodic_assembly,
+        _repartition_owner_local_periodic_assembly,
+    )
+
+    from phydrax.lifecycle import Composition
+
+    geometry_root = read_model_artifact(
+        archive,
+        expected_type=Composition,
+        restore=lambda value: restore_model_archive_value(value, execution_group=group),
+        limits=None,
+    )
+    composition = read_model_artifact(
+        Path(f"{archive}.state"),
+        expected_type=Composition,
+        restore=_restore_composition,
+        limits=None,
+    )
+    contract = composition.entry("mesh/coordinate-contract").value
+    fv_entry = composition.entry("fv/cell-density")
+    view = geometry_root.entry("owner-local-adaptive/view").value
+    specification = geometry_root.entry("owner-local-adaptive/specification").value
+    plan = geometry_root.entry("owner-local-adaptive/graph-plan").value
+    restart = composition.entry("solver/restart-manifest").value
+    coordinate_contract = phx.SpatialCoordinateContract.from_dict(contract)
+    part = MeshPart(view.part_name, view, coordinate_contract=coordinate_contract)
+    assembly = MeshAssembly(
+        (part,), global_parts=(MeshPartManifest.from_part(part),), local_rank=rank
+    )
+    prepared = _compile_owner_local_problem(view, group, rank)
+    composition = _source_composition(
+        view,
+        MeshPartManifest.from_part(part),
+        restart,
+        prepared[3],
+        composition.entry("mesh/specification").value,
+        specification,
+        plan,
+        composition.entry("mesh/target-graph-plan").value,
+    )
+    source_state_id = restart.state.accepted_id
+    proposal = _partition_owner_local_periodic_families(
+        assembly, plan, group, axis_name="cold_live_reunification_graph"
+    )
+    if not proposal.result.feasible:
+        raise RuntimeError(
+            "Authored target shares are infeasible for indivisible live families."
+        )
+    reunited = _repartition_owner_local_periodic_assembly(
+        assembly,
+        proposal,
+        group,
+        current_specification=specification,
+        graph_partition_plan=plan,
+        axis_name="cold_live_reunification_mesh",
+    )
+    moved, reunited_prepared = _live_family_field_step(
+        assembly, reunited, restart, composition, group, rank, topology_change=False
+    )
+    reunited_view = reunited.parts[0].carrier
+    if not isinstance(reunited_view, OwnerLocalCellGeometry):
+        raise TypeError("Reunion lacks its current owner-local geometry.")
+    migration = reunited_view.graph_migration_evidence
+    if migration is None:
+        raise RuntimeError("Family reunification lacks its accepted migration.")
+    fv_migration = migration.transfer_keyed_values(
+        fv_entry,
+        view.owned_cell_ids,
+        np.full(np.asarray(view.owned_cell_ids).shape, rank, dtype=np.int32),
+        fv_entry.value,
+        reunited_view.owned_cell_ids,
+        np.full(np.asarray(reunited_view.owned_cell_ids).shape, rank, dtype=np.int32),
+        group,
+        target_structure_id=reunited_view.source_topology_id,
+        key_identity_id="periodic-cell-density",
+        axis_name="cold_live_fv_migration",
+    )
+    fv_source_values = fv_migration.gather_target_local_values(
+        reunited_view.cell_ids, group, axis_name="cold_live_fv_ghosts"
+    )
+    counts = np.asarray(
+        multihost_utils.process_allgather(
+            np.asarray(reunited_view.owned_cell_ids.size, dtype=np.int64)
+        )
+    ).reshape(-1)
+    if np.count_nonzero(counts) < 2:
+        raise RuntimeError(
+            "Distributed coarsening requires complete families on at least two owners."
+        )
+    if proposal.result.migration_count <= 0:
+        raise RuntimeError(
+            "Split-family reunion did not exercise neighbor-local migration."
+        )
+    if moved.rebind_receipt is None:
+        raise RuntimeError("Family reunion lost its accepted composition.")
+    coarse_specification = _coarse_live_specification(specification)
+    coarse = _adapt_owner_local_periodic_assembly(reunited, coarse_specification, group)
+    before_ids = (
+        moved.state.accepted_id,
+        moved.manifest.manifest_id,
+        moved.rebind_receipt.composition.composition_id,
+    )
+    _live_family_field_step(
+        reunited,
+        coarse,
+        moved.manifest,
+        moved.rebind_receipt.composition,
+        group,
+        rank,
+        topology_change=True,
+        refuse=True,
+    )
+    if before_ids != (
+        moved.state.accepted_id,
+        moved.manifest.manifest_id,
+        moved.rebind_receipt.composition.composition_id,
+    ):
+        raise RuntimeError(
+            "Failed coarsening changed the post-reunification accepted state."
+        )
+    coarsened, coarse_prepared = _live_family_field_step(
+        reunited,
+        coarse,
+        moved.manifest,
+        moved.rebind_receipt.composition,
+        group,
+        rank,
+        topology_change=True,
+    )
+    coarse_view = coarse.parts[0].carrier
+    if not isinstance(coarse_view, OwnerLocalCellGeometry):
+        raise TypeError("Coarsening lacks its current owner-local geometry.")
+    coarse_counts = np.asarray(
+        multihost_utils.process_allgather(
+            np.asarray(coarse_view.owned_cell_ids.size, dtype=np.int64)
+        )
+    ).reshape(-1)
+    if np.sum(coarse_counts) >= np.sum(counts) or np.count_nonzero(coarse_counts) < 2:
+        raise RuntimeError(
+            "Accepted distributed continuation did not coarsen on multiple owners."
+        )
+    from phydrax.discretization.finite_volume._owner_local_remap import (
+        prepare_owner_local_conservative_remap,
+    )
+
+    fv_remap = prepare_owner_local_conservative_remap(
+        reunited_view, coarse_view, group, axis_name="cold_live_fv_overlap"
+    )
+    fv_coarsened = fv_remap.apply_averages(
+        fv_source_values,
+        reunited_view,
+        coarse_view,
+        group,
+        axis_name="cold_live_fv_overlap",
+    )
+    p0_keys = np.asarray(coarse_prepared[2][1].ownership().dof_keys, dtype=np.int64)
+    expected_density = {
+        int(key[1]): float(value) + 2.0
+        for key, value in zip(p0_keys, np.asarray(coarsened.state.fields[1]), strict=True)
+    }
+    expected_fv = np.asarray(
+        [
+            expected_density[int(identifier)]
+            for identifier in np.asarray(fv_coarsened.owned_target_cell_ids)
+        ],
+        dtype=np.float64,
+    )
+    fv_error = float(
+        np.max(np.abs(np.asarray(fv_coarsened.owned_values) - expected_fv), initial=0.0)
+    )
+    fv_residual = float(
+        np.max(np.abs(np.asarray(fv_coarsened.conservation_residual)), initial=0.0)
+    )
+    from phydrax.meshing._distribution import _owner_group_fail_with_reasons
+
+    _owner_group_fail_with_reasons(
+        None
+        if fv_remap.evidence.coverage_complete
+        and fv_error <= 1.0e-10
+        and fv_residual <= 1.0e-10
+        else f"Physical FV overlap disagrees with FE content: coverage={fv_remap.evidence.coverage_complete}, error={fv_error}, residual={fv_residual}.",
+        group,
+        "cold_live_fv_validation",
+    )
+    source_integral = _periodic_p0_owner_integral(
+        reunited_view,
+        reunited_prepared[0],
+        reunited_prepared[2][1],
+        moved.state.fields[1],
+    )
+    target_integral = _periodic_p0_owner_integral(
+        coarse_view, coarse_prepared[0], coarse_prepared[2][1], coarsened.state.fields[1]
+    )
+    integrals = (
+        np.asarray(
+            multihost_utils.process_allgather(
+                np.asarray((source_integral, target_integral), dtype=np.float64)
+            )
+        )
+        .reshape((3, 2))
+        .sum(axis=0)
+    )
+    transfer = coarsened.field_transfers[1]
+    bound = float(np.sum(np.asarray(transfer.conservation_bound)))
+    local_error = None
+    try:
+        if abs(float(integrals[1] - integrals[0])) > bound:
+            raise RuntimeError("Coarsening changed physical P0 content.")
+        if (
+            coarsened.state.time != restart.state.time
+            or coarsened.state.step != restart.state.step
+        ):
+            raise RuntimeError(
+                "Family migration/coarsening changed accepted time or step."
+            )
+        if (
+            coarsened.state.materials.transaction_id
+            != restart.state.materials.transaction_id
+        ):
+            raise RuntimeError(
+                "Family migration/coarsening changed replicated material history."
+            )
+        source_integrators = dict(restart.integrator_state)
+        target_integrators = dict(coarsened.manifest.integrator_state)
+        for name, value in source_integrators.items():
+            target = target_integrators[name]
+            source_bytes = (
+                jax.random.key_data(value)
+                if jax.dtypes.issubdtype(value.dtype, jax.dtypes.prng_key)
+                else value
+            )
+            target_bytes = (
+                jax.random.key_data(target)
+                if jax.dtypes.issubdtype(target.dtype, jax.dtypes.prng_key)
+                else target
+            )
+            if not np.array_equal(np.asarray(source_bytes), np.asarray(target_bytes)):
+                raise RuntimeError(
+                    "Family continuation changed registered RNG/integrator state."
+                )
+        for index, (_, values) in enumerate(coarsened.manifest.auxiliary_state[:2]):
+            if not np.array_equal(
+                np.asarray(values), np.asarray(coarsened.state.fields[index])
+            ):
+                raise RuntimeError(
+                    "Family coarsening lost the registered field-history action."
+                )
+    except Exception as error:
+        local_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_with_reasons(local_error, group, "cold_live_state_validation")
+    solve = _solve_physical_problem(
+        coarse_prepared[1],
+        tuple(dof_map.global_dof_count for dof_map in coarse_prepared[0].dof_maps),
+    )
+    return {
+        "phase": "coarsen",
+        "profile_key": profile,
+        "rank": rank,
+        "pid": os.getpid(),
+        "restored_accepted_id": source_state_id,
+        "reunification_migration_count": proposal.result.migration_count,
+        "reunified_owner_cell_counts": counts.tolist(),
+        "coarsened_owner_cell_counts": coarse_counts.tolist(),
+        "geometry_identity": _live_family_geometry_identity(coarse_view, group),
+        "coarsening_committed": bool(np.asarray(coarsened.committed)),
+        "coarsening_refusal_atomic": True,
+        "source_content_integral": float(integrals[0]),
+        "target_content_integral": float(integrals[1]),
+        "conservation_bound": bound,
+        "fv_overlap_error": fv_error,
+        "fv_conservation_residual": fv_residual,
+        "fv_source_integral": float(np.asarray(fv_coarsened.source_integral)),
+        "fv_target_integral": float(np.asarray(fv_coarsened.target_integral)),
+        "physical_residual_norm": solve["residual_norm"],
+        "material_history_rng_clock_preserved": True,
+    }
+
+
+def _serial_live_family_reference(profile: str, /) -> dict[str, Any]:
+    import jax
+    from phydrax.discretization._view_support import OwnerLocalCellGeometry
+    import phydrax as phx
+    from phydrax._execution_resources import ExecutionGroupSpec
+    from phydrax._execution_runtime import ExecutionGroup
+    from phydrax.discretization._periodic_cell import PeriodicCell
+    from phydrax.graph import GraphPartitionPlan
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        SizeCompliancePolicy,
+        SurfaceMeshingSpec,
+    )
+    from phydrax.meshing._periodic import PeriodicPointOrbits
+    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+    from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+    from phydrax.meshing.providers._native_periodic import (
+        _adapt_owner_local_periodic_assembly,
+        NativePeriodicSource,
+        prepare_native_periodic,
+    )
+
+    if jax.process_count() != 1:
+        raise ValueError(
+            "The independent serial reference must run outside the owner group."
+        )
+    device = jax.devices()[0]
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "cold-live-serial-reference",
+            (0,),
+            ((0, device.id),),
+            mesh_axes=(("cold_live_serial", 1),),
+        ),
+        (device,),
+    )
+    source_id, size, _, _ = _PROFILE_PARAMETERS[profile]
+    cell = PeriodicCell(_CELL_BASIS)
+    source = NativePeriodicSource(
+        PeriodicPointOrbits(
+            cell, np.asarray(cell.cartesian(_INPUT_FRACTIONAL_POINTS)), _INPUT_POINT_IDS
+        ),
+        source_id,
+        f"{source_id}-revision-1",
+        point_owner_ranks=np.zeros(_INPUT_POINT_IDS.shape, dtype=np.int32),
+    )
+    scope = MeshingScope(
+        source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        source.scope_entity_ids(2),
+    )
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 2, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, size, strength=SizeControlStrength.SOFT),
+        ),
+        size_compliance=SizeCompliancePolicy(
+            relative_tolerance=0.8, target_statistics=("p50",)
+        ),
+    )
+    fine = prepare_native_periodic(
+        source,
+        specification,
+        NativeMeshingOptions("periodic_delaunay"),
+        phx.SpatialCoordinateContract.si(),
+    ).execute(
+        execution_group=group,
+        graph_partition_plan=GraphPartitionPlan(
+            1, maximum_imbalance=1.0, require_nonempty=False, refinement_passes=4
+        ),
+    )
+    coarse = _adapt_owner_local_periodic_assembly(
+        fine, _coarse_live_specification(specification), group
+    )
+    fine_view, coarse_view = fine.parts[0].carrier, coarse.parts[0].carrier
+    if not isinstance(fine_view, OwnerLocalCellGeometry) or not isinstance(
+        coarse_view, OwnerLocalCellGeometry
+    ):
+        raise TypeError("Serial reference lacks owner-local geometry.")
+    return {
+        "geometry_identity": _live_family_geometry_identity(coarse_view, group),
+        "fine_cell_count": fine_view.owned_cell_ids.size,
+        "coarse_cell_count": coarse_view.owned_cell_ids.size,
+    }
+
+
 def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     import equinox as eqx
     import jax
@@ -1639,9 +2631,13 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         FiniteElementRestartManifest,
     )
 
-    if phase not in ("write", "read"):
+    if phase not in ("write", "read", "coarsen"):
         raise ValueError(f"Unknown owner-local FE worker phase {phase!r}.")
     group, rank = _current_group()
+    if phase == "coarsen":
+        return _read_coarsen_live_family_state(
+            archive_root / f"{profile}-live-rank-{rank}.phx", group, rank, profile
+        )
     archive = archive_root / f"{profile}-rank-{rank}.phx"
 
     def gather_scalar(value: Any, dtype: Any = np.float64) -> np.ndarray:
@@ -1839,6 +2835,66 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         target_view.require_owner_directory_current(
             group, axis_name=f"{_AXIS_NAME}_{profile}_writer_target_directory"
         )
+        from phydrax.meshing._distribution import _owner_group_fail_with_reasons
+
+        local_source_error = None
+        try:
+            directory = source_view.owner_directory_data
+            if (
+                not source_assembly.owner_local
+                or source_assembly.local_rank != rank
+                or source_part.name != source_view.source_id
+                or directory.rank != rank
+                or directory.group_id != group.spec.group_id
+                or directory.part_count != 3
+                or not all(
+                    (
+                        directory.source_manifest_id,
+                        directory.source_directory_id,
+                        directory.cell_directory_id,
+                        directory.vertex_directory_id,
+                    )
+                )
+            ):
+                raise ValueError(
+                    "Source assembly lost its compact owner-directory authority."
+                )
+            owned_ids = np.asarray(source_view.owned_cell_ids, dtype=np.int64)
+            if owned_ids.size:
+                scope = source_view.scope(2, owned_ids)
+                if not np.array_equal(
+                    np.sort(np.asarray(scope.entity_ids)), np.sort(owned_ids)
+                ):
+                    raise ValueError("Owned-cell scope changed its stable IDs.")
+        except Exception as error:
+            local_source_error = f"{type(error).__name__}: {error}"
+        _owner_group_fail_with_reasons(
+            local_source_error, group, f"{_AXIS_NAME}_{profile}_source_authority"
+        )
+        assembly_ids = np.asarray(
+            multihost_utils.process_allgather(
+                np.frombuffer(bytes.fromhex(source_assembly.assembly_id), dtype=np.uint8)
+            )
+        ).reshape((3, -1))
+        if not np.all(assembly_ids == assembly_ids[0]):
+            raise RuntimeError("Source owners disagree on the global assembly identity.")
+        local_measure = float(
+            np.sum(
+                np.asarray(source_view.cell_measures)[
+                    np.asarray(source_view.owned, dtype=np.bool_)
+                ]
+            )
+        )
+        if (
+            abs(
+                float(np.sum(gather_scalar(local_measure)))
+                - abs(float(np.linalg.det(_CELL_BASIS)))
+            )
+            > 1.0e-10
+        ):
+            raise RuntimeError(
+                "Owned quotient cell measure differs from the analytic lattice."
+            )
 
         def _optional_id(value: Any, attribute: str, /) -> Any:
             return None if value is None else getattr(value, attribute)
@@ -3666,8 +4722,20 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         raise RuntimeError(
             "Accepted FE next solve changed positive P1 or nonconstant P0 state."
         )
+    live_family_archive = _write_split_live_family_state(
+        target_assembly,
+        next_restart_manifest,
+        specification,
+        adaptation_specification,
+        source_graph_plan,
+        target_graph_plan,
+        group,
+        rank,
+        archive_root / f"{profile}-live-rank-{rank}.phx",
+    )
     return {
         "phase": phase,
+        "live_family_archive": live_family_archive,
         "profile_key": profile,
         "rank": rank,
         "pid": os.getpid(),
@@ -3845,7 +4913,7 @@ def _launch_ranks(
     for result in sorted(results, key=lambda value: value.process_id):
         if result.returncode != 0:
             raise RuntimeError(
-                f"Owner-local FE {phase} rank {result.process_id} exited with {result.returncode}: "
+                f"Owner-local FE {phase} rank {result.process_id} exited with {result.returncode}:\n"
                 f"{result.stderr.decode('utf-8', errors='replace')}"
             )
         lines = [
@@ -3885,6 +4953,24 @@ def _qualify_profile(
     if any(size <= 0 for size in archive_bytes):
         raise RuntimeError(f"{profile_key} producer omitted a rank-local model artifact.")
     reader = _launch_ranks("read", archive_root, environment, profile_key)
+    serial_reference = _serial_live_family_reference(profile_key)
+    coarsened = _launch_ranks("coarsen", archive_root, environment, profile_key)
+    if set(record["pid"] for record in reader).intersection(
+        record["pid"] for record in coarsened
+    ):
+        raise RuntimeError("Live-family restore reused a refined-state producer process.")
+    for record in coarsened:
+        if (
+            record["geometry_identity"] != serial_reference["geometry_identity"]
+            or sum(record["coarsened_owner_cell_counts"])
+            != serial_reference["coarse_cell_count"]
+            or not record["coarsening_committed"]
+            or not record["coarsening_refusal_atomic"]
+            or not record["material_history_rng_clock_preserved"]
+        ):
+            raise RuntimeError(
+                "Cold distributed coarsening differs from its independent serial reference."
+            )
     writer_by_rank = {int(record["rank"]): record for record in writer}
     reader_by_rank = {int(record["rank"]): record for record in reader}
     if tuple(sorted(writer_by_rank)) != (0, 1, 2) or tuple(sorted(reader_by_rank)) != (
@@ -4318,6 +5404,8 @@ def _qualify_profile(
         },
         "producer": writer,
         "reader": reader,
+        "coarsening_reader": coarsened,
+        "serial_coarsening_reference": serial_reference,
         "periodic_adaptation_transfer": {
             "producer": writer_adaptation,
             "fresh_reader": reader_adaptation,
@@ -4509,7 +5597,9 @@ def native_cold_owner_local() -> dict[str, Any]:
         "status": "passed",
         "workflow": (
             "fresh-process three-owner FE source archive, owner-local topology adaptation "
-            "with changed placement, restart-bank rebind, and next physical solve"
+            "with changed placement, restart-bank rebind, next physical solve, split-family "
+            "archive, independent restore, explicit family reunification on multiple owners, "
+            "and conservative accepted coarsening"
         ),
         "source_registry": (
             "tools/meshing_qualification/native_case_migration.json#distributed-lifecycle"
