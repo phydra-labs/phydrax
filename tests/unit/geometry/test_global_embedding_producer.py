@@ -8,7 +8,9 @@ from fractions import Fraction
 from pathlib import Path
 from typing import cast
 
+import equinox as eqx
 import numpy as np
+import pytest
 
 from phydrax._bvh import (
     bvh_overlap_pair_blocks,
@@ -22,6 +24,7 @@ from phydrax.discretization._cell_geometry import (
     CellGeometrySpec,
 )
 from phydrax.discretization._cell_geometry_validity import (
+    _BlockCertificate,
     cell_geometry_id,
     CellValidityCertificate,
     certify_cell_geometry_validity,
@@ -1078,6 +1081,49 @@ def test_affine_planar_cells_certify_only_their_declared_shared_edge() -> None:
     restored = GlobalEmbeddingCertificate.from_stored_fields(certificate)
     assert restored.certificate_id == certificate.certificate_id
     restored.require_current(mesh, geometry)
+
+
+def test_restored_embedding_refuses_a_forged_stored_validity_proof() -> None:
+    mesh, geometry, validity = _embedded_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        ((0, 1, 2), (0, 2, 3)),
+    )
+    certificate = certify_global_embedding(mesh, geometry, validity)
+    lower = np.asarray(validity.determinant_lower) * 0.5
+    forged = CellValidityCertificate(
+        validity.execution_status,
+        lower,
+        validity.determinant_upper,
+        validity.depth,
+        source_proof=_BlockCertificate(
+            np.asarray(validity.source_status),
+            lower,
+            np.asarray(validity.source_determinant_upper),
+            np.asarray(validity.source_depth),
+        ),
+        maximum_coefficient_rounding_error=float(
+            validity.maximum_coefficient_rounding_error
+        ),
+        maximum_element_coefficient_rounding_error=float(
+            validity.maximum_element_coefficient_rounding_error
+        ),
+        apex_derivative_unique=np.asarray(validity.apex_derivative_unique),
+        geometry=geometry,
+        mesh=mesh,
+        policy=validity.policy,
+        block_names=validity.block_names,
+        block_offsets=validity.block_offsets,
+        unsupported_block_names=validity.unsupported_block_names,
+        geometry_id=validity.geometry_id,
+        geometry_layout_id=validity.geometry_layout_id,
+        policy_id=validity.policy_id,
+    )
+    # The forged proof is bound to the same operands, so only a renewed proof
+    # can refuse it when the embedding is restored from stored fields.
+    forged.require_current(geometry, mesh=mesh)
+    stored = eqx.tree_at(lambda value: value.validity, certificate, forged)
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        GlobalEmbeddingCertificate.from_stored_fields(stored)
 
 
 def test_planar_segments_sharing_one_vertex_certify_their_exact_corner() -> None:

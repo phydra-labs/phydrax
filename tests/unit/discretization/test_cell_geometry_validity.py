@@ -171,10 +171,11 @@ def test_exact_positive_interval_rejects_collapsed_execution_map() -> None:
     certificate.require_current(geometry, mesh=mesh)
 
 
-def test_validity_require_current_reproves_a_bound_certificate() -> None:
+def test_validity_revalidate_reproves_and_require_current_checks_binding() -> None:
     mesh, geometry = _p3_triangle(0.5)
     certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
     certificate.require_current(geometry, mesh=mesh)
+    certificate.revalidate(geometry, mesh=mesh)
 
     lower = np.asarray(certificate.determinant_lower) * 0.5
     forged = validity_module.CellValidityCertificate(
@@ -205,13 +206,17 @@ def test_validity_require_current_reproves_a_bound_certificate() -> None:
         geometry_layout_id=certificate.geometry_layout_id,
         policy_id=certificate.policy_id,
     )
-    forged.require_bound(geometry, mesh=mesh)
+    # require_current checks the binding and stored claims only; revalidate
+    # recomputes the proof and refuses the forged determinant bounds.
+    forged.require_current(geometry, mesh=mesh)
     with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
-        forged.require_current(geometry, mesh=mesh)
+        forged.revalidate(geometry, mesh=mesh)
 
     _, other_geometry = _p3_triangle(0.25)
     with pytest.raises(ValueError, match="bound to these exact scientific inputs"):
         certificate.require_current(other_geometry, mesh=mesh)
+    with pytest.raises(ValueError, match="bound to these exact scientific inputs"):
+        certificate.revalidate(other_geometry, mesh=mesh)
 
 
 def test_coordinate_source_basis_is_formed_once_per_element(

@@ -27,7 +27,6 @@
 
 namespace {
 
-using phx::mc::Int256;
 using phx::mc::geometry::next_down;
 using phx::mc::geometry::next_up;
 
@@ -170,10 +169,27 @@ bool lcm_u64(std::uint64_t a, std::uint64_t b, std::uint64_t& out) noexcept {
   return checked_mul_u64(a / std::gcd(a, b), b, out);
 }
 
-Int256 from_u64(std::uint64_t value) noexcept {
-  Int256 out;
-  out.limb = {value, 0, 0, 0};
-  return out;
+// Runs `body` with a value of the wide-integer word type of `limbs` limbs.
+template <class Body>
+int32_t with_word(int32_t limbs, Body&& body) {
+  switch (limbs) {
+    case 4:
+      return body(phx::mc::WideInt<4>{});
+    case 8:
+      return body(phx::mc::WideInt<8>{});
+    case 16:
+      return body(phx::mc::WideInt<16>{});
+    case 32:
+      return body(phx::mc::WideInt<32>{});
+    case 64:
+      return body(phx::mc::WideInt<64>{});
+    default:
+      return PHX_MC_INVALID_ARGUMENT;
+  }
+}
+
+bool word_limbs_valid(int32_t limbs) noexcept {
+  return limbs == 4 || limbs == 8 || limbs == 16 || limbs == 32 || limbs == 64;
 }
 
 // Compositions of `total` into `parts` nonnegative parts, first part descending
@@ -205,7 +221,8 @@ int64_t composition_count(int32_t total, int32_t parts) {
   return static_cast<int64_t>(value);
 }
 
-void record_extremes(const std::vector<Int256>& values, int64_t* extremes) noexcept {
+template <class Word>
+void record_extremes(const std::vector<Word>& values, int64_t* extremes) noexcept {
   std::size_t least = 0;
   std::size_t greatest = 0;
   for (std::size_t index = 1; index < values.size(); ++index) {
@@ -454,40 +471,148 @@ int64_t domain_control_count(int32_t domain, int32_t dimension, const int32_t* d
   }
 }
 
-int32_t controls_item(const ControlsCall& call, int64_t item, WeightTable& table,
-                      std::vector<Int256>& values) {
-  const int32_t built = table.build(call, item);
-  if (built != PHX_MC_OK) return built;
+// Tensor (box) controls axis by axis: pass i maps exponent a to control b with
+// C(b, a) * (L_i / C(n_i, a)), L_i the lcm of C(n_i, a) over the item's
+// exponents on axis i, so the item denominator is prod L_i as for the
+// per-control weights and the work is sum_i (n_i + 1) * controls.
+template <class Word>
+int32_t box_controls(const ControlsCall& call, int64_t item, std::vector<Word>& values,
+                     int64_t& denominator) {
+  const int32_t dimension = call.dimension;
+  const int32_t* degree = call.degrees + item * call.degree_width;
   const int64_t term_begin = call.term_offsets[item];
   const std::size_t terms = static_cast<std::size_t>(call.term_offsets[item + 1] - term_begin);
-  const std::size_t controls =
-      static_cast<std::size_t>(call.control_offsets[item + 1] - call.control_offsets[item]);
-  values.assign(controls, Int256{});
-  std::vector<Int256> numerators(terms);
-  for (std::size_t term = 0; term < terms; ++term) {
-    numerators[term] =
-        Int256::load(call.numerators + (static_cast<std::size_t>(term_begin) + term) * Int256::kBytes);
+  std::vector<std::size_t> extent(static_cast<std::size_t>(dimension));
+  std::vector<std::size_t> stride(static_cast<std::size_t>(dimension));
+  std::size_t size = 1;
+  for (int32_t axis = dimension - 1; axis >= 0; --axis) {
+    if (degree[axis] < 0) return PHX_MC_INVALID_INPUT;
+    extent[static_cast<std::size_t>(axis)] = static_cast<std::size_t>(degree[axis]) + 1;
+    stride[static_cast<std::size_t>(axis)] = size;
+    size *= extent[static_cast<std::size_t>(axis)];
   }
-  for (std::size_t control = 0; control < controls; ++control) {
-    Int256 total;
-    for (std::size_t term = 0; term < terms; ++term) {
-      if (numerators[term].zero()) continue;
-      std::uint64_t weight = 0;
-      if (!table.weight(call, item, control, term, weight)) return PHX_MC_RANGE_ERROR;
-      if (weight == 0) continue;
-      Int256 product;
-      if (!phx::mc::checked_multiply(numerators[term], from_u64(weight), product) ||
-          !phx::mc::checked_add(total, product, total)) {
+  values.assign(size, Word{});
+  std::vector<std::vector<bool>> present(static_cast<std::size_t>(dimension));
+  for (int32_t axis = 0; axis < dimension; ++axis) {
+    present[static_cast<std::size_t>(axis)].assign(extent[static_cast<std::size_t>(axis)], false);
+  }
+  for (std::size_t term = 0; term < terms; ++term) {
+    const int32_t* exponent = call.exponents + (static_cast<std::size_t>(term_begin) + term) *
+                                                   static_cast<std::size_t>(dimension);
+    std::size_t offset = 0;
+    for (int32_t axis = 0; axis < dimension; ++axis) {
+      if (exponent[axis] < 0 || exponent[axis] > degree[axis]) return PHX_MC_INVALID_INPUT;
+      present[static_cast<std::size_t>(axis)][static_cast<std::size_t>(exponent[axis])] = true;
+      offset += static_cast<std::size_t>(exponent[axis]) * stride[static_cast<std::size_t>(axis)];
+    }
+    const Word numerator = Word::load(
+        call.numerators + (static_cast<std::size_t>(term_begin) + term) * Word::kBytes);
+    if (!phx::mc::checked_add(values[offset], numerator, values[offset])) {
+      return PHX_MC_RANGE_ERROR;
+    }
+  }
+  std::uint64_t total_denominator = 1;
+  std::vector<Word> next(size);
+  for (int32_t axis = 0; axis < dimension; ++axis) {
+    const std::size_t n = extent[static_cast<std::size_t>(axis)];
+    const auto& used = present[static_cast<std::size_t>(axis)];
+    std::uint64_t lcm = 1;
+    for (std::size_t a = 0; a < n; ++a) {
+      std::uint64_t value = 0;
+      if (used[a] && (!binomial(static_cast<std::int64_t>(n - 1), static_cast<std::int64_t>(a), value) ||
+                      !lcm_u64(lcm, value, lcm))) {
         return PHX_MC_RANGE_ERROR;
       }
     }
-    values[control] = total;
+    if (!checked_mul_u64(total_denominator, lcm, total_denominator)) return PHX_MC_RANGE_ERROR;
+    // weights[b * n + a] for used a <= b.
+    std::vector<Word> weights(n * n);
+    for (std::size_t b = 0; b < n; ++b) {
+      for (std::size_t a = 0; a <= b; ++a) {
+        if (!used[a]) continue;
+        std::uint64_t numerator = 0;
+        std::uint64_t binomial_n = 0;
+        std::uint64_t weight = 0;
+        if (!binomial(static_cast<std::int64_t>(b), static_cast<std::int64_t>(a), numerator) ||
+            !binomial(static_cast<std::int64_t>(n - 1), static_cast<std::int64_t>(a), binomial_n) ||
+            !checked_mul_u64(numerator, lcm / binomial_n, weight)) {
+          return PHX_MC_RANGE_ERROR;
+        }
+        weights[b * n + a] = Word::from_uint64(weight);
+      }
+    }
+    const std::size_t inner = stride[static_cast<std::size_t>(axis)];
+    const std::size_t outer = size / (n * inner);
+    for (std::size_t block = 0; block < outer; ++block) {
+      for (std::size_t position = 0; position < inner; ++position) {
+        const std::size_t base = block * n * inner + position;
+        for (std::size_t b = 0; b < n; ++b) {
+          Word total;
+          for (std::size_t a = 0; a <= b; ++a) {
+            const Word& coefficient = values[base + a * inner];
+            if (!used[a] || coefficient.zero()) continue;
+            Word product;
+            if (!phx::mc::checked_multiply(coefficient, weights[b * n + a], product) ||
+                !phx::mc::checked_add(total, product, total)) {
+              return PHX_MC_RANGE_ERROR;
+            }
+          }
+          next[base + b * inner] = total;
+        }
+      }
+    }
+    values.swap(next);
   }
-  std::uint8_t* out = call.controls + static_cast<std::size_t>(call.control_offsets[item]) * Int256::kBytes;
-  for (std::size_t control = 0; control < controls; ++control) {
-    values[control].store(out + control * Int256::kBytes);
+  if (total_denominator > static_cast<std::uint64_t>(std::numeric_limits<int64_t>::max())) {
+    return PHX_MC_RANGE_ERROR;
   }
-  call.denominators[item] = table.denominator();
+  denominator = static_cast<int64_t>(total_denominator);
+  return PHX_MC_OK;
+}
+
+template <class Word>
+int32_t controls_item(const ControlsCall& call, int64_t item, WeightTable& table,
+                      std::vector<Word>& values) {
+  int64_t denominator = 1;
+  if (call.domain == PHX_MC_BERNSTEIN_BOX) {
+    const int32_t status = box_controls(call, item, values, denominator);
+    if (status != PHX_MC_OK) return status;
+  } else {
+    const int32_t built = table.build(call, item);
+    if (built != PHX_MC_OK) return built;
+    denominator = table.denominator();
+    const int64_t term_begin = call.term_offsets[item];
+    const std::size_t terms = static_cast<std::size_t>(call.term_offsets[item + 1] - term_begin);
+    const std::size_t controls =
+        static_cast<std::size_t>(call.control_offsets[item + 1] - call.control_offsets[item]);
+    values.assign(controls, Word{});
+    std::vector<Word> numerators(terms);
+    for (std::size_t term = 0; term < terms; ++term) {
+      numerators[term] = Word::load(call.numerators +
+                                    (static_cast<std::size_t>(term_begin) + term) * Word::kBytes);
+    }
+    for (std::size_t control = 0; control < controls; ++control) {
+      Word total;
+      for (std::size_t term = 0; term < terms; ++term) {
+        if (numerators[term].zero()) continue;
+        std::uint64_t weight = 0;
+        if (!table.weight(call, item, control, term, weight)) return PHX_MC_RANGE_ERROR;
+        if (weight == 0) continue;
+        Word product;
+        if (!phx::mc::checked_multiply(numerators[term], Word::from_uint64(weight), product) ||
+            !phx::mc::checked_add(total, product, total)) {
+          return PHX_MC_RANGE_ERROR;
+        }
+      }
+      values[control] = total;
+    }
+  }
+  std::uint8_t* out =
+      call.controls + static_cast<std::size_t>(call.control_offsets[item]) * Word::kBytes;
+  for (std::size_t control = 0; control < values.size(); ++control) {
+    values[control].store(out + control * Word::kBytes);
+  }
+  call.denominators[item] = denominator;
   record_extremes(values, call.extremes + 2 * item);
   return PHX_MC_OK;
 }
@@ -536,29 +661,30 @@ struct CompositionLadder {
   std::map<std::vector<int32_t>, int32_t> final_rank;
 };
 
+template <class Word>
 class BlossomWalk final {
  public:
-  BlossomWalk(const CompositionLadder& ladder, int32_t parts, const std::vector<Int256>& corners,
-              std::vector<Int256>& values)
+  BlossomWalk(const CompositionLadder& ladder, int32_t parts, const std::vector<Word>& corners,
+              std::vector<Word>& values)
       : ladder_(ladder), parts_(parts), corners_(corners), values_(values),
         counts_(static_cast<std::size_t>(parts), 0) {}
 
   // Applies nondecreasing corner sequences depth first; false on overflow.
-  bool walk(const std::vector<Int256>& net, int32_t degree, int32_t last) {
+  bool walk(const std::vector<Word>& net, int32_t degree, int32_t last) {
     if (degree == 0) {
       values_[static_cast<std::size_t>(ladder_.final_rank.at(counts_))] = net[0];
       return true;
     }
     const auto& table = ladder_.next[static_cast<std::size_t>(degree)];
     const std::size_t rows = table.size() / static_cast<std::size_t>(parts_);
-    std::vector<Int256> following(rows);
+    std::vector<Word> following(rows);
     for (int32_t corner = last; corner < parts_; ++corner) {
-      const Int256* weights = corners_.data() + static_cast<std::size_t>(corner * parts_);
+      const Word* weights = corners_.data() + static_cast<std::size_t>(corner * parts_);
       for (std::size_t row = 0; row < rows; ++row) {
-        Int256 total;
+        Word total;
         for (int32_t part = 0; part < parts_; ++part) {
           if (weights[part].zero()) continue;
-          Int256 product;
+          Word product;
           if (!phx::mc::checked_multiply(
                   weights[part],
                   net[static_cast<std::size_t>(
@@ -581,8 +707,8 @@ class BlossomWalk final {
  private:
   const CompositionLadder& ladder_;
   int32_t parts_;
-  const std::vector<Int256>& corners_;
-  std::vector<Int256>& values_;
+  const std::vector<Word>& corners_;
+  std::vector<Word>& values_;
   std::vector<int32_t> counts_;
 };
 
@@ -916,8 +1042,10 @@ int32_t phx_mc_bernstein_controls(int64_t count, int32_t domain, int32_t dimensi
                                   const int32_t* exponents, const uint8_t* numerators,
                                   const int64_t* control_offsets, uint8_t* controls,
                                   int64_t* denominators, int64_t* extremes, int32_t* item_status,
-                                  int32_t parallelism) {
+                                  int32_t word_limbs, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
+    if (!word_limbs_valid(word_limbs)) return PHX_MC_INVALID_ARGUMENT;
+    const int64_t word_bytes = int64_t{8} * word_limbs;
     int32_t degree_width = 0;
     switch (domain) {
       case PHX_MC_BERNSTEIN_SIMPLEX:
@@ -946,8 +1074,8 @@ int32_t phx_mc_bernstein_controls(int64_t count, int32_t domain, int32_t dimensi
     if (!offsets_valid(count, term_offsets, terms) ||
         !offsets_valid(count, control_offsets, total_controls) ||
         !phx::mc::addressable(terms, dimension, sizeof(int32_t)) ||
-        !phx::mc::addressable(terms, Int256::kBytes, 1) ||
-        !phx::mc::addressable(total_controls, Int256::kBytes, 1) ||
+        !phx::mc::addressable(terms, word_bytes, 1) ||
+        !phx::mc::addressable(total_controls, word_bytes, 1) ||
         (terms > 0 && (exponents == nullptr || numerators == nullptr)) ||
         (total_controls > 0 && controls == nullptr)) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -961,16 +1089,19 @@ int32_t phx_mc_bernstein_controls(int64_t count, int32_t domain, int32_t dimensi
     const ControlsCall call{domain,       dimension,       degree_width, degrees,
                             term_offsets, exponents,       numerators,   control_offsets,
                             controls,     denominators,    extremes};
-    return phx::mc::parallel_for(
+    return with_word(word_limbs, [&](auto tag) -> int32_t {
+      using Word = decltype(tag);
+      return phx::mc::parallel_for(
         static_cast<std::size_t>(count), request(parallelism),
         [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
           WeightTable table;
-          std::vector<Int256> values;
+          std::vector<Word> values;
           for (std::size_t item = begin; item < end; ++item) {
             item_status[item] = controls_item(call, static_cast<int64_t>(item), table, values);
           }
           return PHX_MC_OK;
         });
+    });
   });
 }
 
@@ -978,10 +1109,12 @@ int32_t phx_mc_simplex_bernstein_blossoms(int64_t count, int32_t parts, const in
                                           const int64_t* control_offsets, const uint8_t* controls,
                                           const uint8_t* corners, uint8_t* values,
                                           int64_t* extremes, int32_t* item_status,
-                                          int32_t parallelism) {
+                                          int32_t word_limbs, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
+    if (!word_limbs_valid(word_limbs)) return PHX_MC_INVALID_ARGUMENT;
+    const int64_t word_bytes = int64_t{8} * word_limbs;
     if (count < 0 || parts < 1 || parallelism < 1 || control_offsets == nullptr ||
-        !phx::mc::addressable(count, int64_t{parts} * parts * Int256::kBytes, 1)) {
+        !phx::mc::addressable(count, int64_t{parts} * parts * word_bytes, 1)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (count > 0 && (degrees == nullptr || corners == nullptr || extremes == nullptr ||
@@ -990,7 +1123,7 @@ int32_t phx_mc_simplex_bernstein_blossoms(int64_t count, int32_t parts, const in
     }
     int64_t total_controls = 0;
     if (!offsets_valid(count, control_offsets, total_controls) ||
-        !phx::mc::addressable(total_controls, Int256::kBytes, 1) ||
+        !phx::mc::addressable(total_controls, word_bytes, 1) ||
         (total_controls > 0 && (controls == nullptr || values == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -1001,7 +1134,9 @@ int32_t phx_mc_simplex_bernstein_blossoms(int64_t count, int32_t parts, const in
       }
     }
     const std::size_t corner_words = static_cast<std::size_t>(parts) * static_cast<std::size_t>(parts);
-    return phx::mc::parallel_for(
+    return with_word(word_limbs, [&](auto tag) -> int32_t {
+      using Word = decltype(tag);
+      return phx::mc::parallel_for(
         static_cast<std::size_t>(count), request(parallelism),
         [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
           std::map<int32_t, std::unique_ptr<CompositionLadder>> ladders;
@@ -1011,28 +1146,29 @@ int32_t phx_mc_simplex_bernstein_blossoms(int64_t count, int32_t parts, const in
             if (!ladder) ladder = std::make_unique<CompositionLadder>(degree, parts);
             const std::size_t first = static_cast<std::size_t>(control_offsets[item]);
             const std::size_t size = static_cast<std::size_t>(control_offsets[item + 1]) - first;
-            std::vector<Int256> net(size);
+            std::vector<Word> net(size);
             for (std::size_t row = 0; row < size; ++row) {
-              net[row] = Int256::load(controls + (first + row) * Int256::kBytes);
+              net[row] = Word::load(controls + (first + row) * Word::kBytes);
             }
-            std::vector<Int256> weights(corner_words);
+            std::vector<Word> weights(corner_words);
             for (std::size_t word = 0; word < corner_words; ++word) {
-              weights[word] = Int256::load(corners + (item * corner_words + word) * Int256::kBytes);
+              weights[word] = Word::load(corners + (item * corner_words + word) * Word::kBytes);
             }
-            std::vector<Int256> result(size);
-            BlossomWalk walk(*ladder, parts, weights, result);
+            std::vector<Word> result(size);
+            BlossomWalk<Word> walk(*ladder, parts, weights, result);
             if (!walk.walk(net, degree, 0)) {
               item_status[item] = PHX_MC_RANGE_ERROR;
               continue;
             }
             for (std::size_t row = 0; row < size; ++row) {
-              result[row].store(values + (first + row) * Int256::kBytes);
+              result[row].store(values + (first + row) * Word::kBytes);
             }
             record_extremes(result, extremes + 2 * item);
             item_status[item] = PHX_MC_OK;
           }
           return PHX_MC_OK;
         });
+    });
   });
 }
 
@@ -1040,13 +1176,15 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
                                 int32_t components, const int32_t* indices, int32_t first,
                                 int32_t second, const uint8_t* nets, uint8_t* left,
                                 uint8_t* right, int32_t* exponent, int32_t* item_status,
-                                int32_t parallelism) {
+                                int32_t word_limbs, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
+    if (!word_limbs_valid(word_limbs)) return PHX_MC_INVALID_ARGUMENT;
+    const int64_t word_bytes = int64_t{8} * word_limbs;
     if (count < 0 || control_count < 1 || slot_count < 2 || components < 1 || parallelism < 1 ||
         first < 0 || second < 0 || first >= slot_count || second >= slot_count ||
         first == second || indices == nullptr || exponent == nullptr ||
         !phx::mc::addressable(control_count, slot_count, sizeof(int32_t)) ||
-        !phx::mc::addressable(count, control_count * components * int64_t{Int256::kBytes}, 1)) {
+        !phx::mc::addressable(count, control_count * components * word_bytes, 1)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (count > 0 && (nets == nullptr || left == nullptr || right == nullptr ||
@@ -1084,28 +1222,30 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
     *exponent = maximum;
     const std::size_t row_words = static_cast<std::size_t>(components);
     const std::size_t net_words = static_cast<std::size_t>(control_count) * row_words;
-    return phx::mc::parallel_for(
+    return with_word(word_limbs, [&](auto tag) -> int32_t {
+      using Word = decltype(tag);
+      return phx::mc::parallel_for(
         static_cast<std::size_t>(count), request(parallelism),
         [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
-          std::vector<Int256> levels;
+          std::vector<Word> levels;
           for (std::size_t item = begin; item < end; ++item) {
-            const std::uint8_t* net = nets + item * net_words * Int256::kBytes;
-            std::uint8_t* out_left = left + item * net_words * Int256::kBytes;
-            std::uint8_t* out_right = right + item * net_words * Int256::kBytes;
+            const std::uint8_t* net = nets + item * net_words * Word::kBytes;
+            std::uint8_t* out_left = left + item * net_words * Word::kBytes;
+            std::uint8_t* out_right = right + item * net_words * Word::kBytes;
             int32_t status = PHX_MC_OK;
             for (const BisectLine& line : lines) {
               const std::size_t size = static_cast<std::size_t>(line.total) + 1;
               for (std::size_t component = 0; component < row_words && status == PHX_MC_OK;
                    ++component) {
                 // levels[j][r] (unhalved sums) stored row-major by level.
-                levels.assign(size * (size + 1) / 2, Int256{});
+                levels.assign(size * (size + 1) / 2, Word{});
                 const auto at = [size](std::size_t level, std::size_t row) {
                   return level * size - level * (level - 1) / 2 + row;
                 };
                 for (std::size_t row = 0; row < size; ++row) {
-                  levels[at(0, row)] = Int256::load(
+                  levels[at(0, row)] = Word::load(
                       net + (static_cast<std::size_t>(line.rows[row]) * row_words + component) *
-                                Int256::kBytes);
+                                Word::kBytes);
                 }
                 for (std::size_t level = 1; level < size && status == PHX_MC_OK; ++level) {
                   for (std::size_t row = 0; row + level < size; ++row) {
@@ -1118,8 +1258,8 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
                   }
                 }
                 for (std::size_t step = 0; step < size && status == PHX_MC_OK; ++step) {
-                  Int256 kept;
-                  Int256 moved;
+                  Word kept;
+                  Word moved;
                   const std::size_t complement = size - 1 - step;
                   if (!phx::mc::checked_shift_left(levels[at(step, 0)],
                                                    maximum - static_cast<int32_t>(step), kept) ||
@@ -1131,7 +1271,7 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
                   }
                   const std::size_t offset =
                       (static_cast<std::size_t>(line.rows[step]) * row_words + component) *
-                      Int256::kBytes;
+                      Word::kBytes;
                   kept.store(out_left + offset);
                   moved.store(out_right + offset);
                 }
@@ -1142,6 +1282,7 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
           }
           return PHX_MC_OK;
         });
+    });
   });
 }
 
