@@ -1970,9 +1970,6 @@ def _reference_face_coordinates(
 
 type _ReferencePoint = tuple[Fraction, ...]
 
-# Largest per-axis refinement of one twisted quadrilateral face piece bank.
-_MAXIMUM_FACE_SUBDIVISIONS = 64
-
 
 def _bilinear_point(
     corners: tuple[_ReferencePoint, ...], a: Fraction, b: Fraction, /
@@ -2085,15 +2082,11 @@ def _bilinear_face_subdivisions(
             "Twisted restricted boundary faces require a positive fidelity tolerance."
         )
     bound = Fraction.from_float(float(tolerance))
+    # The bound is monotone in ``subdivisions``, so doubling ends at the smallest
+    # dyadic refinement the twist, Lipschitz bound and tolerance require.
     subdivisions = 1
     while lipschitz_squared * twist_squared > 4 * subdivisions**4 * bound * bound:
         subdivisions *= 2
-        if subdivisions > _MAXIMUM_FACE_SUBDIVISIONS:
-            raise ValueError(
-                "A twisted restricted boundary face needs more than "
-                f"{_MAXIMUM_FACE_SUBDIVISIONS} subdivisions per axis to meet its "
-                "fidelity tolerance."
-            )
     return subdivisions
 
 
