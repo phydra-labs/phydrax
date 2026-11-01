@@ -96,7 +96,16 @@ def _real_positive(value: object, name: str, /) -> float:
 type _EnvelopeOriginal = ReconstructedGeometrySource | AuthoredTriangleSheet
 
 
-def _original_domain_query(source: _EnvelopeOriginal, /) -> MeshingDomainBoundarySource:
+def _original_domain_query(
+    source: _EnvelopeOriginal,
+    prepared: MeshingDomainBoundarySource | None = None,
+    /,
+) -> MeshingDomainBoundarySource:
+    """The whole-domain boundary query of the original's current meshing domain.
+
+    `prepared` (the retained original query's whole-domain query) is returned
+    when it was built over this very domain, which is checked current once.
+    """
     domain = source.meshing_domain
     if domain is None:
         raise _failure(
@@ -104,7 +113,14 @@ def _original_domain_query(source: _EnvelopeOriginal, /) -> MeshingDomainBoundar
             category=MeshingFailureCategory.INVALID_SOURCE,
             stage="source_inspection",
         )
-    domain.require_current(source.source_id, source.source_revision)
+    if prepared is not None and prepared.domain is domain:
+        domain.require_current(source.source_id, source.source_revision)
+        return prepared
+    if domain.source_id != source.source_id:
+        raise ValueError("MeshingDomain source_id changed.")
+    if domain.source_revision != source.source_revision:
+        raise ValueError("MeshingDomain source_revision changed.")
+    # The query checks the domain current on construction.
     return MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
 
 
@@ -645,7 +661,9 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
     def require_current(self, /) -> None:
         fresh_original = _fresh_original(self.original)
         source_vertices, source_triangles = _original_triangles(fresh_original)
-        original_domain_query = _original_domain_query(fresh_original)
+        original_domain_query = _original_domain_query(
+            fresh_original, self.original_boundary_query.domain_query
+        )
         result = self.result
         try:
             reproduces = envelope_reproduces(

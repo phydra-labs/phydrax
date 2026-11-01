@@ -419,6 +419,37 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
             + second * self.corners[2]
         )
 
+    @classmethod
+    def evaluate_stacked(
+        cls,
+        surfaces: Sequence[AbstractSurfacePatch],
+        owners: np.ndarray,
+        parameters: Array,
+        /,
+    ) -> Array:
+        """``surfaces[owners[row]].evaluate(parameters[row])`` for every row.
+
+        The corners are gathered on the host and the barycentric combination
+        runs with exactly `evaluate`'s operations, so every coordinate is
+        bit-identical to the per-patch evaluation.
+        """
+        stacked = []
+        for surface in surfaces:
+            if not isinstance(surface, cls):
+                raise TypeError(
+                    "Stacked evaluation requires reconstructed triangle charts."
+                )
+            stacked.append(np.asarray(surface.corners, dtype=np.float64))
+        corners = jnp.asarray(np.stack(stacked)[np.asarray(owners, dtype=np.int64)])
+        values = jnp.asarray(parameters, dtype=jnp.float64)
+        first = values[..., 0, None]
+        second = values[..., 1, None]
+        return (
+            (1.0 - first - second) * corners[:, 0]
+            + first * corners[:, 1]
+            + second * corners[:, 2]
+        )
+
 
 def _reconstructed_meshing_domain(
     source: GeometrySource,
