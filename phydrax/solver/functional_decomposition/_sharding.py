@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from functools import partial
 from typing import TypeVar
 
 import equinox as eqx
@@ -246,6 +247,62 @@ class DistributedCollectiveResult(StrictModule):
         self.evidence = evidence
 
 
+def _assemble_local(value: Array, weight: Array, /) -> Array:
+    local_value = value[0]
+    expanded = weight[0]
+    while expanded.ndim < local_value.ndim:
+        expanded = expanded[..., None]
+    numerator = jax.lax.psum(expanded * local_value, "patch")
+    denominator = jax.lax.psum(expanded, "patch")
+    result = jax.numpy.where(
+        denominator > 0.0,
+        numerator / denominator,
+        jax.numpy.nan,
+    )
+    return result[None, ...]
+
+
+@partial(jax.jit, static_argnames=("mesh", "value_spec", "weight_spec"))
+def _pou_program(
+    values: Array,
+    weights: Array,
+    *,
+    mesh: Mesh,
+    value_spec: PartitionSpec,
+    weight_spec: PartitionSpec,
+) -> Array:
+    return jax.shard_map(
+        _assemble_local,
+        mesh=mesh,
+        in_specs=(value_spec, weight_spec),
+        out_specs=value_spec,
+        check_vma=False,
+    )(values, weights)
+
+
+def _exchange_local(value: Array, source: Array, /) -> Array:
+    gathered = jax.lax.all_gather(value[0], "patch", tiled=False)
+    return gathered[source[0]][None, ...]
+
+
+@partial(jax.jit, static_argnames=("mesh", "value_spec", "source_spec"))
+def _schwarz_program(
+    values: Array,
+    sources: Array,
+    *,
+    mesh: Mesh,
+    value_spec: PartitionSpec,
+    source_spec: PartitionSpec,
+) -> Array:
+    return jax.shard_map(
+        _exchange_local,
+        mesh=mesh,
+        in_specs=(value_spec, source_spec),
+        out_specs=value_spec,
+        check_vma=False,
+    )(values, sources)
+
+
 def distributed_pou_collective(
     local_values: ArrayLike,
     local_weights: ArrayLike,
@@ -272,27 +329,9 @@ def distributed_pou_collective(
     values = jax.device_put(values, NamedSharding(mesh, value_spec))
     weights = jax.device_put(weights, NamedSharding(mesh, weight_spec))
 
-    def assemble(value: Array, weight: Array) -> Array:
-        local_value = value[0]
-        expanded = weight[0]
-        while expanded.ndim < local_value.ndim:
-            expanded = expanded[..., None]
-        numerator = jax.lax.psum(expanded * local_value, "patch")
-        denominator = jax.lax.psum(expanded, "patch")
-        result = jax.numpy.where(
-            denominator > 0.0,
-            numerator / denominator,
-            jax.numpy.nan,
-        )
-        return result[None, ...]
-
-    assembled = jax.shard_map(
-        assemble,
-        mesh=mesh,
-        in_specs=(value_spec, weight_spec),
-        out_specs=value_spec,
-        check_vma=False,
-    )(values, weights)
+    assembled = _pou_program(
+        values, weights, mesh=mesh, value_spec=value_spec, weight_spec=weight_spec
+    )
     communicated = int((values.nbytes + weights.nbytes) * max(len(devices_) - 1, 0))
     evidence = DistributedCollectiveEvidence(
         mode="partition-of-unity-psum",
@@ -328,17 +367,9 @@ def distributed_schwarz_exchange(
     values = jax.device_put(values, NamedSharding(mesh, value_spec))
     sources = jax.device_put(sources, NamedSharding(mesh, source_spec))
 
-    def exchange(value: Array, source: Array) -> Array:
-        gathered = jax.lax.all_gather(value[0], "patch", tiled=False)
-        return gathered[source[0]][None, ...]
-
-    received = jax.shard_map(
-        exchange,
-        mesh=mesh,
-        in_specs=(value_spec, source_spec),
-        out_specs=value_spec,
-        check_vma=False,
-    )(values, sources)
+    received = _schwarz_program(
+        values, sources, mesh=mesh, value_spec=value_spec, source_spec=source_spec
+    )
     communicated = int(values.nbytes * max(len(devices_) - 1, 0))
     evidence = DistributedCollectiveEvidence(
         mode="schwarz-all-gather",
