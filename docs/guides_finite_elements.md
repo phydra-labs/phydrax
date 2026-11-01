@@ -181,6 +181,14 @@ with the problem. Op-by-op execution would keep every unfused quadrature
 intermediate resident and compile a new executable per call for each
 control-flow primitive. Inside `jit`, `grad` or `vmap` the methods run inline.
 
+Hexahedral facet quadrature permutations and hybrid reference-family data are
+prepared on the host before these programs are traced. Hexahedral, prism and
+pyramid worksets do not switch the entire problem to eager execution.
+Exact restricted/composed coordinate charts are tabulated per distinct chart
+before cell/facet execution; runtime coordinate values remain differentiable.
+Per-cell Jacobian evaluation and inversion use the same scanned geometry
+arithmetic as shared charts.
+
 `linear_system(storage="sparse")` hands exact sparse coordinates to
 `phydrax.linalg` instead of a matrix-free action. Strong Dirichlet constraints
 are eliminated exactly: `ConstraintMap.reduce_sparse_operator` keeps the
@@ -197,6 +205,14 @@ on the prepared preconditioner; `estimate_condition_number(system.operator)`
 gives conditioning bounds. Forms without structural sparse actions,
 matrix-free realization, and constraints that are not coordinate selections
 refuse this route.
+
+Independent cell contractions and local orientation transforms are evaluated in
+bounded deterministic blocks. This bounds temporary assembly tensors without
+changing cell ordering or sparse duplicate-accumulation ordering.
+Default sparse assembly limits follow 32-bit index and host-address
+representability, rather than a fixed one-million-nonzero quota. Explicit
+caller-selected `SparseAssemblyPolicy` limits still apply; index and allocation
+overflow checks apply independently of those limits.
 
 ```python
 system, rhs = problem.linear_system(storage="sparse")

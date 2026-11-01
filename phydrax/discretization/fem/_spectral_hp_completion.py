@@ -4,14 +4,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from itertools import product
 from typing import final, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, lax
 from jax.typing import ArrayLike
 from scipy.special import eval_jacobi
 
@@ -497,7 +497,7 @@ class NIrregularMortarPlan(StrictModule, NonTrainableState):
 
 
 def _shifted_jacobi(
-    degree: int, alpha: float, beta: float, values: np.ndarray, /
+    degree: int, alpha: float, beta: float, values: Array | np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
     polynomial = eval_jacobi(degree, alpha, beta, 2.0 * values - 1.0)
     derivative = (
@@ -509,24 +509,63 @@ def _shifted_jacobi(
     return np.asarray(polynomial), np.asarray(derivative)
 
 
+def _jacobi_recurrence(degree: int, alpha: float, beta: float, /) -> Array:
+    """Host-prepared stable three-term recurrence, without a power expansion."""
+    rows = []
+    if degree:
+        rows.append((0.5 * (alpha + beta + 2.0), 0.5 * (alpha - beta), 0.0))
+    for n in range(2, degree + 1):
+        s = 2.0 * n + alpha + beta
+        denominator = 2.0 * n * (n + alpha + beta) * (s - 2.0)
+        rows.append(
+            (
+                (s - 1.0) * s * (s - 2.0) / denominator,
+                (s - 1.0) * (alpha * alpha - beta * beta) / denominator,
+                2.0 * (n + alpha - 1.0) * (n + beta - 1.0) * s / denominator,
+            )
+        )
+    return jnp.asarray(np.asarray(rows, dtype=np.float64).reshape((-1, 3)))
+
+
+def _evaluate_jacobi_recurrence(rows: Array, argument: Array, /) -> Array:
+    def step(
+        carry: tuple[Array, Array], coefficients: Array
+    ) -> tuple[tuple[Array, Array], None]:
+        previous, current = carry
+        value = (coefficients[0] * argument + coefficients[1]) * current - coefficients[
+            2
+        ] * previous
+        return (current, value), None
+
+    initial = (jnp.zeros_like(argument), jnp.ones_like(argument))
+    return lax.scan(step, initial, rows)[0][1]
+
+
 def _pyramid_modal_tabulation(
-    points: np.ndarray,
+    points: Array | np.ndarray,
     indices: tuple[tuple[int, int, int], ...],
     /,
-) -> tuple[np.ndarray, np.ndarray]:
-    values = np.asarray(points, dtype=np.float64)
+    *,
+    array_module: Literal["numpy", "jax"] = "numpy",
+    shifted_jacobi: Callable[
+        [int, float, float, Array | np.ndarray],
+        tuple[Array | np.ndarray, Array | np.ndarray],
+    ] = _shifted_jacobi,
+) -> tuple[Array | np.ndarray, Array | np.ndarray]:
+    xp = np if array_module == "numpy" else jnp
+    values = xp.asarray(points, dtype=np.float64)
     height = values[:, 2]
     scale = 1.0 - height
-    safe = np.where(scale > 1.0e-12, scale, 1.0)
-    first = np.where(scale > 1.0e-12, (values[:, 0] - 0.5 * height) / safe, 0.5)
-    second = np.where(scale > 1.0e-12, (values[:, 1] - 0.5 * height) / safe, 0.5)
+    safe = xp.where(scale > 1.0e-12, scale, 1.0)
+    first = xp.where(scale > 1.0e-12, (values[:, 0] - 0.5 * height) / safe, 0.5)
+    second = xp.where(scale > 1.0e-12, (values[:, 1] - 0.5 * height) / safe, 0.5)
     modal_values = []
     modal_gradients = []
     for first_degree, second_degree, height_degree in indices:
         maximum = max(first_degree, second_degree)
-        first_value, first_derivative = _shifted_jacobi(first_degree, 0.0, 0.0, first)
-        second_value, second_derivative = _shifted_jacobi(second_degree, 0.0, 0.0, second)
-        height_value, height_derivative = _shifted_jacobi(
+        first_value, first_derivative = shifted_jacobi(first_degree, 0.0, 0.0, first)
+        second_value, second_derivative = shifted_jacobi(second_degree, 0.0, 0.0, second)
+        height_value, height_derivative = shifted_jacobi(
             height_degree, 2.0 * maximum + 2.0, 0.0, height
         )
         scale_power = scale**maximum
@@ -534,19 +573,19 @@ def _pyramid_modal_tabulation(
         x_gradient = (
             first_derivative
             * second_value
-            * np.where(maximum > 0, scale ** max(maximum - 1, 0), 1.0)
+            * xp.where(maximum > 0, scale ** max(maximum - 1, 0), 1.0)
             * height_value
         )
         y_gradient = (
             first_value
             * second_derivative
-            * np.where(maximum > 0, scale ** max(maximum - 1, 0), 1.0)
+            * xp.where(maximum > 0, scale ** max(maximum - 1, 0), 1.0)
             * height_value
         )
-        first_height_derivative = np.where(scale > 1.0e-12, (first - 0.5) / safe, 0.0)
-        second_height_derivative = np.where(scale > 1.0e-12, (second - 0.5) / safe, 0.0)
+        first_height_derivative = xp.where(scale > 1.0e-12, (first - 0.5) / safe, 0.0)
+        second_height_derivative = xp.where(scale > 1.0e-12, (second - 0.5) / safe, 0.0)
         scale_derivative = (
-            np.zeros_like(scale) if maximum == 0 else -maximum * scale ** (maximum - 1)
+            xp.zeros_like(scale) if maximum == 0 else -maximum * scale ** (maximum - 1)
         )
         z_gradient = (
             first_derivative
@@ -563,8 +602,8 @@ def _pyramid_modal_tabulation(
             + first_value * second_value * scale_power * height_derivative
         )
         modal_values.append(mode)
-        modal_gradients.append(np.stack((x_gradient, y_gradient, z_gradient), axis=-1))
-    return np.stack(tuple(modal_values), axis=-1), np.stack(
+        modal_gradients.append(xp.stack((x_gradient, y_gradient, z_gradient), axis=-1))
+    return xp.stack(tuple(modal_values), axis=-1), xp.stack(
         tuple(modal_gradients), axis=1
     )
 
@@ -580,6 +619,10 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
     basis_permutation: tuple[int, ...] = eqx.field(static=True)
     modal_indices: tuple[tuple[int, int, int], ...] = eqx.field(static=True)
     coefficients: Array
+    triangle_family: SimplexNodalFamily | None
+    axial_nodes: Array
+    jacobi_keys: tuple[tuple[int, float, float], ...] = eqx.field(static=True)
+    jacobi_recurrences: tuple[tuple[Array, Array], ...]
     condition_number: float = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
@@ -678,6 +721,36 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
         self.basis_permutation = permutation
         self.modal_indices = modal_indices
         self.coefficients = jnp.asarray(coefficients)
+        # Constructors and polynomial coefficient generation are host preparation,
+        # never part of a compiled tabulation.
+        self.triangle_family = triangle if kind == "prism" else None
+        self.axial_nodes = (
+            jnp.asarray(
+                0.5 * (np.asarray(legendre_rule_data(q + 1, "lobatto").nodes) + 1.0)
+            )
+            if kind == "prism"
+            else jnp.empty((0,))
+        )
+        self.jacobi_keys = tuple(
+            sorted(
+                {
+                    key
+                    for first, second, height in modal_indices
+                    for key in (
+                        (first, 0.0, 0.0),
+                        (second, 0.0, 0.0),
+                        (height, 2.0 * max(first, second) + 2.0, 0.0),
+                    )
+                }
+            )
+        )
+        self.jacobi_recurrences = tuple(
+            (
+                _jacobi_recurrence(degree, alpha, beta),
+                _jacobi_recurrence(max(degree - 1, 0), alpha + 1.0, beta + 1.0),
+            )
+            for degree, alpha, beta in self.jacobi_keys
+        )
         self.condition_number = condition_number
         self.family_id = canonical_fingerprint(
             {
@@ -700,23 +773,39 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
         if points_.ndim != 2 or points_.shape[-1] != 3:
             raise ValueError("Hybrid reference points must have shape (n, 3).")
         if self.cell_kind == "pyramid":
+
+            def evaluate(
+                degree: int, alpha: float, beta: float, values: Array | np.ndarray
+            ) -> tuple[Array, Array]:
+                recurrence, derivative = self.jacobi_recurrences[
+                    self.jacobi_keys.index((degree, alpha, beta))
+                ]
+                argument = 2.0 * jnp.asarray(values) - 1.0
+                return (
+                    _evaluate_jacobi_recurrence(recurrence, argument),
+                    jnp.zeros_like(argument)
+                    if degree == 0
+                    else (degree + alpha + beta + 1.0)
+                    * _evaluate_jacobi_recurrence(derivative, argument),
+                )
+
             modal, modal_gradients = _pyramid_modal_tabulation(
-                np.asarray(points_), self.modal_indices
+                points_, self.modal_indices, array_module="jax", shifted_jacobi=evaluate
             )
-            coefficients = np.asarray(self.coefficients)
-            values = modal @ coefficients
-            gradients = np.stack(
-                tuple(modal_gradients[..., axis] @ coefficients for axis in range(3)),
+            values = jnp.asarray(modal) @ self.coefficients
+            gradients = jnp.stack(
+                tuple(
+                    modal_gradients[..., axis] @ self.coefficients for axis in range(3)
+                ),
                 axis=-1,
             )
-            return jnp.asarray(values), jnp.asarray(gradients)
+            return values, gradients
 
-        triangle_degree, axial_degree = self.orders
-        triangle = SimplexNodalFamily("triangle", triangle_degree)
+        triangle = self.triangle_family
+        if triangle is None:
+            raise ValueError("Prism reference family lacks its prepared triangle.")
         triangle_values, triangle_gradients = triangle.tabulate(points_[..., :2])
-        rule = legendre_rule_data(axial_degree + 1, "lobatto")
-        z_nodes = 0.5 * (jnp.asarray(rule.nodes) + 1.0)
-        z_values, z_gradients = lagrange_1d_tabulation(z_nodes, points_[..., 2])
+        z_values, z_gradients = lagrange_1d_tabulation(self.axial_nodes, points_[..., 2])
         values = ein.contract(
             "qi,qj->qij", triangle_values, z_values, backend="jax"
         ).reshape((points_.shape[0], -1))

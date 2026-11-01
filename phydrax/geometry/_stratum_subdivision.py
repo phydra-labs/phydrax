@@ -103,12 +103,20 @@ class _Piece:
 
 @dataclass
 class StratumSubdivisionCache:
-    """Pieces of one embedding proof, keyed by cell, stratum, and reference vertices."""
+    """Pieces and Jacobian controls of one embedding proof, keyed by cell.
+
+    Pieces are keyed by cell, stratum, and reference vertices; Jacobian
+    Bernstein controls by cell and uniform subdivision level (every facet
+    contact of a cell reuses them).
+    """
 
     roots: dict[tuple[int, tuple[int, ...]], _Piece | None] = field(default_factory=dict)
     children: dict[
         tuple[int, tuple[int, ...], tuple[_Barycentric, ...]], tuple[_Piece, _Piece]
     ] = field(default_factory=dict)
+    jacobian_controls: dict[tuple[int, int], tuple[_Matrix, ...] | None] = field(
+        default_factory=dict
+    )
 
 
 def _compositions(total: int, parts: int, /) -> tuple[_Index, ...]:
@@ -940,19 +948,26 @@ def _side(plane: tuple[_Point, Fraction], point: _Point, /) -> Fraction:
 
 
 def _cell_jacobian_controls(
-    cell: EmbeddingCell, level: int, /
+    cell: EmbeddingCell, level: int, cache: StratumSubdivisionCache, /
 ) -> tuple[_Matrix, ...] | None:
-    jacobian = tuple(
-        tuple(derivative(expression, axis) for axis in range(cell.dimension))
-        for expression in cell.coordinates
-    )
-    return subdivided_jacobian_controls(
-        jacobian, cell.proof_domain, cell.dimension, level
-    )
+    key = (cell.global_id, level)
+    if key not in cache.jacobian_controls:
+        jacobian = tuple(
+            tuple(derivative(expression, axis) for axis in range(cell.dimension))
+            for expression in cell.coordinates
+        )
+        cache.jacobian_controls[key] = subdivided_jacobian_controls(
+            jacobian, cell.proof_domain, cell.dimension, level
+        )
+    return cache.jacobian_controls[key]
 
 
 def _glued_facet(
-    first: EmbeddingCell, second: EmbeddingCell, shared: tuple[int, ...], /
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    shared: tuple[int, ...],
+    cache: StratumSubdivisionCache,
+    /,
 ) -> bool:
     dimension = first.dimension
     first_points = [
@@ -1073,8 +1088,8 @@ def _glued_facet(
     # Whole-cell controls first, then uniformly refined ones, which enclose the
     # Jacobian more tightly (one constant preconditioner serves every piece).
     for level in range(SUBDIVISION_LEVELS + 1):
-        first_controls = _cell_jacobian_controls(first, level)
-        second_controls = _cell_jacobian_controls(second, level)
+        first_controls = _cell_jacobian_controls(first, level, cache)
+        second_controls = _cell_jacobian_controls(second, level, cache)
         if first_controls is None or second_controls is None:
             return False
         if (
@@ -1105,7 +1120,11 @@ def _edge_columns(points: list[_Point], extra: _Point, /) -> _Matrix:
 
 
 def glued_facet_monotone(
-    first: EmbeddingCell, second: EmbeddingCell, shared_ids: tuple[int, ...], /
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    shared_ids: tuple[int, ...],
+    cache: StratumSubdivisionCache,
+    /,
 ) -> bool:
     """Prove two facet-sharing simplices or prisms meet only in their shared facet.
 
@@ -1136,7 +1155,9 @@ def glued_facet_monotone(
         )
     ):
         return False
-    return _glued_facet(first, second, shared) or _glued_facet(second, first, shared)
+    return _glued_facet(first, second, shared, cache) or _glued_facet(
+        second, first, shared, cache
+    )
 
 
 __all__ = [

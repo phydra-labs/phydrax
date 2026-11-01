@@ -3,7 +3,7 @@
 #
 
 
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -31,6 +31,19 @@ from phydrax.discretization.fem import (
 )
 from phydrax.exterior._algebra import map_reference_values
 from phydrax.exterior._form_type import FormType, FormValueSpec
+
+
+@pytest.mark.parametrize("kind", ("prism", "pyramid"))
+def test_hybrid_tabulation_compiles_prepared_families(
+    kind: Literal["prism", "pyramid"],
+) -> None:
+    family = HybridReferenceFamily(kind, 3)
+    values, gradients = eqx.filter_jit(
+        lambda prepared, points: prepared.tabulate_with_gradients(points)
+    )(family, family.nodes)
+    np.testing.assert_allclose(values, np.eye(family.nodes.shape[0]), atol=2.0e-8)
+    np.testing.assert_allclose(np.sum(values, axis=1), 1.0, atol=2.0e-10)
+    np.testing.assert_allclose(np.sum(gradients, axis=1), 0.0, atol=2.0e-9)
 
 
 def _quad_mesh() -> Any:
