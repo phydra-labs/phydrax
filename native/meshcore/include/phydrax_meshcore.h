@@ -739,6 +739,8 @@ PHX_MC_API int32_t phx_mc_triangle_dual_quads(
  * PHX_MC_RANGE_ERROR in its item status, its outputs are unspecified, and the
  * caller retries it with wider words or recomputes it on its own exact path.
  * Other items are unaffected.
+ * Sizes and intermediate strides must be addressable even for zero items.
+ * Malformed dimensions are rejected before output mutation.
  */
 enum phx_mc_bernstein_domain {
   PHX_MC_BERNSTEIN_SIMPLEX = 0, /* degree (n); controls ordered by compositions of n
@@ -760,17 +762,17 @@ PHX_MC_API int32_t phx_mc_interval_bernstein_restrict(
     int32_t parallelism);
 /* Elementwise set-based interval product of count aligned interval pairs: a
  * zero endpoint times an unbounded one contributes 0, a NaN endpoint product
- * gives (-inf, inf), an endpoint rounds outward one step only when its binary64
- * product is not error free (Dekker TwoProduct within its exact window, or an
- * exact zero factor), and a sign fixed by the operand signs is kept. Serial:
- * the host interval interpreter calls it once per product of a small batch. */
+ * gives (-inf, inf). Each endpoint product is enclosed independently before
+ * extrema reduction: it rounds outward one step unless proved error free
+ * (Dekker TwoProduct within its exact window, or an exact zero factor).
+ * Sign-fixed results keep their sign unless the NaN fallback applies. */
 PHX_MC_API int32_t phx_mc_interval_multiply(
     int64_t count, const double* first_lower, const double* first_upper,
     const double* second_lower, const double* second_upper, double* lower, double* upper);
 /* Elementwise interval sum (subtract = 0) or difference (subtract = 1) of count
  * aligned interval pairs: an endpoint rounds outward one step only when its
- * binary64 sum is not error free (TwoSum), a NaN endpoint widens the result to
- * the whole line, and a sum of sign-fixed operands keeps that sign. */
+ * binary64 sum is not error free (TwoSum). Either NaN sum endpoint forces the
+ * whole line, overriding exactness and sign retention of the other endpoint. */
 PHX_MC_API int32_t phx_mc_interval_sum(
     int64_t count, const double* first_lower, const double* first_upper,
     const double* second_lower, const double* second_upper, int32_t subtract, double* lower,
@@ -825,8 +827,10 @@ PHX_MC_API int32_t phx_mc_separation_screen(
  * bounds (nodes, dimension), node_size (nodes) the descent key (the caller's
  * sum of node extents), left/right/leaf (nodes), leaf items (leaves,
  * leaf_width) with -1 padding, item bounds (items, dimension). The caller keeps
- * every array alive and unchanged until phx_mc_bvh_pair_stream_free. Blocks
- * follow the LIFO node-block traversal of the host reference: node blocks are
+ * every array alive and unchanged until phx_mc_bvh_pair_stream_free.
+ * Reachable nodes must form a rooted tree (no cycles or shared children);
+ * leaf nodes have left = right = -1. Validation is iterative without a depth cap.
+ * Blocks follow the LIFO node-block traversal of the host reference: node blocks are
  * split at node_block pairs, leaf pairs are tested in chunks of
  * max(1, item_block / (leaf_width_a * leaf_width_b)), and every chunk with a hit
  * is one block. A non-leaf node of the first tree descends when the second
@@ -854,9 +858,14 @@ PHX_MC_API int32_t phx_mc_bvh_pair_stream_create(
     int32_t include_touching, double absolute_tolerance, double relative_tolerance,
     int64_t item_block, int64_t node_block, int32_t parallelism,
     phx_mc_bvh_pair_stream** stream);
-/* Copies whole blocks while they fit: pair_capacity must hold item_block pairs.
- * block_ends receives the exclusive end of every copied block; *blocks == 0
- * after a call means the traversal is complete. */
+/* Copies whole blocks while they fit: pair_capacity must hold at least
+ * max(1, item_block / (leaf_width_a * leaf_width_b)) * leaf_width_a * leaf_width_b
+ * pairs. block_ends receives the exclusive end of each copied block.
+ * On PHX_MC_OK, *blocks == 0 means traversal is complete. Invalid capacities
+ * do not consume work and may be retried. An operational failure (including
+ * allocation failure) is terminal: subsequent valid calls return that failure,
+ * never successful incomplete traversal. Outputs of a failed call are
+ * unspecified; the handle remains safe to free. */
 PHX_MC_API int32_t phx_mc_bvh_pair_stream_next(
     phx_mc_bvh_pair_stream* stream, int64_t pair_capacity, int64_t block_capacity,
     int64_t* first_items, int64_t* second_items, int64_t* block_ends, int64_t* blocks);
