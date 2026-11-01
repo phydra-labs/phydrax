@@ -1216,6 +1216,14 @@ metric edits use exact interpolation ancestry and are committed only after
 whole-orbit closure. `periodic_orbit_closure` and
 `stage_periodic_topology_edit` are the explicit APIs for orbit-complete
 periodic topology transitions.
+Across such an edit, an entity that keeps its identity key (vertex ID, sorted
+vertex IDs, or cell ID) keeps its lifted ID, and its quotient entity keeps its
+quotient ID. Removed quotient IDs are retired. New lifted edges and faces and
+new quotient entities take consecutive IDs from the lineage allocator
+(`allocator_next_ids`) in canonical key order, so a native tetra mesh never
+sees a retired identity again. An edit may change the star of one lifted copy
+of a vertex orbit and leave the other copies alone. Every copy must still
+carry its exact winding and image.
 
 ### Periodic quotient embedding proofs
 
