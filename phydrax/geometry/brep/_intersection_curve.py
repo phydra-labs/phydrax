@@ -2413,6 +2413,7 @@ def _evaluate_orthogonal_cylinder_parameters_on_chart(
     angle_mode: int,
     angle_sign: int,
     angle_turns: int,
+    period: Array,
     /,
 ) -> Array:
     """Evaluate the exact source p-curve on one certified cylinder chart."""
@@ -2454,12 +2455,14 @@ def _evaluate_orthogonal_cylinder_parameters_on_chart(
         small_axis * large_second
     ) + radial_n * jnp.sum(normal * large_second)
     if angle_mode == 1:
-        angle = angle_sign * 0.5 * jnp.pi - jnp.arctan(first_component / second_component)
+        angle = angle_sign * 0.25 * period - jnp.arctan(
+            first_component / second_component
+        )
     else:
         angle = jnp.arctan(second_component / first_component)
         if angle_sign < 0:
-            angle += jnp.pi
-    angle += angle_turns * 2.0 * jnp.pi
+            angle += 0.5 * period
+    angle += angle_turns * period
     large_profile = axial_large / large_slope
     small_profile = (axial_small - delta_small_axis) / small_slope
     if large_index == 0:
@@ -3562,7 +3565,9 @@ class IntersectionPCurve(AbstractCurve):
             return self.last - self.first
         return None
 
-    def _chart_evaluator(self, chart: int, /) -> Callable[[Array], Array]:
+    def _chart_evaluator_with_period(
+        self, chart: int, /
+    ) -> Callable[[Array, Array], Array]:
         family = orthogonal_cylinder_family(self.curve.first, self.curve.second)
         if family is not None:
             branch_sign = _orthogonal_cylinder_curve_branch_sign(self.curve, family)
@@ -3576,7 +3581,7 @@ class IntersectionPCurve(AbstractCurve):
             if angle_data is not None:
                 angle_mode, angle_sign, angle_turns = angle_data
 
-                def evaluate(parameter: Array, /) -> Array:
+                def evaluate(parameter: Array, period: Array, /) -> Array:
                     carrier = (
                         self.first + self.last - parameter if self.reversed else parameter
                     )
@@ -3589,13 +3594,14 @@ class IntersectionPCurve(AbstractCurve):
                         angle_mode,
                         angle_sign,
                         angle_turns,
+                        period,
                     )
                     return parameters[:2] if self.side == "first" else parameters[2:]
 
                 return evaluate
         axis = int(np.asarray(self.curve.chart_axes, dtype=np.int64)[chart])
 
-        def evaluate(parameter: Array, /) -> Array:
+        def evaluate(parameter: Array, period: Array, /) -> Array:
             carrier = self.first + self.last - parameter if self.reversed else parameter
             result = _evaluate_curve_point_on_fixed_chart(
                 self.curve, chart, axis, carrier
@@ -3603,6 +3609,10 @@ class IntersectionPCurve(AbstractCurve):
             return result[1] if self.side == "first" else result[2]
 
         return evaluate
+
+    def _chart_evaluator(self, chart: int, /) -> Callable[[Array], Array]:
+        evaluate = self._chart_evaluator_with_period(chart)
+        return lambda parameter: evaluate(parameter, jnp.asarray(math.tau))
 
     def _evaluate_on_chart(self, parameters: Array, chart: int, /) -> Array:
         values = jnp.asarray(parameters, dtype=jnp.float64)

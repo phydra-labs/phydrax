@@ -329,6 +329,9 @@ coordinates as exact source values.
 Signed shell integration belongs to the native measure implementation and is
 shared by Boolean shell nesting and interchange orientation repair. Its
 directed interval sign proof is independent of a sampled volume estimate.
+For an exact straight cylinder, the Green strip's angular integral is analytic;
+the remaining source p-curve integral is interval-enclosed on individual
+certified intersection charts, retaining the requested volume accuracy.
 
 STEP retains shared conic basis references as one curve-bank definition and
 exports a shared bank row as one referenced conic. Independently authored

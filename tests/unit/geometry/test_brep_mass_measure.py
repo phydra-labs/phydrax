@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from math import pi
+from pathlib import Path
 
 import build123d as bd
 import numpy as np
@@ -342,3 +343,46 @@ def test_conical_hole_defeature_publishes_measured_shape_change() -> None:
     assert result.volume_kind == "enclosed"
     expected = pi * (0.5**2 + 0.5 * 0.75 + 0.75**2) / 3.0
     _contains(np.asarray(result.volume_change_enclosure), expected)
+
+
+def test_cylinder_green_strip_encloses_exact_primitive() -> None:
+    from phydrax.geometry.brep._measure import _green_strip_program
+    from phydrax.geometry.brep._patches import CylinderPatch, LineCurve
+
+    cylinder = CylinderPatch((1, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
+    pcurve = LineCurve((0.0, 0.0), (1.0, 1.0))
+    program = _green_strip_program(cylinder, pcurve, 0.0, cylinder=True)
+    lower, upper = program.evaluate(np.asarray([[0.3]]), np.asarray([[0.4]]))
+    for parameter in (0.3, 0.35, 0.4):
+        expected = (parameter + np.sin(parameter)) / 3.0
+        assert lower[0, 0] <= expected <= upper[0, 0]
+
+
+def test_measure_period_binding_preserves_directed_native_turn() -> None:
+    from fractions import Fraction
+
+    from phydrax.geometry._interval_enclosure import prepare_interval_function
+    from phydrax.geometry.brep._measure import _PeriodBoundProgram
+    from phydrax.geometry.brep._trim_helpers import period_scalar_bounds, PeriodOffset
+
+    program = _PeriodBoundProgram(prepare_interval_function(lambda x: x[1:2], 2))
+    lower, upper = program.evaluate(np.asarray([[0.0]]), np.asarray([[0.0]]))
+    expected_lower, expected_upper = period_scalar_bounds(
+        PeriodOffset(Fraction(0), Fraction(1))
+    )
+    assert lower[0, 0] <= expected_lower
+    assert upper[0, 0] >= expected_upper
+    assert lower[0, 0] < upper[0, 0]
+
+
+def test_iges_cylinder_intersection_source_volume_at_profile_accuracy(
+    tmp_path: Path,
+) -> None:
+    from tools.meshing_qualification.scenarios.native_cad_profiles import (
+        _quadric_case,
+        _source_volume_oracle,
+    )
+
+    model, expected, _, _ = _quadric_case("iges", tmp_path)
+    result = _source_volume_oracle(model, expected, "quadric-routine")
+    assert result["passed"] is True

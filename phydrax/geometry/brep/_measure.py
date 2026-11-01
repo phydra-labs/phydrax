@@ -58,6 +58,8 @@ from .._rational import (
 from ._assembly import BRepAssemblyOccurrence
 from ._boolean_core import AffinePCurve, PeriodicPCurve
 from ._exact import rational_determinant
+from ._intersection import _straight_revolution
+from ._intersection_curve import IntersectionPCurve, orthogonal_cylinder_family
 from ._model import BRepEntityId, BRepGeometry, BRepModel
 from ._patches import (
     AbstractCurve,
@@ -84,6 +86,7 @@ from ._patches import (
     TorusPatch,
 )
 from ._placed import PlacedCurve, PlacedSurface
+from ._trim_helpers import period_scalar_bounds, PeriodOffset
 from ._tspline import TSplineSurfacePatch
 
 
@@ -451,9 +454,35 @@ def _parameter_area_program(pcurve: AbstractCurve, /) -> PreparedIntervalFunctio
     return _cell_program(_with_hessian(density), 1)
 
 
+@dataclass(frozen=True, slots=True)
+class _PeriodBoundProgram:
+    """Supply the directed exact native turn as a non-integrated parameter."""
+
+    program: PreparedIntervalFunction
+
+    def evaluate(self, lower: np.ndarray, upper: np.ndarray, /) -> _Interval:
+        period_lower, period_upper = period_scalar_bounds(
+            PeriodOffset(Fraction(0), Fraction(1))
+        )
+        count = lower.shape[0]
+        return self.program.evaluate(
+            np.concatenate((lower, np.full((count, 1), period_lower)), axis=1),
+            np.concatenate((upper, np.full((count, 1), period_upper)), axis=1),
+        )
+
+
+type _IntervalProgram = PreparedIntervalFunction | _PeriodBoundProgram
+
+
 def _green_strip_program(
-    patch: AbstractSurfacePatch, pcurve: AbstractCurve, origin: float, /
-) -> PreparedIntervalFunction:
+    patch: AbstractSurfacePatch,
+    pcurve: AbstractCurve,
+    origin: float,
+    /,
+    *,
+    chart: int | None = None,
+    cylinder: bool = False,
+) -> _IntervalProgram:
     """``g(u0 + s (u(t) - u0), v(t)) (u(t) - u0) v'(t)`` on the strip ``(t, s)``.
 
     Its integral over ``s`` in ``[0, 1]`` is ``G(u(t), v(t)) v'(t)`` with
@@ -461,14 +490,67 @@ def _green_strip_program(
     gives the trimmed face integral by Green's theorem.
     """
 
-    def density(parameters: Array, /) -> Array:
-        point = _pcurve_point(pcurve, parameters[0])
-        tangent = jax.jacfwd(lambda value: _pcurve_point(pcurve, value))(parameters[0])
-        width = point[0] - origin
-        chart = jnp.stack((origin + parameters[1] * width, point[1]))
-        return _surface_flux(patch, chart) * width * tangent[1]
+    chart_evaluator = (
+        pcurve._chart_evaluator_with_period(chart)
+        if chart is not None and isinstance(pcurve, IntersectionPCurve)
+        else None
+    )
 
-    return _cell_program(_with_hessian(density), 2)
+    def evaluator(period: Array | None) -> Callable[[Array], Array]:
+        if chart_evaluator is not None:
+            assert period is not None
+            return lambda parameter: chart_evaluator(parameter, period)
+        return lambda parameter: _pcurve_point(pcurve, parameter)
+
+    if cylinder:
+        # On an exact cylinder the divergence flux is a + b sin(u) + c cos(u),
+        # independent of v. Recover its coefficients at u=0 by differentiation
+        # and integrate that expression in u before enclosing the remaining
+        # one-dimensional Green integral.
+        def flux_at(angle: Array, /) -> Array:
+            return _surface_flux(patch, jnp.stack((angle, jnp.zeros_like(angle))))
+
+        def cylinder_density(parameters: Array, period: Array | None) -> Array:
+            evaluate = evaluator(period)
+            zero = parameters[0] * 0.0
+            value = flux_at(zero)
+            first = jax.grad(flux_at)(zero)
+            second = jax.grad(jax.grad(flux_at))(zero)
+
+            def primitive(angle: Array, /) -> Array:
+                return (
+                    (value + second) * angle
+                    + first * (1.0 - jnp.cos(angle))
+                    - second * jnp.sin(angle)
+                )
+
+            point = evaluate(parameters[0])
+            tangent = jax.jacfwd(evaluate)(parameters[0])
+            return (primitive(point[0]) - primitive(jnp.asarray(origin))) * tangent[1]
+
+        dimension = 1
+        integrand = cylinder_density
+    else:
+        dimension = 2
+
+        def density(parameters: Array, period: Array | None) -> Array:
+            evaluate = evaluator(period)
+            point = evaluate(parameters[0])
+            tangent = jax.jacfwd(evaluate)(parameters[0])
+            width = point[0] - origin
+            chart_point = jnp.stack((origin + parameters[1] * width, point[1]))
+            return _surface_flux(patch, chart_point) * width * tangent[1]
+
+        integrand = density
+
+    if chart is None:
+        return _cell_program(_with_hessian(lambda x: integrand(x, None)), dimension)
+
+    def jet_with_period(parameters: Array, /) -> Array:
+        period = parameters[-1]
+        return _with_hessian(lambda x: integrand(x, period))(parameters[:-1])
+
+    return _PeriodBoundProgram(_cell_program(jet_with_period, dimension + 1))
 
 
 def _pcurve_point_program(pcurve: AbstractCurve, /) -> PreparedIntervalFunction:
@@ -477,9 +559,7 @@ def _pcurve_point_program(pcurve: AbstractCurve, /) -> PreparedIntervalFunction:
     )
 
 
-def _prepare(
-    label: str, build: Callable[[], PreparedIntervalFunction], /
-) -> PreparedIntervalFunction:
+def _prepare(label: str, build: Callable[[], _IntervalProgram], /) -> _IntervalProgram:
     try:
         return build()
     except IntervalExtensionError as error:
@@ -501,7 +581,7 @@ def _arrays(interval: tuple[object, object], /) -> _Interval:
 
 
 def _evaluate(
-    label: str, program: PreparedIntervalFunction, lower: np.ndarray, upper: np.ndarray
+    label: str, program: _IntervalProgram, lower: np.ndarray, upper: np.ndarray
 ) -> _Interval:
     try:
         low, high = program.evaluate(lower, upper)
@@ -797,7 +877,7 @@ class _Family:
     """Adaptive parameter cells of one integrand times an exact constant factor."""
 
     label: str
-    program: PreparedIntervalFunction
+    program: _IntervalProgram
     factor: _Interval
     dimension: int
     domain: TrimDomain | None
@@ -973,7 +1053,7 @@ def _enclose(
 
 def _new_family(
     label: str,
-    program: PreparedIntervalFunction,
+    program: _IntervalProgram,
     factor: _Interval,
     boxes: np.ndarray,
     *,
@@ -1242,6 +1322,15 @@ def _loop_ends(source: _VolumeSource, face: int, /) -> _LoopEnds:
                 ends.append((_exact_end(exact[1]), _exact_end(exact[2])))
                 continue
             pcurve = geometry.pcurves[coedge]
+            if isinstance(pcurve, IntersectionPCurve):
+                first, last = _traversal_range(geometry, coedge)
+                ends.append(
+                    (
+                        _End(pcurve.bounding_box(first, first), None),
+                        _End(pcurve.bounding_box(last, last), None),
+                    )
+                )
+                continue
             label = f"source coedge {coedge} p-curve"
             program = _prepare(label, lambda: _pcurve_point_program(pcurve))
             values = np.asarray(_traversal_range(geometry, coedge))[:, None]
@@ -1265,6 +1354,18 @@ def _chord_distance(end: _End, start: _End, /) -> float:
     gap = np.maximum(np.abs(end.box[1] - start.box[0]), np.abs(start.box[1] - end.box[0]))
     largest = float(np.max(gap))
     return float(np.nextafter(largest, np.inf)) if largest else 0.0
+
+
+def _green_curve_breaks(curve: AbstractCurve, /) -> np.ndarray | None:
+    """Admit analytic intersection p-curves only one certified chart at a time."""
+    if isinstance(curve, IntersectionPCurve):
+        if orthogonal_cylinder_family(curve.curve.first, curve.curve.second) is None:
+            return None
+        breaks = np.arange(curve.curve.num_charts + 1, dtype=np.float64)
+        if curve.reversed:
+            breaks = curve.first + curve.last - breaks[::-1]
+        return breaks
+    return _curve_breaks(curve)
 
 
 def _plan_face(
@@ -1363,7 +1464,7 @@ def _plan_face(
         _norm_bound(frame_low[0, 4:], frame_high[0, 4:]),
     )
     pcurve_breaks = tuple(
-        _curve_breaks(geometry.pcurves[coedge])
+        _green_curve_breaks(geometry.pcurves[coedge])
         for loop in geometry.face_loops[face]
         for coedge in loop
     )
@@ -1380,6 +1481,18 @@ def _plan_face(
         # p-curves of a smooth integrand on parameter strips (tau, sigma) that
         # sweep from the chart's lower u edge, so no cell crosses the trim.
         families = []
+        straight = _straight_revolution(patch)
+        cylinder = straight is not None and straight.slope == 0
+
+        def grid(first: float, last: float, breaks: np.ndarray, /) -> np.ndarray:
+            if cylinder:
+                return _break_grid(np.asarray((first,)), np.asarray((last,)), (breaks,))
+            return _break_grid(
+                np.asarray((first, 0.0)),
+                np.asarray((last, 1.0)),
+                (breaks, _NO_BREAKS),
+            )
+
         magnitude = max(abs(float(frame_low[0, 0])), abs(float(frame_high[0, 0])))
         sweep = float(bounds[1, 0] - bounds[0, 0])
         chords = 0.0
@@ -1392,26 +1505,52 @@ def _plan_face(
                         geometry.coedge_edges[coedge]
                     ]
                 )
-                piece_breaks = _curve_breaks(pcurve)
+                piece_breaks = _green_curve_breaks(pcurve)
                 assert piece_breaks is not None
                 coedge_label = f"{label} coedge {coedge}"
-                families.append(
-                    _new_family(
-                        coedge_label,
-                        _prepare(
-                            coedge_label,
-                            lambda: _green_strip_program(
-                                patch, pcurve, float(bounds[0, 0])
-                            ),
-                        ),
-                        _factor(Fraction(sign * geometry.coedge_senses[coedge])),
-                        _break_grid(
-                            np.asarray((first, 0.0)),
-                            np.asarray((last, 1.0)),
-                            (piece_breaks, _NO_BREAKS),
-                        ),
+                if isinstance(pcurve, IntersectionPCurve):
+                    cuts = np.concatenate(
+                        ([first], _interior_breaks(piece_breaks, first, last), [last])
                     )
-                )
+                    for start, stop in zip(cuts[:-1], cuts[1:], strict=True):
+                        midpoint = float(start + 0.5 * (stop - start))
+                        carrier = (
+                            pcurve.first + pcurve.last - midpoint
+                            if pcurve.reversed
+                            else midpoint
+                        )
+                        chart = min(int(carrier), pcurve.curve.num_charts - 1)
+                        families.append(
+                            _new_family(
+                                coedge_label,
+                                _prepare(
+                                    coedge_label,
+                                    lambda: _green_strip_program(
+                                        patch,
+                                        pcurve,
+                                        float(bounds[0, 0]),
+                                        chart=chart,
+                                        cylinder=cylinder,
+                                    ),
+                                ),
+                                _factor(Fraction(sign * geometry.coedge_senses[coedge])),
+                                grid(float(start), float(stop), _NO_BREAKS),
+                            )
+                        )
+                else:
+                    families.append(
+                        _new_family(
+                            coedge_label,
+                            _prepare(
+                                coedge_label,
+                                lambda: _green_strip_program(
+                                    patch, pcurve, float(bounds[0, 0]), cylinder=cylinder
+                                ),
+                            ),
+                            _factor(Fraction(sign * geometry.coedge_senses[coedge])),
+                            grid(first, last, piece_breaks),
+                        )
+                    )
                 chords += _chord_distance(
                     loop_ends[position][1], loop_ends[(position + 1) % len(loop)][0]
                 )
