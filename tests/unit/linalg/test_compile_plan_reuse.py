@@ -108,7 +108,7 @@ def test_prepared_inverse_and_custom_root_reuse_traces(
 def test_eager_route_accumulation_reuses_trace_and_preserves_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _linear._sum_route_products.clear_cache()
+    jax.clear_caches()
     calls = []
     original = _linear._accumulate_slot
 

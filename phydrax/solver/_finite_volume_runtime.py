@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from .._differentiation import BranchDifferentiationPolicy
@@ -126,7 +126,7 @@ def _fold_retry_attempts(
     reverse-differentiable. Op-by-op (eager collective) steps keep the plain
     attempt sequence.
     """
-    if not any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(carry)):
+    if not any(isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(carry)):
         for retry in range(1, maximum_retries + 1):
             carry = attempt(retry, carry)
         return carry
