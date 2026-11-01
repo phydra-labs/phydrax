@@ -496,10 +496,9 @@ TetEditStatus TetMesh::relocate_impl(
       if (protected_vertex(slot) || protection_radius(slot) > 0.0) {
         return TetEditStatus::kRejectedProtected;
       }
-      if (vertex_dimension(slot) < 3 &&
-          witness(slot).stratum == SourceStratum::kNone) {
-        return TetEditStatus::kUncertainPredicate;
-      }
+      // A boundary vertex without a source witness is its own exact source
+      // point: the overlay revalidation below checks every incident facet and
+      // segment by exact coverage of the moved carrier.
       if (vertex.protected_vertex != protected_vertex(slot) ||
           vertex.protection_radius != protection_radius(slot)) {
         return TetEditStatus::kRejectedProtected;
@@ -598,7 +597,7 @@ TetEditStatus TetMesh::relocate_impl(
         check.source = facet.source;
         check.orientation = facet.orientation;
         if (!source_face_valid(check, &overlay)) {
-          return TetEditStatus::kUncertainPredicate;
+          return TetEditStatus::kInvalidGeometry;
         }
       }
       for (const TetSnapshotSegment& segment : segments_) {
@@ -611,7 +610,7 @@ TetEditStatus TetMesh::relocate_impl(
         check.vertices = segment.vertices;
         check.source = segment.source;
         if (!source_segment_valid(check, &overlay)) {
-          return TetEditStatus::kUncertainPredicate;
+          return TetEditStatus::kInvalidGeometry;
         }
       }
     } else {
@@ -1361,7 +1360,7 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
         record.vertices = {vertex_id(edge.from), vertex_id(edge.to), vertex.id};
         record.source = edge.source;
         record.orientation = edge.orientation;
-        if (!source_face_valid(record)) return reject(TetEditStatus::kUncertainPredicate);
+        if (!source_face_valid(record)) return reject(TetEditStatus::kInvalidGeometry);
         TetSnapshotFacet facet;
         facet.vertices = record.vertices;
         facet.source = edge.source;
@@ -1374,7 +1373,7 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
           record.vertices = {half == 0 ? vertex_id(split[0]) : vertex.id,
                              half == 0 ? vertex.id : vertex_id(split[1])};
           record.source = segment_source;
-          if (!source_segment_valid(record)) return reject(TetEditStatus::kUncertainPredicate);
+          if (!source_segment_valid(record)) return reject(TetEditStatus::kInvalidGeometry);
         }
       }
 
@@ -1892,12 +1891,37 @@ bool TetMesh::validate_regions_and_constraints(
       };
 
 
+  // A non-split edit may retire constrained boundary facets (a boundary vertex
+  // collapse or a coplanar boundary swap): a removed cell side on the ghost
+  // shell that names a removed facet needs no identical replacement side. The
+  // new boundary is then exactly the replacement facets, each checked for exact
+  // source coverage and orientation, and the candidate shell must mark exactly
+  // the future facets (validate_and_commit).
+  std::set<SortedFace> retired_boundary;
+  if (operation.split_edges.empty()) {
+    for (std::uint64_t id : operation.removed_facet_ids) {
+      const auto found = std::find_if(facets_.begin(), facets_.end(),
+          [&](const TetSnapshotFacet& facet) { return facet.id == id; });
+      if (found == facets_.end()) return false;
+      std::int32_t local[3];
+      for (int corner = 0; corner < 3; ++corner) {
+        local[corner] = vertex_slot(found->vertices[corner]);
+        if (local[corner] < 0) return false;
+      }
+      retired_boundary.insert(sorted_face(local));
+    }
+  }
   for (std::int32_t slot : removed_slots) {
     if (!complex_.live(slot) || is_ghost(tet(slot))) return false;
     const Tetrahedron& cell = tet(slot);
     for (int face_slot = 0; face_slot < 4; ++face_slot) {
       const std::int32_t neighbor = cell.n[face_slot];
       if (removed.contains(neighbor)) continue;
+      if (is_ghost(tet(neighbor)) && !retired_boundary.empty()) {
+        std::int32_t face[3];
+        oriented_facet(cell.v, face_slot, face);
+        if (retired_boundary.contains(sorted_face(face))) continue;
+      }
       if (!replacement_boundary_face(cell, face_slot, complex_.region(slot))) {
         return false;
       }
@@ -2091,24 +2115,6 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   // lattice action: a seam facet stays valid when its deck partner does.
   const PeriodicMemberIndex seam_members =
       relocation ? mesh.periodic_member_index() : PeriodicMemberIndex{};
-  // A boundary vertex without a source witness may move only as a whole orbit
-  // member that lies on no constrained segment and only on periodic seams; in
-  // the quotient it is interior.
-  const auto periodic_seam_vertex = [&](std::uint64_t id) {
-    if (!seam_members.contains(id)) return false;
-    for (const TetSnapshotSegment& segment : mesh.segments_) {
-      if (segment.vertices[0] == id || segment.vertices[1] == id) return false;
-    }
-    bool incident = false;
-    for (const TetSnapshotFacet& facet : mesh.facets_) {
-      if (std::find(facet.vertices.begin(), facet.vertices.end(), id) == facet.vertices.end()) {
-        continue;
-      }
-      if (!mesh.periodic_seam_facet(facet, seam_members)) return false;
-      incident = true;
-    }
-    return incident;
-  };
   std::unordered_set<std::uint64_t> changed_vertex_ids;
   std::vector<std::int32_t> moved_vertex_slots;
   std::size_t new_count = 0;
@@ -2127,11 +2133,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       if (mesh.protected_vertex(current_slot) || mesh.protection_radius(current_slot) > 0.0) {
         return TetEditStatus::kRejectedProtected;
       }
-      if (mesh.vertex_dimension(current_slot) < 3 &&
-          mesh.witness(current_slot).stratum == SourceStratum::kNone &&
-          !periodic_seam_vertex(vertex.id)) {
-        return TetEditStatus::kUncertainPredicate;
-      }
+      // A boundary vertex without a source witness is its own exact source
+      // point; every affected facet and segment is revalidated exactly below.
       if (vertex.protected_vertex != mesh.protected_vertex(current_slot) ||
           vertex.protection_radius != mesh.protection_radius(current_slot)) {
         return TetEditStatus::kRejectedProtected;
@@ -2338,7 +2341,9 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
         return facet.protected_facet || mesh.policy_ == BoundaryPolicy::kFixed
                    ? TetEditStatus::kRejectedProtected : TetEditStatus::kRejectedTopology;
       }
-      if (!mesh.source_face_valid(facet)) return TetEditStatus::kUncertainPredicate;
+      // Source facet and segment validity are exact predicates (expansion
+      // arithmetic): a refusal is certain invalid geometry, never uncertainty.
+      if (!mesh.source_face_valid(facet)) return TetEditStatus::kInvalidGeometry;
       TetSnapshotFacet record;
       record.id = facet.id;
       record.vertices = facet.vertices;
@@ -2379,7 +2384,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
         return segment.protected_segment || mesh.policy_ == BoundaryPolicy::kFixed
                    ? TetEditStatus::kRejectedProtected : TetEditStatus::kRejectedTopology;
       }
-      if (!mesh.source_segment_valid(segment)) return TetEditStatus::kUncertainPredicate;
+      if (!mesh.source_segment_valid(segment)) return TetEditStatus::kInvalidGeometry;
       TetSnapshotSegment record;
       record.id = segment.id;
       record.vertices = segment.vertices;
@@ -2444,7 +2449,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       check.source = facet.source;
       check.orientation = facet.orientation;
       if (!mesh.periodic_seam_facet(facet, seam_members) && !mesh.source_face_valid(check)) {
-        return TetEditStatus::kUncertainPredicate;
+        return TetEditStatus::kInvalidGeometry;
       }
     }
     for (const TetSnapshotSegment& segment : mesh.segments_) {
@@ -2456,7 +2461,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       check.id = segment.id;
       check.vertices = segment.vertices;
       check.source = segment.source;
-      if (!mesh.source_segment_valid(check)) return TetEditStatus::kUncertainPredicate;
+      if (!mesh.source_segment_valid(check)) return TetEditStatus::kInvalidGeometry;
     }
     for (std::int32_t slot : removed_slots) {
       const Tetrahedron& tet = mesh.tet(slot);
