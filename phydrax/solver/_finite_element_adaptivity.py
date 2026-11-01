@@ -4,6 +4,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field as dataclass_field
+from fractions import Fraction
 from pathlib import Path
 from typing import assert_never, final, TYPE_CHECKING
 
@@ -84,7 +85,7 @@ from ..meshing._distribution import (
     OwnerLocalGraphMigrationEvidence,
     OwnerLocalGraphPartitionEvidence,
 )
-from ..meshing._lineage import MeshLineage, VertexInterpolationStencil
+from ..meshing._lineage import EntityLineageKind, MeshLineage, VertexInterpolationStencil
 from ..sparse import EdgeRelation, SparseLinearMap
 from ..typing import checked
 from ._finite_element_schedule import (
@@ -1673,6 +1674,85 @@ def _finite_element_owner_local_action_id(
     )
 
 
+def _owner_local_cell_average_rows(
+    metadata: "_FiniteElementOwnerLocalAdaptiveMetadata",
+    dimension: int,
+    target_ids: np.ndarray,
+    /,
+) -> tuple[tuple[tuple[int, Fraction], ...], ...]:
+    """Build exact physical-overlap rows from accepted nested cell lineage."""
+    if metadata.lineage is None:
+        if (
+            metadata.source_cell_ids.size
+            or metadata.target_cell_ids.size
+            or target_ids.size
+        ):
+            raise ValueError("Nonempty conservative FE transfer requires cell lineage.")
+        return ()
+    source_measures = dict(
+        zip(
+            map(int, metadata.source_cell_ids), metadata.source_cell_measures, strict=True
+        )
+    )
+    target_measures = dict(
+        zip(
+            map(int, metadata.target_cell_ids), metadata.target_cell_measures, strict=True
+        )
+    )
+    if (
+        len(source_measures) != metadata.source_cell_ids.size
+        or len(target_measures) != metadata.target_cell_ids.size
+        or any(
+            not isinstance(value, Fraction) or value <= 0
+            for value in (*source_measures.values(), *target_measures.values())
+        )
+    ):
+        raise ValueError("Conservative FE lineage requires positive exact cell measures.")
+    lineage = metadata.lineage.entity_lineage(dimension)
+    source_coverage = {identifier: Fraction(0) for identifier in source_measures}
+    target_coverage = {identifier: Fraction(0) for identifier in target_measures}
+    rows: dict[int, list[tuple[int, Fraction]]] = {
+        identifier: [] for identifier in target_measures
+    }
+    seen: set[tuple[int, int]] = set()
+    for source, target, kind in zip(
+        np.asarray(lineage.source_global_ids, dtype=np.int64),
+        np.asarray(lineage.target_global_ids, dtype=np.int64),
+        np.asarray(lineage.relation_kinds, dtype=np.int32),
+        strict=True,
+    ):
+        source_id, target_id = int(source), int(target)
+        if (
+            source_id not in source_measures
+            or target_id not in target_measures
+            or (source_id, target_id) in seen
+        ):
+            raise ValueError(
+                "Conservative FE cell lineage escapes or duplicates its domain."
+            )
+        seen.add((source_id, target_id))
+        source_measure = source_measures[source_id]
+        target_measure = target_measures[target_id]
+        if kind == int(EntityLineageKind.PRESERVED):
+            if source_measure != target_measure:
+                raise ValueError("Preserved FE cell changed its exact physical measure.")
+            overlap = source_measure
+        elif kind == int(EntityLineageKind.REFINED_FROM):
+            overlap = target_measure
+        elif kind == int(EntityLineageKind.COARSENED_INTO):
+            overlap = source_measure
+        else:
+            raise ValueError("FE cell lineage lacks a nested physical-overlap contract.")
+        source_coverage[source_id] += overlap
+        target_coverage[target_id] += overlap
+        rows[target_id].append((source_id, overlap / target_measure))
+    if source_coverage != source_measures or target_coverage != target_measures:
+        raise ValueError(
+            "Conservative FE lineage does not exactly cover source and target."
+        )
+    return tuple(tuple(sorted(rows[int(identifier)])) for identifier in target_ids)
+
+
 def _transfer_finite_element_owner_local_adaptive_field(
     transaction: "FiniteElementTopologyTransaction",
     context: _FiniteElementRepartitionContext,
@@ -1705,15 +1785,12 @@ def _transfer_finite_element_owner_local_adaptive_field(
     local_error = None
     source_keys = np.asarray(source_ownership.dof_keys, dtype=np.int64)
     target_keys = np.asarray(target_ownership.dof_keys, dtype=np.int64)
-    target_origins: tuple[int, ...] = ()
+    target_rows: tuple[tuple[tuple[int, Fraction], ...], ...] = ()
     if conservative_cell_average:
         dimension = context.target_geometry_view.topological_dimension
         if (
             source_map.association != "cell"
             or target_map.association != "cell"
-            or metadata.target_cell_ids.shape != metadata.target_cell_origins.shape
-            or np.unique(metadata.target_cell_ids).size != metadata.target_cell_ids.size
-            or np.any(metadata.target_cell_origins < 0)
             or (
                 source_keys.size
                 and (
@@ -1731,20 +1808,12 @@ def _transfer_finite_element_owner_local_adaptive_field(
         ):
             local_error = "Conservative FE cell-average ancestry or keys are malformed."
         else:
-            origin_by_target = {
-                int(identifier): int(origin)
-                for identifier, origin in zip(
-                    metadata.target_cell_ids,
-                    metadata.target_cell_origins,
-                    strict=True,
-                )
-            }
             try:
-                target_origins = tuple(
-                    origin_by_target[int(key[1])] for key in target_keys
+                target_rows = _owner_local_cell_average_rows(
+                    metadata, dimension, target_keys[:, 1]
                 )
-            except KeyError:
-                local_error = "A target-owned FE P0 cell lacks adaptive ancestry."
+            except (ValueError, KeyError) as error:
+                local_error = str(error)
     elif vertex_transfer:
         stencil = metadata.vertex_stencil
         if stencil is None:
@@ -1809,7 +1878,9 @@ def _transfer_finite_element_owner_local_adaptive_field(
     )
 
     if conservative_cell_average:
-        unique_origins = np.asarray(sorted(set(target_origins)), dtype=np.int64)
+        unique_origins = np.asarray(
+            sorted({source for row in target_rows for source, _ in row}), dtype=np.int64
+        )
         request_keys = np.zeros((unique_origins.size, 3), dtype=np.int64)
         request_keys[:, 0] = dimension
         request_keys[:, 1] = unique_origins
@@ -1822,10 +1893,19 @@ def _transfer_finite_element_owner_local_adaptive_field(
         }
         target_values = (
             jnp.stack(
-                tuple(parent_values[origin_row[origin]] for origin in target_origins),
+                tuple(
+                    sum(
+                        (
+                            parent_values[origin_row[source]] * float(weight)
+                            for source, weight in row
+                        ),
+                        jnp.zeros(source_values.shape[1:], dtype=source_values.dtype),
+                    )
+                    for row in target_rows
+                ),
                 axis=0,
             )
-            if target_origins
+            if target_rows
             else jnp.empty(
                 (0,) + tuple(int(size) for size in source_values.shape[1:]),
                 dtype=source_values.dtype,
@@ -1854,7 +1934,7 @@ def _transfer_finite_element_owner_local_adaptive_field(
             )
         )
         conservative = True
-        action_id = f"cell-origin:{context.adaptive_result_id}"
+        action_id = f"cell-lineage:{context.adaptive_result_id}"
     elif vertex_transfer:
         stencil = metadata.vertex_stencil
         if stencil is None:
@@ -2030,9 +2110,8 @@ class _FiniteElementOwnerLocalAdaptiveMetadata:
     vertex_stencil: VertexInterpolationStencil | None
     source_cell_ids: np.ndarray
     target_cell_ids: np.ndarray
-    target_cell_origins: np.ndarray
-    source_cell_measures: tuple[object, ...]
-    target_cell_measures: tuple[object, ...]
+    source_cell_measures: tuple[Fraction, ...]
+    target_cell_measures: tuple[Fraction, ...]
     adaptive_result: FiniteElementFieldTransferContext | None
 
 
@@ -2047,7 +2126,7 @@ def _finite_element_owner_local_adaptive_metadata(
     empty = np.empty((0,), dtype=np.int64)
     if adaptive_result is None:
         return _FiniteElementOwnerLocalAdaptiveMetadata(
-            None, None, None, None, empty, empty, empty, (), (), None
+            None, None, None, None, empty, empty, (), (), None
         )
     if type(adaptive_result) is OwnerLocalPeriodicAdaptiveResult:
         if not adaptive_result.status.converged or adaptive_result.refusal is not None:
@@ -2059,7 +2138,6 @@ def _finite_element_owner_local_adaptive_metadata(
             adaptive_result.vertex_stencil,
             np.asarray(adaptive_result.source_cell_ids, dtype=np.int64),
             np.asarray(adaptive_result.target_cell_ids, dtype=np.int64),
-            np.asarray(adaptive_result.target_cell_origins, dtype=np.int64),
             tuple(adaptive_result.source_cell_measures),
             tuple(adaptive_result.target_cell_measures),
             adaptive_result,
@@ -2074,7 +2152,6 @@ def _finite_element_owner_local_adaptive_metadata(
             adaptive_result.vertex_stencil,
             np.asarray(adaptive_result.source_cell_ids, dtype=np.int64),
             np.asarray(adaptive_result.target_cell_ids, dtype=np.int64),
-            np.asarray(adaptive_result.target_cell_origins, dtype=np.int64),
             tuple(adaptive_result.source_cell_measures),
             tuple(adaptive_result.target_cell_measures),
             adaptive_result,
@@ -2838,7 +2915,6 @@ def _validate_finite_element_owner_local_topology_authority(
             or not _finite_element_owner_local_mesh_rows_match_view(
                 adaptive.target_mesh, target_view
             )
-            or metadata.target_cell_ids.shape != metadata.target_cell_origins.shape
             or (
                 adaptive.vertex_stencil is not None
                 and (

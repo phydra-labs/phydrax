@@ -107,13 +107,10 @@ def test_triangle_transition_lineage_stencil_and_atomic_commit() -> None:
     assert jnp.allclose(result.state.fields[0], transition.target.mesh.coordinates[:, 0])
 
 
-
 def test_non_dyadic_stencil_weights_remain_exact_and_unique() -> None:
     exact = ((Fraction(1, 3), Fraction(2, 3)),)
     sources = np.asarray(((5, 7),), dtype=np.int64)
-    weights = np.asarray(
-        ((float(exact[0][0]), float(exact[0][1])),), dtype=np.float64
-    )
+    weights = np.asarray(((float(exact[0][0]), float(exact[0][1])),), dtype=np.float64)
     valid = np.ones(sources.shape, dtype=np.bool_)
     stencil = phx.meshing.VertexInterpolationStencil(
         "source-vertices",
@@ -127,9 +124,10 @@ def test_non_dyadic_stencil_weights_remain_exact_and_unique() -> None:
 
     assert stencil.preserves_constants
     assert stencil.exact_weights == exact
-    assert sum(
-        (Fraction.from_float(float(weight)) for weight in weights[0]), Fraction(0)
-    ) != 1
+    assert (
+        sum((Fraction.from_float(float(weight)) for weight in weights[0]), Fraction(0))
+        != 1
+    )
     assert len(set(np.asarray(stencil.source_global_ids)[0])) == 2
     expected = float(exact[0][0] * 2 + exact[0][1] * 4)
     value = np.asarray(stencil.apply((5, 7), np.asarray((2.0, 4.0))))
@@ -153,6 +151,84 @@ def test_non_dyadic_stencil_weights_remain_exact_and_unique() -> None:
             np.ones((1, 2), dtype=np.bool_),
             exact_weights=((Fraction(1, 4), Fraction(3, 4)),),
         )
+
+
+def test_owner_local_p0_uses_many_to_many_physical_cell_lineage() -> None:
+    from dataclasses import replace
+
+    from phydrax.meshing._lineage import EntityLineage, EntityLineageKind, MeshLineage
+    from phydrax.solver._finite_element_adaptivity import (
+        _FiniteElementOwnerLocalAdaptiveMetadata,
+        _owner_local_cell_average_rows,
+    )
+
+    # One unequal-measure family coarsens while another cell refines.
+    source_ids = np.asarray((10, 11, 20), dtype=np.int64)
+    target_ids = np.asarray((1, 21, 22), dtype=np.int64)
+    lineage = MeshLineage(
+        "source-topology",
+        "target-topology",
+        (
+            EntityLineage(
+                2,
+                "source-cells",
+                "target-cells",
+                (10, 11, 20, 20),
+                (1, 1, 21, 22),
+                (
+                    EntityLineageKind.COARSENED_INTO,
+                    EntityLineageKind.COARSENED_INTO,
+                    EntityLineageKind.REFINED_FROM,
+                    EntityLineageKind.REFINED_FROM,
+                ),
+            ),
+        ),
+    )
+    metadata = _FiniteElementOwnerLocalAdaptiveMetadata(
+        "result",
+        "candidate",
+        lineage,
+        None,
+        source_ids,
+        target_ids,
+        (Fraction(1, 3), Fraction(2, 3), Fraction(2)),
+        (Fraction(1), Fraction(1, 2), Fraction(3, 2)),
+        None,
+    )
+    rows = _owner_local_cell_average_rows(metadata, 2, target_ids)
+    assert rows == (
+        ((10, Fraction(1, 3)), (11, Fraction(2, 3))),
+        ((20, Fraction(1)),),
+        ((20, Fraction(1)),),
+    )
+    source_values = {10: Fraction(2), 11: Fraction(8), 20: Fraction(5)}
+    values = tuple(
+        sum((source_values[i] * w for i, w in row), Fraction(0)) for row in rows
+    )
+    assert values == (6, 5, 5)
+    assert sum(
+        (
+            value * measure
+            for value, measure in zip(values, metadata.target_cell_measures, strict=True)
+        ),
+        Fraction(0),
+    ) == sum(
+        (
+            source_values[int(i)] * measure
+            for i, measure in zip(source_ids, metadata.source_cell_measures, strict=True)
+        ),
+        Fraction(0),
+    )
+    with pytest.raises(ValueError, match="exactly cover"):
+        _owner_local_cell_average_rows(
+            replace(
+                metadata,
+                target_cell_measures=(Fraction(2), Fraction(1, 2), Fraction(3, 2)),
+            ),
+            2,
+            target_ids,
+        )
+
 
 def test_conservative_cell_average_uses_overlap_and_rolls_back() -> None:
     source = _source()
@@ -182,11 +258,15 @@ def test_conservative_cell_average_uses_overlap_and_rolls_back() -> None:
                 phx.solver.FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE
             ),
         )
-    dof_map = phx.discretization.fem.FiniteElementPlan(
-        mesh,
-        (layout.field_spec,),
-        coordinate_spec=source.geometry,
-    ).prepare().dof_maps[0]
+    dof_map = (
+        phx.discretization.fem.FiniteElementPlan(
+            mesh,
+            (layout.field_spec,),
+            coordinate_spec=source.geometry,
+        )
+        .prepare()
+        .dof_maps[0]
+    )
     field = np.arange(1, dof_map.global_dof_count + 1, dtype=np.float64)
     accepted = phx.solver.FiniteElementAcceptedState(
         (field,),
@@ -218,8 +298,7 @@ def test_conservative_cell_average_uses_overlap_and_rolls_back() -> None:
     assert evidence.transfer.conservative
     assert evidence.coverage_complete
     assert np.all(
-        np.abs(np.asarray(evidence.conservation_defect))
-        <= evidence.conservation_bound
+        np.abs(np.asarray(evidence.conservation_defect)) <= evidence.conservation_bound
     )
     np.testing.assert_allclose(evidence.source_integral, evidence.target_integral)
     np.testing.assert_array_equal(
@@ -286,9 +365,7 @@ def test_parentless_retriangulation_withholds_vertex_transfer() -> None:
     assert target.stencil.preserves_constants
     assert target.transfer is None
     cell_lineage = target.lineage.entity_lineage(2)
-    np.testing.assert_array_equal(
-        np.asarray(cell_lineage.created_target_ids), (101, 102)
-    )
+    np.testing.assert_array_equal(np.asarray(cell_lineage.created_target_ids), (101, 102))
 
 
 def test_material_field_requires_its_declared_chain_action() -> None:
@@ -331,7 +408,9 @@ def test_material_field_requires_its_declared_chain_action() -> None:
     assert not bool(result.committed)
     assert result.state is accepted
     assert result.adaptation is None
-    assert result.diagnostics == "material-following-field-requires-validated-material-chain"
+    assert (
+        result.diagnostics == "material-following-field-requires-validated-material-chain"
+    )
 
 
 @pytest.mark.parametrize("commit", (True, False), ids=("commit", "rollback"))

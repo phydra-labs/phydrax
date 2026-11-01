@@ -1586,6 +1586,14 @@ action. Configure `material_field_transfer`, `eulerian_field_transfer`,
 missing, the accepted state remains unchanged for the whole transition; other
 fields are not zero-filled or silently switched to another route.
 
+Owner-local nested P0 transfer consumes the many-to-many `MeshLineage`, not one
+representative source cell per target. Refinement assigns the target's physical
+measure to each nested overlap; coarsening sums child content using each child's
+exact physical measure and divides by the restored parent's measure. Both source
+and target coverage must be exact. This rule applies only to declared
+conservative cell averages; higher-order and form fields retain their own
+nested/projection actions.
+
 `material_csr_rows` is an explicit, policy-bounded material-action view; ordinary
 Eulerian remap keeps its own physical-overlap CSR. `MappedNestedRemapEvidence`
 binds a physical coverage report to an exact geometry-transition witness, while
@@ -1841,12 +1849,21 @@ and host-barrier counts, the native metric evidence, and whether edits committed
 
 ### Stable-ID forest migration and restart
 
-`extract_simplex_forest` converts the allocated cell and vertex slots in an
-`AdaptiveSimplexState` to stable scientific IDs, including parent/child links,
-split vertices, cell and vertex history, and protected edges. Slot numbers remain
-local storage details. `validate_simplex_forest` rechecks the full link closure;
+`extract_simplex_forest` converts active leaves and their live coarsenable
+ancestors in an `AdaptiveSimplexState` to stable scientific IDs. It retains
+parent/child links, exact connectivity, required vertex ancestry, classes, and
+protected edges, not retired descendants or previous execution snapshots.
+Restored parents keep their original IDs; allocation cursors remain monotone,
+so discarded descendant IDs are never reused. Slot numbers remain local storage
+details. `validate_simplex_forest` rechecks the full link closure;
 `reconstruct_adaptive_simplex_state` rebuilds a capacity-bucketed state from
 those ID-keyed records while retaining the supplied epoch clocks.
+
+`PeriodicSimplexForest` additionally binds exact lifted coordinates, source
+representatives, integer winding, block identity, source revision, and lattice
+identity. Reconstruction verifies midpoint restrictions and that each child
+pair exactly tiles its recorded parent. Current-view validation must also check
+the active leaves against the accepted source, quotient, and owner directory.
 
 For owner-local execution, wrap the forest and any cell- or vertex-aligned field
 rows in `OwnerLocalMigrationState`. `prepare_ownerlocal_migration` stages cell,

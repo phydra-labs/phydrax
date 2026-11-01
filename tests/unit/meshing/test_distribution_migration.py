@@ -97,6 +97,115 @@ def _mesh_state() -> tuple[AdaptiveSimplexLayout, AdaptiveSimplexState, np.ndarr
     return update.layout, update.state, cell_ids
 
 
+def test_live_forest_discards_retired_slots_without_reusing_ids() -> None:
+    from phydrax.discretization import coarsen_adaptive_simplex
+
+    layout, refined, root_ids = _mesh_state()
+    live = extract_simplex_forest(refined)
+    restored = reconstruct_adaptive_simplex_state(live, refined, layout)
+    update = coarsen_adaptive_simplex(
+        layout, restored, np.asarray(restored.mesh.cell_active, dtype=np.bool_)
+    )
+    compact = extract_simplex_forest(update.state)
+    np.testing.assert_array_equal(compact.cell_ids, root_ids)
+    np.testing.assert_array_equal(compact.vertex_ids, np.arange(9, dtype=np.int64))
+    np.testing.assert_array_equal(compact.cell_field_map()["children_ids"], -1)
+    assert compact.next_cell_id == live.next_cell_id
+    assert compact.next_vertex_id == live.next_vertex_id
+    next_state = reconstruct_adaptive_simplex_state(compact, update.state, update.layout)
+    next_update = refine_adaptive_simplex(
+        update.layout, next_state, np.asarray(next_state.mesh.cell_active, dtype=np.bool_)
+    )
+    next_live = extract_simplex_forest(next_update.state)
+    new_ids = np.asarray(next_live.cell_ids)[
+        np.asarray(next_live.cell_field_map()["active"])
+    ]
+    assert np.all(new_ids >= live.next_cell_id)
+    np.testing.assert_array_equal(
+        np.asarray(next_live.vertex_field_map()["coordinates"])[:9],
+        np.asarray(compact.vertex_field_map()["coordinates"]),
+    )
+
+
+def test_periodic_live_forest_checks_exact_restriction_and_tiling() -> None:
+    from fractions import Fraction
+
+    from phydrax.meshing._distribution_forest import PeriodicSimplexForest
+
+    _, state, _ = _mesh_state()
+    forest = extract_simplex_forest(state)
+    exact = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row)
+        for row in np.asarray(forest.vertex_field_map()["coordinates"])
+    )
+    roots = np.asarray(forest.vertex_ids)
+    windings = np.zeros((roots.size, 2), dtype=np.int64)
+    wrapper = PeriodicSimplexForest(
+        forest, roots, windings, exact, ("triangles",), "source", "revision", "lattice"
+    )
+    assert wrapper.records.forest_id == forest.forest_id
+    changed_exact = list(exact)
+    changed_exact[-1] = (exact[-1][0] + Fraction(1, 100), exact[-1][1])
+    changed_vertices = {
+        name: np.asarray(values).copy() for name, values in forest.vertex_fields
+    }
+    changed_vertices["coordinates"][-1, 0] = float(changed_exact[-1][0])
+    changed_forest = SimplexForestRecords(
+        forest.cell_ids,
+        forest.cell_owner_ranks,
+        dict(forest.cell_fields),
+        forest.vertex_ids,
+        forest.vertex_owner_ranks,
+        changed_vertices,
+        forest.protected_edge_ids,
+        forest.dimension,
+        forest.ambient_dimension,
+        forest.next_vertex_id,
+        forest.next_cell_id,
+    )
+    with pytest.raises(ValueError, match="exact parent restriction"):
+        PeriodicSimplexForest(
+            changed_forest,
+            roots,
+            windings,
+            tuple(changed_exact),
+            ("triangles",),
+            "source",
+            "revision",
+            "lattice",
+        )
+    changed_cells = {
+        name: np.asarray(values).copy() for name, values in forest.cell_fields
+    }
+    children = changed_cells["children_ids"][0]
+    first, second = np.searchsorted(np.asarray(forest.cell_ids), children)
+    changed_cells["cells"][first] = changed_cells["cells"][second]
+    invalid_tiling = SimplexForestRecords(
+        forest.cell_ids,
+        forest.cell_owner_ranks,
+        changed_cells,
+        forest.vertex_ids,
+        forest.vertex_owner_ranks,
+        dict(forest.vertex_fields),
+        forest.protected_edge_ids,
+        forest.dimension,
+        forest.ambient_dimension,
+        forest.next_vertex_id,
+        forest.next_cell_id,
+    )
+    with pytest.raises(ValueError, match="exactly tile"):
+        PeriodicSimplexForest(
+            invalid_tiling,
+            roots,
+            windings,
+            exact,
+            ("triangles",),
+            "source",
+            "revision",
+            "lattice",
+        )
+
+
 def _root_owners(
     cell_ids: np.ndarray, cell_parent_ids: np.ndarray, part_count: int, /
 ) -> dict[int, int]:

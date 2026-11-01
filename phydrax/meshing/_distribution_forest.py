@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from fractions import Fraction
 from typing import final
 
 import equinox as eqx
@@ -218,7 +219,11 @@ def _validate_protected_edges(edges: np.ndarray, vertex_ids: np.ndarray, /) -> N
 
 @final
 class SimplexForestRecords(StrictModule, NonTrainableState):
-    """Canonical ID-keyed cell and vertex history, independent of owner placement."""
+    """Canonical live coarsenable families, independent of owner placement.
+
+    Inactive ancestors are scientific state; retired descendants are not.
+    Stable ID cursors survive compaction, so a discarded ID is never recycled.
+    """
 
     cell_ids: Array
     cell_owner_ranks: Array
@@ -393,7 +398,7 @@ def extract_simplex_forest(
     cell_owner_ranks: ArrayLike | None = None,
     vertex_owner_ranks: ArrayLike | None = None,
 ) -> SimplexForestRecords:
-    """Extract allocated records and convert every slot reference to a stable ID."""
+    """Extract live cells, their coarsenable ancestors, and required vertex ancestry."""
     if not isinstance(state, AdaptiveSimplexState):
         raise TypeError("state must be AdaptiveSimplexState.")
     host = jax.device_get(state)
@@ -482,6 +487,57 @@ def extract_simplex_forest(
     }
     dimension = mesh.dimension
     next_vertex_id, next_cell_id = np.asarray(host.cursors, dtype=np.int64)[2:4]
+    # Only active leaves and the ancestors needed to undo their bisections
+    # survive an accepted epoch. Old coarsened descendants are execution slots,
+    # not scientific state. Clear their links before validating the live forest.
+    cell_row = {int(identifier): row for row, identifier in enumerate(cell_ids)}
+    live_cells = set(map(int, cell_ids[cell_fields["active"]]))
+    pending = list(live_cells)
+    while pending:
+        identifier = pending.pop()
+        parent = int(parent_ids[cell_row[identifier]])
+        if parent >= 0 and parent not in live_cells:
+            live_cells.add(parent)
+            pending.append(parent)
+    keep_cells = np.asarray(
+        [int(identifier) in live_cells for identifier in cell_ids], dtype=np.bool_
+    )
+    cell_fields = {
+        name: values[keep_cells].copy() for name, values in cell_fields.items()
+    }
+    cell_ids = cell_ids[keep_cells]
+    cell_owners = cell_owners[keep_cells]
+    leaves = cell_fields["active"]
+    cell_fields["children_ids"][leaves] = -1
+    cell_fields["bisection_vertex_ids"][leaves] = -1
+    cell_fields["coarsen_marked"][:] = False
+    cell_fields["refine_rejected"][:] = False
+    vertex_row = {int(identifier): row for row, identifier in enumerate(vertex_ids)}
+    live_vertices = set(map(int, cell_fields["cells"].reshape(-1)))
+    live_vertices.update(map(int, cell_fields["tuples"].reshape(-1)))
+    live_vertices.update(
+        int(identifier)
+        for identifier in cell_fields["bisection_vertex_ids"]
+        if identifier >= 0
+    )
+    pending = list(live_vertices)
+    while pending:
+        identifier = pending.pop()
+        for parent in vertex_fields["parents"][vertex_row[identifier]]:
+            if parent >= 0 and int(parent) not in live_vertices:
+                live_vertices.add(int(parent))
+                pending.append(int(parent))
+    keep_vertices = np.asarray(
+        [int(identifier) in live_vertices for identifier in vertex_ids], dtype=np.bool_
+    )
+    vertex_ids = vertex_ids[keep_vertices]
+    vertex_owners = vertex_owners[keep_vertices]
+    vertex_fields = {
+        name: values[keep_vertices] for name, values in vertex_fields.items()
+    }
+    protected_pairs = protected_pairs[
+        np.all(np.isin(protected_pairs, vertex_ids), axis=1)
+    ]
     records = SimplexForestRecords(
         cell_ids,
         cell_owners,
@@ -637,8 +693,157 @@ def reconstruct_adaptive_simplex_state(
     )
 
 
+@final
+class PeriodicSimplexForest(StrictModule, NonTrainableState):
+    """Live simplex families with exact lifted source and quotient coordinates."""
+
+    records: SimplexForestRecords
+    vertex_source_ids: Array
+    vertex_absolute_windings: Array
+    exact_vertex_coordinates: tuple[tuple[Fraction, ...], ...]
+    block_names: tuple[str, ...] = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    periodic_cell_id: str = eqx.field(static=True)
+    forest_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        records: SimplexForestRecords,
+        vertex_source_ids: ArrayLike,
+        vertex_absolute_windings: ArrayLike,
+        exact_vertex_coordinates: tuple[tuple[Fraction, ...], ...],
+        block_names: tuple[str, ...],
+        source_id: str,
+        source_revision: str,
+        periodic_cell_id: str,
+        /,
+    ) -> None:
+        validate_simplex_forest(records)
+        roots = np.asarray(vertex_source_ids, dtype=np.int64)
+        windings = np.asarray(vertex_absolute_windings, dtype=np.int64)
+        exact = tuple(tuple(row) for row in exact_vertex_coordinates)
+        vertices = np.asarray(records.vertex_ids, dtype=np.int64)
+        cells = np.asarray(records.cell_ids, dtype=np.int64)
+        cell_fields = {name: np.asarray(value) for name, value in records.cell_fields}
+        vertex_fields = {name: np.asarray(value) for name, value in records.vertex_fields}
+        if (
+            roots.shape != vertices.shape
+            or np.any(roots < 0)
+            or windings.shape != (vertices.size, records.dimension)
+            or len(exact) != vertices.size
+            or any(
+                len(row) != records.ambient_dimension
+                or any(not isinstance(value, Fraction) for value in row)
+                for row in exact
+            )
+            or not block_names
+            or len(set(block_names)) != len(block_names)
+            or any(not isinstance(name, str) or not name for name in block_names)
+            or any(
+                not isinstance(value, str) or not value
+                for value in (source_id, source_revision, periodic_cell_id)
+            )
+            or np.any(cell_fields["blocks"] < 0)
+            or np.any(cell_fields["blocks"] >= len(block_names))
+            or np.any(cell_fields["retired"])
+        ):
+            raise ValueError(
+                "Live periodic forest source, block, or vertex banks are malformed."
+            )
+        projected = np.asarray(
+            [[float(value) for value in row] for row in exact], dtype=np.float64
+        ).reshape((vertices.size, records.ambient_dimension))
+        if not np.array_equal(projected, vertex_fields["coordinates"]):
+            raise ValueError(
+                "Live periodic exact coordinates disagree with their geometry."
+            )
+        vertex_row = {int(identifier): row for row, identifier in enumerate(vertices)}
+        cell_row = {int(identifier): row for row, identifier in enumerate(cells)}
+        for row, parents in enumerate(vertex_fields["parents"]):
+            if parents[0] >= 0:
+                first, second = (exact[vertex_row[int(parent)]] for parent in parents)
+                if exact[row] != tuple(
+                    (a + b) / 2 for a, b in zip(first, second, strict=True)
+                ):
+                    raise ValueError(
+                        "Live periodic midpoint violates exact parent restriction."
+                    )
+        reachable: set[int] = set()
+        for identifier in cells[cell_fields["active"]]:
+            current = int(identifier)
+            while current >= 0 and current not in reachable:
+                reachable.add(current)
+                current = int(cell_fields["parent_ids"][cell_row[current]])
+        if reachable != set(map(int, cells)):
+            raise ValueError(
+                "Periodic forest retains a family without a live descendant."
+            )
+        for row, children in enumerate(cell_fields["children_ids"]):
+            if cell_fields["active"][row]:
+                if np.any(children >= 0):
+                    raise ValueError(
+                        "An active periodic leaf retains obsolete child records."
+                    )
+                continue
+            if np.any(children < 0):
+                raise ValueError(
+                    "An inactive periodic parent lacks its live child family."
+                )
+            midpoint = int(cell_fields["bisection_vertex_ids"][row])
+            endpoints = vertex_fields["parents"][vertex_row[midpoint]]
+            parent_vertices = set(map(int, cell_fields["cells"][row]))
+            if (
+                len(set(map(int, endpoints))) != 2
+                or not set(map(int, endpoints)) <= parent_vertices
+            ):
+                raise ValueError("Periodic bisection edge is not an exact parent edge.")
+            expected = {
+                frozenset((parent_vertices - {int(endpoint)}) | {midpoint})
+                for endpoint in endpoints
+            }
+            observed = {
+                frozenset(map(int, cell_fields["cells"][cell_row[int(child)]]))
+                for child in children
+            }
+            if observed != expected or any(
+                cell_fields["blocks"][cell_row[int(child)]] != cell_fields["blocks"][row]
+                for child in children
+            ):
+                raise ValueError(
+                    "Live periodic children do not exactly tile their parent."
+                )
+        self.records = records
+        self.vertex_source_ids = jnp.asarray(roots)
+        self.vertex_absolute_windings = jnp.asarray(windings)
+        self.exact_vertex_coordinates = exact
+        self.block_names = tuple(block_names)
+        self.source_id = source_id
+        self.source_revision = source_revision
+        self.periodic_cell_id = periodic_cell_id
+        self.forest_id = canonical_fingerprint(
+            {
+                "kind": "live-periodic-simplex-forest",
+                "records": records.forest_id,
+                "owners": (
+                    np.asarray(records.cell_owner_ranks),
+                    np.asarray(records.vertex_owner_ranks),
+                ),
+                "roots": roots,
+                "windings": windings,
+                "exact": tuple(
+                    tuple((value.numerator, value.denominator) for value in row)
+                    for row in exact
+                ),
+                "blocks": block_names,
+                "source": (source_id, source_revision, periodic_cell_id),
+            }
+        )
+
+
 __all__ = [
     "SimplexForestRecords",
+    "PeriodicSimplexForest",
     "extract_simplex_forest",
     "reconstruct_adaptive_simplex_state",
     "validate_simplex_forest",
