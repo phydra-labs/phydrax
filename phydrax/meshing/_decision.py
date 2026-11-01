@@ -77,7 +77,6 @@ class PhysicalErrorEvidence(StrictModule, NonTrainableState):
     transfer_error: float = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         revision_id: str,
@@ -160,7 +159,6 @@ class MeasuredAdaptationCost(StrictModule, NonTrainableState):
     phase_seconds: tuple[float, ...] = eqx.field(static=True)
     cost_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         candidate_id: str,
@@ -225,7 +223,6 @@ class RouteFeasibility(StrictModule, NonTrainableState):
     issues: tuple[str, ...] = eqx.field(static=True)
     feasibility_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         source_revision_id: str,
@@ -394,14 +391,6 @@ class MeshAdaptationCandidate(StrictModule, NonTrainableState):
     ) -> None:
         action_ = parse(action, AdaptationAction, "action")
         candidate = canonical_identifier(candidate_id, "candidate_id")
-        if not isinstance(feasibility, RouteFeasibility):
-            raise TypeError("feasibility must be RouteFeasibility.")
-        if not isinstance(error, PhysicalErrorEvidence):
-            raise TypeError("error must be PhysicalErrorEvidence.")
-        if not isinstance(cost, MeasuredAdaptationCost):
-            raise TypeError("cost must be MeasuredAdaptationCost.")
-        if not isinstance(solve_check, LinearSolveCheckEvidence):
-            raise TypeError("solve_check must be LinearSolveCheckEvidence.")
         if (
             candidate != feasibility.candidate_id
             or candidate != cost.candidate_id
@@ -463,7 +452,6 @@ class MeshAdaptationObjective(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     objective_id_hash: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         objective_id: str,
@@ -496,8 +484,6 @@ class MeshAdaptationObjective(StrictModule, NonTrainableState):
         candidates: Sequence[MeshAdaptationCandidate],
         /,
     ) -> MeshAdaptationDecision:
-        if not isinstance(baseline, PhysicalErrorEvidence):
-            raise TypeError("baseline must be PhysicalErrorEvidence.")
         if not _error_matches(self.objective_id, self.quantity, baseline):
             raise ValueError("Baseline error evidence does not match the objective.")
         return MeshAdaptationDecision(self, baseline, candidates)
@@ -522,10 +508,6 @@ class MeshAdaptationDecision(StrictModule, NonTrainableState):
         candidates: Sequence[MeshAdaptationCandidate],
         /,
     ) -> None:
-        if not isinstance(objective, MeshAdaptationObjective):
-            raise TypeError("objective must be MeshAdaptationObjective.")
-        if not isinstance(baseline, PhysicalErrorEvidence):
-            raise TypeError("baseline must be PhysicalErrorEvidence.")
         if not _error_matches(objective.objective_id, objective.quantity, baseline):
             raise ValueError("Decision baseline does not match its objective.")
         candidates_ = tuple(candidates)
@@ -594,10 +576,6 @@ class MeshAdaptationDecision(StrictModule, NonTrainableState):
         *,
         rebind: CompositionRebind | None = None,
     ) -> tuple[str, ...]:
-        if not isinstance(actual, PhysicalErrorEvidence):
-            raise TypeError("actual must be PhysicalErrorEvidence.")
-        if not isinstance(solve_check, LinearSolveCheckEvidence):
-            raise TypeError("solve_check must be LinearSolveCheckEvidence.")
         selected = self.selected
         if selected is None:
             return ("no-adaptation-selected",)
@@ -675,8 +653,6 @@ class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
         routes: Sequence[tuple[str, str]],
     ) -> None:
         epoch = canonical_identifier(epoch_id, "epoch_id")
-        if not isinstance(parameter_id, ParameterId):
-            raise TypeError("parameter_id must be ParameterId.")
         routes_ = _bindings(routes, "routes")
         route_table = dict(routes_)
         if set(route_table) != {"geometry", "pde", "transfer"}:

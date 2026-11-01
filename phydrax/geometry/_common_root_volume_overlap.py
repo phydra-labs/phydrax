@@ -3385,6 +3385,76 @@ def _box_expression_bounds(
     return polynomial_bounds(compose_expression(expression, arguments), "box", 3)
 
 
+def _chart_newton_terms(
+    target_chart: Sequence[Expression], reference: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the binary64 chart image and Jacobian at one reference point."""
+    exact_reference = _as_point(
+        tuple(Fraction.from_float(float(value)) for value in reference)
+    )
+    mapped = np.asarray(
+        [
+            float(evaluate_expression(expression, exact_reference))
+            for expression in target_chart
+        ],
+        dtype=np.float64,
+    )
+    jacobian = np.asarray(
+        [
+            [
+                float(evaluate_expression(derivative(expression, axis), exact_reference))
+                for axis in range(3)
+            ]
+            for expression in target_chart
+        ],
+        dtype=np.float64,
+    )
+    return mapped, jacobian
+
+
+def _damped_chart_inverse(
+    target_chart: Sequence[Expression],
+    target_value: np.ndarray,
+    reference: np.ndarray,
+    /,
+) -> np.ndarray | None:
+    """Continue Newton with step halving until convergence or binary64 stagnation.
+
+    Every accepted step strictly decreases the binary64 residual norm, and a step
+    is halved only until the candidate no longer differs from the current point,
+    so both loops end on a decided outcome or at binary64 resolution. The point is
+    only a Krawczyk center: the caller's inclusion test certifies or rejects it.
+    """
+    mapped, jacobian = _chart_newton_terms(target_chart, reference)
+    residual = mapped - target_value
+    norm = float(np.linalg.norm(residual, ord=np.inf))
+    while True:
+        step = np.linalg.solve(jacobian, residual)
+        if not np.all(np.isfinite(step)):
+            return None
+        scale = 1.0
+        while True:
+            candidate = reference - scale * step
+            if not np.all(np.isfinite(candidate)):
+                return None
+            if np.array_equal(candidate, reference):
+                return reference
+            mapped, candidate_jacobian = _chart_newton_terms(target_chart, candidate)
+            candidate_residual = mapped - target_value
+            candidate_norm = float(np.linalg.norm(candidate_residual, ord=np.inf))
+            if candidate_norm < norm:
+                break
+            scale *= 0.5
+        reference, residual, jacobian, norm = (
+            candidate,
+            candidate_residual,
+            candidate_jacobian,
+            candidate_norm,
+        )
+        if scale * float(np.linalg.norm(step, ord=np.inf)) <= 8.0 * np.finfo(float).eps:
+            return reference
+
+
 def _parametric_inverse_inclusion(
     source_chart: Sequence[Expression],
     source_vertices: Tet,
@@ -3418,37 +3488,26 @@ def _parametric_inverse_inclusion(
     target_value = np.asarray(source_value)
     target_reference = np.full((3,), 0.25, dtype=np.float64)
     try:
+        # Plain Newton from the reference barycenter is the fast path; a start
+        # outside its quadratic basin falls through to the residual-decreasing
+        # continuation, which ends only on convergence or binary64 stagnation.
+        converged = False
         for _ in range(16):
-            exact_reference = _as_point(
-                tuple(Fraction.from_float(float(value)) for value in target_reference)
-            )
-            mapped = np.asarray(
-                [
-                    float(evaluate_expression(expression, exact_reference))
-                    for expression in target_chart
-                ],
-                dtype=np.float64,
-            )
-            jacobian = np.asarray(
-                [
-                    [
-                        float(
-                            evaluate_expression(
-                                derivative(expression, axis), exact_reference
-                            )
-                        )
-                        for axis in range(3)
-                    ]
-                    for expression in target_chart
-                ],
-                dtype=np.float64,
-            )
+            mapped, jacobian = _chart_newton_terms(target_chart, target_reference)
             step = np.linalg.solve(jacobian, mapped - target_value)
             target_reference -= step
             if not np.all(np.isfinite(target_reference)):
                 return False
             if float(np.linalg.norm(step, ord=np.inf)) <= 8.0 * np.finfo(float).eps:
+                converged = True
                 break
+        if not converged:
+            continued = _damped_chart_inverse(
+                target_chart, target_value, target_reference
+            )
+            if continued is None:
+                return False
+            target_reference = continued
         exact_reference = _as_point(
             tuple(Fraction.from_float(float(value)) for value in target_reference)
         )

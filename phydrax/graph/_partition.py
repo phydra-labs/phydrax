@@ -156,7 +156,6 @@ class WeightedCSRGraph(StrictModule, NonTrainableState):
     vertex_count: int = eqx.field(static=True)
     graph_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         offsets: ArrayLike,
@@ -204,7 +203,6 @@ class WeightedCSRGraph(StrictModule, NonTrainableState):
         self.vertex_count = int(vertices_.size)
 
     @classmethod
-    @checked
     def from_edges(
         cls,
         vertex_count: int,

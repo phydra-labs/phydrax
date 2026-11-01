@@ -2134,8 +2134,6 @@ class MeshingDomain(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_brep(cls, model: BRepModel, /) -> MeshingDomain:
-        if not isinstance(model, BRepModel):
-            raise TypeError("MeshingDomain.from_brep requires a BRepModel.")
         geometry = model.geometry
         occurrences = tuple(geometry.assembly_graph.iter_occurrences())
         if occurrences:

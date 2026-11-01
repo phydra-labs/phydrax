@@ -297,7 +297,14 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
 
 
 class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
-    """Dynamic face geometry bound to one immutable stage-face layout."""
+    """Dynamic face geometry bound to one immutable stage-face layout.
+
+    ``quadrature_grid_normal_velocity`` is the flux grid velocity: its face
+    quadrature is the stage's swept volume rate, so it closes the discrete GCL.
+    ``quadrature_kinematic_grid_normal_velocity`` is the instantaneous mesh
+    velocity at the stage time (the witness that moving walls follow their
+    provider); it defaults to the flux velocity.
+    """
 
     layout: FiniteVolumeStageFaceLayout
     face_centers: Array
@@ -306,6 +313,7 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
     quadrature_points: Array
     quadrature_weights: Array
     quadrature_grid_normal_velocity: Array
+    quadrature_kinematic_grid_normal_velocity: Array
 
     @checked
     def __init__(
@@ -318,6 +326,7 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
         quadrature_points: ArrayLike,
         quadrature_weights: ArrayLike,
         quadrature_grid_normal_velocity: ArrayLike,
+        quadrature_kinematic_grid_normal_velocity: ArrayLike | None = None,
     ) -> None:
 
         centers = jnp.asarray(face_centers)
@@ -326,6 +335,11 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
         points = jnp.asarray(quadrature_points)
         weights = jnp.asarray(quadrature_weights)
         grid_velocity = jnp.asarray(quadrature_grid_normal_velocity)
+        kinematic_velocity = (
+            grid_velocity
+            if quadrature_kinematic_grid_normal_velocity is None
+            else jnp.asarray(quadrature_kinematic_grid_normal_velocity)
+        )
         if centers.shape != layout.spatial_shape:
             raise ValueError("face_centers must match the prepared layout spatial_shape.")
         if vectors.shape != layout.spatial_shape:
@@ -341,6 +355,7 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
         if (
             weights.shape != layout.quadrature_shape
             or grid_velocity.shape != layout.quadrature_shape
+            or kinematic_velocity.shape != layout.quadrature_shape
         ):
             raise ValueError(
                 "Quadrature weights and grid-normal velocity must match the prepared layout quadrature_shape."
@@ -353,7 +368,8 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
             | jnp.any(~jnp.isfinite(measures))
             | jnp.any(~jnp.isfinite(points))
             | jnp.any(~jnp.isfinite(weights))
-            | jnp.any(~jnp.isfinite(grid_velocity)),
+            | jnp.any(~jnp.isfinite(grid_velocity))
+            | jnp.any(~jnp.isfinite(kinematic_velocity)),
             "Stage face geometry must be finite.",
         )
         active = jnp.asarray(layout.active_mask, dtype=jnp.bool_)
@@ -401,6 +417,7 @@ class FiniteVolumeStageFaceBlock(StrictModule, NonTrainableState):
         self.quadrature_points = points
         self.quadrature_weights = weights
         self.quadrature_grid_normal_velocity = grid_velocity
+        self.quadrature_kinematic_grid_normal_velocity = kinematic_velocity
 
     @property
     def grid_normal_velocity(self) -> Array:
@@ -464,9 +481,7 @@ class FiniteVolumeStageGeometryEvidence(StrictModule, NonTrainableState):
         gcl_defect = jnp.asarray(gcl_identity_defect)
         gcl_tolerance = jnp.asarray(gcl_identity_tolerance)
         if coordinate_defect.ndim != 1:
-            raise ValueError(
-                "coordinate_effective_volume_defect must be a rank-1 array."
-            )
+            raise ValueError("coordinate_effective_volume_defect must be a rank-1 array.")
         cell_shape = coordinate_defect.shape
         if (
             coordinate_tolerance.shape != cell_shape

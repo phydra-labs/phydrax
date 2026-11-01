@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import weakref
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from fractions import Fraction
@@ -101,33 +100,53 @@ def _polygon_point_state(
 
 
 class _SegmentEnclosures:
-    """Lazily refined, memoized enclosure tree of one immutable trim segment.
+    """Lazily refined enclosure tree of one trim segment within one classification.
 
     Subdivision is deterministic midpoint bisection of the unit interval, so
-    every box query descends the same nodes; each node box and endpoint value
-    is computed once per segment and shared by all queries.
+    every query of one classification call descends the same nodes; each node box
+    and endpoint value is computed once per call and shared by its queries. The
+    record is created by the classifying call and dropped with it.
     """
 
-    __slots__ = ("boxes", "points")
+    __slots__ = ("boxes", "points", "segment")
 
-    def __init__(self) -> None:
+    def __init__(self, segment: _CurveTrimSegment, /) -> None:
+        self.segment = segment
         self.boxes: dict[tuple[float, float], np.ndarray | None] = {}
         self.points: dict[float, np.ndarray | None] = {}
 
 
-# Keyed by segment identity; records hold only host arrays, never the segment,
-# and each entry is dropped when its segment is collected.
-_SEGMENT_ENCLOSURES: dict[int, _SegmentEnclosures] = {}
+type _LoopEnclosures = tuple[tuple[_SegmentEnclosures, ...], ...]
 
 
-def _segment_enclosures(segment: _CurveTrimSegment, /) -> _SegmentEnclosures:
-    key = id(segment)
-    record = _SEGMENT_ENCLOSURES.get(key)
-    if record is None:
-        record = _SegmentEnclosures()
-        _SEGMENT_ENCLOSURES[key] = record
-        weakref.finalize(segment, _SEGMENT_ENCLOSURES.pop, key, None)
-    return record
+class TrimEnclosures:
+    """Enclosure trees of one trim domain's curve loops, shared by its queries.
+
+    Prepared by `TrimDomain.prepare_enclosures` and passed explicitly to that
+    domain's classifications, which require the trees to cover the very segments
+    they classify against.
+    """
+
+    __slots__ = ("loops",)
+
+    def __init__(self, loops: tuple[tuple[_CurveTrimSegment, ...], ...], /) -> None:
+        self.loops: _LoopEnclosures = tuple(
+            tuple(_SegmentEnclosures(segment) for segment in loop) for loop in loops
+        )
+
+    def require_for(
+        self, loops: tuple[tuple[_CurveTrimSegment, ...], ...], /
+    ) -> _LoopEnclosures:
+        if len(self.loops) != len(loops) or any(
+            len(records) != len(loop)
+            or any(
+                record.segment is not segment
+                for record, segment in zip(records, loop, strict=True)
+            )
+            for records, loop in zip(self.loops, loops, strict=True)
+        ):
+            raise ValueError("Trim enclosures were prepared for different trim segments.")
+        return self.loops
 
 
 def _turn_start_parameter(segment: _CurveTrimSegment, parameter: float, /) -> float:
@@ -149,8 +168,8 @@ def _turn_start_parameter(segment: _CurveTrimSegment, parameter: float, /) -> fl
     return 1.0 - turn_end
 
 
-def _segment_point(segment: _CurveTrimSegment, parameter: float, /) -> np.ndarray | None:
-    points = _segment_enclosures(segment).points
+def _segment_point(record: _SegmentEnclosures, parameter: float, /) -> np.ndarray | None:
+    points, segment = record.points, record.segment
     if parameter not in points:
         try:
             value = np.asarray(
@@ -173,12 +192,12 @@ def _segment_point(segment: _CurveTrimSegment, parameter: float, /) -> np.ndarra
 
 
 def _curve_segment_box(
-    segment: _CurveTrimSegment, first: float, last: float, /
+    record: _SegmentEnclosures, first: float, last: float, /
 ) -> np.ndarray | None:
-    boxes = _segment_enclosures(segment).boxes
+    boxes = record.boxes
     if (first, last) in boxes:
         return boxes[first, last]
-    result = _compute_segment_box(segment, first, last)
+    result = _compute_segment_box(record, first, last)
     if result is not None:
         result.setflags(write=False)
     boxes[first, last] = result
@@ -186,13 +205,13 @@ def _curve_segment_box(
 
 
 def _compute_segment_box(
-    segment: _CurveTrimSegment, first: float, last: float, /
+    record: _SegmentEnclosures, first: float, last: float, /
 ) -> np.ndarray | None:
     try:
-        box = np.asarray(segment.bounding_box(first, last), dtype=np.float64)
+        box = np.asarray(record.segment.bounding_box(first, last), dtype=np.float64)
     except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
         return None
-    start, end = _segment_point(segment, first), _segment_point(segment, last)
+    start, end = _segment_point(record, first), _segment_point(record, last)
     if (
         start is None
         or end is None
@@ -222,7 +241,7 @@ type _ChordPiece = tuple[float, float, np.ndarray]
 
 
 def _segment_chord_pieces(
-    segment: _CurveTrimSegment, query_box: np.ndarray, /
+    segment: _SegmentEnclosures, query_box: np.ndarray, /
 ) -> list[_ChordPiece] | None:
     """Order parameter pieces whose source boxes all avoid the query box."""
     pending: list[tuple[float, float, np.ndarray | None]] = [(0.0, 1.0, None)]
@@ -256,7 +275,7 @@ def _segment_chord_pieces(
 
 
 def _split_terminal_piece(
-    segment: _CurveTrimSegment,
+    segment: _SegmentEnclosures,
     pieces: list[_ChordPiece],
     query_box: np.ndarray,
     index: int,
@@ -298,7 +317,7 @@ def _junction_avoids_query(
 
 
 def _curve_loop_chords(
-    loop: tuple[_CurveTrimSegment, ...], query_box: np.ndarray, /
+    loop: tuple[_SegmentEnclosures, ...], query_box: np.ndarray, /
 ) -> tuple[tuple[Fraction, Fraction], ...] | None:
     pieces: list[list[_ChordPiece]] = []
     for segment in loop:
@@ -351,7 +370,7 @@ def _curve_loop_chords(
 
 
 def _curve_loops_point_state(
-    loops: tuple[tuple[_CurveTrimSegment, ...], ...], point: np.ndarray, /
+    loops: _LoopEnclosures, point: np.ndarray, /
 ) -> tuple[bool, bool, bool]:
     query_box = np.stack((point, point))
     states: list[bool] = []
@@ -373,7 +392,7 @@ def _curve_loops_point_state(
 
 
 def _curve_loops_avoid_box(
-    loops: tuple[tuple[_CurveTrimSegment, ...], ...],
+    loops: _LoopEnclosures,
     box: np.ndarray,
     disjoint: Callable[[np.ndarray, np.ndarray], bool] = _boxes_disjoint,
     /,
@@ -559,7 +578,20 @@ class TrimDomain(StrictModule):
             inside &= ~self._inside_loop(reference_, hole)
         return inside
 
-    def classify(self, points: npt.ArrayLike, /) -> TrimClassification:
+    def prepare_enclosures(self, /) -> TrimEnclosures:
+        """Prepare enclosure trees shared by a sequence of classifications."""
+        return TrimEnclosures(self.curve_loops)
+
+    def _enclosure_loops(self, enclosures: TrimEnclosures | None, /) -> _LoopEnclosures:
+        if enclosures is None:
+            return TrimEnclosures(self.curve_loops).loops
+        if not isinstance(enclosures, TrimEnclosures):
+            raise TypeError("enclosures must be TrimEnclosures or None.")
+        return enclosures.require_for(self.curve_loops)
+
+    def classify(
+        self, points: npt.ArrayLike, /, *, enclosures: TrimEnclosures | None = None
+    ) -> TrimClassification:
         points_ = np.asarray(points, dtype=np.float64)
         if points_.ndim < 1 or points_.shape[-1] != 2 or not np.all(np.isfinite(points_)):
             raise ValueError(
@@ -571,9 +603,10 @@ class TrimDomain(StrictModule):
         boundary = np.zeros_like(inside)
         resolved = np.zeros_like(inside)
         if self.curve_loops:
+            loops = self._enclosure_loops(enclosures)
             for index, point in enumerate(flat):
                 inside[index], boundary[index], resolved[index] = (
-                    _curve_loops_point_state(self.curve_loops, point)
+                    _curve_loops_point_state(loops, point)
                 )
         else:
             assert self.outer is not None
@@ -609,12 +642,19 @@ class TrimDomain(StrictModule):
         )
 
     def classify_boxes(
-        self, boxes: npt.ArrayLike, /, *, interior: bool = False
+        self,
+        boxes: npt.ArrayLike,
+        /,
+        *,
+        interior: bool = False,
+        enclosures: TrimEnclosures | None = None,
     ) -> TrimClassification:
         """Classify closed boxes, or with ``interior`` their open interiors.
 
         An open interior that no trim curve meets lies on one side of the trim,
         so trim curves running along its edges do not leave it undecided.
+        ``enclosures`` from `prepare_enclosures` shares curve enclosure trees
+        across calls.
         """
         boxes_ = np.asarray(boxes, dtype=np.float64)
         if (
@@ -632,9 +672,10 @@ class TrimDomain(StrictModule):
         inside = np.zeros((flat.shape[0],), dtype=np.bool_)
         boundary = np.zeros_like(inside)
         resolved = np.zeros_like(inside)
+        loops = self._enclosure_loops(enclosures)
         for index, box in enumerate(flat):
             if self.curve_loops:
-                clear = _curve_loops_avoid_box(self.curve_loops, box, disjoint)
+                clear = _curve_loops_avoid_box(loops, box, disjoint)
             else:
                 assert self.outer is not None
                 clear = True
@@ -654,6 +695,11 @@ class TrimDomain(StrictModule):
             if not clear:
                 continue
             center = box[0] + 0.5 * (box[1] - box[0])
+            if self.curve_loops:
+                inside[index], boundary[index], resolved[index] = (
+                    _curve_loops_point_state(loops, center)
+                )
+                continue
             decision = self.classify(center[None, :])
             if not bool(np.asarray(decision.resolved[0])):
                 continue

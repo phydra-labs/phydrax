@@ -715,7 +715,12 @@ class PreparedDeviceMetricAdaptation(StrictModule, NonTrainableState):
 
 
 class _Work(NamedTuple):
-    """Array view of one state inside the compiled kernel."""
+    """Array view of one state inside the compiled kernel.
+
+    ``periodic_enabled`` is a Python bool carried as static pytree data (see the
+    registration below), so non-periodic executables never trace the periodic
+    orbit branches.
+    """
 
     coordinates: Array
     vertex_ids: Array
@@ -723,7 +728,7 @@ class _Work(NamedTuple):
     cells: Array
     cell_ids: Array
     cell_active: Array
-    periodic_enabled: Array
+    periodic_enabled: bool
     metric: Array
     source_rows: Array
     vertex_fixed: Array
@@ -760,6 +765,24 @@ class _Work(NamedTuple):
     flags: Array
 
 
+_WORK_PERIODIC = _Work._fields.index("periodic_enabled")
+
+
+def _flatten_work(work: _Work, /) -> tuple[tuple[Any, ...], bool]:
+    values = tuple(work)
+    return values[:_WORK_PERIODIC] + values[_WORK_PERIODIC + 1 :], work.periodic_enabled
+
+
+def _unflatten_work(periodic_enabled: bool, children: Any, /) -> _Work:
+    values = tuple(children)
+    return _Work._make(
+        (*values[:_WORK_PERIODIC], periodic_enabled, *values[_WORK_PERIODIC:])
+    )
+
+
+jax.tree_util.register_pytree_node(_Work, _flatten_work, _unflatten_work)
+
+
 def _work(state: DeviceMetricState, /) -> _Work:
     mesh = state.mesh
     return _Work(
@@ -769,7 +792,7 @@ def _work(state: DeviceMetricState, /) -> _Work:
         mesh.cells,
         mesh.cell_ids,
         mesh.cell_active,
-        jnp.asarray(state.periodic_enabled, dtype=jnp.bool_),
+        bool(state.periodic_enabled),
         state.metric,
         state.source_rows,
         state.vertex_fixed,
@@ -1882,12 +1905,9 @@ def _split_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any
     def ordinary(operands: Any) -> Any:
         return _split_round_nonperiodic(operands[0], operands[1], layout)
 
-    return jax.lax.cond(
-        work.periodic_enabled,
-        periodic,
-        ordinary,
-        (work, done),
-    )
+    if work.periodic_enabled:
+        return periodic((work, done))
+    return ordinary((work, done))
 
 
 # ------------------------------------------------------------------ collapse
@@ -2391,12 +2411,9 @@ def _collapse_round(
     def ordinary(operands: Any) -> Any:
         return _collapse_round_nonperiodic(operands[0], operands[1], layout, escape)
 
-    return jax.lax.cond(
-        work.periodic_enabled,
-        periodic,
-        ordinary,
-        (work, done),
-    )
+    if work.periodic_enabled:
+        return periodic((work, done))
+    return ordinary((work, done))
 
 
 # ------------------------------------------------------------------ flip
@@ -2639,12 +2656,9 @@ def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     def ordinary(operands: Any) -> Any:
         return _flip_round_nonperiodic(operands[0], operands[1], layout)
 
-    return jax.lax.cond(
-        work.periodic_enabled,
-        periodic,
-        ordinary,
-        (work, done),
-    )
+    if work.periodic_enabled:
+        return periodic((work, done))
+    return ordinary((work, done))
 
 
 # ------------------------------------------------------------------ relocation
@@ -2803,7 +2817,7 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
     cavity = some(topology.valence > layout.ball_width)
     displacement, badness = _relocation_targets(work, topology, orbits)
     candidate = movable & ~cavity & jnp.any(displacement != 0.0, axis=1)
-    deck = ~work.periodic_enabled | every(work.periodic_vertex_deck)
+    deck = every(work.periodic_vertex_deck) | (not work.periodic_enabled)
     active = candidate & deck
     ball = topology.ball
     present = ball >= 0
@@ -2822,11 +2836,9 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
 
     def targets(scale: Array, /) -> Array:
         step = points + scale * displacement
-        return jnp.where(
-            work.periodic_enabled,
-            step[orbits.anchor] + work.periodic_vertex_translation,
-            step,
-        )
+        if work.periodic_enabled:
+            return step[orbits.anchor] + work.periodic_vertex_translation
+        return step
 
     initial_point = points
     initial_metric = work.metric
@@ -2968,12 +2980,13 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
     ).astype(jnp.int32)
     counters, _ = _tally(counters, _CAVITY, movable & cavity)
     rank = _ranks(success, -badness, work.vertex_ids)
-    ordinary = _independent(rank, success, ball, cell_capacity)
-    periodic, periodic_bits = _periodic_vertex_selection(
-        work, topology, active, success, best_scale, badness, layout
-    )
-    selected = jnp.where(work.periodic_enabled, periodic, ordinary)
-    bits = bits | jnp.where(work.periodic_enabled, periodic_bits, 0)
+    if work.periodic_enabled:
+        selected, periodic_bits = _periodic_vertex_selection(
+            work, topology, active, success, best_scale, badness, layout
+        )
+        bits = bits | periodic_bits
+    else:
+        selected = _independent(rank, success, ball, cell_capacity)
     count = jnp.sum(selected, dtype=jnp.int32)
     touched_cells = jnp.any(selected[work.cells], axis=1)
     touched_records = _live_records(work) & jnp.any(selected[work.record_keys], axis=1)
@@ -4360,7 +4373,7 @@ def _device_state(
         cells=padded(slot_of[host_cells], cell_capacity, 0, np.int32),
         cell_ids=padded(state.cell_ids[cell_order], cell_capacity, -1, np.int64),
         cell_active=padded(np.ones(cell_count), cell_capacity, False, np.bool_),
-        periodic_enabled=jnp.asarray(periodic_enabled, dtype=jnp.bool_),
+        periodic_enabled=bool(periodic_enabled),
         metric=jnp.asarray(metric),
         source_rows=padded(vertex_order, vertex_capacity, -1, np.int32),
         vertex_fixed=padded(state.fixed[vertex_order], vertex_capacity, False, np.bool_),

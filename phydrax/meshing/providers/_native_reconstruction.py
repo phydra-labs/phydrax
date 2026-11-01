@@ -1002,8 +1002,6 @@ def prepare_native_reconstruction(
     /,
 ) -> _PreparedReconstructionRoute:
     """Prepare exact reuse or conforming refinement of reconstructed facets."""
-    if not isinstance(options, NativeMeshingOptions):
-        raise TypeError("options must be NativeMeshingOptions.")
     unsupported = reconstructed_surface_support_issues(source, specification, options)
     if unsupported:
         raise _failure(

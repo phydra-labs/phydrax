@@ -307,6 +307,53 @@ def _supplied_ids(
     return ids
 
 
+def _continued_ids(
+    ancestry: ArrayLike,
+    degree: int,
+    orbit: np.ndarray,
+    count: int,
+    next_id: int,
+    /,
+) -> tuple[np.ndarray, int]:
+    """Keep each continued quotient ID once; draw every other ID from the allocator.
+
+    ``ancestry`` names, per lifted row, the source quotient ID the entity
+    continues (``-1`` for a new entity). A quotient entity whose continued rows
+    name exactly one source ID that no other quotient entity claims keeps it;
+    all others are new and take consecutive allocator IDs in canonical
+    quotient-row order, so a retired ID never returns.
+    """
+    values = np.asarray(ancestry)
+    if values.shape != orbit.shape or values.dtype.kind not in "iu":
+        raise ValueError(
+            f"quotient_id_ancestry[{degree}] must be an integer vector per lifted entity."
+        )
+    values = values.astype(np.int64, copy=False)
+    if np.any(values < -1):
+        raise ValueError(
+            f"quotient_id_ancestry[{degree}] holds source quotient IDs or -1."
+        )
+    if next_id <= int(np.max(values, initial=-1)):
+        raise ValueError(
+            f"entity_allocator_next_ids[{degree}] must exceed every continued quotient ID."
+        )
+    order = np.argsort(orbit, kind="stable")
+    bounds = np.searchsorted(orbit[order], np.arange(count + 1))
+    ids = np.full((count,), -1, dtype=np.int64)
+    claims: dict[int, list[int]] = {}
+    for quotient_row in range(count):
+        members = values[order[bounds[quotient_row] : bounds[quotient_row + 1]]]
+        continued = np.unique(members[members >= 0])
+        if continued.size == 1:
+            claims.setdefault(int(continued[0]), []).append(quotient_row)
+    for identifier, rows in claims.items():
+        if len(rows) == 1:
+            ids[rows[0]] = identifier
+    fresh = np.flatnonzero(ids < 0)
+    ids[fresh] = np.arange(next_id, next_id + fresh.size, dtype=np.int64)
+    return ids, next_id + int(fresh.size)
+
+
 def _quotient_incidence(
     lifted: CellMesh,
     entity_sets: tuple[EntitySet, ...],
@@ -591,6 +638,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         /,
         entity_global_ids: Mapping[int, ArrayLike] | None = None,
         entity_allocator_next_ids: Mapping[int, int] | None = None,
+        quotient_id_ancestry: Mapping[int, ArrayLike] | None = None,
         actual_geometry: CellGeometrySpec | None = None,
         exact_coordinate_source: ExactPeriodicCoordinateSource | None = None,
     ) -> None:
@@ -657,6 +705,22 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             exact_coordinate_source=exact_coordinate_source,
         )
         dimension = lifted.topological_dimension
+        next_ids = [
+            -1
+            if entity_allocator_next_ids is None
+            or degree not in entity_allocator_next_ids
+            else int(entity_allocator_next_ids[degree])
+            for degree in range(dimension + 1)
+        ]
+        if quotient_id_ancestry is not None and any(
+            degree not in range(dimension + 1)
+            or next_ids[degree] < 0
+            or (entity_global_ids is not None and degree in entity_global_ids)
+            for degree in quotient_id_ancestry
+        ):
+            raise ValueError(
+                "quotient_id_ancestry needs an allocator and no supplied IDs per degree."
+            )
         row_groups = _entity_vertex_rows(lifted)
         if len(row_groups) != dimension + 1:
             raise ValueError("Lifted connectivity must provide every entity degree.")
@@ -765,9 +829,18 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 copies = np.flatnonzero(orbit == quotient_row)
                 members[quotient_row] = copies[np.argmin(lifted_ids[copies])]
             defaults = lifted_ids[members]
-            quotient_ids = _supplied_ids(
-                entity_global_ids, degree, len(unique_keys), defaults
-            )
+            if quotient_id_ancestry is not None and degree in quotient_id_ancestry:
+                quotient_ids, next_ids[degree] = _continued_ids(
+                    quotient_id_ancestry[degree],
+                    degree,
+                    orbit,
+                    len(unique_keys),
+                    next_ids[degree],
+                )
+            else:
+                quotient_ids = _supplied_ids(
+                    entity_global_ids, degree, len(unique_keys), defaults
+                )
             quotient_ids_by_degree.append(quotient_ids)
             orbit_by_degree.append(orbit.astype(np.int32))
             orientation_by_degree.append(signs)
@@ -838,13 +911,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         )
         corner_shifts = _corner_shifts(lifted, shifts, orders)
 
-        allocator = tuple(
-            -1
-            if entity_allocator_next_ids is None
-            or degree not in entity_allocator_next_ids
-            else int(entity_allocator_next_ids[degree])
-            for degree in range(dimension + 1)
-        )
+        allocator = tuple(next_ids)
         for degree, next_id in enumerate(allocator):
             if next_id != -1 and next_id <= int(
                 np.max(quotient_ids_by_degree[degree], initial=-1)
@@ -1051,8 +1118,6 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         """Rebuild quotient topology from its current canonical lifted mesh."""
         if not isinstance(stored, cls):
             raise TypeError("stored must be PeriodicMeshTopology.")
-        if not isinstance(lifted_mesh, CellMesh):
-            raise TypeError("lifted_mesh must be CellMesh.")
         if actual_geometry is not None and not isinstance(
             actual_geometry, CellGeometrySpec
         ):

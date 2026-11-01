@@ -728,16 +728,18 @@ def test_geometry_evidence_uses_its_order_aware_factor_for_a_successful_retry() 
         minimum_reduction_factor=0.1,
     )
 
-    def nonlinear_deformation(time: Any, vertices: Any, args: Any) -> Any:
+    def folding_deformation(time: Any, vertices: Any, args: Any) -> Any:
+        # The centre vertex crosses its right neighbours at the full step
+        # (t = 0.2) but not at the reduced one: invalid end geometry.
         del args
-        return vertices.at[4, 0].add(0.8 * time**2)
+        return vertices.at[4, 0].add(15.0 * time**2)
 
     policy = phx.solver.FiniteVolumeStepPolicy(
         maximum_retries=3,
         reduction_factor=0.5,
     )
     _, discretization, system, runtime = _prepared_runtime(
-        motion=nonlinear_deformation,
+        motion=folding_deformation,
         mapping_id="retry-nonlinear-geometry",
         consistency_policy=consistency,
         step_policy=policy,
@@ -763,16 +765,18 @@ def test_all_rejected_retries_publish_one_final_attempt_evidence_envelope() -> N
         minimum_reduction_factor=0.1,
     )
 
-    def nonlinear_deformation(time: Any, vertices: Any, args: Any) -> Any:
+    def folding_deformation(time: Any, vertices: Any, args: Any) -> Any:
+        # The centre vertex leaves its cells at every retried step.
         del args
-        return vertices.at[4, 0].add(0.8 * time**2)
+        # Even two minimum (0.1) reductions leave dt = 2e-3: a 2.0 move.
+        return vertices.at[4, 0].add(1000.0 * time)
 
     policy = phx.solver.FiniteVolumeStepPolicy(
         maximum_retries=2,
         reduction_factor=0.5,
     )
     _, discretization, system, runtime = _prepared_runtime(
-        motion=nonlinear_deformation,
+        motion=folding_deformation,
         mapping_id="rejected-nonlinear-geometry",
         consistency_policy=strict,
         step_policy=policy,

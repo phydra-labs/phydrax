@@ -466,8 +466,6 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
             raise TypeError(
                 "Surface envelopes require an actual reconstructed MeshRegion source."
             )
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if coordinate_contract.coordinate_system != "cartesian":
             raise ValueError(
                 "Surface-envelope lengths require an orthonormal Cartesian coordinate contract."
@@ -1861,14 +1859,6 @@ def prepare_native_surface_envelope(
     /,
 ) -> _PreparedSurfaceEnvelopeRoute:
     """Prepare a native constrained fill against the derived envelope PLC."""
-    if not isinstance(source, SurfaceEnvelopeSource):
-        raise TypeError("source must be SurfaceEnvelopeSource.")
-    if not isinstance(specification, VolumeMeshingSpec):
-        raise TypeError("specification must be VolumeMeshingSpec.")
-    if not isinstance(options, NativeMeshingOptions):
-        raise TypeError("options must be NativeMeshingOptions.")
-    if not isinstance(coordinate_contract, SpatialCoordinateContract):
-        raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
     issues = _support_issues(source, specification, options, coordinate_contract)
     if issues:
         raise _failure(

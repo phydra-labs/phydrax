@@ -606,7 +606,6 @@ def _transform_exact_box(
     return tuple(low), tuple(high)
 
 
-@checked
 def transformed_source_box(
     lower: np.ndarray,
     upper: np.ndarray,
@@ -787,7 +786,6 @@ class PeriodicImageFrame:
             return product(*self.ranges)
         return iter(range(self.image_count))
 
-    @checked
     def image_points(
         self,
         image: PeriodicImage,

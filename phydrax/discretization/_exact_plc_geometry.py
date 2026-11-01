@@ -12,7 +12,6 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked
 from ._exact_algebraic_geometry import ExactScalar, RadicalElement
 
 
@@ -52,7 +51,6 @@ class ExactPlcCellGeometrySource(StrictModule, NonTrainableState):
     vertex_occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     source_map_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         source_id: str,

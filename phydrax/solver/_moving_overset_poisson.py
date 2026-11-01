@@ -1419,10 +1419,6 @@ def prepare_moving_overset_poisson_update(
     preparation.
     """
 
-    if not isinstance(composition, Composition):
-        raise TypeError("composition must be Composition.")
-    if not isinstance(previous, OversetConnectivity):
-        raise TypeError("previous must be OversetConnectivity.")
     if not isinstance(advances, Mapping) or not advances:
         raise TypeError("advances must map at least one moved part to MeshMotionAdvance.")
     if not isinstance(plans, Mapping):

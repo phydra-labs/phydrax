@@ -919,8 +919,14 @@ def _target_entity_ids(
     dimension: int,
     prescribed: tuple[PrescribedEntityIds, ...],
     /,
+    *,
+    first_new_id: int = 0,
 ) -> np.ndarray:
-    """Preserve IDs by identity key and allocate only genuinely new entities."""
+    """Preserve IDs by identity key and allocate only genuinely new entities.
+
+    New IDs start above every source and restored ID and at ``first_new_id``,
+    the lineage allocator of a periodic source.
+    """
 
     source_keys = entity_keys(source, dimension)
     source_ids = np.asarray(source.entity_set(dimension).entity_ids, dtype=np.int64)
@@ -954,7 +960,10 @@ def _target_entity_ids(
     identifiers[restoring] = restored[matched[restoring]]
     new = np.flatnonzero(identifiers < 0)
     order = np.lexsort(target_keys[new].T[::-1])
-    start = int(max(np.max(source_ids, initial=-1), np.max(restored, initial=-1))) + 1
+    start = max(
+        int(max(np.max(source_ids, initial=-1), np.max(restored, initial=-1))) + 1,
+        int(first_new_id),
+    )
     identifiers[new[order]] = np.arange(start, start + new.size, dtype=np.int64)
     return identifiers
 
@@ -1288,8 +1297,19 @@ def assemble_topology_edit(
                 f"Topology edit block {block.name!r} has a mismatched source family."
             )
     probe = _build_mesh(source, edit, numeric_version, None)
+    first_new_ids = (0,) * (dimension + 1)
+    if source.periodic_topology is not None:
+        from ._periodic import periodic_next_entity_ids
+
+        first_new_ids = periodic_next_entity_ids(source)
     entity_ids = {
-        degree: _target_entity_ids(source, probe, degree, edit.prescribed_entity_ids)
+        degree: _target_entity_ids(
+            source,
+            probe,
+            degree,
+            edit.prescribed_entity_ids,
+            first_new_id=first_new_ids[degree],
+        )
         for degree in range(1, dimension)
     }
     target = _build_mesh(source, edit, numeric_version, entity_ids or None)
