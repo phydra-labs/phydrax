@@ -245,3 +245,49 @@ def test_fixed_trip_happy_breakdown_has_finite_jvp_and_vjp() -> None:
     for cotangent, expected in ((rhs, -0.25), (jnp.zeros_like(rhs), 0.0)):
         (gradient,) = pullback(cotangent)
         np.testing.assert_allclose(gradient, expected, rtol=1e-12, atol=0.0)
+
+
+@pytest.mark.parametrize("method", ("gmres", "fgmres"))
+def test_restarted_arnoldi_without_step_budget_runs_until_decided(method: str) -> None:
+    # restart < n: n steps are no termination bound for restarted Arnoldi, so
+    # the undeclared budget must continue cycling until the residual is decided.
+    size = 48
+    rng = np.random.default_rng(17)
+    matrix = np.eye(size) + 0.9 * rng.standard_normal((size, size)) / np.sqrt(size)
+    rhs = rng.standard_normal(size)
+    selected = la.GMRES(restart=4) if method == "gmres" else la.FGMRES(restart=4)
+    result = la.solve(
+        la.LinearSystem(la.DenseLinearOperator(jnp.asarray(matrix))),
+        jnp.asarray(rhs),
+        policy=la.LinearSolvePolicy(
+            selected, tolerance=la.TolerancePolicy(relative=1e-12, absolute=0.0)
+        ),
+    )
+    assert int(result.status) == int(la.LinearSolveStatus.SUCCESS)
+    assert int(result.diagnostics.iterations) > size
+    np.testing.assert_allclose(
+        np.asarray(result.value), np.linalg.solve(matrix, rhs), rtol=1e-9, atol=1e-12
+    )
+
+
+def test_restarted_arnoldi_without_step_budget_refuses_unresolvable_residual() -> None:
+    # An inconsistent singular system cannot reach its tolerance; once the range
+    # component is resolved the null residual spans an invariant direction
+    # without progress, so the undeclared budget ends in typed breakdown or
+    # stagnation evidence rather than a step cap.
+    size = 16
+    matrix = np.diag(np.concatenate((np.linspace(1.0, 2.0, size - 1), [0.0])))
+    rhs = np.ones(size)
+    result = la.solve(
+        la.LinearSystem(la.DenseLinearOperator(jnp.asarray(matrix))),
+        jnp.asarray(rhs),
+        policy=la.LinearSolvePolicy(
+            la.GMRES(restart=4), tolerance=la.TolerancePolicy(relative=1e-12)
+        ),
+    )
+    assert int(result.status) in (
+        int(la.LinearSolveStatus.STAGNATION),
+        int(la.LinearSolveStatus.BREAKDOWN),
+    )
+    assert not bool(result.successful)
+    assert float(result.diagnostics.residual_norm) >= 1.0 - 1e-12
