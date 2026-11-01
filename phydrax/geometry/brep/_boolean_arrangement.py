@@ -19,30 +19,22 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...typing import checked
-from .._atlas import TrimDomain
+from .._atlas import TrimDomain, TrimEnclosures
 from .._interval_enclosure import (
     interval_add,
     interval_multiply,
     interval_subtract,
     prepare_interval_function,
-    PreparedIntervalFunction,
 )
-from .._rational import rational_vector
 from ._boolean_coincidence import CoincidentFaceArc, SourceEdgeFacePairCoverage
 from ._boolean_core import (
     affine_root_endpoint,
     boolean_face_chart_box,
     BRepBooleanFailure,
     BRepBooleanPolicy,
-    chart_add,
-    chart_parts,
-    chart_scale,
-    ChartScalar,
-    conic_rootline_endpoint_parameter,
-    line_chart_coefficients,
     MaterialSelection,
 )
-from ._carrier_pieces import carrier_payload, child_coefficient_enclosures
+from ._carrier_pieces import carrier_payload
 from ._constructors import _Builder, assemble_brep_model
 from ._intersection import (
     _same_parameter_source,
@@ -71,12 +63,10 @@ from ._intersection_curve import (
     orthogonal_cylinder_family,
     SurfaceRegion,
 )
-from ._interval_source import evaluate_interval
 from ._model import BRepEntityId, BRepGeometry, BRepModel
 from ._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
-    PlanePatch,
 )
 from ._projection import NativeBRepProjection, prepare_brep_projection
 from ._projection_contracts import brep_entity_id, BRepProjectionStatus
@@ -202,6 +192,8 @@ class Arrangement:
     branch_source_edges: dict[str, dict[FaceOwner, tuple[int, int]]] = field(
         default_factory=dict
     )
+    # Enclosure trees of each source face trim, prepared once per operation.
+    trim_enclosures: dict[FaceOwner, TrimEnclosures] = field(default_factory=dict)
     source_pair_coverage: dict[
         tuple[FaceOwner, FaceOwner], SourceEdgeFacePairCoverage
     ] = field(default_factory=dict)
@@ -761,423 +753,28 @@ def arc_area_bounds_batch(
     return [arc_area_bounds(curve, first, last) for curve, first, last in cells]
 
 
+def owner_enclosures(state: Arrangement, owner: FaceOwner, /) -> TrimEnclosures:
+    """The operation's enclosure trees of a source face's trim domain."""
+    enclosures = state.trim_enclosures.get(owner)
+    if enclosures is None:
+        enclosures = state.domains[owner].prepare_enclosures()
+        state.trim_enclosures[owner] = enclosures
+    return enclosures
+
+
 @checked
-def trim_box_status(domain: TrimDomain, box: np.ndarray) -> int:
-    decision = domain.classify_boxes(np.asarray(box, dtype=np.float64)[None])
-    if not decision.resolved[0] or decision.boundary[0]:
-        return 0
-    return 1 if decision.inside[0] else -1
-
-
-def _trim_interior_status(domain: TrimDomain, box: np.ndarray, /) -> int:
-    """Trim side of a cell's open interior; trim curves on its edges carry no area."""
-    decision = domain.classify_boxes(box[None], interior=True)
-    if not decision.resolved[0] or decision.boundary[0]:
-        return 0
-    return 1 if decision.inside[0] else -1
-
-
-def _cross2(
-    first: tuple[Fraction, Fraction],
-    second: tuple[Fraction, Fraction],
-    third: tuple[Fraction, Fraction],
-    /,
-) -> Fraction:
-    return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
-        third[0] - first[0]
-    )
-
-
-def _on_segment(
-    first: tuple[Fraction, Fraction],
-    last: tuple[Fraction, Fraction],
-    point: tuple[Fraction, Fraction],
-    /,
-) -> bool:
-    return min(first[0], last[0]) <= point[0] <= max(first[0], last[0]) and min(
-        first[1], last[1]
-    ) <= point[1] <= max(first[1], last[1])
-
-
-def _segments_intersect(
-    first: tuple[Fraction, Fraction],
-    last: tuple[Fraction, Fraction],
-    other_first: tuple[Fraction, Fraction],
-    other_last: tuple[Fraction, Fraction],
-    /,
-) -> bool:
-    a = _cross2(first, last, other_first)
-    b = _cross2(first, last, other_last)
-    c = _cross2(other_first, other_last, first)
-    d = _cross2(other_first, other_last, last)
-    if a == 0 and _on_segment(first, last, other_first):
-        return True
-    if b == 0 and _on_segment(first, last, other_last):
-        return True
-    if c == 0 and _on_segment(other_first, other_last, first):
-        return True
-    if d == 0 and _on_segment(other_first, other_last, last):
-        return True
-    return ((a > 0 and b < 0) or (a < 0 and b > 0)) and (
-        (c > 0 and d < 0) or (c < 0 and d > 0)
-    )
-
-
-def _simple_polygon_signed_area(
-    points: tuple[tuple[Fraction, Fraction], ...], /
-) -> Fraction | None:
-    count = len(points)
-    if len(points) > 1 and points[0] == points[-1]:
-        points = points[:-1]
-        count = len(points)
-    if count < 3 or any(
-        points[index] == points[(index + 1) % count] for index in range(count)
-    ):
-        return None
-    for index in range(count):
-        previous = points[(index - 1) % count]
-        current = points[index]
-        following = points[(index + 1) % count]
-        if _cross2(previous, current, following) == 0:
-            before = (previous[0] - current[0], previous[1] - current[1])
-            after = (following[0] - current[0], following[1] - current[1])
-            if before[0] * after[0] + before[1] * after[1] > 0:
-                return None
-        for other in range(index + 1, count):
-            if other == (index + 1) % count or (other + 1) % count == index:
-                continue
-            if _segments_intersect(
-                current,
-                points[(index + 1) % count],
-                points[other],
-                points[(other + 1) % count],
-            ):
-                return None
-    twice_area = sum(
-        (
-            points[index][0] * points[(index + 1) % count][1]
-            - points[(index + 1) % count][0] * points[index][1]
-            for index in range(count)
-        ),
-        Fraction(0),
-    )
-    if twice_area == 0:
-        return None
-    return twice_area / 2
-
-
-def _coedge_parameter_value(
-    geometry: BRepGeometry,
-    coedge: int,
-    endpoint: int,
-    parameter: float,
-    /,
-) -> ChartScalar | None:
-    root = _source_root_endpoint(geometry.coedge_endpoint_roots[coedge][endpoint])
-    if root is None:
-        return Fraction.from_float(float(parameter)) if np.isfinite(parameter) else None
-    pcurve = geometry.pcurves[coedge]
-    if not isinstance(pcurve, AbstractCurve):
-        return None
-    if isinstance(root, NativePeriodEndpoint):
-        if root.patch is not None or carrier_payload(root.curve) != carrier_payload(
-            pcurve
-        ):
-            return None
-        return root.exact_parameter
-    if isinstance(root, ConicParameterEndpoint):
-        if root.parameter_exact is None or carrier_payload(
-            root.carrier
-        ) != carrier_payload(pcurve):
-            return None
-        return root.parameter_exact
-    return conic_rootline_endpoint_parameter(pcurve, root)
-
-
-def _coedge_chart_point(
-    curve: AbstractCurve,
-    parameter: ChartScalar,
-    /,
-) -> tuple[Fraction, Fraction] | None:
-    coefficients = line_chart_coefficients(curve)
-    if coefficients is None:
-        return None
-    origin, direction = coefficients
-    if len(origin) != 2 or len(direction) != 2:
-        return None
-    point = tuple(
-        chart_add(origin[axis], chart_scale(parameter, direction[axis]))
-        for axis in range(2)
-    )
-    coordinates = tuple(chart_parts(value) for value in point)
-    if any(turns for _, turns in coordinates):
-        return None
-    return coordinates[0][0], coordinates[1][0]
-
-
-def _source_exact_face_area(
-    geometry: BRepGeometry,
-    face: int,
-    /,
-) -> Fraction | None:
-    loops = geometry.face_loops[face]
-    if not loops:
-        return None
-    edge_ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
-    polygons: list[tuple[tuple[Fraction, Fraction], ...]] = []
-    total = Fraction(0)
-    for loop in loops:
-        if len(loop) < 3:
-            return None
-        points: list[tuple[Fraction, Fraction]] = []
-        previous_end: tuple[Fraction, Fraction] | None = None
-        for coedge in loop:
-            edge = geometry.coedge_edges[coedge]
-            if geometry.edge_curves[edge] < 0:
-                return None
-            lower, upper = edge_ranges[edge]
-            if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
-                return None
-            curve = geometry.pcurves[coedge]
-            if not isinstance(curve, AbstractCurve):
-                return None
-            first_parameter = _coedge_parameter_value(geometry, coedge, 0, float(lower))
-            last_parameter = _coedge_parameter_value(geometry, coedge, 1, float(upper))
-            if first_parameter is None or last_parameter is None:
-                return None
-            first_point = _coedge_chart_point(curve, first_parameter)
-            last_point = _coedge_chart_point(curve, last_parameter)
-            if first_point is None or last_point is None or first_point == last_point:
-                return None
-            if geometry.coedge_senses[coedge] < 0:
-                start, end = last_point, first_point
-            else:
-                start, end = first_point, last_point
-            if previous_end is not None and previous_end != start:
-                return None
-            points.append(start)
-            previous_end = end
-        if previous_end != points[0]:
-            return None
-        polygon = tuple(points)
-        area = _simple_polygon_signed_area(polygon)
-        if area is None:
-            return None
-        polygons.append(polygon)
-        total += area
-    for index, first in enumerate(polygons):
-        for second in polygons[index + 1 :]:
-            for first_edge, first_start in enumerate(first):
-                first_end = first[(first_edge + 1) % len(first)]
-                for second_edge, second_start in enumerate(second):
-                    second_end = second[(second_edge + 1) % len(second)]
-                    if _segments_intersect(
-                        first_start, first_end, second_start, second_end
-                    ):
-                        return None
-    return None if total == 0 else total
-
-
-def _source_planar_shell_face_term(
-    patch: AbstractSurfacePatch,
-    geometry: BRepGeometry,
-    face: int,
-    sign: float,
-    /,
-) -> Fraction | None:
-    if type(patch) is not PlanePatch or sign not in (-1.0, 1.0):
-        return None
-    area = _source_exact_face_area(geometry, face)
-    if area is None:
-        return None
-    try:
-        origin = rational_vector(np.asarray(patch.origin))
-        first = rational_vector(np.asarray(patch.first_axis))
-        second = rational_vector(np.asarray(patch.second_axis))
-    except ValueError:
-        return None
-    if len(origin) != 3 or len(first) != 3 or len(second) != 3:
-        return None
-    normal = (
-        first[1] * second[2] - first[2] * second[1],
-        first[2] * second[0] - first[0] * second[2],
-        first[0] * second[1] - first[1] * second[0],
-    )
-    if not any(normal):
-        return None
-    flux = sum(
-        (point * component for point, component in zip(origin, normal, strict=True)),
-        Fraction(0),
-    )
-    return Fraction(int(sign), 3) * flux * area
-
-
-def _exact_enclosure(
-    lower: np.ndarray, upper: np.ndarray, /
-) -> tuple[Fraction, Fraction]:
-    if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
-        raise BRepBooleanFailure(
-            "BRepBoolean.shell.volume_sign requires a finite integrand enclosure"
-        )
-    return Fraction.from_float(float(lower)), Fraction.from_float(float(upper))
-
-
-def _volume_cell_bounds(
-    value: PreparedIntervalFunction,
-    gradient: PreparedIntervalFunction,
+def trim_box_status(
+    domain: TrimDomain,
     box: np.ndarray,
-    status: int,
-    /,
-) -> tuple[Fraction, Fraction]:
-    """Enclose one chart cell's divergence-theorem integral exactly.
-
-    A cell inside the trim uses the centered form: ``f(x) - f(c)`` is the
-    gradient at an intermediate point dotted with ``x - c``, so with the
-    gradient enclosed by ``m +- r`` the integral lies in
-    ``f(c) A + sum_k (m_k M_k +- r_k |M|_k)`` where ``M_k`` and ``|M|_k`` are
-    the exact first and absolute first moments of ``x_k - c_k``. The width is
-    second order in the cell size. A cell crossing the trim encloses its
-    partial integral by the zero-extended range times the cell area.
-    """
-    lower = tuple(Fraction.from_float(float(entry)) for entry in box[0])
-    upper = tuple(Fraction.from_float(float(entry)) for entry in box[1])
-    widths = (upper[0] - lower[0], upper[1] - lower[1])
-    area = widths[0] * widths[1]
-    if status == 0:
-        bounds = evaluate_interval(value, box[0][None], box[1][None])
-        low, high = _exact_enclosure(bounds[0][0], bounds[1][0])
-        return min(low, Fraction(0)) * area, max(high, Fraction(0)) * area
-    center = box[0] + 0.5 * (box[1] - box[0])
-    center_bounds = evaluate_interval(value, center[None], center[None])
-    low, high = _exact_enclosure(center_bounds[0][0], center_bounds[1][0])
-    low, high = low * area, high * area
-    gradient_bounds = evaluate_interval(gradient, box[0][None], box[1][None])
-    for axis in range(2):
-        point = Fraction.from_float(float(center[axis]))
-        other = widths[1 - axis]
-        first_moment = other * widths[axis] * ((lower[axis] + upper[axis]) / 2 - point)
-        absolute_moment = (
-            other * ((point - lower[axis]) ** 2 + (upper[axis] - point) ** 2) / 2
-        )
-        slope_low, slope_high = _exact_enclosure(
-            gradient_bounds[0][0][axis], gradient_bounds[1][0][axis]
-        )
-        middle, radius = (slope_low + slope_high) / 2, (slope_high - slope_low) / 2
-        low += middle * first_moment - radius * absolute_moment
-        high += middle * first_moment + radius * absolute_moment
-    return low, high
-
-
-def _shell_volume_sign(
-    geometry: BRepGeometry,
-    patches: tuple[AbstractSurfacePatch, ...],
-    bounds: np.ndarray,
-    domains: tuple[TrimDomain | None, ...],
-    signs: np.ndarray,
-    faces: tuple[int, ...],
+    *,
+    enclosures: TrimEnclosures | None = None,
 ) -> int:
-    """Certify the oriented shell volume sign from ``x . (S_u x S_v) / 3``.
-
-    Planar faces contribute exactly. Curved-face cell enclosures are summed in
-    exact arithmetic; each round splits every cell at least half as wide as
-    the widest, and sub-cells inherit a decided trim status.
-    """
-    functions: list[tuple[PreparedIntervalFunction, PreparedIntervalFunction]] = []
-    cell_signs: list[int] = []
-    cell_domains: list[TrimDomain] = []
-    cells: list[tuple[int, np.ndarray, int, tuple[Fraction, Fraction]]] = []
-    planar_term = Fraction(0)
-
-    def bounded(index: int, box: np.ndarray, status: int, /) -> tuple[Fraction, Fraction]:
-        if status < 0:
-            return Fraction(0), Fraction(0)
-        low, high = _volume_cell_bounds(*functions[index], box, status)
-        return (low, high) if cell_signs[index] > 0 else (-high, -low)
-
-    for face in faces:
-        box = np.asarray(bounds[face], dtype=np.float64)
-        exact_term = _source_planar_shell_face_term(
-            patches[face], geometry, face, float(signs[face])
-        )
-        if exact_term is not None:
-            planar_term += exact_term
-            continue
-        domain = domains[face]
-        if domain is None:
-            raise BRepBooleanFailure(
-                "BRepBoolean.shell.volume_sign has no source trim for the selected face"
-            )
-        evaluator = patches[face]
-
-        def integrand(
-            uv: jax.Array,
-            evaluator: AbstractSurfacePatch = evaluator,
-        ) -> jax.Array:
-            point = evaluator.evaluate(uv)
-            frame = jax.jacfwd(evaluator.evaluate)(uv)
-            return (point @ jnp.cross(frame[:, 0], frame[:, 1])) / 3.0
-
-        constants = child_coefficient_enclosures(evaluator)
-        functions.append(
-            (
-                prepare_interval_function(
-                    integrand, 2, batch_capacity=1, constant_bounds=constants
-                ),
-                prepare_interval_function(
-                    jax.grad(integrand), 2, batch_capacity=1, constant_bounds=constants
-                ),
-            )
-        )
-        cell_signs.append(1 if float(signs[face]) > 0.0 else -1)
-        cell_domains.append(domain)
-        index = len(functions) - 1
-        status = _trim_interior_status(domain, box)
-        cells.append((index, box, status, bounded(index, box, status)))
-    if not cells:
-        if planar_term > 0:
-            return 1
-        if planar_term < 0:
-            return -1
-        raise BRepBooleanFailure(
-            "BRepBoolean.shell.volume_sign has zero exact planar shell volume"
-        )
-    while True:
-        total_low = planar_term + sum((cell[3][0] for cell in cells), Fraction(0))
-        total_high = planar_term + sum((cell[3][1] for cell in cells), Fraction(0))
-        if total_low > 0:
-            return 1
-        if total_high < 0:
-            return -1
-        if total_low == total_high == 0:
-            raise BRepBooleanFailure(
-                "BRepBoolean.shell.volume_sign has an exact zero shell volume"
-            )
-        threshold = max(cell[3][1] - cell[3][0] for cell in cells) / 2
-        refined: list[tuple[int, np.ndarray, int, tuple[Fraction, Fraction]]] = []
-        for index, box, status, contribution in cells:
-            if contribution[1] - contribution[0] < threshold:
-                refined.append((index, box, status, contribution))
-                continue
-            axis = int(np.argmax(box[1] - box[0]))
-            lower = float(box[0, axis])
-            upper = float(box[1, axis])
-            middle = lower + 0.5 * (upper - lower)
-            if not lower < middle < upper:
-                raise BRepBooleanFailure(
-                    "BRepBoolean.shell.volume_sign remains unresolved at parameter representability"
-                )
-            first, second = box.copy(), box.copy()
-            first[1, axis], second[0, axis] = middle, middle
-            for child in (first, second):
-                child_status = (
-                    status
-                    if status
-                    else _trim_interior_status(cell_domains[index], child)
-                )
-                refined.append(
-                    (index, child, child_status, bounded(index, child, child_status))
-                )
-        cells = refined
+    decision = domain.classify_boxes(
+        np.asarray(box, dtype=np.float64)[None], enclosures=enclosures
+    )
+    if not decision.resolved[0] or decision.boundary[0]:
+        return 0
+    return 1 if decision.inside[0] else -1
 
 
 def _edge_spatial_roots(
@@ -2386,18 +1983,29 @@ def _oriented_solids(
     ``outward`` is each face's material-outward sign relative to its patch
     normal. Returned solids index the returned shells, outer shell first.
     """
+    from ._measure import BRepMeasureRefusal, source_shell_volume_sign
+
     shells_bank = shells(built.geometry, faces, outward)
-    signs = tuple(
-        _shell_volume_sign(
-            built.geometry,
-            built.patches,
-            built.bounds,
-            built.domains,
-            outward,
-            shell,
+    if len(shells_bank) == 1:
+        # Operand solids are bounded, so the material is bounded: the only
+        # closed shell bounds it from outside and is positively oriented.
+        return shells_bank, ((0,),)
+    try:
+        signs = tuple(
+            source_shell_volume_sign(
+                built.geometry,
+                built.patches,
+                built.bounds,
+                built.domains,
+                outward,
+                shell,
+            )
+            for shell in shells_bank
         )
-        for shell in shells_bank
-    )
+    except BRepMeasureRefusal as error:
+        raise BRepBooleanFailure(
+            f"BRepBoolean.shell.volume_sign remains unresolved: {error}"
+        ) from error
     outer = [index for index, sign in enumerate(signs) if sign > 0]
     if not outer:
         raise BRepBooleanFailure(

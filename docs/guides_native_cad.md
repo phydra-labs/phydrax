@@ -62,11 +62,24 @@ branch. A plane holding a cone's axis direction cuts exact trimmed section arcs
 from it, circle and straight edges meet planes and cones at exact radical
 roots, and branches whose partner faces are coaxial straight revolutions (a
 cylinder and a cone sharing a circle edge) join at that edge's roots once the
-faces are proved to meet only on it. The remaining refusals return typed
-unresolved regions: junctions whose curved partner faces are not coaxial
-straight revolutions, partially trimmed intersections between two curved faces
-of different operands, planes through a cone's axis, and tangent contacts of a
-cone section with a trim.
+faces are proved to meet only on it.
+
+Supported trimmed intersections of curved faces from different operands can be
+traced as graphs over a straight revolution's angle. Qualified examples include
+cylinder-cylinder, cylinder-cone, cone-cone, and sphere against a cylinder or
+cone; admission still requires the exact source and graph certificates. Each
+trim crossing is a Krawczyk-certified node on the exact trim
+coordinate, bound to the curve-surface root of that trim edge, and each seam
+crossing of the other face is a node with an exact deck. The remaining refusals
+return typed unresolved regions: a turning point of the traced graph inside the
+trims, junctions whose curved partner faces are not coaxial straight
+revolutions, planes through a cone's axis, and tangent contacts of a section
+with a trim.
+
+Discovery also proves separation of coaxial cylinder and torus supports from
+their exact radial ranges. This excludes disjoint annular surfaces whose
+Cartesian boxes overlap, without assuming that faces of the same imported
+solid are disjoint and without introducing a general torus-intersection route.
 
 T-spline B-rep intersections use cell-local rational Bézier source pieces and
 native interval enclosures. Transverse graph branches against planes, cylinders,
@@ -312,6 +325,10 @@ isoline over the authored edge range. Each coedge of a shared full-turn edge
 binds its endpoints to its own face, using the declared period of that face's
 surface or else the p-curve's own native turn. Pole vertices keep their file
 coordinates as exact source values.
+
+Signed shell integration belongs to the native measure implementation and is
+shared by Boolean shell nesting and interchange orientation repair. Its
+directed interval sign proof is independent of a sampled volume estimate.
 
 STEP retains shared conic basis references as one curve-bank definition and
 exports a shared bank row as one referenced conic. Independently authored

@@ -20,13 +20,14 @@ from functools import cmp_to_key
 from itertools import combinations
 from typing import assert_never, Literal
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...typing import checked
-from .._atlas import TrimDomain
+from .._atlas import TrimDomain, TrimEnclosures
 from .._interval_enclosure import interval_add, interval_multiply, interval_subtract
 from ._boolean_arrangement import (
     Arc,
@@ -36,6 +37,7 @@ from ._boolean_arrangement import (
     FaceOwner,
     intersect_arc_pair,
     ordered_cuts,
+    owner_enclosures,
     Piece,
     piece_nodes,
     piece_trim,
@@ -344,8 +346,13 @@ def _cyclic_order(
     )
 
 
-def _box_status(domain: TrimDomain, box: np.ndarray, /) -> int:
-    decision = domain.classify_boxes(box[None])
+def _box_status(
+    domain: TrimDomain,
+    box: np.ndarray,
+    /,
+    enclosures: TrimEnclosures | None = None,
+) -> int:
+    decision = domain.classify_boxes(box[None], enclosures=enclosures)
     if not decision.resolved[0]:
         return 0
     return 1 if decision.inside[0] else -1
@@ -582,6 +589,7 @@ def _bind_face_graph(
 class _OppositeBranchTrim(StrictModule):
     domain: TrimDomain
     pcurve: IntersectionPCurve
+    owner: FaceOwner = eqx.field(static=True)
 
 
 def _opposite_branch_trim(
@@ -596,11 +604,15 @@ def _opposite_branch_trim(
     first_owner, second_owner = workset.branch_owners[arc.token]
     if owner == first_owner:
         return _OppositeBranchTrim(
-            domain=state.domains[second_owner], pcurve=branch.p_curve("second")
+            domain=state.domains[second_owner],
+            pcurve=branch.p_curve("second"),
+            owner=second_owner,
         )
     if owner == second_owner:
         return _OppositeBranchTrim(
-            domain=state.domains[first_owner], pcurve=branch.p_curve("first")
+            domain=state.domains[first_owner],
+            pcurve=branch.p_curve("first"),
+            owner=first_owner,
         )
     raise BRepBooleanFailure(
         f"face_cells.branch_owner must name a generating face; got owner={owner}, generators={(first_owner, second_owner)}",
@@ -630,6 +642,7 @@ def _full_pieces(
                 status = _box_status(
                     state.domains[owner],
                     source_pcurve_image(arc.trim, middle, middle),
+                    owner_enclosures(state, owner),
                 )
                 if status == 0:
                     raise BRepBooleanFailure(
@@ -643,6 +656,7 @@ def _full_pieces(
                 status = _box_status(
                     opposite.domain,
                     source_pcurve_image(opposite.pcurve, middle, middle),
+                    owner_enclosures(state, opposite.owner),
                 )
                 if status == 0:
                     raise BRepBooleanFailure(
@@ -882,6 +896,7 @@ def _seed_box(
     Probes sit at ``weight`` along each search box; an off-centre weight
     avoids symmetric points of the loop such as a tangent contact line.
     """
+    enclosures = domain.prepare_enclosures()
     boxes = [source_pcurve_image(curve, 0.0, 1.0) for curve in outer]
     if not boxes:
         raise BRepBooleanFailure(
@@ -898,7 +913,7 @@ def _seed_box(
         box = pending.popleft()
         center = box[0] + weight * (box[1] - box[0])
         probe = np.stack((np.nextafter(center, -np.inf), np.nextafter(center, np.inf)))
-        if _box_status(domain, probe) > 0:
+        if _box_status(domain, probe, enclosures) > 0:
             return probe
         axis = int(np.argmax(box[1] - box[0]))
         middle = center[axis]
@@ -939,7 +954,7 @@ def _publish_face_cells(
         owned = (outer, *children)
         domain = TrimDomain.from_curve_loops(tuple(exact[index] for index in owned))
         seed = _seed_box(domain, exact[outer])
-        status = _box_status(state.domains[owner], seed)
+        status = _box_status(state.domains[owner], seed, owner_enclosures(state, owner))
         if status == 0:
             raise BRepBooleanFailure(
                 f"face_cells.source_trim_membership must resolve the open-cell seed; got owner={owner}, unresolved classification"

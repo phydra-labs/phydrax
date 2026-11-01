@@ -437,21 +437,33 @@ def _derive_orthogonal_cylinder_family(
     regions = source_a, source_b
     for region in regions:
         patch = region.patch
-        if not isinstance(patch, RevolutionSurface) or not isinstance(
+        if isinstance(patch, CylinderPatch):
+            profile_arrays = (
+                patch.origin,
+                patch.axis,
+                patch.first_axis,
+                patch.second_axis,
+                patch.radius,
+            )
+        elif isinstance(patch, RevolutionSurface) and isinstance(
             patch.curve, (LineCurve, ExactLineCurve)
         ):
+            profile_arrays = (
+                (patch.curve.origin, patch.curve.direction)
+                if isinstance(patch.curve, LineCurve)
+                else (patch.curve.first, patch.curve.last)
+            )
+        else:
             return None
-        profile_arrays = (
-            (patch.curve.origin, patch.curve.direction)
-            if isinstance(patch.curve, LineCurve)
-            else (patch.curve.first, patch.curve.last)
-        )
         if any(
             isinstance(value, Tracer)
             for value in (
                 region.parameter_box,
-                patch.axis_origin,
-                patch.axis_direction,
+                *(
+                    (patch.axis_origin, patch.axis_direction)
+                    if isinstance(patch, RevolutionSurface)
+                    else ()
+                ),
                 *profile_arrays,
             )
         ):
@@ -1521,6 +1533,80 @@ def _branch_prepared_pair(curve: IntersectionCurve, /) -> KrawczykEvaluator:
     return prepared
 
 
+_ChartRequest = tuple[np.ndarray, np.ndarray, int, np.ndarray, np.ndarray, float, float]
+
+
+def _contract_chart_subintervals(
+    prepared: KrawczykEvaluator, requests: list[_ChartRequest], /
+) -> list[tuple[np.ndarray, np.ndarray] | None]:
+    """Enclose each chart's unique graph over a subinterval of its chart axis.
+
+    The Krawczyk image of a whole chart box shrinks with the box, not with the
+    subinterval, so boxes around the chord between the chart endpoints are
+    tried first, batched per chart axis: a certified sub-box of the chart box
+    holds the unique graph over the subinterval. Otherwise the chart box is
+    contracted repeatedly; every certified image still holds that graph.
+    """
+    results: list[tuple[np.ndarray, np.ndarray] | None] = [None] * len(requests)
+    pending = list(range(len(requests)))
+    for scale in (1.0, 8.0):
+        trials: dict[int, list[tuple[int, np.ndarray, np.ndarray]]] = {}
+        for index in pending:
+            lower_box, upper_box, axis, start, end, first, last = requests[index]
+            free = [item for item in range(4) if item != axis]
+            chord = [start + fraction * (end - start) for fraction in (first, last)]
+            guess_lower = np.minimum(chord[0], chord[1])
+            guess_upper = np.maximum(chord[0], chord[1])
+            margin = np.maximum(
+                (last - first) * (upper_box[free] - lower_box[free])
+                + (guess_upper - guess_lower)[free],
+                256.0 * np.finfo(np.float64).eps * (1.0 + np.abs(guess_upper[free])),
+            )
+            trial_lower, trial_upper = lower_box.copy(), upper_box.copy()
+            trial_lower[free] = np.maximum(
+                lower_box[free], guess_lower[free] - scale * margin
+            )
+            trial_upper[free] = np.minimum(
+                upper_box[free], guess_upper[free] + scale * margin
+            )
+            trials.setdefault(axis, []).append((index, trial_lower, trial_upper))
+        for axis, items in trials.items():
+            free = [item for item in range(4) if item != axis]
+            witness = krawczyk(
+                prepared,
+                np.stack([item[1] for item in items]),
+                np.stack([item[2] for item in items]),
+                parameter_axis=axis,
+            )
+            for row, (index, trial_lower, trial_upper) in enumerate(items):
+                if not bool(witness.certified[row]):
+                    continue
+                trial_lower[free] = np.maximum(trial_lower[free], witness.lower[row])
+                trial_upper[free] = np.minimum(trial_upper[free], witness.upper[row])
+                results[index] = (trial_lower, trial_upper)
+        pending = [index for index in pending if results[index] is None]
+    for index in pending:
+        lower_box, upper_box, axis, _, _, _, _ = requests[index]
+        free = [item for item in range(4) if item != axis]
+        trial_lower, trial_upper = lower_box.copy(), upper_box.copy()
+        certified = False
+        while True:
+            width = float(np.max(trial_upper[free] - trial_lower[free]))
+            witness = krawczyk(
+                prepared, trial_lower[None, :], trial_upper[None, :], parameter_axis=axis
+            )
+            if not bool(witness.certified[0]):
+                break
+            certified = True
+            next_lower = np.maximum(trial_lower[free], witness.lower[0])
+            next_upper = np.minimum(trial_upper[free], witness.upper[0])
+            trial_lower[free], trial_upper[free] = next_lower, next_upper
+            if not float(np.max(next_upper - next_lower)) < 0.5 * width:
+                break
+        results[index] = (trial_lower, trial_upper) if certified else None
+    return results
+
+
 def _prepare_pair(
     system: SurfacePairSystem,
     /,
@@ -2176,6 +2262,42 @@ def _batched_node_jacobians(
     return jnp.concatenate((pair, fixed), axis=1)
 
 
+def _cylinder_profile_data(
+    surface: AbstractSurfacePatch, /
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    """Realize the certified cylinder's source chart without reparameterizing it."""
+    from ._patches import CylinderPatch, ExactLineCurve, LineCurve, RevolutionSurface
+
+    if isinstance(surface, CylinderPatch):
+        return (
+            surface.origin,
+            surface.axis,
+            surface.first_axis,
+            surface.second_axis,
+            surface.radius,
+            jnp.asarray(1.0, dtype=surface.radius.dtype),
+        )
+    if not isinstance(surface, RevolutionSurface):
+        raise TypeError("The orthogonal-cylinder evaluator requires cylinder sources.")
+    profile = surface.curve
+    if isinstance(profile, LineCurve):
+        origin, direction = profile.origin, profile.direction
+    elif isinstance(profile, ExactLineCurve):
+        origin, direction = profile.first, profile.last - profile.first
+    else:
+        raise TypeError("The orthogonal-cylinder evaluator requires line profiles.")
+    axis_origin, axis = surface.axis_origin, surface.axis_direction
+    relative = origin - axis_origin
+    axial_origin = jnp.sum(relative * axis)
+    radial = relative - axial_origin * axis
+    radius = jnp.linalg.norm(radial)
+    first_axis = radial / radius
+    second_axis = jnp.cross(axis, first_axis)
+    center = axis_origin + axial_origin * axis
+    slope = jnp.sum(direction * axis)
+    return center, axis, first_axis, second_axis, radius, slope
+
+
 def _evaluate_orthogonal_cylinder_curve_point(
     curve: IntersectionCurve,
     parameter: Array,
@@ -2183,44 +2305,16 @@ def _evaluate_orthogonal_cylinder_curve_point(
     /,
 ) -> tuple[Array, ...]:
     """Evaluate the exact line-revolution branch and its two analytic p-curves."""
-    from ._patches import ExactLineCurve, LineCurve, RevolutionSurface
-
     if large_index == 0:
         large_surface, small_surface = curve.first.patch, curve.second.patch
     else:
         large_surface, small_surface = curve.second.patch, curve.first.patch
-    if not isinstance(large_surface, RevolutionSurface) or not isinstance(
-        small_surface, RevolutionSurface
-    ):
-        raise TypeError("The orthogonal-cylinder evaluator requires revolution sources.")
-
-    def profile_data(
-        surface: RevolutionSurface, /
-    ) -> tuple[Array, Array, Array, Array, Array, Array]:
-        profile = surface.curve
-        if isinstance(profile, LineCurve):
-            origin, direction = profile.origin, profile.direction
-        elif isinstance(profile, ExactLineCurve):
-            origin, direction = profile.first, profile.last - profile.first
-        else:
-            raise TypeError("The orthogonal-cylinder evaluator requires line profiles.")
-        axis_origin = surface.axis_origin
-        axis = surface.axis_direction
-        relative = origin - axis_origin
-        axial_origin = jnp.sum(relative * axis)
-        radial = relative - axial_origin * axis
-        radius = jnp.linalg.norm(radial)
-        first_axis = radial / radius
-        second_axis = jnp.cross(axis, first_axis)
-        center = axis_origin + axial_origin * axis
-        slope = jnp.sum(direction * axis)
-        return center, axis, first_axis, second_axis, radius, slope
 
     large_center, large_axis, large_first, large_second, large_radius, large_slope = (
-        profile_data(large_surface)
+        _cylinder_profile_data(large_surface)
     )
     small_center, small_axis, small_first, small_second, small_radius, small_slope = (
-        profile_data(small_surface)
+        _cylinder_profile_data(small_surface)
     )
     small_index = 1 - large_index
     theta_axis = 2 * small_index
@@ -2322,44 +2416,17 @@ def _evaluate_orthogonal_cylinder_parameters_on_chart(
     /,
 ) -> Array:
     """Evaluate the exact source p-curve on one certified cylinder chart."""
-    from ._patches import ExactLineCurve, LineCurve, RevolutionSurface
-
     large_surface, small_surface = (
         (curve.first.patch, curve.second.patch)
         if large_index == 0
         else (curve.second.patch, curve.first.patch)
     )
-    if not isinstance(large_surface, RevolutionSurface) or not isinstance(
-        small_surface, RevolutionSurface
-    ):
-        raise TypeError("The orthogonal-cylinder evaluator requires revolution sources.")
-
-    def profile_data(
-        surface: RevolutionSurface, /
-    ) -> tuple[Array, Array, Array, Array, Array, Array]:
-        profile = surface.curve
-        if isinstance(profile, LineCurve):
-            origin, direction = profile.origin, profile.direction
-        elif isinstance(profile, ExactLineCurve):
-            origin, direction = profile.first, profile.last - profile.first
-        else:
-            raise TypeError("The orthogonal-cylinder evaluator requires line profiles.")
-        axis_origin, axis = surface.axis_origin, surface.axis_direction
-        relative = origin - axis_origin
-        axial_origin = jnp.sum(relative * axis)
-        radial = relative - axial_origin * axis
-        radius = jnp.linalg.norm(radial)
-        first_axis = radial / radius
-        second_axis = jnp.cross(axis, first_axis)
-        center = axis_origin + axial_origin * axis
-        slope = jnp.sum(direction * axis)
-        return center, axis, first_axis, second_axis, radius, slope
 
     large_center, large_axis, large_first, large_second, large_radius, large_slope = (
-        profile_data(large_surface)
+        _cylinder_profile_data(large_surface)
     )
     small_center, small_axis, small_first, small_second, small_radius, small_slope = (
-        profile_data(small_surface)
+        _cylinder_profile_data(small_surface)
     )
     small_index = 1 - large_index
     theta_axis = 2 * small_index
@@ -3188,11 +3255,12 @@ class IntersectionCurve(AbstractCurve):
             return np.stack(boxes)
         prepared = _branch_prepared_pair(self)
         boxes: list[np.ndarray] = []
+        requests: list[_ChartRequest] = []
+        charts: list[tuple[int, float, float, int]] = []
         for chart in range(first_chart, last_chart + 1):
             chart_first = max(lower_parameter, float(chart))
             chart_last = min(upper_parameter, float(chart + 1))
             axis = int(self.chart_axes[chart])
-            free_axes = tuple(index for index in range(4) if index != axis)
             start = np.asarray(self.chart_start[chart], dtype=np.float64)
             end = np.asarray(self.chart_end[chart], dtype=np.float64)
             start_axis = Fraction.from_float(float(start[axis]))
@@ -3210,38 +3278,60 @@ class IntersectionCurve(AbstractCurve):
                 axis_lower = math.nextafter(axis_lower, -math.inf)
             if Fraction.from_float(axis_upper) < exact_upper:
                 axis_upper = math.nextafter(axis_upper, math.inf)
+            if axis_lower == axis_upper:
+                # A point query keeps a proper interval for box-valued carriers.
+                axis_lower = math.nextafter(axis_lower, -math.inf)
+                axis_upper = math.nextafter(axis_upper, math.inf)
             lower_box = np.asarray(self.chart_lower[chart], dtype=np.float64).copy()
             upper_box = np.asarray(self.chart_upper[chart], dtype=np.float64).copy()
             lower_box[axis], upper_box[axis] = axis_lower, axis_upper
-            witness = krawczyk(
-                prepared,
-                lower_box[None, :],
-                upper_box[None, :],
-                parameter_axis=axis,
+            requests.append(
+                (
+                    lower_box,
+                    upper_box,
+                    axis,
+                    start,
+                    end,
+                    chart_first - chart,
+                    chart_last - chart,
+                )
             )
-            if not bool(witness.certified[0]):
+            charts.append((chart, chart_first, chart_last, axis))
+        contracted_boxes = _contract_chart_subintervals(prepared, requests)
+        for (chart, chart_first, chart_last, axis), contracted in zip(
+            charts, contracted_boxes, strict=True
+        ):
+            if contracted is None:
                 raise ValueError(
                     "The branch subinterval does not certify a unique source graph."
                 )
-            contracted_lower = lower_box.copy()
-            contracted_upper = upper_box.copy()
-            contracted_lower[list(free_axes)] = witness.lower[0]
-            contracted_upper[list(free_axes)] = witness.upper[0]
+            contracted_lower, contracted_upper = contracted
             if isinstance(prepared, _ExactAffinePairPrepared):
                 prepared.intersect_exact_coordinates(contracted_lower, contracted_upper)
             # A node fixing another coordinate (the trim edge a boundary branch
             # ends on) is only represented by its chart endpoint; an enclosure
             # reaching that node also encloses the node's own root.
-            for node, touches in (
-                (chart, chart_first == chart),
-                (chart + 1, chart_last == chart + 1),
+            for node, touches, direction in (
+                (chart, chart_first == chart, 1),
+                (chart + 1, chart_last == chart + 1, 0),
             ):
                 if touches and int(self.node_axes[node]) != axis:
+                    # The node box seen from this chart's sheet: a node on a
+                    # periodic seam sits one deck turn away on one side.
+                    shift_lower, shift_upper = self.shift_parameter_bounds(
+                        np.asarray(self.node_period_shifts[node, direction], np.int64)
+                    )
                     contracted_lower = np.minimum(
-                        contracted_lower, np.asarray(self.node_lower[node])
+                        contracted_lower,
+                        np.nextafter(
+                            np.asarray(self.node_lower[node]) + shift_lower, -np.inf
+                        ),
                     )
                     contracted_upper = np.maximum(
-                        contracted_upper, np.asarray(self.node_upper[node])
+                        contracted_upper,
+                        np.nextafter(
+                            np.asarray(self.node_upper[node]) + shift_upper, np.inf
+                        ),
                     )
             boxes.append(np.stack((contracted_lower, contracted_upper)))
         if not boxes:

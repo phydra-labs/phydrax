@@ -982,7 +982,7 @@ def _coaxial_faces_meet_on_shared_circle(
     from .._rational import rational_cross, rational_dot
     from ._patches import CircleCurve
 
-    frames = [_straight_revolution(region.patch) for region in regions]
+    frames = [_straight_revolution(region.patch, allow_disk=True) for region in regions]
     if frames[0] is None or frames[1] is None:
         return False
     first, second = frames[0], frames[1]
@@ -993,8 +993,23 @@ def _coaxial_faces_meet_on_shared_circle(
         return False
     quadratics = []
     ranges = []
+    disks: list[Fraction | None] = []
     for frame, region in zip(frames, regions, strict=True):
         assert frame is not None
+        if frame.axial_rate == 0:
+            # A disk lies at one height along the common axis.
+            height = rational_dot(
+                tuple(
+                    frame.origin[i] + frame.axial_origin * frame.axis[i] - first.origin[i]
+                    for i in range(3)
+                ),
+                first.axis,
+            )
+            disks.append(height)
+            quadratics.append((Fraction(0), Fraction(0), Fraction(0)))
+            ranges.append((height, height))
+            continue
+        disks.append(None)
         # Height h along the first axis: h = c + e (a0 + a1 v), so the scale
         # s = 1 + slope v is affine in h: s = p + q h.
         shift = rational_dot(
@@ -1002,7 +1017,7 @@ def _coaxial_faces_meet_on_shared_circle(
         )
         sense = rational_dot(frame.axis, first.axis)
         rate = frame.slope / (sense * frame.axial_rate)
-        constant = 1 - rate * (shift + sense * frame.axial_origin)
+        constant = frame.scale_origin - rate * (shift + sense * frame.axial_origin)
         squared = rational_dot(frame.radial, frame.radial)
         quadratics.append(
             (squared * rate * rate, 2 * squared * constant * rate, squared * constant**2)
@@ -1015,11 +1030,10 @@ def _coaxial_faces_meet_on_shared_circle(
             )
         ]
         ranges.append((min(heights), max(heights)))
-    difference = tuple(a - b for a, b in zip(quadratics[0], quadratics[1], strict=True))
-    if all(value == 0 for value in difference):
-        return False
     lower = max(ranges[0][0], ranges[1][0])
     upper = min(ranges[0][1], ranges[1][1])
+    if lower > upper:
+        return True
     geometry = model.geometry
     assert geometry is not None
     circles = []
@@ -1040,16 +1054,28 @@ def _coaxial_faces_meet_on_shared_circle(
             (rational_dot(relative, first.axis), cast(Fraction, curve.radius_exact) ** 2)
         )
 
+    radial = quadratics[1] if disks[0] is not None else quadratics[0]
+
     def shared(height: Fraction, /) -> bool:
-        squared = (
-            quadratics[0][0] * height * height
-            + quadratics[0][1] * height
-            + quadratics[0][2]
-        )
+        squared = radial[0] * height * height + radial[1] * height + radial[2]
         return any(height == h and squared == r for h, r in circles)
 
+    if disks[0] is not None and disks[1] is not None:
+        # Parallel disks meet only when coplanar.
+        return disks[0] != disks[1]
+    if disks[0] is not None or disks[1] is not None:
+        height = disks[0] if disks[0] is not None else disks[1]
+        assert height is not None
+        return not (lower <= height <= upper) or shared(height)
+    difference = tuple(a - b for a, b in zip(quadratics[0], quadratics[1], strict=True))
+    if all(value == 0 for value in difference):
+        return False
     a, b, c = difference
     if a == 0:
+        if b == 0:
+            # The nonzero constant difference separates coaxial cylinders
+            # of unequal radii at every height.
+            return True
         root = -c / b
         return not (lower <= root <= upper) or shared(root)
     discriminant = b * b - 4 * a * c
@@ -1105,7 +1131,10 @@ def _branches_meet_on_shared_edge(
     regions = state.face_region(other_a), state.face_region(other_b)
     if geometry is None:
         return False
-    if all(_straight_revolution(region.patch) is not None for region in regions):
+    if all(
+        _straight_revolution(region.patch, allow_disk=True) is not None
+        for region in regions
+    ):
         return _coaxial_faces_meet_on_shared_circle(
             model, (other_a[1], other_b[1]), regions
         )
@@ -1238,6 +1267,71 @@ def _arc_interval(arc: Arc, /) -> tuple[float, float]:
     return float(domain[0]), float(domain[1])
 
 
+def _same_pair_branches_disjoint(
+    first: IntersectionCurve, second: IntersectionCurve, /
+) -> bool:
+    """Prove two certified branches of one surface pair share no point.
+
+    Each chart box holds a unique branch point per chart-parameter slice, so
+    a common point would lie in a box of both branches. Pairwise disjoint
+    boxes, with every integer period image of the second, exclude it.
+    """
+    if (
+        first.first.identity_payload() != second.first.identity_payload()
+        or first.second.identity_payload() != second.second.identity_payload()
+        or not first.fully_certified
+        or not second.fully_certified
+    ):
+        return False
+    from math import ceil, floor
+
+    from ._trim_helpers import period_scalar_bounds, PeriodOffset
+
+    period_bounds = []
+    for region in (first.first, first.second):
+        for period, symbol in zip(
+            region.patch.periods, region.patch.native_period_symbols(), strict=True
+        ):
+            period_bounds.append(
+                None
+                if period is None
+                else tuple(
+                    Fraction.from_float(float(value))
+                    for value in period_scalar_bounds(
+                        PeriodOffset(Fraction(0), Fraction(1))
+                    )
+                )
+                if symbol == "two_pi"
+                else ()
+            )
+
+    for left in range(first.num_charts):
+        for right in range(second.num_charts):
+            for axis, period in enumerate(period_bounds):
+                low = Fraction(float(first.chart_lower[left, axis])) - Fraction(
+                    float(second.chart_upper[right, axis])
+                )
+                high = Fraction(float(first.chart_upper[left, axis])) - Fraction(
+                    float(second.chart_lower[right, axis])
+                )
+                if period is None:
+                    if low > 0 or high < 0:
+                        break
+                elif period:
+                    # A common point requires an integer deck whose exact
+                    # period multiple lies in [low, high]. Directed period
+                    # bounds conservatively include every such integer,
+                    # including simultaneous shifts in several coordinates.
+                    ratios = tuple(
+                        value / bound for value in (low, high) for bound in period
+                    )
+                    if ceil(min(ratios)) > floor(max(ratios)):
+                        break
+            else:
+                return False
+    return True
+
+
 def _full_trim_events(
     state: Arrangement,
 ) -> None:
@@ -1255,6 +1349,8 @@ def _full_trim_events(
                 ):
                     continue
                 if _branches_meet_on_shared_edge(state, owner, first, second):
+                    continue
+                if _same_pair_branches_disjoint(first.branch, second.branch):
                     continue
             if tuple(sorted((first.token, second.token))) in state.spatial_pairs:
                 continue

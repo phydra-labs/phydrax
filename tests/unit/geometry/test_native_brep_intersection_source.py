@@ -51,6 +51,98 @@ def _cylinder_region(patch: CylinderPatch, /) -> SurfaceRegion:
     return SurfaceRegion(patch, np.asarray(((0.0, -2.0), (math.tau, 2.0)), dtype=np.float64))
 
 
+@pytest.mark.parametrize("radius", (1.0, math.nextafter(1.5, 0.0), 3.0))
+def test_coaxial_cylinder_torus_radial_separation_is_complete(radius: float) -> None:
+    from phydrax.geometry.brep._patches import TorusPatch
+
+    cylinder = _cylinder_region(_cylinder((0.0, 0.0, 1.0), radius))
+    torus = SurfaceRegion(
+        TorusPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 2.0, 0.5),
+        np.asarray(((0.0, 0.0), (math.tau, math.tau))),
+    )
+    for first, second in ((cylinder, torus), (torus, cylinder)):
+        result = intersect_surface_regions(first, second)
+        assert result.complete
+        assert not result.curves and not result.points and not result.coincident
+
+
+def test_radial_separation_retains_touching_and_noncoaxial_supports() -> None:
+    from phydrax.geometry.brep._intersection import _coaxial_radial_separation
+    from phydrax.geometry.brep._patches import TorusPatch
+
+    torus = TorusPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 2.0, 0.5)
+    assert not _coaxial_radial_separation(_cylinder((0.0, 0.0, 1.0), 1.5), torus)
+    assert not _coaxial_radial_separation(_cylinder((1.0, 0.0, 0.0), 1.0), torus)
+    shifted = CylinderPatch((2, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
+    assert not _coaxial_radial_separation(shifted, torus)
+    outer = TorusPatch((0, 0, 3), (1, 0, 0), (0, -1, 0), (0, 0, -1), 4.0, 0.5)
+    assert _coaxial_radial_separation(torus, outer)
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_mixed_cylinder_carriers_keep_source_charts_and_complete_branches(
+    reverse: bool,
+) -> None:
+    from phydrax.geometry.brep._patches import RevolutionSurface
+
+    analytic = _cylinder_region(_cylinder((0.0, 0.0, 1.0), 1.0))
+    revolved = SurfaceRegion(
+        RevolutionSurface(
+            LineCurve((-2.0, 0.5, 0.0), (4.0, 0.0, 0.0)),
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+        ),
+        np.asarray(((0.0, 0.0), (math.tau, 1.0))),
+    )
+    first, second = (revolved, analytic) if reverse else (analytic, revolved)
+    result = intersect_surface_regions(first, second)
+    assert result.complete and len(result.curves) == 2
+    for branch in result.curves:
+        assert branch.first is first and branch.second is second
+        assert branch.fully_certified and branch.closed
+        parameters = jnp.linspace(0.15, branch.num_charts - 0.15, 11)
+        coupled = branch.evaluate_coupled(parameters)
+        np.testing.assert_allclose(
+            first.patch.evaluate(coupled.first_parameters),
+            coupled.point,
+            rtol=0.0,
+            atol=1e-10,
+        )
+        np.testing.assert_allclose(
+            second.patch.evaluate(coupled.second_parameters),
+            coupled.point,
+            rtol=0.0,
+            atol=1e-10,
+        )
+
+
+@pytest.mark.parametrize("spline", (False, True))
+def test_affine_edges_isolate_exact_analytic_cylinder_trim_roots(spline: bool) -> None:
+    from phydrax.geometry.brep._intersection import CurveRange, intersect_curve_region
+    from phydrax.geometry.brep._patches import BSplineCurve
+
+    edge = (
+        BSplineCurve(
+            np.asarray(((-2.0, 0.0, 0.0), (2.0, 0.0, 0.0))),
+            np.ones(2),
+            np.asarray((0.0, 0.0, 1.0, 1.0)),
+            1,
+        )
+        if spline
+        else LineCurve((-2.0, 0.0, 0.0), (4.0, 0.0, 0.0))
+    )
+    region = _cylinder_region(_cylinder((0.0, 0.0, 1.0), 1.0))
+    result = intersect_curve_region(CurveRange(edge, 0.0, 1.0), region)
+    assert result.complete and len(result.points) == 2
+    roots = sorted(result.points, key=lambda point: float(point.parameters[0]))
+    for root, parameter in zip(roots, (0.25, 0.75), strict=True):
+        assert root.kind == "crossing" and root.certificate == "krawczyk"
+        assert root.parameter_lower[0] <= parameter <= root.parameter_upper[0]
+        np.testing.assert_allclose(
+            edge.evaluate(jnp.asarray(parameter)), root.point, rtol=0.0, atol=1e-12
+        )
+
+
 def test_unequal_orthogonal_quadrics_have_complete_source_branch_atlas() -> None:
     first = _cylinder((0.0, 0.0, 1.0), 1.0)
     second = _cylinder((1.0, 0.0, 0.0), 0.5)

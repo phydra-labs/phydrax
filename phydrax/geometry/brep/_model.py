@@ -634,6 +634,10 @@ def _rebuild_surface_region(region: Any, cache: dict[int, Any] | None = None, /)
     return rebuilt
 
 
+# The key under which a validation cache keeps its proved branches by id.
+_PROVED_BRANCHES = object()
+
+
 def _rebuild_intersection_curve(
     curve: Any, cache: dict[int, Any] | None = None, /
 ) -> Any:
@@ -645,6 +649,13 @@ def _rebuild_intersection_curve(
 
     if not isinstance(curve, IntersectionCurve):
         raise TypeError("A source branch witness must retain an IntersectionCurve.")
+    # A copy of a branch proved earlier in this validation is checked against
+    # that proof instead of being proved again.
+    proved = cache.setdefault(id(_PROVED_BRANCHES), {}).get(curve.branch_id)
+    if proved is not None:
+        _same_recomputed_evidence(curve, proved, "IntersectionCurve")
+        cache[key] = proved
+        return proved
     first = _rebuild_surface_region(curve.first, cache)
     second = _rebuild_surface_region(curve.second, cache)
     rebuilt = IntersectionCurve(
@@ -665,6 +676,7 @@ def _rebuild_intersection_curve(
         end_kind=curve.end_kind,
     )
     _same_recomputed_evidence(curve, rebuilt, "IntersectionCurve")
+    cache[id(_PROVED_BRANCHES)][curve.branch_id] = rebuilt
     cache[key] = rebuilt
     return rebuilt
 

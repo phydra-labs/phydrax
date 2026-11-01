@@ -321,7 +321,33 @@ def _register_brep_types() -> None:
     _register_type("phydrax.interchange", ConicRootLineEndpointWitnessArchiveRecipe)
 
 
+def _branch_type() -> type:
+    from ..geometry.brep._intersection_curve import IntersectionCurve
+
+    return IntersectionCurve
+
+
+def _same_branch_fields(proved: Any, fields: Mapping[str, Any], /) -> bool:
+    """Whether stored branch fields equal a branch already proved in this load."""
+    from ..geometry.brep._intersection_curve import SurfaceRegion
+
+    for name, stored in fields.items():
+        current = getattr(proved, name)
+        if isinstance(stored, SurfaceRegion):
+            if not isinstance(current, SurfaceRegion) or (
+                stored.identity_payload() != current.identity_payload()
+            ):
+                return False
+        elif hasattr(stored, "shape") and hasattr(stored, "dtype"):
+            if not np.array_equal(np.asarray(stored), np.asarray(current)):
+                return False
+        elif stored != current:
+            return False
+    return True
+
+
 def _reconstruct_brep_graph(root: Any, /) -> Any:
+    proved_branches: dict[Any, Any] = {}
     pending: list[tuple[Any, bool]] = [(root, False)]
     state: dict[int, bool] = {}
     postorder: list[Any] = []
@@ -370,7 +396,19 @@ def _reconstruct_brep_graph(root: Any, /) -> Any:
                 field.name: restored[id(object.__getattribute__(value, field.name))]
                 for field in dataclasses.fields(value)
             }
-            result = _construct_dataclass(type(value), fields)
+            proved = (
+                proved_branches.get(fields.get("branch_id"))
+                if type(value) is _branch_type()
+                else None
+            )
+            if proved is not None and _same_branch_fields(proved, fields):
+                # Another stored copy of one branch is checked against the
+                # branch proved earlier in this load, not proved again.
+                result = proved
+            else:
+                result = _construct_dataclass(type(value), fields)
+                if type(value) is _branch_type():
+                    proved_branches[result.branch_id] = result
         elif isinstance(value, tuple) and hasattr(type(value), "_fields"):
             if type(value) is ConicRootLineEndpointWitnessArchiveRecipe:
                 result = _construct_dataclass(

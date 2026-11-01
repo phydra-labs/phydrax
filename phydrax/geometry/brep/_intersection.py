@@ -3815,11 +3815,10 @@ def _line_cylinder_quadratic(
     curve: AbstractCurve, surface: SurfaceRegion, /
 ) -> _LineCylinderQuadratic | None:
     """Return the exact edge/cylinder quadratic, or None for other carriers."""
-    from ._patches import CylinderPatch, ExactLineCurve, LineCurve, RevolutionSurface
+    from ._source_correspondence import _affine_curve_coefficients
 
-    if not isinstance(surface.patch, RevolutionSurface) or not isinstance(
-        curve, (LineCurve, ExactLineCurve)
-    ):
+    line = _affine_curve_coefficients(curve, (Fraction(0), Fraction(0), Fraction(0)))
+    if line is None:
         return None
     view = _revolution_cylinder_view(surface)
     if view is None:
@@ -3837,15 +3836,7 @@ def _line_cylinder_quadratic(
         != Fraction.from_float(float(surface.patch.periods[0]))
     ):
         return None
-    if isinstance(curve, LineCurve):
-        line_origin = curve.origin_exact
-        line_direction = curve.direction_exact
-    else:
-        line_origin = curve.first_exact
-        line_direction = tuple(
-            last - first
-            for first, last in zip(curve.first_exact, curve.last_exact, strict=True)
-        )
+    line_origin, line_direction = line
     vectors = (
         line_origin,
         line_direction,
@@ -4292,8 +4283,9 @@ def _line_cylinder_region_intersections(
 class _StraightRevolution:
     """Exact frame of a revolution of a meridian line segment.
 
-    ``S(t, v) = origin + (a0 + a1 v) axis + (1 + slope v)(cos t radial + sin t
+    ``S(t, v) = origin + (a0 + a1 v) axis + (s0 + slope v)(cos t radial + sin t
     tangent)`` with ``tangent = axis x radial``; ``slope = 0`` is a cylinder.
+    The scale origin ``s0`` is 1, or 0 for a profile starting on the axis.
     """
 
     origin: tuple[Fraction, ...]
@@ -4303,11 +4295,52 @@ class _StraightRevolution:
     axial_origin: Fraction
     axial_rate: Fraction
     slope: Fraction
+    scale_origin: Fraction = Fraction(1)
 
 
-def _straight_revolution(patch: object, /) -> _StraightRevolution | None:
+def _straight_revolution(
+    patch: object, /, *, allow_disk: bool = False
+) -> _StraightRevolution | None:
+    """The exact frame of a straight meridian revolution.
+
+    A disk (a radial profile, ``axial_rate == 0``) is admitted only on request.
+    """
     from ._patches import ExactLineCurve, LineCurve, RevolutionSurface
 
+    if isinstance(patch, CylinderPatch):
+        values = (
+            *patch.origin_exact,
+            *patch.axis_exact,
+            *patch.first_axis_exact,
+            *patch.second_axis_exact,
+            patch.radius_exact,
+        )
+        if not all(isinstance(value, Fraction) for value in values):
+            return None
+        exact = cast(tuple[Fraction, ...], values)
+        origin, axis, first, second, radius = (
+            exact[:3],
+            exact[3:6],
+            exact[6:9],
+            exact[9:12],
+            exact[12],
+        )
+        if (
+            rational_dot(axis, axis) != 1
+            or rational_dot(first, first) != 1
+            or rational_dot(axis, first) != 0
+            or rational_cross(axis, first) != second
+        ):
+            return None
+        return _StraightRevolution(
+            origin,
+            axis,
+            tuple(radius * value for value in first),
+            tuple(radius * value for value in second),
+            Fraction(0),
+            Fraction(1),
+            Fraction(0),
+        )
     if not isinstance(patch, RevolutionSurface):
         return None
     profile = patch.curve
@@ -4336,11 +4369,19 @@ def _straight_revolution(patch: object, /) -> _StraightRevolution | None:
     axial_rate = rational_dot(direction, axis)
     radial = tuple(relative[index] - axial_origin * axis[index] for index in range(3))
     radial_rate = tuple(direction[index] - axial_rate * axis[index] for index in range(3))
+    if axial_rate == 0 and not allow_disk:
+        return None
+    scale_origin = Fraction(1)
+    if all(value == 0 for value in radial):
+        # A profile starting on the axis scales its own radial rate from zero.
+        radial, scale_origin = radial_rate, Fraction(0)
     squared = rational_dot(radial, radial)
-    if squared == 0 or axial_rate == 0:
+    if squared == 0:
         return None
     slope = rational_dot(radial_rate, radial) / squared
-    if any(radial_rate[index] != slope * radial[index] for index in range(3)):
+    if (axial_rate == 0 and slope == 0) or any(
+        radial_rate[index] != slope * radial[index] for index in range(3)
+    ):
         return None
     return _StraightRevolution(
         axis_origin,
@@ -4350,6 +4391,7 @@ def _straight_revolution(patch: object, /) -> _StraightRevolution | None:
         axial_origin,
         axial_rate,
         slope,
+        scale_origin,
     )
 
 
@@ -4391,7 +4433,8 @@ def _line_cone_region_intersections(
     radial_rate = tuple(rate[i] - axial[1] * frame.axis[i] for i in range(3))
     # v(t) = (axial(t) - a0) / a1 and s(t) = 1 + slope v(t).
     scale = (
-        1 + frame.slope * (axial[0] - frame.axial_origin) / frame.axial_rate,
+        frame.scale_origin
+        + frame.slope * (axial[0] - frame.axial_origin) / frame.axial_rate,
         frame.slope * axial[1] / frame.axial_rate,
     )
     squared_radius = rational_dot(frame.radial, frame.radial)
@@ -4674,6 +4717,14 @@ def intersect_curve_region(
     circle_plane = _circle_plane_region_intersections(source, surface, selected)
     if circle_plane is not None:
         return circle_plane
+    from ._quadric_tracing import circle_revolution_roots, line_sphere_roots
+
+    circle_revolution = circle_revolution_roots(source, surface, selected)
+    if circle_revolution is not None:
+        return circle_revolution
+    line_sphere = line_sphere_roots(source, surface, selected)
+    if line_sphere is not None:
+        return line_sphere
     line_cone = _line_cone_region_intersections(source, surface, selected)
     if line_cone is not None:
         return line_cone
@@ -4826,6 +4877,7 @@ def _surface_branch_node_box(
     /,
     *,
     pair_prepared: KrawczykEvaluator | None = None,
+    minimum_radius: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     from ._intersection_curve import (
         _exact_ruled_plane_node_prepared,
@@ -4840,7 +4892,7 @@ def _surface_branch_node_box(
         pair_prepared = _prepare_pair(pair) if pair_prepared is None else pair_prepared
         prepared = _PreparedNode(system, pair_prepared)
     scale = max(1.0, float(np.max(np.abs(parameters))))
-    radius = 64.0 * np.finfo(np.float64).eps * scale
+    radius = max(64.0 * np.finfo(np.float64).eps * scale, minimum_radius * scale)
     maximum = policy.relative_probe * scale
     while radius <= maximum:
         lower, upper = parameters - radius, parameters + radius
@@ -5966,6 +6018,8 @@ def _angular_surface_branch(
     end_nodes: tuple[tuple[int, float], tuple[int, float]] | None = None,
     interior_nodes: tuple[tuple[float, int, float], ...] = (),
     seam: tuple[float, float] | None = None,
+    sided_point_at: Callable[[float, int], np.ndarray] | None = None,
+    end_node_radius: float = 0.0,
 ) -> IntersectionCurve | None:
     """Build an angular source branch with certified chart and node roots.
 
@@ -5981,11 +6035,23 @@ def _angular_surface_branch(
 
     Each ``interior_nodes`` entry ``(angle, axis, value)`` splits the branch at
     ``angle`` with a node fixing source coordinate ``axis`` at the exact
-    ``value`` instead of the angle: a tangent touch of a trim edge.
+    ``value`` instead of the angle: a tangent touch of a trim edge, or the
+    crossing of the other surface's periodic seam.
+
+    ``sided_point_at(angle, side)`` evaluates a chart start (``side = 1``) or
+    end (``side = -1``) when a node there separates two source sheets.
+
+    ``end_node_radius`` is a relative lower bound on the isolation boxes of
+    nodes fixed off the chart angle, so a trim crossing whose root is enclosed
+    from its own edge still lies inside the node it is identified with.
     """
     from ._intersection_curve import _PreparedPair
 
     pair = SurfacePairSystem(first.patch, second.patch)
+
+    def endpoint(angle: float, side: int, /) -> np.ndarray:
+        return point_at(angle) if sided_point_at is None else sided_point_at(angle, side)
+
     prepared = _PreparedPair(pair)
     region_lower = np.concatenate(
         (np.asarray(first.parameter_box[0]), np.asarray(second.parameter_box[0]))
@@ -6007,16 +6073,23 @@ def _angular_surface_branch(
     def subdivide(
         piece_lower: float, piece_upper: float, /
     ) -> list[tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] | None:
+        fixed_angles = {
+            angle for angle, _, _ in interior_nodes if piece_lower < angle < piece_upper
+        }
+        # A regular breakpoint next to a fixed node would leave a sliver chart
+        # whose endpoint, not the node, would claim the node's root.
+        clearance = 2.0**-20 * (piece_upper - piece_lower)
         breakpoints = sorted(
             {
-                piece_lower + (piece_upper - piece_lower) * index / 4.0
-                for index in range(5)
+                value
+                for value in (
+                    piece_lower + (piece_upper - piece_lower) * index / 4.0
+                    for index in range(5)
+                )
+                if value in (piece_lower, piece_upper)
+                or all(abs(value - angle) > clearance for angle in fixed_angles)
             }
-            | {
-                angle
-                for angle, _, _ in interior_nodes
-                if piece_lower < angle < piece_upper
-            }
+            | fixed_angles
         )
         pending = [
             (breakpoints[index], breakpoints[index + 1])
@@ -6055,13 +6128,42 @@ def _angular_surface_branch(
                 upper[None],
                 parameter_axis=chart_axis,
             )
+            if (
+                trimmed
+                and not bool(witness.certified[0])
+                and not bool(witness.excluded[0])
+                and float(witness.contraction[0]) < 1.0
+            ):
+                # At a stationary graph coordinate its true range is O(h²),
+                # while a natural interval residual can still have O(h)
+                # dependency width. Subdividing solely to fit that residual
+                # into the tight graph box creates arbitrarily many slivers.
+                # Enclose the actual Krawczyk image instead, then recompute
+                # the full inclusion proof on the enlarged candidate box.
+                image_lower = np.minimum(lower[free], witness.lower[0])
+                image_upper = np.maximum(upper[free], witness.upper[0])
+                margin = np.maximum(desired, 0.25 * (image_upper - image_lower))
+                enlarged_lower, enlarged_upper = lower.copy(), upper.copy()
+                enlarged_lower[free] = np.nextafter(image_lower - margin, -np.inf)
+                enlarged_upper[free] = np.nextafter(image_upper + margin, np.inf)
+                if np.all(np.isfinite(enlarged_lower)) and np.all(
+                    np.isfinite(enlarged_upper)
+                ):
+                    enlarged = krawczyk(
+                        prepared,
+                        enlarged_lower[None],
+                        enlarged_upper[None],
+                        parameter_axis=chart_axis,
+                    )
+                    if bool(enlarged.certified[0]):
+                        lower, upper, witness = enlarged_lower, enlarged_upper, enlarged
             if bool(witness.certified[0]):
                 found.append(
                     (
                         lower_angle,
                         upper_angle,
-                        point_at(lower_angle),
-                        point_at(upper_angle),
+                        endpoint(lower_angle, 1),
+                        endpoint(upper_angle, -1),
                         lower,
                         upper,
                     )
@@ -6107,13 +6209,18 @@ def _angular_surface_branch(
             node_axis, node_value = fixed[angle]
         node_axes[index], node_values[index] = node_axis, node_value
         isolated = _surface_branch_node_box(
-            pair, point_at(angle), node_axis, node_value, policy
+            pair,
+            point_at(angle),
+            node_axis,
+            node_value,
+            policy,
+            minimum_radius=end_node_radius if node_axis != chart_axis else 0.0,
         )
         if isolated is None:
             return None
         node_boxes.append(isolated)
     node_shifts = np.zeros((len(node_angles), 2, 4), dtype=np.int32)
-    if seam is not None:
+    if seam is not None or interior_nodes:
         patches = first.patch, second.patch
         for index, (lower, upper) in enumerate(node_boxes):
             for direction, point in (
@@ -7895,17 +8002,19 @@ def _revolution_plane_isoline(
     )
     plane_offset = 0 if plane_is_first else 2
 
-    def inner_angle(angle: float, step: float, /) -> float | None:
+    def inner_angle(angle: float, step: float, limit: float, /) -> float | None:
         # The float that represents a trim crossing lies on the arc's side, so
-        # the chart endpoint stays inside the plane chart it is authored in.
-        for _ in range(8):
+        # the chart endpoint stays inside the plane chart it is authored in;
+        # the search ends only past the arc's other end.
+        while True:
             angle = float(np.nextafter(angle, step))
+            if (angle >= limit) if step > 0 else (angle <= limit):
+                return None
             plane_uv = point_at(angle)[plane_offset : plane_offset + 2]
             if np.all(plane_uv >= plane_bounds[0]) and np.all(
                 plane_uv <= plane_bounds[1]
             ):
                 return angle
-        return None
 
     def certified_branch(
         arc: _IsolineArc | None, /
@@ -7916,8 +8025,16 @@ def _revolution_plane_isoline(
         if arc is None:
             theta_lower, theta_upper = angle_lower, angle_upper
         else:
-            start = inner_angle(arc.start_upper, np.inf)
-            end = inner_angle(arc.end_lower, -np.inf)
+            start = inner_angle(
+                arc.start_upper,
+                np.inf,
+                angle_upper if arc.across_seam else arc.end_lower,
+            )
+            end = inner_angle(
+                arc.end_lower,
+                -np.inf,
+                angle_lower if arc.across_seam else arc.start_upper,
+            )
             if (
                 start is None
                 or end is None
@@ -8502,14 +8619,19 @@ def _revolution_plane_generator_lines(
                 np.asarray((*revolution_upper, *plane_upper), dtype=np.float64),
             )
 
-        def inner(bound: tuple[Any, int, float], step: float, /) -> float | None:
+        def inner(
+            bound: tuple[Any, int, float], step: float, limit: float, /
+        ) -> float | None:
             # An exact profile end is its own representative; a plane edge
-            # crossing is represented by the nearest float on the line's side.
+            # crossing is represented by the nearest float on the line's side,
+            # searched up to the other end of the trimmed line.
             if bound[1] == chart_axis:
                 return bound[2]
             parameter = float(bound[0].b if step > 0 else bound[0].a)
-            for _ in range(8):
+            while True:
                 parameter = float(np.nextafter(parameter, step))
+                if (parameter >= limit) if step > 0 else (parameter <= limit):
+                    return None
                 plane_uv = point_at(parameter)[plane_offset : plane_offset + 2]
                 if (
                     np.all(plane_uv >= plane_bounds[0])
@@ -8517,10 +8639,9 @@ def _revolution_plane_generator_lines(
                     and profile_lower <= parameter <= profile_upper
                 ):
                     return parameter
-            return None
 
-        start_parameter = inner(start, np.inf)
-        stop_parameter = inner(stop, -np.inf)
+        start_parameter = inner(start, np.inf, float(stop[0].b))
+        stop_parameter = inner(stop, -np.inf, float(start[0].a))
         if (
             start_parameter is None
             or stop_parameter is None
@@ -8810,14 +8931,16 @@ def _revolution_plane_axial_sections(
             np.asarray((*revolution_upper, *plane_upper), dtype=np.float64),
         )
 
-    def inner(angle: Any, step: float, /) -> float | None:
-        # The representative float of a trim crossing lies inside the arc.
+    def inner(angle: Any, step: float, limit: float, /) -> float | None:
+        # The representative float of a trim crossing lies inside the arc,
+        # searched up to the arc's other end.
         value = float(angle.b if step > 0 else angle.a)
-        for _ in range(8):
+        while True:
             value = float(np.nextafter(value, step))
+            if (value >= limit) if step > 0 else (value <= limit):
+                return None
             if inside(context.mpf(value)):
                 return value
-        return None
 
     curves = []
     for index, (start, start_fixed, start_value) in enumerate(events):
@@ -8837,8 +8960,8 @@ def _revolution_plane_axial_sections(
             # The section leaves through the axis-parallel asymptote only
             # where the profile range is unbounded.
             return _unresolved_surface(first, second, "continuation")
-        theta_lower = inner(start, np.inf)
-        theta_upper = inner(end, -np.inf)
+        theta_lower = inner(start, np.inf, angle_upper if across_seam else float(end.b))
+        theta_upper = inner(end, -np.inf, angle_lower if across_seam else float(start.a))
         if (
             theta_lower is None
             or theta_upper is None
@@ -8957,6 +9080,10 @@ def _revolution_cylinder_view(
     from ._patches import ExactLineCurve, LineCurve, RevolutionSurface
 
     patch = region.patch
+    if isinstance(patch, CylinderPatch):
+        if _straight_revolution(patch) is None:
+            return None
+        return region, Fraction(1)
     if not isinstance(patch, RevolutionSurface):
         return None
     if isinstance(patch.curve, LineCurve):
@@ -9322,6 +9449,9 @@ def _revolution_cylinder_intersection(
     policy: ParametricIntersectionPolicy,
     /,
 ) -> SurfaceIntersectionResult | None:
+    singular = _orthogonal_equal_cylinder_singular(first, second, policy)
+    if singular is not None:
+        return singular
     try:
         family = orthogonal_cylinder_family(first, second)
     except _DisjointOrthogonalCylinderFamily:
@@ -10006,6 +10136,58 @@ def _placed_surface_result(
     )
 
 
+def _coaxial_radial_separation(first: object, second: object, /) -> bool:
+    """Separate exact cylinder/torus supports by disjoint coaxial radial ranges.
+
+    Cartesian boxes of concentric annuli overlap even when their surfaces
+    cannot meet. This uses whole-support radial bounds, so it remains valid
+    for every trim and does not infer separation from samples.
+    """
+    from ._patches import TorusPatch
+
+    supports = []
+    for patch in (first, second):
+        if isinstance(patch, CylinderPatch):
+            origin = patch.origin_exact
+            lower = upper = patch.radius_exact
+        elif isinstance(patch, TorusPatch):
+            origin = patch.center_exact
+            lower = max(Fraction(0), patch.major_radius_exact - patch.minor_radius_exact)
+            upper = patch.major_radius_exact + patch.minor_radius_exact
+        else:
+            return False
+        axis, radial, tangent = (
+            patch.axis_exact,
+            patch.first_axis_exact,
+            patch.second_axis_exact,
+        )
+        if not all(
+            isinstance(value, Fraction)
+            for value in (*origin, *axis, *radial, *tangent, lower, upper)
+        ):
+            return False
+        axis = cast(tuple[Fraction, ...], axis)
+        radial = cast(tuple[Fraction, ...], radial)
+        tangent = cast(tuple[Fraction, ...], tangent)
+        if (
+            rational_dot(axis, axis) != 1
+            or rational_dot(radial, radial) != 1
+            or rational_dot(tangent, tangent) != 1
+            or rational_dot(axis, radial) != 0
+            or rational_dot(axis, tangent) != 0
+            or rational_dot(radial, tangent) != 0
+        ):
+            return False
+        supports.append((origin, axis, lower, upper))
+    origin, axis, lower, upper = supports[0]
+    other_origin, other_axis, other_lower, other_upper = supports[1]
+    if any(rational_cross(axis, other_axis)) or any(
+        rational_cross(tuple(other_origin[i] - origin[i] for i in range(3)), axis)
+    ):
+        return False
+    return upper < other_lower or other_upper < lower
+
+
 def intersect_surface_regions(
     first: SurfaceRegion,
     second: SurfaceRegion,
@@ -10029,6 +10211,8 @@ def intersect_surface_regions(
         return _placed_surface_result(source_result, first.patch, second.patch)
     if isinstance(first.patch, PlacedSurface) or isinstance(second.patch, PlacedSurface):
         return _unresolved_surface(first, second, "continuation")
+    if _coaxial_radial_separation(first.patch, second.patch):
+        return SurfaceIntersectionResult()
     if isinstance(first.patch, PlanePatch) and isinstance(second.patch, PlanePatch):
         coincident = _coincident_planes(first, second)
         if coincident is False:
@@ -10054,9 +10238,15 @@ def intersect_surface_regions(
     parallel_cylinders = _parallel_cylinder_separation(first, second, selected)
     if parallel_cylinders is not None:
         return parallel_cylinders
+    from ._quadric_tracing import trace_revolution_quadric_pair
+
     revolution_cylinders = _revolution_cylinder_intersection(first, second, selected)
     if revolution_cylinders is not None:
-        return revolution_cylinders
+        if revolution_cylinders.complete:
+            return revolution_cylinders
+        # A partially trimmed pair is traced over a revolution angle instead.
+        traced = trace_revolution_quadric_pair(first, second, selected)
+        return traced if traced is not None and traced.complete else revolution_cylinders
     revolutions = _coaxial_revolution_line_intersection(first, second, selected)
     if revolutions is not None:
         return revolutions
@@ -10081,6 +10271,9 @@ def intersect_surface_regions(
     cylinders = _orthogonal_cylinder_intersection(first, second, selected)
     if cylinders is not None:
         return cylinders
+    traced = trace_revolution_quadric_pair(first, second, selected)
+    if traced is not None:
+        return traced
     from ._tspline import TSplineSurfacePatch
 
     if isinstance(first.patch, TSplineSurfacePatch) or isinstance(
