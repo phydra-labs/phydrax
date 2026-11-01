@@ -29,6 +29,7 @@ from ._distribution_forest import (
     validate_simplex_forest,
 )
 
+
 if TYPE_CHECKING:
     from ..graph._partition import GraphPartitionPlan
     from ._assembly import MeshAssembly
@@ -1389,7 +1390,7 @@ def _partition_owner_local_periodic_families(
         plan.plan_id,
         migration_id,
         owner_identity,
-        "phydrax-owner-local-family-contraction-v1",
+        "phydrax-owner-local-family-contraction",
     )
     return OwnerLocalGraphPartitionEvidence(
         result, view.local_view_id, view.periodic_face_coverage_id, view.distribution_id

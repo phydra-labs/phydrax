@@ -4,6 +4,7 @@ from collections.abc import Callable
 from fractions import Fraction
 from typing import Any
 
+import equinox as eqx
 import numpy as np
 import pytest
 
@@ -12,6 +13,7 @@ import phydrax.meshing.providers._native_periodic as native_periodic
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import exact_periodic_element
+from phydrax.discretization._view_support import OwnerLocalCellGeometry
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -652,3 +654,208 @@ def test_owner_local_skew_periodic_partition_uses_integer_work() -> None:
         np.asarray(evidence.result.entity_ids, dtype=np.int64),
         owned_ids,
     )
+
+
+@pytest.fixture(scope="module")
+def periodic_transfer_geometry() -> tuple[OwnerLocalCellGeometry, OwnerLocalCellGeometry]:
+    import jax
+
+    from phydrax._execution_resources import ExecutionGroupSpec
+    from phydrax._execution_runtime import ExecutionGroup
+    from phydrax.meshing.providers._native_periodic import (
+        _adapt_owner_local_periodic_assembly,
+    )
+
+    if jax.process_count() != 1:
+        pytest.skip("The paired periodic transfer regression uses one owner.")
+    device = jax.devices()[0]
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "periodic-transfer-claims",
+            (0,),
+            ((0, device.id),),
+            mesh_axes=(("periodic_transfer", 1),),
+        ),
+        (device,),
+    )
+    orbits = _point_source()
+    source = NativePeriodicSource(
+        orbits,
+        "periodic-transfer-source",
+        "periodic-transfer-revision",
+        point_owner_ranks=np.zeros(orbits.point_ids.shape, dtype=np.int32),
+    )
+    scope = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        source.scope_entity_ids(2),
+    )
+    target = CellMeshingTarget(2, 2, CellFamilyPolicy(required=("triangle",)))
+    fine_spec = SurfaceMeshingSpec(
+        target,
+        scope,
+        size_controls=(UniformSizeControl(scope, 0.35),),
+        size_compliance=SizeCompliancePolicy(relative_tolerance=0.5),
+    )
+    coarse_spec = SurfaceMeshingSpec(
+        target,
+        scope,
+        size_controls=(UniformSizeControl(scope, 0.7),),
+        size_compliance=SizeCompliancePolicy(relative_tolerance=0.5),
+    )
+    fine = prepare_native_periodic(
+        source,
+        fine_spec,
+        NativeMeshingOptions("periodic_delaunay"),
+        phx.SpatialCoordinateContract.si(),
+    ).execute(execution_group=group)
+    coarse = _adapt_owner_local_periodic_assembly(fine, coarse_spec, group)
+    fine_view, coarse_view = fine.parts[0].carrier, coarse.parts[0].carrier
+    assert isinstance(fine_view, OwnerLocalCellGeometry)
+    assert isinstance(coarse_view, OwnerLocalCellGeometry)
+    restored = OwnerLocalCellGeometry.from_stored_fields(
+        coarse_view,
+        group,
+        current_specification=coarse_spec,
+        graph_partition_plan=None,
+        axis_name="periodic_transfer_restore",
+    )
+    return fine_view, restored
+
+
+def test_periodic_transfer_replays_linear_geometry(
+    periodic_transfer_geometry: tuple[OwnerLocalCellGeometry, OwnerLocalCellGeometry],
+) -> None:
+    from phydrax.meshing._device_adaptation import (
+        _require_owner_local_periodic_transfer,
+        OwnerLocalPeriodicAdaptiveResult,
+    )
+
+    source, target = periodic_transfer_geometry
+    result = target.adaptive_result
+    assert isinstance(result, OwnerLocalPeriodicAdaptiveResult)
+    _require_owner_local_periodic_transfer(result, source, target)
+    stencil = result.vertex_stencil
+    assert stencil is not None
+    assert source.exact_vertex_coordinates is not None
+    assert target.exact_vertex_coordinates is not None
+    source_points = dict(
+        zip(
+            map(int, np.asarray(source.vertex_ids)),
+            source.exact_vertex_coordinates,
+            strict=True,
+        )
+    )
+    target_points = dict(
+        zip(
+            map(int, np.asarray(target.vertex_ids)),
+            target.exact_vertex_coordinates,
+            strict=True,
+        )
+    )
+    rows = np.asarray(stencil.source_global_ids)
+    valid = np.asarray(stencil.valid)
+    reproduced = {
+        int(identifier): tuple(
+            sum(
+                (
+                    source_points[int(rows[row, column])][axis]
+                    * stencil.exact_weights[row][column]
+                    for column in np.flatnonzero(valid[row])
+                ),
+                Fraction(0),
+            )
+            for axis in range(2)
+        )
+        for row, identifier in enumerate(np.asarray(stencil.target_global_ids))
+    }
+    assert reproduced == {
+        identifier: target_points[identifier] for identifier in reproduced
+    }
+
+
+@pytest.mark.parametrize("claim", ("stencil", "entity-lineage", "measures"))
+def test_periodic_transfer_rejects_rehashed_false_claims(
+    periodic_transfer_geometry: tuple[OwnerLocalCellGeometry, OwnerLocalCellGeometry],
+    claim: str,
+) -> None:
+    from phydrax.meshing._device_adaptation import (
+        _require_owner_local_periodic_transfer,
+        OwnerLocalPeriodicAdaptiveResult,
+    )
+    from phydrax.meshing._lineage import (
+        EntityLineage,
+        MeshLineage,
+        VertexInterpolationStencil,
+    )
+
+    source, target = periodic_transfer_geometry
+    result = target.adaptive_result
+    assert isinstance(result, OwnerLocalPeriodicAdaptiveResult)
+    if claim == "stencil":
+        stencil = result.vertex_stencil
+        assert stencil is not None
+        rows = np.asarray(stencil.source_global_ids).copy()
+        column = int(np.flatnonzero(np.asarray(stencil.valid)[0])[0])
+        rows[0, column] = next(
+            int(identifier)
+            for identifier in source.vertex_ids
+            if int(identifier) != rows[0, column]
+        )
+        changed = result._replace(
+            vertex_stencil=VertexInterpolationStencil(
+                stencil.source_entity_set_id,
+                stencil.target_entity_set_id,
+                stencil.target_global_ids,
+                rows,
+                stencil.weights,
+                stencil.valid,
+                exact_weights=stencil.exact_weights,
+            )
+        )
+    elif claim == "entity-lineage":
+        lineage = result.lineage
+        assert lineage is not None
+        entity = lineage.entity_lineage(0)
+        rows = np.asarray(entity.source_global_ids).copy()
+        rows[[0, 1]] = rows[[1, 0]]
+        replacement = EntityLineage(
+            0,
+            entity.source_entity_set_id,
+            entity.target_entity_set_id,
+            rows,
+            entity.target_global_ids,
+            entity.relation_kinds,
+            created_target_ids=entity.created_target_ids,
+            deleted_source_ids=entity.deleted_source_ids,
+        )
+        changed = result._replace(
+            lineage=MeshLineage(
+                lineage.source_topology_id,
+                lineage.target_topology_id,
+                tuple(
+                    replacement if row.dimension == 0 else row for row in lineage.entities
+                ),
+            )
+        )
+    else:
+        changed = result._replace(
+            source_cell_measures=tuple(
+                2 * value for value in result.source_cell_measures
+            ),
+            target_cell_measures=tuple(
+                2 * value for value in result.target_cell_measures
+            ),
+        )
+    changed = changed._replace(result_id=changed._computed_result_id())
+    altered = eqx.tree_at(
+        lambda value: value.adaptive_result,
+        target,
+        changed,
+        is_leaf=lambda value: isinstance(value, OwnerLocalPeriodicAdaptiveResult),
+    )
+    with pytest.raises(ValueError):
+        _require_owner_local_periodic_transfer(changed, source, altered)

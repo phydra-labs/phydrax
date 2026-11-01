@@ -6,9 +6,15 @@ import socket
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, assert_never, get_args, Literal, TYPE_CHECKING
 
 import numpy as np
+
+
+if TYPE_CHECKING:
+    from phydrax.meshing._device_adaptation import OwnerLocalPeriodicAdaptiveResult
+
+type _FalseTransferClaim = Literal["stencil", "measures"]
 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -1608,6 +1614,52 @@ def _restore_composition(value: Any, /) -> Any:
     return rebuilt
 
 
+def _false_periodic_transfer_claim(
+    result: OwnerLocalPeriodicAdaptiveResult, claim: _FalseTransferClaim, /
+) -> OwnerLocalPeriodicAdaptiveResult:
+    from phydrax.meshing._lineage import VertexInterpolationStencil
+    from phydrax.typing import parse
+
+    claim = parse(claim, _FalseTransferClaim, "false_claim")
+    match claim:
+        case "stencil":
+            stencil = result.vertex_stencil
+            if stencil is None:
+                raise RuntimeError("The forged stencil case needs a nonempty owner.")
+            valid = np.asarray(stencil.valid)
+            rows = np.asarray(stencil.source_global_ids).copy()
+            identifiers = np.unique(rows[valid])
+            if identifiers.size < 2:
+                raise RuntimeError(
+                    "The forged stencil case needs distinct source vertices."
+                )
+            column = int(np.flatnonzero(valid[0])[0])
+            rows[0, column] = identifiers[identifiers != rows[0, column]][0]
+            changed = result._replace(
+                vertex_stencil=VertexInterpolationStencil(
+                    stencil.source_entity_set_id,
+                    stencil.target_entity_set_id,
+                    stencil.target_global_ids,
+                    rows,
+                    stencil.weights,
+                    stencil.valid,
+                    exact_weights=stencil.exact_weights,
+                )
+            )
+        case "measures":
+            changed = result._replace(
+                source_cell_measures=tuple(
+                    2 * value for value in result.source_cell_measures
+                ),
+                target_cell_measures=tuple(
+                    2 * value for value in result.target_cell_measures
+                ),
+            )
+        case _:
+            assert_never(claim)
+    return changed._replace(result_id=changed._computed_result_id())
+
+
 def _live_family_field_step(
     source_assembly: Any,
     target_assembly: Any,
@@ -1619,14 +1671,30 @@ def _live_family_field_step(
     *,
     topology_change: bool,
     refuse: bool = False,
+    false_claim: _FalseTransferClaim | None = None,
 ) -> tuple[Any, tuple[Any, Any, Any, Any]]:
     """Use the existing FE transaction for one explicit accepted transition."""
     import jax
+
     import phydrax as phx
     from phydrax.meshing._assembly import MeshPartManifest
 
     source_view = source_assembly.parts[0].carrier
     target_view = target_assembly.parts[0].carrier
+    if false_claim is not None and rank == 0:
+        import equinox as eqx
+
+        from phydrax.meshing._device_adaptation import OwnerLocalPeriodicAdaptiveResult
+
+        if not isinstance(target_view.adaptive_result, OwnerLocalPeriodicAdaptiveResult):
+            raise TypeError("The forged transfer case needs an accepted periodic result.")
+        changed = _false_periodic_transfer_claim(target_view.adaptive_result, false_claim)
+        target_view = eqx.tree_at(
+            lambda view: view.adaptive_result,
+            target_view,
+            changed,
+            is_leaf=lambda value: isinstance(value, OwnerLocalPeriodicAdaptiveResult),
+        )
     source_discretization, source_compiled, source_identities, source_layouts = (
         _compile_owner_local_problem(source_view, group, rank)
     )
@@ -1736,7 +1804,7 @@ def _live_family_field_step(
             target_view,
             **arguments,
         )
-    if refuse:
+    if refuse or false_claim is not None:
         before_leaves, before_tree = jax.tree_util.tree_flatten(restart)
         after_leaves, after_tree = jax.tree_util.tree_flatten(result.manifest)
 
@@ -1762,7 +1830,7 @@ def _live_family_field_step(
             )
         ):
             raise RuntimeError(
-                "Rejected collective coarsen changed the post-reunification accepted state."
+                f"Rejected {false_claim or 'policy'} coarsen changed the accepted state."
             )
     elif not bool(np.asarray(result.committed)) or result.rebind_receipt is None:
         raise RuntimeError(
@@ -1816,10 +1884,10 @@ def _authored_split_placement(
 ) -> Any:
     """Exchange two equally weighted cells to author a split without changing loads."""
     from phydrax.graph._distributed_partition import (
-        DistributedGraphPartitionResult,
         _global_ids_and_labels_identity,
         _global_migration_identity,
         _group_mesh,
+        DistributedGraphPartitionResult,
     )
     from phydrax.meshing._distribution import (
         _owner_group_allgather,
@@ -1945,7 +2013,7 @@ def _authored_split_placement(
         plan.plan_id,
         migration_id,
         identity,
-        "phydrax-owner-local-authored-placement-v1",
+        "phydrax-owner-local-authored-placement",
     )
     return OwnerLocalGraphPartitionEvidence(
         result, view.local_view_id, view.periodic_face_coverage_id, view.distribution_id
@@ -1965,6 +2033,7 @@ def _write_split_live_family_state(
     /,
 ) -> dict[str, Any]:
     from jax.experimental import multihost_utils
+
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
     from phydrax.graph import GraphPartitionPlan
     from phydrax.meshing._assembly import MeshPartManifest
@@ -2125,6 +2194,7 @@ def _write_split_live_family_state(
 def _live_family_geometry_identity(view: Any, group: Any, /) -> str:
     """Partition-independent exact quotient-cell geometry, without a mesh gather."""
     from fractions import Fraction
+
     from phydrax.meshing._distribution import _owner_local_multiset_identity
 
     vectors = tuple(
@@ -2218,9 +2288,11 @@ def _read_coarsen_live_family_state(
     archive: Path, group: Any, rank: int, profile: str, /
 ) -> dict[str, Any]:
     import jax
-    import phydrax as phx
     from jax.experimental import multihost_utils
+
+    import phydrax as phx
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
+    from phydrax.lifecycle import Composition
     from phydrax.meshing._assembly import MeshAssembly, MeshPart, MeshPartManifest
     from phydrax.meshing._distribution_migration import (
         _partition_owner_local_periodic_families,
@@ -2233,8 +2305,6 @@ def _read_coarsen_live_family_state(
         _adapt_owner_local_periodic_assembly,
         _repartition_owner_local_periodic_assembly,
     )
-
-    from phydrax.lifecycle import Composition
 
     geometry_root = read_model_artifact(
         archive,
@@ -2349,6 +2419,17 @@ def _read_coarsen_live_family_state(
     ):
         raise RuntimeError(
             "Failed coarsening changed the post-reunification accepted state."
+        )
+    for false_claim in get_args(_FalseTransferClaim):
+        _live_family_field_step(
+            reunited,
+            coarse,
+            moved.manifest,
+            moved.rebind_receipt.composition,
+            group,
+            rank,
+            topology_change=True,
+            false_claim=false_claim,
         )
     coarsened, coarse_prepared = _live_family_field_step(
         reunited,
@@ -2496,6 +2577,7 @@ def _read_coarsen_live_family_state(
         "geometry_identity": _live_family_geometry_identity(coarse_view, group),
         "coarsening_committed": bool(np.asarray(coarsened.committed)),
         "coarsening_refusal_atomic": True,
+        "forged_transfer_claims_refused": list(get_args(_FalseTransferClaim)),
         "source_content_integral": float(integrals[0]),
         "target_content_integral": float(integrals[1]),
         "conservation_bound": bound,
@@ -2510,11 +2592,12 @@ def _read_coarsen_live_family_state(
 
 def _serial_live_family_reference(profile: str, /) -> dict[str, Any]:
     import jax
-    from phydrax.discretization._view_support import OwnerLocalCellGeometry
+
     import phydrax as phx
     from phydrax._execution_resources import ExecutionGroupSpec
     from phydrax._execution_runtime import ExecutionGroup
     from phydrax.discretization._periodic_cell import PeriodicCell
+    from phydrax.discretization._view_support import OwnerLocalCellGeometry
     from phydrax.graph import GraphPartitionPlan
     from phydrax.meshing._contracts import (
         CellFamilyPolicy,

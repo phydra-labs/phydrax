@@ -10,6 +10,10 @@
 - Staged native archive reads reject malformed column payloads and inconsistent
   local record identities even in unselected fields, before returning prerequisite
   data or replaying scientific proofs.
+- Owner-local periodic FE topology transactions now rederive transfer stencils,
+  lineage, and exact measures from paired current geometry before field/history
+  transfer, refusing consistently rehashed false claims without changing accepted
+  state. Distributed partition provenance uses canonical unversioned selectors.
 - Finite-element and finite-volume field queries now bind compiled geometry
   through the same content identity; default finite-volume simplex location uses
   the supported block's cell count.

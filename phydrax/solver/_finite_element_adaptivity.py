@@ -2664,6 +2664,7 @@ def _validate_finite_element_owner_local_topology_authority(
     from ..discretization._cell_mesh import EmptyLocalCellMeshAuthority
     from ..meshing._assembly import MeshPartManifest
     from ..meshing._device_adaptation import (
+        _require_owner_local_periodic_transfer,
         OwnerLocalAdaptivePartTransition,
         OwnerLocalPeriodicAdaptiveResult,
     )
@@ -2910,6 +2911,7 @@ def _validate_finite_element_owner_local_topology_authority(
                 "Periodic FE adaptive evidence differs from the target view: "
                 f"{', '.join(differing)}."
             )
+        _require_owner_local_periodic_transfer(adaptive, source_view, target_view)
     elif type(context.adaptive_result) is OwnerLocalAdaptivePartTransition:
         adaptive = context.adaptive_result
         source_owned_ids = np.sort(np.asarray(source_view.owned_cell_ids, dtype=np.int64))

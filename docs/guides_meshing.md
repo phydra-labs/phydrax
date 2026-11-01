@@ -1874,6 +1874,20 @@ leaves the reunited state and its history unchanged. Live vertex levels are
 canonical parent-ancestry depths rather than owner-specific closure rounds;
 coarsening orders midpoint orbits by their exact unshifted coordinates.
 
+Distributed partition evidence distinguishes graph refinement, family
+contraction, and explicitly authored placement. That provenance participates in
+the result identity. A topology-only field transfer retains its own route and
+lineage validation; it does not manufacture graph-migration evidence.
+
+Restoring a periodic target renews its current geometry and live families, not a
+historical source-to-target transfer merely because its result ID matches.
+Before transferring FE fields or registered history, topology transactions
+rederive vertex stencils, complete entity lineage, and exact cell measures from
+both current views. Inactive family ancestors are bound to either current
+frontier when present. Coarsening uses the source's live children, so the target
+archive need not retain retired descendants. False transfer claims with
+recomputed identities are refused collectively before composition commit.
+
 For owner-local execution, wrap the forest and any cell- or vertex-aligned field
 rows in `OwnerLocalMigrationState`. `prepare_ownerlocal_migration` stages cell,
 vertex, protected-edge, and field packets for current target owner ranks. It

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from math import gcd
-from typing import final
+from typing import final, Literal
 
 import equinox as eqx
 import jax
@@ -28,7 +28,7 @@ from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked
+from ..typing import checked, parse
 from ._partition import (
     _INT64_MAX,
     _integer_vector,
@@ -40,6 +40,12 @@ from ._partition import (
 
 _UINT64_MASK = (1 << 64) - 1
 _DIGEST_MASK = (1 << 256) - 1
+
+type DistributedPartitionProvenance = Literal[
+    "phydrax-owner-local-graph-refinement",
+    "phydrax-owner-local-family-contraction",
+    "phydrax-owner-local-authored-placement",
+]
 
 
 def _digest_integer_limbs(value: int, /) -> tuple[int, int, int, int]:
@@ -222,7 +228,7 @@ class DistributedGraphPartitionResult(StrictModule, NonTrainableState):
     feasibility_status: str = eqx.field(static=True)
     migration_count: int = eqx.field(static=True)
     migration_weight: int = eqx.field(static=True)
-    provenance: str = eqx.field(static=True)
+    provenance: DistributedPartitionProvenance = eqx.field(static=True)
     graph_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     migration_id: str = eqx.field(static=True)
@@ -244,9 +250,10 @@ class DistributedGraphPartitionResult(StrictModule, NonTrainableState):
         plan_id: str,
         migration_id: str,
         owner_identity: str,
-        provenance: str,
+        provenance: DistributedPartitionProvenance,
         /,
     ) -> None:
+        provenance = parse(provenance, DistributedPartitionProvenance, "provenance")
         self.entity_ids = jnp.asarray(entity_ids, dtype=jnp.int64)
         self.owners = jnp.asarray(owners, dtype=jnp.int32)
         self.part_weights = jnp.asarray(part_weights, dtype=jnp.int64)
@@ -258,12 +265,6 @@ class DistributedGraphPartitionResult(StrictModule, NonTrainableState):
         self.feasibility_status = "feasible" if feasible else "balance_not_reached"
         self.migration_count = int(migration_count)
         self.migration_weight = int(migration_weight)
-        if provenance not in (
-            "phydrax-owner-local-graph-refinement-v1",
-            "phydrax-owner-local-family-contraction-v1",
-            "phydrax-owner-local-authored-placement-v1",
-        ):
-            raise ValueError("Unknown distributed partition provenance.")
         self.provenance = provenance
         self.graph_id = graph_id
         self.plan_id = plan_id
@@ -1285,7 +1286,7 @@ def partition_graph_distributed(
         plan.plan_id,
         migration_id,
         owner_identity,
-        "phydrax-owner-local-graph-refinement-v1",
+        "phydrax-owner-local-graph-refinement",
     )
 
 

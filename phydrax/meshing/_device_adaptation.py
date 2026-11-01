@@ -108,17 +108,17 @@ from ._bisection import (
     BisectionEvidence,
     BisectionHierarchy,
 )
-from ._distribution_forest import (
-    extract_simplex_forest,
-    PeriodicSimplexForest,
-    reconstruct_adaptive_simplex_state,
-    SimplexForestRecords,
-)
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._device_status import (
     DeviceEpoch,
     require_applied_status,
     require_committed_status,
+)
+from ._distribution_forest import (
+    extract_simplex_forest,
+    PeriodicSimplexForest,
+    reconstruct_adaptive_simplex_state,
+    SimplexForestRecords,
 )
 from ._lineage import (
     EntityLineageKind,
@@ -1102,8 +1102,44 @@ def _owner_local_exact_cell_measures(mesh: CellMesh, /) -> tuple[Fraction, ...]:
     )
 
 
+def _owner_local_parent_ids(
+    state: AdaptiveSimplexState, /
+) -> tuple[dict[int, int], dict[int, tuple[int, int]]]:
+    """Project executor slots to the scientific cell and vertex parent DAGs."""
+    vertex_count, cell_count = map(int, np.asarray(state.cursors)[:2])
+    vertex_ids = np.asarray(state.mesh.vertex_ids, dtype=np.int64)[:vertex_count]
+    cell_ids = np.asarray(state.mesh.cell_ids, dtype=np.int64)[:cell_count]
+    vertices = np.asarray(state.vertex_parents, dtype=np.int64)[:vertex_count]
+    cells = np.asarray(state.parents, dtype=np.int64)[:cell_count]
+    if (
+        vertices.shape != (vertex_count, 2)
+        or np.any(vertices < -1)
+        or np.any(vertices >= vertex_count)
+        or np.any(np.any(vertices < 0, axis=1) != np.all(vertices < 0, axis=1))
+        or np.any(cells < -1)
+        or np.any(cells >= 2 * cell_count)
+    ):
+        raise ValueError("Owner-local parent slots escape their scientific domains.")
+    return (
+        {
+            int(identifier): -1 if code < 0 else int(cell_ids[int(code) // 2])
+            for identifier, code in zip(cell_ids, cells, strict=True)
+        },
+        {
+            int(vertex_ids[row]): (
+                -1 if vertices[row, 0] < 0 else int(vertex_ids[vertices[row, 0]]),
+                -1 if vertices[row, 1] < 0 else int(vertex_ids[vertices[row, 1]]),
+            )
+            for row in range(vertex_count)
+        },
+    )
+
+
 def _owner_local_vertex_stencil(
-    source: CellMesh, target: CellMesh, state: AdaptiveSimplexState, /
+    source: CellMesh,
+    target: CellMesh,
+    vertex_parent_ids: dict[int, tuple[int, int]],
+    /,
 ) -> tuple[VertexInterpolationStencil, FiniteElementTopologyTransfer]:
     source_mesh_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
     source_coordinates = np.asarray(source.coordinates, dtype=np.float64)
@@ -1111,13 +1147,6 @@ def _owner_local_vertex_stencil(
     source_ids = source_mesh_ids[source_order]
     coordinates = source_coordinates[source_order]
     source_rows = {int(identifier): row for row, identifier in enumerate(source_ids)}
-    mesh = state.mesh
-    vertex_count = int(np.asarray(state.cursors)[0])
-    state_ids = np.asarray(mesh.vertex_ids, dtype=np.int64)[:vertex_count]
-    parent_rows = np.asarray(state.vertex_parents, dtype=np.int64)[:vertex_count]
-    state_row = {
-        int(identifier): row for row, identifier in enumerate(state_ids.tolist())
-    }
     memo: dict[int, tuple[tuple[int, Fraction], ...]] = {}
     active: set[int] = set()
 
@@ -1129,22 +1158,17 @@ def _owner_local_vertex_stencil(
             result = ((identifier, Fraction(1)),)
             memo[identifier] = result
             return result
-        row = state_row.get(identifier)
-        if row is None or identifier in active:
+        parents = vertex_parent_ids.get(identifier)
+        if parents is None or identifier in active:
             raise ValueError(
                 "An owner-local target vertex has no acyclic source ancestry."
             )
-        parents = parent_rows[row]
-        if (
-            parents.shape != (2,)
-            or np.any(parents < 0)
-            or np.any(parents >= state_ids.size)
-        ):
+        if any(parent < 0 for parent in parents):
             raise ValueError("A created owner-local vertex lacks two source parents.")
         active.add(identifier)
         combined: dict[int, Fraction] = {}
-        for parent in state_ids[parents].tolist():
-            for source_id, weight in exact_row(int(parent)):
+        for parent in parents:
+            for source_id, weight in exact_row(parent):
                 combined[source_id] = combined.get(source_id, Fraction(0)) + weight / 2
         active.remove(identifier)
         result = tuple(
@@ -1199,7 +1223,7 @@ def _owner_local_lineage(
     source: CellMesh,
     target: CellMesh,
     stencil: VertexInterpolationStencil,
-    state: AdaptiveSimplexState,
+    parents: dict[int, int],
     /,
 ) -> MeshLineage:
     target_ids = np.asarray(stencil.target_global_ids, dtype=np.int64)
@@ -1227,13 +1251,6 @@ def _owner_local_lineage(
             )
             source_cell_set = set(map(int, source_cell_ids))
             target_cell_set = set(map(int, target_entity_ids))
-            count = int(np.asarray(state.cursors)[1])
-            state_ids = np.asarray(state.mesh.cell_ids, dtype=np.int64)[:count]
-            parent_codes = np.asarray(state.parents, dtype=np.int64)[:count]
-            parents = {
-                int(identifier): (-1 if code < 0 else int(state_ids[int(code) // 2]))
-                for identifier, code in zip(state_ids, parent_codes, strict=True)
-            }
 
             def ancestor(identifier: int, candidates: set[int]) -> int:
                 seen: set[int] = set()
@@ -1360,18 +1377,18 @@ def _owner_local_origins(
     return cell_ids[active_rows], origins, parents
 
 
-def _owner_local_part_meshes(
+def _owner_local_mesh_subset(
     source: CellMesh,
     source_cell_ids: np.ndarray,
-    target_state: AdaptiveSimplexState,
-    part_index: int,
     /,
     *,
     numeric_version: str,
-) -> tuple[CellMesh | None, CellMesh | None]:
+) -> CellMesh | None:
+    """Retain exact cell identities and their canonically ordered vertex closure."""
     requested = set(int(value) for value in np.asarray(source_cell_ids, dtype=np.int64))
     selected_source: list[tuple[int, np.ndarray, np.ndarray]] = []
     used_source_vertices: list[np.ndarray] = []
+    selected_ids: set[int] = set()
     for block_index, block in enumerate(source.blocks):
         ids = np.asarray(block.global_ids, dtype=np.int64)
         rows = np.flatnonzero(np.isin(ids, tuple(sorted(requested))))
@@ -1379,8 +1396,11 @@ def _owner_local_part_meshes(
             vertices = np.asarray(block.vertices, dtype=np.int64)[rows]
             selected_source.append((block_index, vertices, ids[rows]))
             used_source_vertices.append(vertices.reshape((-1,)))
+            selected_ids.update(map(int, ids[rows]))
+    if selected_ids != requested:
+        raise ValueError("Owner-local cell selection escapes its current mesh.")
     if not selected_source:
-        return None, None
+        return None
     source_rows = np.unique(np.concatenate(used_source_vertices))
     source_vertex_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
     source_rows = source_rows[np.argsort(source_vertex_ids[source_rows], kind="stable")]
@@ -1395,12 +1415,30 @@ def _owner_local_part_meshes(
         )
         for block_index, vertices, ids in selected_source
     )
-    source_mesh = CellMesh(
+    return CellMesh(
         np.asarray(source.coordinates, dtype=np.float64)[source_rows],
         source_blocks,
         vertex_global_ids=source_vertex_ids[source_rows],
+        numeric_version=numeric_version,
+    )
+
+
+def _owner_local_part_meshes(
+    source: CellMesh,
+    source_cell_ids: np.ndarray,
+    target_state: AdaptiveSimplexState,
+    part_index: int,
+    /,
+    *,
+    numeric_version: str,
+) -> tuple[CellMesh | None, CellMesh | None]:
+    source_mesh = _owner_local_mesh_subset(
+        source,
+        source_cell_ids,
         numeric_version=f"{numeric_version}:source:{part_index}",
     )
+    if source_mesh is None:
+        return None, None
     host = target_state
     vertex_count = int(np.asarray(host.cursors)[0])
     cell_count = int(np.asarray(host.cursors)[1])
@@ -1517,11 +1555,12 @@ def _owner_local_part_transition(
                 }
             ),
         )
+    cell_parents, vertex_parents = _owner_local_parent_ids(host_part)
     stencil, transfer = _owner_local_vertex_stencil(
-        source_local_mesh, target_mesh, host_part
+        source_local_mesh, target_mesh, vertex_parents
     )
     target_cell_ids, origins, parents = _owner_local_origins(host_part, source_cell_ids)
-    lineage = _owner_local_lineage(source_local_mesh, target_mesh, stencil, host_part)
+    lineage = _owner_local_lineage(source_local_mesh, target_mesh, stencil, cell_parents)
     source_cell_order = np.asarray(
         source_local_mesh.entity_set(source_mesh.topological_dimension).entity_ids,
         dtype=np.int64,
@@ -4993,30 +5032,7 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
                 raise ValueError(
                     "Accepted periodic adaptation lacks live scientific families."
                 )
-            stored = forest.records
-            records = SimplexForestRecords(
-                stored.cell_ids,
-                stored.cell_owner_ranks,
-                dict(stored.cell_fields),
-                stored.vertex_ids,
-                stored.vertex_owner_ranks,
-                dict(stored.vertex_fields),
-                stored.protected_edge_ids,
-                stored.dimension,
-                stored.ambient_dimension,
-                stored.next_vertex_id,
-                stored.next_cell_id,
-            )
-            rebuilt = PeriodicSimplexForest(
-                records,
-                forest.vertex_source_ids,
-                forest.vertex_absolute_windings,
-                forest.exact_vertex_coordinates,
-                forest.block_names,
-                forest.source_id,
-                forest.source_revision,
-                forest.periodic_cell_id,
-            )
+            rebuilt = _restored_periodic_live_forest(forest)
             _validate_owner_local_periodic_forest(rebuilt, candidate)
             if (
                 rebuilt.forest_id != forest.forest_id
@@ -5061,31 +5077,79 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
         return self
 
 
+def _restored_periodic_live_forest(
+    forest: PeriodicSimplexForest, /
+) -> PeriodicSimplexForest:
+    """Replay structural and exact family mathematics, not only stored IDs."""
+    stored = forest.records
+    records = SimplexForestRecords(
+        stored.cell_ids,
+        stored.cell_owner_ranks,
+        dict(stored.cell_fields),
+        stored.vertex_ids,
+        stored.vertex_owner_ranks,
+        dict(stored.vertex_fields),
+        stored.protected_edge_ids,
+        stored.dimension,
+        stored.ambient_dimension,
+        stored.next_vertex_id,
+        stored.next_cell_id,
+    )
+    return PeriodicSimplexForest(
+        records,
+        forest.vertex_source_ids,
+        forest.vertex_absolute_windings,
+        forest.exact_vertex_coordinates,
+        forest.block_names,
+        forest.source_id,
+        forest.source_revision,
+        forest.periodic_cell_id,
+    )
+
+
 def _validate_owner_local_periodic_forest(
     forest: PeriodicSimplexForest,
-    candidate: OwnerLocalPeriodicCandidate,
+    candidate: OwnerLocalPeriodicCandidate | OwnerLocalCellGeometry,
     /,
 ) -> None:
     """Check owned leaves directly against the independently certified current mesh."""
+    from ..discretization._view_support import OwnerLocalCellGeometry
+    from ._periodic import PeriodicPointOrbits
+    from .providers._native_periodic import NativePeriodicSource
+
+    if isinstance(candidate, OwnerLocalCellGeometry):
+        rank = candidate.owner_rank
+        source = candidate.source_value
+        if not isinstance(source, NativePeriodicSource) or not isinstance(
+            source.domain, PeriodicPointOrbits
+        ):
+            raise TypeError("Owner-local periodic families require their point source.")
+        periodic_cell_ids = (source.domain.cell.cell_id,)
+        mesh, _ = candidate.reconstruct_local_geometry()
+    else:
+        rank = candidate.rank
+        periodic_cell_ids = (candidate.periodic_cell_id,)
+        mesh = candidate.local_mesh
     records = forest.records
     if (
         forest.source_id != candidate.source_id
         or forest.source_revision != candidate.source_revision
-        or forest.periodic_cell_id != candidate.periodic_cell_id
+        or forest.periodic_cell_id not in periodic_cell_ids
     ):
         raise ValueError("Periodic live families belong to another source or lattice.")
     fields = records.cell_field_map()
     owned = np.asarray(fields["active"], dtype=np.bool_) & (
-        np.asarray(records.cell_owner_ranks) == candidate.rank
+        np.asarray(records.cell_owner_ranks) == rank
     )
     identifiers = np.asarray(records.cell_ids)[owned]
     if not np.array_equal(identifiers, np.asarray(candidate.owned_cell_ids)):
         raise ValueError("Periodic live family leaves do not cover accepted ownership.")
-    mesh = candidate.local_mesh
     if mesh is None:
         if identifiers.size:
             raise ValueError("Nonempty periodic family has no accepted local geometry.")
         return
+    if candidate.exact_vertex_coordinates is None:
+        raise ValueError("Periodic family binding requires exact current coordinates.")
     candidate_vertex_ids = np.asarray(candidate.vertex_ids, dtype=np.int64)
     candidate_vertex_rows = {
         int(identifier): row for row, identifier in enumerate(candidate_vertex_ids)
@@ -5123,6 +5187,236 @@ def _validate_owner_local_periodic_forest(
                 )
             ):
                 raise ValueError("Periodic live source coordinates or winding changed.")
+
+
+def _periodic_transfer_mesh(
+    view: OwnerLocalCellGeometry,
+    identifiers: np.ndarray,
+    /,
+) -> tuple[CellMesh | None, dict[int, tuple[Fraction, ...]]]:
+    """Bind an owned transition domain to current exact, lifted geometry."""
+    if not np.array_equal(
+        np.sort(identifiers),
+        np.sort(np.asarray(view.owned_cell_ids, dtype=np.int64)),
+    ):
+        raise ValueError("Periodic transfer cells differ from current ownership.")
+    local_mesh, _ = view.reconstruct_local_geometry()
+    if local_mesh is None:
+        if identifiers.size:
+            raise ValueError("Nonempty periodic transfer lacks current geometry.")
+        return None, {}
+    mesh = _owner_local_mesh_subset(
+        local_mesh, identifiers, numeric_version="periodic-transfer-validation"
+    )
+    if mesh is None:
+        return None, {}
+    if not np.array_equal(
+        identifiers,
+        np.asarray(
+            mesh.entity_set(mesh.topological_dimension).entity_ids, dtype=np.int64
+        ),
+    ):
+        raise ValueError("Periodic transfer cell rows are not in canonical order.")
+    vertex_ids = np.asarray(view.vertex_ids, dtype=np.int64)
+    bank = view.exact_vertex_coordinates
+    if (
+        not isinstance(bank, tuple)
+        or len(bank) != vertex_ids.size
+        or any(
+            not isinstance(row, tuple)
+            or len(row) != mesh.ambient_dimension
+            or any(not isinstance(value, Fraction) for value in row)
+            for row in bank
+        )
+    ):
+        raise ValueError("Periodic transfer requires current exact rational vertices.")
+    return mesh, {
+        int(identifier): tuple(row)
+        for identifier, row in zip(vertex_ids, bank, strict=True)
+    }
+
+
+def _periodic_transfer_frontiers(
+    source: CellMesh,
+    target: CellMesh,
+    source_exact: dict[int, tuple[Fraction, ...]],
+    target_exact: dict[int, tuple[Fraction, ...]],
+    /,
+) -> tuple[
+    dict[int, tuple[str, tuple[int, ...]]],
+    dict[int, tuple[Fraction, ...]],
+]:
+    """Bind shared scientific IDs to both actual frontier geometries."""
+    cells: dict[int, tuple[str, tuple[int, ...]]] = {}
+    points: dict[int, tuple[Fraction, ...]] = {}
+    for mesh, exact in ((source, source_exact), (target, target_exact)):
+        vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        for identifier in map(int, vertex_ids):
+            point = exact[identifier]
+            if identifier in points and points[identifier] != point:
+                raise ValueError("Periodic transfer moved a retained exact vertex.")
+            points[identifier] = point
+        for block in mesh.blocks:
+            for identifier, row in zip(
+                np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
+            ):
+                identifier = int(identifier)
+                geometry = (block.name, tuple(map(int, vertex_ids[row])))
+                if identifier in cells and cells[identifier] != geometry:
+                    raise ValueError(
+                        "Periodic transfer changed a retained cell's closure."
+                    )
+                cells[identifier] = geometry
+    return cells, points
+
+
+def _periodic_transfer_parent_banks(
+    source: OwnerLocalCellGeometry,
+    target: OwnerLocalCellGeometry,
+    current_cells: dict[int, tuple[str, tuple[int, ...]]],
+    current_coordinates: dict[int, tuple[Fraction, ...]],
+    /,
+) -> tuple[dict[int, int], dict[int, tuple[int, int]]]:
+    """Use both current frontiers; coarsening need not retain retired children."""
+    cells: dict[int, int] = {}
+    vertices: dict[int, tuple[int, int]] = {}
+    coordinates: dict[int, tuple[Fraction, ...]] = {}
+    for view in (source, target):
+        previous = view.adaptive_result
+        if previous is None:
+            continue
+        if not isinstance(previous, OwnerLocalPeriodicAdaptiveResult):
+            raise TypeError("Periodic transfer has an unsupported family authority.")
+        if previous.live_forest is None:
+            raise ValueError("Periodic transfer lacks its current live families.")
+        forest = _restored_periodic_live_forest(previous.live_forest)
+        _validate_owner_local_periodic_forest(forest, view)
+        if forest.forest_id != previous.live_forest.forest_id:
+            raise ValueError("Periodic transfer family identity does not reproduce.")
+        records = forest.records
+        fields = records.cell_field_map()
+        forest_cells = np.asarray(fields["cells"])
+        forest_blocks = np.asarray(fields["blocks"])
+        for row, (identifier, parent) in enumerate(
+            zip(
+                np.asarray(records.cell_ids),
+                np.asarray(fields["parent_ids"]),
+                strict=True,
+            )
+        ):
+            identifier, parent = int(identifier), int(parent)
+            if identifier in current_cells and current_cells[identifier] != (
+                forest.block_names[int(forest_blocks[row])],
+                tuple(map(int, forest_cells[row])),
+            ):
+                raise ValueError(
+                    "Periodic family ancestor differs from current geometry."
+                )
+            if identifier in cells and cells[identifier] != parent:
+                raise ValueError("Periodic transfer changed a shared cell's ancestry.")
+            cells[identifier] = parent
+        vertex_fields = records.vertex_field_map()
+        for identifier, parents, point in zip(
+            np.asarray(records.vertex_ids),
+            np.asarray(vertex_fields["parents"]),
+            forest.exact_vertex_coordinates,
+            strict=True,
+        ):
+            identifier = int(identifier)
+            if (
+                identifier in current_coordinates
+                and current_coordinates[identifier] != point
+            ):
+                raise ValueError(
+                    "Periodic family ancestor has different exact coordinates."
+                )
+            pair = (int(parents[0]), int(parents[1]))
+            if identifier in vertices and (
+                vertices[identifier] != pair or coordinates[identifier] != point
+            ):
+                raise ValueError("Periodic transfer changed a shared vertex's ancestry.")
+            vertices[identifier] = pair
+            coordinates[identifier] = point
+    return cells, vertices
+
+
+def _require_owner_local_periodic_transfer(
+    result: OwnerLocalPeriodicAdaptiveResult,
+    source: OwnerLocalCellGeometry,
+    target: OwnerLocalCellGeometry,
+    /,
+) -> None:
+    """Replay historical transfer mathematics against both current input views."""
+    if (
+        result.source_topology_id != source.source_topology_id
+        or result.source_geometry_id != source.source_geometry_id
+        or result.target_topology_id != target.source_topology_id
+        or result.target_geometry_id != target.source_geometry_id
+        or not _owner_local_periodic_values_equal(result, target.adaptive_result)
+    ):
+        raise ValueError("Periodic transfer belongs to different scientific geometry.")
+    source_mesh, source_exact = _periodic_transfer_mesh(
+        source, np.asarray(result.source_cell_ids, dtype=np.int64)
+    )
+    target_mesh, target_exact = _periodic_transfer_mesh(
+        target, np.asarray(result.target_cell_ids, dtype=np.int64)
+    )
+    if source_mesh is None or target_mesh is None:
+        if (
+            source_mesh is not None
+            or target_mesh is not None
+            or result.lineage is not None
+            or result.vertex_stencil is not None
+            or result.vertex_transfer is not None
+            or result.source_cell_measures
+            or result.target_cell_measures
+        ):
+            raise ValueError(
+                "Empty periodic transfer carries nonempty scientific claims."
+            )
+        return
+    dimension = source_mesh.topological_dimension
+    if (
+        _owner_local_periodic_exact_cell_measures(source_mesh, source_exact, dimension)
+        != result.source_cell_measures
+        or _owner_local_periodic_exact_cell_measures(target_mesh, target_exact, dimension)
+        != result.target_cell_measures
+    ):
+        raise ValueError("Periodic transfer measures differ from exact current geometry.")
+    current_cells, current_coordinates = _periodic_transfer_frontiers(
+        source_mesh, target_mesh, source_exact, target_exact
+    )
+    cells, vertices = _periodic_transfer_parent_banks(
+        source, target, current_cells, current_coordinates
+    )
+    stencil, transfer = _owner_local_vertex_stencil(source_mesh, target_mesh, vertices)
+    lineage = _owner_local_lineage(source_mesh, target_mesh, stencil, cells)
+    if (
+        not _owner_local_periodic_values_equal(stencil, result.vertex_stencil)
+        or not _owner_local_periodic_values_equal(transfer, result.vertex_transfer)
+        or not _owner_local_periodic_values_equal(lineage, result.lineage)
+    ):
+        raise ValueError("Periodic transfer claims differ from exact family ancestry.")
+    target_ids = np.asarray(target_mesh.vertex_global_ids, dtype=np.int64)
+    if (
+        not np.array_equal(target_ids, np.asarray(result.target_vertex_ids))
+        or tuple(target_exact[int(identifier)] for identifier in target_ids)
+        != result.exact_vertex_coordinates
+        or not np.array_equal(
+            np.asarray(result.target_cell_parent_ids),
+            np.asarray(
+                [cells[int(identifier)] for identifier in result.target_cell_ids],
+                dtype=np.int64,
+            ),
+        )
+        or not np.array_equal(
+            np.asarray(result.target_vertex_parent_ids),
+            np.asarray(
+                [vertices[int(identifier)] for identifier in target_ids], dtype=np.int64
+            ),
+        )
+    ):
+        raise ValueError("Periodic transfer target coordinates or parent rows changed.")
 
 
 def _owner_local_periodic_values_equal(first: Any, second: Any, /) -> bool:
@@ -5396,7 +5690,10 @@ def _owner_local_periodic_finish(
     else:
         if target_mesh is None:
             raise ValueError("Periodic bisection removed every local source cell.")
-        stencil, transfer = _owner_local_vertex_stencil(source_mesh, target_mesh, state)
+        cell_parents, vertex_parents = _owner_local_parent_ids(state)
+        stencil, transfer = _owner_local_vertex_stencil(
+            source_mesh, target_mesh, vertex_parents
+        )
         target_cell_ids, target_cell_origins, target_cell_parent_ids = (
             _owner_local_origins(state, source_ids)
         )
@@ -5404,7 +5701,7 @@ def _owner_local_periodic_finish(
             source_mesh,
             target_mesh,
             stencil,
-            state,
+            cell_parents,
         )
         target_cell_order = np.asarray(
             target_mesh.entity_set(dimension).entity_ids, dtype=np.int64
