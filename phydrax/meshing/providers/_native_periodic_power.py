@@ -29,6 +29,7 @@ from phydrax.discretization._periodic_exact import (
     reduce_periodic_exponents,
 )
 from phydrax.discretization._periodic_topology import PeriodicMeshTopology
+from phydrax.linalg._exact import solve_exact
 from phydrax.meshing._periodic import PeriodicMeshConstruction, PeriodicPointOrbits
 from phydrax.meshing._plc_source import _numeric_entity_ids
 
@@ -39,9 +40,7 @@ if TYPE_CHECKING:
 
 
 type _PowerSiteSignature = tuple[tuple[int, tuple[int, ...]], ...]
-type _PowerPointSignature = tuple[
-    _PowerSiteSignature, tuple[tuple[int, int], ...]
-]
+type _PowerPointSignature = tuple[_PowerSiteSignature, tuple[tuple[int, int], ...]]
 type _PowerVertexKey = tuple[_PowerPointSignature, tuple[int, ...]]
 type _CarrierProof = tuple[tuple[int, tuple[int, int]], ...]
 
@@ -90,7 +89,9 @@ def _convex_power_face_loop(
     for row, point in zip(rows, points, strict=True):
         projected = (point[projected_axes[0]], point[projected_axes[1]])
         if projected in projected_by_point:
-            raise ValueError("Exact periodic power face projects distinct rows to one point.")
+            raise ValueError(
+                "Exact periodic power face projects distinct rows to one point."
+            )
         projected_by_point[projected] = row
 
     projected = tuple(sorted(projected_by_point))
@@ -101,9 +102,9 @@ def _convex_power_face_loop(
         third: tuple[Fraction, Fraction],
         /,
     ) -> Fraction:
-        return (second[0] - first[0]) * (third[1] - first[1]) - (
-            second[1] - first[1]
-        ) * (third[0] - first[0])
+        return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
+            third[0] - first[0]
+        )
 
     lower: list[tuple[Fraction, Fraction]] = []
     for point in projected:
@@ -120,8 +121,7 @@ def _convex_power_face_loop(
         raise ValueError("Exact periodic power face has no convex polygon boundary.")
 
     def twice_area(
-        points_: tuple[tuple[Fraction, Fraction], ...]
-        | list[tuple[Fraction, Fraction]],
+        points_: tuple[tuple[Fraction, Fraction], ...] | list[tuple[Fraction, Fraction]],
         /,
     ) -> Fraction:
         return sum(
@@ -165,7 +165,9 @@ def periodic_power_mesh(
     if not isinstance(source, PeriodicPointOrbits):
         raise TypeError("source must be PeriodicPointOrbits.")
     if source.ambient_dimension != 3:
-        raise ValueError("Periodic power cells require a three-dimensional periodic lattice.")
+        raise ValueError(
+            "Periodic power cells require a three-dimensional periodic lattice."
+        )
     if source_id is not None and not isinstance(source_id, str):
         raise TypeError("source_id must be a string when supplied.")
     if source_revision is not None and not isinstance(source_revision, str):
@@ -197,9 +199,7 @@ def periodic_power_mesh(
     radius = _lattice_covering_radius(lattice)
     weight_fractions = tuple(Fraction.from_float(float(value)) for value in weights)
     influence_radius = _upper_sqrt(
-        Fraction.from_float(radius) ** 2
-        + max(weight_fractions)
-        - min(weight_fractions)
+        Fraction.from_float(radius) ** 2 + max(weight_fractions) - min(weight_fractions)
     )
     preferred_owner = int(np.argmax(weights))
     lower = np.min(points, axis=0)
@@ -218,7 +218,9 @@ def periodic_power_mesh(
             preferred_owner,
         )
         if image_owners.size >= np.iinfo(np.int32).max:
-            raise OverflowError("Periodic power image bank exceeds native index capacity.")
+            raise OverflowError(
+                "Periodic power image bank exceeds native index capacity."
+            )
         coordinate_offsets, coordinate_components = _exact_image_coordinates(
             points, lattice, image_owners, image_windings
         )
@@ -280,11 +282,7 @@ def periodic_power_mesh(
             )
             carrier_mesh = CellMesh(
                 domain_points,
-                (
-                    CellBlock(
-                        "periodic-power-carrier", "tetrahedron", domain_tets
-                    ),
-                ),
+                (CellBlock("periodic-power-carrier", "tetrahedron", domain_tets),),
             )
             periodic_source_context = ExactPeriodicPowerSourceContext(
                 source,
@@ -325,7 +323,9 @@ def periodic_power_mesh(
             geometry = CellGeometrySpec.power(mesh, source_map)
             return PeriodicMeshConstruction(mesh, geometry=geometry)
         if not isfinite(margin * 2.0):
-            raise RuntimeError("Periodic power carrier expansion did not resolve all base cells.")
+            raise RuntimeError(
+                "Periodic power carrier expansion did not resolve all base cells."
+            )
         margin = _outward_scalar(margin * 2.0)
 
 
@@ -376,52 +376,40 @@ def _lattice_covering_radius(lattice: np.ndarray, /) -> float:
 def _outward_bound(values: np.ndarray, direction: float, /) -> np.ndarray:
     result = np.nextafter(np.asarray(values, dtype=np.float64), direction)
     if np.any(~np.isfinite(result)):
-        raise OverflowError("Periodic power carrier bounds exceed finite binary64 storage.")
+        raise OverflowError(
+            "Periodic power carrier bounds exceed finite binary64 storage."
+        )
     return result
 
 
 def _outward_scalar(value: float, /) -> float:
     result = nextafter(value, np.inf)
     if not isfinite(result):
-        raise OverflowError("Periodic power carrier growth exceeds finite binary64 storage.")
+        raise OverflowError(
+            "Periodic power carrier growth exceeds finite binary64 storage."
+        )
     return result
 
 
-def _exact_lattice_inverse(
-    lattice: np.ndarray, /
-) -> tuple[tuple[Fraction, ...], ...]:
+def _exact_lattice_inverse(lattice: np.ndarray, /) -> tuple[tuple[Fraction, ...], ...]:
     matrix = np.asarray(lattice, dtype=np.float64)
     if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError("Exact periodic lattice inversion requires a square matrix.")
     dimension = matrix.shape[0]
-    augmented = [
-        [
-            *(Fraction.from_float(float(matrix[row, column])) for column in range(dimension)),
-            *(Fraction(int(row == column)) for column in range(dimension)),
-        ]
+    entries = [
+        [Fraction.from_float(float(matrix[row, column])) for column in range(dimension)]
         for row in range(dimension)
     ]
-    for column in range(dimension):
-        pivot = next(
-            (row for row in range(column, dimension) if augmented[row][column]), None
-        )
-        if pivot is None:
-            raise ValueError("Periodic lattice is singular in exact binary arithmetic.")
-        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
-        scale = augmented[column][column]
-        augmented[column] = [value / scale for value in augmented[column]]
-        for row in range(dimension):
-            if row == column:
-                continue
-            factor = augmented[row][column]
-            if factor:
-                augmented[row] = [
-                    value - factor * pivot_value
-                    for value, pivot_value in zip(
-                        augmented[row], augmented[column], strict=True
-                    )
-                ]
-    return tuple(tuple(row[dimension:]) for row in augmented)
+    identity = [
+        [Fraction(int(row == column)) for column in range(dimension)]
+        for row in range(dimension)
+    ]
+    inverse = solve_exact(
+        entries,
+        identity,
+        singular_message="Periodic lattice is singular in exact binary arithmetic.",
+    )
+    return tuple(tuple(row) for row in inverse)
 
 
 def _power_images(
@@ -453,7 +441,10 @@ def _power_images(
             for axis in range(3):
                 fractional_values[axis].append(
                     sum(
-                        (delta[component] * inverse[component][axis] for component in range(3)),
+                        (
+                            delta[component] * inverse[component][axis]
+                            for component in range(3)
+                        ),
                         Fraction(0),
                     )
                 )
@@ -464,10 +455,14 @@ def _power_images(
         for values in ranges:
             count *= len(values)
         if count > limit - len(owners):
-            raise OverflowError("Periodic power image bank exceeds native index capacity.")
+            raise OverflowError(
+                "Periodic power image bank exceeds native index capacity."
+            )
         for winding in product(*ranges):
             if any(abs(int(value)) > np.iinfo(np.int32).max for value in winding):
-                raise OverflowError("Periodic power image winding exceeds topology index capacity.")
+                raise OverflowError(
+                    "Periodic power image winding exceeds topology index capacity."
+                )
             owners.append(point_row)
             windings.append((int(winding[0]), int(winding[1]), int(winding[2])))
     identities = {
@@ -493,14 +488,12 @@ def _power_images(
     return owner_array[stable], winding_array[stable]
 
 
-def _image_row(
-    owners: np.ndarray, windings: np.ndarray, point_row: int, /
-) -> int:
-    matches = np.flatnonzero(
-        (owners == point_row) & np.all(windings == 0, axis=1)
-    )
+def _image_row(owners: np.ndarray, windings: np.ndarray, point_row: int, /) -> int:
+    matches = np.flatnonzero((owners == point_row) & np.all(windings == 0, axis=1))
     if matches.size != 1:
-        raise ValueError("Periodic power image bank must contain each authored base site exactly once.")
+        raise ValueError(
+            "Periodic power image bank must contain each authored base site exactly once."
+        )
     return int(matches[0])
 
 
@@ -536,16 +529,22 @@ def _float_expansion(value: Fraction, /) -> tuple[float, ...]:
         try:
             term = float(remainder)
         except OverflowError as error:
-            raise OverflowError("Periodic exact image coordinate exceeds binary64 range.") from error
+            raise OverflowError(
+                "Periodic exact image coordinate exceeds binary64 range."
+            ) from error
         if not isfinite(term) or term == 0.0:
-            raise OverflowError("Periodic exact image coordinate has no finite dyadic expansion.")
+            raise OverflowError(
+                "Periodic exact image coordinate has no finite dyadic expansion."
+            )
         values.append(term)
         remainder -= Fraction.from_float(term)
     values.sort(key=abs)
     for previous, current in pairwise(values):
         gap = abs(current) - nextafter(abs(current), 0.0)
         if abs(previous) > 0.5 * gap:
-            raise OverflowError("Periodic exact image coordinate lacks a nonoverlapping expansion.")
+            raise OverflowError(
+                "Periodic exact image coordinate lacks a nonoverlapping expansion."
+            )
     return tuple(values)
 
 
@@ -578,7 +577,9 @@ def _image_radius_neighbor_csr(
         or np.any(np.diff(offsets) < 0)
         or np.any(~np.isfinite(components))
     ):
-        raise ValueError("Periodic image coordinates do not match their owner/winding rows.")
+        raise ValueError(
+            "Periodic image coordinates do not match their owner/winding rows."
+        )
     diameter = 2 * Fraction.from_float(float(influence_radius))
     if diameter <= 0:
         raise ValueError("Periodic power neighbor radius must be positive.")
@@ -591,7 +592,10 @@ def _image_radius_neighbor_csr(
             first, last = map(int, offsets[position : position + 2])
             coordinate.append(
                 sum(
-                    (Fraction.from_float(float(value)) for value in components[first:last]),
+                    (
+                        Fraction.from_float(float(value))
+                        for value in components[first:last]
+                    ),
                     Fraction(0),
                 )
             )
@@ -614,23 +618,20 @@ def _image_radius_neighbor_csr(
             floor(point[2] / diameter),
         )
         for neighbor_offset in neighbor_offsets:
-            nearby = tuple(
-                bucket[axis] + neighbor_offset[axis] for axis in range(3)
-            )
+            nearby = tuple(bucket[axis] + neighbor_offset[axis] for axis in range(3))
             for second in buckets.get(nearby, ()):
                 if second <= first:
                     continue
                 distance_squared = sum(
-                    (
-                        (point[axis] - coordinates[second][axis]) ** 2
-                        for axis in range(3)
-                    ),
+                    ((point[axis] - coordinates[second][axis]) ** 2 for axis in range(3)),
                     Fraction(0),
                 )
                 if distance_squared <= diameter_squared:
                     pairs.add((first, second))
     if not pairs:
-        raise ValueError("Periodic image radius search found no exact power-neighbor edges.")
+        raise ValueError(
+            "Periodic image radius search found no exact power-neighbor edges."
+        )
     undirected = np.asarray(sorted(pairs), dtype=np.int64).reshape((-1, 2))
     directed = np.concatenate((undirected, undirected[:, ::-1]), axis=0)
     directed = directed[np.lexsort((directed[:, 1], directed[:, 0]))]
@@ -644,7 +645,11 @@ def _box_tetrahedra(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     points = np.asarray(
         tuple(
-            (upper[0] if x else lower[0], upper[1] if y else lower[1], upper[2] if z else lower[2])
+            (
+                upper[0] if x else lower[0],
+                upper[1] if y else lower[1],
+                upper[2] if z else lower[2],
+            )
             for x, y, z in product((0, 1), repeat=3)
         ),
         dtype=np.float64,
@@ -675,7 +680,9 @@ def _box_tetrahedra(
         if len(adjacent) == 1:
             boundary.append((face, adjacent[0]))
         elif len(adjacent) != 2:
-            raise ValueError("Periodic power carrier has a nonmanifold tetrahedral facet.")
+            raise ValueError(
+                "Periodic power carrier has a nonmanifold tetrahedral facet."
+            )
     for facet, (_, (cell, opposite)) in enumerate(sorted(boundary)):
         facets[cell, opposite] = facet
     return points, cells, facets
@@ -692,7 +699,9 @@ def _base_image_cell_rows(
     for point_row in range(site_count):
         rows = np.flatnonzero(cell_sites == base_images[point_row])
         if rows.size != 1:
-            raise ValueError("Every authored periodic site requires one connected full power cell.")
+            raise ValueError(
+                "Every authored periodic site requires one connected full power cell."
+            )
         result[point_row] = int(rows[0])
     return result
 
@@ -712,10 +721,7 @@ def _base_cells_are_unclipped(
         if second >= 0:
             faces_by_cell[second].append(face)
     return all(
-        all(
-            owners[face, 0] >= 0 and owners[face, 1] >= 0
-            for face in faces_by_cell[row]
-        )
+        all(owners[face, 0] >= 0 and owners[face, 1] >= 0 for face in faces_by_cell[row])
         for row in cell_rows.values()
     )
 
@@ -761,7 +767,9 @@ def _polyhedral_quotient_from_power(
         or np.any((face_vertices < 0) | (face_vertices >= points.shape[0]))
     ):
         raise ValueError("Exact periodic power output has malformed face topology.")
-    incident: list[list[int]] = [[] for _ in range(np.asarray(restricted.cell_sites).size)]
+    incident: list[list[int]] = [
+        [] for _ in range(np.asarray(restricted.cell_sites).size)
+    ]
     for face in range(face_cells.shape[0]):
         first = int(face_cells[face, 0])
         second = int(face_cells[face, 1])
@@ -791,9 +799,7 @@ def _polyhedral_quotient_from_power(
 
     orders = identification_orders(source.cell)
     coordinate_offsets = np.asarray(image_coordinate_offsets, dtype=np.int64)
-    coordinate_components = np.asarray(
-        image_coordinate_components, dtype=np.float64
-    )
+    coordinate_components = np.asarray(image_coordinate_components, dtype=np.float64)
     exact_image_points: list[tuple[Fraction, Fraction, Fraction]] = []
     for image in range(image_owners.size):
         image_coordinates = []
@@ -815,19 +821,16 @@ def _polyhedral_quotient_from_power(
             image_coordinates[2],
         )
         exact_image_points.append(exact_point_row)
-    exact_image_point_bank: tuple[
-        tuple[Fraction, Fraction, Fraction], ...
-    ] = tuple(exact_image_points)
+    exact_image_point_bank: tuple[tuple[Fraction, Fraction, Fraction], ...] = tuple(
+        exact_image_points
+    )
     exact_image_weights = tuple(
-        Fraction.from_float(float(site_weights[int(owner)]))
-        for owner in image_owners
+        Fraction.from_float(float(site_weights[int(owner)])) for owner in image_owners
     )
     prepared_exact_image_bank = _prepare_power_site_bank(
         exact_image_point_bank, exact_image_weights
     )
-    exact_carrier_points: tuple[
-        tuple[Fraction, Fraction, Fraction], ...
-    ] = tuple(
+    exact_carrier_points: tuple[tuple[Fraction, Fraction, Fraction], ...] = tuple(
         (
             Fraction.from_float(float(row[0])),
             Fraction.from_float(float(row[1])),
@@ -845,19 +848,27 @@ def _polyhedral_quotient_from_power(
     # Authored sites whose unshifted (owned) cell meets each native vertex.
     base_site_ids_by_vertex: dict[int, frozenset[int]] = {}
     for vertex in sorted(used_vertices):
-        start, stop = map(int, np.asarray(restricted.vertex_site_offsets)[vertex : vertex + 2])
+        start, stop = map(
+            int, np.asarray(restricted.vertex_site_offsets)[vertex : vertex + 2]
+        )
         witnesses = np.asarray(restricted.vertex_sites, dtype=np.int64)[start:stop]
-        if witnesses.size == 0 or np.any((witnesses < 0) | (witnesses >= image_owners.size)):
-            raise ValueError("Periodic power vertex lacks exact active image-site ancestry.")
+        if witnesses.size == 0 or np.any(
+            (witnesses < 0) | (witnesses >= image_owners.size)
+        ):
+            raise ValueError(
+                "Periodic power vertex lacks exact active image-site ancestry."
+            )
         equal_images = tuple(int(image) for image in witnesses)
         if tuple(sorted(set(equal_images))) != equal_images:
-            raise ValueError("Periodic power image-site witnesses must be sorted and unique.")
+            raise ValueError(
+                "Periodic power image-site witnesses must be sorted and unique."
+            )
         carrier_ids = tuple(int(value) for value in carrier_bank[vertex] if value >= 0)
-        if not carrier_ids or any(index >= len(exact_carrier_points) for index in carrier_ids):
+        if not carrier_ids or any(
+            index >= len(exact_carrier_points) for index in carrier_ids
+        ):
             raise ValueError("Periodic power vertex lacks exact carrier-point ancestry.")
-        carrier_coordinates = tuple(
-            exact_carrier_points[index] for index in carrier_ids
-        )
+        carrier_coordinates = tuple(exact_carrier_points[index] for index in carrier_ids)
         try:
             exact_point, barycentric = _vertex_power_point(
                 points[vertex],
@@ -875,12 +886,8 @@ def _polyhedral_quotient_from_power(
                 tuple(int(value) for value in image_windings[image])
                 for image in equal_images
             )
-            active_points = tuple(
-                exact_image_point_bank[image] for image in equal_images
-            )
-            active_weights = tuple(
-                exact_image_weights[image] for image in equal_images
-            )
+            active_points = tuple(exact_image_point_bank[image] for image in equal_images)
+            active_weights = tuple(exact_image_weights[image] for image in equal_images)
             raise ValueError(
                 "Exact periodic power carrier intersection failed for one native vertex: "
                 f"source_orbits={source.orbits_id}; cell={source.cell.cell_id}; "
@@ -950,7 +957,6 @@ def _polyhedral_quotient_from_power(
             if not np.any(image_windings[int(image)])
         )
 
-
     loops_by_site = {
         point_row: tuple(
             _convex_power_face_loop(loop, exact_point_by_vertex) for loop in loops
@@ -958,10 +964,15 @@ def _polyhedral_quotient_from_power(
         for point_row, loops in loops_by_site.items()
     }
     used_vertices = {
-        int(vertex) for loops in loops_by_site.values() for loop in loops for vertex in loop
+        int(vertex)
+        for loops in loops_by_site.values()
+        for loop in loops
+        for vertex in loop
     }
     identity_by_vertex = {
-        vertex: key for vertex, key in identity_by_vertex.items() if vertex in used_vertices
+        vertex: key
+        for vertex, key in identity_by_vertex.items()
+        if vertex in used_vertices
     }
 
     vertex_keys = tuple(sorted(set(identity_by_vertex.values())))
@@ -1041,9 +1052,7 @@ def _polyhedral_quotient_from_power(
     root_id_by_signature = dict(zip(root_signatures, root_ids, strict=True))
     owner_by_site_id = {
         int(identifier): int(owner)
-        for identifier, owner in zip(
-            point_ids, point_owner_ranks, strict=True
-        )
+        for identifier, owner in zip(point_ids, point_owner_ranks, strict=True)
     }
     vertex_source_ids = np.asarray(
         [root_id_by_signature[signature] for signature, _ in vertex_keys],
@@ -1118,7 +1127,9 @@ def _polyhedral_quotient_from_power(
     )
     cell_ids = np.asarray(lifted.entity_set(3).entity_ids, dtype=np.int64)
     if not np.array_equal(np.sort(cell_ids), np.sort(selected_cell_ids)):
-        raise ValueError("Periodic power quotient cells do not retain authored point identities.")
+        raise ValueError(
+            "Periodic power quotient cells do not retain authored point identities."
+        )
     selected_vertex_rows = np.asarray(
         [raw_coordinate_by_key[key][0] for key in vertex_keys], dtype=np.int64
     )
@@ -1141,6 +1152,7 @@ def _polyhedral_quotient_from_power(
         shifts,
     )
 
+
 def _bind_power_periodic_topology(
     lifted: CellMesh,
     cell: PeriodicPointOrbits,
@@ -1152,7 +1164,9 @@ def _bind_power_periodic_topology(
 ) -> CellMesh:
     connectivity = lifted.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("Periodic power quotient construction requires polyhedral connectivity.")
+        raise TypeError(
+            "Periodic power quotient construction requires polyhedral connectivity."
+        )
     topology = PeriodicMeshTopology(
         lifted,
         cell.cell,
@@ -1180,11 +1194,12 @@ def _bind_power_periodic_topology(
         topology.quotient.entity_sets[3].entity_ids, dtype=np.int64
     )
     expected_cell_ids = np.asarray(selected_cell_ids, dtype=np.int64)
-    if (
-        not np.array_equal(np.sort(cell_ids), np.sort(expected_cell_ids))
-        or not np.array_equal(np.sort(quotient_cell_ids), np.sort(expected_cell_ids))
-    ):
-        raise ValueError("Periodic power quotient cells do not retain authored point identities.")
+    if not np.array_equal(
+        np.sort(cell_ids), np.sort(expected_cell_ids)
+    ) or not np.array_equal(np.sort(quotient_cell_ids), np.sort(expected_cell_ids)):
+        raise ValueError(
+            "Periodic power quotient cells do not retain authored point identities."
+        )
     return bound
 
 
@@ -1196,7 +1211,9 @@ def _validate_periodic_power_measure(
     lattice: np.ndarray,
     /,
 ) -> None:
-    rows = np.asarray(tuple(cell_rows[index] for index in range(site_count)), dtype=np.int64)
+    rows = np.asarray(
+        tuple(cell_rows[index] for index in range(site_count)), dtype=np.int64
+    )
     volumes = np.asarray(restricted.cell_volumes, dtype=np.float64)[rows]
     total = float(np.sum(volumes, dtype=np.float64))
     expected = abs(float(np.linalg.det(lattice)))
@@ -1210,8 +1227,9 @@ def _validate_periodic_power_measure(
         or abs(total - expected) > tolerance
         or mesh.entity_set(3).entity_ids.size != site_count
     ):
-        raise ValueError("Periodic power cells do not conserve one fundamental-cell volume.")
-
+        raise ValueError(
+            "Periodic power cells do not conserve one fundamental-cell volume."
+        )
 
 
 def _owner_local_power_source_bank(
@@ -1263,11 +1281,12 @@ def _owner_local_power_source_bank(
     weights_present = source.site_weights is not None
     if weights_present:
         raw_weights = np.asarray(source.site_weights, dtype=np.float64)
-        if (
-            raw_weights.shape != np.asarray(source.domain.point_ids).shape
-            or np.any(~np.isfinite(raw_weights))
+        if raw_weights.shape != np.asarray(source.domain.point_ids).shape or np.any(
+            ~np.isfinite(raw_weights)
         ):
-            raise ValueError("Owner-local power weights do not align with authored sites.")
+            raise ValueError(
+                "Owner-local power weights do not align with authored sites."
+            )
         weight_by_id = {
             int(identifier): float(weight)
             for identifier, weight in zip(
@@ -1295,9 +1314,7 @@ def _owner_local_power_source_bank(
         tuple(outgoing_requests), rank, execution_group, axis_name
     )
     owned_rows = {
-        int(identifier): row
-        for row, identifier in enumerate(point_ids)
-        if owned[row]
+        int(identifier): row for row, identifier in enumerate(point_ids) if owned[row]
     }
     outgoing_weights = [np.zeros((0, 1), dtype=np.float64) for _ in range(parts)]
     local_error = None
@@ -1306,22 +1323,20 @@ def _owner_local_power_source_bank(
         if identifiers.ndim != 2 or identifiers.shape[1] != 1:
             local_error = "Owner-local power weight requests are malformed."
             continue
-        positions = [owned_rows.get(int(identifier), -1) for identifier in identifiers[:, 0]]
+        positions = [
+            owned_rows.get(int(identifier), -1) for identifier in identifiers[:, 0]
+        ]
         if any(position < 0 for position in positions):
             local_error = "A power source owner lacks a requested authored weight."
             continue
-        outgoing_weights[requester] = weights[
-            np.asarray(positions, dtype=np.int64), None
-        ]
+        outgoing_weights[requester] = weights[np.asarray(positions, dtype=np.int64), None]
     _owner_group_fail_if_any(
         local_error, execution_group, axis_name, "periodic power weight request"
     )
     incoming_weights = _owner_exchange_message_banks(
         tuple(outgoing_weights), rank, execution_group, axis_name
     )
-    local_rows = {
-        int(identifier): row for row, identifier in enumerate(point_ids)
-    }
+    local_rows = {int(identifier): row for row, identifier in enumerate(point_ids)}
     local_error = None
     for owner, values in incoming_weights.items():
         owner_weights = np.asarray(values, dtype=np.float64)
@@ -1329,12 +1344,12 @@ def _owner_local_power_source_bank(
         if owner_weights.shape != (requested_ids.size, 1):
             local_error = "Periodic power weight replies do not match their requests."
             continue
-        for identifier, weight in zip(
-            requested_ids, owner_weights[:, 0], strict=True
-        ):
+        for identifier, weight in zip(requested_ids, owner_weights[:, 0], strict=True):
             row = local_rows[int(identifier)]
             if weights[row] != weight:
-                local_error = "A periodic power ghost weight differs from its exact owner."
+                local_error = (
+                    "A periodic power ghost weight differs from its exact owner."
+                )
                 continue
             weights[row] = weight
     _owner_group_fail_if_any(
@@ -1387,12 +1402,8 @@ def _owner_local_power_bounds(
         local_record[1] = float(np.min(weights[rows]))
         local_record[2] = float(np.max(weights[rows]))
         local_record[3 : 3 + dimension] = np.min(point_lower, axis=0)
-        local_record[3 + dimension : 3 + 2 * dimension] = np.max(
-            point_upper, axis=0
-        )
-        local_record[3 + 2 * dimension : 3 + 3 * dimension] = np.min(
-            point_values, axis=0
-        )
+        local_record[3 + dimension : 3 + 2 * dimension] = np.max(point_upper, axis=0)
+        local_record[3 + 2 * dimension : 3 + 3 * dimension] = np.min(point_values, axis=0)
         local_record[3 + 3 * dimension :] = np.max(point_values, axis=0)
     records = _owner_group_allgather(local_record, execution_group, axis_name)
     bounds: list[tuple[np.ndarray, np.ndarray] | None] = []
@@ -1405,13 +1416,8 @@ def _owner_local_power_bounds(
             bounds.append(None)
             continue
         lower = np.asarray(row[3 : 3 + dimension], dtype=np.float64)
-        upper = np.asarray(
-            row[3 + dimension : 3 + 2 * dimension], dtype=np.float64
-        )
-        if (
-            np.any(~np.isfinite(lower) | ~np.isfinite(upper))
-            or np.any(lower > upper)
-        ):
+        upper = np.asarray(row[3 + dimension : 3 + 2 * dimension], dtype=np.float64)
+        if np.any(~np.isfinite(lower) | ~np.isfinite(upper)) or np.any(lower > upper):
             raise ValueError("Collective power owner fractional bounds are malformed.")
         bounds.append((lower, upper))
         nonempty.append(row)
@@ -1425,9 +1431,7 @@ def _owner_local_power_bounds(
         axis=0,
     )
     global_upper = np.max(
-        np.asarray(
-            [row[3 + 3 * dimension :] for row in nonempty], dtype=np.float64
-        ),
+        np.asarray([row[3 + 3 * dimension :] for row in nonempty], dtype=np.float64),
         axis=0,
     )
     global_weight_min = min(float(row[1]) for row in nonempty)
@@ -1500,9 +1504,7 @@ def _owner_local_power_support_exchange(
         owned_points, origin, lattice
     )
     response_ids = [np.zeros((0, 1), dtype=np.int64) for _ in range(parts)]
-    response_points = [
-        np.zeros((0, dimension), dtype=np.float64) for _ in range(parts)
-    ]
+    response_points = [np.zeros((0, dimension), dtype=np.float64) for _ in range(parts)]
     response_weights = [np.zeros((0, 1), dtype=np.float64) for _ in range(parts)]
     local_error = None
     for requester, values in incoming_boxes.items():
@@ -1561,7 +1563,9 @@ def _owner_local_power_support_exchange(
     )
     offered_owners = (
         np.concatenate(
-            tuple(np.full((ids.size,), owner, dtype=np.int32) for owner, ids, _, _ in offers)
+            tuple(
+                np.full((ids.size,), owner, dtype=np.int32) for owner, ids, _, _ in offers
+            )
         )
         if offers
         else np.zeros((0,), dtype=np.int32)
@@ -1629,7 +1633,9 @@ def _owner_local_power_support_exchange(
                         np.asarray((weight,), dtype=np.float64).view(np.uint64),
                     )
                 ):
-                    local_error = "Periodic power support returned conflicting source rows."
+                    local_error = (
+                        "Periodic power support returned conflicting source rows."
+                    )
                 else:
                     new_records[int(identifier)] = (
                         owner,
@@ -1642,7 +1648,10 @@ def _owner_local_power_support_exchange(
     new_ids = np.asarray(sorted(new_records), dtype=np.int64)
     if new_ids.size:
         points = np.concatenate(
-            (points, np.asarray([new_records[int(identifier)][1] for identifier in new_ids])),
+            (
+                points,
+                np.asarray([new_records[int(identifier)][1] for identifier in new_ids]),
+            ),
             axis=0,
         )
         point_owners = np.concatenate(
@@ -1704,6 +1713,7 @@ def _owner_local_power_support_exchange(
         (support_round_id,),
     )
 
+
 def _owner_local_periodic_site_weights_for_support(
     source: NativePeriodicSource,
     support_point_ids: ArrayLike,
@@ -1758,8 +1768,7 @@ def _owner_local_periodic_site_weights_for_support(
         f"{axis_name}_schema",
     )
     if any(
-        np.asarray(row, dtype=np.uint8).tobytes().hex() != header
-        for row in header_rows
+        np.asarray(row, dtype=np.uint8).tobytes().hex() != header for row in header_rows
     ):
         raise ValueError("Periodic source weight schemas differ across ranks.")
     if not weights_present:
@@ -1824,9 +1833,9 @@ def _owner_local_periodic_site_weights_for_support(
             for row, identifier in enumerate(source_ids.tolist())
             if source_owners[row] == rank
         }
-        if np.unique(
-            np.asarray(list(owned_weight_bits), dtype=np.int64)
-        ).size != len(owned_weight_bits):
+        if np.unique(np.asarray(list(owned_weight_bits), dtype=np.int64)).size != len(
+            owned_weight_bits
+        ):
             raise ValueError("A periodic source owner duplicated a weighted site.")
     except Exception as error:
         local_error = f"{type(error).__name__}: {error}"
@@ -1851,7 +1860,9 @@ def _owner_local_periodic_site_weights_for_support(
             if owner == rank:
                 bit_value = owned_weight_bits.get(identifier)
                 if bit_value is None:
-                    raise ValueError("A periodic source owner lacks its authored site weight.")
+                    raise ValueError(
+                        "A periodic source owner lacks its authored site weight."
+                    )
                 result_bits[row] = np.uint64(bit_value)
                 result_valid[row] = True
             else:
@@ -1863,9 +1874,7 @@ def _owner_local_periodic_site_weights_for_support(
         )
     except Exception as error:
         local_error = f"{type(error).__name__}: {error}"
-        request_banks = tuple(
-            np.zeros((0, 1), dtype=np.int64) for _ in members
-        )
+        request_banks = tuple(np.zeros((0, 1), dtype=np.int64) for _ in members)
     _owner_group_fail_if_any(
         local_error,
         execution_group,
@@ -1875,9 +1884,7 @@ def _owner_local_periodic_site_weights_for_support(
     incoming_requests = _owner_exchange_message_banks(
         request_banks, rank, execution_group, f"{axis_name}_requests"
     )
-    reply_banks = [
-        np.zeros((0, 2), dtype=np.int64) for _ in members
-    ]
+    reply_banks = [np.zeros((0, 2), dtype=np.int64) for _ in members]
     local_error = None
     try:
         for requester, request_values in incoming_requests.items():
@@ -1909,14 +1916,13 @@ def _owner_local_periodic_site_weights_for_support(
     try:
         for owner, reply_values in incoming_replies.items():
             replies = np.asarray(reply_values, dtype=np.int64)
-            requested_ids = np.asarray(
-                request_ids_by_owner[int(owner)], dtype=np.int64
-            )
-            if (
-                replies.shape != (requested_ids.size, 2)
-                or not np.array_equal(replies[:, 0], requested_ids)
+            requested_ids = np.asarray(request_ids_by_owner[int(owner)], dtype=np.int64)
+            if replies.shape != (requested_ids.size, 2) or not np.array_equal(
+                replies[:, 0], requested_ids
             ):
-                raise ValueError("Periodic site weight replies do not match their requests.")
+                raise ValueError(
+                    "Periodic site weight replies do not match their requests."
+                )
             rows = np.asarray(request_rows_by_owner[int(owner)], dtype=np.int64)
             result_bits[rows] = replies[:, 1].view(np.uint64)
             result_valid[rows] = True
@@ -1958,10 +1964,7 @@ def _owner_local_periodic_power_candidate(
         NativePeriodicSource,
     )
 
-    if (
-        not isinstance(source, NativePeriodicSource)
-        or source.ambient_dimension != 3
-    ):
+    if not isinstance(source, NativePeriodicSource) or source.ambient_dimension != 3:
         raise TypeError("Owner-local power requires a 3D typed periodic point source.")
     domain = source.domain
     if not isinstance(domain, PeriodicPointOrbits):
@@ -2057,11 +2060,7 @@ def _owner_local_periodic_power_candidate(
     dimension = source.ambient_dimension
     inverse = _exact_lattice_inverse(lattice)
     margin = radius
-    preferred_owner = (
-        int(np.argmax(weights))
-        if weights.size
-        else 0
-    )
+    preferred_owner = int(np.argmax(weights)) if weights.size else 0
     restricted = None
     cell_rows: dict[int, int] = {}
     image_owners = np.zeros((0,), dtype=np.int32)
@@ -2114,9 +2113,7 @@ def _owner_local_periodic_power_candidate(
                     domain_face_facets,
                 )
                 base_images = {
-                    int(point_row): _image_row(
-                        image_owners, image_windings, point_row
-                    )
+                    int(point_row): _image_row(image_owners, image_windings, point_row)
                     for point_row in range(point_ids.size)
                 }
                 all_cell_rows = _base_image_cell_rows(
@@ -2129,9 +2126,7 @@ def _owner_local_periodic_power_candidate(
                 }
                 if not cell_rows:
                     raise ValueError("Owned power sites have no restricted cells.")
-                local_unclipped = _base_cells_are_unclipped(
-                    restricted, cell_rows
-                )
+                local_unclipped = _base_cells_are_unclipped(restricted, cell_rows)
             except Exception as error:
                 local_error = str(error)
             else:
@@ -2167,7 +2162,9 @@ def _owner_local_periodic_power_candidate(
     if cell_rows:
         try:
             if restricted is None:
-                raise ValueError("Owned periodic cells require exact restricted power data.")
+                raise ValueError(
+                    "Owned periodic cells require exact restricted power data."
+                )
             (
                 lifted,
                 exact_vertex_bank,
@@ -2303,6 +2300,7 @@ def _owner_local_periodic_power_candidate(
         "lattice": lattice,
     }
 
+
 def _owner_local_periodic_power_mesh_data(
     power: dict[str, Any],
     rank: int,
@@ -2330,15 +2328,9 @@ def _owner_local_periodic_power_mesh_data(
         vertex_rows = np.zeros((0,), dtype=np.int64)
         coordinate_rows = np.zeros((0,), dtype=np.int64)
         empty_keys = np.zeros((0,), dtype=np.int64)
-        entity_ids = {
-            degree: np.zeros((0,), dtype=np.int64) for degree in range(4)
-        }
-        entity_offsets = {
-            degree: np.zeros((1,), dtype=np.int64) for degree in range(4)
-        }
-        entity_values = {
-            degree: np.zeros((0,), dtype=np.int32) for degree in range(4)
-        }
+        entity_ids = {degree: np.zeros((0,), dtype=np.int64) for degree in range(4)}
+        entity_offsets = {degree: np.zeros((1,), dtype=np.int64) for degree in range(4)}
+        entity_values = {degree: np.zeros((0,), dtype=np.int32) for degree in range(4)}
         return {
             "cell_rows": cell_rows,
             "cell_ids": cell_ids,
@@ -2364,9 +2356,7 @@ def _owner_local_periodic_power_mesh_data(
             "entity_vertex_values": entity_values,
             "cell_key_offsets": np.zeros((1,), dtype=np.int64),
             "cell_key_source_ids": empty_keys,
-            "cell_key_relative_windings": np.zeros(
-                (0, dimension), dtype=np.int64
-            ),
+            "cell_key_relative_windings": np.zeros((0, dimension), dtype=np.int64),
             "periodic_cell_ids": cell_ids.copy(),
             "vertex_representative_ids": np.zeros((0,), dtype=np.int64),
             "vertex_windings": np.zeros((0, dimension), dtype=np.int64),
@@ -2462,22 +2452,18 @@ def _owner_local_periodic_power_mesh_data(
                     int(source_id),
                     tuple(int(value) for value in winding),
                 )
-                for source_id, winding in zip(
-                    source_ids_for_cell, relative, strict=True
-                )
+                for source_id, winding in zip(source_ids_for_cell, relative, strict=True)
             )
         )
         key_sources.append(
             np.asarray([source_id for source_id, _ in ordered_keys], dtype=np.int64)
         )
         key_windings.append(
-            np.asarray(
-                [winding for _, winding in ordered_keys], dtype=np.int64
-            ).reshape((-1, dimension))
+            np.asarray([winding for _, winding in ordered_keys], dtype=np.int64).reshape(
+                (-1, dimension)
+            )
         )
-        cell_key_offsets[row + 1] = (
-            cell_key_offsets[row] + len(ordered_keys)
-        )
+        cell_key_offsets[row + 1] = cell_key_offsets[row] + len(ordered_keys)
     cell_key_source_ids = (
         np.concatenate(key_sources).astype(np.int64, copy=False)
         if key_sources
@@ -2489,17 +2475,11 @@ def _owner_local_periodic_power_mesh_data(
         else np.zeros((0, dimension), dtype=np.int64)
     )
 
-    face_vertex_offsets = np.asarray(
-        connectivity.face_vertex_offsets, dtype=np.int64
-    )
-    face_vertex_values = np.asarray(
-        connectivity.face_vertex_values, dtype=np.int32
-    )
+    face_vertex_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+    face_vertex_values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
     cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
     cell_face_values = np.asarray(connectivity.cell_face_values, dtype=np.int64)
-    cell_face_signs = np.asarray(
-        connectivity.cell_face_sign_values, dtype=np.int8
-    )
+    cell_face_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int8)
     cell_measures = np.empty((cell_ids.size,), dtype=np.float64)
     exact_cell_measures: list[Fraction] = []
     for cell in range(cell_ids.size):
@@ -2559,19 +2539,13 @@ def _owner_local_periodic_power_mesh_data(
             if loops
             else np.zeros((0,), dtype=np.int32)
         )
-    element_by_name = dict(
-        zip(geometry.block_names, geometry.elements, strict=True)
-    )
+    element_by_name = dict(zip(geometry.block_names, geometry.elements, strict=True))
     face_ids_global = np.asarray(connectivity.face_global_ids, dtype=np.int64)
     block_cell_face_offsets_global = np.asarray(
         connectivity.cell_face_offsets, dtype=np.int64
     )
-    block_cell_face_values = np.asarray(
-        connectivity.cell_face_values, dtype=np.int64
-    )
-    block_cell_face_signs = np.asarray(
-        connectivity.cell_face_sign_values, dtype=np.int8
-    )
+    block_cell_face_values = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    block_cell_face_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int8)
     face_vertex_offsets_global = np.asarray(
         connectivity.face_vertex_offsets, dtype=np.int64
     )
@@ -2579,12 +2553,8 @@ def _owner_local_periodic_power_mesh_data(
         connectivity.face_vertex_values, dtype=np.int32
     )
     maximum_arity = max(vertices.shape[1] for vertices in block_vertices_by_index)
-    combined_vertices = np.full(
-        (cell_ids.size, maximum_arity), -1, dtype=np.int32
-    )
-    combined_vertex_valid = np.zeros(
-        (cell_ids.size, maximum_arity), dtype=np.bool_
-    )
+    combined_vertices = np.full((cell_ids.size, maximum_arity), -1, dtype=np.int32)
+    combined_vertex_valid = np.zeros((cell_ids.size, maximum_arity), dtype=np.bool_)
     combined_cell_vertex_shifts = np.zeros(
         (cell_ids.size, maximum_arity, dimension), dtype=np.int64
     )
@@ -2603,19 +2573,13 @@ def _owner_local_periodic_power_mesh_data(
         block_shifts = np.zeros(
             (block_vertices.shape[0], arity, dimension), dtype=np.int64
         )
-        block_shifts[block_valid] = vertex_absolute_windings[
-            block_vertices[block_valid]
-        ]
+        block_shifts[block_valid] = vertex_absolute_windings[block_vertices[block_valid]]
         combined_cell_vertex_shifts[global_rows, :arity] = block_shifts
-        cell_face_offsets_local = np.zeros(
-            (block_cell_ids.size + 1,), dtype=np.int64
-        )
+        cell_face_offsets_local = np.zeros((block_cell_ids.size + 1,), dtype=np.int64)
         used_face_rows: list[int] = []
         cell_face_signs_local: list[int] = []
         for local_row, global_row in enumerate(global_rows):
-            start, stop = block_cell_face_offsets_global[
-                global_row : global_row + 2
-            ]
+            start, stop = block_cell_face_offsets_global[global_row : global_row + 2]
             for incidence in range(int(start), int(stop)):
                 used_face_rows.append(int(block_cell_face_values[incidence]))
                 cell_face_signs_local.append(int(block_cell_face_signs[incidence]))
@@ -2633,18 +2597,14 @@ def _owner_local_periodic_power_mesh_data(
             [local_face_by_row[face] for face in used_face_rows],
             dtype=np.int64,
         )
-        face_vertex_offsets_local = np.zeros(
-            (len(local_face_rows) + 1,), dtype=np.int64
-        )
+        face_vertex_offsets_local = np.zeros((len(local_face_rows) + 1,), dtype=np.int64)
         face_vertex_values_local: list[int] = []
         for local_row, face_row in enumerate(local_face_rows):
             start, stop = face_vertex_offsets_global[face_row : face_row + 2]
             face_vertex_values_local.extend(
                 int(value) for value in face_vertex_values_global[int(start) : int(stop)]
             )
-            face_vertex_offsets_local[local_row + 1] = len(
-                face_vertex_values_local
-            )
+            face_vertex_offsets_local[local_row + 1] = len(face_vertex_values_local)
         block_records.append(
             {
                 "name": block.name,
@@ -2655,18 +2615,14 @@ def _owner_local_periodic_power_mesh_data(
                 "vertex_valid": block_valid,
                 "coordinate_routes": block_vertices,
                 "element": element_by_name[block.name],
-                "element_rows": np.arange(
-                    block_cell_ids.size, dtype=np.int32
-                ),
+                "element_rows": np.arange(block_cell_ids.size, dtype=np.int32),
                 "source_cell_ids": block_cell_ids,
                 "chart_arguments": None,
                 "cell_measures": cell_measures[global_rows],
                 "face_ids": face_ids_global[np.asarray(local_face_rows, dtype=np.int64)],
                 "cell_face_offsets": cell_face_offsets_local,
                 "cell_face_values": cell_face_values_local,
-                "cell_face_signs": np.asarray(
-                    cell_face_signs_local, dtype=np.int8
-                ),
+                "cell_face_signs": np.asarray(cell_face_signs_local, dtype=np.int8),
                 "face_vertex_offsets": face_vertex_offsets_local,
                 "face_vertex_values": np.asarray(
                     face_vertex_values_local, dtype=np.int32
@@ -2675,9 +2631,7 @@ def _owner_local_periodic_power_mesh_data(
             }
         )
 
-    origin_exact = tuple(
-        Fraction.from_float(float(value)) for value in power["origin"]
-    )
+    origin_exact = tuple(Fraction.from_float(float(value)) for value in power["origin"])
     inverse = _exact_lattice_inverse(np.asarray(power["lattice"], dtype=np.float64))
     local_cell_vertices = _entity_vertex_rows(mesh)[dimension]
     support_lower = np.empty((cell_ids.size, dimension), dtype=np.float64)
@@ -2690,8 +2644,7 @@ def _owner_local_periodic_power_mesh_data(
                 tuple(
                     sum(
                         (
-                            (point[cart] - origin_exact[cart])
-                            * inverse[cart][axis]
+                            (point[cart] - origin_exact[cart]) * inverse[cart][axis]
                             for cart in range(dimension)
                         ),
                         Fraction(0),
@@ -2745,4 +2698,6 @@ def _owner_local_periodic_power_mesh_data(
         "cell_vertex_shifts": combined_cell_vertex_shifts,
         "source_cell_ids": cell_ids.copy(),
     }
+
+
 __all__ = ["periodic_power_mesh"]
