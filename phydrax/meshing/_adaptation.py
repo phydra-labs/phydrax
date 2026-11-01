@@ -3089,10 +3089,27 @@ def _restricted_target_geometry(
             block_parent_reference_maps=target_parent_maps,
             carrier_geometry=ancestry.carrier_geometry,
         )
+    # The target routes index the source coordinate rows, so an exact source bank
+    # (e.g. a curved map's exact edge midpoints) restricts row for row.
+    bank = source.geometry.exact_coordinate_bank
+    source_map = None
+    if bank is not None:
+        from ._curving import _exact_coordinate_bank_source_map
+
+        source_map = _exact_coordinate_bank_source_map(
+            target,
+            target.mesh_id,
+            target.numeric_version,
+            ("adaptation-restriction", str(source.geometry.source_map_id)),
+            bank,
+            np.asarray(source.geometry.coordinates, dtype=np.float64),
+        )
     geometry = CellGeometrySpec(
         target_elements,
         target_routes,
         source.geometry.coordinates,
+        source_map=source_map,
+        source_mesh=None if source_map is None else target,
         restriction_source=restriction,
     )
     return target, geometry, reference_maps, None

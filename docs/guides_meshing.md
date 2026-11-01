@@ -1923,8 +1923,12 @@ material reference.
 
 `HighOrderCurvingResult.relaxation_statuses` records every relaxation's native
 termination status and `accepted_round` names the accepted candidate (0 for the
-projection). Without an accepted candidate the result rolls back to the straight
-geometry with the rejected candidate's evidence (`HighOrderCurvingStatus`,
+projection). Cell validity and CAD residuals are certified for every candidate
+that may be accepted; global embedding and source acceptance run on locally
+valid candidates latest round first and stop at the first accepted one, which is
+the candidate certifying every round would select. Without an accepted candidate
+the result rolls back to the straight geometry with the last round's fully
+certified evidence (`HighOrderCurvingStatus`,
 including `ROLLED_BACK_NONCONVERGED`). `PeriodicCoupling` vertex pairs make target-side
 high-order nodes the declared isometry of their source-side nodes
 (`PeriodicCoupling.match_points` pairs the nodes). `verify_curved_geometry`
@@ -1941,9 +1945,10 @@ affine glue places the second reference cell across the facet so that the union
 is convex; a constant preconditioner then makes the glued map strictly monotone
 at every (uniformly refined) Jacobian Bernstein control. Single-cell injectivity
 uses the same preconditioner. It is found by Kelley cutting planes, whose
-linear-program bound also proves when no preconditioner exists. Containment rays
-that meet a trim edge or a face tangentially are retried along the next fixed
-direction.
+linear-program bound also proves when no preconditioner exists. Solid containment
+casts exact rays along an unbounded dense sequence of dyadic directions until one
+meets every face transversally away from trim edges; points on the solid boundary
+stay unresolved, and every other point is decided after finitely many rays.
 
 `curve_layer_core_construction(construction, layers, source_surface_charts, policy=...)`
 builds a source-aware high-order mixed-cell map for a boundary-layer/core mesh.
