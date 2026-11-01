@@ -225,12 +225,18 @@ def test_triangle_charts_bind_shared_corners_exactly() -> None:
     assert revised.source_revision == "revision-2"
 
 
-def test_triangle_complex_domain_host_evaluation_and_currentness() -> None:
+def test_triangle_complex_domain_host_evaluation_and_currentness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import copy
+    import pickle
 
     import equinox as eqx
+    import jax
     import jax.numpy as jnp
 
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.geometry._meshing_domain import MeshingDomain, ValidatedMeshingDomain
     from phydrax.geometry.reconstruction._core import (
         _ReconstructedTrianglePatch,
         _triangle_complex_meshing_domain,
@@ -280,16 +286,75 @@ def test_triangle_complex_domain_host_evaluation_and_currentness() -> None:
                 np.asarray(use.pcurve.evaluate(jnp.asarray(parameters))),
             )
 
-    domain.require_current("host-evaluation-tetrahedron", "revision-1")
-    copy.deepcopy(domain).require_current()
-    # A pytree rebuild is a different object: its content is fingerprinted again.
+    fingerprinted: list[MeshingDomain] = []
+    content_domain_id = MeshingDomain.content_domain_id
+
+    def counted_content_domain_id(self: MeshingDomain) -> str:
+        fingerprinted.append(self)
+        return content_domain_id(self)
+
+    monkeypatch.setattr(MeshingDomain, "content_domain_id", counted_content_domain_id)
+    validated = domain.require_current("host-evaluation-tetrahedron", "revision-1")
+    assert isinstance(validated, ValidatedMeshingDomain)
+    assert validated.binds(domain)
+    assert len(fingerprinted) == 1 and fingerprinted[0] is domain
+    with pytest.raises(TypeError):
+        ValidatedMeshingDomain(domain, True, token=object())
+    # The validation spares the fingerprint for its own domain object, also
+    # through the boundary queries that keep it.
+    assert domain.require_current(validated=validated) is validated
+    query = MeshingDomainBoundarySource(domain, (0, 1, 2, 3), validated=validated)
+    query.require_current()
+    MeshingDomainBoundarySource(
+        domain, (1,), validated=query.validated_domain
+    ).require_current()
+    assert len(fingerprinted) == 1
+    with pytest.raises(ValueError, match="source_revision changed"):
+        domain.require_current(None, "revision-2", validated=validated)
+
+    # Copies, pickles and pytree rebuilds are other objects: fingerprinted again.
+    # Copied and unpickled NumPy leaves are writable, so their validations prove
+    # only their moment.
+    copied = copy.deepcopy(domain)
+    assert not validated.binds(copied)
+    copied_record = copied.require_current(validated=validated)
+    assert copied_record.domain is copied
+    assert not copied_record.binds(copied)
+    assert fingerprinted[-1] is copied
+    restored = pickle.loads(pickle.dumps(validated))
+    assert restored.domain is not domain
+    assert fingerprinted[-1] is restored.domain
+    rebuilt = jax.tree_util.tree_map(lambda leaf: leaf, domain)
+    assert rebuilt is not domain
+    rebuilt_record = rebuilt.require_current(validated=validated)
+    assert rebuilt_record.binds(rebuilt)
+    assert fingerprinted[-1] is rebuilt
+    rebuilt_query = eqx.tree_at(lambda value: value.domain, query, rebuilt)
+    rebuilt_query.require_current()
+    assert len(fingerprinted) == 5
+    assert fingerprinted[-1] is rebuilt_query.domain
     surface = domain.patches[1].surface
     assert isinstance(surface, _ReconstructedTrianglePatch)
     stale = eqx.tree_at(
         lambda value: value.patches[1].surface.corners, domain, surface.corners + 1.0e-3
     )
     with pytest.raises(ValueError, match="content changed"):
-        stale.require_current()
+        stale.require_current(validated=validated)
+
+    # Over a writable leaf a validation proves only its moment: an in-place
+    # edit afterwards is fingerprinted and refused.
+    banks = domain.scope_entity_id_banks
+    writable = np.array(banks[2], copy=True)
+    mutable = eqx.tree_at(
+        lambda value: value.scope_entity_id_banks,
+        domain,
+        (*banks[:2], writable, *banks[3:]),
+    )
+    record = mutable.require_current()
+    assert not record.binds(mutable)
+    writable[0] += 1
+    with pytest.raises(ValueError, match="content changed"):
+        mutable.require_current(validated=record)
 
 
 def test_triangle_trim_partition_matches_constrained_triangulation(

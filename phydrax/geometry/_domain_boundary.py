@@ -39,6 +39,7 @@ from ._meshing_domain import (
     PatchCurveUse,
     PatchPoleUse,
     SourcePreparation,
+    ValidatedMeshingDomain,
 )
 from ._rational import fraction_down, fraction_endpoint, fraction_up, rational_vector
 from ._source_boundary_records import (
@@ -1123,7 +1124,13 @@ def _cover_chord_triangles(
 
 @final
 class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
-    """Bounded boundary queries over selected source patches and trims."""
+    """Bounded boundary queries over selected source patches and trims.
+
+    The query keeps the validation of its domain (``validated_domain``), so
+    checking it current again fingerprints the content only when its domain is
+    no longer the object that validation bound (for example after a pytree
+    rebuild).
+    """
 
     domain: MeshingDomain
     patches: tuple[int, ...] = eqx.field(static=True)
@@ -1134,6 +1141,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
     boundary_cell_ids: np.ndarray | None
     boundary_patch_ids: np.ndarray | None
     boundary_occurrences: np.ndarray | None
+    validated_domain: ValidatedMeshingDomain = eqx.field(static=True, repr=False)
 
     @checked
     def __init__(
@@ -1146,6 +1154,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         boundary_occurrences: ArrayLike | None = None,
         boundary_cell_ids: ArrayLike | None = None,
         boundary_patch_ids: ArrayLike | None = None,
+        validated: ValidatedMeshingDomain | None = None,
     ) -> None:
         selected = tuple(sorted(set(int(value) for value in patches)))
         if not selected or any(
@@ -1186,7 +1195,8 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             occurrences = np.array(occurrences, copy=True)
             for array in (cells, owners, occurrences):
                 array.setflags(write=False)
-        domain.require_current()
+        # `validated`: the caller's validation of this domain object, if it holds one.
+        self.validated_domain = domain.require_current(validated=validated)
         self.domain = domain
         self.patches = selected
         self.source_id = domain.source_id
@@ -1216,7 +1226,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         return 3
 
     def require_current(self) -> None:
-        self.domain.require_current(self.source_id, self.source_revision)
+        self.domain.require_current(
+            self.source_id, self.source_revision, validated=self.validated_domain
+        )
 
     def boundary_parameter_triangles(
         self, /

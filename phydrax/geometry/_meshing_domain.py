@@ -177,7 +177,56 @@ def _immutable_leaf(value: object, /) -> bool:
     return isinstance(value, (str, bytes, int, float, complex, Fraction, np.generic))
 
 
-_CONSTRUCTED_CONTENT = "_constructed_content"
+_VALIDATION_TOKEN = object()
+
+
+@final
+class ValidatedMeshingDomain:
+    """A MeshingDomain whose content was fingerprinted against its ``domain_id``.
+
+    Only :meth:`MeshingDomain.require_current` creates it. It records the exact
+    domain object it fingerprinted. When every content leaf of that object is
+    immutable, handing it on together with that same object proves the content
+    current without fingerprinting it again; any other object (a copy, a
+    pytree rebuild, a restore) is fingerprinted again. Copying or pickling the
+    record validates its domain again.
+    """
+
+    __slots__ = ("domain", "reusable")
+
+    def __init__(
+        self, domain: MeshingDomain, reusable: bool, /, *, token: object
+    ) -> None:
+        if token is not _VALIDATION_TOKEN:
+            raise TypeError(
+                "Validated meshing domains are created only by MeshingDomain.require_current."
+            )
+        self.domain = domain
+        self.reusable = reusable
+
+    def binds(self, domain: MeshingDomain, /) -> bool:
+        """Whether this validation proves exactly this immutable domain object current."""
+        return self.reusable and self.domain is domain
+
+    # Static-field equality of holders: two validations of equal content are
+    # interchangeable as metadata; `binds` alone decides reuse, by identity.
+    def __eq__(self, other: object, /) -> bool:
+        return (
+            isinstance(other, ValidatedMeshingDomain)
+            and self.domain.domain_id == other.domain.domain_id
+        )
+
+    def __hash__(self) -> int:
+        return hash(self.domain.domain_id)
+
+    def __reduce__(
+        self,
+    ) -> tuple[Callable[[MeshingDomain], ValidatedMeshingDomain], tuple[MeshingDomain]]:
+        return _revalidate_meshing_domain, (self.domain,)
+
+
+def _revalidate_meshing_domain(domain: MeshingDomain, /) -> ValidatedMeshingDomain:
+    return domain.require_current()
 
 
 def _outward_surface_parameter_box(
@@ -2356,26 +2405,6 @@ class MeshingDomain(StrictModule, NonTrainableState):
             _source_entity_slot_index(keys) for keys in stratum_keys
         )
         self.domain_id = self.content_domain_id()
-        # The identity was just computed from these fields. When every content
-        # leaf is immutable, this very instance can never drift from it; record
-        # that for this object only. Copies, pickles and pytree rebuilds (tree_at,
-        # tree_map, jit) are other objects and are fingerprinted again.
-        if all(
-            map(
-                _immutable_leaf,
-                jax.tree_util.tree_leaves(
-                    (
-                        self.patches,
-                        self.curves,
-                        self.regions,
-                        self.corner_points,
-                        self.scope_entity_id_banks,
-                        self.scope_entity_key_banks,
-                    )
-                ),
-            )
-        ):
-            object.__setattr__(self, _CONSTRUCTED_CONTENT, id(self))
 
     @classmethod
     @checked
@@ -2551,13 +2580,18 @@ class MeshingDomain(StrictModule, NonTrainableState):
         )
 
     def require_current(
-        self, source_id: str | None = None, source_revision: str | None = None, /
-    ) -> None:
+        self,
+        source_id: str | None = None,
+        source_revision: str | None = None,
+        /,
+        *,
+        validated: ValidatedMeshingDomain | None = None,
+    ) -> ValidatedMeshingDomain:
         """Refuse a changed source binding, a stale BRep authority, or drifted content.
 
-        The content fingerprint is recomputed unless this object is the one the
-        constructor fingerprinted over immutable leaves; any rebuilt, copied or
-        restored object is fingerprinted again against `domain_id`.
+        Returns the validation of this exact object. ``validated``, made by an
+        earlier call for this very object, is returned without fingerprinting the
+        content again; any other object is fingerprinted against ``domain_id``.
         """
         if source_id is not None and source_id != self.source_id:
             raise ValueError("MeshingDomain source_id changed.")
@@ -2566,11 +2600,29 @@ class MeshingDomain(StrictModule, NonTrainableState):
         authority = self.brep_authority
         if authority is not None:
             authority.require_current()
-        if (
-            vars(self).get(_CONSTRUCTED_CONTENT) != id(self)
-            and self.content_domain_id() != self.domain_id
-        ):
+        if validated is not None and validated.binds(self):
+            return validated
+        if self.content_domain_id() != self.domain_id:
             raise ValueError("MeshingDomain content changed after construction.")
+        return ValidatedMeshingDomain(
+            self,
+            all(
+                map(
+                    _immutable_leaf,
+                    jax.tree_util.tree_leaves(
+                        (
+                            self.patches,
+                            self.curves,
+                            self.regions,
+                            self.corner_points,
+                            self.scope_entity_id_banks,
+                            self.scope_entity_key_banks,
+                        )
+                    ),
+                )
+            ),
+            token=_VALIDATION_TOKEN,
+        )
 
     @property
     def corner_count(self) -> int:
@@ -3815,4 +3867,5 @@ __all__ = [
     "PatchBoundaryUse",
     "SourcePreparation",
     "use_endpoints",
+    "ValidatedMeshingDomain",
 ]
