@@ -540,7 +540,12 @@ class FiniteElementLocalProvider(StrictModule):
                 and discretization.coordinate_measure.kind == "spherical-radial"
             ):
                 degree += 1
-            points, weights = _degree_aware_reference_rule(block.cell_kind, degree)
+            points, weights = _degree_aware_reference_rule(
+                block.cell_kind,
+                degree,
+                # ty: ignore[unresolved-attribute]
+                geometry_degree=discretization.coordinate_elements[block_index].degree,
+            )
             references = []
             gathers = []
             for name in names:
