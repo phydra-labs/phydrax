@@ -665,16 +665,20 @@ class _RowGatherLayout(StrictModule):
             products,
             jnp.zeros((), dtype=products.dtype),
         )
-        # The loop-carried sum fixes route order per output; unrolled and
-        # reduce-based sums were not bitwise route-ordered on CPU. A
-        # module-level body keeps eager applies on one cached executable.
-        total, _ = jax.lax.fori_loop(
-            0,
-            products.shape[0],
-            _accumulate_slot,
-            (jnp.zeros(products.shape[1:], dtype=products.dtype), products),
-        )
-        return total
+        # Preserve sequential route order, including in eager execution.
+        return _sum_route_products(products)
+
+
+@jax.jit
+def _sum_route_products(products: Array, /) -> Array:
+    # A stable body alone does not stabilize fori_loop's eager scan wrapper.
+    total, _ = jax.lax.fori_loop(
+        0,
+        products.shape[0],
+        _accumulate_slot,
+        (jnp.zeros(products.shape[1:], dtype=products.dtype), products),
+    )
+    return total
 
 
 def _accumulate_slot(slot: Array, carry: tuple[Array, Array], /) -> tuple[Array, Array]:

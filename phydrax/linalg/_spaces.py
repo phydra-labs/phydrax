@@ -56,20 +56,27 @@ def _space_metadata(structure: PyTree[jax.ShapeDtypeStruct], /) -> list[dict[str
     ]
 
 
+@eqx.filter_jit
+def _pairing_actions(
+    pairing: AbstractPairing, vector: PyTree[Array], /
+) -> tuple[PyTree[Array], PyTree[Array], Array]:
+    """Trace the pairing contract once per static pairing and array signature."""
+    image = pairing.riesz(vector)
+    return image, pairing.inverse_riesz(image), pairing.inner(vector, vector)
+
+
 def _validate_pairing(
     pairing: AbstractPairing,
     structure: PyTree[jax.ShapeDtypeStruct],
     /,
 ) -> None:
-    riesz = jax.eval_shape(pairing.riesz, structure)
+    riesz, inverse, inner = eqx.filter_eval_shape(_pairing_actions, pairing, structure)
     if eqx.tree_equal(riesz, structure) is not True:
         raise TypeError("Pairing Riesz output must match the vector-space structure.")
-    inverse = jax.eval_shape(pairing.inverse_riesz, riesz)
     if eqx.tree_equal(inverse, structure) is not True:
         raise TypeError(
             "Pairing inverse-Riesz output must match the vector-space structure."
         )
-    inner = jax.eval_shape(pairing.inner, structure, structure)
     if not isinstance(inner, jax.ShapeDtypeStruct) or inner.shape != ():
         raise TypeError("Pairing inner products must return one scalar array.")
 
