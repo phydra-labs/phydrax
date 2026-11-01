@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -45,6 +47,7 @@ from phydrax.meshing._contracts import (
     SurfaceMeshingSpec,
 )
 from phydrax.meshing._implicit_association_transfer import ImplicitAssociationTransfer
+from phydrax.meshing._local_metric import _field_box, _initial_state
 from phydrax.meshing._metric import MeshMetricField, metric_edge_lengths
 from phydrax.meshing._periodic import periodic_entity_orbit_map
 from phydrax.meshing._result import CellMeshingResult
@@ -52,6 +55,7 @@ from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
 from phydrax.meshing._surface_association_transfer import SurfaceAssociationTransfer
 from phydrax.meshing._surface_metric import (
+    _pullback_field,
     execute_surface_metric_adaptation,
     prepare_implicit_surface_metric_source,
     prepare_surface_metric_source,
@@ -463,6 +467,70 @@ def _coarsening_metric(mesh: CellMesh, /) -> np.ndarray:
     # (median 0.15, shortest 0.016), so the extraction's short edges must collapse.
     tensor = np.diag(np.full((3,), 30.0, dtype=np.float64))
     return np.broadcast_to(tensor, (mesh.coordinates.shape[0], 3, 3)).copy()
+
+
+def test_sphere_metric_segment_enclosure_contains_chart_samples() -> None:
+    profile, result, contract = _implicit_sphere_source()
+    certification = result.certification
+    assert certification is not None
+    witness = certification.inputs.fidelity_witness
+    query = certification.inputs.source
+    assert isinstance(witness, SourceBoundaryChartWitness) and query is not None
+    prepared = prepare_implicit_surface_metric_source(
+        result.mesh,
+        result.geometry,
+        contract,
+        profile,
+        witness,
+        query,
+        _coarsening_metric(result.mesh),
+    )
+    rows = np.asarray(prepared.work_mesh.blocks[0].vertices[0], dtype=np.int64)
+    field = _pullback_field(prepared)
+    chart = np.asarray(prepared.work_mesh.coordinates[rows[0]], dtype=np.float64)
+    bounds = field.segment_range(
+        tuple(int(row) for row in rows),
+        (Fraction(1), Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0), Fraction(0)),
+        chart - 1e-6,
+        chart + 1e-6,
+    )
+    assert bounds is not None
+    for offset in (-1e-6, 0.0, 1e-6):
+        point = chart + offset
+        value = field(point[None, :], rows[None, :], np.asarray(((1.0, 0.0, 0.0),)))[0]
+        assert np.all(value >= bounds[0]) and np.all(value <= bounds[1])
+    floor = float(np.finfo(np.float64).eps) ** 0.25
+    bounds = field.segment_range(
+        tuple(int(row) for row in rows),
+        (Fraction(1), Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0), Fraction(0)),
+        np.asarray((-2 * floor, 0.3)),
+        np.asarray((2 * floor, 0.5)),
+    )
+    assert bounds is not None
+    for polar in (-2 * floor, -floor / 2, 0.0, floor / 2, 2 * floor):
+        for azimuth in (0.3, 0.4, 0.5):
+            point = np.asarray(((polar, azimuth),))
+            value = field(point, rows[None, :], np.asarray(((1.0, 0.0, 0.0),)))[0]
+            assert np.all(value >= bounds[0]) and np.all(value <= bounds[1])
+    mesh = prepared.work_mesh
+    _, local_source = _initial_state(
+        mesh,
+        prepared.pullback_metric,
+        np.zeros(mesh.entity_set(2).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(mesh.entity_set(0).count, dtype=np.bool_),
+        PredicateMode.EXACT,
+        metric_field=field,
+    )
+    midpoint = np.asarray(mesh.coordinates[rows], dtype=np.float64).mean(axis=0)
+    bounds = _field_box(local_source, midpoint, midpoint)
+    assert bounds is not None
+    weights = np.full((1, 3), 1.0 / 3.0)
+    value = field(midpoint[None, :], rows[None, :], weights)[0]
+    assert np.all(value >= bounds[0]) and np.all(value <= bounds[1])
 
 
 def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> None:

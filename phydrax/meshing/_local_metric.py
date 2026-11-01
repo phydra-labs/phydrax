@@ -18,7 +18,7 @@ protected edges) is never crossed, so inherited organization stays unanimous.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Any, final, NamedTuple
+from typing import Any, final, Literal, NamedTuple, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -27,6 +27,7 @@ import numpy as np
 from .._bvh import _host_boxes_overlap, bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient2d, PredicateMode, PredicateSign
+from .._interpolation._bspline_extraction import _binary64_down, _binary64_up
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
@@ -38,9 +39,21 @@ from ..discretization._periodic_exact import (
     reduce_periodic_exponents,
 )
 from ..discretization._periodic_topology import _entity_vertex_rows
+from ..geometry._interval_enclosure import (
+    interval_add,
+    interval_divide,
+    interval_multiply,
+    interval_subtract,
+)
 from ..linalg._exact import solve_exact
 from ._lineage import EntityLineageKind
-from ._metric import _tensor_properties, interpolate_mesh_metric, metric_edge_lengths
+from ._metric import (
+    _edge_length_enclosure,
+    _PreparedMetricEnclosures,
+    _tensor_properties,
+    interpolate_mesh_metric,
+    metric_edge_lengths,
+)
 from ._periodic import periodic_entity_orbit_map, stage_periodic_topology_edit
 from ._topology_edit import (
     CellTopologyEdit,
@@ -54,8 +67,10 @@ from ._topology_edit import (
 _LOWER = float(1.0 / np.sqrt(2.0))
 _UPPER = float(np.sqrt(2.0))
 _COLLAPSE_LIMIT = 2.0
-# Optimal-point collapses search the dyadic edge parameters j / _OPTIMAL_LATTICE.
+# Initial seed parameters; adaptive search covers the intervening segments.
 _OPTIMAL_LATTICE = 32
+# Workspace batch size only: every eligible edge is searched.
+_OPTIMAL_BLOCK = 256
 # Quantum of the |ln L| edge-length deviation scores that order relocations
 # which keep their star's minimum quality (see _deviation_improves).
 _DEVIATION_QUANTUM = 2.0**-20
@@ -96,7 +111,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
     protected); ``converged`` certifies the unit-mesh criterion on them. A stalled
     adaptation records, per out-of-range edge (one per quotient edge orbit on a
     periodic mesh), its metric length and why no operation could change it,
-    e.g. ``collapse=hysteresis+inadmissible;optimal=long;flip=invalid``.
+    e.g. ``collapse=hysteresis+inadmissible;optimal=unresolved;flip=invalid``.
     """
 
     passes: int = eqx.field(static=True)
@@ -302,6 +317,130 @@ def _locator(source: _Source, /) -> tuple[np.ndarray, np.ndarray]:
     if source.locator_cells is None or source.locator_ids is None:
         return source.cells, source.cell_ids
     return source.locator_cells, source.locator_ids
+
+
+def _candidate_box(
+    origin: np.ndarray, target: np.ndarray, lower: float, upper: float, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose separately rounded and fused binary64 affine candidate evaluation."""
+    delta = interval_subtract((target, target), (origin, origin))
+    scaled = interval_multiply(delta, (np.asarray(lower), np.asarray(upper)))
+    result = interval_add((origin, origin), scaled)
+    return np.asarray(result[0]), np.asarray(result[1])
+
+
+def _exact_candidate_box(
+    origin: tuple[Fraction, ...],
+    target: tuple[Fraction, ...],
+    lower: Fraction,
+    upper: Fraction,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose the authoritative affine segment and its rounded carriers."""
+    if len(origin) != len(target) or lower > upper:
+        raise ValueError("Exact segment endpoints and parameter bounds must align.")
+    low: list[float] = []
+    high: list[float] = []
+    for first, second in zip(origin, target, strict=True):
+        a = first + lower * (second - first)
+        b = first + upper * (second - first)
+        low.append(_binary64_down(min(a, b)))
+        high.append(_binary64_up(max(a, b)))
+    return np.asarray(low), np.asarray(high)
+
+
+class _SourceBoxPiece(NamedTuple):
+    rows: tuple[int, int, int]
+    weight_lower: tuple[Fraction, Fraction, Fraction]
+    weight_upper: tuple[Fraction, Fraction, Fraction]
+
+
+def _source_box_pieces(
+    source: _Source, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[bool, tuple[_SourceBoxPiece, ...]]:
+    """Conservatively enumerate locator cells touching a binary64 chart box.
+
+    Coverage is proven only when a single cell contains the entire box.
+    Conservative carrier AABBs discard cells that cannot touch the box;
+    barycentric halfspaces filter the remaining cells.
+    """
+    corners = tuple(
+        (Fraction(float(x)), Fraction(float(y)))
+        for x in (lower[0], upper[0])
+        for y in (lower[1], upper[1])
+    )
+    pieces: list[_SourceBoxPiece] = []
+    covered = False
+    candidates = np.flatnonzero(
+        np.all(source.cell_lower <= upper, axis=1)
+        & np.all(source.cell_upper >= lower, axis=1)
+    )
+    for raw in _locator(source)[0][candidates]:
+        rows = (int(raw[0]), int(raw[1]), int(raw[2]))
+        a, b, c = (source.exact_points[row] for row in rows)
+        bx, by = b[0] - a[0], b[1] - a[1]
+        cx, cy = c[0] - a[0], c[1] - a[1]
+        determinant = bx * cy - by * cx
+        if not determinant:
+            continue
+        weights = []
+        for x, y in corners:
+            u = ((x - a[0]) * cy - (y - a[1]) * cx) / determinant
+            v = (bx * (y - a[1]) - by * (x - a[0])) / determinant
+            weights.append((1 - u - v, u, v))
+        minima = tuple(min(weight[i] for weight in weights) for i in range(3))
+        maxima = tuple(max(weight[i] for weight in weights) for i in range(3))
+        if any(value < 0 for value in maxima):
+            continue
+        covered |= all(value >= 0 for value in minima)
+        pieces.append(
+            _SourceBoxPiece(
+                rows, (minima[0], minima[1], minima[2]), (maxima[0], maxima[1], maxima[2])
+            )
+        )
+    return covered, tuple(pieces)
+
+
+@runtime_checkable
+class _SegmentMetricField(Protocol):
+    def segment_range(
+        self,
+        rows: tuple[int, ...],
+        weight_lower: tuple[Fraction, ...],
+        weight_upper: tuple[Fraction, ...],
+        chart_lower: np.ndarray,
+        chart_upper: np.ndarray,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray] | None: ...
+
+
+def _field_box(
+    source: _Source, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Enclose a source field throughout a covered box, including cell ties."""
+    field = source.metric_field
+    if not isinstance(field, _SegmentMetricField):
+        return None
+    covered, pieces = _source_box_pieces(source, lower, upper)
+    if not covered:
+        return None
+    ranges: list[tuple[np.ndarray, np.ndarray]] = []
+    for piece in pieces:
+        try:
+            value = field.segment_range(
+                piece.rows, piece.weight_lower, piece.weight_upper, lower, upper
+            )
+        except (ValueError, OverflowError, FloatingPointError):
+            return None
+        if value is None or not all(np.all(np.isfinite(bound)) for bound in value):
+            return None
+        ranges.append(value)
+    if not ranges:
+        return None
+    return (
+        np.minimum.reduce([value[0] for value in ranges]),
+        np.maximum.reduce([value[1] for value in ranges]),
+    )
 
 
 def _field_metric(
@@ -579,7 +718,10 @@ def _interpolate_metrics(values: np.ndarray, weights: np.ndarray, /) -> np.ndarr
     coefficients[:, 0] = 1.0
     coefficients[:count] = weights
     result = interpolate_mesh_metric(tensors, coefficients)
-    return np.asarray(result, dtype=np.float64)[:count]
+    output = np.asarray(result, dtype=np.float64)[:count].copy()
+    constant = np.all(values == values[:, :1], axis=(1, 2, 3))
+    output[constant] = values[constant, 0]
+    return output
 
 
 def _quality(lengths: np.ndarray, /) -> np.ndarray:
@@ -1509,7 +1651,9 @@ def _exact_source_segment_points(
     /,
 ) -> tuple[tuple[Fraction, ...], ...]:
     """Interpolate source-authoritative endpoints at binary64 segment parameters."""
-    source_points = dict(zip(source.vertex_ids.tolist(), source.exact_points, strict=True))
+    source_points = dict(
+        zip(source.vertex_ids.tolist(), source.exact_points, strict=True)
+    )
     endpoints = {}
     for vertex in sorted(set(first.tolist()) | set(second.tolist())):
         stencil = state.source_stencil_exact[vertex]
@@ -1517,7 +1661,10 @@ def _exact_source_segment_points(
             raise ValueError("A segment endpoint lost its exact source point.")
         endpoints[vertex] = tuple(
             sum(
-                (weight * source_points[identifier][axis] for identifier, weight in stencil),
+                (
+                    weight * source_points[identifier][axis]
+                    for identifier, weight in stencil
+                ),
                 Fraction(0),
             )
             for axis in range(state.points.shape[1])
@@ -2793,6 +2940,13 @@ def _apply_collapses(
     )
 
 
+class _OptimalStencil(NamedTuple):
+    sources: np.ndarray
+    weights: np.ndarray
+    valid: np.ndarray
+    exact: ExactSourceRow
+
+
 class _OptimalCollapses(NamedTuple):
     """Optimal-point collapse of each short edge; an empty ``reason`` admits it.
 
@@ -2808,14 +2962,14 @@ class _OptimalCollapses(NamedTuple):
     metric: np.ndarray
     longest: np.ndarray
     reason: tuple[str, ...]
-    stencils: tuple[Any, ...]
+    stencils: tuple[_OptimalStencil | None, ...]
     guard: tuple[np.ndarray, ...]
     retired: tuple[np.ndarray, ...]
     retired_to: tuple[np.ndarray, ...]
 
 
 def _optimal_point_movable(
-    topology: _Topology, edge: Any, removed: Any, kept: Any, /
+    topology: _Topology, edge: np.ndarray, removed: np.ndarray, kept: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
     """Kept ends that may move along the edge (free interior vertices off any
     classified edge, or straight curve vertices along an edge of their curve),
@@ -2830,6 +2984,428 @@ def _optimal_point_movable(
     return along_edge, along_curve
 
 
+def _current_segment_metric(
+    state: _State,
+    topology: _Topology,
+    source: _Source,
+    kept: int,
+    target: int,
+    lower: Fraction,
+    upper: Fraction,
+    prepared: _PreparedMetricEnclosures,
+    /,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Enclose the current vertex-ball P1 metric along an exact segment."""
+    ball = topology.ball_cells[
+        topology.ball_offsets[kept] : topology.ball_offsets[kept + 1]
+    ]
+    ball_vertices = np.unique(state.cells[ball])
+    if ball_vertices.size and np.all(
+        state.metric[ball_vertices] == state.metric[ball_vertices[0]]
+    ):
+        constant = state.metric[ball_vertices[0]]
+        return constant, constant
+    vertices = np.unique(np.concatenate((state.cells[ball].reshape(-1), [kept, target])))
+    exact = _exact_source_segment_points(
+        state, source, vertices, vertices, np.zeros(vertices.size, dtype=np.float64)
+    )
+    coordinates = dict(zip(vertices.tolist(), exact, strict=True))
+    origin, destination = coordinates[kept], coordinates[target]
+    pieces: list[tuple[Fraction, Fraction, tuple[np.ndarray, np.ndarray]]] = []
+    for cell in ball:
+        rows = tuple(int(row) for row in state.cells[cell])
+        a, b, c = (coordinates[row] for row in rows)
+        bx, by = b[0] - a[0], b[1] - a[1]
+        cx, cy = c[0] - a[0], c[1] - a[1]
+        determinant = bx * cy - by * cx
+        if not determinant:
+            continue
+
+        def barycentric(point: tuple[Fraction, ...]) -> tuple[Fraction, ...]:
+            u = ((point[0] - a[0]) * cy - (point[1] - a[1]) * cx) / determinant
+            v = (bx * (point[1] - a[1]) - by * (point[0] - a[0])) / determinant
+            return 1 - u - v, u, v
+
+        first, last = barycentric(origin), barycentric(destination)
+        lo, hi = lower, upper
+        for start, end in zip(first, last, strict=True):
+            slope = end - start
+            if slope > 0:
+                lo = max(lo, -start / slope)
+            elif slope < 0:
+                hi = min(hi, -start / slope)
+            elif start < 0:
+                hi = lo - 1
+        if lo > hi:
+            continue
+        bounds = [
+            (
+                min(start + lo * (end - start), start + hi * (end - start)),
+                max(start + lo * (end - start), start + hi * (end - start)),
+            )
+            for start, end in zip(first, last, strict=True)
+        ]
+        try:
+            enclosure = prepared.segment_range(
+                rows,
+                tuple(value[0] for value in bounds),
+                tuple(value[1] for value in bounds),
+            )
+        except (ValueError, OverflowError, FloatingPointError):
+            return None
+        low = np.asarray(
+            [
+                [_binary64_down(value - enclosure.error) for value in row]
+                for row in enclosure.matrix
+            ]
+        )
+        high = np.asarray(
+            [
+                [_binary64_up(value + enclosure.error) for value in row]
+                for row in enclosure.matrix
+            ]
+        )
+        pieces.append((lo, hi, (low, high)))
+    end = lower
+    for lo, hi, _ in sorted(pieces, key=lambda piece: piece[0]):
+        if lo > end:
+            return None
+        end = max(end, hi)
+    if not pieces or end < upper:
+        return None
+    floating = _current_ball_metric_box(
+        state, ball, _exact_candidate_box(origin, destination, lower, upper), prepared
+    )
+    if floating is None:
+        return None
+    return (
+        np.minimum(np.minimum.reduce([piece[2][0] for piece in pieces]), floating[0]),
+        np.maximum(np.maximum.reduce([piece[2][1] for piece in pieces]), floating[1]),
+    )
+
+
+def _current_ball_metric_box(
+    state: _State,
+    ball: np.ndarray,
+    point: tuple[np.ndarray, np.ndarray],
+    prepared: _PreparedMetricEnclosures,
+    /,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Enclose floating ball-location and normalized barycentric arithmetic."""
+
+    def fixed(value: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return value, value
+
+    def component(value: Any, index: int) -> tuple[np.ndarray, np.ndarray]:
+        return np.asarray(value[0][index]), np.asarray(value[1][index])
+
+    def cross(origin: Any, first: Any, second: Any) -> Any:
+        u = interval_subtract(first, origin)
+        v = interval_subtract(second, origin)
+        return interval_subtract(
+            interval_multiply(component(u, 0), component(v, 1)),
+            interval_multiply(component(u, 1), component(v, 0)),
+        )
+
+    candidates = []
+    for cell in ball:
+        rows = tuple(int(row) for row in state.cells[cell])
+        a, b, c = (fixed(state.points[row]) for row in rows)
+        denominator = cross(a, b, c)
+        if float(denominator[0]) <= 0.0 <= float(denominator[1]):
+            return None
+        weights = tuple(
+            interval_divide(cross(point, first, second), denominator)
+            for first, second in ((b, c), (c, a), (a, b))
+        )
+        if not all(np.isfinite(value) for weight in weights for value in weight):
+            return None
+        score = (
+            min(float(weight[0]) for weight in weights),
+            min(float(weight[1]) for weight in weights),
+        )
+        candidates.append((rows, weights, score))
+    if not candidates:
+        return None
+    best_lower = max(candidate[2][0] for candidate in candidates)
+    ranges = []
+    for rows, weights, score in candidates:
+        if score[1] < best_lower:
+            continue
+        clipped = tuple(
+            (np.maximum(weight[0], 0.0), np.maximum(weight[1], 0.0)) for weight in weights
+        )
+        total = interval_add(interval_add(clipped[0], clipped[1]), clipped[2])
+        if float(total[0]) <= 0.0:
+            return None
+        normalized = tuple(interval_divide(weight, total) for weight in clipped)
+        if not all(np.isfinite(value) for weight in normalized for value in weight):
+            return None
+        enclosure = prepared.segment_range(
+            rows,
+            tuple(Fraction(float(weight[0])) for weight in normalized),
+            tuple(Fraction(float(weight[1])) for weight in normalized),
+        )
+        ranges.append(
+            (
+                np.asarray(
+                    [
+                        [_binary64_down(value - enclosure.error) for value in row]
+                        for row in enclosure.matrix
+                    ]
+                ),
+                np.asarray(
+                    [
+                        [_binary64_up(value + enclosure.error) for value in row]
+                        for row in enclosure.matrix
+                    ]
+                ),
+            )
+        )
+    if not ranges:
+        return None
+    return (
+        np.minimum.reduce([value[0] for value in ranges]),
+        np.maximum.reduce([value[1] for value in ranges]),
+    )
+
+
+def _optimal_box_geometry(
+    state: _State,
+    topology: _Topology,
+    source: _Source,
+    kept: int,
+    removed: int,
+    target: int,
+    lower: Fraction,
+    upper: Fraction,
+    /,
+) -> Literal["excluded", "inside", "unresolved"]:
+    """Prove affine star orientation and curve collinearity over a segment."""
+    cells = np.unique(
+        np.concatenate(
+            (
+                topology.ball_cells[
+                    topology.ball_offsets[kept] : topology.ball_offsets[kept + 1]
+                ],
+                topology.ball_cells[
+                    topology.ball_offsets[removed] : topology.ball_offsets[removed + 1]
+                ],
+            )
+        )
+    )
+    rows = state.cells[cells]
+    rows = rows[~(np.any(rows == kept, axis=1) & np.any(rows == removed, axis=1))]
+    vertices = np.unique(np.concatenate((rows.reshape(-1), [kept, removed, target])))
+    exact = _exact_source_segment_points(
+        state, source, vertices, vertices, np.zeros(vertices.size, dtype=np.float64)
+    )
+    coordinates = dict(zip(vertices.tolist(), exact, strict=True))
+    first, last = coordinates[kept], coordinates[target]
+    points = tuple(
+        tuple(a + t * (b - a) for a, b in zip(first, last, strict=True))
+        for t in (lower, upper)
+    )
+
+    def orientation(
+        a: tuple[Fraction, ...], b: tuple[Fraction, ...], c: tuple[Fraction, ...]
+    ) -> Fraction:
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    inside = True
+    for row in rows:
+        signs = []
+        for point in points:
+            triangle = [
+                point if int(vertex) in (kept, removed) else coordinates[int(vertex)]
+                for vertex in row
+            ]
+            signs.append(orientation(*triangle))
+        if max(signs) <= 0:
+            return "excluded"
+        inside &= min(signs) > 0
+    if topology.kind[kept] == _CURVE:
+        neighbors = topology.curve_neighbors[kept]
+        if target != removed:
+            outer = neighbors
+        else:
+            other = topology.curve_neighbors[removed]
+            outer = np.asarray(
+                (
+                    neighbors[0] if neighbors[0] != removed else neighbors[1],
+                    other[0] if other[0] != kept else other[1],
+                )
+            )
+        needed = np.asarray(outer, dtype=np.int64)
+        outer_points = _exact_source_segment_points(
+            state, source, needed, needed, np.zeros(2, dtype=np.float64)
+        )
+        signs = [orientation(outer_points[0], point, outer_points[1]) for point in points]
+        if min(signs) > 0 or max(signs) < 0:
+            return "excluded"
+        inside &= all(sign == 0 for sign in signs)
+    return "inside" if inside else "unresolved"
+
+
+def _optimal_box_band(
+    state: _State,
+    topology: _Topology,
+    source: _Source,
+    kept: int,
+    removed: int,
+    target: int,
+    lower: Fraction,
+    upper: Fraction,
+    prepared: _PreparedMetricEnclosures,
+    /,
+    *,
+    actual_metric: np.ndarray | None = None,
+) -> Literal["excluded", "inside", "unresolved"]:
+    """Bound every mandatory spoke using source-authoritative chart points."""
+    endpoints = _exact_source_segment_points(
+        state,
+        source,
+        np.asarray((kept, target), dtype=np.int64),
+        np.asarray((kept, target), dtype=np.int64),
+        np.zeros(2, dtype=np.float64),
+    )
+    point_box = _exact_candidate_box(endpoints[0], endpoints[1], lower, upper)
+    point_metric = (
+        _current_segment_metric(
+            state, topology, source, kept, target, lower, upper, prepared
+        )
+        if source.metric_field is None
+        else _field_box(source, *point_box)
+    )
+    if point_metric is None:
+        return "unresolved"
+    if actual_metric is not None:
+        point_metric = (
+            np.minimum(point_metric[0], actual_metric),
+            np.maximum(point_metric[1], actual_metric),
+        )
+    neighbors: set[int] = set()
+    for vertex in (kept, removed):
+        begin, end = topology.neighbor_offsets[vertex : vertex + 2]
+        neighbors.update(int(row) for row in topology.neighbor_values[begin:end])
+    neighbors.difference_update((kept, removed))
+    all_inside = True
+    for neighbor in sorted(neighbors):
+        if (
+            state.pole is not None
+            and neighbor < state.pole.size
+            and state.pole[neighbor] >= 0
+        ):
+            continue
+        vertex = np.asarray((neighbor,), dtype=np.int64)
+        exact = _exact_source_segment_points(state, source, vertex, vertex, np.zeros(1))
+        neighbor_box = _exact_candidate_box(exact[0], exact[0], Fraction(0), Fraction(0))
+        neighbor_metric = (state.metric[neighbor], state.metric[neighbor])
+        delta = interval_subtract(neighbor_box, point_box)
+        length_lower, length_upper = _edge_length_enclosure(
+            (np.asarray(delta[0]), np.asarray(delta[1])), point_metric, neighbor_metric
+        )
+        if not np.isfinite(length_lower) or not np.isfinite(length_upper):
+            return "unresolved"
+        if Fraction(length_lower) ** 2 > 2:
+            return "excluded"
+        if Fraction(length_upper) ** 2 > 2:
+            all_inside = False
+    return "inside" if all_inside else "unresolved"
+
+
+def _optimal_remainder(
+    state: _State,
+    topology: _Topology,
+    mode: PredicateMode,
+    context: _PeriodicContext | None,
+    source: _Source,
+    initial: _OptimalCollapses,
+    index: int,
+    prepared: _PreparedMetricEnclosures,
+    /,
+) -> _OptimalCollapses | Literal["long"] | None:
+    """Search every representable interior parameter not excluded by a proof."""
+    edge = initial.edge[index : index + 1]
+    removed, kept, sliding, reason, _ = _prepare_optimal_candidates(
+        state, topology, context, edge
+    )
+    if reason[0]:
+        return None
+    if source.metric_field is not None and not isinstance(
+        source.metric_field, _SegmentMetricField
+    ):
+        return None
+    for step in range(_OPTIMAL_LATTICE + 1):
+        parameter = step / _OPTIMAL_LATTICE
+        candidate = _optimal_collapse_batch(
+            state,
+            topology,
+            mode,
+            context,
+            source,
+            edge,
+            lattice=np.asarray((parameter,), dtype=np.float64),
+        )
+        if not candidate.reason[0]:
+            return candidate
+    targets = (
+        topology.curve_neighbors[kept[0]].tolist() if sliding[0] else [int(removed[0])]
+    )
+    unresolved = False
+    for target in targets:
+        stack = [
+            (float(j / _OPTIMAL_LATTICE), float((j + 1) / _OPTIMAL_LATTICE))
+            for j in range(_OPTIMAL_LATTICE - 1, -1, -1)
+        ]
+        while stack:
+            lo, hi = stack.pop()
+            lower, upper = Fraction(lo), Fraction(hi)
+            geometry = _optimal_box_geometry(
+                state,
+                topology,
+                source,
+                int(kept[0]),
+                int(removed[0]),
+                int(target),
+                lower,
+                upper,
+            )
+            if geometry == "excluded":
+                continue
+            band = _optimal_box_band(
+                state,
+                topology,
+                source,
+                int(kept[0]),
+                int(removed[0]),
+                int(target),
+                lower,
+                upper,
+                prepared,
+            )
+            if band == "excluded":
+                continue
+            middle = lo + (hi - lo) * 0.5
+            if middle == lo or middle == hi:
+                unresolved = True
+                continue
+            candidate = _optimal_collapse_batch(
+                state,
+                topology,
+                mode,
+                context,
+                source,
+                edge,
+                lattice=np.asarray((middle,), dtype=np.float64),
+            )
+            if not candidate.reason[0]:
+                return candidate
+            stack.append((middle, hi))
+            stack.append((lo, middle))
+    return None if unresolved else "long"
+
+
 def _optimal_collapse_search(
     state: _State,
     topology: _Topology,
@@ -2839,30 +3415,73 @@ def _optimal_collapse_search(
     short: np.ndarray,
     /,
 ) -> _OptimalCollapses:
-    """Best point of every short edge to collapse both ends into.
+    """Search every edge in deterministic bounded-memory batches."""
+    if short.size == 0:
+        return _optimal_collapse_batch(state, topology, mode, context, source, short)
+    batches = [
+        _optimal_collapse_batch(
+            state, topology, mode, context, source, short[start : start + _OPTIMAL_BLOCK]
+        )
+        for start in range(0, short.size, _OPTIMAL_BLOCK)
+    ]
+    result = _OptimalCollapses(
+        edge=np.concatenate([batch.edge for batch in batches]),
+        removed=np.concatenate([batch.removed for batch in batches]),
+        kept=np.concatenate([batch.kept for batch in batches]),
+        point=np.concatenate([batch.point for batch in batches]),
+        metric=np.concatenate([batch.metric for batch in batches]),
+        longest=np.concatenate([batch.longest for batch in batches]),
+        reason=tuple(reason for batch in batches for reason in batch.reason),
+        stencils=tuple(stencil for batch in batches for stencil in batch.stencils),
+        guard=tuple(guard for batch in batches for guard in batch.guard),
+        retired=tuple(retired for batch in batches for retired in batch.retired),
+        retired_to=tuple(target for batch in batches for target in batch.retired_to),
+    )
+    reason = list(result.reason)
+    stencils = list(result.stencils)
+    guards = list(result.guard)
+    retired = list(result.retired)
+    retired_to = list(result.retired_to)
+    prepared = _PreparedMetricEnclosures(state.metric)
+    for index, value in enumerate(reason):
+        if value not in ("unresolved", "uncertain", "missing-certification", "unlocated"):
+            continue
+        try:
+            replacement = _optimal_remainder(
+                state, topology, mode, context, source, result, index, prepared
+            )
+        except MemoryError:
+            replacement = None
+        if replacement is None:
+            continue
+        if isinstance(replacement, str):
+            reason[index] = replacement
+            continue
+        result.point[index] = replacement.point[0]
+        result.metric[index] = replacement.metric[0]
+        result.longest[index] = replacement.longest[0]
+        reason[index] = replacement.reason[0]
+        stencils[index] = replacement.stencils[0]
+        guards[index] = replacement.guard[0]
+        retired[index] = replacement.retired[0]
+        retired_to[index] = replacement.retired_to[0]
+    return result._replace(
+        reason=tuple(reason),
+        stencils=tuple(stencils),
+        guard=tuple(guards),
+        retired=tuple(retired),
+        retired_to=tuple(retired_to),
+    )
 
-    Both ends merge into one vertex at a point of the merged star's kernel
-    reached from the kept end along a segment, ``kept + t (target - kept)`` for
-    the dyadic lattice ``t = j / _OPTIMAL_LATTICE`` (``0 < j <
-    _OPTIMAL_LATTICE``; ``t = 0`` is the endpoint collapse): along the edge
-    (``target = removed``), or, when an interior removed end merges into a
-    straight curve vertex, along the curve toward either curve neighbor, so
-    the merged vertex stays on its curve. The merged star is the endpoint
-    collapse's star, so classification and the (physical) link condition are
-    the endpoint collapse's (``_optimal_point_movable`` decides which kept ends
-    move). Every star cell must be certified positive and a curve point exactly
-    collinear with its curve neighbors. The chosen lattice point minimizes the
-    longest metric edge of the star (the first segment and lowest ``j`` among
-    ties); its metric is the exact field's where the source has one, otherwise
-    the log-Euclidean P1 metric, and its source stencil is located exactly.
-    The collapse is admitted when that longest edge is at most ``sqrt(2)`` (it
-    creates no splittable edge, births included). On a periodic source only an
-    edge whose two vertex orbits each have one lifted member without
-    stabilizer (so the whole quotient star is lifted around it) is eligible;
-    its emptied lifted rows retire as in ``_collapse_orphans``. The kept end is
-    a source vertex rather than a birth where possible, then the lower vertex
-    ID.
-    """
+
+def _prepare_optimal_candidates(
+    state: _State,
+    topology: _Topology,
+    context: _PeriodicContext | None,
+    short: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Choose admissible endpoint directions and classify their topology."""
     count = short.size
     first = topology.edges[short, 0]
     second = topology.edges[short, 1]
@@ -2929,19 +3548,133 @@ def _optimal_collapse_search(
             & (np.diff(topology.ball_offsets)[rows] == 1)
         )
         reason[(reason == "") & np.any(lone, axis=1)] = "orphaned"
+    return removed, kept, sliding, reason, pole
+
+
+def _locate_optimal_candidates(
+    state: _State,
+    topology: _Topology,
+    mode: PredicateMode,
+    context: _PeriodicContext | None,
+    source: _Source,
+    removed: np.ndarray,
+    kept: np.ndarray,
+    point: np.ndarray,
+    exact_points: tuple[tuple[Fraction, ...], ...],
+    reason: np.ndarray,
+    /,
+) -> tuple[
+    tuple[_OptimalStencil | None, ...],
+    tuple[np.ndarray, ...],
+    tuple[np.ndarray, ...],
+    tuple[np.ndarray, ...],
+]:
+    """Resolve source stencils and periodic retirement for selected seeds."""
+    count = point.shape[0]
+    stencils: list[_OptimalStencil | None] = [None] * count
+    empty = np.zeros((0,), dtype=np.int64)
+    guard = [empty] * count
+    retired = [empty] * count
+    retired_to = [empty] * count
+    admitted = np.flatnonzero(reason == "")
+    if admitted.size:
+        bank = _located_stencil_bank(
+            source,
+            point[admitted],
+            mode,
+            allow_invalid_rows=True,
+            stencil_width=state.source_stencil_weights.shape[1],
+            exact_points=tuple(exact_points[index] for index in admitted.tolist()),
+        )
+        source_points = dict(
+            zip(source.vertex_ids.tolist(), source.exact_points, strict=True)
+        )
+        for row, index in enumerate(admitted.tolist()):
+            if not bool(bank[3][row]):
+                reason[index] = "unlocated"
+                continue
+            reconstructed = tuple(
+                sum(
+                    (
+                        weight * source_points[identifier][axis]
+                        for identifier, weight in bank[4][row]
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(point.shape[1])
+            )
+            if reconstructed != exact_points[index]:
+                reason[index] = "unlocated"
+                continue
+            stencils[index] = _OptimalStencil(
+                bank[0][row], bank[1][row], bank[2][row], bank[4][row]
+            )
+            if context is None:
+                continue
+            orphans = _collapse_orphans(
+                state,
+                topology,
+                context,
+                removed[index : index + 1],
+                kept[index : index + 1],
+            )
+            if orphans is None:
+                reason[index] = "orphaned"
+                continue
+            guard[index] = orphans.guard_cells
+            retired[index] = orphans.retired
+            retired_to[index] = orphans.retired_to
+    return tuple(stencils), tuple(guard), tuple(retired), tuple(retired_to)
+
+
+def _optimal_collapse_batch(
+    state: _State,
+    topology: _Topology,
+    mode: PredicateMode,
+    context: _PeriodicContext | None,
+    source: _Source,
+    short: np.ndarray,
+    /,
+    *,
+    lattice: np.ndarray | None = None,
+) -> _OptimalCollapses:
+    """Best point of every short edge to collapse both ends into.
+
+    Both ends merge into one vertex at a point of the merged star's kernel
+    reached from the kept end along ``kept + t (target - kept)`` at the supplied
+    parameters (the default is the interior seed lattice): along the edge
+    (``target = removed``), or, when an interior removed end merges into a
+    straight curve vertex, along the curve toward either curve neighbor, so
+    the merged vertex stays on its curve. The merged star is the endpoint
+    collapse's star, so classification and the (physical) link condition are
+    the endpoint collapse's (``_optimal_point_movable`` decides which kept ends
+    move). Every star cell must be certified positive and a curve point exactly
+    collinear with its curve neighbors. The chosen lattice point minimizes the
+    longest metric edge of the star (the first segment and lowest ``j`` among
+    ties); its metric is the exact field's where the source has one, otherwise
+    the log-Euclidean P1 metric, and its source stencil is located exactly.
+    The collapse is admitted when that longest edge is at most ``sqrt(2)`` (it
+    creates no splittable edge, births included). On a periodic source only an
+    edge whose two vertex orbits each have one lifted member without
+    stabilizer (so the whole quotient star is lifted around it) is eligible;
+    its emptied lifted rows retire as in ``_collapse_orphans``. The kept end is
+    a source vertex rather than a birth where possible, then the lower vertex
+    ID.
+    """
+    count = short.size
+    removed, kept, sliding, reason, pole = _prepare_optimal_candidates(
+        state, topology, context, short
+    )
 
     dimension = state.points.shape[1]
     point = np.zeros((count, dimension), dtype=np.float64)
     metric = np.zeros((count, dimension, dimension), dtype=np.float64)
     longest = np.full((count,), np.inf, dtype=np.float64)
-    stencils: list[Any] = [None] * count
-    empty = np.zeros((0,), dtype=np.int64)
-    guard = [empty] * count
-    retired = [empty] * count
-    retired_to = [empty] * count
+    exact_points: list[tuple[Fraction, ...]] = [()] * count
     live = np.flatnonzero(reason == "")
     if live.size:
-        lattice = np.arange(1, _OPTIMAL_LATTICE, dtype=np.float64) / _OPTIMAL_LATTICE
+        if lattice is None:
+            lattice = np.arange(1, _OPTIMAL_LATTICE, dtype=np.float64) / _OPTIMAL_LATTICE
         steps = lattice.size
         lanes = 2 * steps
         lane = np.arange(lanes, dtype=np.int64)
@@ -2961,10 +3694,15 @@ def _optimal_collapse_search(
         absent = np.repeat(
             np.stack((np.zeros_like(live_sliding), ~live_sliding), axis=1), steps, axis=1
         )
-        origin = state.points[live_kept]
-        delta = state.points[targets] - origin[:, None, :]
-        points = (
-            origin[:, None, None, :] + lattice[None, None, :, None] * delta[:, :, None, :]
+        starts = np.repeat(live_kept, lanes)
+        ends_for_points = np.repeat(targets, steps, axis=1).reshape((-1,))
+        parameters = np.tile(lattice, live.size * 2)
+        candidate_exact = _exact_source_segment_points(
+            state, source, starts, ends_for_points, parameters
+        )
+        points = np.asarray(
+            [[float(value) for value in candidate] for candidate in candidate_exact],
+            dtype=np.float64,
         ).reshape((-1, dimension))
         metrics = _field_metric(
             source,
@@ -3056,40 +3794,66 @@ def _optimal_collapse_search(
         point[live] = points[chosen]
         metric[live] = metrics[chosen]
         longest[live] = best_longest
+        for index, selected in zip(live.tolist(), chosen.tolist(), strict=True):
+            exact_points[index] = candidate_exact[selected]
         refused = ~np.isfinite(best_longest)
         uncertain = np.any(status == _UNCERTAIN, axis=1)
+        # Seed failures cannot exclude the intervals between lattice points.
+        # In particular a point-only field supplies no range certificate.
+        missing = (
+            "missing-certification" if source.metric_field is not None else "unresolved"
+        )
         reason[live[refused & uncertain]] = "uncertain"
-        reason[live[refused & ~uncertain]] = "invalid"
-        reason[live[~refused & (best_longest > _UPPER)]] = "long"
-        admitted = live[reason[live] == ""]
-        if admitted.size:
-            bank = _located_stencil_bank(
-                source,
-                point[admitted],
-                mode,
-                allow_invalid_rows=True,
-                stencil_width=state.source_stencil_weights.shape[1],
-            )
-            for row, index in enumerate(admitted.tolist()):
-                if not bool(bank[3][row]):
+        reason[live[refused & ~uncertain]] = missing
+        reason[live[~refused & (best_longest > _UPPER)]] = missing
+        prepared = _PreparedMetricEnclosures(state.metric)
+        for local, index in enumerate(live.tolist()):
+            if reason[index]:
+                continue
+            if source.metric_field is not None:
+                _, _, located = _locate(source, point[index : index + 1], mode)
+                if not located[0]:
                     reason[index] = "unlocated"
                     continue
-                stencils[index] = (bank[0][row], bank[1][row], bank[2][row], bank[4][row])
-                if context is None:
-                    continue
-                orphans = _collapse_orphans(
-                    state,
-                    topology,
-                    context,
-                    removed[index : index + 1],
-                    kept[index : index + 1],
-                )
-                if orphans is None:
-                    reason[index] = "orphaned"
-                    continue
-                guard[index] = orphans.guard_cells
-                retired[index] = orphans.retired
-                retired_to[index] = orphans.retired_to
+            segment = int(best[local] // steps)
+            target = int(targets[local, segment])
+            parameter = Fraction(float(lattice[int(best[local] % steps)]))
+            geometry = _optimal_box_geometry(
+                state,
+                topology,
+                source,
+                int(kept[index]),
+                int(removed[index]),
+                target,
+                parameter,
+                parameter,
+            )
+            band = _optimal_box_band(
+                state,
+                topology,
+                source,
+                int(kept[index]),
+                int(removed[index]),
+                target,
+                parameter,
+                parameter,
+                prepared,
+                actual_metric=metric[index],
+            )
+            if geometry != "inside" or band != "inside":
+                reason[index] = missing
+    stencils, guard, retired, retired_to = _locate_optimal_candidates(
+        state,
+        topology,
+        mode,
+        context,
+        source,
+        removed,
+        kept,
+        point,
+        tuple(exact_points),
+        reason,
+    )
     return _OptimalCollapses(
         edge=short,
         removed=removed,
@@ -3167,7 +3931,14 @@ def _optimal_collapse_round(
     tensors[kept] = found.metric[chosen]
     flags = state.moved.copy()
     flags[kept] = True
-    rows = [found.stencils[index] for index in chosen.tolist()]
+    rows: list[_OptimalStencil] = []
+    for index in chosen.tolist():
+        stencil = found.stencils[index]
+        if stencil is None:
+            raise ValueError(
+                "An admitted optimal collapse lost its exact source stencil."
+            )
+        rows.append(stencil)
     width = max(state.source_stencil_weights.shape[1], *(row[0].size for row in rows))
     sources, weights, valid = (
         array.copy()
@@ -4959,9 +5730,7 @@ def _located_stencil_bank(
         barycentric: tuple[Fraction, ...] | None = None
         if cell >= 0:
             barycentric = _exact_cell_barycentric(source, cell, query)
-        if source.periodic_cell is None and (
-            barycentric is None or any(weight < 0 for weight in barycentric)
-        ):
+        if barycentric is None or any(weight < 0 for weight in barycentric):
             # Canonical rounding is monotone, so an exact point in a source
             # triangle lies inside its rounded-corner AABB. Search all such
             # cells exactly; never clip a negative barycentric coefficient.
@@ -5106,11 +5875,9 @@ def _stencil(
             weights[row, column] = projection
             valid[row, column] = True
             exact_weights[row][column] = exact_weight
-        image = tuple(reproduced)
-        if source.periodic_cell is None:
-            # The exact point, not its carrier, is the geometry authority.
-            # Downstream exact coordinate maps retain this source-stencil image.
-            image = tuple(Fraction(float(value)) for value in image)
+        # The exact source image is authoritative; the working coordinate is
+        # its canonical binary64 carrier, including on periodic charts.
+        image = tuple(Fraction(float(value)) for value in reproduced)
         if image != target and (
             source.periodic_cell is None
             or not any(
@@ -5747,12 +6514,12 @@ def execute_local_metric_adaptation(
     (``_stall_potential``) and tries the escape phases of ``_ESCAPE_PHASES``
     in order from that stall:
 
-    1. optimal-point collapses: a short edge's two ends merge into one vertex
-       at the point of the edge (or, for an interior end merging into a
-       straight curve vertex, of that curve, so in the merged star's kernel)
-       that minimizes the longest metric edge of the merged star, projected
-       exactly to the source and admitted when that longest edge is at most
-       sqrt(2), births included (``_optimal_collapse_search``);
+    1. optimal-point collapses: a short edge's two ends merge at a verified
+       lattice candidate on the edge (or, for an interior end merging into a
+       straight curve vertex, on that curve). The candidate minimizes the
+       longest metric edge among the sampled candidates and is admitted when
+       that length is at most sqrt(2), births included. A seed miss is not an
+       infeasibility certificate (``_optimal_collapse_search``);
     2. every endpoint collapse up to ``_COLLAPSE_LIMIT``, births included (the
        next split phase splits its long edges).
 

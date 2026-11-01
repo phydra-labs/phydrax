@@ -1445,10 +1445,15 @@ bound to the source vertices). Routes:
   worst-first quantized deviations of its edges. Neither rule creates vertices,
   so each phase terminates. A full pass that applies nothing outside the unit
   criterion is a stall. It first tries optimal-point collapse: both endpoints
-  merge at a dyadic edge point (or slide on the survivor's straight source
-  curve), minimizing the merged star's longest metric edge without creating
-  an edge above `sqrt(2)`. All merged-star cells and source stencils are
-  rechecked, including periodic orphan retirement. If this does not improve
+  merge along an edge (or slide on the survivor's straight source curve)
+  without creating an edge above `sqrt(2)`. The host tries a fixed seed lattice
+  first, then subdivides the remaining representable parameters; the lattice
+  alone cannot establish infeasibility. Interval geometry and metric bounds
+  exclude segments, and an accepted point retains its exact source stencil.
+  Point-only metric callbacks cannot certify the unsampled remainder. The
+  compiled device search is separate and currently uses its fixed seed lattice.
+  All merged-star cells and source stencils are rechecked, including periodic
+  orphan retirement. If this does not improve
   the stall, an endpoint escape admits every collapse up to metric length 2,
   births included (the next split phase splits the long edges). An escape
   stands when the run reaches the unit criterion or a stall whose potential
@@ -1465,8 +1470,8 @@ bound to the source vertices). Routes:
   and refusal reasons, for example
   `collapse=hysteresis+inadmissible;optimal=long;flip=invalid`
   (`hysteresis`: endpoint collapse exceeds the split threshold and its escape
-  did not lower the stall potential; `optimal=long`: no searched survivor point
-  keeps the star below `sqrt(2)`). `RelocationMeshAdaptation` moves vertices
+  did not lower the stall potential; host `optimal=long`: the searched segments
+  were excluded by bounds). `RelocationMeshAdaptation` moves vertices
   only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,

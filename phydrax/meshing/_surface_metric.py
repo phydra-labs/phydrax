@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
@@ -29,6 +28,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import PredicateMode
+from .._interpolation._bspline_extraction import _binary64_down, _binary64_up
 from .._physical import SpatialCoordinateContract
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import cell_geometry_id
@@ -45,6 +45,13 @@ from ..discretization._surface_chart_records import (
     SurfaceChartWitness,
     SurfaceRootMeshCellBinding,
 )
+from ..geometry._interval_enclosure import (
+    _dot_general,
+    Interval,
+    interval_cos,
+    interval_multiply,
+    interval_sin,
+)
 from ..geometry._meshing_domain import _PlacedSurfacePatch, MeshingDomain
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
@@ -60,7 +67,11 @@ from ._local_metric import (
     LocalMetricEvidence,
     LocalMetricOutcome,
 )
-from ._metric import _tensor_properties, interpolate_mesh_metric
+from ._metric import (
+    _PreparedMetricEnclosures,
+    _tensor_properties,
+    interpolate_mesh_metric,
+)
 from ._periodic import periodic_entity_orbit_map, stage_periodic_topology_edit
 from ._topology_edit import (
     assemble_topology_edit,
@@ -2407,14 +2418,17 @@ def _physical_edit(
     return edit, target_metric, geometry
 
 
-def _pullback_field(
-    source: SurfaceMetricSource, /
-) -> Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
-    """Exact chart metric of generated points: the physical metric interpolated
-    log-Euclidean over the source location, pulled back by the chart Jacobian at
-    the point itself (``_pullback_metrics``)."""
+class _PullbackField:
+    """Physical log-Euclidean source field pulled back through its chart."""
 
-    def field(points: np.ndarray, rows: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
+    def __init__(self, source: SurfaceMetricSource, /) -> None:
+        self.source = source
+        self.enclosures = _PreparedMetricEnclosures(source.physical_metric)
+
+    def __call__(
+        self, points: np.ndarray, rows: np.ndarray, weights: np.ndarray, /
+    ) -> np.ndarray:
+        source = self.source
         count = points.shape[0]
         capacity = 1 << max(count - 1, 0).bit_length()
         samples = np.broadcast_to(np.eye(3), (capacity, rows.shape[1], 3, 3)).copy()
@@ -2432,7 +2446,75 @@ def _pullback_field(
             physical,
         )
 
-    return field
+    def segment_range(
+        self,
+        rows: tuple[int, ...],
+        weight_lower: tuple[Fraction, ...],
+        weight_upper: tuple[Fraction, ...],
+        chart_lower: np.ndarray,
+        chart_upper: np.ndarray,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        """Enclose the sphere pullback on a chart box in one location cell."""
+        source = self.source
+        patch = source.domain.patches[int(source.work_vertex_patches[rows[0]])].surface
+        if (
+            not isinstance(patch, _ImplicitParameterSurface)
+            or patch.profile.family != "sphere"
+        ):
+            return None
+        physical = self.enclosures.segment_range(
+            tuple(int(source.work_to_source_rows[row]) for row in rows),
+            weight_lower,
+            weight_upper,
+        )
+        low = np.asarray(
+            [
+                [_binary64_down(value - physical.error) for value in row]
+                for row in physical.matrix
+            ]
+        )
+        high = np.asarray(
+            [
+                [_binary64_up(value + physical.error) for value in row]
+                for row in physical.matrix
+            ]
+        )
+        polar = (np.asarray(chart_lower[0]), np.asarray(chart_upper[0]))
+        azimuth = (np.asarray(chart_lower[1]), np.asarray(chart_upper[1]))
+        sp, cp = interval_sin(polar), interval_cos(polar)
+        sa, ca = interval_sin(azimuth), interval_cos(azimuth)
+        floor = _AZIMUTH_STRETCH_FLOOR
+        if sp[0] >= floor or sp[1] <= -floor:
+            stretch = sp
+        elif sp[0] > -floor and sp[1] < floor:
+            stretch = (np.asarray(floor), np.asarray(floor))
+        else:
+            stretch = (np.minimum(sp[0], floor), np.maximum(sp[1], floor))
+
+        def neg(value: Interval) -> tuple[np.ndarray, np.ndarray]:
+            return np.negative(np.asarray(value[1])), np.negative(np.asarray(value[0]))
+
+        zero = (np.asarray(0.0), np.asarray(0.0))
+        components = (
+            (interval_multiply(cp, ca), neg(interval_multiply(stretch, sa))),
+            (interval_multiply(cp, sa), interval_multiply(stretch, ca)),
+            (neg(sp), zero),
+        )
+        radius = np.asarray(float(patch.profile.radius))
+        frame = (
+            np.asarray([[value[0] for value in row] for row in components]),
+            np.asarray([[value[1] for value in row] for row in components]),
+        )
+        frame = interval_multiply(frame, (radius, radius))
+        transposed = (frame[0].T, frame[1].T)
+        product = _dot_general(transposed, (low, high), (((1,), (0,)), ((), ())))
+        result = _dot_general(product, frame, (((1,), (0,)), ((), ())))
+        return np.asarray(result[0]), np.asarray(result[1])
+
+
+def _pullback_field(source: SurfaceMetricSource, /) -> _PullbackField:
+    return _PullbackField(source)
 
 
 def execute_surface_metric_adaptation(

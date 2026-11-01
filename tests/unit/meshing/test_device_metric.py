@@ -542,3 +542,249 @@ def test_host_and_device_optimal_collapse_relocate_the_survivor() -> None:
         np.asarray(updated.coordinates[1]), (0.0, 0.0), rtol=0.0, atol=1e-15
     )
     np.testing.assert_array_equal(np.asarray(updated.vertex_active[:6]), host.alive)
+
+
+def test_host_optimal_collapse_batches_preserve_candidate_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    diamond = np.asarray(
+        ((-1.2, 0.0), (-0.3, 0.0), (0.3, 0.0), (1.2, 0.0), (0.0, 0.72), (0.0, -0.72))
+    )
+    cells = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)),
+        dtype=np.int32,
+    )
+    points = np.concatenate([diamond + (3.0 * index, 0.0) for index in range(5)])
+    mesh = CellMesh.from_triangles(
+        points, np.concatenate([cells + 6 * index for index in range(5)])
+    )
+    state, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(np.eye(2), (30, 2, 2)),
+        np.zeros(30, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(30, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    short = np.flatnonzero(topology.lengths < _LOWER)
+    assert short.size == 5
+    original = local_metric._optimal_collapse_batch
+    reference = original(state, topology, PredicateMode.EXACT, None, source, short)
+    sizes: list[int] = []
+
+    def observed(
+        state: local_metric._State,
+        topology: local_metric._Topology,
+        mode: PredicateMode,
+        context: local_metric._PeriodicContext | None,
+        source: local_metric._Source,
+        edges: np.ndarray,
+    ) -> local_metric._OptimalCollapses:
+        sizes.append(edges.size)
+        return original(state, topology, mode, context, source, edges)
+
+    monkeypatch.setattr(local_metric, "_OPTIMAL_BLOCK", 2)
+    monkeypatch.setattr(local_metric, "_optimal_collapse_batch", observed)
+    batched = local_metric._optimal_collapse_search(
+        state, topology, PredicateMode.EXACT, None, source, short
+    )
+    assert sizes == [2, 2, 1]
+    for name in ("edge", "removed", "kept", "point", "metric", "longest"):
+        np.testing.assert_array_equal(getattr(batched, name), getattr(reference, name))
+    assert batched.reason == reference.reason
+    for first, second in zip(batched.stencils, reference.stencils, strict=True):
+        assert first is not None and second is not None
+        for left, right in zip(first[:3], second[:3], strict=True):
+            np.testing.assert_array_equal(left, right)
+        assert first.exact == second.exact
+
+
+@pytest.mark.parametrize("scale, feasible", [(0.999, True), (1.001, False)])
+def test_host_optimal_collapse_searches_between_seed_parameters(
+    scale: float,
+    feasible: bool,
+) -> None:
+    center = -0.2 + 0.4 * (17.0 / 64.0)
+    points = np.asarray(
+        (
+            (center - 0.8 * scale, 0.6 * scale),
+            (-0.2, 0.0),
+            (0.2, 0.0),
+            (center + 0.8 * scale, -0.6 * scale),
+            (center, 0.65),
+            (center, -0.65),
+        )
+    )
+    cells = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_triangles(points, cells)
+    state, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(2.0 * np.eye(2), (6, 2, 2)),
+        np.zeros(6, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(6, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    exact_points = list(source.exact_points)
+    exact_points[1] = (exact_points[1][0] + Fraction(1, 2**60), exact_points[1][1])
+    assert float(exact_points[1][0]) == points[1, 0]
+    source = source._replace(exact_points=tuple(exact_points))
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    short = np.flatnonzero(topology.lengths < _LOWER)
+    assert short.size == 1
+    seeds = local_metric._optimal_collapse_batch(
+        state, topology, PredicateMode.EXACT, None, source, short
+    )
+    assert seeds.reason == ("unresolved",)
+    result = local_metric._optimal_collapse_search(
+        state, topology, PredicateMode.EXACT, None, source, short
+    )
+    if feasible:
+        width = np.sqrt(1.0 - (0.6 * scale) ** 2) - 0.8 * scale
+        assert 0.0 < width < 0.4 / 64.0
+        assert result.reason == ("",)
+        assert abs(result.point[0, 0] - center) < width
+        stencil = result.stencils[0]
+        assert stencil is not None
+        by_id = dict(zip(source.vertex_ids.tolist(), source.exact_points, strict=True))
+        exact_x = sum(
+            (weight * by_id[identifier][0] for identifier, weight in stencil.exact),
+            Fraction(0),
+        )
+        expected = exact_points[1][0] + Fraction(17, 64) * (
+            exact_points[2][0] - exact_points[1][0]
+        )
+        assert exact_x == expected
+        assert result.point[0, 0] == float(expected)
+    else:
+        assert result.reason == ("long",)
+
+
+def test_host_optimal_collapse_opaque_field_seed_miss_is_unresolved() -> None:
+    points = np.asarray(
+        ((-1.2, 0.0), (-0.3, 0.0), (0.3, 0.0), (1.2, 0.0), (0.0, 0.72), (0.0, -0.72))
+    )
+    cells = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_triangles(points, cells)
+
+    def opaque(query: np.ndarray, rows: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
+        del rows, weights
+        # A narrow dip halfway between adjacent lattice seeds.
+        scale = np.where(np.abs(query[:, 0] - 0.009375) < 0.001, 0.01, 100.0)
+        return scale[:, None, None] * np.eye(2)
+
+    state, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(np.eye(2), (6, 2, 2)),
+        np.zeros(6, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(6, dtype=np.bool_),
+        PredicateMode.EXACT,
+        metric_field=opaque,
+    )
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    short = np.flatnonzero(topology.lengths < _LOWER)
+    assert short.size == 1
+    result = local_metric._optimal_collapse_search(
+        state, topology, PredicateMode.EXACT, None, source, short
+    )
+    assert result.reason == ("missing-certification",)
+
+
+def test_current_metric_segment_encloses_vertex_ball_interpolation() -> None:
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    mesh = CellMesh.from_triangles(points, np.asarray(((0, 1, 2), (0, 2, 3))))
+    tensors = np.asarray(
+        (
+            ((2.0, 0.0), (0.0, 1.0)),
+            ((3.0, 0.0), (0.0, 1.5)),
+            ((4.0, 0.0), (0.0, 2.0)),
+            ((1.0, 0.0), (0.0, 3.0)),
+        )
+    )
+    state, source = local_metric._initial_state(
+        mesh,
+        tensors,
+        np.zeros(4, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(4, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    prepared = local_metric._PreparedMetricEnclosures(state.metric)
+    bounds = local_metric._current_segment_metric(
+        state, topology, source, 0, 2, Fraction(1, 4), Fraction(3, 4), prepared
+    )
+    assert bounds is not None
+    queries = np.asarray(((0.25, 0.25), (0.5, 0.5), (0.75, 0.75)))
+    actual = local_metric._proposal_metric(
+        state, topology, np.zeros(3, dtype=np.int64), queries
+    )
+    assert np.all(actual >= bounds[0])
+    assert np.all(actual <= bounds[1])
+
+
+def test_source_box_detects_single_and_crossing_cells() -> None:
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    mesh = CellMesh.from_triangles(points, np.asarray(((0, 1, 2), (0, 2, 3))))
+    _, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(np.eye(2), (4, 2, 2)),
+        np.zeros(4, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(4, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    covered, inside = local_metric._source_box_pieces(
+        source, np.asarray((0.7, 0.2)), np.asarray((0.8, 0.3))
+    )
+    assert covered and len(inside) == 1
+    covered, crossing = local_metric._source_box_pieces(
+        source, np.asarray((0.2, 0.2)), np.asarray((0.3, 0.3))
+    )
+    assert not covered and len(crossing) == 2
+    exact = list(source.exact_points)
+    exact[1] = (Fraction(1) + Fraction(1, 2**54), Fraction(0))
+    source = source._replace(exact_points=tuple(exact))
+    covered, shifted = local_metric._source_box_pieces(
+        source, np.asarray((1.0, 0.0)), np.asarray((1.0, 0.0))
+    )
+    assert covered
+    piece = next(piece for piece in shifted if piece.rows == (0, 1, 2))
+    assert piece.weight_upper[1] == 1 / (Fraction(1) + Fraction(1, 2**54))
+
+
+def test_candidate_box_encloses_rounded_and_exact_affine_values() -> None:
+    origin = np.asarray((-0.3, 0.7))
+    target = np.asarray((0.8, -0.2))
+    lower, upper = local_metric._candidate_box(origin, target, 0.1, 0.2)
+    for t in (0.1, 0.125, 0.175, 0.2):
+        rounded = origin + t * (target - origin)
+        for axis in range(2):
+            exact = Fraction(float(origin[axis])) + Fraction(t) * (
+                Fraction(float(target[axis])) - Fraction(float(origin[axis]))
+            )
+            assert Fraction(float(lower[axis])) <= exact <= Fraction(float(upper[axis]))
+            assert lower[axis] <= rounded[axis] <= upper[axis]
+    exact_origin = (Fraction(1, 3), Fraction(-2, 7))
+    exact_target = (Fraction(5, 11), Fraction(4, 9))
+    lower, upper = local_metric._exact_candidate_box(
+        exact_origin, exact_target, Fraction(1, 4), Fraction(3, 4)
+    )
+    for t in (Fraction(1, 4), Fraction(1, 2), Fraction(3, 4)):
+        for axis in range(2):
+            exact = exact_origin[axis] + t * (exact_target[axis] - exact_origin[axis])
+            assert Fraction(float(lower[axis])) <= exact <= Fraction(float(upper[axis]))
+            assert lower[axis] <= float(exact) <= upper[axis]

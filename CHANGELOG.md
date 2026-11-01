@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Host optimal-point metric collapse now searches between its seed parameters
+  using exact source geometry and interval metric bounds; uncertified field
+  ranges remain unresolved. Compiled device search is unchanged.
 - Finite-element and finite-volume field queries now bind compiled geometry
   through the same content identity; default finite-volume simplex location uses
   the supported block's cell count.
