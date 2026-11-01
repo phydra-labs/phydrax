@@ -91,7 +91,7 @@ class UnstructuredParticleInternalMeshPlan(AbstractParticleInternalMeshPlan):
 
     @property
     def cell_capacity(self) -> int:
-        return int(self.finite_volume.mesh.connectivity.cell_count)
+        return int(self.finite_volume.cell_global_ids.size)
 
     def prepare(self) -> PreparedUnstructuredParticleInternalMesh:
         return PreparedUnstructuredParticleInternalMesh(self)
