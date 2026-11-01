@@ -153,6 +153,23 @@ def _surface_endpoint_images(
     return points
 
 
+def _immutable_leaf(value: object, /) -> bool:
+    """Whether a concrete pytree leaf can no longer change its content."""
+    if isinstance(value, jax.Array):
+        return True
+    if isinstance(value, np.ndarray):
+        base: object = value
+        while isinstance(base, np.ndarray):
+            if base.flags.writeable:
+                return False
+            base = base.base
+        return base is None or isinstance(base, (bytes, jax.Array))
+    return isinstance(value, (str, bytes, int, float, complex, Fraction, np.generic))
+
+
+_CONSTRUCTED_CONTENT = "_constructed_content"
+
+
 def _outward_surface_parameter_box(
     surface: AbstractSurfacePatch,
     lower: ConvertibleToArray,
@@ -2196,6 +2213,26 @@ class MeshingDomain(StrictModule, NonTrainableState):
             _source_entity_slot_index(keys) for keys in stratum_keys
         )
         self.domain_id = self.content_domain_id()
+        # The identity was just computed from these fields. When every content
+        # leaf is immutable, this very instance can never drift from it; record
+        # that for this object only. Copies, pickles and pytree rebuilds (tree_at,
+        # tree_map, jit) are other objects and are fingerprinted again.
+        if all(
+            map(
+                _immutable_leaf,
+                jax.tree_util.tree_leaves(
+                    (
+                        self.patches,
+                        self.curves,
+                        self.regions,
+                        self.corner_points,
+                        self.scope_entity_id_banks,
+                        self.scope_entity_key_banks,
+                    )
+                ),
+            )
+        ):
+            object.__setattr__(self, _CONSTRUCTED_CONTENT, id(self))
 
     @classmethod
     @checked
@@ -2373,6 +2410,12 @@ class MeshingDomain(StrictModule, NonTrainableState):
     def require_current(
         self, source_id: str | None = None, source_revision: str | None = None, /
     ) -> None:
+        """Refuse a changed source binding, a stale BRep authority, or drifted content.
+
+        The content fingerprint is recomputed unless this object is the one the
+        constructor fingerprinted over immutable leaves; any rebuilt, copied or
+        restored object is fingerprinted again against `domain_id`.
+        """
         if source_id is not None and source_id != self.source_id:
             raise ValueError("MeshingDomain source_id changed.")
         if source_revision is not None and source_revision != self.source_revision:
@@ -2380,7 +2423,10 @@ class MeshingDomain(StrictModule, NonTrainableState):
         authority = self.brep_authority
         if authority is not None:
             authority.require_current()
-        if self.content_domain_id() != self.domain_id:
+        if (
+            vars(self).get(_CONSTRUCTED_CONTENT) != id(self)
+            and self.content_domain_id() != self.domain_id
+        ):
             raise ValueError("MeshingDomain content changed after construction.")
 
     @property
