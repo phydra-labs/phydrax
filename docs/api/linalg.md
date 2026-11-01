@@ -1232,17 +1232,38 @@ a solve plan charges a sparse-factor preconditioner's retained bytes to
 fill insertions are refused before their host dictionaries exceed a ceiling, with
 observed and allowed nonzeros, retained bytes, and logical work in the refusal.
 Admitted plans retain the same three quantities as static resource evidence.
-Numeric diagnostics separately report minimum pivot, dropped entries, replacement
-count, realized factor nonzeros, and fill ratio.
+Numeric diagnostics separately report minimum pivot, rejected pivots (a positive
+count refutes definiteness), dropped entries, replacement count, realized factor
+nonzeros, and fill ratio.
 
-The symbolic plan stores only the factor pattern: the CSR rows of `L + U` and
-a column-major index of the strictly lower entries. The numeric kernel is
-right-looking. For each pivot it derives the update targets at runtime from the
-stored rows through a dense column marker and a fixed `column_width x row_width`
-window. Plan and prepared bytes therefore scale with `nnz(L + U)`, not with the
-number of elimination updates, and `SparseFactorizationPreconditionerBuilder`
-charges exactly those bytes. Every pivot's targets are unique, so the scatter is
-deterministic.
+Complete Cholesky plans (`fill_level=None`, no dropping or per-row cap) are
+supernodal. Symbolic analysis computes the elimination tree of the ordered
+pattern, an elimination-tree postorder (fill-equivalent, composed after the
+ordering), Gilbert–Ng–Peyton column counts, fundamental supernodes, and relaxed
+amalgamation with the CHOLMOD default thresholds, all in O(nnz(A)) work before
+any row structure or value exists; column counts give the exact `factor_nnz`,
+so the caps refuse at that point. The resulting `SupernodalAnalysis` stores one
+dense column-major `rows x columns` panel per supernode (`plan.factor_size`
+values), the input scatter into those panels, the multifrontal parent/child
+relations, and `factor_flops`. Numeric refresh is multifrontal: each front is
+assembled from the input values and its children's update matrices and factored
+with dense LAPACK/BLAS `potrf`, `trsm`, and `syrk`/`herk` blocks; a front whose
+blocked factorization meets a rejected or non-finite pivot is refactored pivot by
+pivot under the policy's tolerance, replacement, and status rules. Triangular
+solves sweep the same panels with dense blocks for all right-hand sides at once.
+Refresh and solve are host kernels reached through `jax.pure_callback` with fixed
+result shapes, so one analysis serves every refreshed value set under JIT and
+`vmap`; the plan identity covers the analysis identity, and equal inputs give
+bit-identical factors.
+
+Incomplete factors and static-pivot LU keep a `SparseEliminationSchedule`: the
+CSR rows of `L + U` and a column-major index of the strictly lower entries. That
+numeric kernel is right-looking. For each pivot it derives the update targets at
+runtime from the stored rows through a dense column marker and a fixed
+`column_width x row_width` window. Plan and prepared bytes therefore scale with
+`nnz(L + U)`, not with the number of elimination updates, and
+`SparseFactorizationPreconditionerBuilder` charges exactly those bytes. Every
+pivot's targets are unique, so the scatter is deterministic.
 
 `SparseFactorizationPolicy.ordering` selects one symmetric ordering of the graph
 of `A + Aᵀ`: `"natural"` (identity, no graph work), `"reverse-cuthill-mckee"`,

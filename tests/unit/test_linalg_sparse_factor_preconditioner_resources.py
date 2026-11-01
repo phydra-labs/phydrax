@@ -260,7 +260,8 @@ def test_sparse_factor_planned_setup_reprepares_only_for_new_identity() -> None:
 def test_sparse_lu_zero_upper_width_preserves_pivot_evidence() -> None:
     operator = _sparse_map(jnp.asarray([[4.0, 0.0], [-0.2, 3.0]], dtype=jnp.float64))
     plan = la.prepare_sparse_factorization(operator, la.SparseFactorizationPolicy("lu"))
-    assert plan.upper_width == 0
+    assert plan.elimination is not None
+    assert plan.elimination.upper_width == 0
     factor = la.refresh_sparse_factorization(plan, operator)
     assert int(factor.status) == int(la.SparseFactorizationStatus.SUCCESS)
     assert float(factor.diagnostics.minimum_pivot) == 3.0
@@ -326,7 +327,7 @@ def test_builder_estimate_matches_prepared_plan_storage() -> None:
     )
     cost = builder.cost_for(operator)
     symbolic = la.prepare_sparse_factorization(operator, builder.policy())
-    values_bytes = symbolic.factor_indices.size * 8
+    values_bytes = symbolic.factor_size * 8
     assert cost.storage_bytes == _stored_bytes(symbolic) + values_bytes
     assert cost.preparation_workspace_bytes > values_bytes
 
@@ -340,7 +341,7 @@ def test_symbolic_plan_bytes_scale_with_factor_nonzeros_not_updates() -> None:
             _laplacian(count),
             la.SparseFactorizationPolicy("lu", ordering="reverse-cuthill-mckee"),
         )
-        per_entry.append(_stored_bytes(symbolic) / symbolic.factor_indices.size)
+        per_entry.append(_stored_bytes(symbolic) / symbolic.factor_size)
     assert per_entry[1] <= per_entry[0]
     assert per_entry[1] < 64.0
 
@@ -394,8 +395,11 @@ def test_complete_sparse_factorization_refuses_star_fill_before_quadratic_alloca
         tracemalloc.stop()
 
     assert not estimate.accepted
-    assert "factor_nnz requires 20001" in estimate.reason
-    assert "factor_nnz=20001/20000" in estimate.reason
+    # LU fill is reserved entry by entry and refuses at the first entry past
+    # the cap; Cholesky column counts give the exact fill of the dense star.
+    required = 20_001 if kind == "lu" else size * (size + 1) // 2
+    assert f"factor_nnz requires {required}" in estimate.reason
+    assert f"factor_nnz={required}/20000" in estimate.reason
     assert "factor_bytes=" in estimate.reason
     assert "symbolic_work=" in estimate.reason
     assert peak_bytes < 32 * 1024 * 1024
