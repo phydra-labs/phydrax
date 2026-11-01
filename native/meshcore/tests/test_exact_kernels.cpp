@@ -141,7 +141,7 @@ void test_bernstein_controls() {
   PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_SIMPLEX, 2, degrees.data(),
                                       term_offsets.data(), exponents.data(), numerators.data(),
                                       control_offsets.data(), controls.data(), denominators.data(),
-                                      extremes.data(), status.data(), 1) == PHX_MC_OK);
+                                      extremes.data(), status.data(), 4, 1) == PHX_MC_OK);
   PHX_CHECK(status[0] == PHX_MC_OK);
   const int64_t expected[6] = {1, 2, 1, 3, 2, 4};
   for (std::size_t index = 0; index < 6; ++index) {
@@ -158,7 +158,7 @@ void test_bernstein_controls() {
   PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_BOX, 2, box_degrees.data(),
                                       box_terms.data(), box_exponents.data(), box_numerators.data(),
                                       box_offsets.data(), controls.data(), denominators.data(),
-                                      extremes.data(), status.data(), 1) == PHX_MC_OK);
+                                      extremes.data(), status.data(), 4, 1) == PHX_MC_OK);
   PHX_CHECK(status[0] == PHX_MC_OK);
   for (std::size_t index = 0; index < 6; ++index) {
     PHX_CHECK(word(controls, index) == (index == 5 ? denominators[0] : 0));
@@ -170,7 +170,7 @@ void test_bernstein_controls() {
   PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_BOX, 1, line_degree.data(),
                                       box_terms.data(), line_exponent.data(), box_numerators.data(),
                                       line_offsets.data(), controls.data(), denominators.data(),
-                                      extremes.data(), status.data(), 1) == PHX_MC_OK);
+                                      extremes.data(), status.data(), 4, 1) == PHX_MC_OK);
   PHX_CHECK(denominators[0] == 2);
   PHX_CHECK(word(controls, 0) == 0 && word(controls, 1) == 1 && word(controls, 2) == 2);
 
@@ -181,7 +181,7 @@ void test_bernstein_controls() {
   PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_PRISM, 3, prism_degree.data(),
                                       box_terms.data(), prism_exponent.data(), box_numerators.data(),
                                       prism_offsets.data(), controls.data(), denominators.data(),
-                                      extremes.data(), status.data(), 1) == PHX_MC_OK);
+                                      extremes.data(), status.data(), 4, 1) == PHX_MC_OK);
   for (std::size_t index = 0; index < 6; ++index) {
     PHX_CHECK(word(controls, index) == (index % 2 == 1 ? denominators[0] : 0));
   }
@@ -196,14 +196,14 @@ void test_bernstein_controls() {
   PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_SIMPLEX, 2, big_degree.data(),
                                       box_terms.data(), big_exponent.data(), huge.data(),
                                       big_offsets.data(), big_controls.data(), denominators.data(),
-                                      extremes.data(), status.data(), 1) == PHX_MC_OK);
+                                      extremes.data(), status.data(), 4, 1) == PHX_MC_OK);
   PHX_CHECK(status[0] == PHX_MC_RANGE_ERROR);
   // A control count disagreeing with the degree is an argument error.
   const std::vector<int64_t> wrong_offsets = {0, 5};
   PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_SIMPLEX, 2, degrees.data(),
                                       term_offsets.data(), exponents.data(), numerators.data(),
                                       wrong_offsets.data(), controls.data(), denominators.data(),
-                                      extremes.data(), status.data(), 1) == PHX_MC_INVALID_ARGUMENT);
+                                      extremes.data(), status.data(), 4, 1) == PHX_MC_INVALID_ARGUMENT);
 
   // Thread invariance over a random batch.
   std::mt19937_64 random(11);
@@ -235,14 +235,73 @@ void test_bernstein_controls() {
   PHX_CHECK(phx_mc_bernstein_controls(count, PHX_MC_BERNSTEIN_SIMPLEX, 2, batch_degrees.data(),
                                       batch_terms.data(), batch_exponents.data(),
                                       batch_words.data(), batch_controls.data(), one.data(),
-                                      one_den.data(), one_ext.data(), one_status.data(),
+                                      one_den.data(), one_ext.data(), one_status.data(), 4,
                                       1) == PHX_MC_OK);
   PHX_CHECK(phx_mc_bernstein_controls(count, PHX_MC_BERNSTEIN_SIMPLEX, 2, batch_degrees.data(),
                                       batch_terms.data(), batch_exponents.data(),
                                       batch_words.data(), batch_controls.data(), many.data(),
-                                      many_den.data(), many_ext.data(), many_status.data(),
+                                      many_den.data(), many_ext.data(), many_status.data(), 4,
                                       kThreads) == PHX_MC_OK);
   PHX_CHECK(one == many && one_den == many_den && one_ext == many_ext && one_status == many_status);
+}
+
+// Dense degree-(6, 6, 6) box polynomials: 1024-bit words carry numerators near
+// 2^600 exactly (the controls are the small ones shifted by 600 bits), and
+// numerators near 2^1000 are refused at that width.
+void test_wide_box_controls() {
+  using Wide = phx::mc::WideInt<16>;
+  std::mt19937_64 random(29);
+  const std::vector<int32_t> degrees = {6, 6, 6};
+  std::vector<int32_t> exponents;
+  std::vector<int64_t> small;
+  for (int32_t a = 0; a <= 6; ++a) {
+    for (int32_t b = 0; b <= 6; ++b) {
+      for (int32_t c = 0; c <= 6; ++c) {
+        exponents.insert(exponents.end(), {a, b, c});
+        small.push_back(static_cast<int64_t>(random() % 2001) - 1000);
+      }
+    }
+  }
+  const std::vector<int64_t> terms = {0, static_cast<int64_t>(small.size())};
+  const std::vector<int64_t> offsets = {0, 343};
+  const auto encode = [&](int shift) {
+    std::vector<std::uint8_t> out(small.size() * Wide::kBytes);
+    for (std::size_t index = 0; index < small.size(); ++index) {
+      Wide value;
+      PHX_CHECK(phx::mc::checked_shift_left(Wide::from_int64(small[index]), shift, value));
+      value.store(out.data() + index * Wide::kBytes);
+    }
+    return out;
+  };
+  const auto run = [&](const std::vector<std::uint8_t>& numerators, int32_t parallelism,
+                       std::vector<std::uint8_t>& controls, int64_t& denominator,
+                       std::vector<int64_t>& extremes) {
+    controls.assign(343 * Wide::kBytes, 0);
+    extremes.assign(2, -1);
+    int32_t status = -1;
+    PHX_CHECK(phx_mc_bernstein_controls(1, PHX_MC_BERNSTEIN_BOX, 3, degrees.data(), terms.data(),
+                                        exponents.data(), numerators.data(), offsets.data(),
+                                        controls.data(), &denominator, extremes.data(), &status,
+                                        16, parallelism) == PHX_MC_OK);
+    return status;
+  };
+  std::vector<std::uint8_t> base, shifted, threaded;
+  std::vector<int64_t> base_extremes, shifted_extremes, threaded_extremes;
+  int64_t base_denominator = 0, shifted_denominator = 0, threaded_denominator = 0;
+  PHX_CHECK(run(encode(0), 1, base, base_denominator, base_extremes) == PHX_MC_OK);
+  PHX_CHECK(run(encode(600), 1, shifted, shifted_denominator, shifted_extremes) == PHX_MC_OK);
+  PHX_CHECK(run(encode(600), kThreads, threaded, threaded_denominator, threaded_extremes) ==
+            PHX_MC_OK);
+  PHX_CHECK(shifted == threaded && shifted_extremes == threaded_extremes);
+  PHX_CHECK(base_denominator == shifted_denominator && base_extremes == shifted_extremes);
+  for (std::size_t index = 0; index < 343; ++index) {
+    Wide expected;
+    PHX_CHECK(phx::mc::checked_shift_left(Wide::load(base.data() + index * Wide::kBytes), 600,
+                                          expected));
+    PHX_CHECK(phx::mc::compare(expected, Wide::load(shifted.data() + index * Wide::kBytes)) == 0);
+  }
+  PHX_CHECK(run(encode(1000), 1, shifted, shifted_denominator, shifted_extremes) ==
+            PHX_MC_RANGE_ERROR);
 }
 
 void test_blossoms() {
@@ -257,10 +316,10 @@ void test_blossoms() {
   std::vector<int32_t> one_status(2), many_status(2);
   PHX_CHECK(phx_mc_simplex_bernstein_blossoms(2, 3, degrees.data(), offsets.data(), controls.data(),
                                               corners.data(), one.data(), one_ext.data(),
-                                              one_status.data(), 1) == PHX_MC_OK);
+                                              one_status.data(), 4, 1) == PHX_MC_OK);
   PHX_CHECK(phx_mc_simplex_bernstein_blossoms(2, 3, degrees.data(), offsets.data(), controls.data(),
                                               corners.data(), many.data(), many_ext.data(),
-                                              many_status.data(), kThreads) == PHX_MC_OK);
+                                              many_status.data(), 4, kThreads) == PHX_MC_OK);
   PHX_CHECK(one == many && one_ext == many_ext && one_status == many_status);
   PHX_CHECK(one_status[0] == PHX_MC_OK && one_status[1] == PHX_MC_OK);
   const int64_t net[6] = {5, -1, 4, 2, 7, 3};
@@ -275,7 +334,7 @@ void test_blossoms() {
   for (std::size_t index = 0; index < 9; ++index) power_of_two(200).store(big_corners.data() + index * Int256::kBytes);
   PHX_CHECK(phx_mc_simplex_bernstein_blossoms(1, 3, degrees.data(), offsets.data(), controls.data(),
                                               big_corners.data(), one.data(), one_ext.data(),
-                                              one_status.data(), 1) == PHX_MC_OK);
+                                              one_status.data(), 4, 1) == PHX_MC_OK);
   PHX_CHECK(one_status[0] == PHX_MC_RANGE_ERROR);
 }
 
@@ -289,10 +348,10 @@ void test_bisect() {
   int32_t exponent_many = -1;
   std::vector<int32_t> status(2), status_many(2);
   PHX_CHECK(phx_mc_bernstein_bisect(2, 3, 2, 1, indices.data(), 0, 1, nets.data(), left.data(),
-                                    right.data(), &exponent, status.data(), 1) == PHX_MC_OK);
+                                    right.data(), &exponent, status.data(), 4, 1) == PHX_MC_OK);
   PHX_CHECK(phx_mc_bernstein_bisect(2, 3, 2, 1, indices.data(), 0, 1, nets.data(),
                                     left_many.data(), right_many.data(), &exponent_many,
-                                    status_many.data(), kThreads) == PHX_MC_OK);
+                                    status_many.data(), 4, kThreads) == PHX_MC_OK);
   PHX_CHECK(left == left_many && right == right_many && exponent == exponent_many);
   PHX_CHECK(exponent == 2 && status[0] == PHX_MC_OK);
   // Left half on [0, 1/2]: (0, 2, 4) -> numerators over 4: 0, 8, 16.
@@ -302,13 +361,13 @@ void test_bisect() {
   // An incomplete line is invalid input.
   const std::vector<int32_t> broken = {2, 0, 1, 1, 1, 1};
   PHX_CHECK(phx_mc_bernstein_bisect(1, 3, 2, 1, broken.data(), 0, 1, nets.data(), left.data(),
-                                    right.data(), &exponent, status.data(), 1) ==
+                                    right.data(), &exponent, status.data(), 4, 1) ==
             PHX_MC_INVALID_INPUT);
   // Values that double past the range are refused.
   std::vector<std::uint8_t> huge(3 * Int256::kBytes);
   for (std::size_t index = 0; index < 3; ++index) power_of_two(254).store(huge.data() + index * Int256::kBytes);
   PHX_CHECK(phx_mc_bernstein_bisect(1, 3, 2, 1, indices.data(), 0, 1, huge.data(), left.data(),
-                                    right.data(), &exponent, status.data(), 1) == PHX_MC_OK);
+                                    right.data(), &exponent, status.data(), 4, 1) == PHX_MC_OK);
   PHX_CHECK(status[0] == PHX_MC_RANGE_ERROR);
 }
 
@@ -463,6 +522,19 @@ void test_bvh_pair_stream() {
   }
   std::vector<int64_t> sizes_one, sizes_many, sizes_small;
   const auto one = drain(a, b, 1, 1 << 20, 1 << 16, sizes_one);
+  // Coincident boxes: one leaf-pair chunk holds 40000 candidate pairs, so the
+  // pair tests run on the worker pool; the order stays the serial order.
+  std::vector<double> lo_c, hi_c;
+  for (int item = 0; item < 200; ++item) {
+    lo_c.insert(lo_c.end(), {0.0, 0.0});
+    hi_c.insert(hi_c.end(), {1.0, 1.0});
+  }
+  const Tree c = build_tree(lo_c, hi_c);
+  std::vector<int64_t> dense_one_sizes, dense_many_sizes;
+  const auto dense_one = drain(c, c, 1, 1 << 20, 1 << 16, dense_one_sizes);
+  const auto dense_many = drain(c, c, kThreads, 1 << 20, 1 << 16, dense_many_sizes);
+  PHX_CHECK(dense_one.size() == 40000);
+  PHX_CHECK(dense_one == dense_many && dense_one_sizes == dense_many_sizes);
   const auto many = drain(a, b, kThreads, 1 << 20, 1 << 16, sizes_many);
   PHX_CHECK(one == many && sizes_one == sizes_many);
   PHX_CHECK(PairSet(one.begin(), one.end()) == brute);
@@ -480,6 +552,7 @@ int main() {
   test_wide_integer();
   test_interval_restrict();
   test_bernstein_controls();
+  test_wide_box_controls();
   test_blossoms();
   test_bisect();
   test_separation_screen();
