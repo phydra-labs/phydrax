@@ -278,6 +278,9 @@ class _NativeState:
     source_face_ids: dict[tuple[int, int, int], int]
     source_face_group_rows: dict[int, int]
     source_segment_group_rows: dict[int, int]
+    # Source vertex IDs carrying each facet group row and segment group row.
+    source_face_vertices: dict[int, frozenset[int]]
+    source_segment_vertices: dict[int, frozenset[int]]
     next_native_vertex: int
     next_native_cell: int
     next_native_facet: int
@@ -288,6 +291,8 @@ class _NativeState:
     history_vertex: list[tuple[int, int, EntityLineageKind]]
     history_cells: list[tuple[int, int, EntityLineageKind]]
     changed_source_cell_ids: set[int]
+    # Edges refused for having no binary64-consistent split point.
+    unrepresentable_edges: set[tuple[int, int]]
 
 
 class _CandidateTetraSnapshot(NamedTuple):
@@ -317,6 +322,43 @@ def _metric_lengths(
     safe_ratio = np.where(nearly_equal, 2.0, ratio)
     logarithmic = (first - second) / np.log(1.0 / safe_ratio)
     return np.where(nearly_equal, 0.5 * (first + second), logarithmic)
+
+
+def _band_violations(
+    lengths: np.ndarray, /
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Max-first long and short distances ``|log(l / band edge)|`` outside the band."""
+    values = np.asarray(lengths, dtype=np.float64).reshape((-1,))
+    long = np.log(values[values > _UPPER] / _UPPER)
+    short = np.log(_LOWER / values[values < _LOWER])
+    return (
+        tuple(sorted(long.tolist(), reverse=True)),
+        tuple(sorted(short.tolist(), reverse=True)),
+    )
+
+
+def _objective_decreases(
+    removed: np.ndarray, added: np.ndarray, quality_gain: bool, /
+) -> bool:
+    """Whether a local edit strictly decreases the termination objective.
+
+    The objective is lexicographic: the multiset of long-edge violations, then
+    of short-edge violations, each in max-first order (compare violations
+    sorted descending; fewer is smaller), then the cell-quality multiset in
+    min-first order. ``removed`` and ``added`` are the metric lengths of the
+    measured edges the edit deletes or creates (or whose length it changes),
+    and ``quality_gain`` states that the edit replaces cells whose minimum
+    quality ``q`` only by cells better than ``q + _IMPROVEMENT``. The max-first
+    order is compatible with multiset union, so a local decrease is a global
+    one.
+    """
+    removed_long, removed_short = _band_violations(removed)
+    added_long, added_short = _band_violations(added)
+    if added_long != removed_long:
+        return added_long < removed_long
+    if added_short != removed_short:
+        return added_short < removed_short
+    return quality_gain
 
 
 def _log_euclidean_mean(tensors: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
@@ -1136,6 +1178,12 @@ def _prepare_native_state(
         dtype=np.int32,
     ).reshape((-1, 2))
     segment_groups = np.arange(source_segment_ids.size, dtype=np.int32)
+    source_face_vertices = {
+        row: frozenset(key) for row, (_, key, _) in enumerate(constrained_faces)
+    }
+    source_segment_vertices = {
+        row: frozenset(key) for row, key in enumerate(source_segment_keys)
+    }
     source_segment_group_rows = {
         int(identifier): row for row, identifier in enumerate(source_segment_ids.tolist())
     }
@@ -1284,6 +1332,8 @@ def _prepare_native_state(
         source_face_ids=face_id_by_key,
         source_face_group_rows=source_face_group_rows,
         source_segment_group_rows=source_segment_group_rows,
+        source_face_vertices=source_face_vertices,
+        source_segment_vertices=source_segment_vertices,
         next_native_vertex=int(np.max(native_vertex_ids)) + 1,
         next_native_cell=int(np.max(native_cell_ids)) + 1,
         next_native_facet=(
@@ -1298,6 +1348,7 @@ def _prepare_native_state(
         history_vertex=[],
         history_cells=[],
         changed_source_cell_ids=set(),
+        unrepresentable_edges=set(),
     )
 
 
@@ -2768,9 +2819,15 @@ def _try_split_batch(
     blocked: set[tuple[int, int]],
     /,
 ) -> int:
-    """Apply disjoint split orbits; refused orbits are blocked and counted."""
+    """Apply disjoint split orbits; refused orbits are blocked and counted.
+
+    A split replaces its long edge by halves and medians to the edge ring; it
+    is proposed only when that strictly decreases the long-violation multiset
+    (``_objective_decreases``), which longest-first ordering makes the rule.
+    """
     topology = _topology(state.snapshot)
-    points, metrics, _ = _metric_edge_table(state, topology)
+    points, metrics, lengths = _metric_edge_table(state, topology)
+    length_by_edge = dict(zip(topology.edge_cells, lengths.tolist(), strict=True))
     constrained = _constrained_edges(topology)
     parameters: dict[tuple[int, int], Fraction] = {}
     representable: list[tuple[tuple[int, int], ...]] = []
@@ -2780,11 +2837,54 @@ def _try_split_batch(
         )
         if values is None:
             blocked.update(group)
+            state.unrepresentable_edges.update(group)
             _count_rejection(None, counters, 1)
+            continue
+        removed = np.asarray([length_by_edge[edge] for edge in group])
+        added = np.concatenate(
+            [
+                _split_edge_lengths(state, topology, points, metrics, edge, value)
+                for edge, value in zip(group, values, strict=True)
+            ]
+        )
+        if not _objective_decreases(removed, added, False):
+            blocked.update(group)
             continue
         parameters.update(zip(group, values, strict=True))
         representable.append(group)
     return _apply_split_groups(state, representable, parameters, counters, blocked)
+
+
+def _split_edge_lengths(
+    state: _NativeState,
+    topology: _TetTopology,
+    points: np.ndarray,
+    metrics: np.ndarray,
+    edge: tuple[int, int],
+    parameter: Fraction,
+    /,
+) -> np.ndarray:
+    """Metric lengths of the halves and ring medians a split would create."""
+    stencil = _split_stencil(
+        state.vertex_stencils[edge[0]], state.vertex_stencils[edge[1]], parameter
+    )
+    point = np.asarray([float(value) for value in _stencil_image(state, stencil)])
+    metric = _source_metric_from_stencil(
+        state.source_metric, state.source_vertex_rows, stencil
+    )
+    others = sorted(
+        {
+            int(vertex)
+            for row in topology.edge_cells[edge]
+            for vertex in topology.cell_vertex_ids[row]
+        }
+    )
+    rows = np.asarray([topology.vertex_row[vertex] for vertex in others], dtype=np.int64)
+    extended_points = np.concatenate((points[rows], point[None]), axis=0)
+    extended_metrics = np.concatenate((metrics[rows], metric[None]), axis=0)
+    middle = len(others)
+    pairs = np.asarray([[index, middle] for index in range(middle)], dtype=np.int64)
+    return _metric_lengths(extended_points, extended_metrics, pairs)
 
 
 def _apply_split_groups(
@@ -2835,35 +2935,157 @@ def _split_phase(state: _NativeState, counters: dict[str, int], /) -> int:
             blocked.clear()
 
 
+class _BoundaryRecords(NamedTuple):
+    """Current constrained facets and segments keyed by native vertex IDs."""
+
+    # key -> (facet ID, group row, ordered vertices, orientation, protected)
+    facets: dict[tuple[int, int, int], tuple[int, int, tuple[int, int, int], int, bool]]
+    # key -> (segment ID, group row, ordered vertices, protected)
+    segments: dict[tuple[int, int], tuple[int, int, tuple[int, int], bool]]
+    vertex_facets: dict[int, tuple[tuple[int, int, int], ...]]
+    vertex_segments: dict[int, tuple[tuple[int, int], ...]]
+
+
+def _boundary_records(state: _NativeState, /) -> _BoundaryRecords:
+    snapshot = state.snapshot
+    vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
+    facets: dict[
+        tuple[int, int, int], tuple[int, int, tuple[int, int, int], int, bool]
+    ] = {}
+    vertex_facets: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+    for row, identifier, source_id, orientation, protected in zip(
+        vertex_ids[np.asarray(snapshot.faces, dtype=np.int64)].reshape((-1, 3)).tolist(),
+        np.asarray(snapshot.facet_ids, dtype=np.int64).tolist(),
+        np.asarray(snapshot.face_sources, dtype=np.int64).tolist(),
+        np.asarray(snapshot.facet_orientations, dtype=np.int8).tolist(),
+        np.asarray(snapshot.protected_facets, dtype=np.bool_).tolist(),
+        strict=True,
+    ):
+        group = state.source_face_group_rows.get(int(source_id))
+        if group is None:
+            raise ValueError("A constrained native facet lost its source group.")
+        ordered = (int(row[0]), int(row[1]), int(row[2]))
+        key = _face_key(ordered)
+        facets[key] = (int(identifier), group, ordered, int(orientation), bool(protected))
+        for vertex in ordered:
+            vertex_facets[vertex].append(key)
+    segments: dict[tuple[int, int], tuple[int, int, tuple[int, int], bool]] = {}
+    vertex_segments: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for row, identifier, source_id, protected in zip(
+        vertex_ids[np.asarray(snapshot.segments, dtype=np.int64)]
+        .reshape((-1, 2))
+        .tolist(),
+        np.asarray(snapshot.segment_ids, dtype=np.int64).tolist(),
+        np.asarray(snapshot.segment_sources, dtype=np.int64).tolist(),
+        np.asarray(snapshot.protected_segments, dtype=np.bool_).tolist(),
+        strict=True,
+    ):
+        group = state.source_segment_group_rows.get(int(source_id))
+        if group is None:
+            raise ValueError("A constrained native segment lost its source group.")
+        ordered_segment = (int(row[0]), int(row[1]))
+        key = _edge_key(ordered_segment)
+        segments[key] = (int(identifier), group, ordered_segment, bool(protected))
+        for vertex in ordered_segment:
+            vertex_segments[vertex].append(key)
+    return _BoundaryRecords(
+        facets,
+        segments,
+        {vertex: tuple(keys) for vertex, keys in vertex_facets.items()},
+        {vertex: tuple(keys) for vertex, keys in vertex_segments.items()},
+    )
+
+
+def _carrier_entity(
+    state: _NativeState, records: _BoundaryRecords, vertex: int, /
+) -> frozenset[int] | None:
+    """Source vertices spanning the smallest source entity under a boundary vertex.
+
+    ``None`` marks an interior vertex. A boundary vertex lies on the source
+    facet (three vertices) or source edge (two) shared by every incident
+    constrained facet and segment; with fewer than two it is pinned.
+    """
+    entity: frozenset[int] | None = None
+    for key in records.vertex_facets.get(vertex, ()):
+        carried = state.source_face_vertices[records.facets[key][1]]
+        entity = carried if entity is None else entity & carried
+    for key in records.vertex_segments.get(vertex, ()):
+        carried = state.source_segment_vertices[records.segments[key][1]]
+        entity = carried if entity is None else entity & carried
+    return entity
+
+
 def _collapse_proposal(
     state: _NativeState,
     topology: _TetTopology,
+    records: _BoundaryRecords,
+    protected: dict[tuple[int, int], bool],
     edge: tuple[int, int],
-    metric_length: float,
     /,
 ) -> dict[str, Any] | None:
-    """Collapse proposal for one unclassified, unprotected short edge."""
-    snapshot = state.snapshot
-    if metric_length >= _LOWER:
+    """Best admissible direction to collapse one unclassified short edge.
+
+    Interior and boundary vertices collapse alike: a boundary vertex collapses
+    only into a vertex on the source facet or edge carrying it (its stencil
+    support lies in that entity), retiring its constrained facets and segments
+    for their images under the collapse. The collapse must strictly decrease
+    the termination objective (``_objective_decreases``).
+    """
+    proposals = [
+        proposal
+        for removed, kept in (edge, edge[::-1])
+        if (
+            proposal := _directed_collapse(
+                state, topology, records, protected, removed, kept
+            )
+        )
+        is not None
+    ]
+    if not proposals:
         return None
-    first_row = topology.vertex_row[edge[0]]
-    second_row = topology.vertex_row[edge[1]]
-    dimensions = np.asarray(snapshot.vertex_dimensions, dtype=np.int8)
-    if dimensions[first_row] != 3 or dimensions[second_row] != 3:
-        return None
-    if edge[0] in state.fixed_vertices or edge[1] in state.fixed_vertices:
-        return None
-    first_target = state.vertex_target_ids[edge[0]]
-    second_target = state.vertex_target_ids[edge[1]]
-    removed, kept = (
-        (edge[0], edge[1]) if first_target > second_target else (edge[1], edge[0])
+    return min(
+        proposals,
+        key=lambda row: (
+            row["added_violations"],
+            -int(state.vertex_target_ids[int(row["removed"])]),
+        ),
     )
+
+
+def _directed_collapse(
+    state: _NativeState,
+    topology: _TetTopology,
+    records: _BoundaryRecords,
+    protected: dict[tuple[int, int], bool],
+    removed: int,
+    kept: int,
+    /,
+) -> dict[str, Any] | None:
+    snapshot = state.snapshot
+    removed_row = topology.vertex_row[removed]
+    if removed in state.fixed_vertices or bool(
+        np.asarray(snapshot.protected_vertices)[removed_row]
+    ):
+        return None
+    entity = _carrier_entity(state, records, removed)
+    if state.target_mesh.periodic_topology is not None and (
+        entity is not None or _carrier_entity(state, records, kept) is not None
+    ):
+        # Lifted periodic seams are constrained facets: their orbit copies
+        # collapse only through interior vertices.
+        return None
+    if entity is not None and (
+        len(entity) < 2 or not set(state.vertex_stencils[kept]) <= entity
+    ):
+        return None
+    edge = _edge_key((removed, kept))
+    if records.vertex_segments.get(removed) and edge not in records.segments:
+        return None
     removed_rows = topology.vertex_cells[removed]
     kept_rows = topology.vertex_cells[kept]
     cavity_rows = tuple(sorted(set(removed_rows) | set(kept_rows)))
     cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
     regions = np.asarray(snapshot.tetrahedron_regions, dtype=np.int64)
-    cavity_cell_ids = tuple(sorted(int(cell_ids[row]) for row in cavity_rows))
     cavity_regions = {int(regions[row]) for row in cavity_rows}
     cavity_blocks = {state.cell_blocks[int(cell_ids[row])] for row in cavity_rows}
     if len(cavity_regions) != 1 or len(cavity_blocks) != 1:
@@ -2889,9 +3111,40 @@ def _collapse_proposal(
     if removed_link & kept_link != edge_link:
         return None
 
-    source_points = np.asarray(snapshot.points, dtype=np.float64)
+    def image(vertex: int) -> int:
+        return kept if vertex == removed else vertex
+
+    # Constrained facets and segments of the removed vertex map to their images.
+    removed_facets: list[int] = []
+    new_facets: list[tuple[tuple[int, int, int], int, int]] = []
+    for key in records.vertex_facets.get(removed, ()):
+        facet_id, group, ordered, orientation, is_protected = records.facets[key]
+        if is_protected:
+            return None
+        removed_facets.append(facet_id)
+        if kept in key:
+            continue
+        mapped = (image(ordered[0]), image(ordered[1]), image(ordered[2]))
+        if _face_key(mapped) in records.facets:
+            return None
+        new_facets.append((mapped, group, orientation))
+    removed_segments: list[int] = []
+    new_segments: list[tuple[tuple[int, int], int]] = []
+    for key in records.vertex_segments.get(removed, ()):
+        segment_id, group, ordered_segment, is_protected = records.segments[key]
+        if is_protected:
+            return None
+        removed_segments.append(segment_id)
+        if kept in key:
+            continue
+        mapped_segment = (image(ordered_segment[0]), image(ordered_segment[1]))
+        if _edge_key(mapped_segment) in records.segments:
+            return None
+        new_segments.append((mapped_segment, group))
+
+    points = np.asarray(snapshot.points, dtype=np.float64)
     vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
-    source_metrics = np.asarray(
+    metrics = np.asarray(
         [state.metric_by_vertex[int(identifier)] for identifier in vertex_ids],
         dtype=np.float64,
     )
@@ -2901,32 +3154,27 @@ def _collapse_proposal(
         old = topology.cell_vertex_ids[row]
         if kept in old:
             continue
-        modified = _tetra_key(
-            kept if int(value) == removed else int(value) for value in old
-        )
-        proposed_native_cells.append(modified)
+        proposed_native_cells.append(_tetra_key(image(int(value)) for value in old))
         parent_cell_ids.append(int(cell_ids[row]))
     if not proposed_native_cells:
         return None
-    proposed = np.asarray(proposed_native_cells, dtype=np.int64)
     oriented_rows = _oriented_tetrahedra(
-        source_points, topology, proposed, PredicateMode.EXACT
+        points,
+        topology,
+        np.asarray(proposed_native_cells, dtype=np.int64),
+        PredicateMode.EXACT,
     )
     if oriented_rows is None:
         return None
-    oriented_native = vertex_ids[oriented_rows]
-    before_rows = np.asarray(removed_rows, dtype=np.int64)
     before_quality = _tetra_quality(
-        source_points,
-        source_metrics,
-        np.asarray(snapshot.tetrahedra, dtype=np.int64)[before_rows],
+        points,
+        metrics,
+        np.asarray(snapshot.tetrahedra, dtype=np.int64)[
+            np.asarray(removed_rows, dtype=np.int64)
+        ],
     )
-    after_quality = _tetra_quality(source_points, source_metrics, oriented_rows)
-    if (
-        after_quality.size == 0
-        or not np.all(np.isfinite(after_quality))
-        or np.any(after_quality <= 0.0)
-    ):
+    after_quality = _tetra_quality(points, metrics, oriented_rows)
+    if not np.all(np.isfinite(after_quality)) or np.any(after_quality <= 0.0):
         return None
     roundoff = (
         64.0
@@ -2939,19 +3187,18 @@ def _collapse_proposal(
     )
     if float(np.min(after_quality)) + roundoff < float(np.min(before_quality)):
         return None
-    new_edges = sorted(
-        {_edge_key((kept, other)) for other in removed_link if other != kept}
-    )
-    edge_rows = np.asarray(
-        [
-            [topology.vertex_row[first], topology.vertex_row[second]]
-            for first, second in new_edges
-        ],
-        dtype=np.int64,
-    ).reshape((-1, 2))
-    new_lengths = _metric_lengths(source_points, source_metrics, edge_rows)
-    if new_lengths.size and np.any(new_lengths > _UPPER):
+
+    removed_edges = [
+        _edge_key((removed, other))
+        for other in sorted(removed_link)
+        if not protected[_edge_key((removed, other))]
+    ]
+    added_edges = [(kept, other) for other in sorted(removed_link - kept_link - {kept})]
+    removed_lengths = _edge_set_lengths(points, metrics, topology, removed_edges)
+    added_lengths = _edge_set_lengths(points, metrics, topology, added_edges)
+    if not _objective_decreases(removed_lengths, added_lengths, False):
         return None
+    oriented_native = vertex_ids[oriented_rows]
     return {
         "edge": edge,
         "removed": removed,
@@ -2963,9 +3210,28 @@ def _collapse_proposal(
             (oriented_native.shape[0],), next(iter(cavity_regions)), dtype=np.int32
         ),
         "block": next(iter(cavity_blocks)),
-        "cavity": frozenset(cavity_cell_ids),
+        "cavity": frozenset(int(cell_ids[row]) for row in cavity_rows),
         "quality_gain": float(np.min(after_quality) - np.min(before_quality)),
+        "added_violations": _band_violations(added_lengths),
+        "removed_facet_ids": tuple(removed_facets),
+        "replacement_facets": tuple(new_facets),
+        "removed_segment_ids": tuple(removed_segments),
+        "replacement_segments": tuple(new_segments),
     }
+
+
+def _edge_set_lengths(
+    points: np.ndarray,
+    metrics: np.ndarray,
+    topology: _TetTopology,
+    edges: list[tuple[int, int]],
+    /,
+) -> np.ndarray:
+    rows = np.asarray(
+        [[topology.vertex_row[a], topology.vertex_row[b]] for a, b in edges],
+        dtype=np.int64,
+    ).reshape((-1, 2))
+    return _metric_lengths(points, metrics, rows)
 
 
 def _facet_group_map(
@@ -3025,7 +3291,14 @@ def _collapse_edit(
     )
     parent_native_ids = [row[0] for row in replacement_records]
     ancestry_offsets, ancestry_ids = _cell_ancestry_banks(parent_native_ids)
-    facet_group_by_key = _facet_group_map(state, state.snapshot)
+    boundary, new_facet_groups, next_facet, next_segment = _boundary_edit_fields(
+        state,
+        [facet for row in proposals for facet in row["removed_facet_ids"]],
+        [facet for row in proposals for facet in row["replacement_facets"]],
+        [segment for row in proposals for segment in row["removed_segment_ids"]],
+        [segment for row in proposals for segment in row["replacement_segments"]],
+    )
+    facet_group_by_key = _facet_group_map(state, state.snapshot) | new_facet_groups
     replacement_facet_sources = np.full((replacement_count, 4), -1, dtype=np.int32)
     for row, record in enumerate(replacement_records):
         vertices = record[1]
@@ -3057,6 +3330,7 @@ def _collapse_edit(
         replacement_cell_vertices=vertices,
         replacement_cell_facet_sources=replacement_facet_sources,
         replacement_regions=regions,
+        **boundary,
     )
     return edit, {
         "proposals": proposals,
@@ -3072,7 +3346,68 @@ def _collapse_edit(
         ],
         "next_native_cell": state.next_native_cell + replacement_count,
         "next_target_cell": state.next_target_cell + replacement_count,
+        "next_native_facet": next_facet,
+        "next_native_segment": next_segment,
     }
+
+
+def _boundary_edit_fields(
+    state: _NativeState,
+    removed_facet_ids: list[int],
+    new_facets: list[tuple[tuple[int, int, int], int, int]],
+    removed_segment_ids: list[int],
+    new_segments: list[tuple[tuple[int, int], int]],
+    /,
+) -> tuple[dict[str, Any], dict[tuple[int, int, int], int], int, int]:
+    """Native edit fields retiring constrained facets/segments for replacements.
+
+    Replacement facets keep the vertex order, group row and orientation of the
+    facet they continue; fresh native IDs follow the current allocators.
+    """
+    fields: dict[str, Any] = {}
+    next_facet = state.next_native_facet + len(new_facets)
+    next_segment = state.next_native_segment + len(new_segments)
+    if removed_facet_ids:
+        fields["removed_facet_ids"] = np.asarray(
+            sorted(removed_facet_ids), dtype=np.uint64
+        )
+    if new_facets:
+        fields |= {
+            "replacement_facet_ids": _fresh_ids(
+                state.next_native_facet, len(new_facets), "native facet IDs"
+            ).astype(np.uint64),
+            "replacement_facet_vertices": np.asarray(
+                [vertices for vertices, _, _ in new_facets], dtype=np.uint64
+            ).reshape((-1, 3)),
+            "replacement_facet_sources": np.asarray(
+                [group for _, group, _ in new_facets], dtype=np.int32
+            ),
+            "replacement_facet_orientations": np.asarray(
+                [orientation for _, _, orientation in new_facets], dtype=np.int8
+            ),
+            "replacement_protected_facets": np.zeros((len(new_facets),), dtype=np.int8),
+        }
+    if removed_segment_ids:
+        fields["removed_segment_ids"] = np.asarray(
+            sorted(removed_segment_ids), dtype=np.uint64
+        )
+    if new_segments:
+        fields |= {
+            "replacement_segment_ids": _fresh_ids(
+                state.next_native_segment, len(new_segments), "native segment IDs"
+            ).astype(np.uint64),
+            "replacement_segment_vertices": np.asarray(
+                [vertices for vertices, _ in new_segments], dtype=np.uint64
+            ).reshape((-1, 2)),
+            "replacement_segment_sources": np.asarray(
+                [group for _, group in new_segments], dtype=np.int32
+            ),
+            "replacement_protected_segments": np.zeros(
+                (len(new_segments),), dtype=np.int8
+            ),
+        }
+    groups = {_face_key(vertices): group for vertices, group, _ in new_facets}
+    return fields, groups, next_facet, next_segment
 
 
 def _apply_collapse_batch(
@@ -3137,6 +3472,8 @@ def _apply_collapse_batch(
         state.changed_source_cell_ids.update(relation)
     state.next_native_cell = int(metadata["next_native_cell"])
     state.next_target_cell = int(metadata["next_target_cell"])
+    state.next_native_facet = int(metadata["next_native_facet"])
+    state.next_native_segment = int(metadata["next_native_segment"])
     _refresh_native_periodic_windings(state)
     return status
 
@@ -3147,11 +3484,12 @@ def _collapse_metric_candidates(
     topology = _topology(state.snapshot)
     _, _, lengths = _metric_edge_table(state, topology)
     classes, protected = _current_edge_controls(state, topology)
+    records = _boundary_records(state)
     eligible: dict[tuple[int, int], tuple[dict[str, Any], float]] = {}
     for edge, length in zip(topology.edge_cells, lengths.tolist(), strict=True):
         if edge in blocked or protected[edge] or classes[edge] != 0 or length >= _LOWER:
             continue
-        proposal = _collapse_proposal(state, topology, edge, float(length))
+        proposal = _collapse_proposal(state, topology, records, protected, edge)
         if proposal is not None:
             eligible[edge] = (proposal, float(length))
     vertex_quotient = _periodic_vertex_quotient_ids(state)
@@ -3298,7 +3636,14 @@ def _replacement_edit(
     replacement_count = len(records)
     native_ids = _fresh_ids(state.next_native_cell, replacement_count, "native cell IDs")
     target_ids = _fresh_ids(state.next_target_cell, replacement_count, "target cell IDs")
-    facet_groups = _facet_group_map(state, state.snapshot)
+    boundary, new_facet_groups, next_facet, next_segment = _boundary_edit_fields(
+        state,
+        [facet for group in groups for facet in group.get("removed_facet_ids", ())],
+        [facet for group in groups for facet in group.get("replacement_facets", ())],
+        [],
+        [],
+    )
+    facet_groups = _facet_group_map(state, state.snapshot) | new_facet_groups
     facet_sources = np.full((replacement_count, 4), -1, dtype=np.int32)
     for row, record in enumerate(records):
         for local_face, face in enumerate(_TETRA_FACES):
@@ -3329,6 +3674,7 @@ def _replacement_edit(
         ).reshape((-1, 4)),
         replacement_cell_facet_sources=facet_sources,
         replacement_regions=regions,
+        **boundary,
     )
     return edit, {
         "removed_cells": tuple(sorted(removed)),
@@ -3340,6 +3686,8 @@ def _replacement_edit(
         "replacement_kinds": [record[7] for record in records],
         "next_native_cell": state.next_native_cell + replacement_count,
         "next_target_cell": state.next_target_cell + replacement_count,
+        "next_native_facet": next_facet,
+        "next_native_segment": next_segment,
     }
 
 
@@ -3388,6 +3736,8 @@ def _apply_replacement_batch(
             state.changed_source_cell_ids.update(relation)
     state.next_native_cell = int(metadata["next_native_cell"])
     state.next_target_cell = int(metadata["next_target_cell"])
+    state.next_native_facet = int(metadata["next_native_facet"])
+    state.next_native_segment = int(metadata["next_native_segment"])
     _refresh_native_periodic_windings(state)
     return status
 
@@ -3404,11 +3754,24 @@ def _replacement_candidates(
     regions = np.asarray(state.snapshot.tetrahedron_regions, dtype=np.int64)
     classes, protected = _current_edge_controls(state, topology)
     candidates: list[dict[str, Any]] = []
+    cells = np.asarray(state.snapshot.tetrahedra, dtype=np.int64)
+
+    def cell_edges(rows: np.ndarray) -> set[tuple[int, int]]:
+        vertex_ids = np.asarray(state.snapshot.vertex_ids, dtype=np.int64)
+        return {
+            _edge_key((int(vertex_ids[cell[first]]), int(vertex_ids[cell[second]])))
+            for cell in rows
+            for first, second in _TETRA_EDGE_CORNERS
+        }
 
     def propose(
         key: tuple[int, ...],
         cavity_rows: tuple[int, ...],
         raw_cells: list[tuple[int, int, int, int]],
+        boundary: tuple[
+            tuple[int, ...], tuple[tuple[tuple[int, int, int], int, int], ...]
+        ]
+        | None = None,
     ) -> None:
         if key in blocked:
             return
@@ -3429,19 +3792,26 @@ def _replacement_candidates(
         )
         if oriented is None:
             return
-        before_rows = np.asarray(cavity_rows, dtype=np.int64)
-        before = _tetra_quality(
-            points,
-            metrics,
-            np.asarray(state.snapshot.tetrahedra, dtype=np.int64)[before_rows],
-        )
+        before_rows = cells[np.asarray(cavity_rows, dtype=np.int64)]
+        before = _tetra_quality(points, metrics, before_rows)
         after = _tetra_quality(points, metrics, oriented)
         if (
             before.size == 0
             or after.size == 0
             or not np.all(np.isfinite(after))
             or np.any(after <= 0.0)
-            or float(np.min(after)) <= float(np.min(before)) + _IMPROVEMENT
+        ):
+            return
+        old_edges = cell_edges(before_rows)
+        new_edges = cell_edges(oriented)
+        removed_edges = sorted(
+            edge for edge in old_edges - new_edges if not protected[edge]
+        )
+        added_edges = sorted(new_edges - old_edges)
+        if not _objective_decreases(
+            _edge_set_lengths(points, metrics, topology, removed_edges),
+            _edge_set_lengths(points, metrics, topology, added_edges),
+            float(np.min(after)) > float(np.min(before)) + _IMPROVEMENT,
         ):
             return
         vertices = np.asarray(state.snapshot.vertex_ids, dtype=np.int64)[oriented]
@@ -3467,6 +3837,8 @@ def _replacement_candidates(
                 "lineage_kind": EntityLineageKind.SWAPPED_FROM,
                 "cavity": frozenset(cavity_ids),
                 "gain": float(np.min(after) - np.min(before)),
+                "removed_facet_ids": () if boundary is None else boundary[0],
+                "replacement_facets": () if boundary is None else boundary[1],
             }
         )
 
@@ -3550,7 +3922,123 @@ def _replacement_candidates(
                 continue
             raw = list(triangulation[0])
         propose(edge, rows, raw)
+    if kind is TetMeshEditKind.RECONNECT and state.target_mesh.periodic_topology is None:
+        records = _boundary_records(state)
+        for edge, rows in topology.edge_cells.items():
+            swap = _boundary_swap(
+                state, topology, points, records, protected, classes, edge, rows
+            )
+            if swap is not None and edge not in blocked:
+                ring, boundary = swap
+                triangulation = _best_ring_triangulation(
+                    points, metrics, topology, edge, ring, mode
+                )
+                if triangulation is not None:
+                    propose(edge, rows, list(triangulation[0]), boundary)
     return _group_periodic_replacement_candidates(state, candidates, 1)
+
+
+def _boundary_swap(
+    state: _NativeState,
+    topology: _TetTopology,
+    points: np.ndarray,
+    records: _BoundaryRecords,
+    protected: dict[tuple[int, int], bool],
+    classes: dict[tuple[int, int], int],
+    edge: tuple[int, int],
+    rows: tuple[int, ...],
+    /,
+) -> (
+    tuple[
+        tuple[int, ...],
+        tuple[tuple[int, ...], tuple[tuple[tuple[int, int, int], int, int], ...]],
+    ]
+    | None
+):
+    """Open edge ring and facet changes of a coplanar boundary edge swap.
+
+    A boundary edge ``ab`` shared by the facets ``abc`` and ``abd`` of one
+    source group is replaced by ``cd``: the cells around ``ab`` (an open fan
+    from ``c`` to ``d``) are retriangulated by the ring rule and the facets
+    become ``acd`` and ``bcd``, each oriented like the facets it replaces.
+    """
+    if edge in topology.segment_row or protected[edge] or classes[edge] != 0:
+        return None
+    facets = [
+        records.facets[key]
+        for key in records.vertex_facets.get(edge[0], ())
+        if edge[1] in key
+    ]
+    if len(facets) != 2 or facets[0][1] != facets[1][1]:
+        return None
+    if facets[0][4] or facets[1][4] or facets[0][3] != facets[1][3]:
+        return None
+    first, second = edge
+    opposite = [
+        next(int(vertex) for vertex in facet[2] if vertex not in edge) for facet in facets
+    ]
+    c, d = opposite
+    if _edge_key((c, d)) in topology.edge_cells or len(rows) < 2:
+        return None
+    adjacency: dict[int, set[int]] = defaultdict(set)
+    for row in rows:
+        other = [
+            int(vertex)
+            for vertex in topology.cell_vertex_ids[row]
+            if int(vertex) not in edge
+        ]
+        if len(other) != 2:
+            return None
+        adjacency[other[0]].add(other[1])
+        adjacency[other[1]].add(other[0])
+    if len(adjacency[c]) != 1 or len(adjacency[d]) != 1:
+        return None
+    ring = [c]
+    previous = None
+    while ring[-1] != d:
+        following = [vertex for vertex in adjacency[ring[-1]] if vertex != previous]
+        if len(following) != 1 or following[0] in ring:
+            return None
+        previous = ring[-1]
+        ring.append(following[0])
+    if len(ring) != len(adjacency) or len(ring) < 3:
+        return None
+    # Each new facet keeps the oriented normal of the old facets (coplanar).
+    exact = {
+        vertex: [Fraction(float(value)) for value in points[topology.vertex_row[vertex]]]
+        for vertex in (first, second, c, d)
+    }
+
+    def normal(triangle: tuple[int, int, int]) -> list[Fraction]:
+        p, q, r = (exact[vertex] for vertex in triangle)
+        u = [q[axis] - p[axis] for axis in range(3)]
+        v = [r[axis] - p[axis] for axis in range(3)]
+        return [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ]
+
+    reference = normal(facets[0][2])
+    new_facets: list[tuple[tuple[int, int, int], int, int]] = []
+    for apex in edge:
+        triangle = (apex, c, d)
+        alignment = sum(
+            (
+                left * right
+                for left, right in zip(normal(triangle), reference, strict=True)
+            ),
+            Fraction(0),
+        )
+        if alignment == 0:
+            return None
+        if alignment < 0:
+            triangle = (apex, d, c)
+        new_facets.append((triangle, facets[0][1], facets[0][3]))
+    return tuple(ring), (
+        (facets[0][0], facets[1][0]),
+        (new_facets[0], new_facets[1]),
+    )
 
 
 def _group_periodic_replacement_candidates(
