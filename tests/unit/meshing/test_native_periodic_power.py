@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from fractions import Fraction
+
 import numpy as np
 
 import phydrax as phx
@@ -382,4 +384,78 @@ def test_owner_local_site_weight_support_preserves_signed_zero_bits() -> None:
     np.testing.assert_array_equal(
         np.asarray(support_weights).view(np.uint64),
         weights[[2, 0, 1]].view(np.uint64),
+    )
+
+
+def test_owner_local_power_context_is_authored_over_the_support_bank() -> None:
+    import jax
+    import pytest
+
+    from phydrax._execution_runtime import ExecutionGroup, ExecutionGroupSpec
+    from phydrax.meshing.providers._native_periodic_power import (
+        _owner_local_periodic_power_candidate,
+    )
+
+    if jax.process_count() != 1:
+        pytest.skip("This support-bank context contract uses a one-owner group.")
+    process = jax.process_index()
+    device = next(device for device in jax.devices() if device.process_index == process)
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "periodic-power-support-context",
+            (process,),
+            ((process, device.id),),
+            mesh_axes=(("periodic_power_support", 1),),
+        ),
+        (device,),
+    )
+    cell = PeriodicCell(
+        np.asarray(
+            ((1.0, 0.125, 0.0), (0.0, 1.0, 0.25), (0.125, 0.0, 1.0)),
+            dtype=np.float64,
+        )
+    )
+    fractional = np.asarray(
+        (
+            (0.125, 0.1875, 0.25),
+            (0.625, 0.125, 0.125),
+            (0.1875, 0.625, 0.3125),
+            (0.3125, 0.3125, 0.75),
+            (0.75, 0.8125, 0.5625),
+            (0.875, 0.4375, 0.9375),
+        ),
+        dtype=np.float64,
+    )
+    # Authored rows are not in ID order and the weights are unequal, so a
+    # context bound to the authored rows instead of the sorted support bank
+    # permutes its image weights.
+    point_ids = np.asarray((91, 4, 53, 17, 62, 31), dtype=np.int64)
+    weights = np.asarray((0.0, 0.015, -0.01, 0.02, 0.005, -0.015), dtype=np.float64)
+    source = NativePeriodicSource(
+        PeriodicPointOrbits(
+            cell,
+            np.asarray(cell.cartesian(fractional), dtype=np.float64),
+            point_ids,
+        ),
+        "periodic-power-support-context",
+        "periodic-power-support-context-revision-1",
+        site_weights=weights,
+        point_owner_ranks=np.zeros((point_ids.size,), dtype=np.int32),
+    )
+    power = _owner_local_periodic_power_candidate(
+        source, 0, group, "periodic-power-support-context-manifest"
+    )
+    source_map = power["source_map"]
+    assert isinstance(source_map, ExactPowerCellGeometrySource)
+    context = source_map.periodic_source_context
+    assert context is not None
+    assert context.periodic_source is power["source"].domain
+    order = np.argsort(point_ids)
+    np.testing.assert_array_equal(
+        np.asarray(context.periodic_source.point_ids), point_ids[order]
+    )
+    np.testing.assert_array_equal(np.asarray(context.source_weights), weights[order])
+    owners = np.asarray(context.image_owners, dtype=np.int64)
+    assert context.exact_image_weights == tuple(
+        Fraction.from_float(float(value)) for value in weights[order][owners]
     )
