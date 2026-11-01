@@ -3717,7 +3717,10 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         route_rows = [np.asarray(route, dtype=np.int64) for route in routes]
         # A shared reference element tabulates each distinct reference point set
         # once per block; cells requesting the same points reuse those values.
-        shared_tabulations: dict[tuple[int, bytes], np.ndarray] = {}
+        # Composed and per-cell restricted elements likewise evaluate each
+        # distinct exact chart at each distinct point set once: equal exact
+        # charts at equal points give identical binary64 values.
+        shared_tabulations: dict[tuple[object, ...], np.ndarray] = {}
         for output_row, identifier in enumerate(identifiers.tolist()):
             owner = cell_rows.get(int(identifier))
             if owner is None:
@@ -3727,19 +3730,37 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             block_index, cell_row = owner
             element = elements[block_index]
             if isinstance(element, RationalComposedCellGeometryElement):
-                values = _composed_values(
-                    element.source_element,
-                    element.chart_arguments,
-                    references[output_row],
-                    target_cell_kind=element.cell_kind,
-                )
+                key = (block_index, references[output_row].tobytes())
+                values = shared_tabulations.get(key)
+                if values is None:
+                    values = np.asarray(
+                        _composed_values(
+                            element.source_element,
+                            element.chart_arguments,
+                            references[output_row],
+                            target_cell_kind=element.cell_kind,
+                        ),
+                        dtype=np.float64,
+                    )
+                    shared_tabulations[key] = values
             elif isinstance(element, PerCellRestrictedCellGeometryElement):
-                values = _composed_values(
-                    element.source_element,
-                    element.chart_arguments(cell_row),
-                    references[output_row],
-                    target_cell_kind=element.cell_kind,
+                key = (
+                    block_index,
+                    element.chart_coefficients[cell_row],
+                    references[output_row].tobytes(),
                 )
+                values = shared_tabulations.get(key)
+                if values is None:
+                    values = np.asarray(
+                        _composed_values(
+                            element.source_element,
+                            element.chart_arguments(cell_row),
+                            references[output_row],
+                            target_cell_kind=element.cell_kind,
+                        ),
+                        dtype=np.float64,
+                    )
+                    shared_tabulations[key] = values
             else:
                 tabulate_cell = getattr(element, "tabulate_cell", None)
                 if callable(tabulate_cell):
