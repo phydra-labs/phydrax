@@ -2359,6 +2359,105 @@ void split_on_shared_source_diagonal_needs_an_exact_edge_point() {
   PHX_CHECK(split(13.0 / 32.0) == TetEditStatus::kApplied);
 }
 
+// A vertex V inside source facet ABC (z = 0) stars three cells under apex E.
+// Without a source witness V is its own exact source point: it may move within
+// ABC (every incident facet is revalidated exactly) but not off the plane or
+// out of the facet, and it may collapse into A, retiring its boundary facets
+// for the single facet BCA, which exactly covers the same source facet.
+void boundary_vertex_moves_and_collapses_within_its_source_facet() {
+  using namespace phx::mc;
+  constexpr std::array<double, 15> points{
+      0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.25, 0.25, 1.0, 0.25, 0.25, 0.0};
+  // A = 0, B = 1, C = 2, E = 3, V = 4.
+  constexpr std::array<std::int32_t, 12> tetrahedra{0, 1, 4, 3, 1, 2, 4, 3, 2, 0, 4, 3};
+  constexpr std::array<std::int32_t, 3> regions{0, 0, 0};
+  constexpr std::array<std::int32_t, 18> faces{
+      0, 1, 4, 1, 2, 4, 2, 0, 4, 0, 1, 3, 1, 2, 3, 2, 0, 3};
+  constexpr std::array<std::int32_t, 6> face_sources{0, 0, 0, 1, 2, 3};
+  constexpr std::array<std::int8_t, 6> face_orientations{1, 1, 1, 1, 1, 1};
+  constexpr std::array<std::int32_t, 12> source_faces{0, 1, 2, 0, 1, 3, 1, 2, 3, 2, 0, 3};
+  constexpr std::array<std::int32_t, 4> source_face_groups{0, 1, 2, 3};
+  constexpr std::array<std::int64_t, 4> source_face_ids{300, 301, 302, 303};
+  constexpr std::array<double, 4> source_face_tolerances{};
+  constexpr std::array<std::int32_t, 0> no_segments{};
+  constexpr std::array<std::int64_t, 0> no_segment_ids{};
+  constexpr std::array<double, 0> no_segment_tolerances{};
+  constexpr std::array<SourceWitness, 0> no_witnesses{};
+  const SourceComplexView source{
+      std::span<const double>(points),
+      std::span<const std::int32_t>(source_faces),
+      std::span<const std::int32_t>(source_face_groups),
+      std::span<const std::int64_t>(source_face_ids),
+      std::span<const double>(source_face_tolerances),
+      std::span<const std::int32_t>(no_segments),
+      std::span<const std::int32_t>(no_segments),
+      std::span<const std::int64_t>(no_segment_ids),
+      std::span<const double>(no_segment_tolerances),
+      std::span<const SourceWitness>(no_witnesses)};
+
+  const auto apply = [&](TetEdit operation) {
+    TetMesh mesh(BoundaryPolicy::kConforming);
+    const std::int32_t build_status = mesh.build(
+        points, tetrahedra, regions, faces, face_sources, face_orientations,
+        no_segments, no_segments, std::span<const double>{}, &source);
+    PHX_CHECK(build_status == PHX_MC_OK);
+    if (build_status != PHX_MC_OK) return TetEditStatus::kRejectedTopology;
+    constexpr std::array<std::uint64_t, 5> vertex_ids{0, 1, 2, 3, 4};
+    constexpr std::array<std::uint64_t, 3> cell_ids{100, 101, 102};
+    constexpr std::array<std::uint64_t, 6> facet_ids{200, 201, 202, 203, 204, 205};
+    PHX_CHECK(mesh.assign_initial_ids(vertex_ids, cell_ids, facet_ids,
+                                      std::span<const std::uint64_t>{}) == PHX_MC_OK);
+    TetEditBatch batch;
+    batch.expected_generation = mesh.generation();
+    batch.source_revision = mesh.source_revision();
+    batch.frame_id = mesh.frame_id();
+    batch.identity_bound = mesh.identity_bound();
+    batch.operations.push_back(std::move(operation));
+    batch.source_id = mesh.source_id();
+    batch.source_map_id = mesh.source_map_id();
+    batch.periodic_identity = mesh.periodic_identity();
+    std::vector<TetEditResult> results;
+    const TetEditStatus batch_status = mesh.apply_edit_batch(batch, results);
+    if (batch_status != TetEditStatus::kApplied) return batch_status;
+    if (results.size() != 1) return TetEditStatus::kRejectedTopology;
+    return results.front().status;
+  };
+  const auto relocation = [](std::array<double, 3> carrier) {
+    TetEditVertex moved;
+    moved.id = 4;
+    moved.carrier = carrier;
+    moved.edge_witness_supplied = true;
+    TetEdit operation;
+    operation.kind = TetEditKind::kRelocate;
+    operation.removed_cell_ids = {100, 101, 102};
+    operation.changed_vertices.push_back(moved);
+    return operation;
+  };
+  PHX_CHECK(apply(relocation({0.375, 0.25, 0.0})) == TetEditStatus::kApplied);
+  PHX_CHECK(apply(relocation({0.375, 0.25, 0.0625})) == TetEditStatus::kInvalidGeometry);
+  PHX_CHECK(apply(relocation({0.375, -0.0625, 0.0})) != TetEditStatus::kApplied);
+
+  TetEdit collapse;
+  collapse.kind = TetEditKind::kCollapse;
+  collapse.collapse_pairs.push_back({4, 0});
+  collapse.removed_vertex_ids = {4};
+  collapse.removed_cell_ids = {100, 101, 102};
+  TetEditCell restored;
+  restored.id = 103;
+  restored.vertices = {1, 2, 0, 3};
+  restored.facet_sources = {3, 1, 2, 0};
+  restored.region = 0;
+  restored.ancestor_cell_ids = {100, 101, 102};
+  collapse.replacement_cells = {restored};
+  collapse.removed_facet_ids = {200, 201, 202};
+  collapse.replacement_facets = {{206, {1, 2, 0}, 0, 1, false}};
+  PHX_CHECK(apply(collapse) == TetEditStatus::kApplied);
+  // Retiring the boundary needs the exact replacement cover.
+  TetEdit uncovered = collapse;
+  uncovered.replacement_facets.clear();
+  PHX_CHECK(apply(uncovered) != TetEditStatus::kApplied);
+}
+
 void relocation_checks_incident_source_facets_atomically() {
   using namespace phx::mc;
   constexpr std::array<double, 12> points{
@@ -2969,6 +3068,7 @@ int main() {
   replacement_facet_requires_its_own_source_geometry();
   split_edge_preserves_exact_ghost_boundary_coverage();
   split_on_shared_source_diagonal_needs_an_exact_edge_point();
+  boundary_vertex_moves_and_collapses_within_its_source_facet();
   relocation_checks_incident_source_facets_atomically();
   exact_boundary_subface_coverage_rejects_gap_reversal_and_overlap();
   declared_plane_admission_refuses_and_records_vertices();
