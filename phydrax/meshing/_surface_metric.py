@@ -79,6 +79,20 @@ class SurfaceMetricStatus(StrEnum):
     NUMERICAL_STOP = "numerical_stop"
 
 
+class SurfaceMetricGeometryRelation(StrEnum):
+    """How target surface cells relate to the source mesh geometry.
+
+    ``NESTED_REFERENCE``: every target cell lies in one source cell's exact chart and
+    is reconstructed from the source maps through retained reference-cell maps.
+    ``EXACT_PROJECTION``: target vertices are exact source projections on one global
+    analytic chart; cells need not nest in source cells, and fidelity is certified
+    against the source itself.
+    """
+
+    NESTED_REFERENCE = "nested_reference"
+    EXACT_PROJECTION = "exact_projection"
+
+
 @dataclass(frozen=True, slots=True)
 class _ImplicitParameterSurface:
     profile: AnalyticImplicitProfile
@@ -278,6 +292,7 @@ class SurfaceMetricGeometryWitness(NamedTuple):
     periodic_topology_id: str | None
     periodic_vertex_orbits: int
     periodic_edge_orbits: int
+    relation: SurfaceMetricGeometryRelation
     implicit_cell_keys: np.ndarray | None = None
     implicit_root_edge_keys: np.ndarray | None = None
     reference_maps: tuple[ReferenceCellMapWitnesses, ...] = ()
@@ -780,7 +795,7 @@ def prepare_surface_metric_source(
         work_mesh = base_work_mesh
 
     implicit_source = isinstance(source_charts, _ImplicitSurfaceChartBank)
-    if work_mesh.periodic_topology is None:
+    if implicit_source or work_mesh.periodic_topology is None:
         cell_class_ids = source_cell_ids
     else:
         cell_orbit_map = periodic_entity_orbit_map(work_mesh, 2)
@@ -796,12 +811,14 @@ def prepare_surface_metric_source(
             [cell_class_ids_by_id[int(identifier)] for identifier in source_cell_ids],
             dtype=np.int64,
         )
+    # BRep root charts are piecewise, so each source cell is its own chart class. The
+    # implicit analytic chart is one global chart: extraction cells are not features,
+    # and only declared classes separate its cells.
     cell_class_keys = tuple(
         (
             (
                 int(supplied_cell_classes[row]),
                 int(cell_patches[row]),
-                int(cell_class_ids[row]),
                 int(orientation_signs[row]),
             )
             if implicit_source
@@ -856,9 +873,18 @@ def prepare_surface_metric_source(
             np.asarray(source_edge_keys, dtype=np.int64)[source_counts == 1]
         ).tolist()
     }
-    # Anchor source vertices so relocated target cells retain one exact source chart.
-    work_fixed = np.ones((source_vertex_rows.size,), dtype=np.bool_)
-    work_fixed |= supplied_fixed[source_vertex_rows]
+    # BRep target cells retain one exact source chart, so every source vertex is an
+    # anchor. Implicit extraction vertices are not geometric features: only declared
+    # fixed vertices, trim boundaries, and collapsed poles anchor; the rest may be
+    # collapsed or relocated because exact source projection realizes any chart point.
+    if implicit_source:
+        source_collapsed = np.asarray(source_charts.collapsed_vertices, dtype=np.bool_)
+        work_fixed = (
+            supplied_fixed[source_vertex_rows] | source_collapsed[source_vertex_rows]
+        )
+    else:
+        work_fixed = np.ones((source_vertex_rows.size,), dtype=np.bool_)
+        work_fixed |= supplied_fixed[source_vertex_rows]
     work_fixed |= np.isin(
         source_vertex_rows,
         np.asarray(sorted(boundary_source_vertex_rows), dtype=np.int64),
@@ -903,18 +929,10 @@ def prepare_surface_metric_source(
         if cells.size != 2:
             continue
         first, second = int(cells[0]), int(cells[1])
-        source_cell_interface = int(source_cell_ids[first]) != int(
-            source_cell_ids[second]
-        )
-        root_interface = implicit_source and (
-            cell_root_ids[first] != cell_root_ids[second]
-            or cell_pieces[first] != cell_pieces[second]
-        )
-        if (
-            work_cell_classes[first] != work_cell_classes[second]
-            or source_cell_interface
-            or root_interface
-        ):
+        source_cell_interface = not implicit_source and int(
+            source_cell_ids[first]
+        ) != int(source_cell_ids[second])
+        if work_cell_classes[first] != work_cell_classes[second] or source_cell_interface:
             interface_rows.append(int(edge_row))
             interface_keys.append(
                 (
@@ -1278,8 +1296,11 @@ def _parent_face_stencils(
     shadow onto that edge: renormalizing dropped barycentric mass would move the
     point along the edge by that mass times the cell aspect ratio. Larger faces
     are restricted and renormalized; the caller bounds either snap by binary64
-    shadow resolution.
+    shadow resolution. The implicit analytic chart is one global chart, so only
+    its carrier-boundary vertices are restricted: an interior vertex is any chart
+    point, realized by exact source projection.
     """
+    global_chart = isinstance(source.source_charts, _ImplicitSurfaceChartBank)
     work_cells = np.concatenate(
         tuple(
             np.asarray(block.vertices, dtype=np.int64)
@@ -1303,12 +1324,20 @@ def _parent_face_stencils(
     restricted = list(stencils)
     snapped = np.zeros((len(stencils),), dtype=np.bool_)
     for vertex, parents in sorted(parents_by_vertex.items()):
+        boundary = vertex in target_boundary_vertices
         stencil = stencils[vertex]
         support = {work_row for work_row, _ in stencil}
+        # A global-chart vertex keeps its exact row unless it is a carrier-boundary
+        # point off its exact boundary edge.
+        if global_chart and (
+            not boundary
+            or len(support) == 1
+            or (len(support) == 2 and tuple(sorted(support)) in work_boundary)
+        ):
+            continue
         common = set.intersection(
             *(set(work_cells[parent].tolist()) for parent in sorted(parents))
         )
-        boundary = vertex in target_boundary_vertices
         if support <= common and (
             len(support) == 1
             or not boundary
@@ -1755,6 +1784,38 @@ def _source_chart_points(
     return projected
 
 
+def _root_chart_parent(
+    prepared: SurfaceMetricSource,
+    chart: _ExactTriangle,
+    ancestry: tuple[int, ...],
+    /,
+) -> int:
+    """Ancestor source cell whose root chart seeds one implicit target cell.
+
+    The ancestor whose analytic chart holds the target centroid most deeply (largest
+    least barycentric weight over the period lattice images) is the one whose root
+    cell covers the target cell; the root chart proof certifies the choice.
+    """
+    images = [np.mean([[float(value) for value in point] for point in chart], axis=0)]
+    for axis, period in zip(prepared.periodic_axes, prepared.periods, strict=True):
+        offset = np.zeros((2,), dtype=np.float64)
+        offset[axis] = float(period)
+        images = [image + shift * offset for image in images for shift in (-1, 0, 1)]
+    best_row, best_depth = ancestry[0], -np.inf
+    for row in sorted(ancestry):
+        corners = np.asarray(
+            [[float(value) for value in point] for point in prepared.cell_charts[row]],
+            dtype=np.float64,
+        )
+        frame = np.stack((corners[1] - corners[0], corners[2] - corners[0]), axis=1)
+        for image in images:
+            second, third = np.linalg.solve(frame, image - corners[0])
+            depth = min(1.0 - second - third, second, third)
+            if depth > best_depth:
+                best_row, best_depth = row, depth
+    return int(best_row)
+
+
 def _physical_edit(
     prepared: SurfaceMetricSource,
     local_outcome: LocalMetricOutcome,
@@ -1879,19 +1940,33 @@ def _physical_edit(
     if work_target.periodic_topology is not None:
         work_stencils = _synchronized_copy_stencils(prepared, work_stencils, group_rows)
     target_uv = _exact_target_chart(local_edit, prepared, work_stencils, snapped)
+    global_chart = isinstance(prepared.source_charts, _ImplicitSurfaceChartBank)
     cell_meta: dict[
         int, tuple[int, int, tuple[int, ...], str, int, _ExactTriangle, tuple[int, ...]]
     ] = {}
-    for cell, target_id_raw, parents in zip(
+    for cell, target_id_raw, ancestry in zip(
         local_cells.tolist(), local_cell_ids.tolist(), cell_parents, strict=True
     ):
         target_id = int(target_id_raw)
+        chart_points = tuple(target_uv[int(vertex)] for vertex in cell)
+        if len(chart_points) != 3:
+            raise ValueError("Surface metric target cells must remain triangles.")
+        chart: _ExactTriangle = (chart_points[0], chart_points[1], chart_points[2])
+        area = _chart_area(chart)
+        if area == 0 or (1 if area > 0 else -1) != 1:
+            raise ValueError("A UV operation produced a nonpositive chart triangle.")
+        ancestry_ids = tuple(int(source_cell_ids[row]) for row in ancestry)
+        patches = {source_patch_by_cell[value] for value in ancestry_ids}
+        blocks = {source_block_by_cell[value] for value in ancestry_ids}
+        orientations = {source_orientation_by_cell[value] for value in ancestry_ids}
+        # A collapsed or relocated cell of the global implicit chart may overlap
+        # several extraction cells; one of them seeds its root chart.
+        parents = (
+            (_root_chart_parent(prepared, chart, ancestry),) if global_chart else ancestry
+        )
         parent_ids = tuple(int(source_cell_ids[row]) for row in parents)
-        patches = {source_patch_by_cell[value] for value in parent_ids}
         roots = {source_root_by_cell[value] for value in parent_ids}
         pieces = {source_piece_by_cell[value] for value in parent_ids}
-        blocks = {source_block_by_cell[value] for value in parent_ids}
-        orientations = {source_orientation_by_cell[value] for value in parent_ids}
         if any(
             len(values) != 1 for values in (patches, roots, pieces, blocks, orientations)
         ):
@@ -1903,13 +1978,6 @@ def _physical_edit(
             next(iter(blocks)),
             next(iter(orientations)),
         )
-        chart_points = tuple(target_uv[int(vertex)] for vertex in cell)
-        if len(chart_points) != 3:
-            raise ValueError("Surface metric target cells must remain triangles.")
-        chart: _ExactTriangle = (chart_points[0], chart_points[1], chart_points[2])
-        area = _chart_area(chart)
-        if area == 0 or (1 if area > 0 else -1) != 1:
-            raise ValueError("A UV operation produced a nonpositive chart triangle.")
         if orientation < 0:
             chart = (chart[0], chart[2], chart[1])
         cell_meta[target_id] = (
@@ -2160,9 +2228,6 @@ def _physical_edit(
             np.asarray(block.global_ids, dtype=np.int64) for block in target_mesh.blocks
         )
     )
-    reference_maps = _reference_maps_from_charts(
-        prepared, target_cell_ids, chart_by_cell_id
-    )
     charts = tuple(chart_by_cell_id[int(identifier)][3] for identifier in target_cell_ids)
     patches = np.asarray(
         [chart_by_cell_id[int(identifier)][0] for identifier in target_cell_ids],
@@ -2175,7 +2240,9 @@ def _physical_edit(
     pieces = tuple(chart_by_cell_id[int(identifier)][2] for identifier in target_cell_ids)
     implicit_cell_keys = None
     implicit_root_edge_keys = None
+    reference_maps: tuple[ReferenceCellMapWitnesses, ...] = ()
     if isinstance(prepared.source_charts, _ImplicitSurfaceChartBank):
+        relation = SurfaceMetricGeometryRelation.EXACT_PROJECTION
         witness, implicit_cell_keys, implicit_root_edge_keys = _implicit_target_witness(
             prepared,
             target_mesh,
@@ -2184,6 +2251,10 @@ def _physical_edit(
             chart_by_cell_id,
         )
     else:
+        relation = SurfaceMetricGeometryRelation.NESTED_REFERENCE
+        reference_maps = _reference_maps_from_charts(
+            prepared, target_cell_ids, chart_by_cell_id
+        )
         entity_id = prepared.domain.entity_id
         surface_occurrences = prepared.domain.source_occurrences[2]
         patch_entity_ids = {
@@ -2244,6 +2315,7 @@ def _physical_edit(
         periodic_topology_id,
         periodic_vertex_orbits,
         periodic_edge_orbits,
+        relation,
         implicit_cell_keys,
         implicit_root_edge_keys,
         reference_maps,
@@ -2385,6 +2457,7 @@ def target_surface_source(
 
 
 __all__ = [
+    "SurfaceMetricGeometryRelation",
     "SurfaceMetricGeometryWitness",
     "SurfaceMetricOutcome",
     "SurfaceMetricSource",
