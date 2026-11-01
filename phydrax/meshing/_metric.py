@@ -1640,6 +1640,15 @@ def _log_euclidean_mean(tensors: Array, weights: Array, /) -> Array:
     )
 
 
+def _constant_preserving_metric_mean(tensors: Array, weights: Array, /) -> Array:
+    """Internal point value for prevalidated SPD samples and convex weights."""
+    logarithm = hermitian_log(tensors).value
+    mean = hermitian_exp(contract("...k,...kij->...ij", weights, logarithm)).value
+    first = tensors[..., 0, :, :]
+    identical = jnp.all(tensors == first[..., None, :, :], axis=(-3, -2, -1))
+    return jnp.where(identical[..., None, None], first, mean)
+
+
 def interpolate_mesh_metric(values: ArrayLike, weights: ArrayLike, /) -> Array:
     """Log-Euclidean interpolation ``exp(sum_k w_k log M_k)`` (Arsigny et al. 2006).
 

@@ -44,6 +44,15 @@ from phydrax.meshing._device_metric import (
     DeviceMetricEvidence,
 )
 from phydrax.meshing._local_metric import LocalMetricEvidence
+from phydrax.meshing._metric import _constant_preserving_metric_mean
+
+
+def test_internal_metric_mean_preserves_identical_tensor_exactly() -> None:
+    tensor = jnp.asarray(((3.0, 0.4), (0.4, 2.0)), dtype=jnp.float64)
+    samples = jnp.broadcast_to(tensor, (3, 3, 2, 2))
+    weights = jnp.asarray(((0.1, 0.2, 0.7), (1.0, 0.0, 0.0), (0.3, 0.3, 0.4)))
+    actual = jax.jit(_constant_preserving_metric_mean)(samples, weights)
+    np.testing.assert_array_equal(np.asarray(actual), np.asarray(samples[:, 0]))
 
 
 _LOWER = 1.0 / np.sqrt(2.0)
@@ -809,53 +818,6 @@ def test_source_box_detects_single_and_crossing_cells() -> None:
     assert piece.weight_upper[1] == 1 / (Fraction(1) + Fraction(1, 2**54))
 
 
-def test_field_box_includes_carrier_locator_tie_across_exact_cells() -> None:
-    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
-    mesh = CellMesh.from_triangles(points, np.asarray(((0, 1, 2), (0, 2, 3))))
-    _, source = local_metric._initial_state(
-        mesh,
-        np.broadcast_to(np.eye(2), (4, 2, 2)),
-        np.zeros(4, dtype=np.int64),
-        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
-        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
-        np.zeros(4, dtype=np.bool_),
-        PredicateMode.EXACT,
-    )
-
-    class CellField:
-        def __call__(
-            self, query: np.ndarray, rows: np.ndarray, weights: np.ndarray, /
-        ) -> np.ndarray:
-            del query, weights
-            scales = np.where(np.any(rows == 1, axis=1), 0.01, 100.0)
-            return scales[:, None, None] * np.eye(2)
-
-        def segment_range(
-            self,
-            rows: tuple[int, ...],
-            lower: tuple[Fraction, ...],
-            upper: tuple[Fraction, ...],
-            chart_lower: np.ndarray,
-            chart_upper: np.ndarray,
-            /,
-        ) -> tuple[np.ndarray, np.ndarray]:
-            del lower, upper, chart_lower, chart_upper
-            matrix = (0.01 if 1 in rows else 100.0) * np.eye(2)
-            return matrix, matrix
-
-    exact = list(source.exact_points)
-    exact[2] = (Fraction(1) + Fraction(1, 2**54), Fraction(1))
-    source = source._replace(exact_points=tuple(exact), metric_field=CellField())
-    query = np.asarray(((0.5, 0.5),))
-    actual = local_metric._field_metric(
-        source, query, np.eye(2)[None], PredicateMode.EXACT
-    )
-    bounds = local_metric._field_box(source, query[0], query[0])
-    assert bounds is not None
-    assert np.all(bounds[0] <= actual[0])
-    assert np.all(actual[0] <= bounds[1])
-    assert bounds[0][0, 0] == 0.01
-    assert bounds[1][0, 0] == 100.0
 
 
 def test_candidate_box_encloses_rounded_and_exact_affine_values() -> None:

@@ -81,6 +81,7 @@ from ._local_metric import (
     _lookup,
     _LOWER,
     _measured,
+    _OPTIMAL_BLOCK,
     _OPTIMAL_LATTICE,
     _periodic_state_context,
     _REFINED,
@@ -93,7 +94,7 @@ from ._local_metric import (
     _validate_classification,
     _validate_mesh,
 )
-from ._metric import metric_edge_lengths
+from ._metric import _constant_preserving_metric_mean, metric_edge_lengths
 
 
 if TYPE_CHECKING:
@@ -113,9 +114,6 @@ if TYPE_CHECKING:
 _RECORDS_PER_SLOT = 2
 # (cell, source cell) ancestry pairs per cell slot.
 _PAIRS_PER_CELL = 8
-# Short edges searched per optimal-point collapse block; blocks repeat until
-# every eligible edge is searched, so the block bounds memory, not the search.
-_OPTIMAL_BLOCK = 256
 # Collapse round modes, also the escape attempt of a pass: regular passes, then
 # the stall-escape attempts in order (see ``_adapted``).
 _REGULAR, _OPTIMAL, _ENDPOINT = 0, 1, 2
@@ -984,8 +982,7 @@ def _log_euclidean(tensors: Array, weights: Array, /) -> Array:
     callback (`eqx.error_if`) that compiled passes must not embed. Samples are
     metric tensors of the state and weights are convex by construction.
     """
-    logarithm = hermitian_log(tensors).value
-    return hermitian_exp(contract("...k,...kij->...ij", weights, logarithm)).value
+    return _constant_preserving_metric_mean(tensors, weights)
 
 
 def _quality(lengths: Array, /) -> Array:
@@ -2533,7 +2530,15 @@ def _optimal_collapse_round(
         proposal = hermitian_exp(
             (1.0 - weight) * hermitian_log(work.metric[kept_rows]).value[:, None, None]
             + weight * hermitian_log(work.metric[targets]).value[:, :, None]
-        ).value.reshape((block, lanes, 2, 2))
+        ).value
+        identical = jnp.all(
+            work.metric[kept_rows, None] == work.metric[targets], axis=(-2, -1)
+        )
+        proposal = jnp.where(
+            identical[:, :, None, None, None],
+            work.metric[kept_rows, None, None],
+            proposal,
+        ).reshape((block, lanes, 2, 2))
         extended_points = jnp.concatenate((points, candidate.reshape((-1, 2))))
         extended_metric = jnp.concatenate((work.metric, proposal.reshape((-1, 2, 2))))
         # Star edges: every neighbor of either end but the ends themselves.
