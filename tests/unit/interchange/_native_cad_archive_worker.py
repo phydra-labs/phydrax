@@ -3594,7 +3594,7 @@ def _rebuild_layer_curving_source_evidence(
     if evidence.evidence_id != value.evidence_id:
         raise ValueError("Stored layer source evidence identity changed.")
     if require_current:
-        evidence.require_current(mesh, geometry)
+        evidence.revalidate(mesh, geometry)
     return evidence
 
 
@@ -7756,7 +7756,7 @@ def _read_layer_curving_evidence(path: Path, expected: dict[str, object], /) -> 
         raise ValueError(
             f"Layer-curving cold restore differs from its writer evidence: {changed}."
         )
-    evidence.require_current(mesh, geometry)
+    evidence.revalidate(mesh, geometry)
     print("layer-curving-evidence-cold-restored")
 
 
