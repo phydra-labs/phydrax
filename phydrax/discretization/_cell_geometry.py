@@ -1769,6 +1769,35 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
             target_cell_kind=self.cell_kind,
         )
 
+    def tabulate_cells(
+        self, cell_rows: Sequence[int] | np.ndarray, points: ArrayLike, /
+    ) -> tuple[Array, Array]:
+        """Tabulate ``(cell, q, i)`` values and ``(cell, q, i, r)`` gradients.
+
+        Rows sharing one exact chart share one tabulation, so the work scales
+        with the distinct charts of the selection rather than its cell count.
+        """
+        rows = np.asarray(cell_rows, dtype=np.int64).reshape((-1,))
+        if rows.size and (rows.min() < 0 or rows.max() >= len(self.chart_coefficients)):
+            raise IndexError("Per-cell restriction row is outside the target block.")
+        groups: dict[tuple[_ExactRationalChartTerms, ...], int] = {}
+        representatives: list[int] = []
+        slots = np.empty((rows.size,), dtype=np.int64)
+        for position, row in enumerate(rows.tolist()):
+            chart = self.chart_coefficients[row]
+            slot = groups.get(chart)
+            if slot is None:
+                slot = groups[chart] = len(representatives)
+                representatives.append(row)
+            slots[position] = slot
+        tabulations = tuple(
+            self.tabulate_cell(row, points) for row in representatives or [0]
+        )
+        gather = jnp.asarray(slots)
+        values = jnp.stack(tuple(value for value, _ in tabulations))[gather]
+        gradients = jnp.stack(tuple(gradient for _, gradient in tabulations))[gather]
+        return values, gradients
+
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
         raise ValueError(
             "Per-cell coordinate elements require tabulate_cell(cell_row, points)."
