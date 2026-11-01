@@ -27,6 +27,10 @@ from phydrax.meshing._mixed_adaptation import (
     MixedLayerColumns,
 )
 from phydrax.meshing._topology_edit import assemble_topology_edit
+from tests._support.validity_reuse import (
+    assert_incremental_matches_full,
+    cell_map_digests,
+)
 
 
 pytestmark = pytest.mark.meshcore
@@ -469,6 +473,52 @@ def _hex_reference_image(
         )
         for axis in range(3)
     )
+
+
+def test_refined_target_validity_reuses_unchanged_source_cell_proofs(
+    hex_pyramid_mesh: CellMesh, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A tetrahedron sharing no face with the refined hexahedron keeps its map.
+    far = np.asarray(
+        ((3.0, 0.0, 0.0), (4.0, 0.0, 0.0), (3.0, 1.0, 0.0), (3.0, 0.0, 1.0)),
+        dtype=np.float64,
+    )
+    mesh = CellMesh(
+        np.concatenate((np.asarray(hex_pyramid_mesh.coordinates), far)),
+        (
+            *hex_pyramid_mesh.blocks,
+            CellBlock(
+                "tetrahedra",
+                "tetrahedron",
+                np.asarray(((9, 10, 11, 12),), dtype=np.int32),
+                global_ids=np.asarray((707,), dtype=np.int64),
+            ),
+        ),
+        vertex_global_ids=np.arange(900, 913, dtype=np.int64),
+    )
+    source_geometry = _curved_hex_pyramid_geometry(mesh)
+    source_validity = certify_cell_geometry_validity(source_geometry, mesh=mesh)
+    refined = adapt_mixed_mesh(
+        mesh,
+        refine_cell_ids=np.asarray((505,), dtype=np.int64),
+        cell_classes=np.asarray((2, 6, 7), dtype=np.int64),
+        source_geometry=source_geometry,
+    )
+    assert refined.target_geometry is not None
+    fine, _, _ = assemble_topology_edit(
+        mesh, refined.edit, numeric_version="mixed-curved-refinement"
+    )
+
+    full, proofs = assert_incremental_matches_full(
+        monkeypatch, refined.target_geometry, source_validity, mesh=fine
+    )
+
+    assert full.invalid_count == full.unresolved_count == 0
+    table = np.frombuffer(full.cell_map_digests, dtype=np.uint8).reshape(-1, 2, 16)
+    reused = cell_map_digests(full) & cell_map_digests(source_validity)
+    tetrahedron = full.block_offsets[full.block_names.index("tetrahedra")]
+    assert {row.tobytes() for row in table[tetrahedron]} <= reused
+    assert proofs == len(cell_map_digests(full)) - len(reused)
 
 
 def test_high_order_source_geometry_restricts_and_restores_mixed_parents(

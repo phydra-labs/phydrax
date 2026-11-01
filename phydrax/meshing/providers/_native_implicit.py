@@ -772,7 +772,7 @@ class _NativeImplicitProjectionResult:
 class _NativeImplicitBoundaryQuery(StrictModule, NonTrainableState):
     """Forward adaptive boundary evidence under the native source revision."""
 
-    query: AdaptiveImplicitBoundarySource = eqx.field(static=True)
+    query: AdaptiveImplicitBoundarySource
     authoring_profile: AnalyticImplicitProfile | None
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)

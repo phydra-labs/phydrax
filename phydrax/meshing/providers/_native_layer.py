@@ -2938,6 +2938,14 @@ def _native_construction(
         fidelity_witness=fidelity_witness,
         maximum_normal_deviation=None,
         feature_source=feature_source,
+        # Acceptance reuses the proofs of layer cells (and, for an accepted
+        # CURVED result, of its certified map) whose exact maps are unchanged.
+        validity_parent=(source.layers.validity,)
+        + (
+            ()
+            if curving_result is None or curving_result.validity is None
+            else (curving_result.validity,)
+        ),
     )
     organization = construction_owner.NativeMeshOrganization(
         patches=construction.patches,

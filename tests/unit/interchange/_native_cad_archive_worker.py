@@ -4619,24 +4619,44 @@ def _rebuild_source_fidelity_certificate(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: SourceBoundaryQuery,
+    source_record: object,
     /,
 ) -> SourceFidelityCertificate:
     if type(value) is not SourceFidelityCertificate:
         raise TypeError("Stored source fidelity proof has an unexpected concrete type.")
-    stored_source = _rebuild_continuation_value(value.source)
-    if not isinstance(stored_source, SourceBoundaryQuery):
-        raise TypeError("Stored source fidelity proof lost its boundary-query owner.")
     from phydrax.geometry._surface_source_support import _same_tree_content
 
-    if type(stored_source) is not type(source) or not _same_tree_content(
-        stored_source, source
-    ):
+    if not _same_tree_content(value.source, source_record):
         raise ValueError(
             "Stored source fidelity query differs from its reconstructed root."
         )
     witness = (
         None if value.witness is None else _rebuild_source_fidelity_witness(value.witness)
     )
+    from phydrax.geometry.implicit._chart_restriction import ImplicitChartPremise
+
+    chart_parent = None
+    if value.chart_premise is not None:
+        retained = value.chart_premise
+        if type(retained) is not ImplicitChartPremise:
+            raise TypeError("Stored chart restriction lost its exact parent premise.")
+        parent_mesh = _rebuild_as(retained.parent_mesh, CellMesh)
+        parent_geometry = _rebuild_geometry_for_mesh(
+            retained.parent_geometry, parent_mesh
+        )
+        parent_certificate = _rebuild_source_fidelity_certificate(
+            retained.parent_certificate, parent_mesh, parent_geometry, source, source_record
+        )
+        transition = (
+            None
+            if retained.transition is None
+            else _rebuild_cell_geometry_transition(
+                retained.transition, parent_mesh, parent_geometry, mesh, geometry
+            )
+        )
+        chart_parent = ImplicitChartPremise(
+            parent_mesh, parent_geometry, parent_certificate, transition
+        )
     certificate = certify_source_fidelity(
         mesh,
         geometry,
@@ -4644,12 +4664,78 @@ def _rebuild_source_fidelity_certificate(
         tolerance=value.tolerance,
         maximum_normal_deviation=value.maximum_normal_deviation,
         witness=witness,
+        chart_parent=chart_parent,
     )
-    if certificate.certificate_id != value.certificate_id:
+    if (
+        certificate.certificate_id != value.certificate_id
+        or not _same_tree_content(certificate.chart_rows, value.chart_rows)
+        or not _same_tree_content(certificate.chart_restriction, value.chart_restriction)
+    ):
         raise ValueError(
             "Stored source fidelity proof does not reproduce its exact query."
         )
     return certificate
+
+
+def _write_implicit_chart_restriction(directory: Path, /) -> None:
+    from tests.unit.meshing.test_source_association_transfer import (
+        _implicit_surface_result,
+        _profile,
+    )
+    from phydrax.meshing._adaptation import (
+        execute_mesh_adaptation,
+        MarkedMeshAdaptation,
+        MeshAdaptationPolicy,
+        MeshAdaptationRoute,
+        prepare_mesh_adaptation,
+    )
+    from phydrax.meshing._bisection import BisectionCompatibility
+    from phydrax.meshing._implicit_association_transfer import ImplicitAssociationTransfer
+    from phydrax.meshing.providers._native_sources import NativeImplicitSource
+
+    source = _implicit_surface_result(
+        _profile("restriction-sphere"), relative_cell_diameter=0.4
+    )
+    assert source.certification is not None
+    native_source = source.certification.inputs.feature_source
+    assert isinstance(native_source, NativeImplicitSource)
+    refined = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(np.asarray(source.mesh.entity_set(2).entity_ids)),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION,
+                compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+                association_transfer=ImplicitAssociationTransfer(native_source),
+            ),
+        )
+    )
+    assert refined.target.certification is not None
+    certificate = refined.target.certification.fidelity
+    assert certificate is not None and certificate.chart_restriction is not None
+    write_model_artifact(
+        directory / "implicit-chart-restriction.phx", certificate, limits=MODEL_ARCHIVE_LIMITS
+    )
+    print(json.dumps({"certificate_id": certificate.certificate_id}))
+
+
+def _read_implicit_chart_restriction(path: Path, expected: dict[str, str], /) -> None:
+    def rebuild(value: object) -> SourceFidelityCertificate:
+        if type(value) is not SourceFidelityCertificate:
+            raise TypeError("Cold restriction root must be SourceFidelityCertificate.")
+        mesh = _rebuild_as(value.binding.mesh, CellMesh)
+        geometry = _rebuild_geometry_for_mesh(value.binding.geometry, mesh)
+        source = _rebuild_continuation_value(value.source)
+        if not isinstance(source, SourceBoundaryQuery):
+            raise TypeError("Cold restriction source lost its query contract.")
+        return _rebuild_source_fidelity_certificate(value, mesh, geometry, source, value.source)
+
+    certificate = read_model_artifact(
+        path, expected_type=SourceFidelityCertificate, restore=rebuild, limits=MODEL_ARCHIVE_LIMITS
+    )
+    assert certificate.certificate_id == expected["certificate_id"]
+    assert certificate.chart_restriction is not None
+    print(json.dumps({"certificate_id": certificate.certificate_id}))
 
 
 def _rebuild_surface_source_root_atlas(value: object, /) -> SurfaceSourceRootAtlas:
@@ -4862,12 +4948,14 @@ def _rebuild_surface_chart_deformation(
         source_mesh,
         source_geometry,
         source_fidelity_query,
+        source_fidelity_value.source,
     )
     target_fidelity = _rebuild_source_fidelity_certificate(
         target_fidelity_value,
         target_mesh,
         target_geometry,
         target_fidelity_query,
+        target_fidelity_value.source,
     )
     root_cover = (
         None
@@ -4962,6 +5050,7 @@ def _rebuild_surface_chart_boundary_source(
         deformation.source_mesh,
         deformation.source_geometry,
         root,
+        value.root,
     )
     query = SurfaceChartBoundarySource(root, support, deformation, predecessor_fidelity)
     query.require_current()
@@ -14601,6 +14690,10 @@ if __name__ == "__main__":
         _write_implicit_layer_curving_evidence(archive_directory)
     elif operation == "read-implicit-layer-curving-evidence":
         _read_layer_curving_evidence(archive_directory, json.loads(sys.argv[3]))
+    elif operation == "write-implicit-chart-restriction":
+        _write_implicit_chart_restriction(archive_directory)
+    elif operation == "read-implicit-chart-restriction":
+        _read_implicit_chart_restriction(archive_directory, json.loads(sys.argv[3]))
     elif operation == "write-material-reference-seed-transition":
         _write_material_reference_seed_transition(archive_directory)
     elif operation == "read-material-reference-seed-transition":

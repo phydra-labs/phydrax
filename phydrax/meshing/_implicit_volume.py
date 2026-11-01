@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import deque
-from typing import final
+from typing import final, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -2251,6 +2251,233 @@ def _compliance(
     )
 
 
+def _restricted_primal_mesh(
+    profile: AnalyticImplicitProfile,
+    specification: VolumeMeshingSpec,
+    carrier_bounds: np.ndarray,
+    fidelity_tolerance: float,
+    samples: SourceBoundarySamples,
+    site_points: np.ndarray,
+    site_ids: np.ndarray,
+    sample_input_rows: np.ndarray,
+    spatial_resolution: float,
+    /,
+) -> tuple[CellMesh, np.ndarray, np.ndarray] | Literal["cover", "grid"]:
+    """Assemble one restricted-Delaunay primal mesh, or name the refinement it needs.
+
+    `"cover"` asks for a finer source cover and `"grid"` for a finer site grid.
+    The Delaunay, dual, flood and incidence arrays are local to this attempt and
+    are released when it returns; only the assembled volume mesh survives.
+    """
+    points, point_ids, tetrahedra, sample_rows = _delaunay_snapshot(
+        site_points, site_ids, sample_input_rows
+    )
+    if sample_rows.shape != (samples.points.shape[0],):
+        raise _failure(
+            MeshingFailureCategory.INVALID_SOURCE,
+            "Every analytic cover sample must retain one native Delaunay vertex row.",
+            "restricted_delaunay",
+        )
+    for sample_row, primal_row in enumerate(sample_rows.tolist()):
+        if not np.array_equal(points[primal_row], samples.points[sample_row]):
+            raise _failure(
+                MeshingFailureCategory.INVALID_SOURCE,
+                "Every analytic source cover sample must map through the actual native Delaunay vertex map.",
+                "restricted_delaunay",
+            )
+    dual, _, _, _, root_counts = _dual_data(
+        profile,
+        points,
+        tetrahedra,
+        carrier_bounds,
+        spatial_resolution,
+    )
+    raw_facets = np.asarray(dual.facets, dtype=np.int64)
+    raw_cells = np.asarray(dual.cells, dtype=np.int64)
+    del dual
+    if raw_facets.shape[0] != len(root_counts):
+        raise _failure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "Restricted dual rows and interval root records must align exactly.",
+            "restricted_dual_query",
+        )
+    face_incidence = _tetrahedron_faces(tetrahedra)
+    for face, owners in zip(raw_facets.tolist(), raw_cells.tolist(), strict=True):
+        actual = face_incidence.get(
+            _triangle_key(int(face[0]), int(face[1]), int(face[2]))
+        )
+        expected = tuple(sorted(int(value) for value in owners if value >= 0))
+        if actual is None or tuple(sorted(actual)) != expected:
+            raise _failure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                "Native restricted dual candidates must retain their actual primal facet and incident tetrahedra.",
+                "restricted_dual_query",
+            )
+    selected_rows = np.asarray(
+        [row for row, count in enumerate(root_counts) if count == 1],
+        dtype=np.int64,
+    )
+    selected_facets = raw_facets[selected_rows]
+    selected_cells = raw_cells[selected_rows]
+    if any(count > 1 for count in root_counts):
+        return "cover"
+    if selected_rows.size:
+        # Root-certified facets may use strict-side Steiner sites;
+        # complete source coverage is a separate proof.
+        selected_points = points[selected_facets]
+        face_diameters = np.maximum.reduce(
+            tuple(
+                np.nextafter(
+                    np.linalg.norm(
+                        np.nextafter(
+                            selected_points[:, first] - selected_points[:, second],
+                            np.inf,
+                        ),
+                        axis=1,
+                    ),
+                    np.inf,
+                )
+                for first, second in ((0, 1), (1, 2), (2, 0))
+            )
+        )
+        if np.any(face_diameters >= profile.reach_lower / 4.0):
+            return "cover"
+    selected_keys = {
+        _triangle_key(int(face[0]), int(face[1]), int(face[2]))
+        for face in selected_facets.tolist()
+    }
+    classification = _field_box_bounds(profile, points, tetrahedra)[4]
+    hull_dual_rows = [
+        row for row, count in enumerate(root_counts) if count and raw_cells[row, 1] < 0
+    ]
+    if hull_dual_rows:
+        raise _failure(
+            MeshingFailureCategory.COMPLIANCE_FAILED,
+            "The analytic source must be enclosed by the restricted primal carrier; a carrier-hull dual ray intersects its zero set.",
+            "restricted_topology",
+        )
+    # Dual-root topology and complete source projection coverage are
+    # independent proofs; only hull cells need a strict exterior box.
+    try:
+        flood_labels = _classify_sides(
+            profile,
+            points,
+            tetrahedra,
+            classification,
+            face_incidence,
+            selected_keys,
+        )
+        del face_incidence, classification
+        if not selected_rows.size:
+            raise _failure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                "The analytic profile must have a nonempty restricted-Delaunay zero-set boundary.",
+                "restricted_topology",
+            )
+        for cells, root_count in zip(raw_cells.tolist(), root_counts, strict=True):
+            if cells[1] < 0:
+                if flood_labels[cells[0]] != _SIDE_EXTERIOR:
+                    raise _failure(
+                        MeshingFailureCategory.COMPLIANCE_FAILED,
+                        "Every zero-free restricted carrier ray must remain on the exterior region side.",
+                        "restricted_topology",
+                    )
+                continue
+            same_side = flood_labels[cells[0]] == flood_labels[cells[1]]
+            if same_side != (root_count == 0):
+                raise _failure(
+                    MeshingFailureCategory.COMPLIANCE_FAILED,
+                    "Restricted dual root counts must agree with the flooded region-side transition.",
+                    "restricted_topology",
+                )
+        oriented_facets = _orient_facets(
+            points,
+            tetrahedra,
+            selected_facets,
+            selected_cells,
+            flood_labels,
+        )
+    except MeshingFailure as error:
+        return "grid" if error.stage == "restricted_seed_star" else "cover"
+    del raw_facets, raw_cells
+    if not _topology_matches(profile, oriented_facets):
+        return "cover"
+    facet_deviation = _facet_deviation(profile, points, oriented_facets)
+    if np.any(facet_deviation > fidelity_tolerance):
+        return "cover"
+    inside_rows = np.flatnonzero(flood_labels == _SIDE_INTERIOR)
+    edge_keys = {
+        tuple(sorted((int(face[index]), int(face[(index + 1) % 3]))))
+        for face in selected_facets
+        for index in range(3)
+    }
+    boundary_edges = np.asarray(sorted(edge_keys), dtype=np.int64)
+    edge_lengths = np.linalg.norm(
+        points[boundary_edges[:, 1]] - points[boundary_edges[:, 0]], axis=1
+    )
+    size_unmet = False
+    for control in specification.size_controls:
+        if (
+            not isinstance(control, UniformSizeControl)
+            or control.strength is not SizeControlStrength.HARD
+        ):
+            continue
+        allowed = control.target_size * (
+            1.0 + specification.size_compliance.relative_tolerance
+        )
+        allowed += specification.size_compliance.absolute_tolerance
+        if control.maximum_size is not None:
+            allowed = min(allowed, control.maximum_size)
+        if (
+            control.minimum_size is not None
+            and float(np.min(edge_lengths)) < control.minimum_size
+        ):
+            raise _failure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                f"Hard minimum boundary size for control {control.control_id!r} is unmet by the restricted primal facets.",
+                "specification_compliance",
+            )
+        if float(np.max(edge_lengths)) > allowed:
+            size_unmet = True
+        for statistic in specification.size_compliance.target_statistics:
+            quantile = 0.5 if statistic == "p50" else 0.95
+            if float(np.quantile(edge_lengths, quantile)) > allowed:
+                size_unmet = True
+    if size_unmet:
+        return "cover"
+    primal_tet_ids = np.asarray(
+        [
+            _stable_id(
+                (
+                    "restricted-primal-tetrahedron",
+                    profile.profile_id,
+                    tuple(sorted(int(point_ids[value]) for value in tet)),
+                )
+            )
+            for tet in tetrahedra
+        ],
+        dtype=np.int64,
+    )
+    if np.unique(primal_tet_ids).size != primal_tet_ids.size:
+        raise _failure(
+            MeshingFailureCategory.INVALID_SOURCE,
+            "Raw Delaunay tetrahedra require unique deterministic ancestry identities.",
+            "restricted_mesh_assembly",
+        )
+    return _build_mesh(
+        profile,
+        points,
+        point_ids,
+        tetrahedra,
+        primal_tet_ids,
+        inside_rows,
+        selected_facets,
+        selected_cells,
+        selected_facets,
+        flood_labels,
+    )
+
+
 @final
 class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
     """Prepared analytic-profile volume route using restricted Delaunay."""
@@ -2378,332 +2605,137 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             )
             iteration += 1
 
-        while True:
-            points, point_ids, tetrahedra, sample_rows = _delaunay_snapshot(
-                site_points, site_ids, sample_input_rows
-            )
-            if sample_rows.shape != (samples.points.shape[0],):
-                raise _failure(
-                    MeshingFailureCategory.INVALID_SOURCE,
-                    "Every analytic cover sample must retain one native Delaunay vertex row.",
-                    "restricted_delaunay",
-                )
-            for sample_row, primal_row in enumerate(sample_rows.tolist()):
-                if not np.array_equal(points[primal_row], samples.points[sample_row]):
-                    raise _failure(
-                        MeshingFailureCategory.INVALID_SOURCE,
-                        "Every analytic source cover sample must map through the actual native Delaunay vertex map.",
-                        "restricted_delaunay",
-                    )
-            dual, _, endpoint_bounds, roots_by_row, root_counts = _dual_data(
+        while isinstance(
+            attempt := _restricted_primal_mesh(
                 profile,
-                points,
-                tetrahedra,
-                self.carrier_bounds,
-                spatial_resolution,
-            )
-            if np.asarray(dual.facets).shape[0] != len(root_counts):
-                raise _failure(
-                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                    "Restricted dual rows and interval root records must align exactly.",
-                    "restricted_dual_query",
-                )
-            face_incidence = _tetrahedron_faces(tetrahedra)
-            raw_facets = np.asarray(dual.facets, dtype=np.int64)
-            raw_cells = np.asarray(dual.cells, dtype=np.int64)
-            for face, owners in zip(raw_facets.tolist(), raw_cells.tolist(), strict=True):
-                actual = face_incidence.get(
-                    _triangle_key(int(face[0]), int(face[1]), int(face[2]))
-                )
-                expected = tuple(sorted(int(value) for value in owners if value >= 0))
-                if actual is None or tuple(sorted(actual)) != expected:
-                    raise _failure(
-                        MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                        "Native restricted dual candidates must retain their actual primal facet and incident tetrahedra.",
-                        "restricted_dual_query",
-                    )
-            selected_rows = np.asarray(
-                [row for row, count in enumerate(root_counts) if count == 1],
-                dtype=np.int64,
-            )
-            selected_facets = raw_facets[selected_rows]
-            selected_cells = raw_cells[selected_rows]
-            multiple_rows = [row for row, count in enumerate(root_counts) if count > 1]
-            if multiple_rows:
-                refresh_cover()
-                continue
-            if selected_rows.size:
-                # Root-certified facets may use strict-side Steiner sites;
-                # complete source coverage is a separate proof.
-                selected_points = points[selected_facets]
-                face_diameters = np.maximum.reduce(
-                    tuple(
-                        np.nextafter(
-                            np.linalg.norm(
-                                np.nextafter(
-                                    selected_points[:, first]
-                                    - selected_points[:, second],
-                                    np.inf,
-                                ),
-                                axis=1,
-                            ),
-                            np.inf,
-                        )
-                        for first, second in ((0, 1), (1, 2), (2, 0))
-                    )
-                )
-                if np.any(face_diameters >= profile.reach_lower / 4.0):
-                    refresh_cover()
-                    continue
-            selected_keys = {
-                _triangle_key(int(face[0]), int(face[1]), int(face[2]))
-                for face in selected_facets.tolist()
-            }
-            classification = _field_box_bounds(profile, points, tetrahedra)[4]
-            hull_dual_rows = [
-                row
-                for row, count in enumerate(root_counts)
-                if count and raw_cells[row, 1] < 0
-            ]
-            if hull_dual_rows:
-                raise _failure(
-                    MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "The analytic source must be enclosed by the restricted primal carrier; a carrier-hull dual ray intersects its zero set.",
-                    "restricted_topology",
-                )
-            # Dual-root topology and complete source projection coverage are
-            # independent proofs; only hull cells need a strict exterior box.
-            try:
-                flood_labels = _classify_sides(
-                    profile,
-                    points,
-                    tetrahedra,
-                    classification,
-                    face_incidence,
-                    selected_keys,
-                )
-                if not selected_rows.size:
-                    raise _failure(
-                        MeshingFailureCategory.COMPLIANCE_FAILED,
-                        "The analytic profile must have a nonempty restricted-Delaunay zero-set boundary.",
-                        "restricted_topology",
-                    )
-                for cells, root_count in zip(
-                    raw_cells.tolist(), root_counts, strict=True
-                ):
-                    if cells[1] < 0:
-                        if flood_labels[cells[0]] != _SIDE_EXTERIOR:
-                            raise _failure(
-                                MeshingFailureCategory.COMPLIANCE_FAILED,
-                                "Every zero-free restricted carrier ray must remain on the exterior region side.",
-                                "restricted_topology",
-                            )
-                        continue
-                    same_side = flood_labels[cells[0]] == flood_labels[cells[1]]
-                    if same_side != (root_count == 0):
-                        raise _failure(
-                            MeshingFailureCategory.COMPLIANCE_FAILED,
-                            "Restricted dual root counts must agree with the flooded region-side transition.",
-                            "restricted_topology",
-                        )
-                oriented_facets = _orient_facets(
-                    points,
-                    tetrahedra,
-                    selected_facets,
-                    selected_cells,
-                    flood_labels,
-                )
-            except MeshingFailure as error:
-                if error.stage == "restricted_seed_star":
-                    refine_grid()
-                else:
-                    refresh_cover()
-                continue
-            if not _topology_matches(profile, oriented_facets):
-                refresh_cover()
-                continue
-            facet_deviation = _facet_deviation(profile, points, oriented_facets)
-            if np.any(facet_deviation > self.fidelity_tolerance):
-                refresh_cover()
-                continue
-            inside_rows = np.flatnonzero(flood_labels == _SIDE_INTERIOR)
-            edge_keys = {
-                tuple(sorted((int(face[index]), int(face[(index + 1) % 3]))))
-                for face in selected_facets
-                for index in range(3)
-            }
-            boundary_edges = np.asarray(sorted(edge_keys), dtype=np.int64)
-            edge_lengths = np.linalg.norm(
-                points[boundary_edges[:, 1]] - points[boundary_edges[:, 0]], axis=1
-            )
-            size_unmet = False
-            for control in specification.size_controls:
-                if (
-                    not isinstance(control, UniformSizeControl)
-                    or control.strength is not SizeControlStrength.HARD
-                ):
-                    continue
-                allowed = control.target_size * (
-                    1.0 + specification.size_compliance.relative_tolerance
-                )
-                allowed += specification.size_compliance.absolute_tolerance
-                if control.maximum_size is not None:
-                    allowed = min(allowed, control.maximum_size)
-                if (
-                    control.minimum_size is not None
-                    and float(np.min(edge_lengths)) < control.minimum_size
-                ):
-                    raise _failure(
-                        MeshingFailureCategory.COMPLIANCE_FAILED,
-                        f"Hard minimum boundary size for control {control.control_id!r} is unmet by the restricted primal facets.",
-                        "specification_compliance",
-                    )
-                if float(np.max(edge_lengths)) > allowed:
-                    size_unmet = True
-                for statistic in specification.size_compliance.target_statistics:
-                    quantile = 0.5 if statistic == "p50" else 0.95
-                    if float(np.quantile(edge_lengths, quantile)) > allowed:
-                        size_unmet = True
-            if size_unmet:
-                refresh_cover()
-                continue
-            deviation_upper = float(np.max(facet_deviation, initial=0.0))
-            primal_tet_ids = np.asarray(
-                [
-                    _stable_id(
-                        (
-                            "restricted-primal-tetrahedron",
-                            profile.profile_id,
-                            tuple(sorted(int(point_ids[value]) for value in tet)),
-                        )
-                    )
-                    for tet in tetrahedra
-                ],
-                dtype=np.int64,
-            )
-            if np.unique(primal_tet_ids).size != primal_tet_ids.size:
-                raise _failure(
-                    MeshingFailureCategory.INVALID_SOURCE,
-                    "Raw Delaunay tetrahedra require unique deterministic ancestry identities.",
-                    "restricted_mesh_assembly",
-                )
-            mesh, target_face_global_ids, boundary_faces = _build_mesh(
-                profile,
-                points,
-                point_ids,
-                tetrahedra,
-                primal_tet_ids,
-                inside_rows,
-                selected_facets,
-                selected_cells,
-                selected_facets,
-                flood_labels,
-            )
-            mesh, target_face_global_ids, boundary_faces = (
-                _native_fixed_boundary_quality_pass(
-                    mesh, boundary_faces, profile, self.schedule
-                )
-            )
-            if not _topology_matches(profile, boundary_faces):
-                raise _failure(
-                    MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "The native fixed-boundary quality pass changed analytic boundary topology.",
-                    "restricted_quality_materialization",
-                )
-            facet_deviation = _facet_deviation(
-                profile, np.asarray(mesh.coordinates, dtype=np.float64), boundary_faces
-            )
-            if np.any(facet_deviation > self.fidelity_tolerance):
-                raise _failure(
-                    MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "The native fixed-boundary quality pass violated analytic source fidelity.",
-                    "restricted_quality_materialization",
-                )
-            deviation_upper = float(np.max(facet_deviation, initial=0.0))
-            geometry = CellGeometrySpec.affine(mesh)
-            fidelity_witness = SourceBoundaryDistanceWitness(
-                mesh_id=mesh.mesh_id,
-                geometry_id=cell_geometry_id(geometry),
-                topology_id=mesh.topology_id,
-                source_id=profile.source_id,
-                source_revision=profile.source_revision,
-                source_query_id=profile.profile_id,
-                sample_count=samples.points.shape[0],
-                cover_radius=cover_radius,
-                target_facet_global_ids=target_face_global_ids,
-            )
-            coverage_witness = RestrictedDelaunayBoundaryWitness(
-                mesh_id=mesh.mesh_id,
-                geometry_id=cell_geometry_id(geometry),
-                topology_id=mesh.topology_id,
-                profile_id=profile.profile_id,
-                source_id=profile.source_id,
-                source_revision=profile.source_revision,
-                domain_id=profile.domain_id,
-                distance_witness_id=fidelity_witness.witness_id,
-            )
-            compliance = _compliance(
                 specification,
-                self.schedule,
-                mesh,
-                boundary_faces,
+                self.carrier_bounds,
                 self.fidelity_tolerance,
-                deviation_upper,
+                samples,
+                site_points,
+                site_ids,
+                sample_input_rows,
+                spatial_resolution,
+            ),
+            str,
+        ):
+            if attempt == "cover":
+                refresh_cover()
+            else:
+                refine_grid()
+        sample_count = samples.points.shape[0]
+        del samples, site_points, site_ids, sample_input_rows, refresh_cover, refine_grid
+        # The primal mesh is only the quality pass input; dropping the attempt
+        # releases it as soon as the improved mesh exists.
+        primal_mesh, _, primal_boundary_faces = attempt
+        del attempt, _
+        mesh, target_face_global_ids, boundary_faces = (
+            _native_fixed_boundary_quality_pass(
+                primal_mesh, primal_boundary_faces, profile, self.schedule
             )
-            if not compliance.passed:
-                raise _failure(
-                    MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "Restricted analytic volume construction does not meet requested controls: "
-                    + "; ".join(compliance.issues),
-                    "specification_compliance",
-                )
-            organization = _organization(
-                profile,
-                self.coordinate_contract,
-                mesh,
-                target_face_global_ids,
-                boundary_faces,
-                deviation_upper,
+        )
+        del primal_mesh, primal_boundary_faces
+        if not _topology_matches(profile, boundary_faces):
+            raise _failure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                "The native fixed-boundary quality pass changed analytic boundary topology.",
+                "restricted_quality_materialization",
             )
-            cell_regions = np.zeros((mesh.blocks[0].cell_count,), dtype=np.int32)
-            # The exact global embedding is computed once here and passed to
-            # the coverage replay and to acceptance, which check its inputs.
-            validity = certify_cell_geometry_validity(geometry, mesh=mesh)
-            embedding = (
-                certify_global_embedding(mesh, geometry, validity)
-                if validity.all_certified
-                else None
+        facet_deviation = _facet_deviation(
+            profile, np.asarray(mesh.coordinates, dtype=np.float64), boundary_faces
+        )
+        if np.any(facet_deviation > self.fidelity_tolerance):
+            raise _failure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                "The native fixed-boundary quality pass violated analytic source fidelity.",
+                "restricted_quality_materialization",
             )
-            validate_restricted_delaunay_boundary_witness(
-                mesh,
-                geometry,
-                profile,
-                cell_regions,
-                fidelity_witness,
-                coverage_witness,
-                embedding=embedding,
+        deviation_upper = float(np.max(facet_deviation, initial=0.0))
+        geometry = CellGeometrySpec.affine(mesh)
+        fidelity_witness = SourceBoundaryDistanceWitness(
+            mesh_id=mesh.mesh_id,
+            geometry_id=cell_geometry_id(geometry),
+            topology_id=mesh.topology_id,
+            source_id=profile.source_id,
+            source_revision=profile.source_revision,
+            source_query_id=profile.profile_id,
+            sample_count=sample_count,
+            cover_radius=cover_radius,
+            target_facet_global_ids=target_face_global_ids,
+        )
+        coverage_witness = RestrictedDelaunayBoundaryWitness(
+            mesh_id=mesh.mesh_id,
+            geometry_id=cell_geometry_id(geometry),
+            topology_id=mesh.topology_id,
+            profile_id=profile.profile_id,
+            source_id=profile.source_id,
+            source_revision=profile.source_revision,
+            domain_id=profile.domain_id,
+            distance_witness_id=fidelity_witness.witness_id,
+        )
+        compliance = _compliance(
+            specification,
+            self.schedule,
+            mesh,
+            boundary_faces,
+            self.fidelity_tolerance,
+            deviation_upper,
+        )
+        if not compliance.passed:
+            raise _failure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                "Restricted analytic volume construction does not meet requested controls: "
+                + "; ".join(compliance.issues),
+                "specification_compliance",
             )
-            certification = NativeCertificationRequest(
-                MeshCertificationSchedule("volume_implicit"),
-                profile.source_id,
-                profile.source_revision,
-                domain=profile,
-                cell_regions=cell_regions,
-                fidelity_source=profile,
-                fidelity_tolerance=self.fidelity_tolerance,
-                fidelity_witness=fidelity_witness,
-                feature_source=profile,
-                source_coverage_witness=coverage_witness,
-                global_embedding=embedding,
-            )
-            return NativeMeshConstruction(
-                mesh,
-                self.coordinate_contract,
-                compliance,
-                certification,
-                geometry=geometry,
-                organization=organization,
-            )
+        cell_regions = np.zeros((mesh.blocks[0].cell_count,), dtype=np.int32)
+        # The exact global embedding is computed once here and passed to
+        # the coverage replay and to acceptance, which check its inputs.
+        validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+        embedding = (
+            certify_global_embedding(mesh, geometry, validity)
+            if validity.all_certified
+            else None
+        )
+        del validity
+        validate_restricted_delaunay_boundary_witness(
+            mesh,
+            geometry,
+            profile,
+            cell_regions,
+            fidelity_witness,
+            coverage_witness,
+            embedding=embedding,
+        )
+        organization = _organization(
+            profile,
+            self.coordinate_contract,
+            mesh,
+            target_face_global_ids,
+            boundary_faces,
+            deviation_upper,
+        )
+        certification = NativeCertificationRequest(
+            MeshCertificationSchedule("volume_implicit"),
+            profile.source_id,
+            profile.source_revision,
+            domain=profile,
+            cell_regions=cell_regions,
+            fidelity_source=profile,
+            fidelity_tolerance=self.fidelity_tolerance,
+            fidelity_witness=fidelity_witness,
+            feature_source=profile,
+            source_coverage_witness=coverage_witness,
+            global_embedding=embedding,
+        )
+        return NativeMeshConstruction(
+            mesh,
+            self.coordinate_contract,
+            compliance,
+            certification,
+            geometry=geometry,
+            organization=organization,
+        )
 
 
 @checked

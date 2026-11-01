@@ -284,6 +284,11 @@ def _register_model_archive_types() -> None:
     from ..geometry.implicit._adaptive_discovery import (
         AdaptiveImplicitSurfaceArchiveRecipe,
     )
+    from ..geometry.implicit._chart_restriction import (
+        ImplicitChartPremise,
+        ImplicitChartRestrictionEvidence,
+        ImplicitChartRows,
+    )
     from ..geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
     from ..geometry.implicit._restricted_delaunay_coverage import (
         RestrictedDelaunayBoundaryWitness,
@@ -508,6 +513,9 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.analytic.internal", _TorusKernel),
         ("phydrax.geometry.implicit", AdaptiveImplicitSurfaceArchiveRecipe),
         ("phydrax.geometry.implicit", AdaptiveImplicitSurfacePolicy),
+        ("phydrax.geometry.implicit", ImplicitChartPremise),
+        ("phydrax.geometry.implicit", ImplicitChartRestrictionEvidence),
+        ("phydrax.geometry.implicit", ImplicitChartRows),
         ("phydrax.geometry.reconstruction", ReconstructionReport),
         ("phydrax.geometry.reconstruction", ReconstructedGeometrySourceArchiveRecipe),
         ("phydrax.geometry.reconstruction.internal", _ReconstructedTrianglePatch),

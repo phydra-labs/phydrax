@@ -687,13 +687,15 @@ def _volume_topology_findings(
             cell_adjacency[first].add(second)
             cell_adjacency[second].add(first)
     component_count = _connected_components(tuple(cell_adjacency))
+    del cell_adjacency
+    canonical_facets = {key: key for key in occurrences}
 
     vertex_link_faces: dict[int, list[tuple[int, ...]]] = defaultdict(list)
     edge_link_cells: dict[
         tuple[int, int], list[tuple[frozenset[int], frozenset[int]]]
     ] = defaultdict(list)
     for cell, faces in zip(cells, cell_faces, strict=True):
-        face_keys = tuple(frozenset(face) for face in faces)
+        face_keys = tuple(canonical_facets[frozenset(face)] for face in faces)
         for identifier in set(cell.vertex_ids):
             vertex_link_edges: list[tuple[int, int]] = []
             for face in faces:
@@ -724,7 +726,9 @@ def _volume_topology_findings(
         }
         for edge in cell_edges:
             incident_faces = tuple(
-                face_key for face_key in face_keys if set(edge) <= face_key
+                face_key
+                for face_key in face_keys
+                if edge[0] in face_key and edge[1] in face_key
             )
             if len(incident_faces) != 2:
                 findings.append(
@@ -737,6 +741,7 @@ def _volume_topology_findings(
                 continue
             edge_link_cells[edge].append((incident_faces[0], incident_faces[1]))
 
+    del canonical_facets
     for identifier, polygons in vertex_link_faces.items():
         if not _surface_link_is_manifold(tuple(polygons)):
             findings.append(
@@ -746,6 +751,7 @@ def _volume_topology_findings(
                     "The exact volume-vertex link is not one disk or sphere.",
                 )
             )
+    del vertex_link_faces
     for edge, edge_ring in edge_link_cells.items():
         adjacency: dict[frozenset[int], list[frozenset[int]]] = defaultdict(list)
         for first, second in edge_ring:
@@ -1211,6 +1217,7 @@ def build_oriented_boundary(
             "The exact source complex is not a nonempty full-dimensional cell complex.",
         )
         return OrientedBoundary("unresolved", (), (), (), (), (), False, (finding,))
+    vertex_images, mismatched_vertices = _vertex_images(cells)
     try:
         facet_ids = _facet_identity_map(mesh)
         occurrences: dict[
@@ -1218,14 +1225,21 @@ def build_oriented_boundary(
         ] = defaultdict(list)
         cell_faces_list: list[tuple[tuple[int, ...], ...]] = []
         for cell_index, cell in enumerate(cells):
+            spatial_corners = (
+                tuple(vertex_images[identifier] for identifier in cell.vertex_ids)
+                if not mismatched_vertices
+                else tuple(
+                    (point[0], point[1], point[2])
+                    for point in cell.corner_images
+                    if len(point) == 3
+                )
+            )
+            if len(spatial_corners) != len(cell.corner_images):
+                raise ValueError("A volume facet has non-spatial corner images.")
             cell_faces = []
             for route in _cell_facets(cell):
                 ids = tuple(cell.vertex_ids[index] for index in route)
-                points = tuple(
-                    (point[0], point[1], point[2])
-                    for point in (cell.corner_images[index] for index in route)
-                    if len(point) == 3
-                )
+                points = tuple(spatial_corners[index] for index in route)
                 if len(points) != len(ids):
                     raise ValueError("A volume facet has non-spatial corner images.")
                 cell_faces.append(ids)
@@ -1235,7 +1249,6 @@ def build_oriented_boundary(
         finding = BoundaryFinding("boundary_facet_preparation", (), str(error))
         return OrientedBoundary("unresolved", (), (), (), (), (), False, (finding,))
 
-    vertex_images, mismatched_vertices = _vertex_images(cells)
     if mismatched_vertices:
         findings.append(
             BoundaryFinding(
@@ -1335,6 +1348,7 @@ def build_oriented_boundary(
     topology_findings, volume_component_count = _volume_topology_findings(
         cells, cell_faces, occurrences
     )
+    del occurrences, cell_faces, cell_faces_list, facet_ids
     findings.extend(topology_findings)
     face_tuple = tuple(faces)
     if not face_tuple:

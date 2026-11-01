@@ -6,7 +6,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import math
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import cache
@@ -20,6 +21,10 @@ from ..discretization._cell_geometry import (
     CellGeometrySpec,
     CellVertexGeometryElement,
     coordinate_effective_basis,
+    PerCellRestrictedCellGeometryElement,
+    PolynomialComposedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+    RestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
 from ..discretization._cell_mesh import CellMesh
@@ -133,6 +138,68 @@ def _linear_simplex_chart(
     return corners, offset, matrix, bounds
 
 
+# Elements whose effective basis composes a per-cell reference chart.
+_CELL_CHARTED = (
+    PerCellRestrictedCellGeometryElement
+    | RestrictedCellGeometryElement
+    | PolynomialComposedCellGeometryElement
+    | RationalComposedCellGeometryElement
+)
+
+
+def _straight_simplex_frame(
+    element: ScalarCoordinateElement,
+    references: tuple[tuple[Fraction, ...], ...],
+    dimension: int,
+    width: int,
+    /,
+) -> tuple[tuple[int, ...], int, tuple[int, ...]] | None:
+    """Corner DOFs of an element mapping every cell affinely through them.
+
+    A cell-independent basis of total degree at most one that is nodal at the
+    unit-simplex corners maps each cell onto the simplex spanned by its corner
+    coordinate rows: reference corner `k` lands exactly on the row of DOF
+    `corner_dofs[k]`.  Returns `(corner_dofs, origin, units)` with the reference
+    rows of the origin and of each unit vector, or `None` for any other element
+    (whose cells keep their exact per-cell expressions).
+    """
+    if (
+        isinstance(element, _CELL_CHARTED)
+        or width != dimension + 1
+        or len(references) != dimension + 1
+        or frozenset(references) != _unit_simplex_corners(dimension)
+    ):
+        return None
+    try:
+        basis = coordinate_effective_basis(element)
+    except (ValueError, ZeroDivisionError):
+        return None
+    if len(basis) != width or any(
+        isinstance(function, RationalPolynomial)
+        or any(
+            sum(exponent) > 1 or not isinstance(value, Fraction)
+            for exponent, value in function.items()
+        )
+        for function in basis
+    ):
+        return None
+    corner_dofs: list[int] = []
+    for point in references:
+        values = tuple(evaluate_polynomial(function, point) for function in basis)
+        nodal = tuple(dof for dof, value in enumerate(values) if value)
+        if len(nodal) != 1 or values[nodal[0]] != 1:
+            return None
+        corner_dofs.append(nodal[0])
+    origin = references.index((_ZERO,) * dimension)
+    units = tuple(
+        references.index(
+            tuple(Fraction(int(axis == column)) for axis in range(dimension))
+        )
+        for column in range(dimension)
+    )
+    return tuple(corner_dofs), origin, units
+
+
 def _pyramid_box_reference(
     point: tuple[Fraction, ...], /
 ) -> tuple[Fraction, Fraction, Fraction]:
@@ -217,19 +284,27 @@ def _solve_affine(
     raise UnsupportedEmbeddingMap("Reference vertices do not determine an affine chart.")
 
 
+@cache
+def _affine_exponents(
+    dimension: int, /
+) -> tuple[tuple[int, ...], tuple[tuple[int, ...], ...]]:
+    return (0,) * dimension, tuple(
+        tuple(int(index == column) for index in range(dimension))
+        for column in range(dimension)
+    )
+
+
 def _affine_expressions(
     offset: tuple[ExactScalar, ...], matrix: tuple[tuple[ExactScalar, ...], ...]
 ) -> tuple[dict[tuple[int, ...], ExactScalar], ...]:
-    dimension = len(matrix[0])
-    zero = (0,) * dimension
+    zero, units = _affine_exponents(len(matrix[0]))
     result = []
     for axis, row in enumerate(matrix):
         expression: dict[tuple[int, ...], ExactScalar] = {}
         if offset[axis]:
             expression[zero] = offset[axis]
-        for column, coefficient in enumerate(row):
+        for exponent, coefficient in zip(units, row, strict=True):
             if coefficient:
-                exponent = tuple(int(index == column) for index in range(dimension))
                 expression[exponent] = coefficient
         result.append(expression)
     return tuple(result)
@@ -259,7 +334,7 @@ class EmbeddingCell:
     vertex_indices: tuple[int, ...]
     vertex_ids: tuple[int, ...]
     reference_vertices: tuple[tuple[Fraction, ...], ...]
-    coordinates: tuple[Expression, ...]
+    coordinate_expressions: tuple[Expression, ...] | None
     corner_images: tuple[tuple[ExactScalar, ...], ...]
     affine_offset: tuple[ExactScalar, ...] | None
     affine_matrix: tuple[tuple[ExactScalar, ...], ...] | None
@@ -269,6 +344,17 @@ class EmbeddingCell:
 
     pyramid_normalizations: tuple[PyramidApexNormalization, ...] | None = None
     pyramid_reference_arguments: tuple[Expression, ...] | None = None
+
+    @property
+    def coordinates(self) -> tuple[Expression, ...]:
+        """Materialize affine polynomials only for a consumer that needs them."""
+        if self.coordinate_expressions is not None:
+            return self.coordinate_expressions
+        if self.affine_offset is None or self.affine_matrix is None:
+            raise UnsupportedEmbeddingMap(
+                "An implicit affine chart needs its exact frame."
+            )
+        return _affine_expressions(self.affine_offset, self.affine_matrix)
 
     @property
     def proof_domain(self) -> BernsteinDomain:
@@ -322,19 +408,13 @@ def _polyhedral_face_routes(
 
 def _cell_expressions(
     element: ScalarCoordinateElement,
-    route: np.ndarray,
-    source_bank: tuple[tuple[ExactScalar, ...], ...],
+    local: tuple[tuple[ExactScalar, ...], ...],
     row: int,
 ) -> tuple[Expression, ...]:
     basis = coordinate_effective_basis(element, cell_row=row)
     if not basis:
         raise UnsupportedEmbeddingMap(
             "Coordinate element has no exact effective source basis."
-        )
-    local = tuple(source_bank[int(index)] for index in route)
-    if not local or any(len(value) != len(local[0]) for value in local):
-        raise UnsupportedEmbeddingMap(
-            "Coordinate source rows have inconsistent ambient dimension."
         )
     coefficients = tuple(
         tuple(local[dof][axis] for dof in range(len(local)))
@@ -348,14 +428,154 @@ def _cell_expressions(
         ) from error
 
 
+_CellChart = tuple[
+    tuple[Expression, ...] | None,
+    tuple[tuple[ExactScalar, ...], ...],
+    tuple[ExactScalar, ...] | None,
+    tuple[tuple[ExactScalar, ...], ...] | None,
+    tuple[tuple[float, float], ...],
+    tuple[PyramidApexNormalization, ...] | None,
+    tuple[Expression, ...] | None,
+]
+
+
+def _straight_cell_chart(
+    local: tuple[tuple[Fraction, ...], ...],
+    frame: tuple[tuple[int, ...], int, tuple[int, ...]],
+    /,
+) -> _CellChart:
+    """Chart of a straight simplex read from its exact corner coordinate rows.
+
+    The corner images are the routed rows themselves, the affine chart is the
+    origin row plus the unit-corner differences, and its degree-one Bernstein
+    controls are the corners, so no per-cell polynomial is composed.
+    """
+    corner_dofs, origin, units = frame
+    corners = tuple(local[dof] for dof in corner_dofs)
+    offset = corners[origin]
+    matrix = tuple(
+        tuple(corners[unit][axis] - value for unit in units)
+        for axis, value in enumerate(offset)
+    )
+    bounds = tuple(
+        (
+            coefficient_endpoint(min(values), upper=False, saturate=True),
+            coefficient_endpoint(max(values), upper=True, saturate=True),
+        )
+        for values in zip(*corners, strict=True)
+    )
+    return (
+        None,
+        corners,
+        offset,
+        matrix,
+        bounds,
+        None,
+        None,
+    )
+
+
+def _mapped_cell_chart(
+    element: ScalarCoordinateElement,
+    local: tuple[tuple[ExactScalar, ...], ...],
+    row: int,
+    kind: str,
+    dimension: int,
+    domain: str,
+    references: tuple[tuple[Fraction, ...], ...],
+    ambient: int,
+    /,
+) -> _CellChart:
+    """Chart of a cell from its exact composed per-cell coordinate expressions."""
+    coordinates = _cell_expressions(element, local, row)
+    if len(coordinates) != ambient:
+        raise UnsupportedEmbeddingMap(
+            "Exact source map ambient dimension does not match the mesh."
+        )
+    pyramid_normalizations: tuple[PyramidApexNormalization, ...] | None = None
+    pyramid_reference_arguments: tuple[Expression, ...] | None = None
+    proof_references = references
+    proof_coordinates = coordinates
+    proof_domain = domain
+    if kind == "pyramid":
+        pyramid_normalizations = tuple(
+            normalize_pyramid_reference_expression(expression)
+            for expression in coordinates
+        )
+        if any(
+            normalization.apex_trace is None or normalization.apex_value is None
+            for normalization in pyramid_normalizations
+        ):
+            raise UnsupportedEmbeddingMap(
+                "Pyramid source map has no exact constant apex continuation."
+            )
+        pyramid_reference_arguments = pyramid_reference_to_box_arguments()
+        proof_references = tuple(_pyramid_box_reference(point) for point in references)
+        proof_coordinates = tuple(
+            normalization.expression for normalization in pyramid_normalizations
+        )
+        proof_domain = "box"
+    linear_chart = (
+        _linear_simplex_chart(coordinates, references, dimension)
+        if proof_domain == "simplex"
+        else None
+    )
+    offset: tuple[ExactScalar, ...] | None
+    matrix: tuple[tuple[ExactScalar, ...], ...] | None
+    if linear_chart is None:
+        corners = tuple(
+            tuple(_evaluate(expression, point) for expression in proof_coordinates)
+            for point in proof_references
+        )
+        offset, matrix = _solve_affine(references, corners)
+        bounds = tuple(
+            polynomial_bounds(expression, cast(BernsteinDomain, proof_domain), dimension)
+            for expression in proof_coordinates
+        )
+    else:
+        corners, offset, matrix, bounds = linear_chart
+    affine_expressions = _affine_expressions(offset, matrix)
+    if not (
+        len(affine_expressions) == len(coordinates)
+        and all(
+            expression_equal(source, target)
+            for source, target in zip(coordinates, affine_expressions, strict=True)
+        )
+    ):
+        offset = None
+        matrix = None
+    return (
+        coordinates,
+        corners,
+        offset,
+        matrix,
+        bounds,
+        pyramid_normalizations,
+        pyramid_reference_arguments,
+    )
+
+
 def prepare_embedding_cells(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[EmbeddingCell, ...]:
-    """Bind exact effective coordinate expressions to mesh-order cell identities."""
+    """Bind exact source-coordinate charts to mesh-order cell identities."""
+    return tuple(_iter_embedding_cells(mesh, geometry))
+
+
+def _iter_embedding_cells(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> Iterator[EmbeddingCell]:
+    """Bind exact source-coordinate charts to mesh-order cell identities.
+
+    Each block's connectivity, routes and identities are read once as plain rows
+    and streamed cell by cell.  Straight simplices of a nodal degree-one element
+    take their chart directly from the exact corner rows; every other fixed-
+    reference cell composes its exact per-cell expressions.
+    """
     elements, routes, _ = geometry.resolve(mesh)
     bank = geometry.source_coordinates()
-    vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    result: list[EmbeddingCell] = []
+    vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
+    ambient = mesh.ambient_dimension
     block_offset = 0
     for block, element, block_route in zip(mesh.blocks, elements, routes, strict=True):
         rows = np.asarray(block.vertices, dtype=np.int64)
@@ -372,22 +592,37 @@ def prepare_embedding_cells(
             raise UnsupportedEmbeddingMap(
                 "Cell connectivity and coordinate routes are not row-aligned."
             )
-        for local_index in range(rows.shape[0]):
-            row = rows[local_index, :]
-            route = route_rows[local_index, :]
-            valid = active[local_index, :]
-            cell_id = ids[local_index]
-            active_row = tuple(int(value) for value in row[valid])
-            kind = str(block.cell_kind)
-            dimension = block.topological_dimension
-            pyramid_normalizations: tuple[PyramidApexNormalization, ...] | None = None
-            pyramid_reference_arguments: tuple[Expression, ...] | None = None
-            if isinstance(element, CellVertexGeometryElement):
-                if route.shape != valid.shape:
+        kind = str(block.cell_kind)
+        name = str(block.name)
+        dimension = block.topological_dimension
+        vertex_element = isinstance(element, CellVertexGeometryElement)
+        frame = None
+        if not vertex_element:
+            if not isinstance(element, ScalarCoordinateElement):
+                raise UnsupportedEmbeddingMap(
+                    "Fixed-reference embedding requires a scalar coordinate element."
+                )
+            facet_routes = _reference_facets(kind, dimension)
+            domain = _map_domain(kind, dimension)
+            references = _reference_rows(kind)
+            if domain == "simplex":
+                frame = _straight_simplex_frame(
+                    element, references, dimension, route_rows.shape[1]
+                )
+        for local_index, (row, route, valid, cell_id) in enumerate(
+            zip(rows, route_rows, active, ids, strict=True)
+        ):
+            active_row = tuple(
+                int(vertex) for vertex, keep in zip(row, valid, strict=True) if keep
+            )
+            if vertex_element:
+                if len(route) != len(valid):
                     raise UnsupportedEmbeddingMap(
                         "Vertex-based coordinate routes must align with active cell vertices."
                     )
-                active_route = tuple(int(value) for value in route[valid])
+                active_route = tuple(
+                    int(index) for index, keep in zip(route, valid, strict=True) if keep
+                )
                 if len(active_row) != len(active_route):
                     raise UnsupportedEmbeddingMap(
                         "Active cell vertices and coordinate routes disagree."
@@ -406,135 +641,94 @@ def prepare_embedding_cells(
                     raise UnsupportedEmbeddingMap(
                         "Variable-topology cell has too few active vertices."
                     )
-                references: tuple[tuple[Fraction, ...], ...] = ()
-                coordinates: tuple[Expression, ...] = ()
-                offset = None
-                matrix = None
-                bounds: tuple[tuple[float, float], ...] = tuple(
-                    (
-                        coefficient_endpoint(
-                            min(point[axis] for point in corners), upper=False
-                        ),
-                        coefficient_endpoint(
-                            max(point[axis] for point in corners), upper=True
-                        ),
-                    )
-                    for axis in range(mesh.ambient_dimension)
+                chart: _CellChart = (
+                    (),
+                    corners,
+                    None,
+                    None,
+                    tuple(
+                        (
+                            coefficient_endpoint(
+                                min(point[axis] for point in corners), upper=False
+                            ),
+                            coefficient_endpoint(
+                                max(point[axis] for point in corners), upper=True
+                            ),
+                        )
+                        for axis in range(ambient)
+                    ),
+                    None,
+                    None,
                 )
+                cell_references: tuple[tuple[Fraction, ...], ...] = ()
                 cell_domain = "polyhedron" if kind == "polyhedron" else "polygon"
             else:
-                if not isinstance(element, ScalarCoordinateElement):
-                    raise UnsupportedEmbeddingMap(
-                        "Fixed-reference embedding requires a scalar coordinate element."
-                    )
-                if not np.all(valid):
+                if not all(valid):
                     raise UnsupportedEmbeddingMap(
                         "Padded fixed-reference cells are not supported by this map."
                     )
-                facet_routes = _reference_facets(kind, dimension)
-                domain = _map_domain(kind, dimension)
-                cell_domain = domain
-                references = _reference_rows(kind)
                 if len(references) != len(active_row):
                     raise UnsupportedEmbeddingMap(
                         "Reference corners do not match cell vertex incidence."
                     )
-                coordinates = _cell_expressions(element, route, bank, local_index)
-                if len(coordinates) != mesh.ambient_dimension:
+                local = tuple(bank[index] for index in route)
+                if not local or any(len(value) != len(local[0]) for value in local):
                     raise UnsupportedEmbeddingMap(
-                        "Exact source map ambient dimension does not match the mesh."
+                        "Coordinate source rows have inconsistent ambient dimension."
                     )
-                proof_references = references
-                proof_coordinates = coordinates
-                proof_domain = domain
-                if kind == "pyramid":
-                    pyramid_normalizations = tuple(
-                        normalize_pyramid_reference_expression(expression)
-                        for expression in coordinates
-                    )
-                    if any(
-                        normalization.apex_trace is None
-                        or normalization.apex_value is None
-                        for normalization in pyramid_normalizations
-                    ):
-                        raise UnsupportedEmbeddingMap(
-                            "Pyramid source map has no exact constant apex continuation."
-                        )
-                    pyramid_reference_arguments = pyramid_reference_to_box_arguments()
-                    proof_references = tuple(
-                        _pyramid_box_reference(point) for point in references
-                    )
-                    proof_coordinates = tuple(
-                        normalization.expression
-                        for normalization in pyramid_normalizations
-                    )
-                    proof_domain = "box"
-                linear_chart = (
-                    _linear_simplex_chart(coordinates, references, dimension)
-                    if proof_domain == "simplex"
-                    else None
-                )
-                if linear_chart is None:
-                    corners = tuple(
-                        tuple(
-                            _evaluate(expression, point)
-                            for expression in proof_coordinates
-                        )
-                        for point in proof_references
-                    )
-                    offset, matrix = _solve_affine(references, corners)
-                    bounds = tuple(
-                        polynomial_bounds(
-                            expression,
-                            cast(BernsteinDomain, proof_domain),
-                            dimension,
-                        )
-                        for expression in proof_coordinates
-                    )
-                else:
-                    corners, offset, matrix, bounds = linear_chart
-                affine_expressions = _affine_expressions(offset, matrix)
-                if not (
-                    len(affine_expressions) == len(coordinates)
+                if (
+                    frame is not None
+                    and len(local[0]) == ambient
                     and all(
-                        expression_equal(source, target)
-                        for source, target in zip(
-                            coordinates, affine_expressions, strict=True
-                        )
+                        isinstance(value, Fraction) for point in local for value in point
                     )
                 ):
-                    offset = None
-                    matrix = None
+                    chart = _straight_cell_chart(
+                        cast(tuple[tuple[Fraction, ...], ...], local), frame
+                    )
+                else:
+                    chart = _mapped_cell_chart(
+                        element,
+                        local,
+                        local_index,
+                        kind,
+                        dimension,
+                        domain,
+                        references,
+                        ambient,
+                    )
+                cell_references = references
+                cell_domain = domain
+            coordinates, corners, offset, matrix, bounds, normalizations, arguments = (
+                chart
+            )
             lower = tuple(value[0] for value in bounds)
             upper = tuple(value[1] for value in bounds)
-            if not all(np.isfinite((*lower, *upper))):
+            if not all(math.isfinite(value) for value in (*lower, *upper)):
                 raise UnsupportedEmbeddingMap(
                     "Exact source image has no finite binary64 broad-phase bound."
                 )
-            result.append(
-                EmbeddingCell(
-                    int(cell_id),
-                    str(block.name),
-                    local_index,
-                    kind,
-                    dimension,
-                    cell_domain,
-                    active_row,
-                    tuple(int(vertex_global_ids[index]) for index in active_row),
-                    references,
-                    coordinates,
-                    corners,
-                    offset,
-                    matrix,
-                    lower,
-                    upper,
-                    facet_routes,
-                    pyramid_normalizations,
-                    pyramid_reference_arguments,
-                )
+            yield EmbeddingCell(
+                int(cell_id),
+                name,
+                local_index,
+                kind,
+                dimension,
+                cell_domain,
+                active_row,
+                tuple(vertex_global_ids[index] for index in active_row),
+                cell_references,
+                coordinates,
+                corners,
+                offset,
+                matrix,
+                lower,
+                upper,
+                facet_routes,
+                normalizations,
+                arguments,
             )
         block_offset += block.cell_count
-    return tuple(result)
 
 
 __all__ = ["EmbeddingCell", "UnsupportedEmbeddingMap", "prepare_embedding_cells"]

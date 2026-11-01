@@ -1987,3 +1987,24 @@ def test_chart_overlap_candidates_agree_on_host_and_bvh_broad_phases(
         for right in range(len(second)):
             if _source_fidelity._intersection_area(first[left], second[right]) > 0:
                 assert (left, right) in candidates
+
+
+def test_rational_chart_rows_share_storage_without_skipping_realization_validation() -> (
+    None
+):
+    from phydrax.geometry._source_boundary_records import _validated_rational_chart_tokens
+
+    chart = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    tokens = rational_chart_tokens(chart for _ in range(3))
+    assert tokens[0] is tokens[1] is tokens[2]
+    realization = np.asarray((chart, chart, chart), dtype=np.float64)
+    validated = _validated_rational_chart_tokens(tokens, realization, 3, 3, 2, "chart")
+    assert validated == tokens
+    assert validated[0] is validated[1] is validated[2]
+    realization[1, 1, 0] = np.nextafter(1.0, 2.0)
+    with pytest.raises(ValueError, match="differs from its binary64 realization"):
+        _validated_rational_chart_tokens(tokens, realization, 3, 3, 2, "chart")

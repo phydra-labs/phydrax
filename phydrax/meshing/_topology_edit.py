@@ -807,6 +807,9 @@ def reference_cell_maps_from_edit(
     # A corner's exact source-reference point depends only on its target vertex
     # stencil and the parent cell, so children of one parent share it.
     corner_points: dict[tuple[int, int], tuple[Fraction, ...]] = {}
+    reference_shapes: dict[
+        tuple[tuple[Fraction, ...], ...], tuple[tuple[Fraction, ...], ...]
+    ] = {}
     for target_id, (target_kind, child_vertices) in target_records.items():
         source_id = parents[target_id]
         parent = source_records.get(source_id)
@@ -852,8 +855,9 @@ def reference_cell_maps_from_edit(
             )
             corner_points[source_id, target_vertex] = point
             exact_vertices.append(point)
+        shape = tuple(exact_vertices)
         grouped.setdefault((target_kind, source_kind), []).append(
-            (target_id, source_id, tuple(exact_vertices))
+            (target_id, source_id, reference_shapes.setdefault(shape, shape))
         )
 
     witnesses = []
@@ -862,10 +866,11 @@ def reference_cell_maps_from_edit(
         target_ids = np.asarray([value[0] for value in rows], dtype=np.int64)
         source_ids = np.asarray([value[1] for value in rows], dtype=np.int64)
         exact = tuple(value[2] for value in rows)
-        execution = np.asarray(
-            [[[float(value) for value in point] for point in cell] for cell in exact],
+        execution = np.fromiter(
+            (float(value) for cell in exact for point in cell for value in point),
             dtype=np.float64,
-        )
+            count=len(exact) * len(exact[0]) * dimension,
+        ).reshape(len(exact), len(exact[0]), dimension)
         witness = ReferenceCellMapWitnesses(
             target_ids,
             source_ids,
