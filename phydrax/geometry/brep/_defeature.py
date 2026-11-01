@@ -475,7 +475,7 @@ def brep_defeature(
     *,
     operation: BRepDefeatureOperation,
     recipe_names: RecipeEntityNames | None = None,
-    volume_subdivisions: int = 8,
+    volume_relative_tolerance: float = 1e-6,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-defeature",
 ) -> BRepDefeatureResult:
@@ -483,6 +483,8 @@ def brep_defeature(
 
     Other geometric families remain explicitly unsupported. Exact native
     intersections distinguish collision from unresolved contact proofs.
+    ``volume_relative_tolerance`` is the certified relative half-width requested
+    from the source and target volume measures.
     """
     operation_ = parse(operation, BRepDefeatureOperation, "brep_defeature.operation")
     if face not in model.face_ids:
@@ -494,11 +496,14 @@ def brep_defeature(
             "brep_defeature.recipe_names must bind the source model; got foreign names"
         )
     if (
-        isinstance(volume_subdivisions, bool)
-        or not isinstance(volume_subdivisions, int)
-        or volume_subdivisions <= 0
+        isinstance(volume_relative_tolerance, bool)
+        or not isinstance(volume_relative_tolerance, (int, float))
+        or not np.isfinite(volume_relative_tolerance)
+        or volume_relative_tolerance <= 0
     ):
-        raise ValueError("brep_defeature.volume_subdivisions must be a positive integer")
+        raise ValueError(
+            "brep_defeature.volume_relative_tolerance must be finite and positive"
+        )
     geometry = model.geometry
     try:
         _single_solid(model)
@@ -555,7 +560,7 @@ def brep_defeature(
         if coefficients is None or margin:
             coefficients = None
             enclosure, volume_gap = _volume_difference(
-                model, target, builder, points, volume_subdivisions
+                model, target, builder, points, float(volume_relative_tolerance)
             )
         distance = (
             max(0.0, float(np.nextafter(distance[0] - margin, -np.inf))),
@@ -743,11 +748,11 @@ def _volume_difference(
     target: BRepModel,
     builder: Builder,
     points: tuple[_Vector, ...],
-    subdivisions: int,
+    relative_tolerance: float,
     /,
 ) -> tuple[tuple[float, float], float]:
-    source_mass = brep_mass_properties(source, subdivisions=subdivisions)
-    target_mass = brep_mass_properties(target, subdivisions=subdivisions)
+    source_mass = brep_mass_properties(source, relative_tolerance=relative_tolerance)
+    target_mass = brep_mass_properties(target, relative_tolerance=relative_tolerance)
     for label, measured in (("source", source_mass), ("target", target_mass)):
         if not measured.status or measured.status[0] != "certified":
             reason = measured.reasons[0] if measured.reasons else "no solid occurrence"

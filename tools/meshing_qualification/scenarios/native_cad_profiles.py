@@ -823,7 +823,7 @@ def _source_volume_oracle(
         raise RuntimeError(
             f"{case} source volume oracle requires one solid; got {model.topology.num_solids}."
         )
-    measured = brep_mass_properties(model, subdivisions=8)
+    measured = brep_mass_properties(model, relative_tolerance=_VOLUME_RELATIVE_TOLERANCE)
     if measured.status != ("certified",):
         raise RuntimeError(
             f"{case} exact B-Rep volume query failed: status={measured.status!r}, reasons={measured.reasons!r}."
