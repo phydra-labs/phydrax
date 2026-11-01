@@ -125,3 +125,43 @@ def test_eager_route_accumulation_reuses_trace_and_preserves_order(
     np.testing.assert_array_equal(_linear._sum_route_products(products * 2), [0.0, 18.0])
     assert count > 0
     assert len(calls) == count
+
+
+@pytest.mark.parametrize("action", ("riesz", "inverse"))
+@pytest.mark.parametrize("defect", ("shape", "dtype", "pytree"))
+def test_space_refuses_invalid_pairing_before_downstream_actions(
+    monkeypatch: pytest.MonkeyPatch, action: str, defect: str
+) -> None:
+    eqx.clear_caches()
+    calls: list[str] = []
+
+    def malformed(vector: Any) -> Any:
+        if defect == "shape":
+            return vector[:-1]
+        if defect == "dtype":
+            return vector.astype(jnp.float32)
+        return (vector,)
+
+    def riesz(self: _pairings.EuclideanPairing, vector: Any) -> Any:
+        calls.append("riesz")
+        return malformed(vector) if action == "riesz" else vector
+
+    def inverse(self: _pairings.EuclideanPairing, vector: Any) -> Any:
+        calls.append("inverse")
+        if action == "riesz":
+            raise AssertionError("An invalid Riesz result reached the inverse.")
+        return malformed(vector)
+
+    def inner(self: _pairings.EuclideanPairing, left: Any, right: Any) -> Any:
+        calls.append("inner")
+        raise AssertionError("An invalid pairing action reached the inner product.")
+
+    monkeypatch.setattr(_pairings.EuclideanPairing, "riesz", riesz)
+    monkeypatch.setattr(_pairings.EuclideanPairing, "inverse_riesz", inverse)
+    monkeypatch.setattr(_pairings.EuclideanPairing, "inner", inner)
+    name = "Riesz" if action == "riesz" else "inverse-Riesz"
+    with pytest.raises(
+        TypeError, match=f"Pairing {name} output must match the vector-space structure."
+    ):
+        la.ArraySpace((3,), dtype=jnp.float64, pairing=la.EuclideanPairing())
+    assert calls == (["riesz"] if action == "riesz" else ["riesz", "inverse"])
