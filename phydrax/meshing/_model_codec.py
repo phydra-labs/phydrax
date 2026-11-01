@@ -1695,7 +1695,7 @@ def read_model_archive_fields(
     fields: tuple[str, ...],
     limits: ArrayArchiveLimits | None,
 ) -> dict[str, Any]:
-    """Decode selected root fields for owner-scoped prerequisite validation.
+    """Decode selected registered field paths for prerequisite validation.
 
     The complete archive is admitted first. The returned fields are stored
     inputs, not certified authority; the owner must replay their mathematics.
@@ -1704,7 +1704,10 @@ def read_model_archive_fields(
     _require_model_type(expected_type)
     if (
         not fields
-        or any(type(name) is not str or not name for name in fields)
+        or any(
+            type(name) is not str or any(not part for part in name.split("."))
+            for name in fields
+        )
         or len(set(fields)) != len(fields)
     ):
         raise ValueError("Selected model fields must be distinct nonempty names.")
@@ -1713,9 +1716,14 @@ def read_model_archive_fields(
     try:
         if artifact_value(recipe["type"]) is not expected_type:
             raise ValueError("Native model archive has a different registered root type.")
-        root_fields = recipe["fields"]
-        if any(name not in root_fields for name in fields):
-            raise ValueError("Selected model field is absent from the registered root.")
+        subtrees = {}
+        for name in fields:
+            subtree = recipe
+            for part in name.split("."):
+                if subtree.get("kind") not in ("dataclass", "strict_value"):
+                    raise ValueError("Selected model path crosses a non-record value.")
+                subtree = subtree["fields"][part]
+            subtrees[name] = subtree
         nodes = _recipe_array_nodes(recipe)
         if len(nodes) != len(arrays):
             raise ValueError("Model recipe array inventory is inconsistent.")
@@ -1725,7 +1733,7 @@ def read_model_archive_fields(
         }
         selected = {}
         for name in fields:
-            subtree = root_fields[name]
+            subtree = subtrees[name]
             subnodes = _recipe_array_nodes(subtree)
             subarrays = {
                 f"{_MODEL_ARRAYS}/{index:06d}": payloads[id(node)]

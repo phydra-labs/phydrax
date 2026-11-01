@@ -110,6 +110,8 @@ def test_fidelity_root_and_nested_records_project_row_banks() -> None:
     assert restored.source_cell_global_ids == certificate.source_cell_global_ids
     assert restored.source_patch_ids == certificate.source_patch_ids
     assert restored.source_occurrence_paths == certificate.source_occurrence_paths
+    selected = restore_row_record_recipes(model_archive_projection(certificate))
+    assert selected.source_cell_global_ids == certificate.source_cell_global_ids
     nested = model_archive_projection((certificate,))
     assert (
         restore_row_record_recipes(nested)[0].source_cell_global_ids

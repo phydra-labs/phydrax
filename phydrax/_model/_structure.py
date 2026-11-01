@@ -1513,8 +1513,8 @@ def restore_row_record_recipes(value: Any, /) -> Any:
 
     result = visit(value)
     if (
-        type(result).__module__ == "phydrax.geometry._source_fidelity_certificate"
-        and type(result).__name__ == "SourceFidelityCertificate"
+        type(value).__module__ == "phydrax.geometry._source_fidelity_certificate"
+        and type(value).__name__ == "SourceFidelityCertificate"
     ):
         from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
 
