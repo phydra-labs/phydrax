@@ -1337,7 +1337,7 @@ def _face_range(
             return None
         if spans is None:
             try:
-                spans = tuple(patch.rational_spans())
+                spans = patch.prepare_spans().spans
             except (TypeError, ValueError, RuntimeError):
                 spans = ()
         for index, span in enumerate(spans):
