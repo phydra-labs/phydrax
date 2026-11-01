@@ -2451,7 +2451,13 @@ def _implicit_chart_derivative_bounds(
         raise ValueError(
             "IntersectionPCurve derivative interval is unresolved at a singular chart."
         )
-    rhs = interval_multiply((-jacobian_upper[:, axis], -jacobian_lower[:, axis]), rate)
+    rhs_lower, rhs_upper = interval_multiply(
+        (-jacobian_upper[:, axis], -jacobian_lower[:, axis]), rate
+    )
+    rhs = (
+        np.asarray(rhs_lower, dtype=np.float64),
+        np.asarray(rhs_upper, dtype=np.float64),
+    )
 
     def precondition(
         values: tuple[np.ndarray, np.ndarray], /
@@ -2474,9 +2480,9 @@ def _implicit_chart_derivative_bounds(
 
     product_lower, product_upper = precondition(matrix)
     identity = np.eye(3)
-    error_lower, error_upper = interval_subtract(
-        (identity, identity), (product_lower, product_upper)
-    )
+    error_bounds = interval_subtract((identity, identity), (product_lower, product_upper))
+    error_lower = np.asarray(error_bounds[0], dtype=np.float64)
+    error_upper = np.asarray(error_bounds[1], dtype=np.float64)
     contraction = Fraction(0)
     for row in range(3):
         contraction = max(
