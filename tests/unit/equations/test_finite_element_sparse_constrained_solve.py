@@ -275,3 +275,48 @@ def test_large_dirichlet_laplace_stays_sparse() -> None:
         rtol=0.0,
         atol=1.0e-8,
     )
+
+
+@pytest.mark.parametrize("kind", ("triangle", "simplex:2"))
+def test_per_cell_exact_charts_prepare_and_solve(kind: str) -> None:
+    """Adapted curved results carry per-cell exact charts; FE prepares and solves."""
+    from phydrax.discretization._cell_geometry import (
+        PerCellRestrictedCellGeometryElement,
+    )
+    from phydrax.discretization._coordinate_enclosure import axes
+
+    shared = _curved_p2_space(kind)
+    block = shared.mesh.blocks[0]
+    cells = tuple(int(value) for value in np.asarray(block.global_ids).tolist())
+    p2 = phx.discretization.lagrange_element(kind, 2)
+    restricted = PerCellRestrictedCellGeometryElement(
+        p2, kind, cells, cells, (axes(2),) * len(cells)
+    )
+    geometry = phx.discretization.CellGeometrySpec(
+        {block.name: restricted},
+        {block.name: np.asarray(shared.dof_maps[0].cell_dofs[0])},
+        np.asarray(shared.dof_maps[0].dof_coordinates),
+    )
+    space = phx.discretization.FiniteElementPlan(
+        shared.mesh,
+        phx.discretization.FiniteElementFieldSpec("u", p2),
+        coordinate_spec=geometry,
+    ).prepare()
+    points = np.asarray(space.dof_maps[0].dof_coordinates)
+    np.testing.assert_allclose(
+        points, np.asarray(shared.dof_maps[0].dof_coordinates), rtol=0.0, atol=1e-14
+    )
+    problem = _dirichlet_laplace(space, lambda value: value[..., 0])
+    system, rhs = problem.linear_system(storage="sparse")
+    result = la.solve(system, rhs, policy=_NATIVE_CHOLESKY)
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        np.asarray(problem.expand(result.value)), points[:, 0], rtol=0.0, atol=1e-13
+    )
+    action_system, action_rhs = problem.linear_system()
+    np.testing.assert_allclose(
+        np.asarray(action_system.operator.mv(result.value)),
+        np.asarray(action_rhs),
+        rtol=0.0,
+        atol=1e-12,
+    )
