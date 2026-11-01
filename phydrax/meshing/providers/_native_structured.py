@@ -21,6 +21,7 @@ from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._reference_cell import reference_cell_topology
 from ...discretization.fem._reference import FiniteElementSpec
+from ...geometry._curve_boundary import ParametricCurveBoundarySource
 from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
 from ...geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
@@ -29,6 +30,11 @@ from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
 )
 from ...typing import checked
+from .._association import (
+    GeometryAssociation,
+    GeometryAssociationKind,
+    GeometrySourceEntityRole,
+)
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import (
     MeshingFailure,
@@ -37,6 +43,7 @@ from .._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from .._controls import TransfiniteCurveControl
 from .._multiblock import (
     glue_structured_blocks,
     logical_face_vertices,
@@ -159,6 +166,11 @@ def structured_support_issues(
         source.domain, PiecewiseLinearDomain
     ):
         issues.append("an authoritative source volume domain for coverage")
+    if expected_dimension == target.ambient_dimension == 2 and (
+        not isinstance(source.domain, PiecewiseLinearDomain)
+        or source.domain.ambient_dimension != 2
+    ):
+        issues.append("an authoritative planar source domain for coverage")
     if any(len(block.intervals) != expected_dimension for block in source.blocks):
         issues.append("block dimensions matching the target")
     family = "quadrilateral" if expected_dimension == 2 else "hexahedron"
@@ -192,8 +204,6 @@ def structured_support_issues(
             issues.append("protected feature scopes not bound to a transfinite source boundary")
         if specification.maximum_normal_deviation is not None:
             issues.append("normal-deviation compliance not represented by the declared block contract")
-        if specification.quality_target is not None:
-            issues.append("surface quality targets not represented by the declared block contract")
         if specification.background_metric is not None:
             issues.append("background metrics not represented by the declared block contract")
     if isinstance(specification, VolumeMeshingSpec):
@@ -585,10 +595,115 @@ def _selected_entities(
     return np.asarray(selected, dtype=np.int64)
 
 
+def _structured_curve_witness(
+    source: NativeStructuredSource,
+    constructions: tuple[StructuredConstruction, ...],
+    combined: MultiblockConstruction,
+    /,
+) -> SourceBoundaryChartWitness | None:
+    query = source.fidelity_source
+    if (combined.mesh.topological_dimension, combined.mesh.ambient_dimension) != (2, 2):
+        return None
+    if not isinstance(query, ParametricCurveBoundarySource):
+        raise ValueError("Planar structured fidelity requires authored curve charts.")
+    mesh = combined.mesh
+    source_blocks = {block.name: block for block in source.blocks}
+    local_blocks = {item.mesh.blocks[0].name: item for item in constructions}
+    interfaces = {
+        face
+        for interface in source.interfaces
+        for face in (
+            (interface.first_block, interface.first_face),
+            (interface.second_block, interface.second_face),
+        )
+    }
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+    edges = {
+        tuple(sorted(map(int, vertices))): int(identifier)
+        for vertices, identifier in zip(_entity_vertex_rows(mesh, 1), edge_ids, strict=True)
+    }
+    query_rows = {entity: row for row, entity in enumerate(query.curve_entity_ids)}
+    cell_ids, facet_ids, local_facets = [], [], []
+    references, parameters, charts, entities, occurrences, orientations = [], [], [], [], [], []
+    for block in mesh.blocks:
+        construction = local_blocks[block.name]
+        declared = source_blocks[block.name]
+        topology = reference_cell_topology(block.cell_kind)
+        reference_vertices = np.asarray(topology.vertices, dtype=np.float64)
+        local_cells = np.asarray(construction.mesh.blocks[0].vertices, dtype=np.int64)
+        for row, vertices in enumerate(np.asarray(block.vertices, dtype=np.int64)):
+            logical = np.stack(
+                np.unravel_index(local_cells[row], construction.logical_shape, order="C"),
+                axis=-1,
+            )
+            for facet, corners in enumerate(topology.entities[1]):
+                corner_rows = np.asarray(corners, dtype=np.int64)
+                for axis in range(2):
+                    values = logical[corner_rows, axis]
+                    if not np.all(values == values[0]) or int(values[0]) not in (
+                        0, construction.logical_shape[axis] - 1
+                    ):
+                        continue
+                    side = int(values[0] != 0)
+                    face = 2 * axis + side
+                    if (block.name, face) in interfaces:
+                        continue
+                    control = declared.boundaries[face]
+                    if not isinstance(control, TransfiniteCurveControl):
+                        raise TypeError("Structured surface boundaries require curve controls.")
+                    if control.source_id not in query_rows:
+                        raise ValueError("A structured exterior curve lacks its authored source chart.")
+                    source_row = query_rows[control.source_id]
+                    lower, upper = map(Fraction, control.parameter_range)
+                    fractions = tuple(
+                        Fraction(int(value), construction.logical_shape[1 - axis] - 1)
+                        for value in logical[corner_rows, 1 - axis]
+                    )
+                    if control.reversed:
+                        fractions = tuple(1 - value for value in fractions)
+                    parameter = tuple((lower + (upper - lower) * value,) for value in fractions)
+                    cell_ids.append(int(block.global_ids[row]))
+                    facet_ids.append(edges[tuple(sorted(map(int, vertices[corner_rows])))])
+                    local_facets.append(facet)
+                    references.append(reference_vertices[corner_rows])
+                    parameters.append(parameter)
+                    charts.append(query.chart_ids[source_row])
+                    entities.append(query.curve_entity_ids[source_row])
+                    occurrences.append(query.occurrence_paths[source_row])
+                    orientations.append(1 if parameter[1] > parameter[0] else -1)
+    return SourceBoundaryChartWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(combined.geometry),
+        topology_id=mesh.topology_id,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_query_id=query.query_id,
+        chart_dimension=1,
+        reference_dimension=2,
+        cell_global_ids=np.asarray(cell_ids, dtype=np.int64),
+        entity_global_ids=np.asarray(facet_ids, dtype=np.int64),
+        local_entity_indices=np.asarray(local_facets, dtype=np.int32),
+        target_reference_vertices=np.asarray(references, dtype=np.float64),
+        target_reference_rational_tokens=rational_chart_tokens(
+            tuple(
+                tuple(tuple(Fraction(float(value)) for value in point) for point in chart)
+                for chart in references
+            )
+        ),
+        source_chart_ids=tuple(charts),
+        source_entity_ids=tuple(entities),
+        occurrence_paths=tuple(occurrences),
+        source_parameters=np.asarray(parameters, dtype=np.float64),
+        source_parameter_rational_tokens=rational_chart_tokens(tuple(parameters)),
+        orientations=np.asarray(orientations, dtype=np.int8),
+    )
+
+
 def _structured_organization(
     source: NativeStructuredSource,
     constructions: tuple[StructuredConstruction, ...],
     combined: MultiblockConstruction,
+    fidelity_witness: SourceBoundaryChartWitness | None,
     /,
 ) -> NativeMeshOrganization:
     mesh = combined.mesh
@@ -661,9 +776,69 @@ def _structured_organization(
                     _mesh_scope(mesh, mesh.topological_dimension - 1, selected),
                 )
             )
+    associations: tuple[GeometryAssociation, ...] = ()
+    if fidelity_witness is not None:
+        query = source.fidelity_source
+        if not isinstance(query, ParametricCurveBoundarySource):
+            raise TypeError("Structured curve associations require their chart query.")
+        curves = dict(zip(query.chart_ids, query.curves, strict=True))
+        cells = {
+            int(identifier): (block, row)
+            for block in mesh.blocks
+            for row, identifier in enumerate(block.global_ids)
+        }
+        edge_rows = dict(
+            zip(map(int, mesh.entity_set(1).entity_ids), _entity_vertex_rows(mesh, 1), strict=True)
+        )
+        intervals = tuple(
+            (
+                min(Fraction(*chart[0][0]), Fraction(*chart[1][0])),
+                max(Fraction(*chart[0][0]), Fraction(*chart[1][0])),
+            )
+            for chart in fidelity_witness.source_parameter_rational_tokens
+        )
+        edge_orientations = []
+        residuals = []
+        for identifier, edge_id, facet, chart, parameters in zip(
+            fidelity_witness.cell_global_ids,
+            fidelity_witness.entity_global_ids,
+            fidelity_witness.local_entity_indices,
+            fidelity_witness.source_chart_ids,
+            fidelity_witness.source_parameters,
+            strict=True,
+        ):
+            block, row = cells[int(identifier)]
+            corners = reference_cell_topology(block.cell_kind).entities[1][int(facet)]
+            target = np.asarray(mesh.coordinates)[
+                np.asarray(block.vertices)[row, np.asarray(corners)]
+            ]
+            source_points = np.asarray(curves[chart].evaluate(parameters[:, 0]))
+            residuals.append(float(np.max(np.linalg.norm(target - source_points, axis=-1))))
+            direction = 1 if parameters[1, 0] > parameters[0, 0] else -1
+            if int(block.vertices[row, corners[0]]) != int(edge_rows[int(edge_id)][0]):
+                direction = -direction
+            edge_orientations.append(direction)
+        associations = (
+            GeometryAssociation(
+                GeometryAssociationKind.CURVE,
+                source.source_id,
+                source.source_revision,
+                mesh.entity_set(1).entity_set_id,
+                fidelity_witness.entity_global_ids,
+                fidelity_witness.source_entity_ids,
+                np.asarray(residuals, dtype=np.float64),
+                exact=False,
+                source_roles=(GeometrySourceEntityRole.EDGE,) * len(residuals),
+                source_occurrence_paths=fidelity_witness.occurrence_paths,
+                parameters=np.asarray(intervals, dtype=np.float64),
+                source_parameter_intervals=intervals,
+                orientations=np.asarray(edge_orientations, dtype=np.int8),
+            ),
+        )
     return NativeMeshOrganization(
         labels=tuple(labels),
         attributes=tuple(attributes),
+        associations=associations,
     )
 
 
@@ -876,6 +1051,45 @@ def _physical_edge_lengths(
     return edge_rows, edge_lengths, maximum_error
 
 
+def _minimum_surface_angle(mesh: CellMesh, geometry: CellGeometrySpec, /) -> float:
+    """Measure corner angles from the realized coordinate-map edge tangents."""
+    elements, routes, coordinates = geometry.resolve(mesh)
+    points = np.asarray(coordinates, dtype=np.float64)
+    minimum = np.inf
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        if not isinstance(element, FiniteElementSpec):
+            raise ValueError("Structured corner angles require polynomial coordinate maps.")
+        topology = reference_cell_topology(block.cell_kind)
+        vertices = np.asarray(topology.vertices, dtype=np.float64)
+        _, gradients = element.tabulate(vertices)
+        jacobians = np.einsum(
+            "vjd,cjk->cvkd",
+            np.asarray(gradients),
+            points[np.asarray(route, dtype=np.int64)],
+        )
+        for corner, vertex in enumerate(vertices):
+            neighbors = [
+                second if first == corner else first
+                for first, second in topology.entities[1]
+                if corner in (first, second)
+            ]
+            if len(neighbors) != 2:
+                raise ValueError("Surface corner quality requires two incident edges.")
+            directions = vertices[neighbors] - vertex
+            tangents = np.einsum("ckd,ed->cek", jacobians[:, corner], directions)
+            lengths = np.linalg.norm(tangents, axis=-1)
+            if not np.all(np.isfinite(lengths)) or np.any(lengths <= 0.0):
+                raise ValueError("Surface corner quality requires nonzero finite tangents.")
+            cosine = np.sum(tangents[:, 0] * tangents[:, 1], axis=-1) / np.prod(
+                lengths, axis=-1
+            )
+            angles = np.arccos(np.clip(cosine, -1.0, 1.0))
+            minimum = min(minimum, float(np.min(angles)))
+    if not np.isfinite(minimum):
+        raise ValueError("Surface corner quality requires nonempty coordinate geometry.")
+    return minimum
+
+
 def _size_compliance(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -948,6 +1162,13 @@ def _size_compliance(
                 )
                 if control.strength is SizeControlStrength.HARD and growth > control.maximum_growth_rate + growth_tolerance:
                     issues.append(f"{control.control_id}:maximum_growth_rate")
+    if isinstance(specification, SurfaceMeshingSpec) and specification.quality_target is not None:
+        quality = specification.quality_target
+        minimum_angle = _minimum_surface_angle(mesh, geometry)
+        requested.append(("minimum_angle", quality.minimum_angle))
+        achieved.append(("minimum_angle", minimum_angle))
+        if quality.hard and minimum_angle < quality.minimum_angle:
+            issues.append("minimum_angle")
     return MeshingComplianceReport(
         specification.specification_id,
         issues=tuple(dict.fromkeys(issues)),
@@ -961,8 +1182,6 @@ def _cell_regions(
     mesh: CellMesh,
     /,
 ) -> np.ndarray | None:
-    if mesh.topological_dimension != 3:
-        return None
     region_ids = _domain_region_ids(source.domain)
     if not region_ids:
         return None
@@ -1030,13 +1249,31 @@ def _certification_request(
     fidelity_witness: SourceBoundaryChartWitness | None = None,
 ) -> NativeCertificationRequest:
     if mesh.topological_dimension == 2:
-        schedule_name = "surface"
+        schedule_name = "planar" if mesh.ambient_dimension == 2 else "surface"
     elif isinstance(source.domain, PiecewiseLinearDomain):
         schedule_name = "volume_plc"
     elif isinstance(source.domain, MappedReferenceDomain):
         schedule_name = "mapped_volume"
     else:
         raise ValueError("Volume construction requires an authoritative source-domain coverage route.")
+    junction_vertices = None
+    if schedule_name == "planar":
+        domain = source.domain
+        if not isinstance(domain, PiecewiseLinearDomain):
+            raise ValueError("Planar structured certification requires its source domain.")
+        incidence = np.bincount(
+            np.asarray(domain.facets, dtype=np.int64).reshape(-1),
+            minlength=domain.vertices.shape[0],
+        )
+        junction_ids: list[int] = []
+        for point in np.asarray(domain.vertices)[incidence >= 3]:
+            # This checks the image of an already authored source junction; it
+            # neither welds vertices nor creates an identity from rounded proximity.
+            rows = np.flatnonzero(np.all(np.asarray(mesh.coordinates) == point, axis=1))
+            if rows.size != 1:
+                raise ValueError("An authored planar junction lacks one exact mesh image.")
+            junction_ids.append(int(mesh.vertex_global_ids[rows[0]]))
+        junction_vertices = np.asarray(junction_ids, dtype=np.int64)
     return NativeCertificationRequest(
         MeshCertificationSchedule(schedule_name),
         source.source_id,
@@ -1050,6 +1287,9 @@ def _certification_request(
             else specification.maximum_deviation
         ),
         fidelity_witness=fidelity_witness,
+        feature_source=source,
+        junction_vertices=junction_vertices,
+        protected_features=specification.protected_features,
     )
 
 
@@ -1105,7 +1345,10 @@ class PreparedStructured(StrictModule):
         )
         combined = glue_structured_blocks(constructions, source.interfaces)
         compliance = _size_compliance(combined.mesh, combined.geometry, specification)
-        organization = _structured_organization(source, constructions, combined)
+        fidelity_witness = _structured_curve_witness(source, constructions, combined)
+        organization = _structured_organization(
+            source, constructions, combined, fidelity_witness
+        )
         organization = NativeMeshOrganization(
             patches=organization.patches,
             zones=_region_zones(source, specification, combined.mesh),
@@ -1119,9 +1362,19 @@ class PreparedStructured(StrictModule):
             combined.mesh,
             self.coordinate_contract,
             compliance,
-            _certification_request(source, specification, combined.mesh),
+            _certification_request(
+                source,
+                specification,
+                combined.mesh,
+                fidelity_witness=fidelity_witness,
+            ),
             geometry=combined.geometry,
             organization=organization,
+            planar_embedding=(
+                specification.planar_embedding
+                if isinstance(specification, SurfaceMeshingSpec)
+                else None
+            ),
         )
 
 

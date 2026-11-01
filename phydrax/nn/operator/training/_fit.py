@@ -1227,6 +1227,26 @@ def _resolve_operator_fit_optimizer(
     return target_aliases, optimizer, resolved_optimizer_id
 
 
+def _attempt(
+    kernel_: PreparedTrainingKernel,
+    state: TrainingKernelState,
+    payload: _OperatorFitPayload,
+) -> tuple[TrainingKernelState, TrainingAttemptEvidence]:
+    return kernel_.attempt(state, payload)
+
+
+def _accumulate(
+    kernel_: PreparedTrainingKernel,
+    state: TrainingKernelState,
+    payload: _OperatorFitPayload,
+) -> tuple[TrainingKernelState, tuple[Any, ...]]:
+    return kernel_.accumulate_with_diagnostics(state, payload)
+
+
+_compiled_attempt = eqx.filter_jit(_attempt)
+_compiled_accumulate = eqx.filter_jit(_accumulate)
+
+
 def fit_operator(
     model: AbstractOperatorModel,
     train: FitInput,
@@ -2369,22 +2389,8 @@ def fit_operator(
             raise RuntimeError("Internal invariant failed: state is not None.")
         return fit_model(kernel.target_tree(state))
 
-    def attempt(
-        kernel_: PreparedTrainingKernel,
-        state: TrainingKernelState,
-        payload: _OperatorFitPayload,
-    ) -> tuple[TrainingKernelState, TrainingAttemptEvidence]:
-        return kernel_.attempt(state, payload)
-
-    def accumulate(
-        kernel_: PreparedTrainingKernel,
-        state: TrainingKernelState,
-        payload: _OperatorFitPayload,
-    ) -> tuple[TrainingKernelState, tuple[Any, ...]]:
-        return kernel_.accumulate_with_diagnostics(state, payload)
-
-    run_attempt = eqx.filter_jit(attempt) if jit else attempt
-    run_accumulation = eqx.filter_jit(accumulate) if jit else accumulate
+    run_attempt = _compiled_attempt if jit else _attempt
+    run_accumulation = _compiled_accumulate if jit else _accumulate
     evaluation_model = evaluation_model_of(kernel_state)
 
     def add_window_metrics(

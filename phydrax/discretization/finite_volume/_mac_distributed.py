@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
@@ -945,8 +946,15 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
     ) -> Array:
         self._require_ready()
         self._validate_pressure_sharding(pressure)
-        axis = int(spatial_axis)
+        return run_owned_program(
+            self,
+            "pressure-halo",
+            PreparedMACDistributedTopology._pressure_halo_program,
+            pressure,
+            int(spatial_axis),
+        )
 
+    def _pressure_halo_program(self, pressure: Array, axis: int, /) -> Array:
         def local(value: Array) -> Array:
             return self.local_stencils.materialize(value, axis)
 
@@ -967,24 +975,36 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         self._require_ready()
         values = self._validate_velocity_sharding(velocity)
         component = int(component_axis)
-        axis = int(spatial_axis)
         if component < 0 or component >= len(values):
             raise ValueError("component_axis is out of range.")
+        return run_owned_program(
+            self,
+            "face-halo",
+            PreparedMACDistributedTopology._face_halo_program,
+            values[component],
+            component,
+            int(spatial_axis),
+        )
 
-        def local(value: Array) -> Array:
-            return self.local_stencils.materialize(value, axis)
+    def _face_halo_program(self, value: Array, component: int, axis: int, /) -> Array:
+        def local(local_value: Array) -> Array:
+            return self.local_stencils.materialize(local_value, axis)
 
         return jax.shard_map(
             local,
             mesh=self.plan.mesh,
             in_specs=self.plan.face_specs[component],
             out_specs=self.plan.face_specs[component],
-        )(values[component])
+        )(value)
 
     def gradient(self, pressure: Array, /) -> FaceVelocity:
         self._require_ready()
         self._validate_pressure_sharding(pressure)
+        return run_owned_program(
+            self, "gradient", PreparedMACDistributedTopology._gradient_program, pressure
+        )
 
+    def _gradient_program(self, pressure: Array, /) -> FaceVelocity:
         def local(value: Array, distances: FaceVelocity) -> FaceVelocity:
             return self.local_stencils.gradient(value, distances)
 
@@ -998,7 +1018,11 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
     def divergence(self, velocity: FaceVelocity, /) -> Array:
         self._require_ready()
         values = self._validate_velocity_sharding(velocity)
+        return run_owned_program(
+            self, "divergence", PreparedMACDistributedTopology._divergence_program, values
+        )
 
+    def _divergence_program(self, values: FaceVelocity, /) -> Array:
         def local(
             components: FaceVelocity, measures: FaceVelocity, volumes: Array
         ) -> Array:
@@ -1018,7 +1042,14 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
     def interpolate_inverse_momentum(self, inverse_momentum: Array, /) -> FaceVelocity:
         self._require_ready()
         self._validate_pressure_sharding(inverse_momentum)
+        return run_owned_program(
+            self,
+            "inverse-momentum",
+            PreparedMACDistributedTopology._inverse_momentum_program,
+            inverse_momentum,
+        )
 
+    def _inverse_momentum_program(self, inverse_momentum: Array, /) -> FaceVelocity:
         def local(value: Array) -> FaceVelocity:
             return self.local_stencils.interpolate_inverse_momentum(value)
 

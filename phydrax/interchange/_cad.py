@@ -3503,10 +3503,71 @@ class CadStage:
             elif edge in discovered:
                 self.native_phases.pop(edge)
 
+    def _closed_conic_loop_endpoints(
+        self,
+        coedge_edges: Sequence[int],
+        coedge_senses: Sequence[int],
+        face_loops: Sequence[tuple[tuple[int, ...], ...]],
+        /,
+    ) -> dict[tuple[int, int], tuple[Fraction, int]]:
+        """Recover a split full turn from exact carrier and authored incidence.
+
+        This is the multi-edge counterpart of ``edge``'s closed-conic rule.
+        Every child must share one parameterized conic, consecutive stored
+        intervals and the same topological junction vertices. Only a complete
+        native interval closing back to its first vertex authors a turn.
+        Intermediate decimal trims remain ordinary parameters; neither nearby
+        multiples of pi nor geometrically nearby vertices are identified.
+        """
+        endpoints: dict[tuple[int, int], tuple[Fraction, int]] = {}
+        for loops in face_loops:
+            for loop in loops:
+                edges = [coedge_edges[coedge] for coedge in loop]
+                if len(edges) < 2 or len(set(edges)) != len(edges):
+                    continue
+                if len({coedge_senses[coedge] for coedge in loop}) != 1:
+                    continue
+                directed = [
+                    self.edge_vertices[coedge_edges[coedge]][:: coedge_senses[coedge]]
+                    for coedge in loop
+                ]
+                if any(
+                    left[1] != right[0]
+                    for left, right in zip(
+                        directed, (*directed[1:], directed[0]), strict=True
+                    )
+                ):
+                    continue
+                indices = [self.edge_curves[edge] for edge in edges]
+                # A shared bank row is a shared authored definition. Equal
+                # coefficients in independently authored rows are not enough.
+                if indices[0] < 0 or any(index != indices[0] for index in indices[1:]):
+                    continue
+                carrier = self.curves[indices[0]]
+                if not isinstance(carrier, (CircleCurve, EllipseCurve)):
+                    continue
+                edges.sort(key=lambda edge: self.edge_ranges[edge][0])
+                first = self.edge_ranges[edges[0]][0]
+                last = self.edge_ranges[edges[-1]][1]
+                if last != first + _TWO_PI:
+                    continue
+                if any(
+                    self.edge_ranges[left][1] != self.edge_ranges[right][0]
+                    or self.edge_vertices[left][1] != self.edge_vertices[right][0]
+                    for left, right in zip(edges[:-1], edges[1:], strict=True)
+                ):
+                    continue
+                if self.edge_vertices[edges[-1]][1] != self.edge_vertices[edges[0]][0]:
+                    continue
+                endpoints[edges[0], 0] = Fraction(first), 0
+                endpoints[edges[-1], 1] = Fraction(first), 1
+        return endpoints
+
     def _native_phase_roots(
         self,
         pcurves: Sequence[AbstractCurve],
         coedge_edges: Sequence[int],
+        coedge_senses: Sequence[int],
         face_loops: Sequence[tuple[tuple[int, ...], ...]],
         /,
     ) -> tuple[
@@ -3519,7 +3580,14 @@ class CadStage:
         the face carries that patch, else a declared period of the face patch
         aligned with the use, else the p-curve's own native turn.
         """
-        if not self.native_phases and not self.split_endpoint_phases:
+        closed_endpoints = self._closed_conic_loop_endpoints(
+            coedge_edges, coedge_senses, face_loops
+        )
+        if (
+            not self.native_phases
+            and not self.split_endpoint_phases
+            and not closed_endpoints
+        ):
             return None, None
         edge_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = [
             (None, None)
@@ -3592,6 +3660,25 @@ class CadStage:
                     for phase in phases
                 ]
                 coedge_roots[coedge] = endpoints[0], endpoints[1]
+        for (edge, endpoint), (rational, turns) in closed_endpoints.items():
+            pair = list(edge_roots[edge])
+            if pair[endpoint] is None:
+                pair[endpoint] = NativePeriodEndpoint(
+                    self.curves[self.edge_curves[edge]], rational=rational, turns=turns
+                )
+                edge_roots[edge] = pair[0], pair[1]
+            for coedge, source in enumerate(coedge_edges):
+                if source != edge or coedge_roots[coedge][endpoint] is not None:
+                    continue
+                binding = _coedge_period_binding(
+                    self.faces[coedge_faces[coedge]].patch, None, None, pcurves[coedge]
+                )
+                if binding is not None:
+                    pair = list(coedge_roots[coedge])
+                    pair[endpoint] = NativePeriodEndpoint(
+                        pcurves[coedge], *binding, rational=rational, turns=turns
+                    )
+                    coedge_roots[coedge] = pair[0], pair[1]
         return tuple(edge_roots), tuple(coedge_roots)
 
     def _junction_window(
@@ -4011,7 +4098,7 @@ class CadStage:
         self.pcurve_origins = tuple(origins)
         self._bind_native_phase_surfaces(resolved)
         edge_roots, coedge_roots = self._native_phase_roots(
-            pcurves, coedge_edges, face_loops
+            pcurves, coedge_edges, coedge_senses, face_loops
         )
         vertex_roots, edge_roots, coedge_roots = self._bind_incidence_roots(
             pcurves,
@@ -4843,6 +4930,62 @@ def cad_export_physical_tag_losses(
     )
 
 
+def _pole_identity_carriers(
+    patch: AbstractSurfacePatch, label: str, /
+) -> tuple[tuple[str, BSplineSurfacePatch], ...]:
+    match patch:
+        case BSplineSurfacePatch():
+            return ((label, patch),)
+        case OffsetSurface():
+            return _pole_identity_carriers(patch.base, f"{label}.base")
+        case _:
+            return ()
+
+
+@checked
+def cad_export_pole_identity_losses(
+    target_patches: Sequence[AbstractSurfacePatch],
+    format_name: str,
+    reread_identity: Literal["record-ordinal", "undeclared"],
+    /,
+) -> tuple[AdapterLoss, ...]:
+    """Report B-spline pole identities that re-import of the written record changes.
+
+    ``record-ordinal`` formats name each pole by its u-major/v-fast ordinal in
+    the written record; ``undeclared`` formats carry no pole identity.
+    """
+    losses: list[AdapterLoss] = []
+    for face, patch in enumerate(target_patches):
+        for label, carrier in _pole_identity_carriers(patch, f"face:{face}"):
+            source = carrier.control_point_ids
+            rows, columns = np.asarray(carrier.weights).shape
+            if reread_identity == "record-ordinal":
+                reread = tuple(
+                    tuple(range(row * columns, (row + 1) * columns))
+                    for row in range(rows)
+                )
+            else:
+                reread = None
+            if source == reread:
+                continue
+            if reread is None:
+                rationale = f"{format_name} does not encode B-spline pole identities; the source's {rows * columns} declared pole identities are not embedded and re-import declares none."
+            elif source is None:
+                rationale = f"{format_name} identifies each B-spline pole by its u-major/v-fast record ordinal; the source declares no pole identities and re-import declares the ordinals 0..{rows * columns - 1}."
+            else:
+                rationale = f"{format_name} identifies each B-spline pole by its u-major/v-fast record ordinal; re-import replaces the source's declared pole identities with the ordinals 0..{rows * columns - 1}."
+            losses.append(
+                AdapterLoss(
+                    f"{label}.pole-identity",
+                    "export",
+                    "transformed",
+                    rationale,
+                    changes_interpretation=True,
+                )
+            )
+    return tuple(losses)
+
+
 @checked
 def cad_export_assembly_identifier_losses(
     graph: BRepAssemblyGraph | None, format_name: str, /
@@ -4872,6 +5015,7 @@ __all__ = [
     "build_cad_import_tolerance_evidence",
     "cad_export_assembly_identifier_losses",
     "cad_export_physical_tag_losses",
+    "cad_export_pole_identity_losses",
     "prepare_cad_export_surfaces",
     "build_cad_export_report",
     "certified_cad_export_tolerances",

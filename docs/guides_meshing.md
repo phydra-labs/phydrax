@@ -380,6 +380,29 @@ periodic power cells use their authored sites and signed weights.
 
 
 
+Transfinite surface blocks accept a `MeshQualityTarget` without changing their
+authored edge counts or connectivity. Minimum corner angles are evaluated from
+the realized coordinate map's incident edge tangents, not straight chords of a
+curved cell. Compliance records both the requested and achieved angle in radians:
+an unmet hard target prevents acceptance, while a soft target remains diagnostic.
+These corner-quality measurements do not replace whole-cell validity, embedding,
+or source-fidelity certification.
+
+For ambient-two-dimensional blocks, `NativeStructuredSource.domain` must retain
+the independently authored `PiecewiseLinearDomain`. Canonical acceptance uses
+the planar coverage route and the declared block-to-region assignment, rather
+than treating the mesh as an embedded three-dimensional surface. Missing domain
+coverage premises are refused during source inspection.
+Planar block fidelity uses a `ParametricCurveBoundarySource` retaining the
+authored exterior curves and parameter intervals. Publication carries exact
+source/target chart coordinates and boundary curve associations; explicitly
+glued internal faces are excluded from the physical boundary witness. Association
+endpoint residuals are diagnostics, not substitutes for continuous fidelity.
+Embedded two-dimensional blocks in three-space instead retain their authored
+`SourceBoundaryQuery` and use surface certification. The planar curve witness
+does not apply to these blocks: their source query describes the surface, not
+only its one-dimensional boundary, and is not required to be a curve query.
+
 ### Sweep source identity and chart maps
 
 For continuous piecewise-linear boundary fidelity on a native sweep, bind each

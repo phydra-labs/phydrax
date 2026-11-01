@@ -169,6 +169,15 @@ def test_qft_contracts() -> None:
     )
     native = AdaptiveHcurlCapabilityPlan(mesh, requested_polynomial_order=1)
     resource_refused = AdaptiveHcurlCapabilityPlan(mesh, maximum_edges=5)
+    from phydrax.solver import FiniteElementTopologyTransaction
+
+    transaction = FiniteElementTopologyTransaction(lambda candidate, *_: candidate)
+    adaptive = AdaptiveHcurlCapabilityPlan(
+        mesh, require_adaptation=True, transaction=transaction
+    )
+    assert adaptive.evidence.status == int(HcurlCapabilityStatus.SUPPORTED)
+    assert adaptive.evidence.adaptation_supported
+    assert adaptive.prepare().transaction is transaction
 
     assert high_order.evidence.status == int(HcurlCapabilityStatus.SUPPORTED)
     assert high_order.evidence.assembly_supported
@@ -188,3 +197,59 @@ def test_qft_contracts() -> None:
     assert prepared.space.hilbert_complex().space(1).size == 6
     assert prepared.evidence.assembly_supported
     assert not prepared.evidence.adaptation_supported
+
+
+def test_adaptive_hcurl_transaction_qualifies_nested_form_evidence() -> None:
+    import phydrax as phx
+
+    mesh = _tetrahedral_mesh()
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    adaptation = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(
+                np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)
+            ),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+    transaction = phx.solver.FiniteElementTopologyTransaction(
+        lambda candidate, fields, materials, lineage, args: True
+    )
+    capability = AdaptiveHcurlCapabilityPlan(
+        mesh, require_adaptation=True, transaction=transaction
+    ).prepare()
+    field_spec = phx.discretization.FiniteElementFieldSpec(
+        "hcurl",
+        phx.discretization.fem.form_element(
+            "tetrahedron", 1, 1, family="trimmed", proxy="circulation"
+        ),
+    )
+    values = np.arange(capability.space.hilbert_complex().space(1).size, dtype=np.float64)
+    for periodic_quotient in (False, True):
+        layout = phx.solver.FiniteElementAcceptedFieldLayout(
+            field_spec, periodic_quotient=periodic_quotient
+        )
+        accepted = phx.solver.FiniteElementAcceptedState(
+            (values,),
+            0.0,
+            0,
+            mesh.topology_id,
+            "prepared-hcurl",
+            "compiled-hcurl",
+            field_layouts=(layout,),
+        )
+        result = transaction.execute(accepted, mesh, adaptation)
+        if periodic_quotient:
+            assert not bool(result.committed)
+            assert result.state is accepted
+            assert (
+                result.diagnostics
+                == "periodic-quotient-layout-requires-periodic-endpoints"
+            )
+        else:
+            assert bool(result.committed), result.diagnostics
+            assert len(result.field_transfers) == 1
+            assert np.all(np.isfinite(np.asarray(result.state.fields[0])))

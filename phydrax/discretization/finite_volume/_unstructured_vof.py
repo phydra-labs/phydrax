@@ -1477,7 +1477,10 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             raise ValueError("Stage geometry is stale for this VOF geometry epoch.")
 
         vertices = np.asarray(geometry.vertices)
-        face_edges = np.asarray(geometry.connectivity.edges, dtype=np.int32)
+        connectivity = geometry.connectivity
+        if not isinstance(connectivity, PolygonalConnectivity):
+            raise TypeError("Stage PLIC reconstruction requires 2-D polygons.")
+        face_edges = np.asarray(connectivity.edges, dtype=np.int32)
         base_owner = np.asarray(geometry.owner_cells, dtype=np.int32)
         base_receptor = np.asarray(geometry.neighbor_cells, dtype=np.int32)
         physical_face_count = face_edges.shape[0]

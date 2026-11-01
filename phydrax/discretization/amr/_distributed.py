@@ -18,6 +18,7 @@ from jax.typing import ArrayLike, DTypeLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
@@ -1274,6 +1275,17 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
     def _distributed_exchange(
         self, route: _PackedBlockRoutePlan, source_values: Array, /
     ) -> Array:
+        return run_owned_program(
+            self,
+            "distributed-exchange",
+            PreparedDistributedBlockAMRHierarchy._distributed_exchange_program,
+            route,
+            source_values,
+        )
+
+    def _distributed_exchange_program(
+        self, route: _PackedBlockRoutePlan, source_values: Array, /
+    ) -> Array:
         if self.mesh is None:
             raise RuntimeError(
                 "Distributed execution requires preparation with an ExecutionGroup."
@@ -1337,6 +1349,22 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
         return mapped(source, *route_arrays)
 
     def _distributed_accumulate(
+        self,
+        route: _PackedBlockRoutePlan,
+        owned_cotangent: Array,
+        received_cotangent: Array,
+        /,
+    ) -> Array:
+        return run_owned_program(
+            self,
+            "distributed-accumulate",
+            PreparedDistributedBlockAMRHierarchy._distributed_accumulate_program,
+            route,
+            owned_cotangent,
+            received_cotangent,
+        )
+
+    def _distributed_accumulate_program(
         self,
         route: _PackedBlockRoutePlan,
         owned_cotangent: Array,
@@ -1543,6 +1571,39 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
         return tuple(outputs), tuple(validity)
 
     def _distributed_fill_levels(
+        self,
+        packed_state: tuple[Array, ...],
+        packed_old: tuple[Array, ...],
+        packed_new: tuple[Array, ...],
+        same_ghost: tuple[Array, ...],
+        coarse_old_ghost: tuple[Array, ...],
+        coarse_new_ghost: tuple[Array, ...],
+        packed_boundaries: tuple[Array, ...],
+        boundary_supplied: tuple[bool, ...],
+        coarse_old_time: ArrayLike,
+        coarse_new_time: ArrayLike,
+        fill_time: ArrayLike,
+        /,
+    ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
+        # Fill times are operands, so one program serves every fill time.
+        return run_owned_program(
+            self,
+            "distributed-fill-levels",
+            PreparedDistributedBlockAMRHierarchy._distributed_fill_levels_program,
+            packed_state,
+            packed_old,
+            packed_new,
+            same_ghost,
+            coarse_old_ghost,
+            coarse_new_ghost,
+            packed_boundaries,
+            tuple(bool(value) for value in boundary_supplied),
+            jnp.asarray(coarse_old_time),
+            jnp.asarray(coarse_new_time),
+            jnp.asarray(fill_time),
+        )
+
+    def _distributed_fill_levels_program(
         self,
         packed_state: tuple[Array, ...],
         packed_old: tuple[Array, ...],

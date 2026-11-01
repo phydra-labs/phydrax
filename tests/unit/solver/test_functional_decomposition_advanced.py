@@ -4,6 +4,7 @@
 
 
 import json
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -16,6 +17,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.solver.functional_decomposition._export as decomposition_export
+from tests._support.assertions import assert_tree_values_equal
 
 
 def _fixed_penalty(condition: Any, count: Any = 8) -> Any:
@@ -414,7 +416,7 @@ def test_sharding_hybrid_and_deployment_roundtrip(
     )
 
     assert sharded.evidence.verified
-    assert eqx.tree_equal(restored.family.fields, artifact.family.fields)
+    assert_tree_values_equal(restored.family.fields, artifact.family.fields)
     assert restored.artifact_id == artifact.artifact_id
     phx.solver.save_decomposition_artifact(checkpoint_directory, artifact)
     manifest_path = checkpoint_directory / "manifest.json"
@@ -430,6 +432,31 @@ def test_sharding_hybrid_and_deployment_roundtrip(
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="checksum is invalid"):
         phx.solver.load_decomposition_artifact(checkpoint_directory, artifact)
+
+
+def test_deployment_rejects_replaced_fields_with_consistent_file_checksum(
+    tmp_path: Path,
+) -> None:
+    family = _pou_problem().family
+    original = phx.solver.DecompositionDeploymentArtifact(
+        family, assembly="partition-of-unity"
+    )
+    changed_family = phx.domain.LocalFieldFamily(
+        "u",
+        family.cover,
+        {patch.patch_id: patch.domain.Parameter(2.0) for patch in family.cover.patches},
+    )
+    changed = phx.solver.DecompositionDeploymentArtifact(
+        changed_family, assembly="partition-of-unity"
+    )
+    assert changed.artifact_id != original.artifact_id
+    destination = phx.solver.save_decomposition_artifact(tmp_path / "deployment", changed)
+    manifest_path = destination / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["artifact_id"] = original.artifact_id
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="content identity"):
+        phx.solver.load_decomposition_artifact(destination, original)
 
 
 def test_functional_decomposition_advanced_scenario_3() -> None:

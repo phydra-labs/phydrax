@@ -126,8 +126,11 @@ def _physical_stage_block(
     compact_aperture = metrics.face_open_fraction[face_ids]
     measures = metrics.open_face_measures[face_ids]
 
+    connectivity = discretization.connectivity
+    if not isinstance(connectivity, PolygonalConnectivity):
+        raise ValueError("Embedded stage lowering requires stationary 2-D polygons.")
     edge_vertex_ids = np.asarray(
-        discretization.connectivity.edges,
+        connectivity.edges,
         dtype=np.int32,
     )[compacted_face_ids]
     edge_points = np.asarray(discretization.vertices)[edge_vertex_ids]

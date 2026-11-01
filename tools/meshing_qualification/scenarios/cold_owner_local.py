@@ -3845,7 +3845,8 @@ def _launch_ranks(
     for result in sorted(results, key=lambda value: value.process_id):
         if result.returncode != 0:
             raise RuntimeError(
-                f"Owner-local FE {phase} rank {result.process_id} exited with {result.returncode}."
+                f"Owner-local FE {phase} rank {result.process_id} exited with {result.returncode}: "
+                f"{result.stderr.decode('utf-8', errors='replace')}"
             )
         lines = [
             line

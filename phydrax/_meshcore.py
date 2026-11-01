@@ -6635,7 +6635,17 @@ def _periodic_snapshot_from_buffers(
 
 
 def _tet_mesh_pointer(array: np.ndarray | None, /) -> int | None:
-    return None if array is None or array.size == 0 else int(array.ctypes.data)
+    """Address of a C-contiguous bank; the caller keeps ``array`` alive.
+
+    C reads a bank densely from its first element, so a strided view (a
+    column of a row bank, say) would be read as interleaved values: it is
+    refused rather than copied (a copy here would die before the call).
+    """
+    if array is None or array.size == 0:
+        return None
+    if not array.flags.c_contiguous:
+        raise ValueError("Native banks must be C-contiguous arrays.")
+    return int(array.ctypes.data)
 
 
 @final
@@ -7658,10 +7668,14 @@ class TetMesh3D:
             2,
             np.dtype(np.uint64),
         )
+        # Each pair names its own removed vertex and survivor: the C request
+        # takes them as two dense columns of ``collapse_pairs``.
+        collapse_pair_removed = np.ascontiguousarray(
+            collapse_pairs[:, 0], dtype=np.uint64
+        )
+        collapse_survivors = np.ascontiguousarray(collapse_pairs[:, 1], dtype=np.uint64)
         collapse_removed = (
-            collapse_pairs[:, 0]
-            if edit.removed_vertex_ids is None and collapse_pairs.size
-            else np.empty((0,), dtype=np.uint64)
+            collapse_pair_removed
             if edit.removed_vertex_ids is None
             else _tet_mesh_vector(
                 edit.removed_vertex_ids, "removed_vertex_ids", np.dtype(np.uint64)
@@ -8053,8 +8067,8 @@ class TetMesh3D:
         request.kind = int(kind)
         pointer_banks = (
             ("collapse_pair_count", collapse_pairs),
-            ("collapse_removed_ids", collapse_removed),
-            ("collapse_survivor_ids", collapse_pairs[:, 1]),
+            ("collapse_removed_ids", collapse_pair_removed),
+            ("collapse_survivor_ids", collapse_survivors),
             ("split_edge_count", split_edges),
             ("split_edges", split_edges),
             ("removed_vertex_count", collapse_removed),

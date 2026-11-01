@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from fractions import Fraction
+from functools import partial
 from math import tau
 from typing import NamedTuple
 
@@ -1396,6 +1397,11 @@ def _free_axis_indices(axis: int, /) -> tuple[int, int, int]:
             raise ValueError("A coupled surface axis must lie in [0, 4).")
 
 
+@eqx.filter_jit
+def _pair_residual(pair: SurfacePairSystem, parameters: Array, /) -> Array:
+    return pair.residual(parameters)
+
+
 def _intersect_spline_pair(
     first: SurfaceRegion,
     second: SurfaceRegion,
@@ -1450,7 +1456,7 @@ def _intersect_spline_pair(
     breakpoints = sorted(
         {t1, *(bound for bound in source.breakpoints(0) if t0 < bound < t1)}
     )
-    residual = eqx.filter_jit(pair.residual)
+    residual = partial(_pair_residual, pair)
     branches: list[IntersectionCurve] = []
     for root in roots:
         curve = _trace_spline_pair_branch(

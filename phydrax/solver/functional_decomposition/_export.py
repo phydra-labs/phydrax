@@ -262,6 +262,7 @@ def load_decomposition_artifact(
     artifact_like: DecompositionDeploymentArtifact,
     /,
 ) -> DecompositionDeploymentArtifact:
+    """Restore fields and verify their content identity against the manifest."""
     if not isinstance(artifact_like, DecompositionDeploymentArtifact):
         raise TypeError("artifact_like must be a DecompositionDeploymentArtifact.")
     source = Path(path)
@@ -289,11 +290,15 @@ def load_decomposition_artifact(
         manifest["state_file"],
         manifest["state_sha256"],
     ) as state_stream:
-        return eqx.tree_deserialise_leaves(
+        restored = eqx.tree_deserialise_leaves(
             state_stream,
             artifact_like,
             filter_spec=deserialize_model_leaf,
         )
+    rebuilt = DecompositionDeploymentArtifact(restored.family, assembly=restored.assembly)
+    if rebuilt.artifact_id != manifest["artifact_id"]:
+        raise ValueError("Restored deployment fields do not match the content identity.")
+    return rebuilt
 
 
 __all__ = [

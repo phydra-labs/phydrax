@@ -238,7 +238,9 @@ def test_mesh_motion_routes_scenario_2() -> None:
         _extension(points, triangles, boundary, Route.PRESCRIBED)
     harmonic = _extension(points, triangles, boundary, Route.HARMONIC)
     with pytest.raises(ValueError, match="monitor"):
-        harmonic.extend(np.zeros_like(points[boundary]), monitor=_GaussianMonitor(1.0))
+        harmonic.extend(
+            np.zeros_like(points[boundary]), monitor=_GaussianMonitor(jnp.asarray(1.0))
+        )
     mmpde = _extension(points, triangles, boundary, Route.MMPDE)
     with pytest.raises(ValueError, match="monitor"):
         mmpde.extend(np.zeros_like(points[boundary]))

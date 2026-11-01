@@ -18,6 +18,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
@@ -347,6 +348,30 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         """Route every active particle exactly once and atomically roll back overflow."""
 
         self._require_state(state)
+        return run_owned_program(
+            self,
+            "migrate",
+            PreparedDistributedParticleRuntime._migrate_program,
+            state,
+            jnp.asarray(proposed_positions),
+            jnp.asarray(proposed_momenta),
+            None
+            if proposed_rng_counters is None
+            else jnp.asarray(proposed_rng_counters, dtype=jnp.uint64),
+            None
+            if end_scale_factor is None
+            else jnp.asarray(end_scale_factor, dtype=state.scale_factor.dtype),
+        )
+
+    def _migrate_program(
+        self,
+        state: DistributedParticleState,
+        proposed_positions: Array,
+        proposed_momenta: Array,
+        proposed_rng_counters: Array | None,
+        end_scale_factor: Array | None,
+        /,
+    ) -> DistributedParticleMigrationResult:
         positions = jax.device_put(jnp.asarray(proposed_positions), self.vector_sharding)
         momenta = jax.device_put(jnp.asarray(proposed_momenta), self.vector_sharding)
         if (
@@ -632,6 +657,16 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         """Exchange fixed-capacity left/right slab ghosts through periodic ppermute."""
 
         self._require_state(state)
+        return run_owned_program(
+            self,
+            "exchange-ghosts",
+            PreparedDistributedParticleRuntime._exchange_ghosts_program,
+            state,
+        )
+
+    def _exchange_ghosts_program(
+        self, state: DistributedParticleState, /
+    ) -> DistributedParticleGhostState:
         p = self.plan.layout.device_count
         g = self.plan.ghost_capacity
         width = self.plan.ghost_width
