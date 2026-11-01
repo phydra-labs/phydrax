@@ -31,7 +31,7 @@ from ._analytic_profile import AnalyticImplicitProfile
 
 
 if TYPE_CHECKING:
-    from .._global_embedding import GlobalEmbeddingCertificate
+    from .._global_embedding import GlobalEmbeddingCertificate, ValidatedGlobalEmbedding
 
 
 type ReferencePoint3 = tuple[Fraction, Fraction, Fraction]
@@ -1057,7 +1057,7 @@ def validate_restricted_delaunay_boundary_witness(
     witness: RestrictedDelaunayBoundaryWitness,
     /,
     *,
-    embedding: GlobalEmbeddingCertificate | None = None,
+    embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None = None,
 ) -> RestrictedDelaunayCoverageProof:
     """Prove degree-one source coverage by exact tubular projection.
 
@@ -1081,6 +1081,7 @@ def validate_restricted_delaunay_boundary_witness(
     from .._global_embedding import (
         certify_global_embedding,
         GlobalEmbeddingCertificate as EmbeddingCertificate,
+        ValidatedGlobalEmbedding,
     )
     from .._source_fidelity import _analytic_profile_distance_evidence
 
@@ -1094,10 +1095,16 @@ def validate_restricted_delaunay_boundary_witness(
         raise TypeError("distance_witness must be SourceBoundaryDistanceWitness.")
     if not isinstance(witness, RestrictedDelaunayBoundaryWitness):
         raise TypeError("witness must be RestrictedDelaunayBoundaryWitness.")
-    if embedding is not None and not isinstance(embedding, EmbeddingCertificate):
-        raise TypeError("embedding must be GlobalEmbeddingCertificate or None.")
+    if embedding is not None and type(embedding) not in (
+        EmbeddingCertificate,
+        ValidatedGlobalEmbedding,
+    ):
+        raise TypeError(
+            "embedding must be a global embedding proof or validated host artifact."
+        )
 
     profile = _canonical_analytic_profile(profile)
+    input_mesh = mesh
     mesh = _canonical_cell_mesh(mesh)
     identities = (
         mesh.mesh_id,
@@ -1216,15 +1223,23 @@ def validate_restricted_delaunay_boundary_witness(
         )
 
     try:
-        validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+        validity = (
+            embedding.validity
+            if type(embedding) is ValidatedGlobalEmbedding
+            else certify_cell_geometry_validity(geometry, mesh=mesh)
+        )
         if not validity.all_certified:
             raise _unavailable(
                 "restricted_target_map",
                 "Every target tetrahedron needs a certified positive affine P1 map.",
             )
-        if embedding is None:
+        if type(embedding) is ValidatedGlobalEmbedding:
+            embedding = embedding.require(input_mesh, geometry, validity)
+            embedding.require_inputs(mesh, geometry, validity)
+        elif embedding is None:
             embedding = certify_global_embedding(mesh, geometry, validity)
         else:
+            embedding = EmbeddingCertificate.from_stored_fields(embedding)
             embedding.require_inputs(mesh, geometry, validity)
     except RestrictedDelaunayCoverageUnavailable:
         raise
@@ -1800,7 +1815,7 @@ def validate_restricted_delaunay_coverage_transport_witness(
     witness: RestrictedDelaunayCoverageTransportWitness,
     /,
     *,
-    embedding: GlobalEmbeddingCertificate | None = None,
+    embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None = None,
 ) -> RestrictedDelaunayCoverageProof:
     """Revalidate every exact transport stage and its analytic projection degree.
 
@@ -2062,7 +2077,7 @@ def validate_restricted_delaunay_coverage_witness(
     witness: RestrictedDelaunayCoverageWitness,
     /,
     *,
-    embedding: GlobalEmbeddingCertificate | None = None,
+    embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None = None,
 ) -> RestrictedDelaunayCoverageProof:
     """Validate the direct restricted proof or its exact transported continuation.
 

@@ -37,7 +37,7 @@ from ..discretization._cell_geometry_validity import (
     certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import CellMesh, TetrahedralConnectivity
-from ..geometry._global_embedding import certify_global_embedding
+from ..geometry._global_embedding import ValidatedGlobalEmbedding
 from ..geometry._source_boundary_records import (
     SourceBoundaryDistanceWitness,
     SourceBoundarySamples,
@@ -2692,12 +2692,14 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         # The exact global embedding is computed once here and passed to
         # the coverage replay and to acceptance, which check its inputs.
         validity = certify_cell_geometry_validity(geometry, mesh=mesh)
-        embedding = (
-            certify_global_embedding(mesh, geometry, validity)
+        validated_embedding = (
+            ValidatedGlobalEmbedding(mesh, geometry, validity)
             if validity.all_certified
             else None
         )
-        del validity
+        embedding = (
+            None if validated_embedding is None else validated_embedding.certificate
+        )
         validate_restricted_delaunay_boundary_witness(
             mesh,
             geometry,
@@ -2705,7 +2707,7 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             cell_regions,
             fidelity_witness,
             coverage_witness,
-            embedding=embedding,
+            embedding=validated_embedding,
         )
         organization = _organization(
             profile,
@@ -2734,6 +2736,7 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             compliance,
             certification,
             geometry=geometry,
+            validated_global_embedding=validated_embedding,
             organization=organization,
         )
 

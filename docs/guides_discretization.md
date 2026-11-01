@@ -389,6 +389,10 @@ accepted exact map rather than promote the rounded carrier to source truth.
 The native frame-bound adaptive source query keeps its array-bearing query as a
 dynamic PyTree child rather than static metadata. Its PyTree structure therefore
 changes, while its explicit source identity and revision remain unchanged.
+Restricted implicit volume construction retains a host-only, object-bound
+validated embedding for subsequent coverage checks within the same operation.
+Constructing that record computes the embedding and renews local validity;
+an independently supplied embedding certificate is re-proved before reuse.
 
 ## Virtual elements
 

@@ -1158,6 +1158,11 @@ def test_restored_embedding_refuses_a_forged_stored_validity_proof() -> None:
     # The forged proof is bound to the same operands, so only a renewed proof
     # can refuse it when the embedding is restored from stored fields.
     forged.require_current(geometry, mesh=mesh)
+    transformed_validity = eqx.tree_at(
+        lambda value: value.determinant_lower, forged, forged.determinant_lower.copy()
+    )
+    with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
+        certify_global_embedding(mesh, geometry, transformed_validity)
     stored = eqx.tree_at(lambda value: value.validity, certificate, forged)
     with pytest.raises(ValueError, match="does not reproduce the current mathematical"):
         GlobalEmbeddingCertificate.from_stored_fields(stored)

@@ -496,11 +496,29 @@ def test_native_implicit_volume_route_builds_region_mesh(
             construction.certification.cell_regions,
             distance_witness,
             coverage_witness,
+            embedding=construction.validated_global_embedding,
         )
         assert proof.region_ids == source.region_ids
         assert proof.target_facet_count > 0
         assert proof.source_facet_count == proof.covered_source_facet_count == 0
         assert coverage_witness.distance_witness_id == distance_witness.witness_id
+        embedding = construction.certification.global_embedding
+        assert embedding is not None
+        forged_embedding = eqx.tree_at(
+            lambda value: value.validity.determinant_lower,
+            embedding,
+            embedding.validity.determinant_lower * 0.5,
+        )
+        with pytest.raises(RestrictedDelaunayCoverageUnavailable):
+            validate_restricted_delaunay_boundary_witness(
+                construction.mesh,
+                construction.geometry,
+                source,
+                construction.certification.cell_regions,
+                distance_witness,
+                coverage_witness,
+                embedding=forged_embedding,
+            )
         # Witness identities are static fields; forge one through the constructor.
         forged_binding = RestrictedDelaunayBoundaryWitness(
             mesh_id="forged-restricted-mesh",
@@ -1205,6 +1223,7 @@ def test_native_restricted_torus_projection_degree_accepts_complete_volume() -> 
         regions,
         distance_witness,
         coverage_witness,
+        embedding=construction.validated_global_embedding,
     )
     assert proof.region_ids == ("interior",)
     assert proof.target_facet_count > 0

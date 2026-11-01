@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
     from ..geometry._domain_certification import CoverageDomain, SourceCoverageWitness
     from ..geometry._global_embedding import GlobalEmbeddingCertificate
+    from ..geometry._global_embedding import ValidatedGlobalEmbedding
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._source_boundary_records import SourceBoundaryQuery
     from ..geometry._source_fidelity_certificate import SourceFidelityWitness
@@ -103,6 +104,9 @@ class NativeMeshConstruction:
         default_factory=NativeMeshOrganization, kw_only=True
     )
     stages: tuple[MeshingStageReport, ...] = field(default=(), kw_only=True)
+    validated_global_embedding: ValidatedGlobalEmbedding | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
     reference_maps: tuple[ReferenceCellMapWitnesses, ...] = field(
         default=(), kw_only=True
     )

@@ -1484,7 +1484,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             )
         if type(validity) is not CellValidityCertificate:
             raise TypeError("validity must be a CellValidityCertificate.")
-        validity.require_current(geometry, mesh=mesh)
+        validity.revalidate(geometry, mesh=mesh)
         junctions = _junction_ids(mesh, junction_vertices)
         periodic_topology = _periodic_input(mesh, periodic)
         if periodic_restriction is not None:
@@ -1820,8 +1820,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                 "Stored global embedding must be a GlobalEmbeddingCertificate."
             )
         value.binding.require(value.binding.mesh, value.binding.geometry)
-        # Stored identities are not proof authority: renew the local proof.
-        value.validity.revalidate(value.binding.geometry, mesh=value.binding.mesh)
+        # The computing constructor below independently renews local validity.
         if value.nested_restriction_premise is not None:
             premise = value.nested_restriction_premise
             cls.from_stored_fields(premise.source_embedding)
@@ -6239,6 +6238,50 @@ def certify_global_embedding(
         periodic_restriction=periodic_restriction,
         nested_restriction=nested_restriction,
     )
+
+
+class ValidatedGlobalEmbedding:
+    """Host-only embedding proof computed for these exact object operands."""
+
+    __slots__ = ("mesh", "geometry", "validity", "certificate")
+
+    def __init__(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        validity: CellValidityCertificate,
+        /,
+    ) -> None:
+        self.mesh = mesh
+        self.geometry = geometry
+        self.validity = validity
+        self.certificate = certify_global_embedding(mesh, geometry, validity)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if hasattr(self, name):
+            raise AttributeError("A validated embedding artifact is immutable.")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("A validated embedding artifact is immutable.")
+
+    def require(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        validity: CellValidityCertificate,
+        /,
+    ) -> GlobalEmbeddingCertificate:
+        if (
+            self.mesh is not mesh
+            or self.geometry is not geometry
+            or self.validity is not validity
+        ):
+            raise ValueError(
+                "Validated embedding binds different exact mesh or geometry objects."
+            )
+        self.certificate.require_inputs(mesh, geometry, validity)
+        return self.certificate
 
 
 __all__ = [
