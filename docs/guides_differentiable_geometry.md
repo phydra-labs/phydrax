@@ -231,9 +231,10 @@ full-dimensional vertex-coordinate FE mesh. The support envelope is:
 `HARMONIC` (graph Laplacian, valid on convex planar domains), `LINEAR_ELASTICITY`
 (Jacobian-stiffened elasticity that keeps small cells near moving inclusions rigid),
 `WINSLOW` (inverse harmonic map whose barrier keeps maps onto a convex reference
-valid), `MMPDE` (Huang–Russell moving-mesh PDE equilibrium for a `monitor(points)`
-passed to `realize`), or `PRESCRIBED`. Linear operators are fixed at preparation and
-solved through `phydrax.linalg` with RHS-only differentiation; nonlinear routes solve
+valid), `MMPDE` (Huang–Russell moving-mesh PDE equilibrium for a monitor `M(points)`,
+an `AbstractMeshMonitor` PyTree passed to `realize`), or `PRESCRIBED`. Linear
+operators are fixed at preparation and solved through `phydrax.linalg` with RHS-only
+differentiation; nonlinear routes solve
 through `phydrax.nonlinear` with implicit root derivatives in the boundary design and
 monitor parameters. The shared `MotionValidityPlan` validates signed corner
 Jacobians inside the traced step and rejects orientation reversal, small Jacobians,

@@ -29,6 +29,7 @@ from .._cell_complex import (
 )
 from .._motion_validity import MotionValidityPlan, MotionValidityPolicy
 from ..fem._geometry_motion import (
+    _TimeBoundMeshMonitor,
     FiniteElementMeshMotionPolicy,
     FiniteElementMeshMotionRoute,
     FiniteElementMotionExtension,
@@ -530,10 +531,8 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         monitor = (
             None
             if self.monitor is None
-            # ty: ignore[call-non-callable]
-            else lambda points: self.monitor(time, points, args)
+            else _TimeBoundMeshMonitor(self.monitor, time, args)
         )
-        # ty: ignore[invalid-argument-type]
         routed = extension.extend(boundary - boundary_reference, monitor=monitor)
         return reference + routed.displacement, routed.successful
 
