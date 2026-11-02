@@ -40,6 +40,7 @@ from .._model._structure import (
     MappedReferenceBoundarySourceArchiveRecipe,
     MeshingDomainArchiveRecipe,
     MeshingDomainBoundarySourceArchiveRecipe,
+    model_archive_projection,
     model_archive_root_projection,
     model_from_array_recipe,
     model_structure_matches_recipe,
@@ -104,7 +105,9 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
             if field.name in columns:
                 a = _encode_column(a, columns[field.name])
                 b = _encode_column(b, columns[field.name])
-            if not _same_model_content(a, b):
+            if not _same_model_content(
+                model_archive_projection(a), model_archive_projection(b)
+            ):
                 return False
         return True
     left = model_archive_root_projection(left)
