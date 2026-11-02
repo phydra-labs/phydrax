@@ -1155,6 +1155,10 @@ def _validate_cad_chart_edge_incidence(
     /,
 ) -> None:
     """Prove which root-chart edges are interior instead of trusting sentinels."""
+    from ._domain_boundary import _line_endpoints, _rooted_patch_chart_endpoints
+    from ._meshing_domain import PatchPoleUse
+    from .brep._patches import ExactLineCurve, LineCurve
+
     rows = {identifier: row for row, identifier in enumerate(charts.cell_global_ids)}
     counts: dict[tuple[int, frozenset[tuple[Fraction, Fraction]]], int] = {}
     for uses in adjacent.values():
@@ -1162,6 +1166,41 @@ def _validate_cad_chart_edge_incidence(
             patch = int(charts.root_patches[rows[cell_id]])
             key = (patch, frozenset((first, last)))
             counts[key] = counts.get(key, 0) + 1
+    pole_sides: dict[
+        int, tuple[tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...]
+    ] = {}
+
+    def same_pole_side(
+        patch: int, first: tuple[Fraction, Fraction], last: tuple[Fraction, Fraction]
+    ) -> bool:
+        if charts.domain.brep_authority is None:
+            return False
+        if patch not in pole_sides:
+            endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)
+            sides = []
+            for loop, loop_endpoints in zip(
+                charts.domain.patches[patch].loops, endpoints, strict=True
+            ):
+                for use, side in zip(loop, loop_endpoints, strict=True):
+                    if (
+                        isinstance(use, PatchPoleUse)
+                        and isinstance(use.pcurve, (ExactLineCurve, LineCurve))
+                        and side == _line_endpoints(use)
+                    ):
+                        sides.append(side)
+            pole_sides[patch] = tuple(sides)
+        for start, stop in pole_sides[patch]:
+            dx, dy = stop[0] - start[0], stop[1] - start[1]
+
+            def on_side(point: tuple[Fraction, Fraction]) -> bool:
+                px, py = point[0] - start[0], point[1] - start[1]
+                along = px * dx + py * dy
+                return px * dy == py * dx and 0 <= along <= dx * dx + dy * dy
+
+            if on_side(first) and on_side(last):
+                return True
+        return False
+
     for edge_id, uses in adjacent.items():
         for cell_id, slot, first, last in uses:
             row = rows[cell_id]
@@ -1179,10 +1218,42 @@ def _validate_cad_chart_edge_incidence(
                     raise ValueError(
                         "CAD source coedge is not a root-chart boundary edge."
                     )
-            elif count != 2 or explicit != (-1, -1, -1):
+            elif explicit != (-1, -1, -1):
                 raise ValueError(
                     "CAD root chart has an unbound or unproved boundary edge."
                 )
+            elif count != 2:
+                # A pole fan can use two distinct UV points on the same
+                # authenticated collapsed side for one physical vertex.
+                # The other endpoint and the physical edge must agree exactly.
+                others = tuple(
+                    other
+                    for other in uses
+                    if other[0] != cell_id
+                    and int(charts.root_patches[rows[other[0]]]) == patch
+                )
+                paired = False
+                if count == 1 and len(uses) == 2 and len(others) == 1:
+                    _, _, other_first, other_last = others[0]
+                    other_count = counts[
+                        (patch, frozenset((other_first, other_last)))
+                    ]
+                    paired = other_count == 1 and (
+                        (
+                            first == other_first
+                            and last != other_last
+                            and same_pole_side(patch, last, other_last)
+                        )
+                        or (
+                            last == other_last
+                            and first != other_first
+                            and same_pole_side(patch, first, other_first)
+                        )
+                    )
+                if not paired:
+                    raise ValueError(
+                        "CAD root chart has an unbound or unproved boundary edge."
+                    )
 
 
 def validate_cad_curve_ancestry(

@@ -472,6 +472,46 @@ def test_cad_pole_lens_uses_exact_collapsed_corner_only() -> None:
     pytest.fail("Cylinder has no regular coedge following a pole side.")
 
 
+def test_cad_pole_fan_interior_edge_requires_exact_common_fiber() -> None:
+    from types import SimpleNamespace
+
+    from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
+    from phydrax.geometry._meshing_domain import PatchPoleUse
+    from phydrax.geometry._surface_source_support import (
+        _validate_cad_chart_edge_incidence,
+    )
+
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
+    )
+    for patch, surface in enumerate(domain.patches):
+        for loop_index, loop in enumerate(surface.loops):
+            for use_index, use in enumerate(loop):
+                if not isinstance(use, PatchPoleUse):
+                    continue
+                start, stop = _rooted_patch_chart_endpoints(domain, patch)[loop_index][
+                    use_index
+                ]
+                one = ((2 * start[0] + stop[0]) / 3, (2 * start[1] + stop[1]) / 3)
+                two = ((start[0] + 2 * stop[0]) / 3, (start[1] + 2 * stop[1]) / 3)
+                apex = (one[0], one[1] + 1)
+                charts = SimpleNamespace(
+                    domain=domain,
+                    cell_global_ids=(10, 11),
+                    root_patches=np.asarray((patch, patch)),
+                    boundary_occurrences=np.full((2, 3, 3), -1),
+                )
+                adjacent = {1: ((10, 0, one, apex), (11, 0, two, apex))}
+                _validate_cad_chart_edge_incidence(charts, adjacent, set())
+                forged = {
+                    1: ((10, 0, one, apex), (11, 0, (two[0], two[1] + 1), apex))
+                }
+                with pytest.raises(ValueError, match="unbound or unproved"):
+                    _validate_cad_chart_edge_incidence(charts, forged, set())
+                return
+    pytest.fail("Cylinder has no pole side.")
+
+
 def test_cad_periodic_coedge_pair_requires_both_occurrences_and_opposite_sense() -> None:
     from fractions import Fraction
     from types import SimpleNamespace
