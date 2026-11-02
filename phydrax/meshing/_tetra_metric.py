@@ -5227,7 +5227,18 @@ def _relocation_proposals(
                 derivatives.append(derivative)
             if all(derivative is not None for derivative in derivatives):
                 jacobian = np.stack([value for value in derivatives if value is not None], axis=0)
-                gradient_pulls = []
+                # Move the entire star coherently toward the band, rather
+                # than following only one violating spoke. In-band spokes
+                # target their present lengths; the exact carrier and full
+                # star objective still decide whether this proposal is valid.
+                residual = np.clip(lengths[measured], _LOWER, _UPPER) - lengths[measured]
+                displacement = np.linalg.lstsq(
+                    jacobian[:, measured].T, residual, rcond=None
+                )[0]
+                joint_pull = basis @ displacement
+                gradient_pulls = (
+                    [joint_pull] if np.all(np.isfinite(joint_pull)) and np.any(joint_pull) else []
+                )
                 for index in np.flatnonzero(outside):
                     direction = basis @ jacobian[:, index]
                     norm = float(np.linalg.norm(direction))
