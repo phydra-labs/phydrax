@@ -226,7 +226,7 @@ def test_continuation_reference_restores_in_fresh_process(tmp_path: Path) -> Non
     recipe = SketchContinuationReferenceArchiveRecipe.from_reference(reference)
     with pytest.raises(ValueError, match="branch evidence"):
         recipe._replace(witness_signs=(-1,)).restore()
-    with pytest.raises(ValueError, match="Preparation witnesses"):
+    with pytest.raises(ValueError, match="checkpoint replay"):
         recipe._replace(
             preparation_pinned_values=np.ones_like(recipe.preparation_pinned_values)
         ).restore()

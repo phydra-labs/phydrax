@@ -2312,6 +2312,7 @@ def _profile_cap(
         coedge_loop = []
         for edge, first, last, curve in edges:
             edge_roots = builder.edge_endpoint_roots[edge]
+
             def coedge_root(root: RootEndpoint | None) -> ConicParameterEndpoint | None:
                 if isinstance(root, ConicParameterEndpoint):
                     return ConicParameterEndpoint(

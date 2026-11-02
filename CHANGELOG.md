@@ -10,6 +10,15 @@
   payload and row-offset array instead of retaining duplicate per-leaf string
   and byte banks. Canonical bytes, empty-container evidence, and type checks
   remain unchanged.
+- Reduced sketch roots now pass full-system native stationarity as well as the
+  original residual test; conflicting weighted constraints retain the native
+  unreduced least-squares behavior.
+- Sketch continuation binds the full retained source and independently replays
+  its one-step archived solve checkpoint before accepting restored output.
+- Directed major sketch arcs retain their exact conic source and endpoint roots
+  rather than being refused by the half-turn `ProfileArc` restriction.
+- Exact radical normalization recognizes word-sized prime residues with a
+  deterministic 64-bit primality test without changing algebraic identities.
 - Sketch root evidence resolves numerical rank through the shared linalg policy
   rather than a locally duplicated threshold.
 - Sketch array-input annotations now match the existing host and device array

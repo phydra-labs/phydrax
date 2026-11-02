@@ -8,6 +8,7 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from dataclasses import fields
 from fractions import Fraction
+from math import atan2, isqrt, tau
 from typing import Literal, TYPE_CHECKING, TypeAlias
 from uuid import uuid4
 
@@ -534,6 +535,8 @@ class SketchPreparationEvidence(StrictModule):
     ] = eqx.field(static=True)
     rigid_clusters: tuple[_SketchDistanceRigidityWitness, ...] = eqx.field(static=True)
     rigid_reduction_points: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    max_iterations: int = eqx.field(static=True)
+    damping: float = eqx.field(static=True)
     reduced_root_accepted: bool = eqx.field(static=True)
 
     def __init__(
@@ -548,6 +551,8 @@ class SketchPreparationEvidence(StrictModule):
         ],
         rigid_clusters: tuple[_SketchDistanceRigidityWitness, ...],
         rigid_reduction_points: tuple[tuple[int, ...], ...],
+        max_iterations: int,
+        damping: float,
         reduced_root_accepted: bool,
         /,
     ) -> None:
@@ -586,6 +591,14 @@ class SketchPreparationEvidence(StrictModule):
                 for item in rigid_clusters
             ):
                 raise TypeError("rigid_clusters must contain exact distance witnesses.")
+        if (
+            isinstance(max_iterations, bool)
+            or not isinstance(max_iterations, int)
+            or max_iterations <= 0
+        ):
+            raise ValueError("max_iterations must be a positive integer.")
+        if not np.isfinite(damping) or damping <= 0.0:
+            raise ValueError("damping must be finite and positive.")
         if reduced_root_accepted and not (indices or constructions):
             raise ValueError("A reduced root requires an admitted construction.")
         if not isinstance(reduced_root_accepted, bool):
@@ -600,6 +613,8 @@ class SketchPreparationEvidence(StrictModule):
         self.rigid_reduction_points = tuple(
             tuple(item) for item in rigid_reduction_points
         )
+        self.max_iterations = max_iterations
+        self.damping = float(damping)
         self.reduced_root_accepted = reduced_root_accepted
 
     def verify(
@@ -773,8 +788,8 @@ class Sketch(StrictModule):
 
     ``to_source`` remains the line-loop/circle geometry-source conversion.
     ``to_profile`` additionally lowers a single connected line/arc cycle to
-    native circular segments. Endpoint radii must agree exactly in represented
-    coordinates, in addition to native profile geometry validation.
+    native directed circular uses, including major arcs. Endpoint radii must
+    agree exactly in represented coordinates, in addition to native validation.
     """
 
     points: Array
@@ -1277,6 +1292,8 @@ class Sketch(StrictModule):
             constructions,
             rigid_clusters,
             tuple(item.point_indices for item in rigid_reductions),
+            max_iterations,
+            damping,
             reduced_root_accepted,
         )
         return SketchSolution(
@@ -1598,10 +1615,13 @@ class Sketch(StrictModule):
         from ..brep._constructors import (
             PlanarProfile,
             ProfileArc,
+            ProfileCurveUse,
             ProfileLine,
             ProfileLoop,
             ProfilePlane,
         )
+        from ...discretization._exact_algebraic_geometry import RadicalElement
+        from ..brep._patches import CircleCurve
         from ..simplicial import PlanarMeshRegion
 
         plane_ = ProfilePlane() if plane is None else plane
@@ -1628,7 +1648,7 @@ class Sketch(StrictModule):
             current = start
             used: set[int] = set()
             vertices: list[tuple[float, float]] = []
-            segments: list[ProfileLine | ProfileArc] = []
+            segments: list[ProfileLine | ProfileArc | ProfileCurveUse] = []
             geometry_segments: list[dict[str, object]] = []
             while True:
                 candidates = [index for index in adjacency[current] if index not in used]
@@ -1677,7 +1697,56 @@ class Sketch(StrictModule):
                         if forward
                         else not bool(directions[arc_index])
                     )
-                    segments.append(ProfileArc(center, direction))
+                    start_vector = tuple(
+                        value - origin
+                        for value, origin in zip(exact_start, exact_center, strict=True)
+                    )
+                    end_vector = tuple(
+                        value - origin
+                        for value, origin in zip(exact_end, exact_center, strict=True)
+                    )
+                    cross = (
+                        start_vector[0] * end_vector[1] - start_vector[1] * end_vector[0]
+                    )
+                    major = cross < 0 if direction else cross > 0
+                    numerator_root = isqrt(start_radius_squared.numerator)
+                    denominator_root = isqrt(start_radius_squared.denominator)
+                    if (
+                        numerator_root**2 == start_radius_squared.numerator
+                        and denominator_root**2 == start_radius_squared.denominator
+                    ):
+                        radius_exact = Fraction(numerator_root, denominator_root)
+                    else:
+                        radius_exact = RadicalElement.sqrt(start_radius_squared)
+                    radius = float(radius_exact)
+                    if (
+                        not major
+                        and Fraction.from_float(radius) ** 2 == start_radius_squared
+                        and all(
+                            float(np.linalg.norm(np.subtract(points[index], center)))
+                            == radius
+                            for index in (current, following)
+                        )
+                    ):
+                        segments.append(ProfileArc(center, direction))
+                    else:
+                        # The native conic retains the exact algebraic radius; its
+                        # increasing parameter follows the requested traversal.
+                        sign = 1.0 if direction else -1.0
+                        first = atan2(
+                            sign * float(start_vector[1]), float(start_vector[0])
+                        )
+                        last = atan2(sign * float(end_vector[1]), float(end_vector[0]))
+                        if last <= first:
+                            last += tau
+                        curve = CircleCurve(
+                            center,
+                            (1.0, 0.0),
+                            (0.0, sign),
+                            radius,
+                            radius_exact=radius_exact,
+                        )
+                        segments.append(ProfileCurveUse(curve, first, last))
                     geometry_segments.append(
                         {"kind": "arc", "center": center, "counterclockwise": direction}
                     )
@@ -1716,6 +1785,11 @@ class Sketch(StrictModule):
         profile = PlanarProfile(
             plane_,
             outer,
+            endpoint_gap_bounds=(
+                (tuple((0.0, 0.0) for _ in outer.segments),)
+                if self.arc_endpoints.shape[0]
+                else None
+            ),
         )
         lineage_id = canonical_fingerprint(
             {
@@ -1763,7 +1837,8 @@ class Sketch(StrictModule):
         if source_profile.root_evidence.problem_id != self._problem_id():
             raise ValueError("Source profile belongs to a different sketch definition.")
         from ..._physical import SpatialCoordinateContract
-        from ..brep._constructors import brep_planar_face
+        from ..brep._constructors import brep_planar_face, ProfileArc, ProfileCurveUse
+        from ..brep._intersection import ConicParameterEndpoint
 
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
@@ -1772,6 +1847,30 @@ class Sketch(StrictModule):
             coordinate_contract=coordinate_contract,
             source_id=source_profile.source_id,
         )
+        if self.arc_endpoints.shape[0]:
+            geometry = model.geometry
+            for edge, segment in enumerate(source_profile.profile.outer.segments):
+                if not isinstance(segment, (ProfileArc, ProfileCurveUse)):
+                    continue
+                uses = [
+                    index
+                    for index, used_edge in enumerate(geometry.coedge_edges)
+                    if used_edge == edge
+                ]
+                if (
+                    len(uses) != 1
+                    or not all(
+                        isinstance(root, ConicParameterEndpoint)
+                        for root in geometry.edge_endpoint_roots[edge]
+                    )
+                    or not all(
+                        isinstance(root, ConicParameterEndpoint)
+                        for root in geometry.coedge_endpoint_roots[uses[0]]
+                    )
+                ):
+                    raise ValueError(
+                        "Exact sketch arc endpoints require bound native conic roots."
+                    )
         return SketchModelResult(model, source_profile)
 
 

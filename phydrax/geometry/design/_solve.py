@@ -15,6 +15,8 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._tree_math import tree_norm
+
 from ...optim import (
     BoundedLevenbergMarquardt,
     Bounds,
@@ -24,6 +26,7 @@ from ...optim import (
     OptimizationStatus,
     OptimizationTermination,
 )
+from ...optim._least_squares import _prepare_residual_model
 
 if TYPE_CHECKING:
     from ._reduced import _SketchGroundedRigidParameterization
@@ -152,6 +155,32 @@ def solve_design_residual(
         iterations=jnp.asarray(result.diagnostics.iterations, dtype=jnp.int32).reshape(
             ()
         ),
+    )
+
+
+def _full_residual_optimal(
+    residual: Callable[[Array], Array],
+    candidate: Array,
+    tolerance: float,
+    bounds: tuple[ArrayLike, ArrayLike] | None,
+    /,
+) -> bool:
+    """Apply the native least-squares stationarity criterion to the full system."""
+    model = _prepare_residual_model(residual, candidate)
+    gradient = model.gradient
+    if bounds is not None:
+        gradient = Bounds(
+            jnp.asarray(bounds[0]), jnp.asarray(bounds[1])
+        ).projected_gradient(candidate, gradient)
+    optimality = tree_norm(gradient)
+    return bool(
+        np.asarray(
+            jnp.isfinite(model.objective)
+            & jnp.all(jnp.isfinite(model.residual))
+            & jnp.all(jnp.isfinite(model.gradient))
+            & jnp.isfinite(optimality)
+            & (optimality <= tolerance)
+        )
     )
 
 
@@ -601,9 +630,9 @@ def solve_prepared_sketch_residual(
     """Try a root-preserving coordinate reduction, then retain the full problem.
 
     Pinning equalities preserve their zero set, not an inconsistent weighted
-    least-squares objective. A reduced candidate is therefore accepted only when
-    the entire original residual converges; otherwise the original native solve
-    is run from the original reference coordinates.
+    least-squares objective. A reduced candidate must satisfy both the full
+    residual and the native full-system stationarity criterion; otherwise the
+    original native solve runs from the original reference coordinates.
     """
     from ._sketch_certificate import LineCircleConstruction
 
@@ -683,6 +712,7 @@ def solve_prepared_sketch_residual(
             and bool(np.all(np.isfinite(np.asarray(candidate))))
             and bool(np.isfinite(np.asarray(residual_norm)))
             and bool(np.asarray(residual_norm <= tolerance))
+            and _full_residual_optimal(residual, candidate, tolerance, bounds)
         ):
             return NativeResidualSolve(
                 candidate,
@@ -737,7 +767,12 @@ def solve_prepared_sketch_residual(
             & (np.asarray(candidate) <= np.asarray(bounds[1]))
         )
     )
-    if bool(np.asarray(attempt.converged)) and within_bounds:
+    if (
+        bool(np.asarray(attempt.converged))
+        and within_bounds
+        and bool(np.all(np.isfinite(np.asarray(candidate))))
+        and _full_residual_optimal(residual, candidate, tolerance, bounds)
+    ):
         return NativeResidualSolve(
             candidate,
             attempt.residual,

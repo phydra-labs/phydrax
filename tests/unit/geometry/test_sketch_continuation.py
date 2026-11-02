@@ -33,9 +33,19 @@ _LAYOUT = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=np.float64)
 
 
 def _solution(
-    sketch: Sketch, points: ArrayLike, *, rank: int = 0, converged: bool = True
+    sketch: Sketch,
+    points: ArrayLike,
+    *,
+    rank: int = 0,
+    converged: bool = True,
+    reference_points: ArrayLike | None = None,
 ) -> SketchSolution:
     coordinates = np.asarray(points, dtype=np.float64).reshape(-1)
+    reference = (
+        coordinates
+        if reference_points is None
+        else np.asarray(reference_points, dtype=np.float64).reshape(-1)
+    )
     residual = (
         np.empty(0, dtype=np.float64)
         if converged and rank == 0
@@ -62,13 +72,15 @@ def _solution(
         root_evidence=evidence,
         preparation=SketchPreparationEvidence(
             sketch._problem_id(),
-            coordinates,
-            coordinates,
+            reference,
+            reference,
             (),
             np.empty(0, dtype=np.float64),
             (),
             (),
             (),
+            32,
+            1e-8,
             False,
         ),
         dimensions=sketch.dimensions,
@@ -132,7 +144,7 @@ def test_restoration_uses_saved_reference_independently(
     sketch = Sketch(_LAYOUT)
     reference = _reference(sketch)
     moved = _LAYOUT + np.array([2.0, 3.0], dtype=np.float64)
-    attempt = _solution(sketch, moved)
+    attempt = _solution(sketch, moved, reference_points=_LAYOUT)
     seeds: list[NDArray[np.float64]] = []
 
     def solve(self: Sketch, **kwargs: Any) -> SketchSolution:
@@ -234,7 +246,7 @@ def test_dimension_edit_and_restoration_with_native_solver() -> None:
     forged = SketchContinuationResult(
         mirrored_reference, mirrored, reference, True, "accepted"
     )
-    with pytest.raises(ValueError, match="witness"):
+    with pytest.raises(ValueError, match="checkpoint"):
         forged.dimension_sensitivity(sketch, distance)
     np.testing.assert_allclose(
         np.linalg.norm(np.asarray(result.attempt.points[2] - result.attempt.points[0])),

@@ -74,6 +74,8 @@ def _root_at_initial_points(sketch: Sketch) -> SketchSolution:
             constructions,
             clusters,
             tuple(item.point_indices for item in reductions),
+            32,
+            1e-8,
             False,
         ),
         dimensions=sketch.dimensions,

@@ -17,7 +17,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint, iter_array_bytes
 from ..._geometry_predicates import PredicateMode, orient2d
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
@@ -327,6 +327,87 @@ def _sketch_witness_signs(
     return tuple(signs)
 
 
+def _same_array_bytes(first: np.ndarray, second: np.ndarray, /) -> bool:
+    """Compare C-order represented bytes exactly, with bounded temporary storage."""
+    left, right = iter_array_bytes(first), iter_array_bytes(second)
+    a = b = memoryview(b"")
+    while True:
+        if not a:
+            a = next(left, None)
+        if not b:
+            b = next(right, None)
+        if a is None or b is None:
+            return a is None and b is None
+        width = min(len(a), len(b))
+        if a[:width] != b[:width]:
+            return False
+        a, b = a[width:], b[width:]
+
+
+def _same_sketch_tree(first: Any, second: Any, /) -> bool:
+    """Compare tree metadata and represented dynamic leaves without tolerance."""
+    first_leaves, first_tree = jax.tree_util.tree_flatten(first)
+    second_leaves, second_tree = jax.tree_util.tree_flatten(second)
+    if first_tree != second_tree or len(first_leaves) != len(second_leaves):
+        return False
+    for left, right in zip(first_leaves, second_leaves, strict=True):
+        if isinstance(left, (jax.Array, np.ndarray, np.generic)) or isinstance(
+            right, (jax.Array, np.ndarray, np.generic)
+        ):
+            a, b = np.asarray(left), np.asarray(right)
+            if a.dtype != b.dtype or a.shape != b.shape or not _same_array_bytes(a, b):
+                return False
+        elif type(left) is not type(right) or left != right:
+            return False
+    return True
+
+
+class _SketchSolveCheckpoint(StrictModule):
+    """One authoritative solve input, independent of its accepted output."""
+
+    coordinates: Array
+    dimensions: DesignState
+    max_iterations: int = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    damping: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        coordinates: ArrayLike,
+        dimensions: DesignState,
+        max_iterations: int,
+        tolerance: float,
+        damping: float,
+        /,
+    ) -> None:
+        if type(dimensions) is not DesignState:
+            raise TypeError("Checkpoint dimensions must be an exact DesignState.")
+        DesignState(dimensions.schema, dimensions.values)
+        if (
+            isinstance(max_iterations, bool)
+            or not isinstance(max_iterations, int)
+            or max_iterations <= 0
+        ):
+            raise ValueError("Checkpoint max_iterations must be a positive integer.")
+        if (
+            not isfinite(tolerance)
+            or tolerance <= 0
+            or not isfinite(damping)
+            or damping <= 0
+        ):
+            raise ValueError(
+                "Checkpoint tolerance and damping must be finite and positive."
+            )
+        coordinates_ = jnp.asarray(coordinates, dtype=jnp.float64)
+        if coordinates_.ndim != 1 or not np.all(np.isfinite(np.asarray(coordinates_))):
+            raise ValueError("Checkpoint coordinates must be a finite vector.")
+        self.coordinates = coordinates_
+        self.dimensions = dimensions
+        self.max_iterations = max_iterations
+        self.tolerance = tolerance
+        self.damping = damping
+
+
 class SketchContinuationReference(StrictModule):
     """A solved reference layout and its explicitly declared orientation witnesses.
 
@@ -337,6 +418,7 @@ class SketchContinuationReference(StrictModule):
 
     sketch: Sketch
     solution: SketchSolution
+    checkpoint: _SketchSolveCheckpoint
     witnesses: tuple[SketchBranchWitness, ...] = eqx.field(static=True)
     witness_signs: tuple[int, ...] = eqx.field(static=True)
 
@@ -346,6 +428,8 @@ class SketchContinuationReference(StrictModule):
         solution: SketchSolution,
         witnesses: Sequence[SketchBranchWitness],
         /,
+        *,
+        checkpoint: _SketchSolveCheckpoint | None = None,
     ) -> None:
         if not isinstance(sketch, Sketch) or not isinstance(solution, SketchSolution):
             raise TypeError("Expected a Sketch and a SketchSolution.")
@@ -353,6 +437,37 @@ class SketchContinuationReference(StrictModule):
             raise ValueError("Reference solution belongs to a different sketch.")
         if solution.dimensions.schema != sketch.dimension_schema:
             raise ValueError("Reference dimensions do not match the sketch.")
+        if checkpoint is not None:
+            if type(checkpoint) is not _SketchSolveCheckpoint:
+                raise TypeError("Expected an exact sketch solve checkpoint.")
+            checked_checkpoint = _SketchSolveCheckpoint(
+                checkpoint.coordinates,
+                checkpoint.dimensions,
+                checkpoint.max_iterations,
+                checkpoint.tolerance,
+                checkpoint.damping,
+            )
+            if not _same_sketch_tree(checkpoint, checked_checkpoint):
+                raise ValueError("Checkpoint representation is not canonical.")
+            if checkpoint.dimensions.schema != sketch.dimension_schema or (
+                checkpoint.coordinates.shape
+                != (sketch.points.size + sketch.circle_radii.size,)
+            ):
+                raise ValueError(
+                    "Checkpoint dimensions or coordinate shape do not match the sketch."
+                )
+            if (
+                not _same_sketch_tree(
+                    checkpoint.coordinates, solution.preparation.reference_coordinates
+                )
+                or not _same_sketch_tree(checkpoint.dimensions, solution.dimensions)
+                or checkpoint.max_iterations != solution.preparation.max_iterations
+                or checkpoint.damping != solution.preparation.damping
+                or checkpoint.tolerance != solution.root_evidence.residual_tolerance
+            ):
+                raise ValueError(
+                    "Checkpoint does not match the solution preparation inputs."
+                )
         solution.preparation.verify(
             sketch,
             solution.dimensions,
@@ -416,6 +531,17 @@ class SketchContinuationReference(StrictModule):
             )
         self.sketch = sketch
         self.solution = solution
+        self.checkpoint = (
+            checkpoint
+            if checkpoint is not None
+            else _SketchSolveCheckpoint(
+                solution.preparation.reference_coordinates,
+                solution.dimensions,
+                solution.preparation.max_iterations,
+                solution.root_evidence.residual_tolerance,
+                solution.preparation.damping,
+            )
+        )
         self.witnesses = witnesses_
         self.witness_signs = signs
 
@@ -462,6 +588,8 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
     preparation_constructions: tuple[Any, ...]
     preparation_rigid_clusters: tuple[Any, ...]
     preparation_rigid_reduction_points: tuple[tuple[int, ...], ...]
+    preparation_max_iterations: int
+    preparation_damping: float
     preparation_reduced_root_accepted: bool
     residual_tolerance: float
     evidence_id: str
@@ -469,6 +597,11 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
     status: int
     witnesses: tuple[tuple[int, int, int], ...]
     witness_signs: tuple[int, ...]
+    checkpoint_coordinates: Any
+    checkpoint_dimensions: tuple[Any, ...]
+    checkpoint_max_iterations: int
+    checkpoint_tolerance: float
+    checkpoint_damping: float
 
     @classmethod
     def from_reference(
@@ -480,7 +613,10 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
             raise TypeError("Expected an exact SketchContinuationReference.")
         sketch = reference.sketch
         checked = SketchContinuationReference(
-            sketch, reference.solution, reference.witnesses
+            sketch,
+            reference.solution,
+            reference.witnesses,
+            checkpoint=reference.checkpoint,
         )
         if checked.witness_signs != reference.witness_signs:
             raise ValueError("Reference witness evidence does not match the layout.")
@@ -527,6 +663,8 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
             solution.preparation.constructions,
             solution.preparation.rigid_clusters,
             solution.preparation.rigid_reduction_points,
+            solution.preparation.max_iterations,
+            solution.preparation.damping,
             solution.preparation.reduced_root_accepted,
             solution.root_evidence.residual_tolerance,
             solution.root_evidence.evidence_id,
@@ -534,6 +672,11 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
             int(np.asarray(solution.status)),
             tuple(witness.points for witness in reference.witnesses),
             reference.witness_signs,
+            np.asarray(reference.checkpoint.coordinates),
+            tuple(np.asarray(value) for value in reference.checkpoint.dimensions.values),
+            reference.checkpoint.max_iterations,
+            reference.checkpoint.tolerance,
+            reference.checkpoint.damping,
         )
 
     def restore(self, /) -> SketchContinuationReference:
@@ -610,6 +753,8 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
             self.preparation_constructions,
             self.preparation_rigid_clusters,
             self.preparation_rigid_reduction_points,
+            self.preparation_max_iterations,
+            self.preparation_damping,
             self.preparation_reduced_root_accepted,
         )
         solution = SketchSolution(
@@ -624,10 +769,27 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
             preparation=preparation,
             dimensions=dimensions,
         )
+        checkpoint = _SketchSolveCheckpoint(
+            self.checkpoint_coordinates,
+            DesignState(sketch.dimension_schema, self.checkpoint_dimensions),
+            self.checkpoint_max_iterations,
+            self.checkpoint_tolerance,
+            self.checkpoint_damping,
+        )
+        replayed = sketch.solve(
+            initial_coordinates=checkpoint.coordinates,
+            dimensions=checkpoint.dimensions,
+            max_iterations=checkpoint.max_iterations,
+            tolerance=checkpoint.tolerance,
+            damping=checkpoint.damping,
+        )
+        if not _same_sketch_tree(solution, replayed):
+            raise ValueError("Archived sketch output does not match checkpoint replay.")
         reference = SketchContinuationReference(
             sketch,
             solution,
             tuple(SketchBranchWitness(value) for value in self.witnesses),
+            checkpoint=checkpoint,
         )
         if reference.witness_signs != self.witness_signs:
             raise ValueError("Archived sketch branch evidence failed replay.")
@@ -647,13 +809,36 @@ class SketchContinuationResult(StrictModule):
         """Replay accepted endpoints before any transition derivative."""
         if not self.accepted or self.reason != "accepted":
             raise ValueError("Continuation sensitivity requires an accepted transition.")
+        if not _same_sketch_tree(
+            sketch, self.prior_reference.sketch
+        ) or not _same_sketch_tree(sketch, self.reference.sketch):
+            raise ValueError(
+                "Continuation reference belongs to a different sketch source."
+            )
         prior = SketchContinuationReference(
-            sketch, self.prior_reference.solution, self.prior_reference.witnesses
+            sketch,
+            self.prior_reference.solution,
+            self.prior_reference.witnesses,
+            checkpoint=self.prior_reference.checkpoint,
         )
+        prior_coordinates = jnp.concatenate(
+            (prior.solution.points.reshape((-1,)), prior.solution.circle_radii)
+        )
+        if not _same_sketch_tree(
+            self.reference.checkpoint.coordinates, prior_coordinates
+        ):
+            raise ValueError(
+                "Continuation checkpoint does not match the prior reference layout."
+            )
         current = SketchContinuationReference(
-            sketch, self.reference.solution, self.reference.witnesses
+            sketch,
+            self.reference.solution,
+            self.reference.witnesses,
+            checkpoint=self.reference.checkpoint,
         )
-        attempted = SketchContinuationReference(sketch, self.attempt, prior.witnesses)
+        attempted = SketchContinuationReference(
+            sketch, self.attempt, prior.witnesses, checkpoint=self.reference.checkpoint
+        )
         prior_points = tuple(item.points for item in prior.witnesses)
         current_points = tuple(item.points for item in current.witnesses)
         if (
@@ -696,6 +881,16 @@ class SketchContinuationResult(StrictModule):
             )
         ):
             raise ValueError("Accepted reference does not match the attempted root.")
+        checkpoint = self.reference.checkpoint
+        replayed = sketch.solve(
+            initial_coordinates=checkpoint.coordinates,
+            dimensions=checkpoint.dimensions,
+            max_iterations=checkpoint.max_iterations,
+            tolerance=checkpoint.tolerance,
+            damping=checkpoint.damping,
+        )
+        if not _same_sketch_tree(current_solution, replayed):
+            raise ValueError("Accepted transition does not match checkpoint replay.")
 
     def dimension_sensitivity(
         self, sketch: Sketch, parameter_id: ParameterId, /
@@ -764,9 +959,13 @@ def continue_sketch(
         reference, SketchContinuationReference
     ):
         raise TypeError("Expected a Sketch and SketchContinuationReference.")
+    if not _same_sketch_tree(sketch, reference.sketch):
+        raise ValueError("Reference solution belongs to a different sketch source.")
     if reference.solution.root_evidence.problem_id != sketch._problem_id():
         raise ValueError("Reference solution belongs to a different sketch.")
-    checked = SketchContinuationReference(sketch, reference.solution, reference.witnesses)
+    checked = SketchContinuationReference(
+        sketch, reference.solution, reference.witnesses, checkpoint=reference.checkpoint
+    )
     if checked.witness_signs != reference.witness_signs:
         raise ValueError("Reference witness evidence does not match the layout.")
     if (
@@ -802,7 +1001,16 @@ def continue_sketch(
     if reason == "accepted":
         try:
             next_reference = SketchContinuationReference(
-                sketch, attempt, reference.witnesses
+                sketch,
+                attempt,
+                reference.witnesses,
+                checkpoint=_SketchSolveCheckpoint(
+                    initial,
+                    dimensions,
+                    options.get("max_iterations", 32),
+                    options.get("tolerance", 1e-9),
+                    options.get("damping", 1e-8),
+                ),
             )
         except ValueError:
             reason = "invalid_attempt"

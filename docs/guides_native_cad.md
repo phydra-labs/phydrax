@@ -26,9 +26,10 @@ External engines remain explicit optional comparisons. For example, `--scenario 
 Sketch root preparation propagates fixed points, fixed circle radii,
 coincidence, horizontal and vertical coordinates, and midpoints only when the
 represented midpoint is exact. It retains every original residual. A reduced
-candidate is accepted only when the complete residual converges; otherwise the
-same native least-squares owner solves the unreduced problem from the original
-reference layout. In particular, conflicting weighted constraints are not
+candidate is accepted only when both the complete residual and the native
+full-system least-squares stationarity test meet the declared tolerance.
+Otherwise the same native least-squares owner solves the unreduced problem from
+the original reference layout. In particular, conflicting weighted constraints are not
 silently treated as hard equalities. This preparation does not prove root
 uniqueness, and no gauge or least-motion objective is added.
 For two positive distance loci with distinct fixed centers, an exact rational
@@ -66,8 +67,9 @@ orientation signs and numerical rank after a dimension edit. A rejected edit
 retains the reference unchanged. Matching endpoint signs do not prove that the
 continuous edit path was event-free or that the root is globally unique.
 `SketchContinuationResult.dimension_sensitivity`, `dimension_jvp`, and
-`dimension_vjp` require an accepted transition and replay endpoint evidence
-before applying the fixed-branch implicit derivative. Standalone
+`dimension_vjp` require an accepted transition, independently replay its
+one-step checkpoint, and validate endpoint evidence before applying the
+fixed-branch implicit derivative. Standalone
 `Sketch.dimension_sensitivity` instead describes the local derivative of its
 supplied regular root, even if that root was an unaccepted diagnostic attempt.
 Derivative actions refuse a represented line-angle branch cut, collapsed
@@ -77,15 +79,22 @@ Sketch problem identity includes constraint incidence and branch selectors,
 including arc topology. Previous identities are not reused for the changed
 representation; compiler keys likewise follow the current residual code and
 captured values.
-Sketch arcs retain directed endpoint and center incidence. Exact native profile
-lowering requires exact equality of the represented endpoint radii; numerical
-residual convergence alone is not promoted to an exact circular profile.
+Sketch arcs retain directed endpoint and center incidence, including selected
+major sweeps. Exact native profile lowering requires exact equality of the
+represented endpoint radii and zero proved endpoint gaps; its planar model
+retains bound native conic roots on the incident edge and coedge carriers.
+Numerical residual convergence alone is not promoted to an exact circular
+profile.
 
 A `SketchContinuationReference` retains its source sketch as well as the
 accepted root. For portable restoration, put it in a lifecycle `Composition`
 entry with role `model-state` and persist the composition through the existing
-model-archive API. Restoration reconstructs the sketch and replays preparation,
-root, and branch evidence; it does not require the original Python objects.
+model-archive API. Restoration reconstructs the sketch and independently replays
+the retained one-step solve checkpoint, then checks the accepted output,
+preparation, root, and branch evidence. This detects output changes against an
+unchanged checkpoint; it does not authenticate a wholesale replacement of both
+the source and checkpoint. Restoration does not require the original Python
+objects.
 Run `python examples/native_sketch_continuation.py` for the complete witnessed
 dimension edit and archive-restoration workflow.
 
@@ -94,6 +103,11 @@ without competing benchmarks. It records growing axis-constraint and
 distance-triangulated cluster scenarios, with preparation, Jacobian work, solve
 time, traced retained host memory, and prepared array bytes separately. The
 measurements are observations, not correctness or speed claims.
+
+Exact radical normalization uses a deterministic 64-bit primality decision for
+word-sized prime residues, including residues left after removing small factors.
+Larger integers retain complete exact factorization without an operation quota;
+no general complexity bound is claimed.
 
 Continuity is source-owned. Built-in analytic carriers declare C1 continuity
 over valid parameter ranges; custom `AbstractCurve` and `AbstractSurfacePatch`
