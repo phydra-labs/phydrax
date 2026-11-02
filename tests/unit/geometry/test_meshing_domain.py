@@ -1,4 +1,5 @@
 from fractions import Fraction
+from pathlib import Path
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -58,6 +59,156 @@ from phydrax.geometry.brep._patches import (
     PlanePatch,
 )
 from phydrax.geometry.brep._tspline import TSplineSurfacePatch
+
+
+def test_rooted_quadric_trim_joins_require_source_authority(tmp_path: Path) -> None:
+    from phydrax.geometry._domain_boundary import (
+        _exact_trim_triangles,
+        _line_endpoints,
+        _patch_chart_polygon,
+        _rooted_patch_chart_endpoints,
+        _rooted_patch_chart_junctions,
+        CurvedTrimLens,
+    )
+    from phydrax.geometry._meshing_domain import (
+        _same_brep_trim_endpoint,
+        SourcePreparation,
+    )
+    from phydrax.geometry._source_fidelity import _curved_trim_lens_caps
+    from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
+    from phydrax.meshing.providers._native_surface import _trim_lens_bound
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _quadric_case
+
+    model, _, _, _ = _quadric_case("iges", tmp_path)
+    domain = MeshingDomain.from_brep(model)
+    patch = 2
+    uses = domain.patches[patch].loops[0]
+    original = tuple((use.first, use.last, use.sense) for use in uses)
+    raw = tuple(_line_endpoints(use) for use in uses)
+    mismatches = tuple(
+        slot
+        for slot, (_, last) in enumerate(raw)
+        if last != raw[(slot + 1) % len(raw)][0]
+    )
+    assert mismatches
+    slot = mismatches[0]
+    following = (slot + 1) % len(uses)
+    endpoints = _rooted_patch_chart_endpoints(domain, patch)
+    assert endpoints[0][slot][1] == endpoints[0][following][0]
+    assert all(
+        last == loop[(index + 1) % len(loop)][0]
+        for loop in endpoints
+        for index, (_, last) in enumerate(loop)
+    )
+    assert endpoints == _rooted_patch_chart_endpoints(domain, patch)
+    assert original == tuple((use.first, use.last, use.sense) for use in uses)
+
+    preparation = SourcePreparation(domain)
+    junction = _rooted_patch_chart_junctions(domain, patch, preparation)[0][slot]
+    assert junction.representative == endpoints[0][slot][1]
+    assert junction.lower != junction.upper
+    radius = fraction_sqrt_interval(
+        sum(
+            (
+                max(
+                    abs(junction.lower[axis] - junction.representative[axis]),
+                    abs(junction.upper[axis] - junction.representative[axis]),
+                )
+                ** 2
+                for axis in range(2)
+            ),
+            Fraction(0),
+        )
+    )[1]
+    lens = CurvedTrimLens(
+        (junction.representative, junction.representative),
+        junction.lower,
+        junction.upper,
+        radius * 2,
+    )
+    representative = junction.representative
+    chart = (
+        representative,
+        (representative[0] + radius, representative[1]),
+        (representative[0], representative[1] + radius),
+    )
+    caps = _curved_trim_lens_caps(
+        domain.patches[patch].surface, [(0, chart)], (lens,), preparation
+    )
+    assert caps[0] > 0
+    reference = _patch_chart_polygon(domain, patch, rooted=True)
+    assert reference is not None
+    triangles = _exact_trim_triangles(*reference)
+    source = MeshingDomainBoundarySource(domain, (patch,))
+    _, actual_lenses = source._trim_partition_reference_unchecked(
+        patch, triangles, preparation
+    )
+    assert any(
+        value.chord == (representative, representative) and value.parameter_bound > 0
+        for value in actual_lenses
+    )
+
+    # Use a proper subinterval of a real intersection branch rather than the
+    # effectively straight p-curves on patch 2.
+    branch_patch = 0
+    use = domain.patches[branch_patch].loops[0][0]
+    assert isinstance(use, PatchCurveUse)
+    oriented = _rooted_patch_chart_endpoints(domain, branch_patch)[0][0]
+    native_endpoints = oriented if use.sense > 0 else oriented[::-1]
+    lower, middle, upper = Fraction(1, 8), Fraction(1, 4), Fraction(3, 8)
+    whole = _trim_lens_bound(
+        domain, branch_patch, use, native_endpoints, lower, upper, preparation
+    )
+    left = _trim_lens_bound(
+        domain, branch_patch, use, native_endpoints, lower, middle, preparation
+    )
+    right = _trim_lens_bound(
+        domain, branch_patch, use, native_endpoints, middle, upper, preparation
+    )
+    assert whole > 0
+    assert left < whole
+    assert right < whole
+
+    authority = domain.brep_authority
+    assert authority is not None
+    face = domain.source_indices[2][patch]
+    coedges = authority.geometry.face_loops[face][0]
+    first, second = uses[slot], uses[following]
+    assert _same_brep_trim_endpoint(
+        authority, face, coedges[slot], coedges[following], first, second
+    )
+    surface = authority.patches[face]
+    periods = surface.native_period_symbols()
+    axis = periods.index("two_pi")
+    shifts = (1, 0) if axis == 0 else (0, 1)
+    shifted = eqx.tree_at(
+        lambda use: use.pcurve,
+        second,
+        PeriodicPCurve(second.pcurve, surface, shifts),
+    )
+    assert not _same_brep_trim_endpoint(
+        authority, face, coedges[slot], coedges[following], first, shifted
+    )
+    first_end = 1 if first.sense > 0 else 0
+    vertex = authority.geometry.edge_vertices[
+        authority.geometry.coedge_edges[coedges[slot]]
+    ][first_end]
+    other = next(
+        index
+        for index, use in enumerate(uses)
+        if authority.geometry.edge_vertices[
+            authority.geometry.coedge_edges[coedges[index]]
+        ][0 if use.sense > 0 else 1]
+        != vertex
+    )
+    assert not _same_brep_trim_endpoint(
+        authority, face, coedges[slot], coedges[other], first, uses[other]
+    )
+
+    unbound = eqx.tree_at(lambda value: value.brep_authority, domain, None)
+    with pytest.raises(ValueError):
+        _rooted_patch_chart_endpoints(unbound, patch)
 
 
 def _rebuild_brep_model(

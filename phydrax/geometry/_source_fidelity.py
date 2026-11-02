@@ -1123,7 +1123,7 @@ def _validate_source_fidelity_witness(
         )
         if any(finding.status != "certified" for finding in findings):
             raise ValueError(
-                "Surface chart witness is not a complete exact source partition."
+                "Surface chart witness is not a complete reference partition."
             )
         _chart_point_tables(domain_source, witness, mesh, geometry)
         return
@@ -4646,6 +4646,52 @@ def _normal_deviation_for_cell(
     return lower, upper
 
 
+def _curved_trim_lens_cap(
+    surface: AbstractSurfacePatch,
+    lens: CurvedTrimLens,
+    preparation: SourcePreparation,
+    /,
+) -> tuple[Fraction, Point2, Point2]:
+    """Map a chart lens bound to physical distance using a Jacobian enclosure."""
+    if lens.parameter_bound == 0:
+        return Fraction(0), lens.lower, lens.upper
+    widths = tuple(
+        lens.parameter_bound if lens.lower[axis] == lens.upper[axis] else 0
+        for axis in range(2)
+    )
+    lower = (lens.lower[0] - widths[0], lens.lower[1] - widths[1])
+    upper = (lens.upper[0] + widths[0], lens.upper[1] + widths[1])
+    domain = surface.parameter_domain
+    if domain is not None:
+        lower = (
+            max(lower[0], Fraction.from_float(float(domain[0][0]))),
+            max(lower[1], Fraction.from_float(float(domain[0][1]))),
+        )
+        upper = (
+            min(upper[0], Fraction.from_float(float(domain[1][0]))),
+            min(upper[1], Fraction.from_float(float(domain[1][1]))),
+        )
+    if lower[0] >= upper[0] or lower[1] >= upper[1]:
+        raise ValueError("A curved trim lens leaves the source parameter domain.")
+    norm_squared = Fraction(0)
+    for triangle in (
+        (lower, (upper[0], lower[1]), upper),
+        (lower, upper, (lower[0], upper[1])),
+    ):
+        bounds = _surface_jacobian_bounds(surface, triangle, preparation)
+        if bounds is None:
+            raise ValueError("A curved trim lens has no surface Jacobian enclosure.")
+        magnitude = np.maximum(np.abs(bounds[0]), np.abs(bounds[1]))
+        norm_squared = max(
+            norm_squared,
+            sum(
+                (Fraction.from_float(float(value)) ** 2 for value in magnitude.flat),
+                Fraction(0),
+            ),
+        )
+    return fraction_sqrt_interval(norm_squared)[1] * lens.parameter_bound, lower, upper
+
+
 def _curved_trim_lens_caps(
     surface: AbstractSurfacePatch,
     chart_rows: list[tuple[int, Triangle2]],
@@ -4653,56 +4699,12 @@ def _curved_trim_lens_caps(
     preparation: SourcePreparation,
     /,
 ) -> dict[int, Fraction]:
-    """Bound the physical distance a curved-trim lens adds to each target cell.
-
-    A lens point is within ``parameter_bound`` of its chord and its arc along a
-    chart segment inside the lens box, clipped to the convex source parameter
-    domain that holds both segment ends. The surface image of that segment is no
-    longer than the Jacobian norm bound on the box times the chart distance. A
-    straight trim's box is flat across the trim; that axis is widened by
-    ``parameter_bound`` before clipping, a superset on which the Jacobian bound
-    still holds.
-    """
+    """Bound the physical distance a curved-trim lens adds to each target cell."""
     caps: dict[int, Fraction] = {}
-    domain = surface.parameter_domain
     for lens in lenses:
-        if lens.parameter_bound == 0:
-            # A straight trim coincides with its chord; its lens adds nothing.
+        cap, lower, upper = _curved_trim_lens_cap(surface, lens, preparation)
+        if cap == 0:
             continue
-        widths = tuple(
-            lens.parameter_bound if lens.lower[axis] == lens.upper[axis] else 0
-            for axis in range(2)
-        )
-        lower = (lens.lower[0] - widths[0], lens.lower[1] - widths[1])
-        upper = (lens.upper[0] + widths[0], lens.upper[1] + widths[1])
-        if domain is not None:
-            lower = (
-                max(lower[0], Fraction.from_float(float(domain[0][0]))),
-                max(lower[1], Fraction.from_float(float(domain[0][1]))),
-            )
-            upper = (
-                min(upper[0], Fraction.from_float(float(domain[1][0]))),
-                min(upper[1], Fraction.from_float(float(domain[1][1]))),
-            )
-        if lower[0] >= upper[0] or lower[1] >= upper[1]:
-            raise ValueError("A curved trim lens leaves the source parameter domain.")
-        norm_squared = Fraction(0)
-        for triangle in (
-            (lower, (upper[0], lower[1]), upper),
-            (lower, upper, (lower[0], upper[1])),
-        ):
-            bounds = _surface_jacobian_bounds(surface, triangle, preparation)
-            if bounds is None:
-                raise ValueError("A curved trim lens has no surface Jacobian enclosure.")
-            magnitude = np.maximum(np.abs(bounds[0]), np.abs(bounds[1]))
-            norm_squared = max(
-                norm_squared,
-                sum(
-                    (Fraction.from_float(float(value)) ** 2 for value in magnitude.flat),
-                    Fraction(0),
-                ),
-            )
-        cap = fraction_sqrt_interval(norm_squared)[1] * lens.parameter_bound
         for cell_id, chart in chart_rows:
             if all(
                 min(point[axis] for point in chart) <= upper[axis]
@@ -5849,10 +5851,32 @@ def certify_source_fidelity(
             )
         )
     if witness.cell_kind == "quadrilateral":
+        from ._domain_boundary import _rooted_patch_chart_junctions
         from ._surface_source_support import (
             SurfaceNativeRestrictionBoundarySource,
             SurfaceSourceRootAtlas,
         )
+
+        try:
+            uncertain_junction = any(
+                junction.lower != junction.upper
+                for patch in domain_source.patches
+                for loop in _rooted_patch_chart_junctions(
+                    domain_source.domain, patch, preparation
+                )
+                for junction in loop
+            )
+        except (ArithmeticError, NotImplementedError, TypeError, ValueError):
+            uncertain_junction = True
+        if uncertain_junction:
+            findings.append(
+                MeshCertificateFinding(
+                    "source_chart_root_junction",
+                    "unresolved",
+                    "source_facet",
+                    detail="Exact quadrilateral fidelity requires exact trim junctions.",
+                )
+            )
 
         if not isinstance(
             source, SurfaceNativeRestrictionBoundarySource

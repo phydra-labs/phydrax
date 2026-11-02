@@ -1104,6 +1104,31 @@ def test_root_bounded_cad_point_requires_explicit_approximation_tolerance() -> N
     assert np.any(enclosure[0] < enclosure[1])
 
     domain = MeshingDomain.from_brep(model)
+    from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
+
+    closed_faces = {
+        face
+        for face, loops in enumerate(brep.face_loops)
+        if len(loops) == 1 and len(loops[0]) == 1
+    }
+    closed_patches = tuple(
+        row for row, face in enumerate(domain.source_indices[2]) if face in closed_faces
+    )
+    assert closed_patches
+    for patch_row in closed_patches:
+        uses = domain.patches[patch_row].loops
+        parameters = tuple(
+            (use.first, use.last, use.sense) for loop in uses for use in loop
+        )
+        endpoints = _rooted_patch_chart_endpoints(domain, patch_row)
+        assert all(
+            last == loop[(index + 1) % len(loop)][0]
+            for loop in endpoints
+            for index, (_, last) in enumerate(loop)
+        )
+        assert parameters == tuple(
+            (use.first, use.last, use.sense) for loop in uses for use in loop
+        )
     domain_row = next(
         row
         for row, source_row in enumerate(domain.source_indices[0])
@@ -1343,6 +1368,100 @@ def test_source_fidelity_certifies_complete_curved_chart_and_zero_normal_deviati
     assert certificate.source_to_mesh_upper == 0.0
     assert certificate.maximum_normal_deviation_bound == 0.0
     certificate.require_current(mesh, geometry, source)
+
+
+def test_rooted_chart_endpoints_preserve_exact_unrooted_square() -> None:
+    from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
+
+    domain = _domain()
+    endpoints = _rooted_patch_chart_endpoints(domain, 0)
+    zero, one = Fraction(0), Fraction(1)
+    assert endpoints == (
+        (
+            ((zero, zero), (one, zero)),
+            ((one, zero), (one, one)),
+            ((one, one), (zero, one)),
+            ((zero, one), (zero, zero)),
+        ),
+    )
+
+
+def test_rooted_chart_endpoints_refuse_unproved_nearby_join() -> None:
+    import equinox as eqx
+
+    from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
+
+    domain = _domain()
+    original = domain.patches[0].loops[0][1]
+    if not isinstance(original, PatchCurveUse):
+        raise ValueError("The square fixture requires a regular trim use.")
+    shifted = PatchCurveUse(
+        original.curve,
+        LineCurve((1.0, 2.0**-40), (0.0, 1.0)),
+        original.first,
+        original.last,
+        sense=original.sense,
+    )
+    changed = eqx.tree_at(lambda value: value.patches[0].loops[0][1], domain, shifted)
+    with pytest.raises(ValueError):
+        _rooted_patch_chart_endpoints(changed, 0)
+
+
+def test_source_fidelity_reports_nonzero_parallel_offset() -> None:
+    domain = _domain()
+    offset = 0.125
+    points = np.asarray(
+        ((0.0, 0.0, offset), (1.0, 0.0, offset), (1.0, 1.0, offset), (0.0, 1.0, offset)),
+        dtype=np.float64,
+    )
+    mesh = _mesh(points, np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64))
+    geometry = CellGeometrySpec.affine(mesh)
+    chart = np.asarray(
+        (((0.0, 0.0), (1.0, 0.0), (1.0, 1.0)), ((0.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        dtype=np.float64,
+    )
+    source = MeshingDomainBoundarySource(domain, (0,))
+    witness = _witness(mesh, geometry, domain, chart)
+    exact = certify_source_fidelity(
+        mesh, geometry, source, tolerance=0.0, witness=witness
+    )
+    assert exact.status != "certified"
+    bounded = certify_source_fidelity(
+        mesh, geometry, source, tolerance=0.25, witness=witness
+    )
+    assert bounded.status == "certified"
+    assert bounded.mesh_to_source_upper >= offset
+    assert bounded.source_to_mesh_upper >= offset
+
+
+def test_source_fidelity_rejects_a_thin_missing_chart_strip() -> None:
+    domain = _domain()
+    right = 1.0 - 2.0**-30
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (right, 0.0, 0.0), (right, 1.0, 0.0), (0.0, 1.0, 0.0)),
+        dtype=np.float64,
+    )
+    mesh = _mesh(points, np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64))
+    geometry = CellGeometrySpec.affine(mesh)
+    chart = np.asarray(
+        (
+            ((0.0, 0.0), (right, 0.0), (right, 1.0)),
+            ((0.0, 0.0), (right, 1.0), (0.0, 1.0)),
+        ),
+        dtype=np.float64,
+    )
+    source = MeshingDomainBoundarySource(domain, (0,))
+    certificate = certify_source_fidelity(
+        mesh,
+        geometry,
+        source,
+        tolerance=1.0,
+        witness=_witness(mesh, geometry, domain, chart),
+    )
+    assert certificate.status == "violated"
+    assert any(
+        finding.check == "source_chart_coverage" for finding in certificate.findings
+    )
 
 
 def test_source_fidelity_detects_omitted_source_chart_region() -> None:

@@ -248,6 +248,138 @@ def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Poi
     return points[0], points[1]
 
 
+class _RootedJunction(NamedTuple):
+    representative: _Point2
+    lower: _Point2
+    upper: _Point2
+
+
+def _rooted_patch_chart_junctions(
+    domain: MeshingDomain, patch: int, /, preparation: SourcePreparation | None = None
+) -> tuple[tuple[_RootedJunction, ...], ...]:
+    """Bind chart representatives to the current source's endpoint root proof."""
+    from ._meshing_domain import _same_brep_trim_endpoint
+
+    authority = domain.brep_authority
+    face = domain.source_indices[2][patch]
+    result: list[tuple[_RootedJunction, ...]] = []
+    for loop_index, loop in enumerate(domain.patches[patch].loops):
+        if not all(isinstance(use, (PatchCurveUse, PatchPoleUse)) for use in loop):
+            raise ValueError("Source trim has no supported chart endpoint chain.")
+        endpoints = tuple(_line_endpoints(use) for use in loop)
+        junctions: list[_RootedJunction] = []
+        for slot, use in enumerate(loop):
+            next_slot = (slot + 1) % len(loop)
+            other = loop[next_slot]
+            left, right = endpoints[slot][1], endpoints[next_slot][0]
+            representative = min(left, right)
+            boxes: list[np.ndarray] = []
+            if authority is not None:
+                coedges = authority.geometry.face_loops[face][loop_index]
+                first_coedge, second_coedge = coedges[slot], coedges[next_slot]
+                if _same_brep_trim_endpoint(
+                    authority, face, first_coedge, second_coedge, use, other
+                ):
+                    geometry = authority.geometry
+                    first_end = 1 if use.sense > 0 else 0
+                    second_start = 0 if other.sense > 0 else 1
+                    vertex = geometry.edge_vertices[geometry.coedge_edges[first_coedge]][
+                        first_end
+                    ]
+                    root = geometry.vertex_roots[vertex]
+                    if root is not None:
+                        first = root._endpoint_uv_binding(
+                            authority.patches[face],
+                            use.pcurve,
+                            geometry.coedge_endpoint_roots[first_coedge][first_end],
+                        )
+                        second = root._endpoint_uv_binding(
+                            authority.patches[face],
+                            other.pcurve,
+                            geometry.coedge_endpoint_roots[second_coedge][second_start],
+                        )
+                        if first is not None and second is not None:
+                            boxes.extend((first[1], second[1]))
+            if left != right and len(boxes) != 2:
+                raise ValueError("Source trim loop lacks a shared same-sheet UV root.")
+            if boxes and preparation is not None and authority is not None:
+                geometry = authority.geometry
+                coedges = geometry.face_loops[face][loop_index]
+                for carrier, parameter, endpoint in (
+                    (
+                        use.pcurve,
+                        use.last if use.sense > 0 else use.first,
+                        geometry.coedge_endpoint_roots[coedges[slot]][
+                            1 if use.sense > 0 else 0
+                        ],
+                    ),
+                    (
+                        other.pcurve,
+                        other.first if other.sense > 0 else other.last,
+                        geometry.coedge_endpoint_roots[coedges[next_slot]][
+                            0 if other.sense > 0 else 1
+                        ],
+                    ),
+                ):
+                    if endpoint is None:
+                        raise ValueError("A rooted junction lost its carrier endpoint.")
+                    lower, upper = endpoint.parameter_enclosure()
+                    carrier_domain = carrier.parameter_domain
+                    if carrier_domain is not None:
+                        lower = max(lower, float(carrier_domain[0]))
+                        upper = min(upper, float(carrier_domain[1]))
+                    if lower > upper:
+                        raise ValueError(
+                            "Root endpoint lies outside its carrier interval."
+                        )
+                    boxes.append(
+                        preparation.curve_box(
+                            carrier, min(lower, parameter), max(upper, parameter)
+                        )
+                    )
+            corners = [left, right]
+            for box in boxes:
+                if (
+                    box.shape != (2, 2)
+                    or np.any(~np.isfinite(box))
+                    or np.any(box[0] > box[1])
+                ):
+                    raise ValueError(
+                        "Source trim endpoint root has no finite ordered UV enclosure."
+                    )
+                corners.extend(
+                    (
+                        Fraction.from_float(float(box[row, 0])),
+                        Fraction.from_float(float(box[row, 1])),
+                    )
+                    for row in range(2)
+                )
+            lower = (
+                min(point[0] for point in corners),
+                min(point[1] for point in corners),
+            )
+            upper = (
+                max(point[0] for point in corners),
+                max(point[1] for point in corners),
+            )
+            junctions.append(_RootedJunction(representative, lower, upper))
+        result.append(tuple(junctions))
+    return tuple(result)
+
+
+def _rooted_patch_chart_endpoints(
+    domain: MeshingDomain, patch: int, /
+) -> tuple[tuple[tuple[_Point2, _Point2], ...], ...]:
+    junctions = _rooted_patch_chart_junctions(domain, patch)
+    return tuple(
+        tuple(
+            (loop[slot - 1].representative, junction.representative)
+            for slot, junction in enumerate(loop)
+        )
+        for loop in junctions
+    )
+
+
 def _patch_chart_polygon(
     domain: MeshingDomain,
     patch: int,
@@ -258,6 +390,7 @@ def _patch_chart_polygon(
     | None = None,
     *,
     drop_enclosed_curved_loops: bool = False,
+    rooted: bool = False,
     trim_loops: tuple[tuple[PatchCurveUse | PatchPoleUse, ...], ...] | None = None,
 ) -> (
     tuple[
@@ -275,18 +408,34 @@ def _patch_chart_polygon(
     boxes cover, so only cover construction may request it. ``trim_loops``
     replaces the authored trim by the same trim in another exact patch chart.
     """
+    if rooted and trim_loops is not None:
+        raise ValueError("Rooted chart representatives require the authored chart.")
+    rooted_endpoints = _rooted_patch_chart_endpoints(domain, patch) if rooted else None
+    if not rooted and domain.brep_authority is not None:
+        if any(
+            junction.lower != junction.upper
+            for loop in _rooted_patch_chart_junctions(domain, patch)
+            for junction in loop
+        ):
+            raise ValueError("Exact chart trim requires exact source-root junctions.")
     points: list[tuple[Fraction, Fraction]] = []
     segments: list[tuple[int, int]] = []
     loops: list[tuple[tuple[Fraction, Fraction], ...]] = []
     dropped = False
-    for loop in domain.patches[patch].loops if trim_loops is None else trim_loops:
+    for loop_index, loop in enumerate(
+        domain.patches[patch].loops if trim_loops is None else trim_loops
+    ):
         if not all(isinstance(use, (PatchCurveUse, PatchPoleUse)) for use in loop):
             return None
         loop_points: list[tuple[Fraction, Fraction]] = []
         loop_start: tuple[Fraction, Fraction] | None = None
         previous_end: tuple[Fraction, Fraction] | None = None
-        for use in loop:
-            first, last = _line_endpoints(use)
+        for slot, use in enumerate(loop):
+            first, last = (
+                _line_endpoints(use)
+                if rooted_endpoints is None
+                else rooted_endpoints[loop_index][slot]
+            )
             if loop_start is None:
                 loop_start = first
             if previous_end is not None and previous_end != first:
@@ -920,6 +1069,38 @@ def _trim_enclosure_triangles(
             third = (upper[0], upper[1])
             fourth = (lower[0], upper[1])
             triangles.extend(((first, second, third), (first, third, fourth)))
+    parameter_domain = domain.patches[patch].surface.parameter_domain
+    for loop in _rooted_patch_chart_junctions(domain, patch, preparation):
+        for junction in loop:
+            widths = tuple(
+                junction.upper[axis] - junction.lower[axis] for axis in range(2)
+            )
+            radius = max(widths)
+            if radius == 0:
+                continue
+            lower = [
+                junction.lower[axis] - (radius if widths[axis] == 0 else 0)
+                for axis in range(2)
+            ]
+            upper = [
+                junction.upper[axis] + (radius if widths[axis] == 0 else 0)
+                for axis in range(2)
+            ]
+            if parameter_domain is not None:
+                for axis in range(2):
+                    lower[axis] = max(
+                        lower[axis], Fraction.from_float(float(parameter_domain[0][axis]))
+                    )
+                    upper[axis] = min(
+                        upper[axis], Fraction.from_float(float(parameter_domain[1][axis]))
+                    )
+            if any(lower[axis] >= upper[axis] for axis in range(2)):
+                raise ValueError("Root junction enclosure has no chart cover.")
+            first = (lower[0], lower[1])
+            second = (upper[0], lower[1])
+            third = (upper[0], upper[1])
+            fourth = (lower[0], upper[1])
+            triangles.extend(((first, second, third), (first, third, fourth)))
     return tuple(triangles)
 
 
@@ -1311,12 +1492,43 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 raise ValueError("Source patch has no exact plane chart.")
             trim_loops = plane_chart.loops
         chart = _patch_chart_polygon(
-            self.domain, patch, curved_chain, trim_loops=trim_loops
+            self.domain, patch, curved_chain, rooted=not plane, trim_loops=trim_loops
         )
         if chart is None:
             raise ValueError(
                 "Source trim has no supported exact parameter triangulation."
             )
+        if not plane:
+            for loop in _rooted_patch_chart_junctions(self.domain, patch, preparation):
+                for junction in loop:
+                    radius = fraction_sqrt_interval(
+                        sum(
+                            (
+                                max(
+                                    abs(
+                                        junction.lower[axis]
+                                        - junction.representative[axis]
+                                    ),
+                                    abs(
+                                        junction.upper[axis]
+                                        - junction.representative[axis]
+                                    ),
+                                )
+                                ** 2
+                                for axis in range(2)
+                            ),
+                            Fraction(0),
+                        )
+                    )[1]
+                    if radius:
+                        lenses.append(
+                            CurvedTrimLens(
+                                (junction.representative, junction.representative),
+                                junction.lower,
+                                junction.upper,
+                                radius * 2,
+                            )
+                        )
         return _exact_trim_triangles(*chart), tuple(lenses)
 
     def collapsed_pole_slivers(
@@ -1332,7 +1544,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         row holding a pole-side edge to ``w``: that cell's chart preimage is its
         affine triangle together with the sliver.
         """
-        chart = _patch_chart_polygon(self.domain, patch)
+        chart = _patch_chart_polygon(self.domain, patch, rooted=True)
         if chart is None:
             return ()
         _, _, loops = chart
@@ -1546,7 +1758,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 )
                 continue
             chart = _patch_chart_polygon(
-                self.domain, patch, drop_enclosed_curved_loops=True
+                self.domain, patch, drop_enclosed_curved_loops=True, rooted=True
             )
             if chart is None:
                 complete = False
