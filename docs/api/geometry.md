@@ -207,6 +207,10 @@ authorize that join. Exact polygon area checks apply to the constructed referenc
 partition; they do not turn the representative into an exact source root.
 Continuous coverage and physical fidelity include the root and endpoint
 enclosures, so nonzero junction uncertainty cannot certify zero deviation.
+For a conic revolution pole, the latitude is carried by its exact conic root;
+the binary64 latitude is a reference realization, not proof of the pole.
+Pole-cap bounds include both the latitude enclosure and the source-corner
+realization error.
 
 
 On standard volume targets, target-reference chart corners retain all three

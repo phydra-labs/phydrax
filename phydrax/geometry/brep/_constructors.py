@@ -1413,7 +1413,10 @@ def _loop_edges(
             binding = builder.vertex_roots[vertex]
             if roots[endpoint] is not None or binding is None:
                 continue
-            assert isinstance(binding.primary, BRepConicVertex)
+            if not isinstance(binding.primary, BRepConicVertex):
+                raise ValueError(
+                    "A rooted profile vertex requires its conic source witness."
+                )
             exact_parameter = Fraction.from_float(parameter)
             point = exact_curve_parameter_point(curve, exact_parameter)
             if point is None or tuple(point) != binding.primary.point_exact:
@@ -2312,6 +2315,7 @@ def _profile_cap(
         coedge_loop = []
         for edge, first, last, curve in edges:
             edge_roots = builder.edge_endpoint_roots[edge]
+
             def coedge_root(root: RootEndpoint | None) -> ConicParameterEndpoint | None:
                 if isinstance(root, ConicParameterEndpoint):
                     return ConicParameterEndpoint(

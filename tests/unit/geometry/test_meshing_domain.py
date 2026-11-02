@@ -68,6 +68,7 @@ def test_rooted_quadric_trim_joins_require_source_authority(tmp_path: Path) -> N
         _patch_chart_polygon,
         _rooted_patch_chart_endpoints,
         _rooted_patch_chart_junctions,
+        _rooted_representative,
         CurvedTrimLens,
     )
     from phydrax.geometry._meshing_domain import (
@@ -83,6 +84,16 @@ def test_rooted_quadric_trim_joins_require_source_authority(tmp_path: Path) -> N
     model, _, _, _ = _quadric_case("iges", tmp_path)
     domain = MeshingDomain.from_brep(model)
     patch = 2
+    smallest = float(np.nextafter(0.0, 1.0))
+    box = np.asarray(((-smallest, 0.5), (smallest, 0.5)), dtype=np.float64)
+    outside = (Fraction.from_float(-smallest), Fraction(1, 2))
+    inside = (Fraction(0), Fraction(1, 2))
+    assert (
+        _rooted_representative(
+            _rational_spline_surfaces()[0], outside, inside, (box, box)
+        )
+        == inside
+    )
     uses = domain.patches[patch].loops[0]
     original = tuple((use.first, use.last, use.sense) for use in uses)
     raw = tuple(_line_endpoints(use) for use in uses)
@@ -209,6 +220,32 @@ def test_rooted_quadric_trim_joins_require_source_authority(tmp_path: Path) -> N
     unbound = eqx.tree_at(lambda value: value.brep_authority, domain, None)
     with pytest.raises(ValueError):
         _rooted_patch_chart_endpoints(unbound, patch)
+
+
+def test_coincident_conic_endpoint_shadows_require_root_authority() -> None:
+    from phydrax.geometry._domain_boundary import (
+        _line_endpoints,
+        _rooted_patch_chart_junctions,
+    )
+    from tests.unit.interchange._native_cad_archive_worker import (
+        _boolean_curve_carrier_model,
+    )
+
+    model = _boolean_curve_carrier_model(SpatialCoordinateContract.si())
+    domain = MeshingDomain.from_brep(model)
+    uses = domain.patches[0].loops[0]
+    assert _line_endpoints(uses[0])[1] == _line_endpoints(uses[1])[0]
+    junction = _rooted_patch_chart_junctions(domain, 0)[0][0]
+    assert junction.lower == junction.upper == junction.representative
+
+    if domain.brep_authority is None:
+        raise ValueError("The conic fixture requires a BRep authority.")
+    modified = eqx.tree_at(
+        lambda value: value.geometry.vertex_roots[1], domain.brep_authority, None
+    )
+    unbound = eqx.tree_at(lambda value: value.brep_authority, domain, modified)
+    with pytest.raises(ValueError, match="shared same-sheet UV root enclosure"):
+        _rooted_patch_chart_junctions(unbound, 0)
 
 
 def _rebuild_brep_model(

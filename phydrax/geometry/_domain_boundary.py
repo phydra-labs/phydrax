@@ -48,6 +48,7 @@ from ._source_boundary_records import (
     SourceBoundarySamples,
 )
 from ._triangulation import ConstrainedDelaunayTriangulation
+from .brep._model import BRepModel
 from .brep._patches import AbstractSurfacePatch, CircleCurve, ExactLineCurve, LineCurve
 
 
@@ -248,10 +249,242 @@ def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Poi
     return points[0], points[1]
 
 
+def _is_rooted_pole_line(use: PatchPoleUse, /) -> bool:
+    """Recognize the source-rooted latitude line of a revolution pole."""
+    from .brep._boolean_core import AffinePCurve, PeriodicPCurve
+    from .brep._patches import ConicRootLinePCurve
+
+    curve = use.pcurve
+    while isinstance(curve, PeriodicPCurve):
+        curve = curve.source_curve
+    return (
+        isinstance(curve, AffinePCurve)
+        and isinstance(curve.curve, ConicRootLinePCurve)
+        and curve.matrix == ((Fraction(0), Fraction(1)), (Fraction(1), Fraction(0)))
+        and curve.offset == (Fraction(0), Fraction(0))
+    )
+
+
 class _RootedJunction(NamedTuple):
     representative: _Point2
     lower: _Point2
     upper: _Point2
+
+
+def _rooted_representative(
+    surface: AbstractSurfacePatch,
+    left: _Point2,
+    right: _Point2,
+    boxes: tuple[np.ndarray, np.ndarray],
+    /,
+) -> _Point2:
+    """Choose a representable reference point inside both root boxes and the chart."""
+    if any(
+        box.shape != (2, 2) or np.any(~np.isfinite(box)) or np.any(box[0] > box[1])
+        for box in boxes
+    ):
+        raise ValueError("Source trim endpoint root has no finite ordered UV enclosure.")
+    lower = [max(float(box[0, axis]) for box in boxes) for axis in range(2)]
+    upper = [min(float(box[1, axis]) for box in boxes) for axis in range(2)]
+    chart = surface.parameter_domain
+    if chart is not None:
+        for axis in range(2):
+            lower[axis] = max(lower[axis], float(chart[0][axis]))
+            upper[axis] = min(upper[axis], float(chart[1][axis]))
+    if any(lower[axis] > upper[axis] for axis in range(2)):
+        raise ValueError("Source root boxes have no common point in the surface chart.")
+    for point in sorted((left, right)):
+        if all(
+            Fraction.from_float(lower[axis])
+            <= point[axis]
+            <= Fraction.from_float(upper[axis])
+            for axis in range(2)
+        ):
+            return point
+    # The interval endpoints are represented floats, so its lower corner is
+    # representable. It is only a chart reference point, never an exact root.
+    return Fraction.from_float(lower[0]), Fraction.from_float(lower[1])
+
+
+def _native_turn_boxes(
+    domain: MeshingDomain,
+    patch: int,
+    coedge: int,
+    use: PatchCurveUse | PatchPoleUse,
+    end: object,
+    start: object,
+    preparation: SourcePreparation | None,
+    /,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    from ._mesh_certificates import _same_tree_content
+    from .brep._boolean_core import pcurve_surface_period_shifts
+    from .brep._intersection import (
+        _same_parameter_source,
+        closes_native_turn,
+        NativePeriodEndpoint,
+    )
+    from .brep._trim_helpers import period_scalar_bounds, PeriodOffset
+
+    if (
+        not isinstance(end, NativePeriodEndpoint)
+        or not isinstance(start, NativePeriodEndpoint)
+        or not closes_native_turn(end, start)
+    ):
+        return None
+    authority = domain.brep_authority
+    if authority is None:
+        return None
+    original = authority.geometry.pcurves[coedge]
+    if not _same_parameter_source(end.curve, original) or not _same_parameter_source(
+        start.curve, original
+    ):
+        return None
+    identity = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
+    if (
+        not _same_tree_content(original, use.pcurve)
+        and pcurve_surface_period_shifts(
+            original,
+            use.pcurve,
+            identity,
+            (Fraction(0), Fraction(0)),
+            authority.patches[domain.source_indices[2][patch]],
+        )
+        is None
+    ):
+        return None
+    prepared = SourcePreparation.of(domain, preparation)
+    result: list[np.ndarray] = []
+    for parameter, endpoint in (
+        (use.last if use.sense > 0 else use.first, end),
+        (use.first if use.sense > 0 else use.last, start),
+    ):
+        lower, upper = endpoint.parameter_enclosure()
+        carrier_domain = use.pcurve.parameter_domain
+        if carrier_domain is not None:
+            lower = max(lower, float(carrier_domain[0]))
+            upper = min(upper, float(carrier_domain[1]))
+        if lower > upper:
+            raise ValueError("Native-turn endpoint lies outside its carrier interval.")
+        box = prepared.curve_box(use.pcurve, min(lower, parameter), max(upper, parameter))
+        if box.shape != (2, 2) or np.any(~np.isfinite(box)) or np.any(box[0] > box[1]):
+            raise ValueError("Native-turn endpoint has no finite UV enclosure.")
+        result.append(box)
+    for axis, symbol in enumerate(domain.patches[patch].surface.native_period_symbols()):
+        if symbol == "two_pi":
+            period = Fraction.from_float(
+                float(period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(1)))[0])
+            )
+            lower = Fraction.from_float(float(result[0][0, axis])) - Fraction.from_float(
+                float(result[1][1, axis])
+            )
+            upper = Fraction.from_float(float(result[0][1, axis])) - Fraction.from_float(
+                float(result[1][0, axis])
+            )
+            if lower <= -period or upper >= period:
+                raise ValueError(
+                    "Native-turn UV enclosure does not select one periodic sheet."
+                )
+    return result[0], result[1]
+
+
+def _exact_line_junction_box(
+    authority: BRepModel,
+    face: int,
+    first_coedge: int,
+    second_coedge: int,
+    first_use: PatchCurveUse | PatchPoleUse,
+    second_use: PatchCurveUse | PatchPoleUse,
+    /,
+) -> np.ndarray | None:
+    """Prove an exact rational/native-period line junction on one source vertex."""
+    from .brep._boolean_core import (
+        chart_add,
+        chart_parts,
+        chart_scale,
+        line_chart_coefficients,
+    )
+    from .brep._intersection import (
+        _same_parameter_source,
+        ConicParameterEndpoint,
+        NativePeriodEndpoint,
+    )
+    from .brep._trim_helpers import period_scalar_bounds
+
+    geometry = authority.geometry
+    first_end = 1 if first_use.sense > 0 else 0
+    second_start = 0 if second_use.sense > 0 else 1
+    vertex = geometry.edge_vertices[geometry.coedge_edges[first_coedge]][first_end]
+    if (
+        vertex
+        != geometry.edge_vertices[geometry.coedge_edges[second_coedge]][second_start]
+    ):
+        return None
+    root = geometry.vertex_roots[vertex]
+    values = []
+    for coedge, use, endpoint_index, parameter in (
+        (
+            first_coedge,
+            first_use,
+            first_end,
+            first_use.last if first_use.sense > 0 else first_use.first,
+        ),
+        (
+            second_coedge,
+            second_use,
+            second_start,
+            second_use.first if second_use.sense > 0 else second_use.last,
+        ),
+    ):
+        coefficients = line_chart_coefficients(use.pcurve)
+        if coefficients is None:
+            return None
+        endpoint = geometry.coedge_endpoint_roots[coedge][endpoint_index]
+        if isinstance(endpoint, NativePeriodEndpoint):
+            if (
+                endpoint.patch is None
+                or not _same_parameter_source(endpoint.patch, authority.patches[face])
+                or not _same_parameter_source(endpoint.curve, geometry.pcurves[coedge])
+            ):
+                return None
+            exact_parameter = endpoint.exact_parameter
+        elif isinstance(endpoint, ConicParameterEndpoint):
+            if (
+                endpoint.parameter_exact is None
+                or root is None
+                or not root.supports_endpoint(endpoint)
+                or not _same_parameter_source(endpoint.carrier, geometry.pcurves[coedge])
+            ):
+                return None
+            exact_parameter = endpoint.parameter_exact
+        elif (
+            endpoint is None
+            and root is None
+            and geometry.vertex_exact_points[vertex] is not None
+        ):
+            exact_parameter = Fraction.from_float(parameter)
+        else:
+            return None
+        origin, direction = coefficients
+        if len(origin) != 2 or len(direction) != 2:
+            return None
+        values.append(
+            tuple(
+                chart_add(origin[axis], chart_scale(exact_parameter, direction[axis]))
+                for axis in range(2)
+            )
+        )
+    if any(
+        chart_parts(values[0][axis]) != chart_parts(values[1][axis]) for axis in range(2)
+    ):
+        return None
+    bounds = tuple(period_scalar_bounds(value) for value in values[0])
+    return np.asarray(
+        (
+            (float(bounds[0][0]), float(bounds[1][0])),
+            (float(bounds[0][1]), float(bounds[1][1])),
+        ),
+        dtype=np.float64,
+    )
 
 
 def _rooted_patch_chart_junctions(
@@ -272,36 +505,64 @@ def _rooted_patch_chart_junctions(
             next_slot = (slot + 1) % len(loop)
             other = loop[next_slot]
             left, right = endpoints[slot][1], endpoints[next_slot][0]
-            representative = min(left, right)
             boxes: list[np.ndarray] = []
+            requires_proof = False
             if authority is not None:
-                coedges = authority.geometry.face_loops[face][loop_index]
+                geometry = authority.geometry
+                coedges = geometry.face_loops[face][loop_index]
                 first_coedge, second_coedge = coedges[slot], coedges[next_slot]
-                if _same_brep_trim_endpoint(
+                first_end = 1 if use.sense > 0 else 0
+                second_start = 0 if other.sense > 0 else 1
+                first_endpoint = geometry.coedge_endpoint_roots[first_coedge][first_end]
+                second_endpoint = geometry.coedge_endpoint_roots[second_coedge][
+                    second_start
+                ]
+                vertex = geometry.edge_vertices[geometry.coedge_edges[first_coedge]][
+                    first_end
+                ]
+                root = geometry.vertex_roots[vertex]
+                requires_proof = first_endpoint is not None or second_endpoint is not None
+                if root is not None and _same_brep_trim_endpoint(
                     authority, face, first_coedge, second_coedge, use, other
                 ):
-                    geometry = authority.geometry
-                    first_end = 1 if use.sense > 0 else 0
-                    second_start = 0 if other.sense > 0 else 1
-                    vertex = geometry.edge_vertices[geometry.coedge_edges[first_coedge]][
-                        first_end
-                    ]
-                    root = geometry.vertex_roots[vertex]
-                    if root is not None:
-                        first = root._endpoint_uv_binding(
-                            authority.patches[face],
-                            use.pcurve,
-                            geometry.coedge_endpoint_roots[first_coedge][first_end],
-                        )
-                        second = root._endpoint_uv_binding(
-                            authority.patches[face],
-                            other.pcurve,
-                            geometry.coedge_endpoint_roots[second_coedge][second_start],
-                        )
-                        if first is not None and second is not None:
-                            boxes.extend((first[1], second[1]))
-            if left != right and len(boxes) != 2:
-                raise ValueError("Source trim loop lacks a shared same-sheet UV root.")
+                    first = root.source_endpoint_uv_box(
+                        authority.patches[face], use.pcurve, first_endpoint
+                    )
+                    second = root.source_endpoint_uv_box(
+                        authority.patches[face], other.pcurve, second_endpoint
+                    )
+                    if first is not None and second is not None:
+                        boxes.extend((first, second))
+                if not boxes:
+                    exact_box = _exact_line_junction_box(
+                        authority, face, first_coedge, second_coedge, use, other
+                    )
+                    if exact_box is not None:
+                        boxes.extend((exact_box, exact_box))
+                if not boxes and first_coedge == second_coedge:
+                    turn_boxes = _native_turn_boxes(
+                        domain,
+                        patch,
+                        first_coedge,
+                        use,
+                        first_endpoint,
+                        second_endpoint,
+                        preparation,
+                    )
+                    if turn_boxes is not None:
+                        boxes.extend(turn_boxes)
+                        requires_proof = True
+            if (requires_proof or left != right) and len(boxes) != 2:
+                raise ValueError(
+                    "Source trim loop lacks a shared same-sheet UV root enclosure."
+                )
+            representative = (
+                _rooted_representative(
+                    domain.patches[patch].surface, left, right, (boxes[0], boxes[1])
+                )
+                if boxes
+                else left
+            )
             if boxes and preparation is not None and authority is not None:
                 geometry = authority.geometry
                 coedges = geometry.face_loops[face][loop_index]
@@ -321,9 +582,11 @@ def _rooted_patch_chart_junctions(
                         ],
                     ),
                 ):
-                    if endpoint is None:
-                        raise ValueError("A rooted junction lost its carrier endpoint.")
-                    lower, upper = endpoint.parameter_enclosure()
+                    lower, upper = (
+                        (parameter, parameter)
+                        if endpoint is None
+                        else endpoint.parameter_enclosure()
+                    )
                     carrier_domain = carrier.parameter_domain
                     if carrier_domain is not None:
                         lower = max(lower, float(carrier_domain[0]))
@@ -1544,6 +1807,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         row holding a pole-side edge to ``w``: that cell's chart preimage is its
         affine triangle together with the sliver.
         """
+        self.require_current()
         chart = _patch_chart_polygon(self.domain, patch, rooted=True)
         if chart is None:
             return ()
@@ -1582,13 +1846,21 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
 
         orientation = int(self.domain.patches[patch].orientation)
         slivers: list[tuple[int, _Triangle2]] = []
-        for loop in self.domain.patches[patch].loops:
-            for use in loop:
-                if not isinstance(use, PatchPoleUse) or not isinstance(
-                    use.pcurve, (ExactLineCurve, LineCurve)
+        rooted_endpoints = _rooted_patch_chart_endpoints(self.domain, patch)
+        for loop, endpoint_loop in zip(
+            self.domain.patches[patch].loops, rooted_endpoints, strict=True
+        ):
+            for use, (start, stop) in zip(loop, endpoint_loop, strict=True):
+                if not isinstance(use, PatchPoleUse) or (
+                    not isinstance(use.pcurve, (ExactLineCurve, LineCurve))
+                    and not (
+                        self.domain.brep_authority is not None
+                        and _is_rooted_pole_line(use)
+                    )
                 ):
                     continue
-                start, stop = _line_endpoints(use)
+                # Pole fan ownership uses the same rooted reference side as the
+                # chart partition, not the carrier's rounded endpoint shadows.
                 direction = (stop[0] - start[0], stop[1] - start[1])
                 side = sorted(
                     {

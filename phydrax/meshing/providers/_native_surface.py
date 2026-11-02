@@ -2989,6 +2989,8 @@ def _pole_cap_bound(
     pole_fixed: float,
     ring_fixed: float,
     pole_point: np.ndarray,
+    pole_gap: Fraction,
+    collapse_proved: bool,
     preparation: domain_owner.SourcePreparation,
     /,
 ) -> float:
@@ -3015,13 +3017,18 @@ def _pole_cap_bound(
     ):
         raise ValueError("Pole p-curve interval has no finite ordered chart box.")
     cap_box = np.array(chart_box, copy=True)
-    cap_box[:, fixed_axis] = (min(pole_fixed, ring_fixed), max(pole_fixed, ring_fixed))
+    cap_box[:, fixed_axis] = (
+        min(pole_fixed, ring_fixed, float(chart_box[0, fixed_axis])),
+        max(pole_fixed, ring_fixed, float(chart_box[1, fixed_axis])),
+    )
     cap_bounds = preparation.surface_box(
         surface, _positive_surface_parameter_box(surface, cap_box)
     )
     if cap_bounds.shape != (2, 3):
         raise ValueError("Pole surface chart boxes must realize finite 3D bounds.")
     bound = _box_point_distance_upper(cap_bounds, pole_point)
+    if not collapse_proved:
+        return bound
     corners = tuple(
         (
             Fraction.from_float(float(cap_box[row, 0])),
@@ -3037,21 +3044,29 @@ def _pole_cap_bound(
         )
     )
     if halves[0] is not None and halves[1] is not None:
-        speed = float(
-            np.linalg.norm(
-                np.maximum(
-                    np.maximum(np.abs(halves[0][0]), np.abs(halves[0][1])),
-                    np.maximum(np.abs(halves[1][0]), np.abs(halves[1][1])),
-                )[:, fixed_axis]
+        magnitude = np.maximum(
+            np.maximum(np.abs(halves[0][0]), np.abs(halves[0][1])),
+            np.maximum(np.abs(halves[1][0]), np.abs(halves[1][1])),
+        )[:, fixed_axis]
+        if not np.all(np.isfinite(magnitude)):
+            return bound
+        speed = fraction_sqrt_interval(
+            sum(
+                (Fraction.from_float(float(value)) ** 2 for value in magnitude),
+                Fraction(0),
+            )
+        )[1]
+        offset = max(
+            abs(Fraction.from_float(value) - Fraction.from_float(root_bound))
+            for value in (pole_fixed, ring_fixed)
+            for root_bound in (
+                float(chart_box[0, fixed_axis]),
+                float(chart_box[1, fixed_axis]),
             )
         )
-        offset = abs(Fraction.from_float(ring_fixed) - Fraction.from_float(pole_fixed))
-        # The norm and product carry a few binary64 roundings; widen past them.
-        swept = float(Fraction.from_float(speed) * offset) * (
-            1.0 + 16.0 * float(np.finfo(np.float64).eps)
-        )
+        swept = fraction_endpoint(speed * offset + pole_gap, upper=True, saturate=True)
         if math.isfinite(swept):
-            bound = min(bound, math.nextafter(swept, math.inf))
+            bound = min(bound, swept)
     return bound
 
 
@@ -3291,6 +3306,9 @@ def _pole_sampling(
             )
         surface = domain.patches[patch].surface
         parameter_domain = surface.parameter_domain
+        rooted_endpoints = domain_boundary_owner._rooted_patch_chart_endpoints(
+            domain, patch
+        )
         for loop_index, loop in enumerate(domain.patches[patch].loops):
             for use_index, use in enumerate(loop):
                 if not isinstance(use, domain_owner.PatchPoleUse):
@@ -3308,8 +3326,12 @@ def _pole_sampling(
                         category=MeshingFailureCategory.INVALID_SOURCE,
                         entity_ids=(int(patch),),
                     )
+                rooted_pole = (
+                    domain.brep_authority is not None
+                    and domain_boundary_owner._is_rooted_pole_line(use)
+                )
                 extents = pcurve_bounds[1] - pcurve_bounds[0]
-                fixed_axis = int(np.argmin(extents))
+                fixed_axis = 1 if rooted_pole else int(np.argmin(extents))
                 chart_scale = max(float(np.max(extents)), 1.0)
                 if (
                     extents[1 - fixed_axis]
@@ -3320,18 +3342,41 @@ def _pole_sampling(
                         category=MeshingFailureCategory.INVALID_SOURCE,
                         entity_ids=(int(patch),),
                     )
-                if extents[fixed_axis] > 128.0 * np.finfo(np.float64).eps * chart_scale:
+                if (
+                    extents[fixed_axis] > 128.0 * np.finfo(np.float64).eps * chart_scale
+                    and not rooted_pole
+                ):
                     raise _failure(
                         "collapsed pole p-curve must follow one singular chart coordinate",
                         category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
                         entity_ids=(int(patch),),
                     )
-                pole_fixed = float(
-                    (pcurve_bounds[0, fixed_axis] + pcurve_bounds[1, fixed_axis]) * 0.5
-                )
+                # This is only the reference ring coordinate; the true pole's
+                # root enclosure remains in every physical cap bound.
+                pole_fixed = float(rooted_endpoints[loop_index][use_index][0][fixed_axis])
                 pole_point = np.asarray(
                     domain.corner_points[use.corner], dtype=np.float64
                 )
+                pole_lower, pole_upper = domain.source_corner_point_bounds(use.corner)
+                pole_gap = fraction_sqrt_interval(
+                    sum(
+                        (
+                            max(
+                                abs(
+                                    pole_lower[axis]
+                                    - Fraction.from_float(float(pole_point[axis]))
+                                ),
+                                abs(
+                                    pole_upper[axis]
+                                    - Fraction.from_float(float(pole_point[axis]))
+                                ),
+                            )
+                            ** 2
+                            for axis in range(3)
+                        ),
+                        Fraction(0),
+                    )
+                )[1]
                 midpoint = _use_chart_point(use, Fraction(1, 2))
                 candidate_values = []
                 if parameter_domain is not None:
@@ -3454,7 +3499,22 @@ def _pole_sampling(
                     )
 
                 def chart_point(parameter: Fraction, /) -> tuple[Fraction, Fraction]:
-                    return _use_chart_point(use, parameter)
+                    start, stop = rooted_endpoints[loop_index][use_index]
+                    if parameter == 0:
+                        return start
+                    if parameter == 1:
+                        return stop
+                    point = list(_use_chart_point(use, parameter))
+                    free_axis = 1 - fixed_axis
+                    span = stop[free_axis] - start[free_axis]
+                    if span == 0:
+                        raise ValueError("Pole reference side has no chart extent.")
+                    point[fixed_axis] = start[fixed_axis] + (
+                        (point[free_axis] - start[free_axis])
+                        * (stop[fixed_axis] - start[fixed_axis])
+                        / span
+                    )
+                    return point[0], point[1]
 
                 def ring_chart_point(parameter: Fraction, /) -> tuple[Fraction, Fraction]:
                     point = list(chart_point(parameter))
@@ -3565,6 +3625,8 @@ def _pole_sampling(
                                 pole_fixed,
                                 ring_fixed,
                                 pole_point,
+                                pole_gap,
+                                domain.brep_authority is not None,
                                 preparation,
                             )
                             if cap_bound <= cap_limit:
