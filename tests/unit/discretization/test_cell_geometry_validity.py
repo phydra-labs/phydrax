@@ -1262,53 +1262,63 @@ def test_parent_validity_requires_the_same_policy() -> None:
         D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=parent)
 
 
-def test_embedded_affine_minor_determinant_matches_exact_gram() -> None:
+def _assert_embedded_affine_minor_matches_gram(
+    jacobian: tuple[tuple[validity_module.ExactScalar, ...], ...], label: str, /
+) -> None:
+    policy = D.CellValidityPolicy()
+    gram = tuple(
+        tuple(
+            sum(
+                (jacobian[axis][left] * jacobian[axis][right] for axis in range(3)),
+                Fraction(0),
+            )
+            for right in range(2)
+        )
+        for left in range(2)
+    )
+    expected = validity_module.determinant_exact(gram)
+    status, actual = validity_module._affine_quality(jacobian, 2, policy)
+    assert actual == expected, label
+    squared_scale = gram[0][0] * gram[1][1]
+    expected_status = (
+        Status.CERTIFIED_VALID
+        if expected > 0
+        and expected - Fraction(policy.determinant_floor()) * squared_scale > 0
+        else Status.INVALID
+    )
+    assert status == expected_status, label
+
+
+def test_embedded_affine_minor_matches_gram_for_dyadic_samples() -> None:
+    rng = np.random.default_rng(8291)
+    for index, matrix in enumerate(rng.uniform(-2.0, 2.0, size=(80, 3, 2))):
+        jacobian = tuple(
+            tuple(Fraction(float(value)) for value in row) for row in matrix
+        )
+        _assert_embedded_affine_minor_matches_gram(jacobian, f"sample {index}")
+
+
+@pytest.mark.parametrize("case", ("near-degenerate", "singular", "radical"))
+def test_embedded_affine_minor_matches_gram_for_adversarial_cases(case: str) -> None:
     from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 
-    rng = np.random.default_rng(8291)
-    matrices = [
-        tuple(tuple(Fraction(float(value)) for value in row) for row in matrix)
-        for matrix in rng.uniform(-2.0, 2.0, size=(80, 3, 2))
-    ]
-    matrices.extend(
-        [
-            (
-                (Fraction(1), Fraction(1)),
-                (Fraction(0), Fraction(1, 2**100)),
-                (Fraction(0), Fraction(0)),
-            ),
-            (
-                (Fraction(1), Fraction(2)),
-                (Fraction(2), Fraction(4)),
-                (Fraction(3), Fraction(6)),
-            ),
-        ]
-    )
-    radical = RadicalElement.sqrt(2)
-    exact_matrices = [
-        *matrices,
-        ((radical, Fraction(1)), (Fraction(1), radical), (Fraction(0), Fraction(1))),
-    ]
-    policy = D.CellValidityPolicy()
-    for jacobian in exact_matrices:
-        gram = tuple(
-            tuple(
-                sum(
-                    (jacobian[axis][left] * jacobian[axis][right] for axis in range(3)),
-                    Fraction(0),
-                )
-                for right in range(2)
-            )
-            for left in range(2)
+    if case == "near-degenerate":
+        jacobian = (
+            (Fraction(1), Fraction(1)),
+            (Fraction(0), Fraction(1, 2**100)),
+            (Fraction(0), Fraction(0)),
         )
-        expected = validity_module.determinant_exact(gram)
-        status, actual = validity_module._affine_quality(jacobian, 2, policy)
-        assert actual == expected
-        squared_scale = gram[0][0] * gram[1][1]
-        expected_status = (
-            Status.CERTIFIED_VALID
-            if expected > 0
-            and expected - Fraction(policy.determinant_floor()) * squared_scale > 0
-            else Status.INVALID
+    elif case == "singular":
+        jacobian = (
+            (Fraction(1), Fraction(2)),
+            (Fraction(2), Fraction(4)),
+            (Fraction(3), Fraction(6)),
         )
-        assert status == expected_status
+    else:
+        radical = RadicalElement.sqrt(2)
+        jacobian = (
+            (radical, Fraction(1)),
+            (Fraction(1), radical),
+            (Fraction(0), Fraction(1)),
+        )
+    _assert_embedded_affine_minor_matches_gram(jacobian, case)
