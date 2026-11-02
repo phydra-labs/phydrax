@@ -9,6 +9,9 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization._cell_mesh import SimplicialConnectivity
+from phydrax.discretization._reference_cell import reference_cell_topology
+from phydrax.discretization.fem._generic import _facet_routes
 
 
 def _mesh() -> Any:
@@ -147,3 +150,40 @@ def test_entity_selection_to_dofs_rejects_high_order_fields() -> None:
 
     with pytest.raises(ValueError, match="only vertex-associated P1"):
         discretization.dof_indices("u", selection)
+
+
+@pytest.mark.parametrize("dimension", (2, 3))
+def test_simplex_facet_routes_use_reference_local_numbering(dimension: int) -> None:
+    if dimension == 2:
+        coordinates = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)))
+        cells = np.asarray(((0, 1, 2), (1, 3, 2)), dtype=np.int32)
+    else:
+        coordinates = np.asarray(
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+                (1.0, 1.0, 1.0),
+            )
+        )
+        cells = np.asarray(((0, 1, 2, 3), (1, 2, 3, 4)), dtype=np.int32)
+    mesh = phx.discretization.CellMesh.from_simplices(
+        coordinates, cells, dimension=dimension
+    )
+    assert isinstance(mesh.connectivity, SimplicialConnectivity)
+    reference = reference_cell_topology(f"simplex:{dimension}")
+    facets = reference.entities[dimension - 1]
+    mesh_facets = np.asarray(mesh.connectivity.entities[dimension - 1])
+    owner, neighbor, owner_local, neighbor_local = _facet_routes(mesh)
+    assert np.count_nonzero(neighbor >= 0) == 1
+    for row in range(len(mesh_facets)):
+        canonical = set(int(vertex) for vertex in mesh_facets[row])
+        for cell, local in (
+            (owner[row], owner_local[row]),
+            (neighbor[row], neighbor_local[row]),
+        ):
+            if cell < 0:
+                assert local == -1
+                continue
+            assert canonical == {int(cells[cell, vertex]) for vertex in facets[local]}

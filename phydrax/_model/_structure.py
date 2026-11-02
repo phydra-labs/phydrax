@@ -33,7 +33,10 @@ if TYPE_CHECKING:
 
 from .._archive_columns import (
     ExactTensorArchiveRecipe,
+    integer_column,
+    integer_column_values,
     IntegerRowsArchiveRecipe,
+    TextColumnArchiveRecipe,
     TextRowsArchiveRecipe,
 )
 from .._array_archive import (
@@ -47,6 +50,63 @@ from .._frozendict import frozendict
 from .._strict import mark_strict_initialized, Strict
 from .._typing_plan import validate_tree
 from ._artifacts import artifact_value, artifact_value_id, register_artifact_value
+
+
+_PLC_TEXT_COLUMNS = frozenset(
+    {"vertex_ids", "facet_ids", "segment_ids", "plc_edge_ids", "region_ids"}
+)
+_PLC_PATH_COLUMNS = frozenset(
+    {
+        "vertex_occurrence_paths",
+        "facet_occurrence_paths",
+        "segment_occurrence_paths",
+        "plc_edge_occurrence_paths",
+        "region_occurrence_paths",
+    }
+)
+_PLC_INTEGER_COLUMNS = frozenset(
+    {
+        "vertex_entity_ids",
+        "facet_entity_ids",
+        "segment_entity_ids",
+        "plc_edge_entity_ids",
+        "region_entity_ids",
+    }
+)
+_PLC_INTEGER_ROWS = frozenset({"plc_edge_vertices", "plc_edge_facets"})
+
+
+class PiecewiseLinearComplexArchiveRecipe(NamedTuple):
+    """Exact PLC fields, with static identity and incidence banks in columns."""
+
+    fields: dict[str, object]
+
+    def decode(self) -> Any:
+        """Decode stored fields; scientific ownership is restored separately."""
+        from ..meshing._plc_source import PiecewiseLinearComplex
+
+        expected = {field.name for field in dataclasses.fields(PiecewiseLinearComplex)}
+        if set(self.fields) != expected:
+            raise ValueError("Stored PLC recipe has an incomplete field inventory.")
+        fields = dict(self.fields)
+        for name in _PLC_TEXT_COLUMNS:
+            column = fields[name]
+            if type(column) is not TextColumnArchiveRecipe:
+                raise TypeError("PLC identity columns must be exact text columns.")
+            fields[name] = column.decode()
+        for name in _PLC_PATH_COLUMNS:
+            column = fields[name]
+            if type(column) is not TextRowsArchiveRecipe:
+                raise TypeError("PLC occurrence paths must be exact text rows.")
+            fields[name] = column.decode()
+        for name in _PLC_INTEGER_COLUMNS:
+            fields[name] = integer_column_values(fields[name])
+        for name in _PLC_INTEGER_ROWS:
+            column = fields[name]
+            if type(column) is not IntegerRowsArchiveRecipe:
+                raise TypeError("PLC incidence must be exact integer rows.")
+            fields[name] = column.decode()
+        return _restore_dataclass(PiecewiseLinearComplex, fields)
 
 
 class CADRevisionArchiveRecipe(NamedTuple):
@@ -223,6 +283,7 @@ class SurfaceSourceChartsArchiveRecipe(NamedTuple):
     associations: tuple[GeometryAssociation, ...]
     boundary_source: MeshingDomainBoundarySourceArchiveRecipe
     source_root_cell_ids: np.ndarray
+    boundary_occurrences: np.ndarray
     source_piece_ids: IntegerRowsArchiveRecipe
     expected_source_chart_id: str
 
@@ -944,6 +1005,7 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.associations,
             boundary_recipe,
             value.source_root_cell_ids,
+            value.boundary_occurrences,
             IntegerRowsArchiveRecipe.encode(value.source_piece_ids),
             value.source_chart_id,
         )
@@ -1479,6 +1541,7 @@ def _cell_quality_report_archive_recipe(value: Any, /) -> object | None:
 _ROW_RECORD_TYPES = frozenset(
     {
         ("phydrax.meshing._association", "GeometryAssociation"),
+        ("phydrax.meshing._plc_source", "PiecewiseLinearComplex"),
         ("phydrax.geometry._embedding_state", "MeshEmbeddingWitness"),
         ("phydrax.geometry.surface._contracts", "SurfaceMetadata"),
         ("phydrax.discretization._surface_chart_records", "SurfaceChartWitness"),
@@ -1731,6 +1794,28 @@ def restore_row_record_recipes(value: Any, /) -> Any:
 
 def model_archive_projection(value: Any, /) -> Any:
     """Return a structural archive view with query caches replaced by owner inputs."""
+    if (
+        type(value).__module__ == "phydrax.meshing._plc_source"
+        and type(value).__name__ == "PiecewiseLinearComplex"
+    ):
+        from ..meshing._plc_source import PiecewiseLinearComplex
+
+        if type(value) is not PiecewiseLinearComplex:
+            raise TypeError("PLC archive projection requires the canonical type.")
+        fields: dict[str, object] = {}
+        for field in dataclasses.fields(value):
+            item = object.__getattribute__(value, field.name)
+            if field.name in _PLC_TEXT_COLUMNS:
+                fields[field.name] = TextColumnArchiveRecipe.encode(item)
+            elif field.name in _PLC_PATH_COLUMNS:
+                fields[field.name] = TextRowsArchiveRecipe.encode(item)
+            elif field.name in _PLC_INTEGER_COLUMNS:
+                fields[field.name] = integer_column(item)
+            elif field.name in _PLC_INTEGER_ROWS:
+                fields[field.name] = IntegerRowsArchiveRecipe.encode(item)
+            else:
+                fields[field.name] = model_archive_projection(item)
+        return PiecewiseLinearComplexArchiveRecipe(fields)
     if type(value).__module__ == "phydrax.geometry._cad_revision":
         from ..geometry._cad_revision import (
             AssociationGraph,

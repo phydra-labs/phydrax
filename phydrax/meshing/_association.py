@@ -46,6 +46,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, EntitySet
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
+from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._exact_algebraic_geometry import coefficient_payload
 from ..geometry._source_identity import source_entity_id
 from ..geometry.brep._projection_contracts import (
@@ -934,6 +935,11 @@ def _entity_rows(
 def _ordered_vertices(mesh: CellMesh, dimension: int, /) -> np.ndarray | None:
     """Canonical vertex rows of every entity of ``dimension`` (simplex routes)."""
     connectivity = mesh.connectivity
+    if (
+        isinstance(connectivity, SimplicialConnectivity)
+        and 1 <= dimension < mesh.topological_dimension
+    ):
+        return np.asarray(connectivity.entities[dimension], dtype=np.int64)
     if dimension == 1 and isinstance(
         connectivity, (PolygonalConnectivity, TetrahedralConnectivity)
     ):

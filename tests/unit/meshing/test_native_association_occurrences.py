@@ -616,6 +616,46 @@ def test_shared_face_cad_sides_retain_qualified_identity(
     ):
         phx.meshing.NativeMeshingProvider().plan(model, one_sided).execute()
     result = phx.meshing.NativeMeshingProvider().plan(model, specification).execute()
+    face_associations = tuple(
+        association
+        for association in result.associations
+        if association.association_kind is GeometryAssociationKind.BREP
+        and association.target_entity_set_id == result.mesh.entity_set(2).entity_set_id
+        and association.source_id == model.source_id
+        and association.source_revision == model.source_revision
+    )
+    assert len(face_associations) == 1
+    face_association = face_associations[0]
+    face_key, face_path = domain.source_entity_key_for_scope(
+        2, int(scopes[0].side_records[0].entity_id)
+    )
+    associated_rows = np.asarray(
+        [
+            row
+            for row, (key, path) in enumerate(
+                zip(
+                    face_association.source_entity_ids,
+                    face_association.source_occurrence_paths,
+                    strict=True,
+                )
+            )
+            if key == face_key and path == face_path
+        ],
+        dtype=np.int64,
+    )
+    assert associated_rows.size
+    assert np.all(np.asarray(face_association.resolved)[associated_rows])
+    assert not np.any(np.asarray(face_association.ambiguous)[associated_rows])
+    selected_face_ids = np.asarray(face_association.target_global_ids)[associated_rows]
+    face_rows = np.flatnonzero(
+        np.isin(np.asarray(result.mesh.entity_set(2).entity_ids), selected_face_ids)
+    )
+    assert face_rows.size == selected_face_ids.size
+    assert isinstance(result.mesh.connectivity, SimplicialConnectivity)
+    selected_vertices = np.asarray(result.mesh.connectivity.entities[2])[face_rows]
+    np.testing.assert_allclose(
+        np.asarray(result.mesh.coordinates)[selected_vertices, 0], 1.0, atol=1e-10
+    )
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.discontinuous_element("simplex:3", 1)
     )
@@ -635,9 +675,29 @@ def test_shared_face_cad_sides_retain_qualified_identity(
         vertex_global_ids=result.mesh.vertex_global_ids,
         numeric_version=result.mesh.numeric_version,
     )
-    # Same canonical topology and global IDs, genuinely reversed storage.
-    assert reversed_mesh.mesh_id == result.mesh.mesh_id
+    # Preserve exact vertex and cell identities while reversing physical storage.
+    np.testing.assert_array_equal(reversed_mesh.coordinates, result.mesh.coordinates)
+    np.testing.assert_array_equal(
+        reversed_mesh.vertex_global_ids, result.mesh.vertex_global_ids
+    )
     np.testing.assert_array_equal(reversed_mesh.blocks[0].vertices, cells[::-1])
+    np.testing.assert_array_equal(
+        reversed_mesh.blocks[0].global_ids, np.asarray(block.global_ids)[::-1]
+    )
+    vertex_ids = np.asarray(result.mesh.vertex_global_ids)
+    original_incidence = {
+        int(cell_id): tuple(sorted(vertex_ids[cell].tolist()))
+        for cell_id, cell in zip(np.asarray(block.global_ids), cells, strict=True)
+    }
+    reversed_incidence = {
+        int(cell_id): tuple(sorted(vertex_ids[cell].tolist()))
+        for cell_id, cell in zip(
+            np.asarray(reversed_mesh.blocks[0].global_ids),
+            np.asarray(reversed_mesh.blocks[0].vertices),
+            strict=True,
+        )
+    }
+    assert original_incidence == reversed_incidence
     for mesh in (result.mesh, reversed_mesh):
         prepared = phx.discretization.FiniteElementPlan(mesh, field).prepare()
         fv = phx.discretization.UnstructuredFiniteVolumePlan(
@@ -665,15 +725,46 @@ def test_shared_face_cad_sides_retain_qualified_identity(
         coefficients[routes] = np.where(centers[:, 0, None] < 1.0, -1.0, 1.0)
         observed = set()
         for side_scope in scopes:
-            zone = next(
-                zone
-                for zone in result.zones
-                if zone.name == f"region-{side_scope.side_records[0].solid_index}"
+            cell_associations = tuple(
+                association
+                for association in result.associations
+                if association.association_kind is GeometryAssociationKind.BREP
+                and association.target_entity_set_id
+                == result.mesh.entity_set(3).entity_set_id
+                and association.source_id == model.source_id
+                and association.source_revision == model.source_revision
             )
-            zone_selection = phx.meshing.resolve_mesh_scope(result.mesh, zone.scope)
-            zone_centers = original_centers[np.asarray(zone_selection.mask)]
-            assert zone_centers.size
-            expected = -1.0 if np.mean(zone_centers[:, 0]) < 1.0 else 1.0
+            assert len(cell_associations) == 1
+            cell_association = cell_associations[0]
+            record = side_scope.side_records[0]
+            association_rows = np.asarray(
+                [
+                    row
+                    for row, (index, path) in enumerate(
+                        zip(
+                            cell_association.source_indices,
+                            cell_association.source_occurrence_paths,
+                            strict=True,
+                        )
+                    )
+                    if int(index) == record.solid_index and path == record.region_path
+                ],
+                dtype=np.int64,
+            )
+            assert association_rows.size
+            assert np.all(np.asarray(cell_association.resolved)[association_rows])
+            assert not np.any(np.asarray(cell_association.ambiguous)[association_rows])
+            selected_ids = np.asarray(cell_association.target_global_ids)[
+                association_rows
+            ]
+            region_centers = original_centers[
+                np.isin(np.asarray(block.global_ids), selected_ids)
+            ]
+            assert region_centers.shape[0] == selected_ids.size
+            assert np.all(region_centers[:, 0] < 1.0) or np.all(
+                region_centers[:, 0] > 1.0
+            )
+            expected = -1.0 if region_centers[0, 0] < 1.0 else 1.0
             observed.add(expected)
             domains = phx.meshing.resolve_sided_integration_domains(
                 result, model, side_scope, prepared, tolerance=1e-8

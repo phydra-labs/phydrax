@@ -21,10 +21,36 @@ from phydrax.meshing._plc_source import (
 )
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing.providers._native_cad_volume import _cad_plc_data
+from phydrax.meshing.providers._native_volume import _face_order_sign
+
+
+@pytest.mark.parametrize(
+    ("vertices", "expected"),
+    (
+        ((3, 5, 7), 1),
+        ((5, 7, 3), 1),
+        ((7, 3, 5), 1),
+        ((3, 7, 5), -1),
+        ((7, 5, 3), -1),
+        ((5, 3, 7), -1),
+    ),
+)
+def test_recovered_face_orientation_transports_exact_vertex_parity(
+    vertices: tuple[int, int, int],
+    expected: int,
+) -> None:
+    assert _face_order_sign((3, 5, 7), vertices) == expected
+
+
+def test_recovered_face_orientation_rejects_other_vertex_identity() -> None:
+    with pytest.raises(ValueError, match="vertex identities"):
+        _face_order_sign((3, 5, 7), (3, 5, 8))
 
 
 @pytest.fixture(scope="module")
-def multiregion_surface() -> tuple[MeshCertificationReport, NativeMeshOrganization, CellMeshingResult]:
+def multiregion_surface() -> tuple[
+    MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+]:
     pytest.importorskip("OCP")
     from OCP.BOPAlgo import BOPAlgo_Splitter
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
@@ -68,7 +94,9 @@ def multiregion_surface() -> tuple[MeshCertificationReport, NativeMeshOrganizati
 
 
 def test_missing_multiregion_evidence_does_not_excuse_junction(
-    multiregion_surface: tuple[MeshCertificationReport, NativeMeshOrganization, CellMeshingResult],
+    multiregion_surface: tuple[
+        MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+    ],
 ) -> None:
     report, organization, _ = multiregion_surface
     assert report.multiregion_evidence is not None
@@ -90,7 +118,9 @@ def test_missing_multiregion_evidence_does_not_excuse_junction(
 
 
 def test_multiregion_proof_refuses_missing_source_association(
-    multiregion_surface: tuple[MeshCertificationReport, NativeMeshOrganization, CellMeshingResult],
+    multiregion_surface: tuple[
+        MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+    ],
 ) -> None:
     report, organization, _ = multiregion_surface
     with pytest.raises(ValueError, match="unique source association"):
@@ -99,7 +129,9 @@ def test_multiregion_proof_refuses_missing_source_association(
 
 @pytest.mark.parametrize("defect", ("inverted", "open", "wrong-region"))
 def test_multiregion_proof_refuses_altered_region_topology(
-    multiregion_surface: tuple[MeshCertificationReport, NativeMeshOrganization, CellMeshingResult],
+    multiregion_surface: tuple[
+        MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+    ],
     defect: Literal["inverted", "open", "wrong-region"],
 ) -> None:
     report, organization, _ = multiregion_surface
@@ -136,7 +168,9 @@ def test_multiregion_proof_refuses_altered_region_topology(
 
 @pytest.fixture(scope="module")
 def cad_plc(
-    multiregion_surface: tuple[MeshCertificationReport, NativeMeshOrganization, CellMeshingResult],
+    multiregion_surface: tuple[
+        MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+    ],
 ) -> PiecewiseLinearComplex:
     report, _, result = multiregion_surface
     domain = report.inputs.feature_source
@@ -146,7 +180,9 @@ def cad_plc(
 
 
 def _rebuild_plc(
-    plc: PiecewiseLinearComplex, /, *,
+    plc: PiecewiseLinearComplex,
+    /,
+    *,
     charts: SurfaceSourceCharts | None,
     vertex_rows: np.ndarray | None,
     segment_edge_ids: np.ndarray | None,
@@ -161,34 +197,75 @@ def _rebuild_plc(
         for first, last in zip(offsets[:-1], offsets[1:], strict=True)
     )
     return PiecewiseLinearComplex(
-        plc.vertices, loops, plc.polygon_facets,
-        plc.facet_regions if facet_regions is None else facet_regions, plc.region_ids,
-        segments=plc.segments, vertex_ids=plc.vertex_ids,
+        plc.vertices,
+        loops,
+        plc.polygon_facets,
+        plc.facet_regions if facet_regions is None else facet_regions,
+        plc.region_ids,
+        segments=plc.segments,
+        vertex_ids=plc.vertex_ids,
         vertex_occurrence_paths=plc.vertex_occurrence_paths,
-        facet_ids=plc.facet_ids, facet_occurrence_paths=plc.facet_occurrence_paths,
-        segment_ids=plc.segment_ids, segment_occurrence_paths=plc.segment_occurrence_paths,
+        facet_ids=plc.facet_ids,
+        facet_occurrence_paths=plc.facet_occurrence_paths,
+        segment_ids=plc.segment_ids,
+        segment_occurrence_paths=plc.segment_occurrence_paths,
         region_occurrence_paths=plc.region_occurrence_paths,
-        boundary=plc.boundary, geometry=plc.geometry,
-        facet_planes=plc.facet_planes, facet_plane_tolerances=plc.facet_plane_tolerances,
-        cad_source_charts=charts, cad_fidelity_tolerance=tolerance,
+        boundary=plc.boundary,
+        geometry=plc.geometry,
+        facet_planes=plc.facet_planes,
+        facet_plane_tolerances=plc.facet_plane_tolerances,
+        cad_source_charts=charts,
+        cad_fidelity_tolerance=tolerance,
         cad_embedding=plc.cad_embedding if charts is not None else None,
         cad_fidelity=plc.cad_fidelity if charts is not None and not drop_proof else None,
-        cad_maximum_normal_deviation=plc.cad_maximum_normal_deviation if charts is not None else None,
-        cad_vertex_rows=vertex_rows, cad_segment_edge_ids=segment_edge_ids,
+        cad_maximum_normal_deviation=plc.cad_maximum_normal_deviation
+        if charts is not None
+        else None,
+        cad_vertex_rows=vertex_rows,
+        cad_segment_edge_ids=segment_edge_ids,
         cad_polygon_cell_ids=polygon_cell_ids,
     )
 
 
-def test_generic_plc_still_refuses_unproven_occurrence_join(cad_plc: PiecewiseLinearComplex) -> None:
+def test_generic_plc_still_refuses_unproven_occurrence_join(
+    cad_plc: PiecewiseLinearComplex,
+) -> None:
     with pytest.raises(ValueError, match="occurrence path"):
-        _rebuild_plc(cad_plc, charts=None, vertex_rows=None, segment_edge_ids=None,
-                     polygon_cell_ids=None, tolerance=None)
+        _rebuild_plc(
+            cad_plc,
+            charts=None,
+            vertex_rows=None,
+            segment_edge_ids=None,
+            polygon_cell_ids=None,
+            tolerance=None,
+        )
 
 
-@pytest.mark.parametrize("defect", ("edge", "vertex", "polygon", "region", "stale-charts", "association", "no-fidelity", "no-proof"))
+@pytest.mark.parametrize(
+    "defect",
+    (
+        "edge",
+        "vertex",
+        "polygon",
+        "region",
+        "stale-charts",
+        "association",
+        "no-fidelity",
+        "no-proof",
+    ),
+)
 def test_cad_plc_refuses_forged_ancestry(
     cad_plc: PiecewiseLinearComplex,
-    defect: Literal["edge", "vertex", "polygon", "region", "stale-charts", "association", "no-fidelity", "no-proof"],
+    defect: Literal[
+        "edge",
+        "vertex",
+        "polygon",
+        "region",
+        "stale-charts",
+        "association",
+        "no-fidelity",
+        "no-proof",
+    ],
 ) -> None:
     charts = cad_plc.cad_source_charts
     vertices = cad_plc.cad_vertex_rows
@@ -215,17 +292,27 @@ def test_cad_plc_refuses_forged_ancestry(
         patches[0] = (patches[0] + 1) % len(charts.domain.patches)
         charts = eqx.tree_at(lambda value: value.root_patches, charts, patches)
     elif defect == "association":
-        charts = eqx.tree_at(lambda value: value.associations, charts, charts.associations[:-1])
+        charts = eqx.tree_at(
+            lambda value: value.associations, charts, charts.associations[:-1]
+        )
     elif defect == "no-fidelity":
         tolerance = None
     with pytest.raises((ValueError, TypeError)):
-        _rebuild_plc(cad_plc, charts=charts, vertex_rows=vertices,
-                     segment_edge_ids=edges, polygon_cell_ids=polygons,
-                     tolerance=tolerance, facet_regions=facet_regions,
-                     drop_proof=defect == "no-proof")
+        _rebuild_plc(
+            cad_plc,
+            charts=charts,
+            vertex_rows=vertices,
+            segment_edge_ids=edges,
+            polygon_cell_ids=polygons,
+            tolerance=tolerance,
+            facet_regions=facet_regions,
+            drop_proof=defect == "no-proof",
+        )
 
 
-def test_cad_plc_restores_exact_scientific_authority(cad_plc: PiecewiseLinearComplex) -> None:
+def test_cad_plc_restores_exact_scientific_authority(
+    cad_plc: PiecewiseLinearComplex,
+) -> None:
     rebuilt = PiecewiseLinearComplex.from_stored_fields(cad_plc)
     assert rebuilt.complex_id == cad_plc.complex_id
     assert rebuilt.cad_source_charts is not None
@@ -234,10 +321,14 @@ def test_cad_plc_restores_exact_scientific_authority(cad_plc: PiecewiseLinearCom
 
 
 def test_cad_plc_rejects_ambiguous_repeated_shared_copy(
-    multiregion_surface: tuple[MeshCertificationReport, NativeMeshOrganization, CellMeshingResult],
+    multiregion_surface: tuple[
+        MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+    ],
 ) -> None:
     from phydrax.geometry.brep._model import (
-        BRepAssemblyGraph, BRepAssemblyUse, BRepGeometry,
+        BRepAssemblyGraph,
+        BRepAssemblyUse,
+        BRepGeometry,
     )
 
     report, _, _ = multiregion_surface
@@ -246,10 +337,13 @@ def test_cad_plc_rejects_ambiguous_repeated_shared_copy(
     source = domain.brep_authority
     geometry = source.geometry
     graph = BRepAssemblyGraph(
-        roots=(BRepAssemblyUse("first", solid_index=0),
-               BRepAssemblyUse("repeated", solid_index=0),
-               BRepAssemblyUse("neighbor", solid_index=1)),
-        definitions=(), solid_count=2,
+        roots=(
+            BRepAssemblyUse("first", solid_index=0),
+            BRepAssemblyUse("repeated", solid_index=0),
+            BRepAssemblyUse("neighbor", solid_index=1),
+        ),
+        definitions=(),
+        solid_count=2,
     )
     repeated = BRepGeometry(
         vertex_points=geometry.vertex_points,
@@ -273,4 +367,6 @@ def test_cad_plc_rejects_ambiguous_repeated_shared_copy(
         assembly_graph=graph,
     )
     with pytest.raises(ValueError, match="Repeated coincident"):
-        _require_unambiguous_cad_copies(repeated, source.source_id, source.source_revision)
+        _require_unambiguous_cad_copies(
+            repeated, source.source_id, source.source_revision
+        )

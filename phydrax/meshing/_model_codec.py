@@ -52,6 +52,7 @@ from .._model._structure import (
     PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS,
     PeriodicFiniteElementTransferArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
+    PiecewiseLinearComplexArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
     PreparedSurfaceSourceSupportArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
@@ -308,15 +309,8 @@ def _register_model_archive_types() -> None:
     from ..geometry.design._reduced import (
         _SketchDistanceRigidityWitness,
         _SketchDistanceTriangleWitness,
+
     )
-    from ..geometry.multiregion_surface._contracts import (
-        MultiRegionSurfaceCapacityEvidence,
-        MultiRegionSurfaceCapacityPlan,
-        MultiRegionSurfaceCounts,
-        MultiRegionSurfaceEvidence,
-        MultiRegionSurfaceStatus,
-    )
-    from ..geometry.multiregion_surface._topology import MultiRegionSurfaceTopology
     from ..geometry.design._schema import (
         DesignState,
         ParameterBinding,
@@ -341,6 +335,14 @@ def _register_model_archive_types() -> None:
         RestrictedDelaunayBoundaryWitness,
         RestrictedDelaunayCoverageTransportWitness,
     )
+    from ..geometry.multiregion_surface._contracts import (
+        MultiRegionSurfaceCapacityEvidence,
+        MultiRegionSurfaceCapacityPlan,
+        MultiRegionSurfaceCounts,
+        MultiRegionSurfaceEvidence,
+        MultiRegionSurfaceStatus,
+    )
+    from ..geometry.multiregion_surface._topology import MultiRegionSurfaceTopology
     from ..geometry.reconstruction._boundary import (
         _TriangleBVHNode,
         ReconstructedTriangleBoundarySource,
@@ -574,6 +576,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", AnalyticImplicitProfileArchiveRecipe),
         ("phydrax.model.archive", ParametricCurveBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", ReconstructedTriangleBoundarySourceArchiveRecipe),
+        ("phydrax.model.archive", PiecewiseLinearComplexArchiveRecipe),
         ("phydrax.model.archive", SurfaceSourceChartsArchiveRecipe),
         ("phydrax.model.archive", PreparedSurfaceSourceSupportArchiveRecipe),
         ("phydrax.model.archive", SurfaceNativeRestrictionBoundarySourceArchiveRecipe),
@@ -1007,6 +1010,7 @@ def restore_model_archive_value(
         CurvedOverlapIntegrationPolicy,
     )
     from ..geometry._planar_embedding import PlanarEmbedding
+    from ..geometry._surface_source_archive import restore_surface_source_charts
     from ..geometry.brep._constructors import BRepTessellationPolicy
     from ..geometry.brep._model import BRepEntityId, BRepModel
     from ..geometry.brep._partition import (
@@ -1048,6 +1052,7 @@ def restore_model_archive_value(
     from ..sparse._relation import EdgeRelation
     from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
     from ._distribution_migration import OwnerLocalMigrationState
+    from ._plc_source import _certify_cad_surface, PiecewiseLinearComplex
 
     _register_model_archive_types()
     in_composition = False
@@ -1236,6 +1241,41 @@ def restore_model_archive_value(
                 raise ValueError("Sided scope requires a replayed source model.")
             pending_sided_scopes.append(item)
             return item
+        if type(item) is SurfaceSourceChartsArchiveRecipe:
+            return restore_surface_source_charts(item)
+        if type(item) is PiecewiseLinearComplexArchiveRecipe:
+            item = item.decode()
+        if type(item) is PiecewiseLinearComplex:
+            stored_charts = item.cad_source_charts
+            if stored_charts is None:
+                return PiecewiseLinearComplex.from_stored_fields(item)
+            if type(stored_charts) is not SurfaceSourceChartsArchiveRecipe:
+                raise TypeError(
+                    "Stored CAD PLC requires its registered source-chart recipe."
+                )
+            if (
+                item.cad_embedding is None
+                or item.cad_fidelity is None
+                or item.cad_fidelity_tolerance is None
+            ):
+                raise ValueError("Stored CAD PLC is missing independent surface proofs.")
+            charts = restore_surface_source_charts(stored_charts)
+            embedding, fidelity = _certify_cad_surface(
+                charts,
+                item.cad_fidelity_tolerance,
+                item.cad_maximum_normal_deviation,
+                np.asarray(item.cad_embedding.binding.junction_vertices, dtype=np.int64),
+            )
+            if not same_content(embedding, item.cad_embedding) or not same_content(
+                fidelity, item.cad_fidelity
+            ):
+                raise ValueError("Stored CAD PLC proofs differ from mathematical replay.")
+            return PiecewiseLinearComplex.from_stored_fields(
+                item,
+                cad_source_charts=charts,
+                cad_embedding=embedding,
+                cad_fidelity=fidelity,
+            )
         if type(item) in (
             MeshingScopeSide,
             CADOccurrence,

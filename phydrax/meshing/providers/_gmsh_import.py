@@ -83,6 +83,11 @@ def _scope_source_records(
         or not np.all(np.isin(identifiers, domain.scope_entity_ids(dimension)))
     ):
         return None
+    if scope.side_records:
+        try:
+            MeshingScope.from_stored_fields(scope, source_model=source)
+        except (TypeError, ValueError, KeyError):
+            return None
     if dimension == 3:
         source_rows = domain.region_source_indices
     else:

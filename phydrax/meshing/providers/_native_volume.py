@@ -749,6 +749,19 @@ def _source_key(
     return key
 
 
+def _face_order_sign(
+    source: tuple[int, int, int], target: tuple[int, int, int], /
+) -> int:
+    """Permutation parity from an oriented recovered triangle to its mesh order."""
+    if len(set(source)) != 3 or set(source) != set(target):
+        raise ValueError("Recovered and canonical face vertex identities must agree.")
+    order = tuple(source.index(vertex) for vertex in target)
+    inversions = sum(
+        order[left] > order[right] for left, right in ((0, 1), (0, 2), (1, 2))
+    )
+    return -1 if inversions % 2 else 1
+
+
 def _source_associations(
     source: NativePlcSource, construction: VolumeConstruction, /
 ) -> tuple[GeometryAssociation, ...]:
@@ -901,7 +914,8 @@ def _source_associations(
         )
         segment_source_by_edge[key] = (source_id, path, residual, source_row)
     face_source_by_face: dict[
-        tuple[int, int, int], tuple[str, tuple[str, ...], float, int, int]
+        tuple[int, int, int],
+        tuple[str, tuple[str, ...], float, int, int, tuple[int, int, int]],
     ] = {}
     for face, source_id, path, facet, orientation in zip(
         construction.boundary_faces.tolist(),
@@ -915,7 +929,14 @@ def _source_associations(
         residual = float(
             np.max(construction.witness_deviations[np.asarray(face, dtype=np.int64)])
         )
-        face_source_by_face[key] = (source_id, path, residual, facet, orientation)
+        face_source_by_face[key] = (
+            source_id,
+            path,
+            residual,
+            facet,
+            orientation,
+            (face[0], face[1], face[2]),
+        )
     face_facet_edges: dict[tuple[int, int], set[int]] = {}
     for face, facet in zip(
         construction.boundary_faces.tolist(),
@@ -1001,12 +1022,14 @@ def _source_associations(
         key = tuple(sorted(face))
         constrained = face_source_by_face.get(key)
         if constrained is not None:
-            local_id, path, residual, facet, orientation = constrained
+            local_id, path, residual, facet, orientation, source_face = constrained
             face_sources.append(_cached_source_key(2, local_id, path))
             face_paths.append(path)
             face_roles.append(GeometrySourceEntityRole.FACET)
             face_residuals.append(residual)
-            face_orientations[row] = orientation
+            face_orientations[row] = orientation * _face_order_sign(
+                source_face, (face[0], face[1], face[2])
+            )
             face_region_sides.append(_facet_region_sides(facet))
             continue
         regions = face_regions.get(key, set())

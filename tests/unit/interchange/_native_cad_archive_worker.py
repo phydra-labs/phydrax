@@ -5870,32 +5870,9 @@ def _rebuild_continuation_value(
         query.require_current()
         return query
     if isinstance(value, SurfaceSourceChartsArchiveRecipe):
-        domain = _rebuild_as(value.domain, MeshingDomain)
-        mesh = _rebuild_as(value.mesh, CellMesh)
-        geometry = _rebuild_geometry_for_mesh(value.geometry, mesh)
-        contract = _rebuild_as(value.coordinate_contract, SpatialCoordinateContract)
-        boundary_source = _rebuild_as(value.boundary_source, MeshingDomainBoundarySource)
-        associations = _rebuild_tuple_as(value.associations, GeometryAssociation)
-        source = SurfaceSourceCharts(
-            domain,
-            mesh,
-            geometry,
-            contract,
-            value.root_parameters,
-            value.root_patches,
-            associations,
-            boundary_source,
-            source_root_cell_ids=value.source_root_cell_ids,
-            source_piece_ids=value.source_piece_ids.decode(),
-            root_parameter_exact=value.root_parameter_exact.decode(),
-        )
-        if source.source_chart_id != value.expected_source_chart_id:
-            raise ValueError(
-                "SurfaceSourceCharts identity changed from its source recipe."
-            )
-        source.require_root(mesh, geometry)
-        source.require_current()
-        return source
+        from phydrax.geometry._surface_source_archive import restore_surface_source_charts
+
+        return restore_surface_source_charts(value)
     if isinstance(value, NativeImplicitBoundaryQueryArchiveRecipe):
         query = _rebuild_continuation_value(value.query)
         if not isinstance(query, AdaptiveImplicitBoundarySource):

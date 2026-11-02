@@ -673,7 +673,9 @@ def _cad_plc_data(
         fidelity = report.fidelity
         if fidelity is None:
             _, fidelity = _certify_cad_surface(
-                surface_source, fidelity_tolerance, normal_deviation,
+                surface_source,
+                fidelity_tolerance,
+                normal_deviation,
                 certification_inputs.junction_vertices,
             )
     complex_ = PiecewiseLinearComplex(
@@ -1332,8 +1334,10 @@ def cad_volume_support_issues(
         issues.append("an explicit CAD maximum_deviation no weaker than source authority")
     try:
         translated = _translate_specification(source, specification)
-    except (TypeError, ValueError, IndexError):
-        issues.append("CAD source controls resolvable through exact domain strata")
+    except (TypeError, ValueError, IndexError) as error:
+        issues.append(
+            f"CAD source controls resolvable through exact domain strata: {error}"
+        )
     else:
         issues.extend(volume_support_issues(source.plc_source, translated))
     return issues

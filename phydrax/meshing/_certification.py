@@ -175,7 +175,8 @@ def _multiregion_proof(
         patches = np.asarray(
             [
                 domain.resolve_entity_id(
-                    2, association.source_entity_ids[row],
+                    2,
+                    association.source_entity_ids[row],
                     occurrence_path=association.source_occurrence_paths[row],
                 )
                 for row in rows

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import combinations
 from math import prod
 from typing import Any, final
 
@@ -1657,9 +1658,29 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
             np.asarray(connectivity.face_neighbor_local, dtype=np.int32),
         )
     elif isinstance(connectivity, SimplicialConnectivity):
-        cell_facets = np.asarray(
-            connectivity.cell_entities[mesh.topological_dimension - 1]
+        raw_facets = np.asarray(
+            connectivity.cell_entities[mesh.topological_dimension - 1], dtype=np.int32
         )
+        # Simplex connectivity uses lexicographic vertex combinations, whereas
+        # named reference cells use their own facet numbering (e.g. tetrahedral
+        # faces are ordered by opposite vertex).  A trace route must name the
+        # reference facet, not the connectivity column.
+        simplex_facets = tuple(
+            combinations(
+                range(mesh.topological_dimension + 1), mesh.topological_dimension
+            )
+        )
+        columns = {vertices: index for index, vertices in enumerate(simplex_facets)}
+        cell_facets = np.empty_like(raw_facets)
+        start = 0
+        for block in mesh.blocks:
+            facets = reference_cell_topology(block.cell_kind).entities[
+                mesh.topological_dimension - 1
+            ]
+            order = [columns[tuple(sorted(vertices))] for vertices in facets]
+            stop = start + block.cell_count
+            cell_facets[start:stop] = raw_facets[start:stop, order]
+            start = stop
         valid = np.ones_like(cell_facets, dtype=np.bool_)
         facet_count = connectivity.entities[mesh.topological_dimension - 1].shape[0]
     else:

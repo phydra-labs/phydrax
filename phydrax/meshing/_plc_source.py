@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from fractions import Fraction
-from typing import TYPE_CHECKING, final, Literal
+from typing import final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -30,6 +30,7 @@ from ..typing import (
     parse,
     Scope,
 )
+
 
 if TYPE_CHECKING:
     from ..geometry.brep._model import BRepGeometry
@@ -65,7 +66,9 @@ def _identifier_bank(
     if len(identifiers) != count:
         raise ValueError(f"{name} must contain exactly {count} authored identifiers.")
     if len(set(zip(identifiers, occurrence_paths, strict=True))) != count:
-        raise ValueError(f"{name} and occurrence paths must uniquely identify each source entity.")
+        raise ValueError(
+            f"{name} and occurrence paths must uniquely identify each source entity."
+        )
     return identifiers
 
 
@@ -77,9 +80,7 @@ def _numeric_entity_ids(
 ) -> tuple[int, ...]:
     identifiers = tuple(
         int(
-            canonical_fingerprint(
-                {"kind": kind, "value": (value, path)}
-            )[:16],
+            canonical_fingerprint({"kind": kind, "value": (value, path)})[:16],
             16,
         )
         & ((1 << 63) - 1)
@@ -103,6 +104,7 @@ def _plc_edge_records(
     facet_paths: tuple[tuple[str, ...], ...],
     segment_ids: tuple[str, ...],
     segment_paths: tuple[tuple[str, ...], ...],
+    verified_segments: frozenset[int],
     /,
 ) -> tuple[
     tuple[tuple[int, int], ...],
@@ -130,17 +132,19 @@ def _plc_edge_records(
             raise ValueError("Authored PLC segments cannot duplicate one geometric edge.")
         explicit_keys.add(key)
         facets = tuple(sorted({entry[0] for entry in boundary.get(key, ())}))
-        facet_paths_on_edge = {
-            facet_paths[facet] for facet in facets
-        }
-        if facet_paths_on_edge and (
-            len(facet_paths_on_edge) != 1
-            or segment_paths[row] not in facet_paths_on_edge
+        facet_paths_on_edge = {facet_paths[facet] for facet in facets}
+        if (
+            row not in verified_segments
+            and facet_paths_on_edge
+            and (
+                len(facet_paths_on_edge) != 1
+                or segment_paths[row] not in facet_paths_on_edge
+            )
         ):
             raise ValueError(
                 "An explicit PLC segment must preserve one unique incident facet occurrence path."
             )
-        records.append(( (first, second), facets, segment_ids[row], segment_paths[row] ))
+        records.append(((first, second), facets, segment_ids[row], segment_paths[row]))
 
     boundary_keys = set(boundary) - explicit_keys
     ordered_boundary_keys = sorted(
@@ -197,19 +201,20 @@ def _plc_edge_records(
                     key=lambda vertex: (vertex_ids[vertex], vertex_paths[vertex]),
                 )
             else:
-                raise ValueError("A PLC facet must orient each boundary edge exactly once.")
+                raise ValueError(
+                    "A PLC facet must orient each boundary edge exactly once."
+                )
         else:
             if any(len(directed_by_facet[facet]) != 1 for facet in facets):
-                raise ValueError("Each incident PLC facet must orient a shared boundary edge once.")
+                raise ValueError(
+                    "Each incident PLC facet must orient a shared boundary edge once."
+                )
             first, second = directed_by_facet[facets[0]][0]
         identity = canonical_fingerprint(
             {
                 "kind": "plc-facet-edge",
                 "vertices": tuple(
-                    sorted(
-                        (vertex_ids[vertex], vertex_paths[vertex])
-                        for vertex in key
-                    )
+                    sorted((vertex_ids[vertex], vertex_paths[vertex]) for vertex in key)
                 ),
                 "facets": tuple(
                     sorted((facet_ids[facet], facet_paths[facet]) for facet in facets)
@@ -231,7 +236,9 @@ def _require_unambiguous_cad_copies(
     geometry: BRepGeometry, source_id: str, source_revision: str, /
 ) -> None:
     geometry.require_current()
-    occurrences = {value.path: value for value in geometry.assembly_graph.iter_occurrences()}
+    occurrences = {
+        value.path: value for value in geometry.assembly_graph.iter_occurrences()
+    }
     placed: dict[tuple, dict[int, set[tuple[str, ...]]]] = {}
     for use in geometry.qualified_entity_incidence(source_id, source_revision):
         if use.container.kind != "solid" or use.member.kind != "face":
@@ -243,14 +250,21 @@ def _require_unambiguous_cad_copies(
         placed.setdefault(key, {}).setdefault(use.container.index, set()).add(
             use.container.occurrence_path
         )
-    if any(len(solids) > 1 and any(len(paths) > 1 for paths in solids.values())
-           for solids in placed.values()):
-        raise ValueError("Repeated coincident solid uses lack exact shared-copy ancestry.")
+    if any(
+        len(solids) > 1 and any(len(paths) > 1 for paths in solids.values())
+        for solids in placed.values()
+    ):
+        raise ValueError(
+            "Repeated coincident solid uses lack exact shared-copy ancestry."
+        )
 
 
 def _certify_cad_surface(
-    surface: SurfaceSourceCharts, fidelity_tolerance: float,
-    maximum_normal_deviation: float | None, junction_vertices: np.ndarray | None, /
+    surface: SurfaceSourceCharts,
+    fidelity_tolerance: float,
+    maximum_normal_deviation: float | None,
+    junction_vertices: np.ndarray | None,
+    /,
 ) -> tuple[GlobalEmbeddingCertificate, SourceFidelityCertificate]:
     """Compute the source's mathematical certificates without retaining a report."""
     from ._certification import MeshCertificationReport
@@ -259,23 +273,36 @@ def _certify_cad_surface(
     from ._native_construction import NativeMeshOrganization
 
     domain = surface.domain
-    faces = np.concatenate([np.asarray(block.vertices, dtype=np.int64) for block in surface.mesh.blocks])
+    faces = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in surface.mesh.blocks]
+    )
     cells = np.asarray(surface.cell_global_ids, dtype=np.int64)
     topology = domain.multiregion_surface(
-        surface.mesh.coordinates, faces, surface.root_patches,
-        vertex_global_ids=surface.mesh.vertex_global_ids, cell_global_ids=cells,
+        surface.mesh.coordinates,
+        faces,
+        surface.root_patches,
+        vertex_global_ids=surface.mesh.vertex_global_ids,
+        cell_global_ids=cells,
     )
     inputs = MeshCertificationInputs(
-        surface.mesh, surface.geometry, MeshCertificationSchedule("surface"),
-        source_id=domain.source_id, source_revision=domain.source_revision,
-        source=surface.boundary_source, fidelity_tolerance=fidelity_tolerance,
+        surface.mesh,
+        surface.geometry,
+        MeshCertificationSchedule("surface"),
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        source=surface.boundary_source,
+        fidelity_tolerance=fidelity_tolerance,
         maximum_normal_deviation=maximum_normal_deviation,
-        junction_vertices=junction_vertices, protected_features=(),
-        fidelity_witness=surface.chart_witness, feature_source=domain,
+        junction_vertices=junction_vertices,
+        protected_features=(),
+        fidelity_witness=surface.chart_witness,
+        feature_source=domain,
     )
     report = MeshCertificationReport(
-        inputs, organization=NativeMeshOrganization(
-            associations=surface.associations, multiregion_surface=topology,
+        inputs,
+        organization=NativeMeshOrganization(
+            associations=surface.associations,
+            multiregion_surface=topology,
         ),
     )
     report.require_passed()
@@ -285,24 +312,39 @@ def _certify_cad_surface(
 
 
 def _cad_segment_incidence(
-    surface: SurfaceSourceCharts, fidelity_tolerance: float,
-    maximum_normal_deviation: float | None, embedding: GlobalEmbeddingCertificate,
+    surface: SurfaceSourceCharts,
+    fidelity_tolerance: float,
+    maximum_normal_deviation: float | None,
+    embedding: GlobalEmbeddingCertificate,
     fidelity: SourceFidelityCertificate,
-    vertex_rows: np.ndarray, segment_edge_ids: np.ndarray,
-    polygon_cell_ids: np.ndarray, points: np.ndarray,
-    loops: tuple[np.ndarray, ...], polygon_facets: np.ndarray, segments: np.ndarray,
-    vertex_ids: tuple[str, ...], vertex_paths: tuple[tuple[str, ...], ...],
-    facet_ids: tuple[str, ...], facet_paths: tuple[tuple[str, ...], ...],
-    facet_regions: np.ndarray, region_ids: tuple[str, ...],
+    vertex_rows: np.ndarray,
+    segment_edge_ids: np.ndarray,
+    polygon_cell_ids: np.ndarray,
+    points: np.ndarray,
+    loops: tuple[np.ndarray, ...],
+    polygon_facets: np.ndarray,
+    segments: np.ndarray,
+    vertex_ids: tuple[str, ...],
+    vertex_paths: tuple[tuple[str, ...], ...],
+    facet_ids: tuple[str, ...],
+    facet_paths: tuple[tuple[str, ...], ...],
+    facet_regions: np.ndarray,
+    region_ids: tuple[str, ...],
     region_paths: tuple[tuple[str, ...], ...],
-    segment_ids: tuple[str, ...], segment_paths: tuple[tuple[str, ...], ...], /,
-) -> None:
+    segment_ids: tuple[str, ...],
+    segment_paths: tuple[tuple[str, ...], ...],
+    /,
+) -> frozenset[int]:
     """Replay exact CAD surface and source incidence before joining occurrences."""
-    from ..geometry._meshing_domain import PatchCurveUse
     from ..geometry._mesh_certificates import _same_tree_content
+    from ..geometry._meshing_domain import PatchCurveUse
+    from ..geometry._surface_source_support import validate_cad_curve_ancestry
     from ._association import _ordered_vertices
     from .providers._native_cad_volume import (
-        _association_for, _association_row_map, _BRepRowResolver, _exact_surface_points,
+        _association_for,
+        _association_row_map,
+        _BRepRowResolver,
+        _exact_surface_points,
     )
 
     if not isinstance(surface, SurfaceSourceCharts):
@@ -312,7 +354,9 @@ def _cad_segment_incidence(
     domain.require_current(domain.source_id, domain.source_revision)
     if domain.brep_authority is None:
         raise ValueError("CAD PLC incidence requires B-Rep authority.")
-    expected_regions = tuple(domain.entity_id(3, row) for row in range(len(domain.regions)))
+    expected_regions = tuple(
+        domain.entity_id(3, row) for row in range(len(domain.regions))
+    )
     if region_ids != expected_regions or region_paths != domain.region_source_occurrences:
         raise ValueError("CAD PLC regions differ from authoritative solid occurrences.")
     expected_sides = np.full((len(domain.patches), 2), -1, dtype=np.int64)
@@ -323,47 +367,78 @@ def _cad_segment_incidence(
                 raise ValueError("CAD source patch has ambiguous region-side incidence.")
             expected_sides[patch, side] = region_row
     if not np.array_equal(facet_regions, expected_sides):
-        raise ValueError("CAD PLC facet regions differ from authoritative oriented incidence.")
-    if not isinstance(embedding, GlobalEmbeddingCertificate) or not isinstance(fidelity, SourceFidelityCertificate):
-        raise TypeError("CAD PLC incidence requires retained mathematical surface proofs.")
+        raise ValueError(
+            "CAD PLC facet regions differ from authoritative oriented incidence."
+        )
+    if not isinstance(embedding, GlobalEmbeddingCertificate) or not isinstance(
+        fidelity, SourceFidelityCertificate
+    ):
+        raise TypeError(
+            "CAD PLC incidence requires retained mathematical surface proofs."
+        )
     embedding.require_current(surface.mesh, surface.geometry)
     GlobalEmbeddingCertificate.from_stored_fields(embedding)
     fidelity.require_inputs(
-        surface.mesh, surface.geometry, surface.boundary_source,
-        tolerance=fidelity_tolerance, maximum_normal_deviation=maximum_normal_deviation,
+        surface.mesh,
+        surface.geometry,
+        surface.boundary_source,
+        tolerance=fidelity_tolerance,
+        maximum_normal_deviation=maximum_normal_deviation,
         witness=surface.chart_witness,
     )
     fidelity.revalidate(surface.mesh, surface.geometry, surface.boundary_source)
     if embedding.status != "certified" or fidelity.status != "certified":
-        raise ValueError("CAD PLC surface embedding and source fidelity must be certified.")
+        raise ValueError(
+            "CAD PLC surface embedding and source fidelity must be certified."
+        )
     fresh_embedding, fresh_fidelity = _certify_cad_surface(
-        surface, fidelity_tolerance, maximum_normal_deviation,
+        surface,
+        fidelity_tolerance,
+        maximum_normal_deviation,
         np.asarray(embedding.binding.junction_vertices, dtype=np.int64),
     )
-    if (not _same_tree_content(fresh_embedding, embedding)
-            or not _same_tree_content(fresh_fidelity, fidelity)):
+    if not _same_tree_content(fresh_embedding, embedding) or not _same_tree_content(
+        fresh_fidelity, fidelity
+    ):
         raise ValueError("CAD PLC mathematical proofs differ from their source replay.")
+    curve_ancestry = validate_cad_curve_ancestry(surface, fidelity_tolerance)
+    if set(int(value) for value in segment_edge_ids) != set(curve_ancestry):
+        raise ValueError(
+            "CAD PLC segments must cover every verified source curve edge exactly."
+        )
     model = domain.brep_authority
-    _require_unambiguous_cad_copies(model.geometry, model.source_id, model.source_revision)
+    _require_unambiguous_cad_copies(
+        model.geometry, model.source_id, model.source_revision
+    )
     mesh = surface.mesh
-    if (len(vertex_rows) != mesh.coordinates.shape[0]
-            or len(segment_edge_ids) != len(segments)
-            or len(polygon_cell_ids) != len(loops)
-            or len(set(segment_edge_ids)) != len(segment_edge_ids)
-            or len(set(polygon_cell_ids)) != len(polygon_cell_ids)
-            or any(row < 0 or row >= len(points) for row in vertex_rows)):
+    if (
+        len(vertex_rows) != mesh.coordinates.shape[0]
+        or len(segment_edge_ids) != len(segments)
+        or len(polygon_cell_ids) != len(loops)
+        or len(set(segment_edge_ids)) != len(segment_edge_ids)
+        or len(set(polygon_cell_ids)) != len(polygon_cell_ids)
+        or set(int(value) for value in polygon_cell_ids) != set(surface.cell_global_ids)
+        or any(row < 0 or row >= len(points) for row in vertex_rows)
+    ):
         raise ValueError("CAD PLC surface incidence maps are incomplete or invalid.")
     _, exact_points = _exact_surface_points(surface)
-    if any(not np.array_equal(points[target], np.asarray([float(x) for x in point]))
-           for target, point in zip(vertex_rows, exact_points, strict=True)):
+    if any(
+        not np.array_equal(points[target], np.asarray([float(x) for x in point]))
+        for target, point in zip(vertex_rows, exact_points, strict=True)
+    ):
         raise ValueError("CAD PLC vertices differ from certified exact surface points.")
     vertex_assoc = _association_for(surface, 0, required=True)
     edge_assoc = _association_for(surface, 1, required=True)
     face_assoc = _association_for(surface, 2, required=True)
     assert vertex_assoc is not None and edge_assoc is not None and face_assoc is not None
-    if any((assoc.source_id, assoc.source_revision) != (domain.source_id, domain.source_revision)
-           for assoc in (vertex_assoc, edge_assoc, face_assoc)):
-        raise ValueError("CAD PLC associations must bind the authoritative source revision.")
+    if any(
+        (assoc.source_id, assoc.source_revision)
+        != (domain.source_id, domain.source_revision)
+        for assoc in (vertex_assoc, edge_assoc, face_assoc)
+    ):
+        raise ValueError(
+            "CAD PLC associations must bind the authoritative source revision."
+        )
     resolve = _BRepRowResolver(domain)
     vertex_assoc_rows = _association_row_map(vertex_assoc)
     for row, global_id in enumerate(np.asarray(mesh.vertex_global_ids, dtype=np.int64)):
@@ -375,21 +450,33 @@ def _cad_segment_incidence(
         if vertex_assoc.source_entity_ids[assoc_row] != brep_key:
             raise ValueError("CAD PLC vertex association changed its source occurrence.")
         parameters = np.asarray(vertex_assoc.parameters)[assoc_row]
-        parameter_key = () if dim == 0 else tuple(
-            float(value).hex() if np.isfinite(value) else None for value in parameters
+        parameter_key = (
+            ()
+            if dim == 0
+            else tuple(
+                float(value).hex() if np.isfinite(value) else None for value in parameters
+            )
         )
-        identity = canonical_fingerprint({
-            "kind": "cad-plc-source-vertex", "source_entity": source_key,
-            "source_dimension": dim, "source_parameters": parameter_key,
-        })
+        identity = canonical_fingerprint(
+            {
+                "kind": "cad-plc-source-vertex",
+                "source_entity": source_key,
+                "source_dimension": dim,
+                "source_parameters": parameter_key,
+            }
+        )
         target = vertex_rows[row]
         if (vertex_ids[target], vertex_paths[target]) != (identity, path):
-            raise ValueError("CAD PLC vertex identity differs from its surface association.")
+            raise ValueError(
+                "CAD PLC vertex identity differs from its surface association."
+            )
     face_assoc_rows = _association_row_map(face_assoc)
     surface_cells = {
         int(identifier): tuple(int(value) for value in vertices)
         for block in mesh.blocks
-        for identifier, vertices in zip(np.asarray(block.global_ids), np.asarray(block.vertices), strict=True)
+        for identifier, vertices in zip(
+            np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
+        )
     }
     for polygon, identifier in enumerate(polygon_cell_ids):
         try:
@@ -405,11 +492,14 @@ def _cad_segment_incidence(
         mapped = tuple(vertex_rows[value] for value in cell)
         if orientation == -1:
             mapped = (mapped[0], mapped[2], mapped[1])
-        if (dim != 2 or orientation not in (-1, 1)
-                or face_assoc.source_entity_ids[assoc_row] != brep_key
-                or int(polygon_facets[polygon]) != patch
-                or (facet_ids[patch], facet_paths[patch]) != (key, path)
-                or tuple(int(value) for value in loops[polygon]) != mapped):
+        if (
+            dim != 2
+            or orientation not in (-1, 1)
+            or face_assoc.source_entity_ids[assoc_row] != brep_key
+            or int(polygon_facets[polygon]) != patch
+            or (facet_ids[patch], facet_paths[patch]) != (key, path)
+            or tuple(int(value) for value in loops[polygon]) != mapped
+        ):
             raise ValueError("CAD PLC polygon differs from certified face incidence.")
     edge_vertices = _ordered_vertices(mesh, 1)
     if edge_vertices is None:
@@ -421,7 +511,9 @@ def _cad_segment_incidence(
     for loop, facet in zip(loops, polygon_facets, strict=True):
         for index, first in enumerate(loop):
             second = int(loop[(index + 1) % len(loop)])
-            boundary.setdefault(tuple(sorted((int(first), second))), set()).add(int(facet))
+            boundary.setdefault(
+                (min(int(first), second), max(int(first), second)), set()
+            ).add(int(facet))
     for row, identifier in enumerate(segment_edge_ids):
         try:
             assoc_row = edge_assoc_rows[identifier]
@@ -436,20 +528,35 @@ def _cad_segment_incidence(
         mapped = tuple(vertex_rows[int(vertex)] for vertex in edge)
         if orientation == -1:
             mapped = mapped[::-1]
-        identity = canonical_fingerprint({
-            "kind": "cad-plc-source-segment", "source_curve": key,
-            "occurrence_path": path,
-            "oriented_source_vertices": (vertex_ids[mapped[0]], vertex_ids[mapped[1]]),
-        })
-        if (dim != 1 or orientation not in (-1, 1)
-                or edge_assoc.source_entity_ids[assoc_row] != brep_key
-                or tuple(int(value) for value in segments[row]) != mapped
-                or (segment_ids[row], segment_paths[row]) != (identity, path)):
+        identity = canonical_fingerprint(
+            {
+                "kind": "cad-plc-source-segment",
+                "source_curve": key,
+                "occurrence_path": path,
+                "oriented_source_vertices": (
+                    vertex_ids[mapped[0]],
+                    vertex_ids[mapped[1]],
+                ),
+            }
+        )
+        if (
+            dim != 1
+            or orientation not in (-1, 1)
+            or edge_assoc.source_entity_ids[assoc_row] != brep_key
+            or tuple(int(value) for value in segments[row]) != mapped
+            or (segment_ids[row], segment_paths[row]) != (identity, path)
+        ):
             raise ValueError("CAD PLC segment differs from certified curve incidence.")
         for patch in boundary.get(tuple(sorted(mapped)), ()):
-            if not any(isinstance(use, PatchCurveUse) and use.curve == curve
-                       for loop in domain.patches[patch].loops for use in loop):
-                raise ValueError("CAD segment is not an authored use of each incident patch.")
+            if not any(
+                isinstance(use, PatchCurveUse) and use.curve == curve
+                for loop in domain.patches[patch].loops
+                for use in loop
+            ):
+                raise ValueError(
+                    "CAD segment is not an authored use of each incident patch."
+                )
+    return frozenset(range(len(segments)))
 
 
 type PlcBoundaryPolicy = Literal["fixed", "conforming"]
@@ -484,8 +591,7 @@ def _integer_array(value: ConvertibleToArray, name: str, /) -> np.ndarray:
     if not np.issubdtype(array.dtype, np.integer):
         raise TypeError(f"{name} must contain integer indices.")
     if array.size and (
-        np.any(array < np.iinfo(np.int64).min)
-        or np.any(array > np.iinfo(np.int64).max)
+        np.any(array < np.iinfo(np.int64).min) or np.any(array > np.iinfo(np.int64).max)
     ):
         raise ValueError(f"{name} indices must be representable as signed int64.")
     return np.asarray(array, dtype=np.int64)
@@ -648,7 +754,9 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         if not loops:
             raise ValueError("polygons must contain at least one oriented loop.")
         if any(loop.ndim != 1 or loop.shape[0] < 3 for loop in loops):
-            raise ValueError("Every polygon loop must be one-dimensional with at least three vertices.")
+            raise ValueError(
+                "Every polygon loop must be one-dimensional with at least three vertices."
+            )
         total_loop_vertices = sum(loop.shape[0] for loop in loops)
         if total_loop_vertices > np.iinfo(np.int64).max:
             raise OverflowError("The packed polygon incidence extent exceeds int64.")
@@ -697,11 +805,12 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             scope=scope,
         )
         region_names = tuple(
-            normalized_identifier(identifier, "region_id")
-            for identifier in region_ids
+            normalized_identifier(identifier, "region_id") for identifier in region_ids
         )
         if not region_names:
-            raise ValueError("region_ids must contain at least one authored source region.")
+            raise ValueError(
+                "region_ids must contain at least one authored source region."
+            )
         policy = parse(boundary, PlcBoundaryPolicy, "boundary")
 
         if owners.shape[0] != len(loops):
@@ -712,7 +821,9 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         if np.any((flat < 0) | (flat >= vertex_count)) or np.any(
             (curves < 0) | (curves >= vertex_count)
         ):
-            raise ValueError("Polygon and segment incidence must index declared vertices.")
+            raise ValueError(
+                "Polygon and segment incidence must index declared vertices."
+            )
         facet_count = incidence.shape[0]
         if np.any((owners < 0) | (owners >= facet_count)):
             raise ValueError("polygon_facets must index declared facets.")
@@ -721,11 +832,17 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         if np.any((incidence < -1) | (incidence >= len(region_names))) or np.any(
             np.all(incidence < 0, axis=1)
         ):
-            raise ValueError("Each facet must separate at least one declared region from a region or void.")
+            raise ValueError(
+                "Each facet must separate at least one declared region from a region or void."
+            )
         if np.setdiff1d(np.arange(len(region_names)), incidence).size:
-            raise ValueError("Every declared region must occur in the facet incidence table.")
+            raise ValueError(
+                "Every declared region must occur in the facet incidence table."
+            )
         if geometry is not None and geometry.coordinates.shape != points.shape:
-            raise ValueError("geometry must bind one source coordinate row per PLC vertex.")
+            raise ValueError(
+                "geometry must bind one source coordinate row per PLC vertex."
+            )
         planes, plane_tolerances = _declared_facet_planes(
             facet_planes, facet_plane_tolerances, scope
         )
@@ -742,52 +859,86 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             region_occurrence_paths, len(region_names), "region_occurrence_paths"
         )
         if len(set(zip(region_names, region_paths, strict=True))) != len(region_names):
-            raise ValueError("Region IDs and occurrence paths must uniquely identify each source region.")
+            raise ValueError(
+                "Region IDs and occurrence paths must uniquely identify each source region."
+            )
         vertex_names = _identifier_bank(
             vertex_ids, vertex_paths, vertex_count, "vertex_ids"
         )
-        facet_names = _identifier_bank(
-            facet_ids, facet_paths, facet_count, "facet_ids"
-        )
+        facet_names = _identifier_bank(facet_ids, facet_paths, facet_count, "facet_ids")
         segment_names = _identifier_bank(
             segment_ids, segment_paths, curves.shape[0], "segment_ids"
         )
-        vertex_entities = _numeric_entity_ids(
-            "plc-vertex", vertex_names, vertex_paths
-        )
-        facet_entities = _numeric_entity_ids(
-            "plc-facet", facet_names, facet_paths
-        )
+        vertex_entities = _numeric_entity_ids("plc-vertex", vertex_names, vertex_paths)
+        facet_entities = _numeric_entity_ids("plc-facet", facet_names, facet_paths)
         segment_entities = _numeric_entity_ids(
             "plc-segment", segment_names, segment_paths
         )
-        region_entities = _numeric_entity_ids(
-            "plc-region", region_names, region_paths
+        region_entities = _numeric_entity_ids("plc-region", region_names, region_paths)
+        cad_values = (
+            cad_source_charts,
+            cad_fidelity_tolerance,
+            cad_embedding,
+            cad_fidelity,
+            cad_vertex_rows,
+            cad_segment_edge_ids,
+            cad_polygon_cell_ids,
         )
-        cad_values = (cad_source_charts, cad_fidelity_tolerance, cad_embedding,
-                      cad_fidelity, cad_vertex_rows, cad_segment_edge_ids, cad_polygon_cell_ids)
-        if any(value is not None for value in cad_values) and any(value is None for value in cad_values):
+        if any(value is not None for value in cad_values) and any(
+            value is None for value in cad_values
+        ):
             raise ValueError("CAD PLC incidence evidence must be supplied together.")
         if cad_source_charts is None and cad_maximum_normal_deviation is not None:
             raise ValueError("CAD normal tolerance requires source charts.")
+        verified_segments: frozenset[int] = frozenset()
+        normalized_vertex_rows: np.ndarray | None = None
+        normalized_segment_edge_ids: np.ndarray | None = None
+        normalized_polygon_cell_ids: np.ndarray | None = None
         if cad_source_charts is not None:
             assert cad_fidelity_tolerance is not None and cad_vertex_rows is not None
             assert cad_embedding is not None and cad_fidelity is not None
             assert cad_segment_edge_ids is not None and cad_polygon_cell_ids is not None
-            cad_vertex_rows = _integer_array(cad_vertex_rows, "cad_vertex_rows").copy()
-            cad_segment_edge_ids = _integer_array(cad_segment_edge_ids, "cad_segment_edge_ids").copy()
-            cad_polygon_cell_ids = _integer_array(cad_polygon_cell_ids, "cad_polygon_cell_ids").copy()
-            for values in (cad_vertex_rows, cad_segment_edge_ids, cad_polygon_cell_ids):
+            normalized_vertex_rows = _integer_array(
+                cad_vertex_rows, "cad_vertex_rows"
+            ).copy()
+            normalized_segment_edge_ids = _integer_array(
+                cad_segment_edge_ids, "cad_segment_edge_ids"
+            ).copy()
+            normalized_polygon_cell_ids = _integer_array(
+                cad_polygon_cell_ids, "cad_polygon_cell_ids"
+            ).copy()
+            for values in (
+                normalized_vertex_rows,
+                normalized_segment_edge_ids,
+                normalized_polygon_cell_ids,
+            ):
                 if values.ndim != 1 or np.any(values < 0):
-                    raise ValueError("CAD PLC incidence maps must be non-negative integer vectors.")
+                    raise ValueError(
+                        "CAD PLC incidence maps must be non-negative integer vectors."
+                    )
                 values.setflags(write=False)
-            _cad_segment_incidence(
-                cad_source_charts, cad_fidelity_tolerance, cad_maximum_normal_deviation,
-                cad_embedding, cad_fidelity,
-                cad_vertex_rows, cad_segment_edge_ids,
-                cad_polygon_cell_ids, points, loops, owners, curves, vertex_names,
-                vertex_paths, facet_names, facet_paths, incidence, region_names,
-                region_paths, segment_names, segment_paths,
+            verified_segments = _cad_segment_incidence(
+                cad_source_charts,
+                cad_fidelity_tolerance,
+                cad_maximum_normal_deviation,
+                cad_embedding,
+                cad_fidelity,
+                normalized_vertex_rows,
+                normalized_segment_edge_ids,
+                normalized_polygon_cell_ids,
+                points,
+                loops,
+                owners,
+                curves,
+                vertex_names,
+                vertex_paths,
+                facet_names,
+                facet_paths,
+                incidence,
+                region_names,
+                region_paths,
+                segment_names,
+                segment_paths,
             )
         (
             plc_edge_vertices,
@@ -806,6 +957,7 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             facet_paths,
             segment_names,
             segment_paths,
+            verified_segments,
         )
 
         for array in (points, offsets, flat, owners, incidence, curves):
@@ -845,9 +997,9 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         self.cad_fidelity = cad_fidelity
         self.cad_fidelity_tolerance = cad_fidelity_tolerance
         self.cad_maximum_normal_deviation = cad_maximum_normal_deviation
-        self.cad_vertex_rows = cad_vertex_rows
-        self.cad_segment_edge_ids = cad_segment_edge_ids
-        self.cad_polygon_cell_ids = cad_polygon_cell_ids
+        self.cad_vertex_rows = normalized_vertex_rows
+        self.cad_segment_edge_ids = normalized_segment_edge_ids
+        self.cad_polygon_cell_ids = normalized_polygon_cell_ids
         self.complex_id = canonical_fingerprint(
             {
                 "kind": "piecewise-linear-complex",
@@ -869,13 +1021,24 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
                 "region_ids": region_names,
                 "region_occurrence_paths": region_paths,
                 "boundary": policy,
-                **({"cad_incidence": (cad_source_charts.source_chart_id,
-                    cad_fidelity_tolerance, cad_maximum_normal_deviation,
-                    cad_embedding.certificate_id, cad_fidelity.certificate_id,
-                    array_tree_fingerprint(cad_vertex_rows),
-                    array_tree_fingerprint(cad_segment_edge_ids),
-                    array_tree_fingerprint(cad_polygon_cell_ids))}
-                   if cad_source_charts is not None else {}),
+                **(
+                    {
+                        "cad_incidence": (
+                            cad_source_charts.source_chart_id,
+                            cad_fidelity_tolerance,
+                            cad_maximum_normal_deviation,
+                            cad_embedding.certificate_id,
+                            cad_fidelity.certificate_id,
+                            array_tree_fingerprint(normalized_vertex_rows),
+                            array_tree_fingerprint(normalized_segment_edge_ids),
+                            array_tree_fingerprint(normalized_polygon_cell_ids),
+                        )
+                    }
+                    if cad_source_charts is not None
+                    and cad_embedding is not None
+                    and cad_fidelity is not None
+                    else {}
+                ),
                 **(
                     {"geometry": array_tree_fingerprint(geometry)}
                     if geometry is not None
@@ -894,15 +1057,65 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             }
         )
 
-
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[PiecewiseLinearComplex], value: PiecewiseLinearComplex, /
+        cls: type[PiecewiseLinearComplex],
+        value: PiecewiseLinearComplex,
+        /,
+        *,
+        cad_source_charts: SurfaceSourceCharts | None = None,
+        cad_embedding: GlobalEmbeddingCertificate | None = None,
+        cad_fidelity: SourceFidelityCertificate | None = None,
     ) -> PiecewiseLinearComplex:
         """Rebuild packed loops and verify their retained scientific identity."""
         if type(value) is not cls:
-            raise TypeError("Stored PLC fields must have the registered PiecewiseLinearComplex type.")
+            raise TypeError(
+                "Stored PLC fields must have the registered PiecewiseLinearComplex type."
+            )
+        from .._model._structure import SurfaceSourceChartsArchiveRecipe
+
+        stored_charts = value.cad_source_charts
+        if cad_source_charts is not None:
+            if type(stored_charts) is SurfaceSourceChartsArchiveRecipe:
+                stored_chart_id = stored_charts.expected_source_chart_id
+            elif type(stored_charts) is SurfaceSourceCharts:
+                stored_chart_id = stored_charts.source_chart_id
+            else:
+                raise ValueError("Stored PLC has no source-chart authority to restore.")
+            if cad_source_charts.source_chart_id != stored_chart_id:
+                raise ValueError(
+                    "Restored PLC source charts differ from their stored authority."
+                )
+        else:
+            if (
+                stored_charts is not None
+                and type(stored_charts) is not SurfaceSourceCharts
+            ):
+                raise ValueError(
+                    "Restore the source-chart archive recipe before the PLC."
+                )
+            cad_source_charts = stored_charts
+        if cad_embedding is not None:
+            if (
+                value.cad_embedding is None
+                or cad_embedding.certificate_id != value.cad_embedding.certificate_id
+            ):
+                raise ValueError(
+                    "Restored PLC embedding differs from its stored certificate."
+                )
+        else:
+            cad_embedding = value.cad_embedding
+        if cad_fidelity is not None:
+            if (
+                value.cad_fidelity is None
+                or cad_fidelity.certificate_id != value.cad_fidelity.certificate_id
+            ):
+                raise ValueError(
+                    "Restored PLC fidelity differs from its stored certificate."
+                )
+        else:
+            cad_fidelity = value.cad_fidelity
         offsets = np.asarray(value.polygon_offsets, dtype=np.int64)
         vertices = np.asarray(value.polygon_vertices, dtype=np.int64)
         if (
@@ -913,7 +1126,9 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             or offsets[-1] != vertices.size
             or np.any(offsets[1:] - offsets[:-1] < 3)
         ):
-            raise ValueError("Stored polygon offsets must partition loops of at least three indices.")
+            raise ValueError(
+                "Stored polygon offsets must partition loops of at least three indices."
+            )
         loops = tuple(
             vertices[start:end]
             for start, end in zip(offsets[:-1], offsets[1:], strict=True)
@@ -936,9 +1151,9 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             facet_plane_tolerances=value.facet_plane_tolerances,
             segment_occurrence_paths=value.segment_occurrence_paths,
             region_occurrence_paths=value.region_occurrence_paths,
-            cad_source_charts=value.cad_source_charts,
-            cad_embedding=value.cad_embedding,
-            cad_fidelity=value.cad_fidelity,
+            cad_source_charts=cad_source_charts,
+            cad_embedding=cad_embedding,
+            cad_fidelity=cad_fidelity,
             cad_fidelity_tolerance=value.cad_fidelity_tolerance,
             cad_maximum_normal_deviation=value.cad_maximum_normal_deviation,
             cad_vertex_rows=value.cad_vertex_rows,

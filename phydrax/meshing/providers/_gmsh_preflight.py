@@ -81,7 +81,10 @@ def _sweep_preflight_issues(
             issues.append("EXACT_SWEEP volume scopes must be disjoint")
         for solid in volumes:
             controlled.setdefault(solid, (control_index, control))
-        for role, faces in (("source", source_faces), ("target", target_faces)):
+        for role, faces, scope in (
+            ("source", source_faces, control.wall_scope),
+            ("target", target_faces, control.cap_scope),
+        ):
             assigned = set()
             for face_value in faces:
                 face = int(face_value)
@@ -93,6 +96,14 @@ def _sweep_preflight_issues(
                     )
                     continue
                 solid = selected.pop()
+                if scope is not None and any(
+                    side.face_index == face and side.solid_index != solid
+                    for side in scope.side_records
+                ):
+                    issues.append(
+                        "EXACT_SWEEP wall and cap sides must match their controlled solid"
+                    )
+                    continue
                 if solid in assigned:
                     issues.append(
                         "Each controlled solid requires exactly one source and one target cap"
@@ -491,6 +502,24 @@ def _semantic_region_issues(
             matched = False
             for face in face_ids:
                 owners = model.topology.face_solids[int(face)]
+                sides = tuple(
+                    side
+                    for side in control.scope.side_records
+                    if side.face_index == int(face)
+                )
+                if (
+                    sides
+                    and not any(
+                        side.entity_id in control.scope.unqualified_entity_ids
+                        for side in sides
+                    )
+                    and {side.solid_index for side in sides} != set(owners)
+                ):
+                    unsupported.append(
+                        f"PatchControl {control.name!r} selects only part of a shared "
+                        "face; Gmsh patches cannot represent an individual incident side"
+                    )
+                    continue
                 actual = tuple(sorted(solid_region[owner] for owner in owners))
                 if (
                     len(owners) not in (1, 2)
