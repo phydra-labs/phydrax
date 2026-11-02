@@ -5702,6 +5702,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             source_root_cell_ids=construction.triangle_source_cells,
             source_piece_ids=construction.triangle_source_pieces,
             root_parameter_exact=root_parameter_exact,
+            boundary_occurrences=construction.boundary_occurrences,
         )
         organization = _organization(
             domain,

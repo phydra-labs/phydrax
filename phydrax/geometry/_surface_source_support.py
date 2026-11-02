@@ -54,7 +54,7 @@ from ..discretization._surface_chart_records import (
     SurfaceRootMeshCellBinding,
 )
 from ._domain_boundary import MeshingDomainBoundarySource
-from ._meshing_domain import MeshingDomain
+from ._meshing_domain import MeshingDomain, PatchCurveUse, SourcePreparation
 from ._source_boundary_records import (
     SourceBoundaryChartCover,
     SourceBoundaryDistance,
@@ -483,6 +483,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
     root_parameter_exact: tuple[Corners, ...] = eqx.field(static=True)
     root_parameter_rational_tokens: _SurfaceChartRationalBank = eqx.field(static=True)
     source_root_cell_ids: np.ndarray
+    boundary_occurrences: np.ndarray
     source_piece_ids: tuple[tuple[int, ...], ...]
     associations: tuple[GeometryAssociation, ...]
     boundary_source: MeshingDomainBoundarySource
@@ -506,6 +507,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
         source_root_cell_ids: ArrayLike,
         source_piece_ids: Sequence[Sequence[int]],
         root_parameter_exact: Sequence[Corners] | None = None,
+        boundary_occurrences: ArrayLike | None = None,
     ) -> None:
         if not isinstance(domain, MeshingDomain):
             raise TypeError("domain must be MeshingDomain.")
@@ -575,6 +577,38 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
             raise ValueError(
                 "Root chart patches must equal the boundary source patch set."
             )
+        arity = 3 if cell_kind == "triangle" else 4
+        if boundary_occurrences is None:
+            occurrences = np.empty((0, arity, 3), dtype=np.int64)
+        else:
+            raw_occurrences = np.asarray(boundary_occurrences)
+            if (
+                raw_occurrences.shape != (len(cell_ids), arity, 3)
+                or raw_occurrences.dtype.kind not in "iu"
+                or np.any(raw_occurrences > np.iinfo(np.int64).max)
+            ):
+                raise ValueError(
+                    "Root boundary occurrences must be aligned integer triples."
+                )
+            occurrences = np.array(raw_occurrences, dtype=np.int64, copy=True)
+            for row in range(len(cell_ids)):
+                for slot in range(arity):
+                    patch, loop, use = (
+                        int(occurrences[row, slot, axis]) for axis in range(3)
+                    )
+                    if (patch, loop, use) == (-1, -1, -1):
+                        continue
+                    if (
+                        patch != int(patches[row])
+                        or loop < 0
+                        or loop >= len(domain.patches[patch].loops)
+                        or use < 0
+                        or use >= len(domain.patches[patch].loops[loop])
+                    ):
+                        raise ValueError(
+                            "Root boundary occurrence names an absent source coedge."
+                        )
+        occurrences.setflags(write=False)
         from ..meshing._association import GeometryAssociation, GeometrySourceEntityRole
 
         association_values = tuple(associations)
@@ -672,6 +706,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
         self.root_parameters = parameters
         self.root_patches = patches
         self.source_root_cell_ids = source_root_cell_ids_
+        self.boundary_occurrences = occurrences
         self.root_parameter_exact = exact_parameters
         self.root_parameter_rational_tokens = parameter_tokens
         self.source_piece_ids = source_piece_ids_
@@ -749,6 +784,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                 "exact_parameters": self.root_parameter_rational_tokens,
                 "patches": array_tree_fingerprint(self.root_patches),
                 "source_root_cells": array_tree_fingerprint(self.source_root_cell_ids),
+                "boundary_occurrences": array_tree_fingerprint(self.boundary_occurrences),
                 "source_pieces": self.source_piece_ids,
                 "associations": tuple(
                     (
@@ -842,6 +878,417 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
             raise ValueError(
                 "Descendant source support changes the retained MeshingDomain."
             )
+
+
+class _CadCurveUseBinding(NamedTuple):
+    root_cell_id: int
+    root_edge_id: int
+    curve_row: int
+    loop_index: int
+    use_index: int
+    parameters: tuple[Fraction, Fraction]
+
+
+def _cad_root_edges(
+    charts: SurfaceSourceCharts, /
+) -> tuple[
+    dict[int, tuple[int, int]],
+    dict[
+        int,
+        tuple[tuple[int, int, tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...],
+    ],
+]:
+    """Map canonical surface edges to their incident root-cell chart endpoints."""
+    from ..discretization._cell_complex import PolygonalConnectivity
+    from ..discretization._cell_mesh import SimplicialConnectivity
+
+    mesh = charts.mesh
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, SimplicialConnectivity):
+        if connectivity.dimension != 2:
+            raise ValueError("CAD root mesh requires two-dimensional edge incidence.")
+        edges = np.asarray(connectivity.entities[1], dtype=np.int64)
+    elif isinstance(connectivity, PolygonalConnectivity):
+        edges = np.asarray(connectivity.edges, dtype=np.int64)
+    else:
+        raise ValueError("CAD root mesh has no canonical surface edge incidence.")
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+    if edges.shape != (edge_ids.size, 2) or np.unique(edge_ids).size != edge_ids.size:
+        raise ValueError("CAD root edge IDs do not align with mesh incidence.")
+    by_pair = {
+        (
+            min(int(edges[row, 0]), int(edges[row, 1])),
+            max(int(edges[row, 0]), int(edges[row, 1])),
+        ): int(edge_ids[row])
+        for row in range(edge_ids.size)
+    }
+    if len(by_pair) != len(edge_ids):
+        raise ValueError("CAD root mesh repeats a canonical edge.")
+    edge_vertices = {
+        int(edge_ids[row]): (int(edges[row, 0]), int(edges[row, 1]))
+        for row in range(edge_ids.size)
+    }
+    adjacent: dict[
+        int, list[tuple[int, int, tuple[Fraction, Fraction], tuple[Fraction, Fraction]]]
+    ] = {}
+    row = 0
+    for block in mesh.blocks:
+        if block.cell_kind == "triangle":
+            slots = ((1, 2), (2, 0), (0, 1))
+        elif block.cell_kind == "quadrilateral":
+            slots = tuple(
+                tuple(int(value) for value in edge)
+                for edge in reference_cell_topology("quadrilateral").entities[1]
+            )
+        else:
+            raise ValueError("CAD root charts require triangular or quadrilateral cells.")
+        vertices = np.asarray(block.vertices, dtype=np.int64)
+        identifiers = np.asarray(block.global_ids, dtype=np.int64)
+        for block_row in range(identifiers.size):
+            cell_id = int(identifiers[block_row])
+            chart = charts.root_parameter_chart(row)
+            for slot, (first, last) in enumerate(slots):
+                first_row = int(vertices[block_row, first])
+                last_row = int(vertices[block_row, last])
+                key = (min(first_row, last_row), max(first_row, last_row))
+                edge_id = by_pair.get(key)
+                if edge_id is None:
+                    raise ValueError(
+                        "CAD root cell edge is absent from canonical incidence."
+                    )
+                canonical = edge_vertices[edge_id]
+                if (first_row, last_row) == canonical:
+                    first_uv, last_uv = chart[first], chart[last]
+                elif (last_row, first_row) == canonical:
+                    first_uv, last_uv = chart[last], chart[first]
+                else:
+                    raise ValueError("CAD root edge orientation changed its endpoints.")
+                adjacent.setdefault(edge_id, []).append(
+                    (int(cell_id), slot, first_uv, last_uv)
+                )
+            row += 1
+    if row != len(charts.cell_global_ids):
+        raise ValueError("CAD root chart rows do not align with mesh cells.")
+    return edge_vertices, {key: tuple(value) for key, value in adjacent.items()}
+
+
+def _cad_curve_use_lens(
+    charts: SurfaceSourceCharts,
+    patch: int,
+    loop: int,
+    use_index: int,
+    first_uv: tuple[Fraction, Fraction],
+    last_uv: tuple[Fraction, Fraction],
+    parameters: tuple[Fraction, Fraction],
+    tolerance: Fraction,
+    preparation: SourcePreparation,
+    /,
+) -> None:
+    """Recompute a continuous bound for one named source-coedge restriction."""
+    from ._domain_boundary import _curved_trim_lens
+    from ._rational import fraction_down, fraction_up
+    from ._source_fidelity import _curved_trim_lens_cap
+
+    preparation.require(charts.domain)
+    use = charts.domain.patches[patch].loops[loop][use_index]
+    if not isinstance(use, PatchCurveUse):
+        raise ValueError("CAD curve ancestry cannot bind a collapsed pole use.")
+    first = Fraction.from_float(use.first)
+    span = Fraction.from_float(use.last) - first
+    exact_first, exact_last = (first + span * value for value in parameters)
+    if exact_first < exact_last:
+        source_first, source_last = fraction_down(exact_first), fraction_up(exact_last)
+    else:
+        source_first, source_last = fraction_up(exact_first), fraction_down(exact_last)
+    lens = _curved_trim_lens(
+        use, first_uv, last_uv, source_first, source_last, preparation
+    )
+    cap, _, _ = _curved_trim_lens_cap(
+        charts.domain.patches[patch].surface, lens, preparation
+    )
+    if cap > tolerance:
+        raise ValueError("CAD source coedge lacks its declared continuous curve bound.")
+
+
+def _validate_cad_curve_chains(
+    charts: SurfaceSourceCharts,
+    intervals: dict[int, list[tuple[Fraction, Fraction, int, int]]],
+    /,
+) -> None:
+    from ..meshing._association import (
+        GeometryAssociationArchiveRecipe,
+        GeometryAssociationKind,
+    )
+
+    domain, mesh = charts.domain, charts.mesh
+    vertex_set = mesh.entity_set(0)
+    matches = tuple(
+        association
+        for association in charts.associations
+        if association.association_kind is GeometryAssociationKind.BREP
+        and association.target_entity_set_id == vertex_set.entity_set_id
+    )
+    if len(matches) != 1:
+        raise ValueError("CAD root curves require one source vertex association.")
+    association = GeometryAssociationArchiveRecipe.from_association(matches[0]).restore()
+    association.validate_target(vertex_set)
+    target_ids = np.asarray(association.target_global_ids, dtype=np.int64)
+    rows = {int(identifier): row for row, identifier in enumerate(target_ids)}
+    global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    dimensions = np.asarray(association.source_dimensions, dtype=np.int64)
+    indices = np.asarray(association.source_indices, dtype=np.int64)
+    resolved = np.asarray(association.resolved, dtype=np.bool_)
+    ambiguous = np.asarray(association.ambiguous, dtype=np.bool_)
+
+    def require_vertex(vertex: int, curve: int, parameter: Fraction, /) -> None:
+        row = rows.get(int(global_ids[vertex]))
+        if row is None or not resolved[row] or ambiguous[row]:
+            raise ValueError("CAD source curve vertex has no resolved root association.")
+        if parameter in (0, 1):
+            corner = (
+                domain.curves[curve].start if parameter == 0 else domain.curves[curve].end
+            )
+            expected_dimension = 0
+            expected_index = domain.source_indices[0][corner]
+            expected_path = domain.source_occurrences[0][corner]
+            expected_id = domain.entity_id(0, corner)
+        else:
+            expected_dimension = 1
+            expected_index = domain.source_indices[1][curve]
+            expected_path = domain.source_occurrences[1][curve]
+            expected_id = domain.entity_id(1, curve)
+        if (
+            int(dimensions[row]) != expected_dimension
+            or int(indices[row]) != expected_index
+            or association.source_occurrence_paths[row] != expected_path
+            or association.source_entity_ids[row] != expected_id
+        ):
+            raise ValueError("CAD source curve vertex changes its source occurrence.")
+
+    for curve, parts in intervals.items():
+        ordered = sorted(parts)
+        if (
+            ordered[0][0] != 0
+            or ordered[-1][1] != 1
+            or any(
+                first[1] != second[0] or first[3] != second[2]
+                for first, second in zip(ordered, ordered[1:])
+            )
+            or (
+                domain.curves[curve].start == domain.curves[curve].end
+                and ordered[0][2] != ordered[-1][3]
+            )
+        ):
+            raise ValueError(
+                "CAD source curve intervals do not form one complete vertex chain."
+            )
+        for first, last, start, stop in ordered:
+            require_vertex(start, curve, first)
+            require_vertex(stop, curve, last)
+
+
+def _validate_cad_chart_edge_incidence(
+    charts: SurfaceSourceCharts,
+    adjacent: dict[
+        int,
+        tuple[tuple[int, int, tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...],
+    ],
+    associated: set[int],
+    /,
+) -> None:
+    """Prove which root-chart edges are interior instead of trusting sentinels."""
+    rows = {identifier: row for row, identifier in enumerate(charts.cell_global_ids)}
+    counts: dict[tuple[int, frozenset[tuple[Fraction, Fraction]]], int] = {}
+    for uses in adjacent.values():
+        for cell_id, _, first, last in uses:
+            patch = int(charts.root_patches[rows[cell_id]])
+            key = (patch, frozenset((first, last)))
+            counts[key] = counts.get(key, 0) + 1
+    for edge_id, uses in adjacent.items():
+        for cell_id, slot, first, last in uses:
+            row = rows[cell_id]
+            patch = int(charts.root_patches[row])
+            count = counts[(patch, frozenset((first, last)))]
+            explicit = (
+                (-1, -1, -1)
+                if charts.boundary_occurrences.size == 0
+                else tuple(int(value) for value in charts.boundary_occurrences[row, slot])
+            )
+            if count not in (1, 2):
+                raise ValueError("CAD root chart has nonmanifold edge incidence.")
+            if edge_id in associated:
+                if count != 1:
+                    raise ValueError(
+                        "CAD source coedge is not a root-chart boundary edge."
+                    )
+            elif count != 2 or explicit != (-1, -1, -1):
+                raise ValueError(
+                    "CAD root chart has an unbound or unproved boundary edge."
+                )
+
+
+def validate_cad_curve_ancestry(
+    charts: SurfaceSourceCharts, tolerance: float, /
+) -> dict[int, tuple[_CadCurveUseBinding, ...]]:
+    """Replay root edge identities, source-curve intervals and coedge occurrences.
+
+    Exact edge interval partition and topology establish source-curve identity;
+    continuous interval lenses bind its particular UV realization. A repeated
+    source curve in a face needs explicit authored coedge incidence.
+    """
+    from ..meshing._association import (
+        GeometryAssociationArchiveRecipe,
+        GeometryAssociationKind,
+        GeometrySourceEntityRole,
+    )
+    from ._meshing_domain import PatchCurveUse, SourcePreparation
+
+    if not isinstance(charts, SurfaceSourceCharts):
+        raise TypeError("CAD curve ancestry requires SurfaceSourceCharts.")
+    if not np.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("CAD curve ancestry requires a finite nonnegative tolerance.")
+    charts.require_current()
+    domain, mesh = charts.domain, charts.mesh
+    if domain.brep_authority is None:
+        raise ValueError("CAD curve ancestry requires current BRep authority.")
+    edge_set = mesh.entity_set(1)
+    associations = tuple(
+        association
+        for association in charts.associations
+        if association.association_kind is GeometryAssociationKind.CURVE
+        and association.target_entity_set_id == edge_set.entity_set_id
+    )
+    expected_curves = {
+        use.curve
+        for patch in charts.boundary_source.patches
+        for loop in domain.patches[patch].loops
+        for use in loop
+        if isinstance(use, PatchCurveUse)
+    }
+    edge_vertices, adjacent = _cad_root_edges(charts)
+    if not expected_curves and not associations:
+        _validate_cad_chart_edge_incidence(charts, adjacent, set())
+        return {}
+    if len(associations) != 1:
+        raise ValueError("CAD root charts need one complete curve-edge association.")
+    association = GeometryAssociationArchiveRecipe.from_association(
+        associations[0]
+    ).restore()
+    association.validate_target(edge_set)
+    curve_rows = {
+        (int(index), path): row
+        for row, (index, path) in enumerate(
+            zip(domain.source_indices[1], domain.source_occurrences[1], strict=True)
+        )
+    }
+    if len(curve_rows) != len(domain.curves):
+        raise ValueError("CAD curve source occurrences are not unique.")
+    source_indices = np.asarray(association.source_indices, dtype=np.int64)
+    dimensions = np.asarray(association.source_dimensions, dtype=np.int64)
+    target_ids = np.asarray(association.target_global_ids, dtype=np.int64)
+    directions = np.asarray(association.orientations, dtype=np.int8)
+    if (
+        np.any(dimensions != 1)
+        or np.any(~np.asarray(association.resolved, dtype=np.bool_))
+        or np.any(np.asarray(association.ambiguous, dtype=np.bool_))
+        or np.any(~np.isin(directions, (-1, 1)))
+    ):
+        raise ValueError(
+            "CAD root edge association is not an oriented resolved curve map."
+        )
+    rows_by_cell = {
+        identifier: row for row, identifier in enumerate(charts.cell_global_ids)
+    }
+    intervals: dict[int, list[tuple[Fraction, Fraction, int, int]]] = {}
+    result: dict[int, tuple[_CadCurveUseBinding, ...]] = {}
+    preparation = SourcePreparation(domain)
+    bound = Fraction.from_float(float(tolerance))
+    for row, edge_id_value in enumerate(target_ids):
+        edge_id = int(edge_id_value)
+        source_key = (int(source_indices[row]), association.source_occurrence_paths[row])
+        curve_row = curve_rows.get(source_key)
+        interval = association.source_parameter_intervals[row]
+        if (
+            curve_row is None
+            or association.source_roles[row] is not GeometrySourceEntityRole.EDGE
+            or association.source_entity_ids[row] != domain.entity_id(1, curve_row)
+            or interval is None
+            or not Fraction(0) <= interval[0] < interval[1] <= Fraction(1)
+            or edge_id not in edge_vertices
+            or edge_id not in adjacent
+            or edge_id in result
+        ):
+            raise ValueError(
+                "CAD root edge changes source occurrence, interval or incidence."
+            )
+        owner_patch, owner_loop, owner_use = domain.curve_owners[curve_row]
+        owner = domain.patches[owner_patch].loops[owner_loop][owner_use]
+        if not isinstance(owner, PatchCurveUse):
+            raise ValueError("CAD source curve has no regular coedge owner.")
+        sense = int(directions[row]) * (1 if owner.last > owner.first else -1)
+        start_vertex, stop_vertex = edge_vertices[edge_id]
+        if sense < 0:
+            start_vertex, stop_vertex = stop_vertex, start_vertex
+        intervals.setdefault(curve_row, []).append(
+            (interval[0], interval[1], start_vertex, stop_vertex)
+        )
+        bindings: list[_CadCurveUseBinding] = []
+        for cell_id, edge_slot, first_uv, last_uv in adjacent[edge_id]:
+            chart_row = rows_by_cell[cell_id]
+            patch = int(charts.root_patches[chart_row])
+            candidates = tuple(
+                (loop_index, use_index)
+                for loop_index, loop in enumerate(domain.patches[patch].loops)
+                for use_index, use in enumerate(loop)
+                if isinstance(use, PatchCurveUse) and use.curve == curve_row
+            )
+            explicit = (
+                (-1, -1, -1)
+                if charts.boundary_occurrences.size == 0
+                else tuple(
+                    int(value)
+                    for value in charts.boundary_occurrences[chart_row, edge_slot]
+                )
+            )
+            if explicit == (-1, -1, -1):
+                if len(candidates) != 1:
+                    raise ValueError(
+                        "CAD root edge has ambiguous source coedge incidence."
+                    )
+                loop_index, use_index = candidates[0]
+            else:
+                if (
+                    len(explicit) != 3
+                    or explicit[0] != patch
+                    or (explicit[1], explicit[2]) not in candidates
+                ):
+                    raise ValueError(
+                        "CAD root edge changes its authored coedge occurrence."
+                    )
+                loop_index, use_index = explicit[1], explicit[2]
+            parameters = interval if sense > 0 else (interval[1], interval[0])
+            _cad_curve_use_lens(
+                charts,
+                patch,
+                loop_index,
+                use_index,
+                first_uv,
+                last_uv,
+                parameters,
+                bound,
+                preparation,
+            )
+            bindings.append(
+                _CadCurveUseBinding(
+                    cell_id, edge_id, curve_row, loop_index, use_index, parameters
+                )
+            )
+        result[edge_id] = tuple(bindings)
+    if set(intervals) != expected_curves:
+        raise ValueError("CAD root association omits or adds a source curve.")
+    _validate_cad_curve_chains(charts, intervals)
+    _validate_cad_chart_edge_incidence(charts, adjacent, set(result))
+    return result
 
 
 @final
