@@ -1,3 +1,4 @@
+import math
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,10 @@ from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.meshing.providers._native_surface import (
     _accepted_source_splits,
     _chart_cdt_scale,
+    _folded_chart_edge,
+    _local_edge_identity,
     _source_curve_parameters,
+    _ChartMesh,
     _SourceSplitProposal,
 )
 from tools.meshing_qualification.scenarios.native_cad_profiles import _external_case
@@ -96,3 +100,23 @@ def test_reversed_source_ancestry_preserves_authored_endpoints_and_descendants()
     assert result[(1, 7)] == Fraction(0)
     assert result[(2, 7)] == Fraction(3, 64)
     assert result[(3, 7)] == Fraction(3, 128)
+
+
+def test_full_turn_polar_annulus_fold_splits_unwrapped_chart_edge() -> None:
+    half_turn = Fraction.from_float(math.pi)
+    points = [
+        (2 * half_turn, Fraction(5, 32)),
+        (half_turn, Fraction(1, 8)),
+        (Fraction(0), Fraction(9, 64)),
+    ]
+    triangle = (0, 1, 2)
+    chart = _ChartMesh(6, points, [triangle], {}, {}, {})
+    edges = ((0, 1), (1, 2), (2, 0))
+    identities = tuple(_local_edge_identity(chart, *edge) for edge in edges)
+    chosen = _folded_chart_edge(chart, triangle, identities)
+    assert chosen == identities[2]
+    midpoint = tuple((points[0][axis] + points[2][axis]) / 2 for axis in range(2))
+    assert midpoint[0] == half_turn
+    assert points[0][0] - midpoint[0] == midpoint[0] - points[2][0] == half_turn
+    assert points[0] != points[2]
+    assert identities[0] != identities[1]

@@ -348,6 +348,10 @@ merged by chart-coordinate proximity. Independent intervals may advance in the
 same round, and later quality requests remain eligible.
 For rational spline surfaces, trim-lens Jacobian bounds use the prepared exact
 knot-span derivative enclosures and their positive-denominator certificates.
+When a facet reverses the source normal, refinement can split its longest exact
+chart edge rather than its longest physical edge, so a full-turn polar chart
+cannot hide a fold behind physically nearby endpoints. Physical acceptance
+criteria and source-curve identities remain unchanged.
 
 At a certified shared-root junction, the chart partition uses one deterministic
 representative on the proved native sheet. That representative is a point of

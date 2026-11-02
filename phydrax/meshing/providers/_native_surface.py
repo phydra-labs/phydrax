@@ -4124,6 +4124,34 @@ def _local_edge_identity(
     return (0, chart.patch, first_uv, last_uv)
 
 
+def _folded_chart_edge(
+    chart: _ChartMesh,
+    triangle: tuple[int, int, int],
+    identities: tuple[_LocalEdgeIdentity, ...],
+    /,
+) -> _LocalEdgeIdentity:
+    """Choose an exact parameter-space edge to unfold an inverted facet."""
+    edges = (
+        (triangle[0], triangle[1]),
+        (triangle[1], triangle[2]),
+        (triangle[2], triangle[0]),
+    )
+    index = max(
+        range(3),
+        key=lambda index: (
+            sum(
+                (
+                    chart.points[edges[index][0]][axis]
+                    - chart.points[edges[index][1]][axis]
+                ) ** 2
+                for axis in range(2)
+            ),
+            identities[index],
+        ),
+    )
+    return identities[index]
+
+
 def _add_global_vertex(
     domain: domain_owner.MeshingDomain,
     chart: _ChartMesh,
@@ -4581,18 +4609,17 @@ def _refine_charts(
             )
         if specification.maximum_normal_deviation is not None:
             bad |= normal_bounds > specification.maximum_normal_deviation
-        # A chart triangle near a singular chart row can map to a cell whose
-        # vertex order reverses the oriented source normal, and an anisotropic
-        # chart can map a well-shaped chart triangle to a physical sliver whose
-        # facet turns from the source beyond the schedule's normal aim; split
-        # both like any other schedule violation.
-        bad |= _facet_normal_violations(
+        # Physical longest-edge propagation alone can miss a full-turn chart
+        # edge whose endpoints happen to be physically close.  Keep the normal
+        # violations separate so a folded chart is split in parameter space.
+        normal_bad = _facet_normal_violations(
             domain,
             patches,
             chart_parameters,
             physical[triangles],
             schedule.normal_deviation_aim,
         )
+        bad |= normal_bad
         local_bad = bool(np.any(bad))
 
         # Bisect along the longest-edge propagation path of every bad cell
@@ -4605,6 +4632,7 @@ def _refine_charts(
         if local_bad:
             identities: list[tuple[_LocalEdgeIdentity, ...]] = []
             cell_charts: list[int] = []
+            local_cells: list[int] = []
             for chart_row, chart in enumerate(charts):
                 identities.extend(
                     tuple(
@@ -4618,6 +4646,7 @@ def _refine_charts(
                     for triangle in chart.triangles
                 )
                 cell_charts.extend((chart_row,) * len(chart.triangles))
+                local_cells.extend(range(len(chart.triangles)))
             cells_by_edge: dict[_LocalEdgeIdentity, list[int]] = {}
             for cell, cell_identities in enumerate(identities):
                 for identity in cell_identities:
@@ -4634,6 +4663,11 @@ def _refine_charts(
                 return identities[cell][index]
 
             for cell in np.flatnonzero(bad).tolist():
+                if normal_bad[cell]:
+                    chart = charts[cell_charts[cell]]
+                    triangle = chart.triangles[local_cells[cell]]
+                    split_edges.add(_folded_chart_edge(chart, triangle, identities[cell]))
+                    continue
                 while True:
                     identity = longest_identity(cell)
                     onward = next(
