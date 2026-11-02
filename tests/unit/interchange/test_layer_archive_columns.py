@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from benchmarks._memory import host_allocation_peak
 from phydrax._archive_columns import (
     ExactTensorArchiveRecipe,
     StaticColumnArchiveRecipe,
@@ -331,6 +332,32 @@ def test_exact_column_preserves_large_rationals_and_repeated_static_rows() -> No
     column = StaticColumnArchiveRecipe.encode(values)
     assert len(column.table) == 1
     assert column.decode() == values
+
+
+@pytest.mark.parametrize("count", (4096, 16384), ids=("small", "large"))
+def test_exact_tensor_encoding_workspace_is_bounded_by_payload(count: int) -> None:
+    values = tuple((row, row + 1) for row in range(count))
+    recipe, peak = host_allocation_peak(
+        lambda: ExactTensorArchiveRecipe.encode(values, rational=False)
+    )
+    assert recipe.decode() == values
+    payload_bytes = recipe.text.data.nbytes + recipe.text.ends.nbytes
+    assert peak <= 4 * payload_bytes + 64 * 1024
+
+
+def test_exact_tensor_retains_canonical_decimal_archive_bytes() -> None:
+    values = (
+        (Fraction(2, 3), Fraction(-5, 7)),
+        (Fraction(0), Fraction(1)),
+    )
+    recipe = ExactTensorArchiveRecipe.encode(values, rational=True)
+    np.testing.assert_array_equal(
+        recipe.text.data, np.frombuffer(b"2/3-5/701", dtype=np.uint8)
+    )
+    np.testing.assert_array_equal(
+        recipe.text.ends, np.asarray((3, 7, 8, 9), dtype=np.int64)
+    )
+    assert recipe.decode() == values
 
 
 def test_exact_reference_map_columns_preserve_polynomial_expression_kinds() -> None:

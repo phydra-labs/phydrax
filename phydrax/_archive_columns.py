@@ -15,8 +15,9 @@ exactly the original tuple.
 
 from __future__ import annotations
 
-from collections.abc import Hashable
+from collections.abc import Hashable, Iterable, Iterator
 from fractions import Fraction
+from itertools import repeat
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -73,6 +74,18 @@ class StaticColumnArchiveRecipe(NamedTuple):
         return tuple(table[index] for index in rows.tolist())
 
 
+def _encode_text_data(
+    values: Iterable[str], count: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Own one UTF-8 payload and its exact row offsets, without flat text banks."""
+    payload = bytearray()
+    ends = np.empty((count,), dtype=np.int64)
+    for index, value in zip(range(count), values, strict=True):
+        payload.extend(value.encode("utf-8"))
+        ends[index] = len(payload)
+    return np.frombuffer(payload, dtype=np.uint8), ends
+
+
 class TextColumnArchiveRecipe(NamedTuple):
     """Per-row text as concatenated UTF-8 bytes and int64 row end offsets."""
 
@@ -83,12 +96,7 @@ class TextColumnArchiveRecipe(NamedTuple):
     def encode(cls, values: tuple[str, ...], /) -> TextColumnArchiveRecipe:
         if any(not isinstance(value, str) for value in values):
             raise TypeError("Text columns hold only strings.")
-        encoded = [value.encode("utf-8") for value in values]
-        ends = np.cumsum(
-            np.asarray([len(item) for item in encoded], dtype=np.int64), dtype=np.int64
-        )
-        data = np.frombuffer(b"".join(encoded), dtype=np.uint8).copy()
-        return cls(data, ends)
+        return cls(*_encode_text_data(values, len(values)))
 
     def decode(self) -> tuple[str, ...]:
         data = np.asarray(self.data)
@@ -223,31 +231,33 @@ class ExactTensorArchiveRecipe(NamedTuple):
             if not node:
                 break
             node = node[0]
-        leaves: list[str] = []
 
-        def visit(item: Any, depth: int, /) -> None:
+        def visit(item: Any, depth: int, /) -> Iterator[str]:
             if depth == len(shape):
                 if type(item) is not leaf_type:
                     raise TypeError("Exact tensor leaves must share one exact type.")
-                leaves.append(str(item))
+                yield str(item)
                 return
             if not isinstance(item, tuple) or len(item) != shape[depth]:
                 raise ValueError("Exact tensor rows must have one regular shape.")
             for child in item:
-                visit(child, depth + 1)
+                yield from visit(child, depth + 1)
 
-        visit(value, 0)
-        if not leaves:
-            # Empty inner dimensions still create outer tuple objects on decode.
-            # Store one empty sentinel per such object so the archive carries
-            # proportional evidence for every allocation it asks us to make.
-            extent = 1
-            containers = 0
-            for size in shape:
-                containers += extent
-                extent *= size
-            leaves = [""] * containers
-        return cls(TextColumnArchiveRecipe.encode(tuple(leaves)), tuple(shape), rational)
+        extent = 1
+        containers = 0
+        for size in shape:
+            containers += extent
+            extent *= size
+        if extent:
+            text = TextColumnArchiveRecipe(*_encode_text_data(visit(value, 0), extent))
+        else:
+            # Validate even empty rows before encoding their allocation evidence.
+            for _ in visit(value, 0):
+                raise ValueError("An empty exact tensor cannot contain scalar leaves.")
+            text = TextColumnArchiveRecipe(
+                *_encode_text_data(repeat("", containers), containers)
+            )
+        return cls(text, tuple(shape), rational)
 
     def decode(self) -> tuple[Any, ...]:
         if not isinstance(self.shape, tuple) or any(

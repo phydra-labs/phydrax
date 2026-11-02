@@ -6,6 +6,10 @@
 - Array-tree fingerprints stream keyed leaves without retaining a flattened leaf
   bank. Iterative traversal keeps ancestry storage linear in tree depth and
   preserves canonical fingerprint bytes for deeply nested trees.
+- Exact tensor archive encoding streams canonical decimal text into one UTF-8
+  payload and row-offset array instead of retaining duplicate per-leaf string
+  and byte banks. Canonical bytes, empty-container evidence, and type checks
+  remain unchanged.
 - Nonaffine retained-root embedding proofs now pass the routed local coefficient
   bank to the canonical cell-expression owner, preserving valid root ancestry
   instead of dropping it after an argument mismatch.

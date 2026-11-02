@@ -1587,8 +1587,10 @@ def elevate_spline_extraction(
         linear_combinations,
         multiply,
         power,
+        RationalPolynomial,
         scale,
     )
+    from ._exact_algebraic_geometry import rational_coefficient
 
     if len(degrees) != 2 or any(
         isinstance(value, bool) or not isinstance(value, (int, np.integer))
@@ -1614,10 +1616,19 @@ def elevate_spline_extraction(
         )
     tensor = tuple(multiply(u, v) for u in basis[0] for v in basis[1])
     extracted = linear_combinations(tensor, element.exact_extraction_operator)
-    extraction = tuple(
-        tuple(bernstein_coefficients(polynomial, "box", 2, degree=target))
-        for polynomial in extracted
-    )
+    rows: list[tuple[Fraction, ...]] = []
+    for polynomial in extracted:
+        if isinstance(polynomial, RationalPolynomial):
+            raise ValueError(
+                "Spline extraction elevation requires polynomial basis functions."
+            )
+        rows.append(
+            tuple(
+                rational_coefficient(value, role="Spline extraction coefficient")
+                for value in bernstein_coefficients(polynomial, "box", 2, degree=target)
+            )
+        )
+    extraction = tuple(rows)
     return SplineCellGeometryElement(
         element.anchor_ids,
         element.parameter_bounds,
