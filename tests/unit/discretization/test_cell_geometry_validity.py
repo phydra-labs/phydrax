@@ -1291,9 +1291,11 @@ def _assert_embedded_affine_minor_matches_gram(
 
 def test_embedded_affine_minor_matches_gram_for_dyadic_samples() -> None:
     rng = np.random.default_rng(8291)
-    for index, matrix in enumerate(rng.uniform(-2.0, 2.0, size=(80, 3, 2))):
+    matrices = rng.uniform(-2.0, 2.0, size=(80, 3, 2))
+    for index in range(matrices.shape[0]):
         jacobian = tuple(
-            tuple(Fraction(float(value)) for value in row) for row in matrix
+            tuple(Fraction(float(matrices[index, row, column])) for column in range(2))
+            for row in range(3)
         )
         _assert_embedded_affine_minor_matches_gram(jacobian, f"sample {index}")
 
