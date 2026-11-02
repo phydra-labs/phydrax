@@ -607,6 +607,49 @@ def test_known_boundary_minimum_does_not_hide_unresolved_stationary_roots() -> N
     assert np.all(np.isnan(np.asarray(result.parameters)))
 
 
+@pytest.mark.parametrize(
+    "restricted", (False, True), ids=("all-entities", "face-first-scope")
+)
+def test_classification_retains_proved_edge_when_face_minimum_is_unresolved(
+    restricted: bool,
+) -> None:
+    model, _ = _nearby_stationary_root_surface_model()
+    projection = prepare_brep_projection(model)
+    query = np.asarray(((0.0, 0.5, 0.0),), dtype=np.float64)
+    if restricted:
+        count = model.topology.num_edges
+        result = projection.classify(
+            query,
+            tolerance=1.0e-8,
+            groups=np.asarray((7,), dtype=np.int64),
+            allowed_groups=np.full((count + 1,), 7, dtype=np.int64),
+            allowed_dimensions=np.asarray((2, *((1,) * count)), dtype=np.int64),
+            allowed_indices=np.asarray((0, *range(count)), dtype=np.int64),
+            allowed_occurrence_paths=((),) * (count + 1),
+        )
+    else:
+        result = projection.classify(query, tolerance=1.0e-8)
+    assert int(result.dimensions[0]) == 1
+    assert int(result.status[0]) == SourceProjectionStatus.UNIQUE
+    np.testing.assert_allclose(result.points, query, rtol=0.0, atol=1.0e-14)
+
+
+def test_spline_projection_bounds_near_tied_boundary_minima() -> None:
+    model, _ = _nearby_stationary_root_surface_model()
+    entity_id = brep_entity_id(model.source_id, model.source_revision, 2, 0)
+    policy = BRepProjectionPolicy(ambiguity_tolerance=1.0e-9)
+    result = prepare_brep_projection(model, policy=policy).project_boundary(
+        np.asarray(((0.0, 0.5, 1.0),), dtype=np.float64), entity_ids=(entity_id,)
+    )
+    # z(u) = 10^-9 u - u² <= 1/(4·10^18); the boundary u=0 attains distance 1.
+    # The interior and boundary minima are distinct but below the declared tie band.
+    reference_lower = 1 - Fraction(1, 4 * 10**18)
+    assert int(result.status[0]) == SourceProjectionStatus.AMBIGUOUS
+    assert 0.9 < float(result.distance_lower_bounds[0])
+    assert Fraction(float(result.distance_lower_bounds[0])) <= reference_lower
+    assert 1.0 <= float(result.residuals[0]) <= 1.0 + policy.ambiguity_tolerance
+
+
 def test_non_graph_tspline_projection_uses_extracted_piece_roots() -> None:
     model, patch = _tspline_non_graph_model()
     entity_id = brep_entity_id(model.source_id, model.source_revision, 2, 0)

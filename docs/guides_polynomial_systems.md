@@ -158,5 +158,10 @@ certifies the supplied point as an approximate root of one Newton basin.
 to certify one unique real root inside an axis-aligned box.
 
 `isolate_univariate_real_roots` uses exact rational Sturm isolation and preserves
-multiplicity. These certificates are distinct from path accounting, clustered
-numerical endpoints, or positive-dimensional witness sets.
+multiplicity. Rational roots are returned as singleton intervals; irrational
+roots receive disjoint rational intervals no wider than the requested tolerance.
+A modular certificate can rule out rational roots without refining to a width
+determined by the leading coefficient. When that certificate is inconclusive,
+exact rational reconstruction remains in use. These certificates are distinct
+from path accounting, clustered numerical endpoints, or positive-dimensional
+witness sets.

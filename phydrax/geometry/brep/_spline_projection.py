@@ -8,23 +8,23 @@ from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
 from math import comb, isfinite
-from typing import TYPE_CHECKING, Callable
+from typing import Callable, TYPE_CHECKING
 
 import numpy as np
 
 from ..._interpolation import rational_bspline_curve_spans
 from ...algebraic._exact_univariate import isolate_real_roots
 from ...discretization._coordinate_enclosure import (
-    ExactScalar,
-    Polynomial,
-    RationalPolynomial,
     add,
     axes,
     compose,
     constant,
     derivative,
+    ExactScalar,
     multiply,
+    Polynomial,
     polynomial_bounds,
+    RationalPolynomial,
     scale,
     subtract,
 )
@@ -38,6 +38,8 @@ from ._patches import (
 )
 from ._projection_contracts import BRepProjectionStatus
 from ._tspline import TSplineSurfacePatch
+
+
 if TYPE_CHECKING:
     from ._model import BRepModel
     from ._projection_contracts import BRepProjectionPolicy
@@ -69,15 +71,16 @@ class _PolynomialEvaluator:
                 np.asarray([[value[1] for value in bounds]], dtype=np.float64),
             )
         bounds = tuple(
-            tuple(
-                _poly_interval(value, box_lower, box_upper)
-                for value in row
-            )
+            tuple(_poly_interval(value, box_lower, box_upper) for value in row)
             for row in self._system._jacobian
         )
         return (
-            np.asarray([[[value[0] for value in row] for row in bounds]], dtype=np.float64),
-            np.asarray([[[value[1] for value in row] for row in bounds]], dtype=np.float64),
+            np.asarray(
+                [[[value[0] for value in row] for row in bounds]], dtype=np.float64
+            ),
+            np.asarray(
+                [[[value[1] for value in row] for row in bounds]], dtype=np.float64
+            ),
         )
 
 
@@ -98,18 +101,25 @@ class _PolynomialSystem:
             exact = tuple(Fraction.from_float(float(value)) for value in point)
             rows.append(
                 [
-                    [float(_eval_polynomial(self._jacobian[row][axis], exact)) for axis in range(2)]
+                    [
+                        float(_eval_polynomial(self._jacobian[row][axis], exact))
+                        for axis in range(2)
+                    ]
                     for row in range(2)
                 ]
             )
         return np.asarray(rows, dtype=np.float64)
+
+
 def _curve_value_box(
     coordinates: tuple[RationalPolynomial, ...],
     lower: float,
     upper: float,
     /,
 ) -> tuple[tuple[float, float], ...]:
-    argument = (_affine_argument(Fraction.from_float(lower), Fraction.from_float(upper), 1, 0),)
+    argument = (
+        _affine_argument(Fraction.from_float(lower), Fraction.from_float(upper), 1, 0),
+    )
     return tuple(
         polynomial_bounds(
             RationalPolynomial(
@@ -123,18 +133,14 @@ def _curve_value_box(
     )
 
 
-def _local_float_interval(
-    lower: Fraction, upper: Fraction, /
-) -> tuple[float, float]:
+def _local_float_interval(lower: Fraction, upper: Fraction, /) -> tuple[float, float]:
     return (
         max(0.0, float(np.nextafter(float(lower), -np.inf))),
         min(1.0, float(np.nextafter(float(upper), np.inf))),
     )
 
 
-def _unclamped_float_interval(
-    lower: Fraction, upper: Fraction, /
-) -> tuple[float, float]:
+def _unclamped_float_interval(lower: Fraction, upper: Fraction, /) -> tuple[float, float]:
     return (
         float(np.nextafter(float(lower), -np.inf)),
         float(np.nextafter(float(upper), np.inf)),
@@ -178,13 +184,26 @@ def _curve_root_intervals(
 ]:
     coefficients = _root_coefficients(polynomial)
     if coefficients is None:
-        return (), (_Unknown(0.0, np.inf, None, segment.piece_id, ("unrepresentable-univariate-coefficients",)),), False
+        return (
+            (),
+            (
+                _Unknown(
+                    0.0,
+                    np.inf,
+                    None,
+                    segment.piece_id,
+                    ("unrepresentable-univariate-coefficients",),
+                ),
+            ),
+            False,
+        )
     if coefficients == (Fraction(0),):
         return (), (), True
     span_width = abs(segment.parameter_bounds[1] - segment.parameter_bounds[0])
     tolerance = min(
         Fraction(1),
-        Fraction.from_float(float(policy.parametric_tolerance)) / max(span_width, Fraction(1)),
+        Fraction.from_float(float(policy.parametric_tolerance))
+        / max(span_width, Fraction(1)),
     )
     while True:
         roots = isolate_real_roots(coefficients, tolerance=tolerance)
@@ -212,9 +231,7 @@ def _curve_root_intervals(
                 0.0
                 if segment.chart_coordinates is None
                 else _diameter(
-                    _curve_value_box(
-                        segment.chart_coordinates, floats[0], floats[1]
-                    )
+                    _curve_value_box(segment.chart_coordinates, floats[0], floats[1])
                 )
             )
             param_width = float(span_width * (interval[1] - interval[0]))
@@ -229,7 +246,13 @@ def _curve_root_intervals(
                 if floats[0] == floats[1] or np.nextafter(floats[0], np.inf) >= floats[1]:
                     representability_blocked = True
                     unresolved.append(
-                        _Unknown(distance_bounds[0], distance_bounds[1], None, segment.piece_id, ("curve-root-resolution", interval, multiplicity))
+                        _Unknown(
+                            distance_bounds[0],
+                            distance_bounds[1],
+                            None,
+                            segment.piece_id,
+                            ("curve-root-resolution", interval, multiplicity),
+                        )
                     )
             selected.append((interval, multiplicity, distance_bounds))
         if not failed:
@@ -238,8 +261,22 @@ def _curve_root_intervals(
             return tuple(selected), tuple(unresolved), False
         next_tolerance = tolerance / 2
         if next_tolerance == 0 or float(next_tolerance) == 0.0:
-            return tuple(selected), tuple(unresolved) or (_Unknown(0.0, np.inf, None, segment.piece_id, ("curve-root-binary64-resolution",)),), False
+            return (
+                tuple(selected),
+                tuple(unresolved)
+                or (
+                    _Unknown(
+                        0.0,
+                        np.inf,
+                        None,
+                        segment.piece_id,
+                        ("curve-root-binary64-resolution",),
+                    ),
+                ),
+                False,
+            )
         tolerance = next_tolerance
+
 
 def _univariate_zero_locations(
     polynomial: Polynomial, policy: BRepProjectionPolicy, /
@@ -320,11 +357,17 @@ def _partition_pcurve_segment(
             )
             u0, u1, v0, v1 = piece.bounds
             local_u = RationalPolynomial(
-                subtract(dict(uv_restricted[0].numerator), scale(dict(uv_restricted[0].denominator), u0)),
+                subtract(
+                    dict(uv_restricted[0].numerator),
+                    scale(dict(uv_restricted[0].denominator), u0),
+                ),
                 scale(dict(uv_restricted[0].denominator), u1 - u0),
             )
             local_v = RationalPolynomial(
-                subtract(dict(uv_restricted[1].numerator), scale(dict(uv_restricted[1].denominator), v0)),
+                subtract(
+                    dict(uv_restricted[1].numerator),
+                    scale(dict(uv_restricted[1].denominator), v0),
+                ),
                 scale(dict(uv_restricted[1].denominator), v1 - v0),
             )
             homogeneous = tuple(
@@ -385,9 +428,7 @@ def _face_trim_segments(
                     segment.coordinates,
                     chart_coordinates=segment.chart_coordinates,
                 )
-                partitioned = _partition_pcurve_segment(
-                    scoped_segment, pieces, policy
-                )
+                partitioned = _partition_pcurve_segment(scoped_segment, pieces, policy)
                 if partitioned is None:
                     return None
                 face_segments.extend(partitioned)
@@ -466,6 +507,39 @@ class CurveProjection:
     root_id: tuple[object, ...] | None = None
 
 
+type _IdentityOrder = tuple[int, Fraction, str, tuple[_IdentityOrder, ...]]
+_IDENTITY_ZERO = Fraction(0)
+
+
+def _identity_order(value: object, /) -> _IdentityOrder:
+    """Order heterogeneous exact metadata without changing its stored identity."""
+    if value is None:
+        return 0, _IDENTITY_ZERO, "", ()
+    if isinstance(value, (int, float, Fraction)):
+        return 1, Fraction(value), "", ()
+    if isinstance(value, str):
+        return 2, _IDENTITY_ZERO, value, ()
+    if isinstance(value, tuple):
+        return 3, _IDENTITY_ZERO, "", tuple(_identity_order(item) for item in value)
+    raise TypeError("Projection root identities require scalar or tuple metadata.")
+
+
+def _best_candidate(candidates: list[_Candidate], /) -> _Candidate:
+    iterator = iter(candidates)
+    best = next(iterator, None)
+    if best is None:
+        raise ValueError("Closest-point selection requires at least one candidate.")
+    for candidate in iterator:
+        if candidate.upper < best.upper:
+            best = candidate
+        elif candidate.upper == best.upper and (
+            _identity_order(candidate.piece_id),
+            _identity_order(candidate.root_id),
+        ) < (_identity_order(best.piece_id), _identity_order(best.root_id)):
+            best = candidate
+    return best
+
+
 _NAN3 = np.full((3,), np.nan, dtype=np.float64)
 _NAN2 = np.full((2,), np.nan, dtype=np.float64)
 
@@ -520,7 +594,6 @@ def _affine_argument(
     )
 
 
-
 def _chart_coordinate_to_local(
     expression: RationalPolynomial,
     lower: Fraction,
@@ -532,6 +605,7 @@ def _chart_coordinate_to_local(
         subtract(dict(expression.numerator), scale(denominator, lower)),
         scale(denominator, upper - lower),
     )
+
 
 def _restrict_surface_polynomial(
     polynomial: Polynomial,
@@ -585,6 +659,7 @@ def _rational_map(
         )
     return tuple(result)
 
+
 def _surface_pieces(model: BRepModel, face: int, /) -> tuple[_SplinePiece, ...]:
     patch = model.patches[face]
     raw_pieces: list[_RawSurfacePiece] = []
@@ -596,10 +671,7 @@ def _surface_pieces(model: BRepModel, face: int, /) -> tuple[_SplinePiece, ...]:
                 extraction.piece_id, patch.exact_target_homogeneous
             )
             net: _HomogeneousNet = tuple(
-                tuple(
-                    tuple(rows[i * 4 + j][axis] for axis in range(4))
-                    for j in range(4)
-                )
+                tuple(tuple(rows[i * 4 + j][axis] for axis in range(4)) for j in range(4))
                 for i in range(4)
             )
             raw_pieces.append(
@@ -713,18 +785,27 @@ def _surface_pieces(model: BRepModel, face: int, /) -> tuple[_SplinePiece, ...]:
 
 def _piece_query_data(
     piece: _SplinePiece, query: tuple[Fraction, Fraction, Fraction], /
-) -> tuple[tuple[Polynomial, Polynomial], tuple[tuple[Polynomial, Polynomial], ...], RationalPolynomial]:
+) -> tuple[
+    tuple[Polynomial, Polynomial],
+    tuple[tuple[Polynomial, Polynomial], ...],
+    RationalPolynomial,
+]:
     x, y, z, weight = piece.homogeneous
     offset = tuple(
-        subtract(component, scale(weight, value)) for component, value in zip((x, y, z), query, strict=True)
+        subtract(component, scale(weight, value))
+        for component, value in zip((x, y, z), query, strict=True)
     )
     weight_u, weight_v = derivative(weight, 0), derivative(weight, 1)
     du = tuple(
-        subtract(multiply(derivative(component, 0), weight), multiply(component, weight_u))
+        subtract(
+            multiply(derivative(component, 0), weight), multiply(component, weight_u)
+        )
         for component in (x, y, z)
     )
     dv = tuple(
-        subtract(multiply(derivative(component, 1), weight), multiply(component, weight_v))
+        subtract(
+            multiply(derivative(component, 1), weight), multiply(component, weight_v)
+        )
         for component in (x, y, z)
     )
     stationary = []
@@ -734,18 +815,21 @@ def _piece_query_data(
             value = add(value, multiply(first, second))
         stationary.append(value)
     jacobian = tuple(
-        tuple(derivative(stationary[row], axis) for axis in range(2))
-        for row in range(2)
+        tuple(derivative(stationary[row], axis) for axis in range(2)) for row in range(2)
     )
     distance_numerator: Polynomial = {}
     for value in offset:
         distance_numerator = add(distance_numerator, multiply(value, value))
-    return (stationary[0], stationary[1]), jacobian, RationalPolynomial(
-        distance_numerator, multiply(weight, weight)
+    return (
+        (stationary[0], stationary[1]),
+        jacobian,
+        RationalPolynomial(distance_numerator, multiply(weight, weight)),
     )
 
 
-def _eval_polynomial(polynomial: Polynomial, values: tuple[Fraction, ...], /) -> ExactScalar:
+def _eval_polynomial(
+    polynomial: Polynomial, values: tuple[Fraction, ...], /
+) -> ExactScalar:
     result: ExactScalar = Fraction(0)
     for exponents, coefficient in polynomial.items():
         term = coefficient
@@ -755,9 +839,7 @@ def _eval_polynomial(polynomial: Polynomial, values: tuple[Fraction, ...], /) ->
     return result
 
 
-def _constant_rational_value(
-    expression: RationalPolynomial, /
-) -> ExactScalar | None:
+def _constant_rational_value(expression: RationalPolynomial, /) -> ExactScalar | None:
     numerator = dict(expression.numerator)
     denominator = dict(expression.denominator)
     if not denominator:
@@ -766,19 +848,22 @@ def _constant_rational_value(
     value = numerator.get(pivot, Fraction(0)) / denominator[pivot]
     indices = set(numerator) | set(denominator)
     if all(
-        numerator.get(index, Fraction(0))
-        == value * denominator.get(index, Fraction(0))
+        numerator.get(index, Fraction(0)) == value * denominator.get(index, Fraction(0))
         for index in indices
     ):
         return value
     return None
+
+
 def _eval_rational(
     expression: RationalPolynomial, values: tuple[Fraction, ...], /
 ) -> ExactScalar:
     numerator = _eval_polynomial(dict(expression.numerator), values)
     denominator = _eval_polynomial(dict(expression.denominator), values)
     if denominator == 0:
-        raise ZeroDivisionError("An exact spline query reached a zero rational denominator.")
+        raise ZeroDivisionError(
+            "An exact spline query reached a zero rational denominator."
+        )
     return numerator / denominator
 
 
@@ -882,7 +967,9 @@ def _diameter(bounds: tuple[tuple[float, float], ...], /) -> float:
 def _point_from_coordinates(
     coordinates: tuple[RationalPolynomial, ...], values: tuple[Fraction, ...], /
 ) -> np.ndarray:
-    return np.asarray([float(_eval_rational(value, values)) for value in coordinates], dtype=np.float64)
+    return np.asarray(
+        [float(_eval_rational(value, values)) for value in coordinates], dtype=np.float64
+    )
 
 
 def _distance_value_bounds(
@@ -909,8 +996,6 @@ def _parameter_box(
             v0 + (v1 - v0) * Fraction.from_float(upper[1]),
         ),
     )
-
-
 
 
 def _trim_box_classification(
@@ -1062,7 +1147,9 @@ def _curve_segments_for_curve(
         segments = []
         for span in spans:
             span_first, span_last = span.parameter_bounds
-            if not isinstance(span_first, Fraction) or not isinstance(span_last, Fraction):
+            if not isinstance(span_first, Fraction) or not isinstance(
+                span_last, Fraction
+            ):
                 return None
             lower, upper = max(first, span_first), min(last, span_last)
             if lower >= upper:
@@ -1071,7 +1158,11 @@ def _curve_segments_for_curve(
             a, b = (lower - span_first) / width, (upper - span_first) / width
             homogeneous = tuple(
                 compose(
-                    _bernstein_curve_power(tuple(row[axis] for row in span.homogeneous_bernstein_coefficients)),
+                    _bernstein_curve_power(
+                        tuple(
+                            row[axis] for row in span.homogeneous_bernstein_coefficients
+                        )
+                    ),
                     (_affine_argument(a, b, 1, 0),),
                     dimension=1,
                 )
@@ -1091,7 +1182,12 @@ def _curve_segments_for_curve(
         direction = curve.direction_exact
     elif isinstance(curve, ExactLineCurve):
         origin = curve.first_exact
-        direction = tuple(last_value - first_value for first_value, last_value in zip(curve.first_exact, curve.last_exact, strict=True))
+        direction = tuple(
+            last_value - first_value
+            for first_value, last_value in zip(
+                curve.first_exact, curve.last_exact, strict=True
+            )
+        )
     else:
         return None
     parameter = _affine_argument(first, last, 1, 0)
@@ -1155,7 +1251,9 @@ def _all_curve_candidates(
                 (local_float_upper,),
             )
             parameter_first, parameter_last = segment.parameter_bounds
-            exact_parameter = parameter_first + (parameter_last - parameter_first) * middle
+            exact_parameter = (
+                parameter_first + (parameter_last - parameter_first) * middle
+            )
             parameter = float(exact_parameter)
             point = _point_from_coordinates(segment.coordinates, (middle,))
             parameter_box = (
@@ -1181,9 +1279,7 @@ def _all_curve_candidates(
                     tuple(float(value) for value in exact_uv), dtype=np.float64
                 )
                 selected_status = int(BRepProjectionStatus.SEAM)
-                root_box = _chart_box(
-                    segment, lower_local, upper_local
-                )
+                root_box = _chart_box(segment, lower_local, upper_local)
                 if root_box is None:
                     unknowns.append(
                         _Unknown(
@@ -1233,14 +1329,19 @@ def project_bspline_curve(
     first, last = (Fraction.from_float(float(value)) for value in parameter_range)
     segments = _curve_segments_for_curve(curve, first, last)
     if segments is None or not segments:
-        return CurveProjection(_NAN3.copy(), np.nan, 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED))
+        return CurveProjection(
+            _NAN3.copy(), np.nan, 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED)
+        )
     candidates, unknowns, nonisolated = _all_curve_candidates(
         segments,
         tuple(Fraction.from_float(float(value)) for value in query),
         policy,
-        endpoint_status=lambda parameter: int(BRepProjectionStatus.SEAM)
-        if parameter in tuple(Fraction.from_float(float(value)) for value in edge_range)
-        else int(BRepProjectionStatus.UNIQUE),
+        endpoint_status=lambda parameter: (
+            int(BRepProjectionStatus.SEAM)
+            if parameter
+            in tuple(Fraction.from_float(float(value)) for value in edge_range)
+            else int(BRepProjectionStatus.UNIQUE)
+        ),
     )
     if not candidates:
         if nonisolated and unknowns:
@@ -1261,12 +1362,12 @@ def project_bspline_curve(
                 np.inf,
                 int(BRepProjectionStatus.UNRESOLVED),
             )
-        return CurveProjection(_NAN3.copy(), np.nan, 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED))
-    best = min(candidates, key=lambda candidate: (candidate.upper, candidate.piece_id, candidate.root_id))
+        return CurveProjection(
+            _NAN3.copy(), np.nan, 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED)
+        )
+    best = _best_candidate(candidates)
     possible_unknowns = [
-        item
-        for item in unknowns
-        if item.lower <= best.upper + policy.ambiguity_tolerance
+        item for item in unknowns if item.lower <= best.upper + policy.ambiguity_tolerance
     ]
     nonisolated_bounds = [
         item
@@ -1315,7 +1416,6 @@ def project_bspline_curve(
     )
 
 
-
 def _curve_segments_for_piece_edge(
     piece: _SplinePiece,
     fixed_axis: int,
@@ -1324,9 +1424,13 @@ def _curve_segments_for_piece_edge(
 ) -> tuple[_CurveSegment, ...]:
     varying_axis = 1 - fixed_axis
     bounds = piece.bounds
-    variable_bounds = (bounds[0], bounds[1]) if varying_axis == 0 else (bounds[2], bounds[3])
+    variable_bounds = (
+        (bounds[0], bounds[1]) if varying_axis == 0 else (bounds[2], bounds[3])
+    )
     args = [constant(0, 1), constant(0, 1)]
-    args[fixed_axis] = constant(Fraction(0) if fixed_value == bounds[fixed_axis * 2] else Fraction(1), 1)
+    args[fixed_axis] = constant(
+        Fraction(0) if fixed_value == bounds[fixed_axis * 2] else Fraction(1), 1
+    )
     args[varying_axis] = axes(1)[0]
     homogeneous = tuple(
         compose(value, tuple(args), dimension=1) for value in piece.homogeneous
@@ -1334,13 +1438,19 @@ def _curve_segments_for_piece_edge(
     coordinates = _rational_map(homogeneous)
     chart_constant = fixed_value
     chart_variable = RationalPolynomial(
-        add(constant(variable_bounds[0], 1), scale(axes(1)[0], variable_bounds[1] - variable_bounds[0])),
+        add(
+            constant(variable_bounds[0], 1),
+            scale(axes(1)[0], variable_bounds[1] - variable_bounds[0]),
+        ),
         constant(1, 1),
     )
     chart = (
         (RationalPolynomial(constant(chart_constant, 1), constant(1, 1)), chart_variable)
         if fixed_axis == 0
-        else (chart_variable, RationalPolynomial(constant(chart_constant, 1), constant(1, 1)))
+        else (
+            chart_variable,
+            RationalPolynomial(constant(chart_constant, 1), constant(1, 1)),
+        )
     )
     segment = _curve_segment(
         (piece.piece_id, "piece-edge", fixed_axis, fixed_value),
@@ -1358,9 +1468,7 @@ def _same_curve_map_on_interval(
     upper: Fraction,
     /,
 ) -> bool:
-    def restrict(
-        segment: _CurveSegment, /
-    ) -> tuple[RationalPolynomial, ...] | None:
+    def restrict(segment: _CurveSegment, /) -> tuple[RationalPolynomial, ...] | None:
         first_parameter, last_parameter = segment.parameter_bounds
         if lower < first_parameter or upper > last_parameter:
             return None
@@ -1414,15 +1522,24 @@ def _pcurve_segments(
         segments = []
         for span in spans:
             span_first, span_last = span.parameter_bounds
-            if not isinstance(span_first, Fraction) or not isinstance(span_last, Fraction):
+            if not isinstance(span_first, Fraction) or not isinstance(
+                span_last, Fraction
+            ):
                 return None
             lower, upper = max(first, span_first), min(last, span_last)
             if lower >= upper:
                 continue
-            a, b = (lower - span_first) / (span_last - span_first), (upper - span_first) / (span_last - span_first)
+            a, b = (
+                (lower - span_first) / (span_last - span_first),
+                (upper - span_first) / (span_last - span_first),
+            )
             homogeneous = tuple(
                 compose(
-                    _bernstein_curve_power(tuple(row[axis] for row in span.homogeneous_bernstein_coefficients)),
+                    _bernstein_curve_power(
+                        tuple(
+                            row[axis] for row in span.homogeneous_bernstein_coefficients
+                        )
+                    ),
                     (_affine_argument(a, b, 1, 0),),
                     dimension=1,
                 )
@@ -1442,12 +1559,17 @@ def _pcurve_segments(
         origin, direction = curve.origin_exact, curve.direction_exact
     elif isinstance(curve, ExactLineCurve):
         origin = curve.first_exact
-        direction = tuple(b - a for a, b in zip(curve.first_exact, curve.last_exact, strict=True))
+        direction = tuple(
+            b - a for a, b in zip(curve.first_exact, curve.last_exact, strict=True)
+        )
     else:
         return None
     parameter = _affine_argument(first, last, 1, 0)
     coordinates = tuple(
-        RationalPolynomial(add(constant(origin[axis], 1), scale(parameter, direction[axis])), constant(1, 1))
+        RationalPolynomial(
+            add(constant(origin[axis], 1), scale(parameter, direction[axis])),
+            constant(1, 1),
+        )
         for axis in range(2)
     )
     return (
@@ -1458,8 +1580,6 @@ def _pcurve_segments(
             chart_coordinates=(coordinates[0], coordinates[1]),
         ),
     )
-
-
 
 
 def _surface_candidates(
@@ -1486,13 +1606,9 @@ def _surface_candidates(
             distance_expression = RationalPolynomial(
                 constant(constant_distance, 2), constant(1, 2)
             )
-            lower, upper = _distance_bounds(
-                distance_expression, (0.0, 0.0), (0.0, 0.0)
-            )
+            lower, upper = _distance_bounds(distance_expression, (0.0, 0.0), (0.0, 0.0))
         else:
-            lower, upper = _distance_bounds(
-                distance_squared, (0.0, 0.0), (1.0, 1.0)
-            )
+            lower, upper = _distance_bounds(distance_squared, (0.0, 0.0), (1.0, 1.0))
         return [], [
             _Unknown(
                 lower,
@@ -1557,8 +1673,7 @@ def _surface_candidates(
     while pending:
         lower, upper, branch = pending.pop()
         excluded = any(
-            (bounds := _poly_interval(value, lower, upper))[0] > 0.0
-            or bounds[1] < 0.0
+            (bounds := _poly_interval(value, lower, upper))[0] > 0.0 or bounds[1] < 0.0
             for value in stationary
         )
         if excluded:
@@ -1584,13 +1699,18 @@ def _surface_candidates(
                     contract_upper,
                 )
                 if (
-                    max(global_box[0][1] - global_box[0][0], global_box[1][1] - global_box[1][0])
+                    max(
+                        global_box[0][1] - global_box[0][0],
+                        global_box[1][1] - global_box[1][0],
+                    )
                     <= Fraction.from_float(float(policy.parametric_tolerance))
                     and _diameter(physical_bounds) <= policy.ambiguity_tolerance
                     and distance_upper - distance_lower <= policy.ambiguity_tolerance
                 ):
                     break
-                refined = krawczyk(system, np.asarray((contract_lower,)), np.asarray((contract_upper,)))
+                refined = krawczyk(
+                    system, np.asarray((contract_lower,)), np.asarray((contract_upper,))
+                )
                 # The existing certified box already proves there is exactly one
                 # root.  Intersecting with the Krawczyk image is a safe enclosure
                 # refinement even if roundoff prevents a second strict inclusion.
@@ -1611,21 +1731,31 @@ def _surface_candidates(
                 contract_lower, contract_upper = next_lower, next_upper
             if certified:
                 global_box = _parameter_box(piece, contract_lower, contract_upper)
-                trim_box = _trim_box_classification(model, face, global_box, full_rectangle)
+                trim_box = _trim_box_classification(
+                    model, face, global_box, full_rectangle
+                )
                 uv_exact = (
                     (global_box[0][0] + global_box[0][1]) / 2,
                     (global_box[1][0] + global_box[1][1]) / 2,
                 )
-                uv_float = np.asarray([float(value) for value in uv_exact], dtype=np.float64)
-                point = _point_from_coordinates(piece.coordinates, tuple(Fraction.from_float(float(value)) for value in contract_lower))
+                uv_float = np.asarray(
+                    [float(value) for value in uv_exact], dtype=np.float64
+                )
+                point = _point_from_coordinates(
+                    piece.coordinates,
+                    tuple(Fraction.from_float(float(value)) for value in contract_lower),
+                )
                 # The published representative and exact bound use the same in-domain parameter point.
                 midpoint_local = tuple(
-                    (Fraction.from_float(contract_lower[axis]) + Fraction.from_float(contract_upper[axis])) / 2
+                    (
+                        Fraction.from_float(contract_lower[axis])
+                        + Fraction.from_float(contract_upper[axis])
+                    )
+                    / 2
                     for axis in range(2)
                 )
                 exact_stationary = all(
-                    _eval_polynomial(value, midpoint_local) == 0
-                    for value in stationary
+                    _eval_polynomial(value, midpoint_local) == 0 for value in stationary
                 )
                 point = _point_from_coordinates(piece.coordinates, midpoint_local)
                 exact_distance = _distance_value_bounds(distance_squared, midpoint_local)
@@ -1651,7 +1781,9 @@ def _surface_candidates(
                         )
                     )
                     continue
-                trim_state = _trim_point_classification(trim_classify, model, face, uv_float)
+                trim_state = _trim_point_classification(
+                    trim_classify, model, face, uv_float
+                )
                 if trim_state == 0:
                     continue
                 if trim_state is None:
@@ -1670,11 +1802,17 @@ def _surface_candidates(
                         )
                     )
                     continue
-                normal_bounds = _poly_interval(piece.normal_squared, contract_lower, contract_upper)
+                normal_bounds = _poly_interval(
+                    piece.normal_squared, contract_lower, contract_upper
+                )
                 if normal_bounds[1] == 0.0:
                     status = int(BRepProjectionStatus.SINGULAR)
                 elif normal_bounds[0] > 0.0:
-                    status = int(BRepProjectionStatus.SEAM) if trim_state < 0 else int(BRepProjectionStatus.UNIQUE)
+                    status = (
+                        int(BRepProjectionStatus.SEAM)
+                        if trim_state < 0
+                        else int(BRepProjectionStatus.UNIQUE)
+                    )
                 else:
                     status = int(BRepProjectionStatus.UNRESOLVED)
                     unknowns.append(
@@ -1691,8 +1829,7 @@ def _surface_candidates(
                     )
                     continue
                 exact_stationary = all(
-                    _eval_polynomial(value, midpoint_local) == 0
-                    for value in stationary
+                    _eval_polynomial(value, midpoint_local) == 0 for value in stationary
                 )
                 exact_point = (
                     tuple(
@@ -1705,7 +1842,9 @@ def _surface_candidates(
                 candidates.append(
                     _make_candidate(
                         point,
-                        np.asarray((float(uv_exact[0]), float(uv_exact[1])), dtype=np.float64),
+                        np.asarray(
+                            (float(uv_exact[0]), float(uv_exact[1])), dtype=np.float64
+                        ),
                         lower_distance,
                         upper_distance,
                         status,
@@ -1738,7 +1877,9 @@ def _surface_candidates(
                 continue
             if enqueue_certified_neighborhood(lower, upper, branch):
                 continue
-            lower_distance, upper_distance = _distance_bounds(distance_squared, lower, upper)
+            lower_distance, upper_distance = _distance_bounds(
+                distance_squared, lower, upper
+            )
             unknowns.append(
                 _Unknown(
                     lower_distance,
@@ -1752,7 +1893,10 @@ def _surface_candidates(
                 )
             )
             continue
-        widths = ((upper[0] - lower[0]) * float(piece.bounds[1] - piece.bounds[0]), (upper[1] - lower[1]) * float(piece.bounds[3] - piece.bounds[2]))
+        widths = (
+            (upper[0] - lower[0]) * float(piece.bounds[1] - piece.bounds[0]),
+            (upper[1] - lower[1]) * float(piece.bounds[3] - piece.bounds[2]),
+        )
         axis = int(widths[1] > widths[0])
         midpoint = 0.5 * lower[axis] + 0.5 * upper[axis]
         if not lower[axis] < midpoint < upper[axis]:
@@ -1762,7 +1906,9 @@ def _surface_candidates(
                 continue
             if enqueue_certified_neighborhood(lower, upper, branch):
                 continue
-            distance_lower, distance_upper = _distance_bounds(distance_squared, lower, upper)
+            distance_lower, distance_upper = _distance_bounds(
+                distance_squared, lower, upper
+            )
             unknowns.append(
                 _Unknown(
                     distance_lower,
@@ -1778,16 +1924,8 @@ def _surface_candidates(
             continue
         split_upper = float(np.nextafter(midpoint, np.inf))
         split_lower = float(np.nextafter(midpoint, -np.inf))
-        left_upper = (
-            (split_upper, upper[1])
-            if axis == 0
-            else (upper[0], split_upper)
-        )
-        right_lower = (
-            (split_lower, lower[1])
-            if axis == 0
-            else (lower[0], split_lower)
-        )
+        left_upper = (split_upper, upper[1]) if axis == 0 else (upper[0], split_upper)
+        right_lower = (split_lower, lower[1]) if axis == 0 else (lower[0], split_lower)
         left_branch: tuple[object, ...] = (
             *branch,
             (axis, 0, Fraction.from_float(midpoint)),
@@ -1837,8 +1975,7 @@ def _piece_boundary_candidates(
         for adjacent in pieces:
             u0, u1, v0, v1 = adjacent.bounds
             if not (
-                u0 <= rational_parameters[0] <= u1
-                and v0 <= rational_parameters[1] <= v1
+                u0 <= rational_parameters[0] <= u1 and v0 <= rational_parameters[1] <= v1
             ):
                 continue
             local = (
@@ -1856,16 +1993,14 @@ def _piece_boundary_candidates(
                 (1, v0, v1),
             ):
                 derivative_value = _eval_polynomial(stationary[axis], local)
-                if (
-                    lower < rational_parameters[axis] < upper
-                    and derivative_value != 0
-                ):
+                if lower < rational_parameters[axis] < upper and derivative_value != 0:
                     return True
                 if rational_parameters[axis] == lower and derivative_value < 0:
                     return True
                 if rational_parameters[axis] == upper and derivative_value > 0:
                     return True
         return False
+
     def has_edge_root_descent(
         piece: _SplinePiece,
         fixed_axis: int,
@@ -1891,9 +2026,7 @@ def _piece_boundary_candidates(
             adjacent_segment = (
                 edge_segment
                 if adjacent.piece_id == piece.piece_id
-                else _curve_segments_for_piece_edge(
-                    adjacent, fixed_axis, fixed_value
-                )[0]
+                else _curve_segments_for_piece_edge(adjacent, fixed_axis, fixed_value)[0]
             )
             if not _same_curve_map_on_interval(
                 edge_segment,
@@ -1902,14 +2035,10 @@ def _piece_boundary_candidates(
                 parameter_interval[1],
             ):
                 continue
-            fixed_local = (fixed_value - fixed_lower) / (
-                fixed_upper - fixed_lower
-            )
+            fixed_local = (fixed_value - fixed_lower) / (fixed_upper - fixed_lower)
             varying_local = (
-                (parameter_interval[0] - varying_lower)
-                / (varying_upper - varying_lower),
-                (parameter_interval[1] - varying_lower)
-                / (varying_upper - varying_lower),
+                (parameter_interval[0] - varying_lower) / (varying_upper - varying_lower),
+                (parameter_interval[1] - varying_lower) / (varying_upper - varying_lower),
             )
             fixed_float_lower, fixed_float_upper = _local_float_interval(
                 fixed_local, fixed_local
@@ -1942,9 +2071,7 @@ def _piece_boundary_candidates(
         surface_system = system_for(piece)
         surface_stationary = surface_system._values
         for fixed_axis, fixed_value in ((0, u0), (0, u1), (1, v0), (1, v1)):
-            segment = _curve_segments_for_piece_edge(
-                piece, fixed_axis, fixed_value
-            )[0]
+            segment = _curve_segments_for_piece_edge(piece, fixed_axis, fixed_value)[0]
             distance_squared, stationarity = _curve_query_data(segment, query)
             chart_coordinates = segment.chart_coordinates
             if chart_coordinates is None:
@@ -1973,14 +2100,30 @@ def _piece_boundary_candidates(
                 if isinstance(restricted_normal, RationalPolynomial)
                 else not restricted_normal
             )
-            roots, unresolved, continuum = _curve_root_intervals(stationarity, segment, distance_squared, policy)
+            roots, unresolved, continuum = _curve_root_intervals(
+                stationarity, segment, distance_squared, policy
+            )
             unknowns.extend(unresolved)
             if continuum:
                 lower, upper = _distance_bounds(distance_squared, (0.0,), (1.0,))
-                unknowns.append(_Unknown(lower, upper, None, segment.piece_id, (segment.piece_id, "nonisolated")))
+                unknowns.append(
+                    _Unknown(
+                        lower,
+                        upper,
+                        None,
+                        segment.piece_id,
+                        (segment.piece_id, "nonisolated"),
+                    )
+                )
                 continue
-            local_candidates = [(Fraction(0), Fraction(0), "endpoint", 1), (Fraction(1), Fraction(1), "endpoint", 1)]
-            local_candidates.extend((bounds[0], bounds[1], "root", multiplicity) for bounds, multiplicity, _ in roots)
+            local_candidates = [
+                (Fraction(0), Fraction(0), "endpoint", 1),
+                (Fraction(1), Fraction(1), "endpoint", 1),
+            ]
+            local_candidates.extend(
+                (bounds[0], bounds[1], "root", multiplicity)
+                for bounds, multiplicity, _ in roots
+            )
             for local_lower, local_upper, kind, multiplicity in local_candidates:
                 middle = (local_lower + local_upper) / 2
                 chart_exact = (
@@ -2018,8 +2161,7 @@ def _piece_boundary_candidates(
                     local_exact = None
                 exact_edge_point = (
                     tuple(
-                        _eval_rational(value, (middle,))
-                        for value in segment.coordinates
+                        _eval_rational(value, (middle,)) for value in segment.coordinates
                     )
                     if local_lower == local_upper
                     else None
@@ -2051,16 +2193,12 @@ def _piece_boundary_candidates(
                             exact_root=local_lower == local_upper,
                             root_system=edge_root_system,
                             root_piece_bounds=(
-                                piece.bounds
-                                if edge_root_system is not None
-                                else None
+                                piece.bounds if edge_root_system is not None else None
                             ),
                         )
                     )
                     continue
-                trim = _trim_box_classification(
-                    model, face, root_box, full_rectangle
-                )
+                trim = _trim_box_classification(model, face, root_box, full_rectangle)
                 if trim == 0:
                     continue
                 if trim is None:
@@ -2076,25 +2214,20 @@ def _piece_boundary_candidates(
                             exact_root=local_lower == local_upper,
                             root_system=edge_root_system,
                             root_piece_bounds=(
-                                piece.bounds
-                                if edge_root_system is not None
-                                else None
+                                piece.bounds if edge_root_system is not None else None
                             ),
                         )
                     )
                     continue
                 if (
-                    (
-                        exact_edge_point is not None
-                        and has_inward_descent(chart_exact, exact_edge_point)
-                    )
-                    or has_edge_root_descent(
-                        piece,
-                        fixed_axis,
-                        fixed_value,
-                        segment,
-                        parameter_box,
-                    )
+                    exact_edge_point is not None
+                    and has_inward_descent(chart_exact, exact_edge_point)
+                ) or has_edge_root_descent(
+                    piece,
+                    fixed_axis,
+                    fixed_value,
+                    segment,
+                    parameter_box,
                 ):
                     continue
                 candidates.append(
@@ -2113,9 +2246,7 @@ def _piece_boundary_candidates(
                         exact_point=exact_edge_point,
                         root_system=edge_root_system,
                         root_piece_bounds=(
-                            piece.bounds
-                            if edge_root_system is not None
-                            else None
+                            piece.bounds if edge_root_system is not None else None
                         ),
                     )
                 )
@@ -2132,7 +2263,15 @@ def _trim_boundary_candidates(
 ) -> tuple[list[_Candidate], list[_Unknown]]:
     segments = _face_trim_segments(model, face, pieces, policy)
     if segments is None:
-        return [], [_Unknown(0.0, np.inf, None, ("trim", face), ("unsupported-trim-piece-composition", face))]
+        return [], [
+            _Unknown(
+                0.0,
+                np.inf,
+                None,
+                ("trim", face),
+                ("unsupported-trim-piece-composition", face),
+            )
+        ]
     candidates: list[_Candidate] = []
     unknowns: list[_Unknown] = []
     for segment, _piece in segments:
@@ -2150,14 +2289,30 @@ def _trim_boundary_candidates(
                 )
             )
             continue
-        roots, unresolved, continuum = _curve_root_intervals(stationarity, segment, distance_squared, policy)
+        roots, unresolved, continuum = _curve_root_intervals(
+            stationarity, segment, distance_squared, policy
+        )
         unknowns.extend(unresolved)
         if continuum:
             lower, upper = _distance_bounds(distance_squared, (0.0,), (1.0,))
-            unknowns.append(_Unknown(lower, upper, None, segment.piece_id, (segment.piece_id, "nonisolated-trim")))
+            unknowns.append(
+                _Unknown(
+                    lower,
+                    upper,
+                    None,
+                    segment.piece_id,
+                    (segment.piece_id, "nonisolated-trim"),
+                )
+            )
             continue
-        local_candidates = [(Fraction(0), Fraction(0), "endpoint", 1), (Fraction(1), Fraction(1), "endpoint", 1)]
-        local_candidates.extend((bounds[0], bounds[1], "root", multiplicity) for bounds, multiplicity, _ in roots)
+        local_candidates = [
+            (Fraction(0), Fraction(0), "endpoint", 1),
+            (Fraction(1), Fraction(1), "endpoint", 1),
+        ]
+        local_candidates.extend(
+            (bounds[0], bounds[1], "root", multiplicity)
+            for bounds, multiplicity, _ in roots
+        )
         for local_lower, local_upper, kind, multiplicity in local_candidates:
             middle = (local_lower + local_upper) / 2
             chart_exact = (
@@ -2267,14 +2422,18 @@ def _candidate_is_duplicate(
         or len(second.root_box) != 2
     ):
         return False
-    if first.root_box_unique and second.root_box_unique and (
-        all(
-            a[0] <= b[0] and b[1] <= a[1]
-            for a, b in zip(first.root_box, second.root_box, strict=True)
-        )
-        or all(
-            b[0] <= a[0] and a[1] <= b[1]
-            for a, b in zip(first.root_box, second.root_box, strict=True)
+    if (
+        first.root_box_unique
+        and second.root_box_unique
+        and (
+            all(
+                a[0] <= b[0] and b[1] <= a[1]
+                for a, b in zip(first.root_box, second.root_box, strict=True)
+            )
+            or all(
+                b[0] <= a[0] and a[1] <= b[1]
+                for a, b in zip(first.root_box, second.root_box, strict=True)
+            )
         )
     ):
         return True
@@ -2308,9 +2467,7 @@ def _candidate_is_duplicate(
     )
     lower = np.asarray((lower_u - margins[0], lower_v - margins[1]), dtype=np.float64)
     upper = np.asarray((upper_u + margins[0], upper_v + margins[1]), dtype=np.float64)
-    return bool(
-        krawczyk(first.root_system, lower[None, :], upper[None, :]).certified[0]
-    )
+    return bool(krawczyk(first.root_system, lower[None, :], upper[None, :]).certified[0])
 
 
 def _unknown_is_same_candidate_root(
@@ -2432,7 +2589,9 @@ def project_spline_face(
 ) -> SplineProjection:
     pieces = _surface_pieces(model, face)
     if not pieces:
-        return SplineProjection(_NAN3.copy(), _NAN2.copy(), 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED))
+        return SplineProjection(
+            _NAN3.copy(), _NAN2.copy(), 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED)
+        )
     exact_query = (
         Fraction.from_float(float(query[0])),
         Fraction.from_float(float(query[1])),
@@ -2484,9 +2643,17 @@ def project_spline_face(
                 int(BRepProjectionStatus.NON_ISOLATED),
             )
         if unknowns:
-            return SplineProjection(_NAN3.copy(), _NAN2.copy(), min(value.lower for value in unknowns), np.inf, int(BRepProjectionStatus.UNRESOLVED))
-        return SplineProjection(_NAN3.copy(), _NAN2.copy(), 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED))
-    best = min(candidates, key=lambda value: (value.upper, value.piece_id, value.root_id))
+            return SplineProjection(
+                _NAN3.copy(),
+                _NAN2.copy(),
+                min(value.lower for value in unknowns),
+                np.inf,
+                int(BRepProjectionStatus.UNRESOLVED),
+            )
+        return SplineProjection(
+            _NAN3.copy(), _NAN2.copy(), 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED)
+        )
+    best = _best_candidate(candidates)
     for first_index, first in enumerate(candidates):
         for second in candidates[first_index + 1 :]:
             if (
@@ -2582,7 +2749,15 @@ def project_spline_face(
     ):
         trim = trim_classify(model, face, best.parameters)
         if trim is None:
-            return SplineProjection(_NAN3.copy(), _NAN2.copy(), best.lower, best.upper, int(BRepProjectionStatus.UNRESOLVED), best.piece_id, best.root_id)
+            return SplineProjection(
+                _NAN3.copy(),
+                _NAN2.copy(),
+                best.lower,
+                best.upper,
+                int(BRepProjectionStatus.UNRESOLVED),
+                best.piece_id,
+                best.root_id,
+            )
         if trim < 0:
             status = int(BRepProjectionStatus.SEAM)
     return SplineProjection(
@@ -2596,4 +2771,9 @@ def project_spline_face(
     )
 
 
-__all__ = ["CurveProjection", "SplineProjection", "project_bspline_curve", "project_spline_face"]
+__all__ = [
+    "CurveProjection",
+    "SplineProjection",
+    "project_bspline_curve",
+    "project_spline_face",
+]

@@ -308,14 +308,17 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
     Node rows follow ``geometry.coordinates``: ``node_dimensions``/``node_indices``
     are the B-Rep class of each node's owning mesh entity, ``constrained`` marks
     nodes on B-Rep entities of lower dimension than the ambient space, and
-    ``node_residuals`` their distance to that entity (zero for free nodes).
+    ``node_residuals`` their distance to that entity (zero for resolved free
+    nodes). Positive infinity denotes an unavailable association or projection
+    bound, not a measured distance; it always prevents acceptance.
     ``minimum_scaled_jacobian`` and ``maximum_distortion`` are sampled at the
     Bernstein control-point lattice; acceptance additionally requires a
     certified global embedding and source fidelity when source claims are supplied.
     Source claims are renewed only for a locally accepted map (certified cells
-    and embedding, residuals within tolerance); otherwise the source fields stay
-    empty. An explicit material-bearing `prior_transition` also yields a fresh
-    source-to-curved `material_transition` in this evidence.
+    and embedding, residuals within tolerance); an unavailable residual is
+    recorded as a source failure. An explicit material-bearing
+    `prior_transition` also yields a fresh source-to-curved `material_transition`
+    in this evidence.
     """
 
     certificate: CellValidityCertificate
@@ -367,8 +370,10 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
             or residuals.shape != dims.shape
         ):
             raise ValueError("Curved geometry evidence rows must align with nodes.")
-        if np.any(~np.isfinite(residuals)) or np.any(residuals < 0.0):
-            raise ValueError("Curved geometry residuals must be finite and nonnegative.")
+        # An unresolved projection has no finite residual bound. Retain infinity
+        # as refusal evidence rather than making the rollback itself fail.
+        if np.any(np.isnan(residuals)) or np.any(residuals < 0.0):
+            raise ValueError("Curved geometry residuals must be nonnegative and not NaN.")
         maximum = float(np.max(residuals, initial=0.0))
         if target_result is not None and not isinstance(target_result, CellMeshingResult):
             raise TypeError("target_result must be CellMeshingResult or None.")
@@ -427,6 +432,7 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
         self.accepted = bool(
             certificate.all_certified
             and embedding.status == "certified"
+            and np.isfinite(maximum)
             and maximum <= residual_tolerance
             and (source_certification is None or source_certification.passed)
             and source_failure is None
@@ -1276,6 +1282,7 @@ def _node_residuals(
     failed = ~np.isin(np.asarray(result.status), _RESOLVED_STATUS)
     feet = np.asarray(result.points)
     residuals[rows] = np.where(failed, np.inf, np.asarray(result.residuals))
+    residuals[~classes.resolved] = np.inf
     identity = np.eye(ambient)
     tangents = np.asarray(result.tangents)
     normals = np.asarray(result.normals)
@@ -1523,6 +1530,8 @@ def _evidence(
         if locally_accepted
         else (None, None, None, None, None)
     )
+    if np.any(~np.isfinite(residuals)):
+        source_failure = "CAD projection or node association has no finite residual bound."
     return CurvedGeometryEvidence(
         validity,
         embedding,

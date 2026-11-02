@@ -84,6 +84,38 @@ def _circle_edge(projection: Any, height: Any) -> Any:
     return int(closed[np.isclose(vertices[edge_vertices[closed, 0], 2], height)][0])
 
 
+def test_trimmed_cylinder_reports_certified_boundary_distance() -> None:
+    from phydrax.geometry.brep._fillet import brep_fillet
+    from phydrax.geometry.brep._patches import CylinderPatch
+
+    box = brep_box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0), coordinate_contract=_CONTRACT)
+    points = np.asarray(box.geometry.vertex_points)
+    edge = next(
+        index
+        for index, (a, b) in enumerate(box.geometry.edge_vertices)
+        if np.array_equal(points[a, :2], (0.0, 0.0))
+        and np.array_equal(points[b, :2], (0.0, 0.0))
+    )
+    blend = brep_fillet(box, (box.edge_ids[edge],), 0.25)
+    assert blend.status == "certified"
+    assert blend.model is not None
+    face = next(
+        i
+        for i, patch in enumerate(blend.model.patches)
+        if isinstance(patch, CylinderPatch)
+    )
+    projection = phx.geometry.prepare_brep_projection(blend.model)
+    result = _project(projection, [[1.0, 1.5, 2.0]], _FACE, face)
+    # The nearest boundary is (0, 0.25, 2), giving sqrt(1 + 1.25**2).
+    oracle = np.hypot(1.0, 1.25)
+    assert int(result.status[0]) == _STATUS.UNRESOLVED
+    assert float(result.distance_lower_bounds[0]) <= oracle
+    assert float(result.residuals[0]) >= oracle
+    assert float(result.distance_lower_bounds[0]) > 1.0
+    assert np.isnan(np.asarray(result.points)[0]).all()
+    assert np.isnan(np.asarray(result.normals)[0]).all()
+
+
 def test_brep_projection_scenario_1() -> None:
     # The projection is immutable, so one cylinder import serves every query.
     _, cylinder = _bound(BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape())
@@ -301,6 +333,99 @@ def test_closed_revolution_containment_is_exact_with_unresolved_boundary(
     located = projection.locate_solids(np.asarray(inside, dtype=np.float64))
     assert np.asarray(located.status).tolist() == [_STATUS.UNIQUE] * len(inside)
     assert np.asarray(located.dimensions).tolist() == [3] * len(inside)
+
+
+def test_projection_trim_enclosures_reuse_only_the_current_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from phydrax.geometry import _atlas
+    from phydrax.geometry.brep import _projection
+    from phydrax.geometry.brep._intersection_curve import CurveTrimSegment
+    from phydrax.geometry.brep._patches import LineCurve
+
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    segments = tuple(
+        CurveTrimSegment(
+            LineCurve(start, (end[0] - start[0], end[1] - start[1])), 0.0, 1.0
+        )
+        for start, end in zip(corners, (*corners[1:], corners[0]), strict=True)
+    )
+    domain = _atlas.TrimDomain.from_curve_loops((segments,))
+    model = SimpleNamespace(geometry=None, trim_domains=(domain,))
+    original = _atlas._compute_segment_box
+    calls = 0
+
+    def counted(*args: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original(*args)
+
+    monkeypatch.setattr(_atlas, "_compute_segment_box", counted)
+    point = np.asarray((0.3, 0.4))
+    enclosures: dict[int, _atlas.TrimEnclosures] = {}
+    assert _projection._trim_classification(model, 0, point, enclosures=enclosures) == 1
+    first_calls = calls
+    assert first_calls > 0
+    assert _projection._trim_classification(model, 0, point, enclosures=enclosures) == 1
+    assert calls == first_calls
+    assert _projection._trim_classification(model, 0, point, enclosures={}) == 1
+    assert calls == 2 * first_calls
+
+
+def test_solid_location_prepares_containment_once_per_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.brep import _projection
+
+    projection = phx.geometry.prepare_brep_projection(
+        brep_sphere(1.0, coordinate_contract=_CONTRACT)
+    )
+    original = _projection._closed_revolution_profile
+    calls: list[int] = []
+
+    def counted(model: Any, solid: int) -> Any:
+        calls.append(solid)
+        return original(model, solid)
+
+    monkeypatch.setattr(_projection, "_closed_revolution_profile", counted)
+    points = np.asarray(((0.0, 0.0, 0.0), (0.2, 0.1, 0.0), (0.0, 0.0, 2.0)))
+    for expected_calls in (1, 2):
+        result = projection.locate_solids(points)
+        assert np.asarray(result.status).tolist() == [
+            _STATUS.UNIQUE,
+            _STATUS.UNIQUE,
+            _STATUS.FAILED,
+        ]
+        assert calls == [0] * expected_calls
+
+
+def test_solid_location_prepares_ray_carriers_once_per_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.brep import _projection
+
+    projection = phx.geometry.prepare_brep_projection(
+        brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_CONTRACT)
+    )
+    original = _projection.NativeBRepProjection._ray_carriers
+    calls: list[int] = []
+
+    def counted(self: Any, solid: int) -> Any:
+        calls.append(solid)
+        return original(self, solid)
+
+    monkeypatch.setattr(_projection.NativeBRepProjection, "_ray_carriers", counted)
+    points = np.asarray(((0.2, 0.3, 0.4), (0.7, 0.6, 0.5), (2.0, 2.0, 2.0)))
+    for expected_calls in (1, 2):
+        result = projection.locate_solids(points)
+        assert np.asarray(result.status).tolist() == [
+            _STATUS.UNIQUE,
+            _STATUS.UNIQUE,
+            _STATUS.FAILED,
+        ]
+        assert calls == [0] * expected_calls
 
 
 def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
@@ -997,3 +1122,17 @@ def test_optional_occt_projection_maps_assembly_entities_to_occurrence_paths() -
         assert np.asarray(ambiguous.indices).tolist() == [-1]
         assert ambiguous.occurrence_paths == ((),)
         assert np.asarray(ambiguous.status).tolist() == [_STATUS.UNRESOLVED]
+
+
+def test_distant_query_is_not_blocked_by_unresolved_boundary_entities() -> None:
+    from tests.unit.interchange._native_cad_archive_worker import (
+        _orthogonal_quadric_boolean_model,
+    )
+
+    projection = phx.geometry.prepare_brep_projection(_orthogonal_quadric_boolean_model())
+    result = projection.classify(
+        np.asarray(((1.0e6, 1.0e6, 1.0e6),), dtype=np.float64), tolerance=1.0e-8
+    )
+    assert int(result.status[0]) == _STATUS.FAILED
+    assert int(result.dimensions[0]) == -1
+    assert np.all(np.isnan(np.asarray(result.points)))

@@ -8,6 +8,24 @@
   proofs, and an explicit B-Rep-to-manifold second-geometry-jet binding.
 
 ### Fixed
+- Native closest-point projection covers regular orthogonal-cylinder intersection
+  branches with exact stationary-root, sheet, and endpoint evidence. Trimmed
+  straight cylinders retain certified distance bounds even when no nearest
+  point or frame is proved.
+- Boundary classification retains proved lower-dimensional entities without
+  allowing unresolved higher-dimensional candidates to override them; unresolved
+  candidates at the same or lower dimension still prevent a decision.
+- Spline projection compares heterogeneous boundary and stationary-root metadata
+  deterministically without rewriting the stored identity payloads.
+- Exact univariate isolation uses a modular no-rational-root certificate to avoid
+  unnecessary denominator-separation refinement; rational roots still require
+  exact reconstruction and substitution.
+- Native B-Rep classification shares source-bound trim enclosures within bounded
+  query batches and excludes distant certified intersection-curve boxes without
+  discarding unresolved nearby source geometry. Solid-location containment
+  proofs are reused only within their current query batch.
+- High-order CAD curving reports unavailable association or projection residuals
+  as explicit rejected evidence instead of failing while constructing rollback.
 - CAD surface fidelity compares exact oriented triangle-chain boundaries,
   including collinear subdivisions, before falling back to pairwise clipping;
   independent overlap and material-orientation checks remain in force.

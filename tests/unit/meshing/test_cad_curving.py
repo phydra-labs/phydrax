@@ -506,6 +506,33 @@ def test_bisection_of_curved_p2_mesh_keeps_exact_coordinate_map_equality() -> No
         assert element.degree == 2
 
 
+def test_unresolved_projection_rolls_back_with_infinite_residual_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.meshing import _curving
+
+    projection = _plate_projection()
+    mesh = _plate_mesh((1.2, 1.2))
+    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+    original_classes = _curving._node_classes
+
+    def unresolved_classes(*args: Any) -> Any:
+        classes = original_classes(*args)
+        resolved = classes.resolved.copy()
+        resolved[0] = False
+        return classes._replace(resolved=resolved)
+
+    monkeypatch.setattr(_curving, "_node_classes", unresolved_classes)
+    result = phx.meshing.curve_cell_mesh(
+        mesh, association, projection, policy=phx.meshing.HighOrderCurvingPolicy(degree=2)
+    )
+    assert result.status is _STATUS.UNRESOLVED_ASSOCIATION
+    assert not result.evidence.accepted
+    assert np.isposinf(result.evidence.maximum_residual)
+    assert result.evidence.source_failure is not None
+    np.testing.assert_array_equal(result.geometry.coordinates, result.straight.coordinates)
+
+
 def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> None:
     projection = _plate_projection()
     mesh = _plate_mesh((0.8, 0.8))
