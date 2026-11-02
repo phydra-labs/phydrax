@@ -353,14 +353,18 @@ def _validated_rational_chart_tokens(
                 coordinates.append(canonical)
             points.append(tuple(coordinates))
         canonical_row = tuple(points)
-        if isinstance(row, tuple) and row == canonical_row and all(
-            isinstance(point, tuple)
+        if (
+            isinstance(row, tuple)
+            and row == canonical_row
             and all(
-                isinstance(token, tuple)
-                and all(type(value) is int for value in token)
-                for token in point
+                isinstance(point, tuple)
+                and all(
+                    isinstance(token, tuple)
+                    and all(type(value) is int for value in token)
+                    for token in point
+                )
+                for point in row
             )
-            for point in row
         ):
             canonical_row = row
         result.append(distinct.setdefault(canonical_row, canonical_row))

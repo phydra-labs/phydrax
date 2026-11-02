@@ -550,16 +550,17 @@ def _curve_witness(
     )
 
 
-def _linear_curve_case() -> tuple[
-    ParametricCurveBoundarySource, CellMesh, CellGeometrySpec
-]:
+def _linear_curve_case(
+    *,
+    occurrence_paths: tuple[tuple[str, ...], ...] = ((),),
+) -> tuple[ParametricCurveBoundarySource, CellMesh, CellGeometrySpec]:
     source = ParametricCurveBoundarySource(
         (LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
         ((0.0, 1.0),),
         source_id="curve-source",
         source_revision="curve-revision-1",
         curve_entity_ids=("authored-edge",),
-        occurrence_paths=((),),
+        occurrence_paths=occurrence_paths,
         chart_ids=("authored-edge-chart",),
     )
     mesh = CellMesh(
@@ -612,7 +613,9 @@ def test_parametric_curve_fidelity_certifies_exact_map_and_refuses_omitted_sourc
 
 
 def test_chart_witness_static_metadata_keeps_numerical_leaves_compilable() -> None:
-    source, mesh, geometry = _linear_curve_case()
+    source, mesh, geometry = _linear_curve_case(
+        occurrence_paths=(("assembly", "instance"),),
+    )
     witness = _curve_witness(
         mesh,
         geometry,
@@ -621,22 +624,26 @@ def test_chart_witness_static_metadata_keeps_numerical_leaves_compilable() -> No
     )
     leaves = jax.tree_util.tree_leaves(witness)
     assert all(
-        any(leaf is getattr(witness, name) for leaf in leaves)
-        for name in (
-            "cell_global_ids",
-            "entity_global_ids",
-            "local_entity_indices",
-            "target_reference_vertices",
-            "source_parameters",
-            "orientations",
-            "implicit_cell_keys",
-            "implicit_root_edge_keys",
-            "target_face_vertex_global_ids",
+        any(leaf is value for leaf in leaves)
+        for value in (
+            witness.cell_global_ids,
+            witness.entity_global_ids,
+            witness.local_entity_indices,
+            witness.target_reference_vertices,
+            witness.source_parameters,
+            witness.orientations,
+            witness.implicit_cell_keys,
+            witness.implicit_root_edge_keys,
+            witness.target_face_vertex_global_ids,
         )
     )
     assert all(
         not any(isinstance(leaf, str) and leaf == item for leaf in leaves)
-        for item in (*witness.source_chart_ids, *witness.source_entity_ids)
+        for item in (
+            *witness.source_chart_ids,
+            *witness.source_entity_ids,
+            *(part for path in witness.occurrence_paths for part in path),
+        )
     )
     compiled = eqx.filter_jit(
         lambda value: jnp.sum(jnp.asarray(value.source_parameters) ** 2)
