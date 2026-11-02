@@ -23,7 +23,6 @@ from ...geometry._domain_boundary import (
     ExactPlaneChart,
     MeshingDomainBoundarySource,
 )
-from ...geometry._mesh_certificates import _same_tree_content
 from ...geometry._meshing_domain import _PlacedSurfacePatch, MeshingDomain, PatchCurveUse
 from ...geometry._source_boundary_records import (
     rational_chart_tokens,
@@ -599,7 +598,6 @@ def _cad_plc_data(
     segment_curve_rows: list[int] = []
     segment_edge_ids: list[int] = []
     segment_brep_indices: list[int] = []
-    segment_surface_edge_ids: list[int] = []
     segment_intervals: list[tuple[Fraction, Fraction]] = []
     if edge_association is not None:
         edge_rows = _association_row_map(edge_association)
@@ -674,7 +672,6 @@ def _cad_plc_data(
             segment_curve_rows.append(curve_row)
             segment_edge_ids.append(global_id)
             segment_brep_indices.append(source_index)
-            segment_surface_edge_ids.append(global_id)
             segment_intervals.append(interval)
     if set(segment_curve_rows) != active_curve_rows:
         raise ValueError(
@@ -756,14 +753,6 @@ def _cad_plc_data(
         facet_plane_tolerances=np.full(
             (len(domain.patches),), 0.0 if deviation is None else deviation
         ),
-        cad_fidelity_tolerance=fidelity_tolerance,
-        cad_maximum_normal_deviation=normal_deviation,
-        cad_embedding=embedding,
-        cad_fidelity=fidelity,
-        cad_source_charts=surface_source,
-        cad_vertex_rows=np.asarray(mesh_row_to_plc, dtype=np.int64),
-        cad_segment_edge_ids=np.asarray(segment_surface_edge_ids, dtype=np.int64),
-        cad_polygon_cell_ids=np.asarray(triangle_cell_ids, dtype=np.int64),
     )
     return _CadPlcData(
         complex_,

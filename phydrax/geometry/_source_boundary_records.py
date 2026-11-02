@@ -400,9 +400,9 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
     mesh_id: str
     geometry_id: str
     topology_id: str
-    source_id: str = eqx.field(static=True)
-    source_revision: str = eqx.field(static=True)
-    source_query_id: str = eqx.field(static=True)
+    source_id: str
+    source_revision: str
+    source_query_id: str
     chart_dimension: int
     reference_dimension: int
     cell_global_ids: np.ndarray
