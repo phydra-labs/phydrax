@@ -2598,9 +2598,19 @@ def _coarsened_root_charts(
             retained = interned_charts.get(key)
             if retained is None:
                 frozen = freeze_reference_chart_arguments((chart,))[0]
-                points = tuple(
+                raw_points = tuple(
                     evaluate_reference_chart_arguments(block.cell_kind, frozen, point)
                     for point in corners
+                )
+                if any(
+                    not isinstance(value, Fraction)
+                    for point in raw_points
+                    for value in point
+                ):
+                    raise ValueError("Source root-chart corners must be exact rationals.")
+                points = tuple(
+                    tuple(value for value in point if isinstance(value, Fraction))
+                    for point in raw_points
                 )
                 retained = (frozen, points)
                 interned_charts[key] = retained
@@ -2611,13 +2621,6 @@ def _coarsened_root_charts(
             child_roots[int(identifier)] = (root, route_rows[row])
         if len(root_kinds) != 1:
             raise ValueError("One source block cannot mix root reference-cell kinds.")
-        if any(
-            not isinstance(value, Fraction)
-            for cell in exact
-            for point in cell
-            for value in point
-        ):
-            raise ValueError("Source root-chart corners must be exact rationals.")
         exact_bank = tuple(exact)
         fine_to_root[block.name] = ReferenceCellMapWitnesses(
             np.arange(block.cell_count, dtype=np.int64),
