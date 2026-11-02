@@ -2098,6 +2098,97 @@ class BRepVertexRoot(StrictModule):
             return None
         return root, _curve_box(curve, lower, upper)
 
+    def _exact_source_endpoint_uv(
+        self,
+        patch: AbstractSurfacePatch,
+        curve: AbstractCurve,
+        endpoint: RootEndpoint | None,
+        /,
+    ) -> tuple[object, ...] | None:
+        while isinstance(curve, CurveTrimSegment):
+            curve = curve.curve
+        if isinstance(endpoint, ConicParameterEndpoint):
+            if not self.supports_endpoint(endpoint):
+                return None
+            return _exact_conic_uv_endpoint(patch, curve, endpoint)
+        if isinstance(endpoint, NativePeriodEndpoint):
+            return _exact_native_period_uv_endpoint(self, patch, curve, endpoint)
+        return None
+
+    def source_endpoint_uv_box(
+        self,
+        patch: AbstractSurfacePatch,
+        curve: AbstractCurve,
+        endpoint: RootEndpoint | None,
+        /,
+    ) -> np.ndarray | None:
+        """Outward UV enclosure of an endpoint proved against this vertex source."""
+        from .._rational import fraction_down, fraction_up
+
+        chart = self._exact_source_endpoint_uv(patch, curve, endpoint)
+        if chart is not None and len(chart) == 3 and chart[0] == "plane":
+            first, second = chart[1], chart[2]
+            if not isinstance(first, (Fraction, RadicalElement)) or not isinstance(
+                second, (Fraction, RadicalElement)
+            ):
+                return None
+            bounds = (
+                coefficient_interval(first, bits=128),
+                coefficient_interval(second, bits=128),
+            )
+            return np.asarray(
+                (
+                    tuple(fraction_down(bound[0]) for bound in bounds),
+                    tuple(fraction_up(bound[1]) for bound in bounds),
+                ),
+                dtype=np.float64,
+            )
+        if chart is not None and chart[0] in ("cylinder", "torus"):
+            from ._patches import _conic_parameter_root_bounds
+
+            def angle_bounds(
+                cosine: object, sine: object, turns: object
+            ) -> tuple[float, float] | None:
+                if (
+                    not isinstance(cosine, (Fraction, RadicalElement))
+                    or not isinstance(sine, (Fraction, RadicalElement))
+                    or type(turns) is not int
+                ):
+                    return None
+                return _conic_parameter_root_bounds(cosine, sine, turns)
+
+            if chart[0] == "cylinder" and len(chart) == 5:
+                first_bounds = angle_bounds(chart[1], chart[2], chart[3])
+                height = chart[4]
+                if first_bounds is None or not isinstance(
+                    height, (Fraction, RadicalElement)
+                ):
+                    return None
+                height_bounds = coefficient_interval(height, bits=128)
+                return np.asarray(
+                    (
+                        (first_bounds[0], fraction_down(height_bounds[0])),
+                        (first_bounds[1], fraction_up(height_bounds[1])),
+                    ),
+                    dtype=np.float64,
+                )
+            if chart[0] == "torus" and len(chart) == 7:
+                first_bounds = angle_bounds(chart[1], chart[2], chart[3])
+                second_bounds = angle_bounds(chart[4], chart[5], chart[6])
+                if first_bounds is None or second_bounds is None:
+                    return None
+                return np.asarray(
+                    (
+                        (first_bounds[0], second_bounds[0]),
+                        (first_bounds[1], second_bounds[1]),
+                    ),
+                    dtype=np.float64,
+                )
+        if endpoint is None or not self.supports_endpoint(endpoint):
+            return None
+        binding = self._endpoint_uv_binding(patch, curve, endpoint)
+        return None if binding is None else binding[1]
+
     def same_uv_endpoint(
         self,
         patch: AbstractSurfacePatch,
@@ -2108,18 +2199,13 @@ class BRepVertexRoot(StrictModule):
         /,
     ) -> bool:
         """Prove two endpoint witnesses name the same source UV root on a face."""
-        if isinstance(first_endpoint, ConicParameterEndpoint) or isinstance(
-            second_endpoint, ConicParameterEndpoint
-        ):
-            if (
-                not isinstance(first_endpoint, ConicParameterEndpoint)
-                or not isinstance(second_endpoint, ConicParameterEndpoint)
-                or not self.supports_endpoint(first_endpoint)
-                or not self.supports_endpoint(second_endpoint)
-            ):
-                return False
-            first_uv = _exact_conic_uv_endpoint(patch, first_curve, first_endpoint)
-            second_uv = _exact_conic_uv_endpoint(patch, second_curve, second_endpoint)
+        if isinstance(
+            first_endpoint, (ConicParameterEndpoint, NativePeriodEndpoint)
+        ) or isinstance(second_endpoint, (ConicParameterEndpoint, NativePeriodEndpoint)):
+            first_uv = self._exact_source_endpoint_uv(patch, first_curve, first_endpoint)
+            second_uv = self._exact_source_endpoint_uv(
+                patch, second_curve, second_endpoint
+            )
             return first_uv is not None and first_uv == second_uv
 
         def root_is_bound(root: _UVSourceRoot, /) -> bool:
@@ -2238,6 +2324,71 @@ class BRepVertexRoot(StrictModule):
         ):
             return True
         return joint is None and _same_parameter_source(first_root, second_root)
+
+
+def _exact_native_period_uv_endpoint(
+    vertex: BRepVertexRoot,
+    patch: AbstractSurfacePatch,
+    curve: AbstractCurve,
+    endpoint: NativePeriodEndpoint,
+    /,
+) -> tuple[object, ...] | None:
+    """Bind a cardinal native-period parameter to its exact planar source point."""
+    from .._rational import rational_vector
+    from ._correspondence import _exact_vertex_root_source
+    from ._patches import (
+        _validate_source_shadows,
+        CircleCurve,
+        PlaneCylinderSectionPCurve,
+        PlanePatch,
+    )
+
+    if (
+        not isinstance(patch, PlanePatch)
+        or not _same_parameter_source(endpoint.curve, curve)
+        or endpoint.rational != 0
+    ):
+        return None
+    if endpoint.patch is not None and not _same_parameter_source(endpoint.patch, patch):
+        return None
+    quarters = endpoint.turns * 4
+    if quarters.denominator != 1:
+        return None
+    try:
+        _validate_source_shadows(curve, set())
+    except (TypeError, ValueError):
+        return None
+    cosine, sine = ((1, 0), (0, 1), (-1, 0), (0, -1))[quarters.numerator % 4]
+    if isinstance(curve, PlaneCylinderSectionPCurve):
+        if (
+            curve.linear_exact != (Fraction(0), Fraction(0))
+            or curve.angle_offset_root is not None
+        ):
+            return None
+        uv = tuple(
+            curve.offset_exact[i]
+            + cosine * curve.cosine_exact[i]
+            + sine * curve.sine_exact[i]
+            for i in range(2)
+        )
+    elif isinstance(curve, CircleCurve) and curve.ambient_dimension == 2:
+        uv = tuple(
+            curve.center_exact[i]
+            + curve.radius_exact
+            * (cosine * curve.first_axis_exact[i] + sine * curve.second_axis_exact[i])
+            for i in range(2)
+        )
+    else:
+        return None
+    point, _ = _exact_vertex_root_source(vertex)
+    if point is None:
+        return None
+    origin = rational_vector(np.asarray(patch.origin))
+    first = rational_vector(np.asarray(patch.first_axis))
+    second = rational_vector(np.asarray(patch.second_axis))
+    if tuple(origin[i] + uv[0] * first[i] + uv[1] * second[i] for i in range(3)) != point:
+        return None
+    return ("plane", uv[0], uv[1])
 
 
 def _torus_conic_uv_endpoint(
@@ -2403,6 +2554,13 @@ def _exact_conic_uv_endpoint(
         if shifts != [0, 0]:
             return None
         if isinstance(source, PlaneCylinderSectionPCurve):
+            if endpoint.parameter_exact is not None and (
+                endpoint.parameter_exact != 0
+                or endpoint.root.cosine_exact != 1
+                or endpoint.root.sine_exact != 0
+                or endpoint.root.turns != 0
+            ):
+                return None
             chart = _exact_plane_cylinder_section_endpoint_chart(
                 endpoint.root.conic, curve, endpoint, patch
             )

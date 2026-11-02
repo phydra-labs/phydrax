@@ -13,7 +13,12 @@ import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.discretization._exact_algebraic_geometry import (
+    coefficient_interval,
+    RadicalElement,
+)
 from phydrax.geometry._interval_enclosure import prepare_interval_function
+from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry._rational import fraction_down, fraction_up
 from phydrax.geometry.brep._constructors import (
     assemble_brep_model,
@@ -26,7 +31,13 @@ from phydrax.geometry.brep._correspondence import (
     exact_source_lift,
     torus_rooted_circle_pcurve,
 )
-from phydrax.geometry.brep._intersection import intersect_surface_regions
+from phydrax.geometry.brep._intersection import (
+    BranchRootEndpoint,
+    ConicParameterEndpoint,
+    intersect_surface_regions,
+    NativePeriodEndpoint,
+    TrimRootEndpoint,
+)
 from phydrax.geometry.brep._intersection_curve import (
     _orthogonal_cylinder_curve_branch_sign,
     IntersectionPCurve,
@@ -45,6 +56,7 @@ from phydrax.geometry.brep._patches import (
     ConicParameterRoot,
     CylinderPatch,
     LineCurve,
+    PlaneCylinderSectionPCurve,
     PlanePatch,
     RevolutionSurface,
     SpherePatch,
@@ -63,6 +75,7 @@ from phydrax.interchange._cad_archive import _register_brep_types, save_brep_arc
 from phydrax.meshing._model_codec import write_model_artifact
 from tools.meshing_qualification.scenarios.native_cad_profiles import (
     _external_raw,
+    _quadric_case,
     _require_geometric_losslessness,
     _roundtrip,
 )
@@ -177,6 +190,122 @@ def test_external_source_repair_preserves_source_and_proves_exact_incidence(
     )
     assert np.max(displacement, initial=0.0) <= result.max_displacement + 1e-15
     _assert_exact_closed_source(target)
+
+
+def test_repaired_donor_conic_arc_endpoints_prove_shared_exact_uv(
+    donor: BRepModel, repair_tolerance: float
+) -> None:
+    target = repair_brep_source(donor, tolerance=repair_tolerance).model
+    geometry = target.geometry
+    patch = target.patches[3]
+    seen_period_pair = False
+    seen_native = False
+    assert geometry.face_loops[3]
+    for loop in geometry.face_loops[3]:
+        assert len(loop) == 2
+        for position, coedge in enumerate(loop):
+            following = loop[(position + 1) % len(loop)]
+            edge, next_edge = (
+                geometry.coedge_edges[coedge],
+                geometry.coedge_edges[following],
+            )
+            sense, next_sense = (
+                geometry.coedge_senses[coedge],
+                geometry.coedge_senses[following],
+            )
+            end_slot = 1 if sense > 0 else 0
+            next_slot = 0 if next_sense > 0 else 1
+            vertex = geometry.edge_vertices[edge][end_slot]
+            assert vertex == geometry.edge_vertices[next_edge][next_slot]
+            root = geometry.vertex_roots[vertex]
+            assert root is not None
+            first = geometry.coedge_endpoint_roots[coedge][end_slot]
+            second = geometry.coedge_endpoint_roots[following][next_slot]
+            first_curve, second_curve = (
+                geometry.pcurves[coedge],
+                geometry.pcurves[following],
+            )
+            assert isinstance(first_curve, PlaneCylinderSectionPCurve)
+            assert isinstance(second_curve, PlaneCylinderSectionPCurve)
+            assert isinstance(first, ConicParameterEndpoint)
+            assert isinstance(second, ConicParameterEndpoint)
+            assert root.same_uv_endpoint(patch, first_curve, first, second_curve, second)
+            for curve, endpoint in ((first_curve, first), (second_curve, second)):
+                box = root.source_endpoint_uv_box(patch, curve, endpoint)
+                exact = root._exact_source_endpoint_uv(patch, curve, endpoint)
+                assert box is not None and exact is not None and exact[0] == "plane"
+                for axis, coordinate in enumerate(exact[1:]):
+                    assert isinstance(coordinate, (Fraction, RadicalElement))
+                    lower, upper = coefficient_interval(coordinate, bits=128)
+                    assert (
+                        Fraction(float(box[0, axis]))
+                        <= lower
+                        <= upper
+                        <= Fraction(float(box[1, axis]))
+                    )
+            if (
+                first.root.cosine_exact == second.root.cosine_exact
+                and first.root.sine_exact == second.root.sine_exact
+                and {first.root.turns, second.root.turns} == {0, 1}
+            ):
+                seen_period_pair = True
+            for curve, endpoint in ((first_curve, first), (second_curve, second)):
+                if (
+                    endpoint.root.cosine_exact == 1
+                    and endpoint.root.sine_exact == 0
+                    and endpoint.root.turns == 0
+                    and curve.native_period_symbol() == "two_pi"
+                    and curve.angle_offset_root is None
+                ):
+                    native = NativePeriodEndpoint(curve, turns=0)
+                    assert root.same_uv_endpoint(patch, curve, endpoint, curve, native)
+                    assert root.source_endpoint_uv_box(patch, curve, native) is not None
+                    seen_native = True
+            wrong_curve = LineCurve((0.0, 0.0), (1.0, 0.0))
+            assert not root.same_uv_endpoint(
+                patch, first_curve, first, wrong_curve, second
+            )
+            assert not root.same_uv_endpoint(
+                target.patches[4], first_curve, first, second_curve, second
+            )
+            other = geometry.coedge_endpoint_roots[coedge][1 - end_slot]
+            assert isinstance(other, ConicParameterEndpoint)
+            assert not root.same_uv_endpoint(
+                patch, first_curve, first, first_curve, other
+            )
+    assert seen_period_pair
+    assert seen_native
+
+
+def test_iges_quadric_shared_branch_and_trim_uv_roots(tmp_path: Path) -> None:
+    model, _, _, _ = _quadric_case("iges", tmp_path)
+    domain = MeshingDomain.from_brep(model)
+    face = int(domain.source_indices[2][2])
+    patch = model.patches[face]
+    geometry = model.geometry
+    loop = geometry.face_loops[face][0]
+    for coedge, following in ((2, 3), (5, 2)):
+        assert loop[(loop.index(coedge) + 1) % len(loop)] == following
+        edge, next_edge = geometry.coedge_edges[coedge], geometry.coedge_edges[following]
+        end_slot = 1 if geometry.coedge_senses[coedge] > 0 else 0
+        next_slot = 0 if geometry.coedge_senses[following] > 0 else 1
+        vertex = geometry.edge_vertices[edge][end_slot]
+        assert vertex == geometry.edge_vertices[next_edge][next_slot]
+        root = geometry.vertex_roots[vertex]
+        assert root is not None
+        first = geometry.coedge_endpoint_roots[coedge][end_slot]
+        second = geometry.coedge_endpoint_roots[following][next_slot]
+        assert {type(first), type(second)} == {BranchRootEndpoint, TrimRootEndpoint}
+        first_curve, second_curve = geometry.pcurves[coedge], geometry.pcurves[following]
+        assert root.same_uv_endpoint(patch, first_curve, first, second_curve, second)
+        first_box = root.source_endpoint_uv_box(patch, first_curve, first)
+        second_box = root.source_endpoint_uv_box(patch, second_curve, second)
+        assert first_box is not None and second_box is not None
+        assert np.all(first_box[0] <= second_box[1])
+        assert np.all(second_box[0] <= first_box[1])
+        unrelated = LineCurve((100.0, 100.0), (1.0, 0.0))
+        assert not root.same_uv_endpoint(patch, first_curve, first, unrelated, second)
+        assert root.source_endpoint_uv_box(patch, unrelated, second) is None
 
 
 def test_repaired_donor_projection_distinguishes_containment_and_uncertainty(
