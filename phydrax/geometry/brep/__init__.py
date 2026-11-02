@@ -27,6 +27,9 @@ _DEFERRED_EXPORTS = {
     "BRepBlendStatus": "._fillet",
     "BRepBlendUnresolved": "._fillet",
     "BRepBlendUnsupported": "._fillet",
+    "BRepSurfaceBridgeEvidence": "._surface_bridge",
+    "BRepSurfaceBridgeResult": "._surface_bridge",
+    "BridgeSeparation": "._bridge_embedding_proof",
     "BRepBooleanFailure": "._boolean_core",
     "BRepBooleanOperation": "._boolean_core",
     "BRepBooleanPolicy": "._boolean_core",
@@ -123,6 +126,7 @@ _DEFERRED_EXPORTS = {
     "brep_edge_classification": "._edge_classification",
     "brep_extrusion": "._constructors",
     "brep_fillet": "._fillet",
+    "brep_surface_bridge": "._surface_bridge",
     "brep_planar_face": "._constructors",
     "brep_revolution": "._constructors",
     "brep_sphere": "._constructors",
@@ -161,6 +165,12 @@ if TYPE_CHECKING:
         BRepBooleanOperation as BRepBooleanOperation,
         BRepBooleanPolicy as BRepBooleanPolicy,
         BRepBooleanResult as BRepBooleanResult,
+    )
+    from ._bridge_embedding_proof import BridgeSeparation as BridgeSeparation
+    from ._surface_bridge import (
+        brep_surface_bridge as brep_surface_bridge,
+        BRepSurfaceBridgeEvidence as BRepSurfaceBridgeEvidence,
+        BRepSurfaceBridgeResult as BRepSurfaceBridgeResult,
     )
     from ._constructors import (
         assemble_brep_model as assemble_brep_model,

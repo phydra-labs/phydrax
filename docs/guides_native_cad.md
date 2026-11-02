@@ -117,8 +117,8 @@ physical map. Exact rational and radical source coefficients retain their
 algebraic identity in fingerprints without rounding them to display values.
 
 Native CAD operations are available through `phydrax.geometry.brep`:
-`boolean_brep`, `sew_brep`, `brep_fillet`, `brep_chamfer`, `brep_offset`,
-and `brep_defeature`, together with their typed results and failure evidence.
+`boolean_brep`, `sew_brep`, `brep_fillet`, `brep_chamfer`, `brep_surface_bridge`,
+`brep_offset`, and `brep_defeature`, together with their typed results and failure evidence.
 Assembly definitions and uses are authored through `BRepAssemblyGraph`;
 occurrences retain exact placements and are expanded only when needed.
 Boolean operations return source geometry without generating triangles unless
@@ -145,6 +145,25 @@ The geometry realization benchmark includes repeated spline-backed assembly
 motion and records local span extraction and reuse separately from placement,
 world tessellation and proof, contact search, interface coupling and total
 work. Run performance measurements without competing benchmarks.
+
+`brep_surface_bridge` connects two prescribed, exact isoparametric boundaries
+of rational B-spline faces. It is not a radius-based fillet or a rolling-ball
+contact solver. Its C1 and C2 claims are parametric: the supplied exact affine
+along-seam maps and inward collar scales define the charts in which all jets
+through the requested order agree over the whole seam. General geometric G1/G2
+reparameterizations and G3 are not claimed. The admitted profile requires two
+distinct unplaced, single-face rectangular open models, exact affine trim
+p-curves and source-edge lifts, rational corner vertices, positive weights,
+matching pulled-back along-seam degrees and knot vectors, and sufficient knot
+continuity. Different refinements, arbitrary trims, and corner networks refuse.
+Positive homogeneous weights certify the bridge denominator. Explicit
+projection and separating-plane witnesses prove regularity, global injectivity,
+and separation of the full source and bridge patches; failure to establish
+those conditions does not publish a model. `BridgeSeparation` specifies the
+two boundary-plane witnesses.
+`BRepSplineManifoldBinding` in `phydrax.discretization.iga` binds a selected
+source-revision face to manifold second-geometry-jet evaluation and covariant
+basis Hessians; it is not itself a whole-face embedding or trim certificate.
 
 Supported native analytic intersections, including unequal-radius
 perpendicular cylinders, preserve coupled source-defined branches even when

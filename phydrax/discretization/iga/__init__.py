@@ -22,6 +22,7 @@ from ..._interpolation import (
     TVertex2D,
 )
 from ._basis import IsogeometricQuadraturePolicy
+from ._brep_surface_binding import BRepSplineManifoldBinding
 from ._compatible import (
     AssembledSplineDeRhamComplex,
     BoundarySide,
@@ -44,6 +45,11 @@ from ._geometry import (
     IsogeometricRuntimeData,
     NURBSGeometryState,
 )
+from ._manifold import (
+    ManifoldBasisRealization,
+    ManifoldPointGeometry,
+    ParametricBasisPayload,
+)
 from ._plan import IsogeometricPlan, PreparedIsogeometricDiscretization
 from ._tspline import (
     PreparedTSplineIsogeometricDiscretization,
@@ -59,6 +65,10 @@ from ._tspline import (
 __all__ = [
     "AssembledSplineDeRhamComplex",
     "BoundarySide",
+    "BRepSplineManifoldBinding",
+    "ManifoldBasisRealization",
+    "ManifoldPointGeometry",
+    "ParametricBasisPayload",
     "BSplineGrid",
     "ASTSCertificate",
     "ASTSRefinement",

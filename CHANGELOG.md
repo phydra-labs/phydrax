@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+- Prescribed-boundary rational B-spline surface bridges with exact parametric
+  C1/C2 seam construction, sufficient global embedding and source separation
+  proofs, and an explicit B-Rep-to-manifold second-geometry-jet binding.
+
 ### Fixed
 - Native torus source covers and fidelity now bind exact direct and
   affine-placed coefficients in outward point and derivative interval programs,
