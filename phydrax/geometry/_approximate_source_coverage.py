@@ -41,8 +41,11 @@ from .implicit._adaptive_discovery import (
 
 
 if TYPE_CHECKING:
+    from ._domain_boundary import _RootedJunction
     from ._meshing_domain import PatchCurveUse
     from ._planar_coverage import OrientedFacet
+    from ._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
+    from .brep._curve_approximation_topology import TrimReferenceSegment
     from .implicit._source_charts import (
         AdaptiveImplicitRootChartMap,
         AdaptiveImplicitSourceQuery,
@@ -777,6 +780,143 @@ def _cad_chart_curve_use(
             status="unresolved",
         )
     return matches[0]
+
+
+def _cad_trim_root_box(junction: _RootedJunction, /) -> np.ndarray:
+    from ._rational import fraction_down, fraction_up
+
+    return np.asarray(
+        (
+            (fraction_down(junction.lower[0]), fraction_down(junction.lower[1])),
+            (fraction_up(junction.upper[0]), fraction_up(junction.upper[1])),
+        ),
+        dtype=np.float64,
+    )
+
+
+def _cad_trim_reference_loops(
+    charts: SurfaceSourceCharts,
+    bindings: dict[int, tuple[_CadCurveUseBinding, ...]],
+    patch: int,
+    /,
+) -> tuple[tuple[TrimReferenceSegment, ...], ...]:
+    """Resolve each authored coedge to its certified root-chart reference chain."""
+    from ._domain_boundary import (
+        _rooted_patch_chart_endpoints,
+        _rooted_patch_chart_junctions,
+    )
+    from ._meshing_domain import PatchCurveUse, PatchPoleUse, SourcePreparation
+    from ._surface_source_support import _cad_root_edges
+    from .brep._curve_approximation_topology import TrimReferenceSegment
+
+    domain = charts.domain
+    authority = domain.brep_authority
+    if authority is None:
+        raise SourceCoverageUnavailable(
+            "CAD trim homotopy requires BRep authority.", status="unresolved"
+        )
+    face = domain.source_indices[2][patch]
+    preparation = SourcePreparation(domain)
+    junctions = _rooted_patch_chart_junctions(domain, patch, preparation)
+    endpoints = _rooted_patch_chart_endpoints(domain, patch)
+    _, adjacency = _cad_root_edges(charts)
+    patch_by_cell = {
+        int(identifier): int(charts.root_patches[row])
+        for row, identifier in enumerate(charts.cell_global_ids)
+    }
+    by_use: dict[tuple[int, int], list[tuple[_CadCurveUseBinding, _Point2, _Point2]]] = {}
+    for edge_id, records in bindings.items():
+        for record in records:
+            if patch_by_cell[record.root_cell_id] != patch:
+                continue
+            incident = tuple(
+                item for item in adjacency[edge_id] if item[0] == record.root_cell_id
+            )
+            if len(incident) != 1:
+                raise SourceCoverageUnavailable(
+                    "CAD coedge lost its unique root-chart edge.", status="violated"
+                )
+            by_use.setdefault((record.loop_index, record.use_index), []).append(
+                (record, incident[0][2], incident[0][3])
+            )
+    result: list[tuple[TrimReferenceSegment, ...]] = []
+    for loop_index, loop in enumerate(domain.patches[patch].loops):
+        output: list[TrimReferenceSegment] = []
+        coedges = authority.geometry.face_loops[face][loop_index]
+        for use_index, use in enumerate(loop):
+            previous = junctions[loop_index][use_index - 1]
+            following = junctions[loop_index][use_index]
+
+            start_root = authority.geometry.coedge_endpoint_roots[coedges[use_index]][
+                0 if use.sense > 0 else 1
+            ]
+            stop_root = authority.geometry.coedge_endpoint_roots[coedges[use_index]][
+                1 if use.sense > 0 else 0
+            ]
+            start_parameter_box = (
+                None if start_root is None else start_root.parameter_enclosure()
+            )
+            stop_parameter_box = (
+                None if stop_root is None else stop_root.parameter_enclosure()
+            )
+            if isinstance(use, PatchPoleUse):
+                start, stop = endpoints[loop_index][use_index]
+                first, last = (
+                    (Fraction.from_float(use.first), Fraction.from_float(use.last))
+                    if use.sense > 0
+                    else (Fraction.from_float(use.last), Fraction.from_float(use.first))
+                )
+                output.append(
+                    TrimReferenceSegment(
+                        use.pcurve,
+                        first,
+                        last,
+                        start,
+                        stop,
+                        _cad_trim_root_box(previous),
+                        _cad_trim_root_box(following),
+                        start_parameter_box,
+                        stop_parameter_box,
+                    )
+                )
+                continue
+            if not isinstance(use, PatchCurveUse):
+                raise SourceCoverageUnavailable(
+                    "CAD trim has an unsupported coedge.", status="unresolved"
+                )
+            records = by_use.get((loop_index, use_index), ())
+            ordered = sorted(
+                records, key=lambda value: min(value[0].parameters), reverse=use.sense < 0
+            )
+            if not ordered:
+                raise SourceCoverageUnavailable(
+                    "CAD source coedge has no complete root edge chain.",
+                    status="violated",
+                )
+            for record, canonical_first, canonical_last in ordered:
+                p0, p1 = record.parameters
+                if (p1 > p0) != (use.sense > 0):
+                    p0, p1 = p1, p0
+                    canonical_first, canonical_last = canonical_last, canonical_first
+                base = Fraction.from_float(use.first)
+                span = Fraction.from_float(use.last) - base
+                is_start = p0 == (0 if use.sense > 0 else 1)
+                is_stop = p1 == (1 if use.sense > 0 else 0)
+                output.append(
+                    TrimReferenceSegment(
+                        use.pcurve,
+                        base + span * p0,
+                        base + span * p1,
+                        canonical_first,
+                        canonical_last,
+                        _cad_trim_root_box(previous) if is_start else None,
+                        _cad_trim_root_box(following) if is_stop else None,
+                        start_parameter_box if is_start else None,
+                        stop_parameter_box if is_stop else None,
+                    )
+                )
+        result.append(tuple(output))
+    return tuple(result)
 
 
 def _cad_corner_key(domain: MeshingDomain, corner: int, /) -> tuple[object, ...]:

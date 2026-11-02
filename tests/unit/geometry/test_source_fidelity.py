@@ -1331,6 +1331,71 @@ def test_rooted_chart_endpoints_preserve_exact_unrooted_square() -> None:
     )
 
 
+def test_exact_trim_reference_homotopy_preserves_a_square() -> None:
+    from phydrax.geometry._domain_boundary import _line_endpoints
+    from phydrax.geometry._meshing_domain import SourcePreparation
+    from phydrax.geometry.brep._curve_approximation_topology import (
+        certify_trim_reference_homotopy,
+        TrimReferenceSegment,
+    )
+
+    domain = _domain()
+    segments = []
+    for use in domain.patches[0].loops[0]:
+        first, last = _line_endpoints(use)
+        first_parameter, last_parameter = (
+            (use.first, use.last) if use.sense > 0 else (use.last, use.first)
+        )
+        segments.append(
+            TrimReferenceSegment(
+                use.pcurve,
+                Fraction.from_float(first_parameter),
+                Fraction.from_float(last_parameter),
+                first,
+                last,
+                None,
+                None,
+                None,
+                None,
+            )
+        )
+    boxes = certify_trim_reference_homotopy((tuple(segments),), SourcePreparation(domain))
+    assert len(boxes) == 4
+
+
+def test_trim_homotopy_proves_unequal_obtuse_adjacency() -> None:
+    from phydrax.geometry.brep._curve_approximation_topology import (
+        _adjacent_trim_projection,
+        TrimReferenceSegment,
+    )
+
+    zero = Fraction(0)
+    one = Fraction(1)
+    first = TrimReferenceSegment(
+        LineCurve((-1.0, 0.0), (1.0, 0.0)),
+        zero,
+        one,
+        (-one, zero),
+        (zero, zero),
+        None,
+        None,
+        None,
+        None,
+    )
+    second = TrimReferenceSegment(
+        LineCurve((0.0, 0.0), (-100.0, 1.0)),
+        zero,
+        one,
+        (zero, zero),
+        (-100 * one, one),
+        None,
+        None,
+        None,
+        None,
+    )
+    assert _adjacent_trim_projection(first, second, SourcePreparation(_domain()))
+
+
 def test_rooted_chart_endpoints_refuse_unproved_nearby_join() -> None:
     import equinox as eqx
 
