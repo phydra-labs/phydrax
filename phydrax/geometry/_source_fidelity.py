@@ -118,11 +118,6 @@ type _ImplicitTriangleKey = tuple[
     _RootCellKey, tuple[_RootEdgeKey, _RootEdgeKey, _RootEdgeKey]
 ]
 
-def _triangle_chart(chart: tuple[Point2, ...], /) -> Triangle2:
-    if len(chart) != 3:
-        raise ValueError("Triangle source chart must contain exactly three points.")
-    return chart[0], chart[1], chart[2]
-
 
 def _root_edge_key(points: np.ndarray, /) -> _RootEdgeKey:
     if points.shape != (2, 3):
@@ -496,7 +491,7 @@ def _partition_findings(
                 raise ValueError("Quadrilateral source chart must contain four points.")
             triangles = ((chart[0], chart[1], chart[2]), (chart[0], chart[2], chart[3]))
         else:
-            triangles = (_triangle_chart(chart),)
+            triangles = (_exact_triangle2(chart),)
         target_triangles.setdefault(int(patch), []).extend(triangles)
     findings: list[MeshCertificateFinding] = []
     if isinstance(witness, SurfaceChartWitness) and set(target_triangles) <= set(
@@ -6026,7 +6021,7 @@ def certify_source_fidelity(
         witness_ids, witness_patches, witness_charts, strict=True
     ):
         if cell_id in selected_cells:
-            by_patch.setdefault(patch, []).append((cell_id, _triangle_chart(chart)))
+            by_patch.setdefault(patch, []).append((cell_id, _exact_triangle2(chart)))
     for patch, chart_rows in by_patch.items():
         surface = domain_source.domain.patches[patch].surface
         from ._meshing_domain import _outward_surface_parameter_box
