@@ -342,6 +342,15 @@ shared by every selected trim use. Mapped interval boxes bound both physical
 chord deviation and edge length; those bounds, rather than a finite witness
 sample, drive trim refinement and remain in the construction evidence.
 
+At a certified shared-root junction, the chart partition uses one deterministic
+representative on the proved native sheet. That representative is a point of
+the constructed reference partition, not a claim that the source root equals
+its binary64 realization. Endpoint and carrier enclosures contribute to the
+continuous trim and physical lens bounds, including the local junction gap.
+Exact polygon areas prove only the reference partition; source coverage also
+requires the separately bound trim, sheet, and topology premises. Distinct or
+unproved roots and incompatible native sheets are not joined by proximity.
+
 Surface protected features select exact source face occurrences. Hard features
 refine and certify each selected patch against its own deviation tolerance;
 soft features report the achieved bound without imposing that refinement.
