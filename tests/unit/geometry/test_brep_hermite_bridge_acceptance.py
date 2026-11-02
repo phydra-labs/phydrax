@@ -26,6 +26,14 @@ from phydrax.geometry.brep._constructors import _Builder, assemble_brep_model
 from phydrax.geometry.brep._patches import BSplineCurve, ExactLineCurve
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.discretization._exact_algebraic_geometry import ExactScalar
+from phydrax.geometry.brep._intersection import ConicParameterEndpoint
+from phydrax.geometry.brep._intersection_curve import SurfaceRegion
+from phydrax.geometry.brep._patches import CircleCurve, ConicParameterRoot
+from phydrax.geometry.brep._root_bindings import (
+    BRepConicVertex,
+    BRepCurveSurfaceLift,
+    BRepVertexRoot,
+)
 
 
 def _rational(value: ExactScalar) -> F:
@@ -101,41 +109,76 @@ def _bridge(
     )
 
 
-def _source_model(patch: BSplineSurfacePatch, source_id: str) -> BRepModel:
+def _source_model(
+    patch: BSplineSurfacePatch,
+    source_id: str,
+    *,
+    rooted: bool = False,
+) -> BRepModel:
     """One unplaced, open rectangular face with exact spline boundary lifts."""
     points, weights = _rational_banks(patch)
     u_knots, v_knots = patch.exact_u_knot_bank, patch.exact_v_knot_bank
     assert u_knots is not None and v_knots is not None
+    u0, u1 = u_knots[patch.u_degree], u_knots[len(points)]
+    v0, v1 = v_knots[patch.v_degree], v_knots[len(points[0])]
+    normalized_u = tuple((k - u0) / (u1 - u0) for k in u_knots)
+    normalized_v = tuple((k - v0) / (v1 - v0) for k in v_knots)
     builder = _Builder()
     corners = (points[0][0], points[-1][0], points[-1][-1], points[0][-1])
-    vertices = tuple(builder.vertex(tuple(map(float, p)), exact_point=p) for p in corners)
+    conic_root = None
+    vertex_root = None
+    if rooted:
+        point = corners[3]
+        center = (point[0] - 1, point[1], point[2])
+        conic = CircleCurve(
+            tuple(map(float, center)),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            1.0,
+            center_exact=center,
+            first_axis_exact=(F(1), F(0), F(0)),
+            second_axis_exact=(F(0), F(1), F(0)),
+            radius_exact=F(1),
+        )
+        conic_root = ConicParameterRoot(conic, F(1), F(0))
+        vertex_root = BRepVertexRoot(BRepConicVertex(conic_root))
+    vertices = tuple(
+        builder.vertex(
+            tuple(map(float, p)), exact_point=p, root=vertex_root if i == 3 else None
+        )
+        for i, p in enumerate(corners)
+    )
+    source_lifts: list[BRepCurveSurfaceLift] = []
+    region = SurfaceRegion(
+        patch, np.asarray(((float(u0), float(v0)), (float(u1), float(v1))))
+    )
     paths = (
         (
             tuple((i, 0) for i in range(4)),
-            (F(0), F(0)),
-            (F(1), F(0)),
-            u_knots,
+            (u0, v0),
+            (u1, v0),
+            normalized_u,
             3,
         ),
         (
             tuple((3, j) for j in range(3)),
-            (F(1), F(0)),
-            (F(1), F(1)),
-            v_knots,
+            (u1, v0),
+            (u1, v1),
+            normalized_v,
             2,
         ),
         (
             tuple((i, 2) for i in reversed(range(4))),
-            (F(1), F(1)),
-            (F(0), F(1)),
-            u_knots,
+            (u1, v1),
+            (u0, v1),
+            normalized_u,
             3,
         ),
         (
             tuple((0, j) for j in reversed(range(3))),
-            (F(0), F(1)),
-            (F(0), F(0)),
-            v_knots,
+            (u0, v1),
+            (u0, v0),
+            normalized_v,
             2,
         ),
     )
@@ -152,9 +195,49 @@ def _source_model(patch: BSplineSurfacePatch, source_id: str) -> BRepModel:
             exact_weights=w,
             exact_knots=knots,
         )
-        edge = builder.edge(curve, 0.0, 1.0, vertices[index], vertices[(index + 1) % 4])
-        loop.append(builder.coedge(edge, 1, ExactLineCurve(first, last)))
-    builder.face(patch, np.asarray(((0.0, 0.0), (1.0, 1.0))), 1, source_id, [loop])
+        pcurve = ExactLineCurve(first, last)
+        rooted_endpoint = 1 if index == 2 else 0 if index == 3 else None
+        edge_roots: list[ConicParameterEndpoint | None] = [None, None]
+        coedge_roots: list[ConicParameterEndpoint | None] = [None, None]
+        if conic_root is not None and rooted_endpoint is not None:
+            t = F(rooted_endpoint)
+            edge_roots[rooted_endpoint] = ConicParameterEndpoint(
+                conic_root, curve, t, corners[3]
+            )
+            coedge_roots[rooted_endpoint] = ConicParameterEndpoint(
+                conic_root, pcurve, t, corners[3]
+            )
+            source_lifts.append(
+                BRepCurveSurfaceLift(curve, patch, pcurve, 0.0, 1.0, source_region=region)
+            )
+        edge = builder.edge(
+            curve,
+            0.0,
+            1.0,
+            vertices[index],
+            vertices[(index + 1) % 4],
+            endpoint_roots=(edge_roots[0], edge_roots[1]),
+        )
+        loop.append(
+            builder.coedge(
+                edge,
+                1,
+                pcurve,
+                endpoint_roots=(coedge_roots[0], coedge_roots[1]),
+            )
+        )
+    if vertex_root is not None:
+        builder.vertex_roots[vertices[3]] = BRepVertexRoot(
+            vertex_root.primary,
+            source_edge_lifts=tuple(source_lifts),
+        )
+    builder.face(
+        patch,
+        np.asarray(((float(u0), float(v0)), (float(u1), float(v1)))),
+        1,
+        source_id,
+        [loop],
+    )
     geometry, patches, bounds, orientations, tags, trims = builder.geometry(solid=False)
     return assemble_brep_model(
         geometry,
@@ -530,3 +613,106 @@ def test_public_bridge_refuses_opposing_corner_correspondence() -> None:
     )
     assert result.model is None
     assert result.reason
+
+
+def test_public_bridge_accepts_non_dyadic_source_domains() -> None:
+    from phydrax.geometry.brep import brep_surface_bridge
+
+    original_left, original_right = _curved_sources()
+    u = (F(1, 3),) * 4 + (F(4, 3),) * 4
+
+    def reparameterize(patch: BSplineSurfacePatch) -> BSplineSurfacePatch:
+        points, weights = _rational_banks(patch)
+        v = patch.exact_v_knot_bank
+        assert v is not None
+        return BSplineSurfacePatch(
+            patch.control_points,
+            patch.weights,
+            np.asarray(u, dtype=np.float64),
+            patch.v_knots,
+            patch.u_degree,
+            patch.v_degree,
+            exact_control_points=points,
+            exact_weights=weights,
+            exact_u_knots=u,
+            exact_v_knots=v,
+        )
+
+    left = _source_model(reparameterize(original_left), "non-dyadic-left")
+    right = _source_model(reparameterize(original_right), "non-dyadic-right")
+    result = brep_surface_bridge(
+        left,
+        right,
+        left.face_ids[0],
+        left.edge_ids[2],
+        right.face_ids[0],
+        right.edge_ids[0],
+        left_side="v1",
+        right_side="v0",
+        left_along=(F(1, 3), F(4, 3)),
+        right_along=(F(1, 3), F(4, 3)),
+        left_collar=F(1),
+        right_collar=F(1),
+        continuity=1,
+        **_embedding_args(),
+    )
+    assert result.model is not None, result.reason
+    assert result.evidence is not None
+
+
+def _rooted_source_models() -> tuple[BRepModel, BRepModel]:
+    left, right = _curved_sources()
+    return _source_model(left, "rooted-bridge-left", rooted=True), _source_model(
+        right, "rooted-bridge-right"
+    )
+
+
+def test_public_bridge_transports_conic_corner_roots_and_lifts() -> None:
+    from phydrax.geometry.brep import brep_surface_bridge
+
+    left, right = _rooted_source_models()
+    result = brep_surface_bridge(
+        left,
+        right,
+        left.face_ids[0],
+        left.edge_ids[2],
+        right.face_ids[0],
+        right.edge_ids[0],
+        left_side="v1",
+        right_side="v0",
+        left_along=(F(0), F(1)),
+        right_along=(F(0), F(1)),
+        left_collar=F(1),
+        right_collar=F(1),
+        continuity=1,
+        **_embedding_args(),
+    )
+    assert result.model is not None, result.reason
+    model = result.model
+    geometry = model.geometry
+    root = geometry.vertex_roots[3]
+    assert root is not None
+    assert len(root.source_edge_lifts) >= 4
+    bridge = model.patches[2]
+    uses = []
+    for coedge in geometry.face_loops[2][0]:
+        edge = geometry.coedge_edges[coedge]
+        for endpoint, vertex in enumerate(geometry.edge_vertices[edge]):
+            if vertex == 3:
+                endpoint_root = geometry.coedge_endpoint_roots[coedge][endpoint]
+                assert isinstance(endpoint_root, ConicParameterEndpoint)
+                pcurve = geometry.pcurves[coedge]
+                assert (
+                    root.source_endpoint_uv_box(bridge, pcurve, endpoint_root) is not None
+                )
+                uses.append((pcurve, endpoint_root, edge, endpoint))
+    assert len(uses) == 2
+    assert root.same_uv_endpoint(bridge, uses[0][0], uses[0][1], uses[1][0], uses[1][1])
+    cross = next(
+        use
+        for use in uses
+        if use[2] >= left.topology.num_edges + right.topology.num_edges
+    )
+    assert isinstance(
+        geometry.edge_endpoint_roots[cross[2]][cross[3]], ConicParameterEndpoint
+    )

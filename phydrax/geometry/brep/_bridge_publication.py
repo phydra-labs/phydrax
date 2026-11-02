@@ -22,10 +22,16 @@ from ._bridge_embedding_proof import (
     certify_bridge_embedding,
 )
 from ._constructors import _Builder, assemble_brep_model
-from ._correspondence import exact_source_lift
+from ._correspondence import (
+    _exact_spline_boundary_lift,
+    _exact_spline_rectangle_bounds,
+    exact_source_lift,
+)
+from ._intersection import ConicParameterEndpoint
 from ._intersection_curve import SurfaceRegion, exact_curve_parameter_point
 from ._model import BRepEntityId, BRepModel
-from ._patches import BSplineCurve, BSplineSurfacePatch, ExactLineCurve
+from ._patches import AbstractCurve, BSplineCurve, BSplineSurfacePatch, ExactLineCurve
+from ._root_bindings import BRepConicVertex, BRepCurveSurfaceLift, BRepVertexRoot
 
 type _Projection = tuple[
     tuple[ExactScalar, ExactScalar, ExactScalar],
@@ -80,17 +86,7 @@ def _rectangle(
         raise _Refuse("source boundary side must be explicit")
     if len(along) != 2 or any(not isinstance(x, Fraction) for x in along):
         raise _Refuse("along map endpoints must be exact Fractions")
-    knots = (patch.exact_u_knots, patch.exact_v_knots)
-    degrees = (patch.u_degree, patch.v_degree)
-    counts = (len(patch.exact_control_points), len(patch.exact_control_points[0]))
-    domain = tuple((knots[i][degrees[i]], knots[i][counts[i]]) for i in range(2))
     bounds = np.asarray(model.parameter_bounds[0])
-    if any(
-        Fraction.from_float(float(bounds[j, i])) != domain[i][j]
-        for i in range(2)
-        for j in range(2)
-    ):
-        raise _Refuse("source trim box must be the exact full patch domain")
     trim = model.trim_domains[0]
     if trim is not None:
         if trim.numeric_only or trim.outer is None or trim.holes or trim.curve_loops:
@@ -111,6 +107,19 @@ def _rectangle(
         raise _Refuse("source must have one four-edge rectangular boundary")
     region = SurfaceRegion(patch, bounds)
     ranges = np.asarray(g.edge_ranges)
+    domain = _exact_spline_rectangle_bounds(
+        region,
+        tuple(
+            (
+                g.pcurves[coedge],
+                float(ranges[g.coedge_edges[coedge], 0]),
+                float(ranges[g.coedge_edges[coedge], 1]),
+            )
+            for coedge in loops[0]
+        ),
+    )
+    if domain is None:
+        raise _Refuse("source trim is not an exact full patch rectangle")
     found = {}
     for coedge in loops[0]:
         edge = g.coedge_edges[coedge]
@@ -125,18 +134,24 @@ def _rectangle(
                 "rectangular trims require unit-range curves and exact affine p-curves"
             )
         a, b = pc.first_exact, pc.last_exact
-        axes = [i for i in range(2) if a[i] == b[i] and a[i] in domain[i]]
-        if len(axes) != 1:
-            raise _Refuse("trim is not a full rectangular domain side")
-        axis = axes[0]
-        other = 1 - axis
-        if {a[other], b[other]} != set(domain[other]):
-            raise _Refuse("trim does not cover its complete domain side")
+        axis = 0 if a[0] == b[0] else 1
         key = (axis, int(a[axis] == domain[axis][1]))
-        if key in found:
-            raise _Refuse("rectangular side occurs more than once")
-        curve = g.curves[ci]
-        if not exact_source_lift(curve, pc, region, 0.0, 1.0):
+        found[key] = (edge, coedge, a, b)
+    # The exact box is justified only after the complete four-side trim proof
+    # above, not by an arbitrary float region that merely rounds to a knot.
+    for edge, coedge, _, _ in found.values():
+        curve = g.curves[g.edge_curves[edge]]
+        pc = g.pcurves[coedge]
+        if not exact_source_lift(
+            curve, pc, region, 0.0, 1.0
+        ) and not _exact_spline_boundary_lift(
+            curve,
+            pc,
+            region,
+            0.0,
+            1.0,
+            exact_region_bounds=(domain[0], domain[1]),
+        ):
             raise _Unresolved("source edge lift from its p-curve was not proved")
         for endpoint, vertex in enumerate(g.edge_vertices[edge]):
             point = g.vertex_exact_points[vertex]
@@ -147,11 +162,24 @@ def _rectangle(
                 raise _Unresolved("exact source edge endpoint evaluation unavailable")
             if endpoint_point != point:
                 raise _Refuse("source edge endpoint does not match its vertex")
-        found[key] = (edge, coedge, a, b)
     key = (0 if side[0] == "u" else 1, int(side[1]))
     edge, coedge, a, b = found[key]
     if edge != edge_id.index:
         raise _Refuse("selected edge is not the explicitly selected source side")
+    for endpoint, vertex in enumerate(g.edge_vertices[edge]):
+        root = g.vertex_roots[vertex]
+        edge_root = g.edge_endpoint_roots[edge][endpoint]
+        if root is None:
+            if edge_root is not None:
+                raise _Refuse("rooted seam endpoint has no source vertex root")
+        elif not (
+            isinstance(root.primary, BRepConicVertex)
+            and root.primary.point_exact == g.vertex_exact_points[vertex]
+            and root.primary.root.exact_point() == root.primary.point_exact
+            and isinstance(edge_root, ConicParameterEndpoint)
+            and edge_root.point_exact == root.primary.point_exact
+        ):
+            raise _Refuse("seam corner root has no supported exact conic transport")
     if (a[1 - key[0]], b[1 - key[0]]) == along:
         direction = 1
     elif (b[1 - key[0]], a[1 - key[0]]) == along:
@@ -159,6 +187,35 @@ def _rectangle(
     else:
         raise _Refuse("along map does not match the source edge p-curve")
     return patch, key, edge, coedge, direction
+
+
+def _transport_conic_endpoint(
+    vertex_root: BRepVertexRoot | None, carrier: AbstractCurve, endpoint: int
+) -> ConicParameterEndpoint | None:
+    if vertex_root is None:
+        return None
+    primary = vertex_root.primary
+    if not isinstance(primary, BRepConicVertex):
+        raise _Refuse("bridge corner root has no supported exact conic transport")
+    return ConicParameterEndpoint(
+        primary.root, carrier, Fraction(endpoint), primary.point_exact
+    )
+
+
+def _attach_lift(
+    builder: _Builder, vertices: tuple[int, int], lift: BRepCurveSurfaceLift
+) -> None:
+    for vertex in vertices:
+        root = builder.vertex_roots[vertex]
+        if root is not None:
+            builder.vertex_roots[vertex] = BRepVertexRoot(
+                root.primary,
+                aliases=root.aliases,
+                spatial_root=root.spatial_root,
+                joint_root=root.joint_root,
+                source_edge_lifts=(*root.source_edge_lifts, lift),
+                branch_node=root.branch_node,
+            )
 
 
 def _copy(
@@ -314,9 +371,22 @@ def publish_bridge(
             curve = g.curves[g.edge_curves[edge]]
             if not exact_source_lift(curve, pc, region, 0.0, 1.0):
                 raise _Unresolved("source edge lift to the bridge seam was not proved")
-            seam = builder.coedge(
-                copies[i][1][edge], direction * (1 if i == 0 else -1), pc
+            seam_roots = tuple(
+                _transport_conic_endpoint(g.vertex_roots[vertex], pc, endpoint)
+                for endpoint, vertex in enumerate(g.edge_vertices[edge])
             )
+            seam = builder.coedge(
+                copies[i][1][edge],
+                direction * (1 if i == 0 else -1),
+                pc,
+                endpoint_roots=(seam_roots[0], seam_roots[1]),
+            )
+            seam_vertices = tuple(copies[i][0][v] for v in g.edge_vertices[edge])
+            if any(builder.vertex_roots[v] is not None for v in seam_vertices):
+                lift = BRepCurveSurfaceLift(
+                    curve, bridge, pc, 0.0, 1.0, source_region=region
+                )
+                _attach_lift(builder, (seam_vertices[0], seam_vertices[1]), lift)
             bridge_edges.append(seam)
             a, b = g.edge_vertices[edge]
             corners.append(
@@ -345,8 +415,61 @@ def publish_bridge(
                     raise _Unresolved("exact bridge corner evaluation unavailable")
                 if endpoint_point != point:
                     raise _Refuse("bridge corner does not equal the source vertex")
-            edge = builder.edge(curve, 0.0, 1.0, corners[0][i], corners[1][i])
-            cross.append(builder.coedge(edge, 1 if i else -1, pc))
+            vertices = (corners[0][i], corners[1][i])
+            edge_roots = tuple(
+                _transport_conic_endpoint(builder.vertex_roots[vertex], curve, endpoint)
+                for endpoint, vertex in enumerate(vertices)
+            )
+            coedge_roots = tuple(
+                _transport_conic_endpoint(builder.vertex_roots[vertex], pc, endpoint)
+                for endpoint, vertex in enumerate(vertices)
+            )
+            edge = builder.edge(
+                curve,
+                0.0,
+                1.0,
+                *vertices,
+                endpoint_roots=(edge_roots[0], edge_roots[1]),
+            )
+            cross.append(
+                builder.coedge(
+                    edge,
+                    1 if i else -1,
+                    pc,
+                    endpoint_roots=(coedge_roots[0], coedge_roots[1]),
+                )
+            )
+            if any(builder.vertex_roots[v] is not None for v in vertices):
+                lift = BRepCurveSurfaceLift(
+                    curve, bridge, pc, 0.0, 1.0, source_region=region
+                )
+                _attach_lift(builder, vertices, lift)
+        for vertex in (v for pair in corners for v in pair):
+            root = builder.vertex_roots[vertex]
+            if root is None:
+                continue
+            uses = []
+            for coedge in (*bridge_edges, *cross):
+                edge = builder.coedge_edges[coedge]
+                for endpoint, edge_vertex in enumerate(builder.edge_vertices[edge]):
+                    if edge_vertex == vertex:
+                        uses.append(
+                            (
+                                builder.pcurves[coedge],
+                                builder.coedge_endpoint_roots[coedge][endpoint],
+                            )
+                        )
+            if (
+                len(uses) != 2
+                or any(
+                    root.source_endpoint_uv_box(bridge, curve, endpoint) is None
+                    for curve, endpoint in uses
+                )
+                or not root.same_uv_endpoint(
+                    bridge, uses[0][0], uses[0][1], uses[1][0], uses[1][1]
+                )
+            ):
+                raise _Unresolved("rooted bridge corner UV incidence was not proved")
         builder.face(
             bridge,
             ((0.0, 0.0), (1.0, 1.0)),

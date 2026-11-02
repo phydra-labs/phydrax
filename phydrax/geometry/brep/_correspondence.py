@@ -2969,6 +2969,53 @@ def _affine_transport_line_pcurve(pcurve: AbstractCurve, /) -> AbstractCurve | N
     )
 
 
+def _exact_spline_rectangle_bounds(
+    region: SurfaceRegion,
+    boundary: tuple[tuple[AbstractCurve, float, float], ...],
+    /,
+) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] | None:
+    """Prove a full spline rectangle from its four exact line p-curves."""
+    patch = region.patch
+    if not isinstance(patch, BSplineSurfacePatch) or len(boundary) != 4:
+        return None
+    domain = (
+        (
+            patch.exact_u_knots[patch.u_degree],
+            patch.exact_u_knots[len(patch.exact_control_points)],
+        ),
+        (
+            patch.exact_v_knots[patch.v_degree],
+            patch.exact_v_knots[len(patch.exact_control_points[0])],
+        ),
+    )
+    box = np.asarray(region.parameter_box, dtype=np.float64)
+    if any(
+        float(domain[axis][end]) != box[end, axis]
+        for axis in range(2)
+        for end in range(2)
+    ):
+        return None
+    sides: set[tuple[int, int]] = set()
+    for curve, first, last in boundary:
+        if not isinstance(curve, ExactLineCurve):
+            return None
+        start = exact_curve_parameter_point(curve, Fraction.from_float(first))
+        stop = exact_curve_parameter_point(curve, Fraction.from_float(last))
+        if start is None or stop is None or len(start) != 2 or len(stop) != 2:
+            return None
+        candidates = [
+            (axis, side)
+            for axis in range(2)
+            for side in range(2)
+            if start[axis] == stop[axis] == domain[axis][side]
+            and {start[1 - axis], stop[1 - axis]} == set(domain[1 - axis])
+        ]
+        if len(candidates) != 1 or candidates[0] in sides:
+            return None
+        sides.add(candidates[0])
+    return domain if len(sides) == 4 else None
+
+
 def _exact_spline_boundary_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
@@ -2976,6 +3023,9 @@ def _exact_spline_boundary_lift(
     first: float,
     last: float,
     /,
+    *,
+    exact_region_bounds: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
+    | None = None,
 ) -> bool:
     from ._tspline import TSplineSurfacePatch
 
@@ -3030,10 +3080,23 @@ def _exact_spline_boundary_lift(
         u0, u1, v0, v1 = patch.mesh.parameter_domain
         domain = ((u0, u1), (v0, v1))
     box = np.asarray(region.parameter_box, dtype=np.float64)
-    region_bounds = tuple(
-        tuple(Fraction.from_float(float(value)) for value in box[:, axis])
-        for axis in range(2)
-    )
+    if exact_region_bounds is None:
+        region_bounds = tuple(
+            tuple(Fraction.from_float(float(value)) for value in box[:, axis])
+            for axis in range(2)
+        )
+    else:
+        if any(
+            not isinstance(value, Fraction)
+            for interval in exact_region_bounds
+            for value in interval
+        ) or any(
+            float(exact_region_bounds[axis][end]) != float(box[end, axis])
+            for axis in range(2)
+            for end in range(2)
+        ):
+            return False
+        region_bounds = exact_region_bounds
     for fixed_axis in range(2):
         free_axis = 1 - fixed_axis
         fixed_value = chart_origin[fixed_axis]

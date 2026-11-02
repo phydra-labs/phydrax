@@ -36,7 +36,7 @@ def test_c2_bridge_seam_transports_covariant_basis_hessian() -> None:
     assert result.status == "certified", result.reason
     assert result.model is not None
     assert result.evidence is not None
-    bridge_binding = BRepSplineManifoldBinding(result.model, 2)
+    bridge_binding = BRepSplineManifoldBinding(result.model, 2, full_patch_domain=True)
     along = np.array([0.2, 0.4, 0.7, 0.8])
     # A single scalar trial function phi(u,v)=u, authored in the common seam
     # coordinates on both sides. Its value, gradient and Hessian therefore
@@ -51,7 +51,7 @@ def test_c2_bridge_seam_transports_covariant_basis_hessian() -> None:
         (left_model, 1.0, 0.0),
         (right_model, 0.0, 1.0),
     ):
-        binding = BRepSplineManifoldBinding(model, 0)
+        binding = BRepSplineManifoldBinding(model, 0, full_patch_domain=True)
         source_points = np.stack((along, np.full_like(along, source_v)), axis=-1)
         bridge_points = np.stack((along, np.full_like(along, bridge_v)), axis=-1)
         source_result = binding.realize_basis(source_points, payload)

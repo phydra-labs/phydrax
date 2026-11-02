@@ -2110,8 +2110,10 @@ class BRepVertexRoot(StrictModule):
         if isinstance(endpoint, ConicParameterEndpoint):
             if not self.supports_endpoint(endpoint):
                 return None
-            return _exact_conic_uv_endpoint(patch, curve, endpoint) or (
-                _exact_revolution_pole_uv_endpoint(self, patch, curve, endpoint)
+            return (
+                _exact_conic_uv_endpoint(patch, curve, endpoint)
+                or _exact_bspline_lift_uv_endpoint(self, patch, curve, endpoint)
+                or _exact_revolution_pole_uv_endpoint(self, patch, curve, endpoint)
             )
         if isinstance(endpoint, NativePeriodEndpoint):
             return (
@@ -2132,7 +2134,7 @@ class BRepVertexRoot(StrictModule):
         from .._rational import fraction_down, fraction_up
 
         chart = self._exact_source_endpoint_uv(patch, curve, endpoint)
-        if chart is not None and len(chart) == 3 and chart[0] == "plane":
+        if chart is not None and len(chart) == 3 and chart[0] in ("plane", "bspline"):
             first, second = chart[1], chart[2]
             if not isinstance(first, (Fraction, RadicalElement)) or not isinstance(
                 second, (Fraction, RadicalElement)
@@ -2699,6 +2701,42 @@ def _torus_conic_uv_endpoint(
     if point != endpoint.point_exact:
         return None
     return ("torus", uc, us, ut + shifts[0], vc, vs, vt + shifts[1])
+
+
+def _exact_bspline_lift_uv_endpoint(
+    vertex: BRepVertexRoot,
+    patch: AbstractSurfacePatch,
+    curve: AbstractCurve,
+    endpoint: ConicParameterEndpoint,
+    /,
+) -> tuple[object, ...] | None:
+    """Bind a conic vertex to a spline UV endpoint through an exact source lift."""
+    from ._intersection_curve import exact_curve_parameter_point
+    from ._patches import BSplineSurfacePatch
+
+    parameter = endpoint.parameter_exact
+    if (
+        not isinstance(patch, BSplineSurfacePatch)
+        or parameter is None
+        or not _same_parameter_source(endpoint.carrier, curve)
+        or endpoint.root.exact_point() != endpoint.point_exact
+        or not vertex.supports_endpoint(endpoint)
+    ):
+        return None
+    uv = exact_curve_parameter_point(curve, parameter)
+    if uv is None or len(uv) != 2:
+        return None
+    for lift in vertex.source_edge_lifts:
+        if (
+            _same_parameter_source(lift.surface, patch)
+            and _same_parameter_source(lift.pcurve, curve)
+            and Fraction.from_float(lift.first)
+            <= parameter
+            <= Fraction.from_float(lift.last)
+            and exact_curve_parameter_point(lift.curve, parameter) == endpoint.point_exact
+        ):
+            return ("bspline", uv[0], uv[1])
+    return None
 
 
 def _exact_conic_uv_endpoint(

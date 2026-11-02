@@ -2208,7 +2208,11 @@ def _certify_edge_face_gap_bounds(
     if declared_bounds is not None and len(declared_bounds) != len(geometry.coedge_edges):
         raise ValueError("Declared face-gap bounds must align with every source coedge.")
     from ._conic_gaps import native_face_gap_squared
-    from ._correspondence import exact_source_lift
+    from ._correspondence import (
+        _exact_spline_boundary_lift,
+        _exact_spline_rectangle_bounds,
+        exact_source_lift,
+    )
     from ._exact import square_root_interval
     from ._intersection_curve import SurfaceRegion
 
@@ -2223,6 +2227,9 @@ def _certify_edge_face_gap_bounds(
                 coedge_faces[coedge] = face
     bounds: list[float] = []
     ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
+    rectangle_bounds: dict[
+        int, tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] | None
+    ] = {}
     for coedge, edge in enumerate(geometry.coedge_edges):
         face = coedge_faces[coedge]
         if face < 0:
@@ -2252,7 +2259,30 @@ def _certify_edge_face_gap_bounds(
             if exact_source_lift(curve, pcurve, region, first, last):
                 squared = Fraction(0)
             else:
-                squared = native_face_gap_squared(curve, pcurve, region, first, last)
+                if face not in rectangle_bounds:
+                    loops = geometry.face_loops[face]
+                    boundary = (
+                        tuple(
+                            (
+                                geometry.pcurves[used],
+                                float(ranges[geometry.coedge_edges[used], 0]),
+                                float(ranges[geometry.coedge_edges[used], 1]),
+                            )
+                            for used in loops[0]
+                        )
+                        if len(loops) == 1
+                        else ()
+                    )
+                    rectangle_bounds[face] = _exact_spline_rectangle_bounds(
+                        region, boundary
+                    )
+                exact_box = rectangle_bounds[face]
+                if exact_box is not None and _exact_spline_boundary_lift(
+                    curve, pcurve, region, first, last, exact_region_bounds=exact_box
+                ):
+                    squared = Fraction(0)
+                else:
+                    squared = native_face_gap_squared(curve, pcurve, region, first, last)
             if squared is None:
                 if exact_unsupported:
                     raise ValueError(

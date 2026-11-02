@@ -15,6 +15,7 @@ from phydrax.geometry.brep._bridge_embedding_proof import (
     BridgeEmbeddingEvidence,
     certify_bridge_embedding,
 )
+from phydrax.geometry.brep._intersection import ConicParameterEndpoint
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import AbstractSurfacePatch, BSplineSurfacePatch
 from phydrax.geometry.brep._surface_bridge import brep_surface_bridge
@@ -28,6 +29,7 @@ from tests.unit.geometry.test_brep_hermite_bridge_acceptance import (
     _curved_sources,
     _embedding_args,
     _endpoint_jet,
+    _rooted_source_models,
     _homogeneous,
 )
 
@@ -98,21 +100,76 @@ def _model_state(model: BRepModel) -> dict[str, object]:
         "geometry_id": model.geometry.geometry_id,
         "faces": [repr(value) for value in model.face_ids],
         "edges": [repr(value) for value in model.edge_ids],
+        "vertex_roots": [
+            None if root is None else root.root_id for root in model.geometry.vertex_roots
+        ],
+        "edge_endpoints": [
+            [
+                endpoint.root_id if isinstance(endpoint, ConicParameterEndpoint) else None
+                for endpoint in pair
+            ]
+            for pair in model.geometry.edge_endpoint_roots
+        ],
+        "coedge_endpoints": [
+            [
+                endpoint.root_id if isinstance(endpoint, ConicParameterEndpoint) else None
+                for endpoint in pair
+            ]
+            for pair in model.geometry.coedge_endpoint_roots
+        ],
         "patches": [_state(patch) for patch in model.patches],
+    }
+
+
+def _rooted_replay(model: BRepModel, source_edge_count: int) -> dict[str, object]:
+    geometry = model.geometry
+    root = geometry.vertex_roots[3]
+    if root is None or len(root.source_edge_lifts) < 4:
+        raise ValueError("Published bridge lost the rooted corner and its lifts.")
+    bridge = _published_patches(model)[2]
+    uses = []
+    for coedge in geometry.face_loops[2][0]:
+        edge = geometry.coedge_edges[coedge]
+        for endpoint, vertex in enumerate(geometry.edge_vertices[edge]):
+            if vertex == 3:
+                endpoint_root = geometry.coedge_endpoint_roots[coedge][endpoint]
+                if not isinstance(endpoint_root, ConicParameterEndpoint):
+                    raise TypeError("Bridge corner lost a conic p-curve endpoint.")
+                pcurve = geometry.pcurves[coedge]
+                if root.source_endpoint_uv_box(bridge, pcurve, endpoint_root) is None:
+                    raise ValueError("Bridge corner lift does not replay on its p-curve.")
+                uses.append((pcurve, endpoint_root, edge, endpoint))
+    if len(uses) != 2 or not root.same_uv_endpoint(
+        bridge, uses[0][0], uses[0][1], uses[1][0], uses[1][1]
+    ):
+        raise ValueError("Bridge corner p-curves do not share their rooted endpoint.")
+    cross = [use for use in uses if use[2] >= source_edge_count]
+    if len(cross) != 1:
+        raise ValueError("Bridge corner must have exactly one cross-edge use.")
+    edge_root = geometry.edge_endpoint_roots[cross[0][2]][cross[0][3]]
+    if not isinstance(edge_root, ConicParameterEndpoint):
+        raise TypeError("Bridge cross-edge lost its conic endpoint.")
+    return {
+        "vertex_root_id": root.root_id,
+        "source_lift_count": len(root.source_edge_lifts),
+        "coedge_root_ids": [use[1].root_id for use in uses],
+        "cross_edge_root_id": edge_root.root_id,
     }
 
 
 def main() -> None:
     mode, directory = sys.argv[1], Path(sys.argv[2])
-    if mode == "write":
+    rooted = mode in ("write-rooted", "read-rooted")
+    continuity = 1 if rooted else 2
+    if mode in ("write", "write-rooted"):
         left, right = _curved_sources()
-        bridge = _bridge(left, right, 2)
-        _replay(left, right, bridge, 2)
+        bridge = _bridge(left, right, continuity)
+        _replay(left, right, bridge, continuity)
         for name, patch in zip(
             ("left", "right", "bridge"), (left, right, bridge), strict=True
         ):
             write_model_artifact(directory / f"{name}.phx", patch, limits=None)
-        models = _curved_source_models()
+        models = _rooted_source_models() if rooted else _curved_source_models()
         left_model, right_model = models
         result = brep_surface_bridge(
             left_model,
@@ -127,7 +184,7 @@ def main() -> None:
             right_along=(Fraction(0), Fraction(1)),
             left_collar=Fraction(1),
             right_collar=Fraction(1),
-            continuity=2,
+            continuity=continuity,
             **_embedding_args(),
         )
         if (
@@ -144,7 +201,16 @@ def main() -> None:
             raise ValueError(
                 "Published bridge changed the exact input or bridge carriers."
             )
-        _replay(published_patches[0], published_patches[1], published_patches[2], 2)
+        _replay(
+            published_patches[0], published_patches[1], published_patches[2], continuity
+        )
+        root_state = (
+            _rooted_replay(
+                published, len(left_model.edge_ids) + len(right_model.edge_ids)
+            )
+            if rooted
+            else None
+        )
         for name, model in zip(
             ("left-model", "right-model", "published-model"),
             (*models, published),
@@ -156,11 +222,12 @@ def main() -> None:
                 {
                     "patches": [_state(p) for p in (left, right, bridge)],
                     "models": [_model_state(m) for m in (*models, published)],
+                    "root": root_state,
                 },
                 sort_keys=True,
             )
         )
-    elif mode == "read":
+    elif mode in ("read", "read-rooted"):
         patches = tuple(
             read_model_artifact(
                 directory / f"{name}.phx",
@@ -184,7 +251,16 @@ def main() -> None:
         published_patches = _published_patches(models[2])
         if [_state(p) for p in published_patches] != expected["patches"]:
             raise ValueError("Cold published model lost its exact spline carriers.")
-        _replay(published_patches[0], published_patches[1], published_patches[2], 2)
+        _replay(
+            published_patches[0], published_patches[1], published_patches[2], continuity
+        )
+        root_state = (
+            _rooted_replay(models[2], len(models[0].edge_ids) + len(models[1].edge_ids))
+            if rooted
+            else None
+        )
+        if root_state != expected["root"]:
+            raise ValueError("Cold bridge rooted endpoint identities changed.")
         print("bridge-cold-restored")
     else:
         raise ValueError(f"Unknown mode {mode!r}.")

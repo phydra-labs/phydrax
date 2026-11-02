@@ -155,7 +155,9 @@ reparameterizations and G3 are not claimed. The admitted profile requires two
 distinct unplaced, single-face rectangular open models, exact affine trim
 p-curves and source-edge lifts, rational corner vertices, positive weights,
 matching pulled-back along-seam degrees and knot vectors, and sufficient knot
-continuity. Different refinements, arbitrary trims, and corner networks refuse.
+continuity. Rooted seam corners require exact conic vertex roots whose rational
+points and new edge and p-curve lifts are independently proved; other rooted
+corner families, different refinements, arbitrary trims, and corner networks refuse.
 Positive homogeneous weights certify the bridge denominator. Explicit
 projection and separating-plane witnesses prove regularity, global injectivity,
 and separation of the full source and bridge patches; failure to establish
@@ -163,7 +165,10 @@ those conditions does not publish a model. `BridgeSeparation` specifies the
 two boundary-plane witnesses.
 `BRepSplineManifoldBinding` in `phydrax.discretization.iga` binds a selected
 source-revision face to manifold second-geometry-jet evaluation and covariant
-basis Hessians; it is not itself a whole-face embedding or trim certificate.
+basis Hessians. The caller explicitly declares `full_patch_domain=True`; subcharts
+are unsupported, and points whose exact or execution chart coordinates can meet
+an interior knot are refused. The binding is not itself a whole-face embedding
+or trim certificate.
 
 Supported native analytic intersections, including unequal-radius
 perpendicular cylinders, preserve coupled source-defined branches even when

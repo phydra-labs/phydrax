@@ -12,6 +12,7 @@ normalized B-Rep face chart coordinates, not the native spline parameters.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 
 import jax.numpy as jnp
 import numpy as np
@@ -30,6 +31,37 @@ from ._manifold import (
 )
 
 
+def _at_interior_knot(
+    reference: np.ndarray,
+    lower: Fraction,
+    upper: Fraction,
+    knots: tuple[Fraction, ...],
+    /,
+) -> bool:
+    """Reject exact knot pullbacks and affine-execution intervals crossing a knot."""
+    width = upper - lower
+    lower_float = float(lower)
+    execution_width = float(upper) - lower_float
+    if not np.isfinite(execution_width) or execution_width <= 0:
+        return bool(knots)
+    numeric_lower = Fraction.from_float(lower_float)
+    numeric_width = Fraction.from_float(execution_width)
+    for knot in knots:
+        if not lower < knot < upper:
+            continue
+        if np.any(reference == float((knot - lower) / width)):
+            return True
+        for value in reference.flat:
+            r = Fraction.from_float(float(value))
+            exact = lower + r * width
+            product = Fraction.from_float(float(r * numeric_width))
+            sequential = Fraction.from_float(float(numeric_lower + product))
+            fused = Fraction.from_float(float(numeric_lower + r * numeric_width))
+            if min(exact, sequential, fused) <= knot <= max(exact, sequential, fused):
+                return True
+    return False
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class BRepSplineManifoldBinding:
     """A revision-scoped spline face and its normalized-chart manifold.
@@ -39,6 +71,11 @@ class BRepSplineManifoldBinding:
     The returned geometry is numerical and only establishes rank at query points.
     Trim membership is not checked; callers must select points on the face.
     Construction and evaluation are host-side, not JIT-compatible.
+    The caller must explicitly declare ``full_patch_domain=True``: numeric face
+    bounds are checked against the patch's rounded exact knot endpoints, but do
+    not themselves prove that declaration. Subcharts have no exact bound owner.
+    Knot admission also refuses when the exact chart point and the IEEE binary64
+    affine execution (including a fused multiply-add) enclose an interior knot.
     """
 
     model: BRepModel
@@ -49,12 +86,20 @@ class BRepSplineManifoldBinding:
     manifold: AtlasManifold
 
     def __init__(
-        self, model: BRepModel, face_index: int, /, *, rank_tolerance: float = 1.0e-10
+        self,
+        model: BRepModel,
+        face_index: int,
+        /,
+        *,
+        full_patch_domain: bool,
+        rank_tolerance: float = 1.0e-10,
     ) -> None:
         if not isinstance(model, BRepModel):
             raise TypeError("model must be a BRepModel.")
         if isinstance(face_index, bool) or not isinstance(face_index, int):
             raise TypeError("face_index must be an integer.")
+        if full_patch_domain is not True:
+            raise ValueError("full_patch_domain=True must be explicitly declared.")
         model.require_current()
         if not 0 <= face_index < len(model.patches):
             raise IndexError("face_index is outside the B-Rep face table.")
@@ -62,9 +107,13 @@ class BRepSplineManifoldBinding:
         if not isinstance(patch, BSplineSurfacePatch):
             raise TypeError("The selected B-Rep face must use a BSplineSurfacePatch.")
         bounds = np.asarray(model.parameter_bounds[face_index])
+        if bounds.dtype != np.float64:
+            raise ValueError("Spline manifold binding requires binary64 chart bounds.")
         domain = np.asarray(patch.parameter_domain)
-        if np.any(bounds[0] < domain[0]) or np.any(bounds[1] > domain[1]):
-            raise ValueError("Face chart bounds must lie inside the spline domain.")
+        if not np.array_equal(bounds, domain):
+            raise ValueError(
+                "Face chart must cover the complete exact spline parameter domain."
+            )
         tolerance = float(rank_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("rank_tolerance must be finite and positive.")
@@ -111,14 +160,14 @@ class BRepSplineManifoldBinding:
             raise RuntimeError(
                 "The bound B-Rep face no longer contains a B-spline patch."
             )
-        bounds = np.asarray(self.model.parameter_bounds[self.face_index])
-        parameters = bounds[0] + points * (bounds[1] - bounds[0])
         for axis, knots, degree, count in (
-            (0, np.asarray(patch.u_knots), patch.u_degree, patch.control_points.shape[0]),
-            (1, np.asarray(patch.v_knots), patch.v_degree, patch.control_points.shape[1]),
+            (0, patch.exact_u_knots, patch.u_degree, patch.control_points.shape[0]),
+            (1, patch.exact_v_knots, patch.v_degree, patch.control_points.shape[1]),
         ):
             interior = knots[degree + 1 : count]
-            if np.any(parameters[..., axis, None] == interior):
+            if _at_interior_knot(
+                points[..., axis], knots[degree], knots[count], interior
+            ):
                 raise ValueError(
                     "Second-geometry queries at interior spline knots are unsupported."
                 )
