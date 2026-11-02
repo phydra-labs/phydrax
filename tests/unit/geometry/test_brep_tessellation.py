@@ -682,6 +682,16 @@ def test_repeated_spline_occurrence_motion_reuses_local_spans() -> None:
     cold_mesh, cold_proof = tessellate_brep_model(moved, _policy(), preparation=cold)
     np.testing.assert_array_equal(warm_mesh.vertices, cold_mesh.vertices)
     np.testing.assert_array_equal(warm_mesh.triangles, cold_mesh.triangles)
+    occurrence_ids = {
+        occurrence.path: index
+        for index, occurrence in enumerate(moved.geometry.iter_occurrences())
+    }
+    triangle_ids = np.asarray(warm_mesh.triangle_occurrence_ids)
+    witness_paths = warm_mesh.source_chart_witness.occurrence_paths
+    for path, occurrence_id in occurrence_ids.items():
+        rows = np.flatnonzero(triangle_ids == occurrence_id)
+        assert rows.size > 0
+        assert all(witness_paths[row] == path for row in rows)
     assert warm_proof.certificate_id == cold_proof.certificate_id
 
 

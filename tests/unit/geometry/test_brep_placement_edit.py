@@ -27,19 +27,24 @@ from phydrax.interchange._cad_archive import save_brep_archive
 from phydrax.meshing._model_codec import read_model_archive, write_model_archive
 
 
-def _shared_model() -> BRepModel:
+def _shared_model(graph: BRepAssemblyGraph | None = None) -> BRepModel:
     box = brep_box(
         (0, 0, 0), (1, 1, 1), coordinate_contract=SpatialCoordinateContract.si()
     )
     source = box.geometry
-    graph = BRepAssemblyGraph(
-        (
-            BRepAssemblyUse("first", definition_id="shared"),
-            BRepAssemblyUse("second", definition_id="shared"),
-        ),
-        (BRepAssemblyDefinition("shared", (BRepAssemblyUse("leaf", solid_index=0),)),),
-        1,
-    )
+    if graph is None:
+        graph = BRepAssemblyGraph(
+            (
+                BRepAssemblyUse("first", definition_id="shared"),
+                BRepAssemblyUse("second", definition_id="shared"),
+            ),
+            (
+                BRepAssemblyDefinition(
+                    "shared", (BRepAssemblyUse("leaf", solid_index=0),)
+                ),
+            ),
+            1,
+        )
     geometry = BRepGeometry(
         vertex_points=source.vertex_points,
         vertex_exact_points=source.vertex_exact_points,
@@ -71,6 +76,62 @@ def _shared_model() -> BRepModel:
         report=box.report,
         trim_domains=box.trim_domains,
     )
+
+
+def test_edit_preserves_unreachable_definition_dependencies_in_cold_archive(
+    tmp_path: Path,
+) -> None:
+    graph = BRepAssemblyGraph(
+        (BRepAssemblyUse("root", definition_id="shared"),),
+        (
+            BRepAssemblyDefinition("shared", (BRepAssemblyUse("leaf", solid_index=0),)),
+            BRepAssemblyDefinition(
+                "unused-parent", (BRepAssemblyUse("child", definition_id="unused-child"),)
+            ),
+            BRepAssemblyDefinition(
+                "unused-child", (BRepAssemblyUse("shared-use", definition_id="shared"),)
+            ),
+        ),
+        1,
+    )
+    original = _shared_model(graph)
+    placement = BRepAffinePlacement.from_matrix(
+        ((1, 0, 0, 2), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+    )
+    edited = edit_brep_occurrence_placement(original, ("root", "leaf"), placement).model
+    definitions = {
+        item.definition_id: item for item in edited.geometry.assembly_graph.definitions
+    }
+    assert {"shared", "unused-parent", "unused-child"} <= definitions.keys()
+    assert definitions["unused-child"].uses[0].definition_id == "shared"
+    assert tuple(item.path for item in edited.geometry.iter_occurrences()) == (
+        ("root", "leaf"),
+    )
+    assert (
+        tuple(original.geometry.iter_occurrences())[0].placement
+        == BRepAffinePlacement.identity()
+    )
+    archive = tmp_path / "orphan-dependencies.phx"
+    save_brep_archive(edited, archive)
+    reader = """
+import sys
+from phydrax.interchange._cad_archive import load_brep_archive
+model = load_brep_archive(sys.argv[1])
+model.require_current()
+assert model.source_revision == sys.argv[2]
+definitions = {item.definition_id: item for item in model.geometry.assembly_graph.definitions}
+assert {"shared", "unused-parent", "unused-child"} <= definitions.keys()
+assert definitions["unused-child"].uses[0].definition_id == "shared"
+assert tuple(item.path for item in model.geometry.iter_occurrences()) == (("root", "leaf"),)
+"""
+    restored = subprocess.run(
+        [sys.executable, "-c", reader, str(archive), edited.source_revision],
+        cwd=Path(__file__).resolve().parents[3],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert restored.returncode == 0, restored.stderr
 
 
 def test_exact_edit_maps_every_qualified_entity_and_namespace() -> None:

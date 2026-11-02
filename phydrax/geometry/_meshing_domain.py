@@ -929,7 +929,9 @@ class SourcePreparation:
         for key, (surface, spans) in self._surface_spans.items():
             if spans is not None and new_surfaces.get(key) is surface:
                 result._surface_spans[key] = (surface, spans)
-        new_curves = {id(curve): curve for curve in new.geometry.curves}
+        new_curves = {
+            id(curve): curve for curve in (*new.geometry.curves, *new.geometry.pcurves)
+        }
         for key, (curve, spans) in self._curve_spans.items():
             if new_curves.get(key) is curve:
                 result._curve_spans[key] = (curve, spans)

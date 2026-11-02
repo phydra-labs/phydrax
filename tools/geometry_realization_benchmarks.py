@@ -39,7 +39,7 @@ from phydrax.geometry.brep import (
     BRepModel,
     BRepTessellationPolicy,
 )
-from phydrax.geometry.brep._patches import BSplineSurfacePatch
+from phydrax.geometry.brep._patches import BSplineCurve, BSplineSurfacePatch, LineCurve
 from phydrax.geometry.brep._tessellation import tessellate_brep_model
 from phydrax.operators.integral.layer_potential._galerkin3d import (
     LaplaceSingleLayerDP0GalerkinPolicy3D,
@@ -266,6 +266,35 @@ def _placement_case() -> Any:
         1,
     )
     geometry = box.geometry
+    pcurves = []
+    for coedge, curve in enumerate(geometry.pcurves):
+        if not isinstance(curve, LineCurve):
+            raise TypeError("The box trim fixture requires native line pcurves.")
+        edge = geometry.coedge_edges[coedge]
+        start, end = (
+            Fraction.from_float(float(value)) for value in geometry.edge_ranges[edge]
+        )
+        controls = tuple(
+            tuple(
+                origin + parameter * direction
+                for origin, direction in zip(
+                    curve.origin_exact, curve.direction_exact, strict=True
+                )
+            )
+            for parameter in (start, end)
+        )
+        knots = (start, start, end, end)
+        pcurves.append(
+            BSplineCurve(
+                np.asarray(controls, dtype=np.float64),
+                np.ones(2),
+                np.asarray(knots, dtype=np.float64),
+                1,
+                exact_control_points=controls,
+                exact_weights=(Fraction(1), Fraction(1)),
+                exact_knots=knots,
+            )
+        )
     geometry = BRepGeometry(
         vertex_points=geometry.vertex_points,
         vertex_exact_points=geometry.vertex_exact_points,
@@ -278,7 +307,7 @@ def _placement_case() -> Any:
         edge_curves=geometry.edge_curves,
         edge_ranges=geometry.edge_ranges,
         edge_vertices=geometry.edge_vertices,
-        pcurves=geometry.pcurves,
+        pcurves=tuple(pcurves),
         coedge_edges=geometry.coedge_edges,
         coedge_senses=geometry.coedge_senses,
         face_loops=geometry.face_loops,
@@ -308,6 +337,8 @@ def _placement_case() -> Any:
         preparation = SourcePreparation(MeshingDomain.from_brep(source))
         for patch in source.patches:
             preparation.surface_spans(patch)
+        for pcurve in pcurves:
+            preparation.curve_spans(pcurve)
         return preparation
 
     local, local_seconds = measure_synchronized(local_prepare)
@@ -331,6 +362,10 @@ def _placement_case() -> Any:
     reused_count = sum(
         reused.surface_spans(patch) is local.surface_spans(patch)
         for patch in source.patches
+    )
+    reused_trim_count = sum(
+        reused.curve_spans(pcurve) is local.curve_spans(pcurve)
+        for pcurve in pcurves
     )
 
     def world(model: Any, preparation: Any) -> Any:
@@ -437,12 +472,15 @@ def _placement_case() -> Any:
         vertices = np.asarray(mesh.vertices)
         triangles = np.asarray(mesh.triangles, dtype=np.int32)
         triangle_occurrences = np.asarray(mesh.triangle_occurrence_ids)
-        occurrence_paths = mesh.source_chart_witness.occurrence_paths
+        occurrence_ids = {
+            occurrence.path: index
+            for index, occurrence in enumerate(model.geometry.iter_occurrences())
+        }
         space = phx.linalg.ArraySpace((1, 3), dtype=vertices.dtype)
         surfaces = []
         counts = []
         for body, path in enumerate((("first", "leaf"), ("second", "leaf"))):
-            occurrence_id = occurrence_paths.index(path)
+            occurrence_id = occurrence_ids[path]
             selected = triangles[triangle_occurrences == occurrence_id]
             vertex_indices = np.unique(selected)
             local_faces = np.searchsorted(vertex_indices, selected)
@@ -518,6 +556,7 @@ def _placement_case() -> Any:
         "placement_seconds": placement_seconds,
         "local_span_reuse_seconds": reuse_seconds,
         "local_spans_reused": reused_count,
+        "local_trim_spans_reused": reused_trim_count,
         "world_tessellation_and_proof_seconds": world_seconds,
         "cold_world_tessellation_and_proof_seconds": cold_world_seconds,
         "cold_contact_search_seconds": cold_contact_seconds,

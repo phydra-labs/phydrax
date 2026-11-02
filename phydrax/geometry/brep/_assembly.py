@@ -556,7 +556,16 @@ class BRepAssemblyGraph:
                 )
             return seen
 
-        removed = reachable(self.roots) - reachable(roots)
+        previously_reachable = reachable(self.roots)
+        authored_orphans = tuple(
+            definition
+            for definition in self.definitions
+            if definition.definition_id not in previously_reachable
+        )
+        orphan_dependencies = reachable(
+            tuple(use for definition in authored_orphans for use in definition.uses)
+        )
+        removed = previously_reachable - reachable(roots) - orphan_dependencies
         retained_definitions = tuple(
             definition
             for definition in all_definitions
