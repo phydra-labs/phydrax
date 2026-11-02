@@ -99,11 +99,11 @@ def _triangle_minimum_sine_violations(
     screen result is accepted as a proof.
     """
     from ..geometry._interval_enclosure import (
+        Interval,
         interval_add,
         interval_multiply,
         interval_square,
         interval_subtract,
-        Interval,
     )
     from ..geometry._rational import (
         fraction_down,
