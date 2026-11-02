@@ -21,6 +21,7 @@ from .._array_archive import (
 from .._model._artifacts import artifact_value, artifact_value_id
 from .._model._structure import (
     _canonical_recipe_payload,
+    _pack_projected_model_array_tree,
     _recipe_array_nodes,
     _row_record_recipe_types,
     AdaptiveImplicitBoundarySourceArchiveRecipe,
@@ -110,15 +111,15 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
     right = model_archive_root_projection(right)
     if type(left) is not type(right):
         return False
-    recipe = model_structure_recipe(left)
+    recipe = model_structure_recipe(left, path="compare")
     if _canonical_recipe_payload(recipe) != _canonical_recipe_payload(
-        model_structure_recipe(right)
+        model_structure_recipe(right, path="compare")
     ):
         return False
-    left_arrays = pack_model_array_tree(
+    left_arrays = _pack_projected_model_array_tree(
         left, recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
     )
-    right_arrays = pack_model_array_tree(
+    right_arrays = _pack_projected_model_array_tree(
         right, recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
     )
     return left_arrays.keys() == right_arrays.keys() and all(

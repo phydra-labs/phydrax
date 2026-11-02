@@ -3085,7 +3085,20 @@ def pack_model_array_tree(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> dict[str, np.ndarray]:
     """Extract the exact dynamic arrays declared by a canonical recipe."""
-    value = model_archive_root_projection(value)
+    return _pack_projected_model_array_tree(
+        model_archive_root_projection(value), recipe, prefix=prefix, limits=limits
+    )
+
+
+def _pack_projected_model_array_tree(
+    value: Any,
+    recipe: Mapping[str, Any],
+    /,
+    *,
+    prefix: str,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+) -> dict[str, np.ndarray]:
+    """Extract arrays from an already projected canonical archive root."""
 
     descriptor_tree = _descriptor_tree(recipe, limits)
     descriptor_leaves, descriptor_definition = jax.tree_util.tree_flatten_with_path(
