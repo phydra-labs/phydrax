@@ -1573,8 +1573,9 @@ synchronized by their exact source weights. The final published physical tensor
 is pulled back at the published chart points and measured again on the final
 unprotected edges, using periodic quotient representatives. If publication
 changes an unmet local state, the local engine continues from that state with
-the original source bindings; repeated numerical states terminate without a
-success claim.
+the original source bindings. Numerical cycle detection retains one checkpoint,
+not a growing history of mesh-sized snapshots. A detected cycle reports
+`NUMERICAL_STOP`; it proves neither exact-source equality nor infeasibility.
 `COMPLETE`, `STALLED`, and `NUMERICAL_STOP` remain distinct; an unresolved
 predicate or an unmet unit-mesh criterion is not reported as success, including
 when both topology operations and relocation are disabled.

@@ -1890,11 +1890,138 @@ def _root_chart_parent(
     return int(best_row)
 
 
+def _remeasure_publication(
+    prepared: SurfaceMetricSource,
+    local_outcome: LocalMetricOutcome,
+    work_target: CellMesh,
+    target_uv: tuple[_ExactPoint, ...],
+    vertex_patches: np.ndarray,
+    target_metric: np.ndarray,
+    work_to_physical_row: np.ndarray,
+    local_cells: np.ndarray,
+    target_ids: np.ndarray,
+    work_stencils: list[_WorkStencil],
+    local_stencils: list[_WorkStencil],
+    /,
+) -> tuple[LocalMetricEvidence, _State]:
+    """Bind metric acceptance to the actually published chart and physical tensors."""
+    local_edit = local_outcome.edit
+    # Publication may project chart points or synchronize periodic stencils.
+    # Measure the published physical tensor pulled back at those final charts,
+    # rather than inheriting the local optimizer's pre-publication measurement.
+    chart_points = np.asarray([[float(value) for value in point] for point in target_uv])
+    chart_metric = _pullback_metrics(
+        prepared.domain, vertex_patches, chart_points, target_metric[work_to_physical_row]
+    )
+    if work_target.periodic_topology is not None:
+        vertex_map = periodic_entity_orbit_map(work_target, 0)
+        vertex_orbits = np.asarray(vertex_map.lifted_to_quotient, dtype=np.int64)
+        vertex_representatives = np.asarray(
+            vertex_map.representative_lifted_rows, dtype=np.int64
+        )
+        windings = np.asarray(vertex_map.winding_shifts, dtype=np.int64)
+        for row, orbit in enumerate(vertex_orbits):
+            representative = int(vertex_representatives[orbit])
+            if row != representative:
+                transform = exact_periodic_element(
+                    work_target.periodic_topology.cell,
+                    windings[row] - windings[representative],
+                )
+                chart_metric[row] = _exact_periodic_metric(
+                    transform, chart_metric[representative]
+                )
+    edges, _, _, _, cell_edges = _edge_table(local_cells)
+    protected = {
+        tuple(int(value) for value in key) for key in local_outcome.protected_edge_keys
+    }
+    measured = np.asarray(
+        [
+            tuple(sorted((int(target_ids[a]), int(target_ids[b])))) not in protected
+            for a, b in edges
+        ],
+        dtype=np.bool_,
+    )
+    lengths = _metric_lengths(chart_metric, chart_points, edges)
+    if work_target.periodic_topology is not None:
+        edge_map = periodic_entity_orbit_map(work_target, 1)
+        target_rows = key_rows(
+            entity_keys(work_target, 1), np.sort(target_ids[edges], axis=1)
+        )
+        if np.any(target_rows < 0):
+            raise ValueError("Published periodic chart lost a lifted edge.")
+        state_rows = np.empty((edges.shape[0],), dtype=np.int64)
+        state_rows[target_rows] = np.arange(edges.shape[0])
+        representatives = state_rows[
+            np.asarray(edge_map.representative_lifted_rows, dtype=np.int64)
+        ]
+        orbits = np.asarray(edge_map.lifted_to_quotient, dtype=np.int64)[target_rows]
+        lengths = lengths[representatives[orbits]]
+    selected = lengths[measured] if np.any(measured) else lengths
+    inside = (selected >= _LOWER) & (selected <= _UPPER)
+    previous = local_outcome.evidence
+    converged = bool(np.all(inside))
+    unchanged = (
+        work_stencils == local_stencils
+        and np.array_equal(chart_points, local_edit.coordinates)
+        and np.array_equal(chart_metric, local_outcome.metric)
+    )
+    evidence = LocalMetricEvidence(
+        passes=previous.passes,
+        splits=previous.splits,
+        collapses=previous.collapses,
+        flips=previous.flips,
+        relocations=previous.relocations,
+        rejected_uncertain=previous.rejected_uncertain,
+        rejected_invalid=previous.rejected_invalid,
+        converged=converged,
+        stalled=not converged
+        and (
+            (previous.stalled and unchanged)
+            or (not previous.topology_operations and not previous.relocation)
+        ),
+        measured_edges=selected.size,
+        out_of_range_edges=int(np.count_nonzero(~inside)),
+        minimum_metric_length=float(np.min(selected)),
+        maximum_metric_length=float(np.max(selected)),
+        unit_fraction=float(np.count_nonzero(inside) / selected.size),
+        minimum_metric_quality=float(np.min(_quality(lengths[cell_edges]))),
+        topology_operations=previous.topology_operations,
+        relocation=previous.relocation,
+        predicate_mode=previous.predicate_mode,
+        stalled_edges=(
+            previous.stalled_edges
+            if previous.stalled and not converged and unchanged
+            else ()
+        ),
+    )
+
+    source_ids = np.asarray(prepared.work_mesh.vertex_global_ids, dtype=np.int64)
+    published_stencils = tuple(
+        tuple((int(source_ids[row]), weight) for row, weight in stencil)
+        for stencil in work_stencils
+    )
+    published_state = _published_state(
+        local_outcome, chart_points, chart_metric, published_stencils
+    )
+    return evidence, published_state
+
+
 def _physical_edit(
     prepared: SurfaceMetricSource,
     local_outcome: LocalMetricOutcome,
     /,
-) -> tuple[CellTopologyEdit, np.ndarray, SurfaceMetricGeometryWitness, LocalMetricEvidence, _State]:
+) -> tuple[
+    CellTopologyEdit,
+    np.ndarray,
+    SurfaceMetricGeometryWitness,
+    LocalMetricEvidence,
+    _State,
+]:
+    """Assemble ordered physical identities, lineage and source witnesses together.
+
+    Reindexing affects every published field, so this assembly retains one ordered
+    owner; geometric primitives and final metric acceptance are delegated.
+    """
     local_edit = local_outcome.edit
     local_blocks = tuple(
         block for block in local_edit.blocks if isinstance(block, TopologyEditBlock)
@@ -2008,7 +2135,8 @@ def _physical_edit(
     local_uv = _exact_target_chart(prepared, local_stencils)
     local_carriers = np.asarray(local_edit.coordinates, dtype=np.float64)
     if local_carriers.shape != (len(local_uv), 2) or not np.array_equal(
-        local_carriers, np.asarray([[float(value) for value in point] for point in local_uv])
+        local_carriers,
+        np.asarray([[float(value) for value in point] for point in local_uv]),
     ):
         raise ValueError(
             "A surface metric target carrier does not canonically round its exact source stencil."
@@ -2150,101 +2278,23 @@ def _physical_edit(
             metric_weights[row, column] = float(weight)
     target_metric = np.asarray(
         _constant_preserving_metric_mean(
-            jnp.asarray(prepared.physical_metric[metric_rows]), jnp.asarray(metric_weights)
+            jnp.asarray(prepared.physical_metric[metric_rows]),
+            jnp.asarray(metric_weights),
         ),
         dtype=np.float64,
     )
-    # Publication may project chart points or synchronize periodic stencils.
-    # Measure the published physical tensor pulled back at those final charts,
-    # rather than inheriting the local optimizer's pre-publication measurement.
-    chart_points = np.asarray([[float(value) for value in point] for point in target_uv])
-    chart_metric = _pullback_metrics(
-        prepared.domain, vertex_patches, chart_points, target_metric[work_to_physical_row]
-    )
-    if work_target.periodic_topology is not None:
-        vertex_map = periodic_entity_orbit_map(work_target, 0)
-        vertex_orbits = np.asarray(vertex_map.lifted_to_quotient, dtype=np.int64)
-        vertex_representatives = np.asarray(
-            vertex_map.representative_lifted_rows, dtype=np.int64
-        )
-        windings = np.asarray(vertex_map.winding_shifts, dtype=np.int64)
-        for row, orbit in enumerate(vertex_orbits):
-            representative = int(vertex_representatives[orbit])
-            if row != representative:
-                transform = exact_periodic_element(
-                    work_target.periodic_topology.cell,
-                    windings[row] - windings[representative],
-                )
-                chart_metric[row] = _exact_periodic_metric(transform, chart_metric[representative])
-    edges, _, _, _, cell_edges = _edge_table(local_cells)
-    protected = {
-        tuple(int(value) for value in key) for key in local_outcome.protected_edge_keys
-    }
-    measured = np.asarray(
-        [
-            tuple(sorted((int(target_ids[a]), int(target_ids[b])))) not in protected
-            for a, b in edges
-        ],
-        dtype=np.bool_,
-    )
-    lengths = _metric_lengths(chart_metric, chart_points, edges)
-    if work_target.periodic_topology is not None:
-        edge_map = periodic_entity_orbit_map(work_target, 1)
-        target_rows = key_rows(
-            entity_keys(work_target, 1), np.sort(target_ids[edges], axis=1)
-        )
-        if np.any(target_rows < 0):
-            raise ValueError("Published periodic chart lost a lifted edge.")
-        state_rows = np.empty((edges.shape[0],), dtype=np.int64)
-        state_rows[target_rows] = np.arange(edges.shape[0])
-        representatives = state_rows[
-            np.asarray(edge_map.representative_lifted_rows, dtype=np.int64)
-        ]
-        orbits = np.asarray(edge_map.lifted_to_quotient, dtype=np.int64)[target_rows]
-        lengths = lengths[representatives[orbits]]
-    selected = lengths[measured] if np.any(measured) else lengths
-    inside = (selected >= _LOWER) & (selected <= _UPPER)
-    previous = local_outcome.evidence
-    converged = bool(np.all(inside))
-    unchanged = (
-        work_stencils == local_stencils
-        and np.array_equal(chart_points, local_edit.coordinates)
-        and np.array_equal(chart_metric, local_outcome.metric)
-    )
-    evidence = LocalMetricEvidence(
-        passes=previous.passes,
-        splits=previous.splits,
-        collapses=previous.collapses,
-        flips=previous.flips,
-        relocations=previous.relocations,
-        rejected_uncertain=previous.rejected_uncertain,
-        rejected_invalid=previous.rejected_invalid,
-        converged=converged,
-        stalled=not converged and (
-            (previous.stalled and unchanged)
-            or (not previous.topology_operations and not previous.relocation)
-        ),
-        measured_edges=selected.size,
-        out_of_range_edges=int(np.count_nonzero(~inside)),
-        minimum_metric_length=float(np.min(selected)),
-        maximum_metric_length=float(np.max(selected)),
-        unit_fraction=float(np.count_nonzero(inside) / selected.size),
-        minimum_metric_quality=float(np.min(_quality(lengths[cell_edges]))),
-        topology_operations=previous.topology_operations,
-        relocation=previous.relocation,
-        predicate_mode=previous.predicate_mode,
-        stalled_edges=(
-            previous.stalled_edges if previous.stalled and not converged and unchanged else ()
-        ),
-    )
-
-    source_ids = np.asarray(prepared.work_mesh.vertex_global_ids, dtype=np.int64)
-    published_stencils = tuple(
-        tuple((int(source_ids[row]), weight) for row, weight in stencil)
-        for stencil in work_stencils
-    )
-    published_state = _published_state(
-        local_outcome, chart_points, chart_metric, published_stencils
+    evidence, published_state = _remeasure_publication(
+        prepared,
+        local_outcome,
+        work_target,
+        target_uv,
+        vertex_patches,
+        target_metric,
+        work_to_physical_row,
+        local_cells,
+        target_ids,
+        work_stencils,
+        local_stencils,
     )
 
     vertex_order = np.argsort(physical_ids, kind="stable")
@@ -2518,7 +2568,9 @@ class _PullbackField:
         coefficients[:, 0] = 1.0
         coefficients[:count] = weights
         physical = np.asarray(
-            _constant_preserving_metric_mean(jnp.asarray(samples), jnp.asarray(coefficients)),
+            _constant_preserving_metric_mean(
+                jnp.asarray(samples), jnp.asarray(coefficients)
+            ),
             dtype=np.float64,
         )[:count]
         return _pullback_metrics(
@@ -2570,7 +2622,12 @@ def execute_surface_metric_adaptation(
         metric_field=_pullback_field(source) if np.any(collapsed) else None,
         exact_source_points=source.work_vertex_charts,
     )
-    seen: set[tuple[bytes, bytes, bytes, bytes]] = set()
+    # Brent checkpoints retain one numerical publication state. A cycle stops at
+    # executed chart/tensor resolution; it proves neither exact-source equality
+    # nor infeasibility. The current exact witnesses remain on the returned state.
+    checkpoint: tuple[bytes, bytes, bytes, bytes] | None = None
+    checkpoint_span = 1
+    checkpoint_age = 0
     while True:
         edit, target_metric, geometry, evidence, published = _physical_edit(source, local)
         if evidence.converged or evidence.stalled or evidence.rejected_uncertain:
@@ -2584,17 +2641,32 @@ def execute_surface_metric_adaptation(
             final_ids[published.cells].tobytes(),
             local.protected_edge_keys.tobytes(),
         )
-        if signature in seen:
+        if signature == checkpoint:
             break
-        seen.add(signature)
+        if checkpoint is None or checkpoint_age == checkpoint_span:
+            if checkpoint is not None:
+                checkpoint_span *= 2
+            checkpoint = signature
+            checkpoint_age = 0
+        checkpoint_age += 1
         old = local.evidence
         counts = _Counts(
-            old.splits, old.collapses, old.flips, old.relocations,
-            old.rejected_uncertain, old.rejected_invalid,
+            old.splits,
+            old.collapses,
+            old.flips,
+            old.relocations,
+            old.rejected_uncertain,
+            old.rejected_invalid,
         )
         local = _resume_local_metric_adaptation(
-            source.work_mesh, local.source, published, predicate_mode,
-            topology_operations, relocation, counts, old.passes,
+            source.work_mesh,
+            local.source,
+            published,
+            predicate_mode,
+            topology_operations,
+            relocation,
+            counts,
+            old.passes,
         )
     if evidence.converged:
         status = SurfaceMetricStatus.COMPLETE

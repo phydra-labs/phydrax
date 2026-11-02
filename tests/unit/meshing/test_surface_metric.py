@@ -394,11 +394,15 @@ def test_open_trimmed_sheet_metric_statistics_match_independent_pullback(
     assert outcome.evidence.unit_fraction == pytest.approx(
         float(np.mean((measured >= lower) & (measured <= upper)))
     )
-    assert outcome.out_of_range_edges == int(np.count_nonzero((measured < lower) | (measured > upper)))
+    assert outcome.out_of_range_edges == int(
+        np.count_nonzero((measured < lower) | (measured > upper))
+    )
     assert outcome.status is (
-        SurfaceMetricStatus.COMPLETE if np.all((measured >= lower) & (measured <= upper))
+        SurfaceMetricStatus.COMPLETE
+        if np.all((measured >= lower) & (measured <= upper))
         else SurfaceMetricStatus.STALLED
     )
+
 
 def test_surface_relocation_without_operations_does_not_claim_unit_mesh(
     _trimmed_sheet: tuple[MeshingDomain, CellMeshingResult],
@@ -436,9 +440,11 @@ def test_surface_relocation_without_operations_does_not_claim_unit_mesh(
     assert result.status is MeshAdaptationStatus.STALLED
 
 
+@pytest.mark.parametrize("publication_period", (1, 3), ids=("fixed", "cycle"))
 def test_surface_publication_rechecks_final_metric_band(
     _trimmed_sheet: tuple[MeshingDomain, CellMeshingResult],
     monkeypatch: pytest.MonkeyPatch,
+    publication_period: int,
 ) -> None:
     _, source = _trimmed_sheet
     assert source.surface_source is not None
@@ -447,18 +453,25 @@ def test_surface_publication_rechecks_final_metric_band(
     )
     local_execute = surface_metric.execute_local_metric_adaptation
     pullback = surface_metric._pullback_metrics
+    publication_index = 0
+
+    def published_pullback(*values: Any) -> np.ndarray:
+        nonlocal publication_index
+        scale = 1.0e6 * (1 + publication_index % publication_period)
+        publication_index += 1
+        return scale * pullback(*values)
 
     def perturb_after_local(*args: Any, **kwargs: Any) -> Any:
         local = local_execute(*args, **kwargs)
-        monkeypatch.setattr(
-            surface_metric, "_pullback_metrics", lambda *values: 1.0e6 * pullback(*values)
-        )
+        monkeypatch.setattr(surface_metric, "_pullback_metrics", published_pullback)
         monkeypatch.setattr(
             surface_metric, "_resume_local_metric_adaptation", lambda *values: local
         )
         return local
 
-    monkeypatch.setattr(surface_metric, "execute_local_metric_adaptation", perturb_after_local)
+    monkeypatch.setattr(
+        surface_metric, "execute_local_metric_adaptation", perturb_after_local
+    )
     outcome = execute_surface_metric_adaptation(
         prepared,
         predicate_mode=PredicateMode.EXACT,

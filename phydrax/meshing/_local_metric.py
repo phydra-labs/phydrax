@@ -728,7 +728,9 @@ def _interpolate_metrics(values: np.ndarray, weights: np.ndarray, /) -> np.ndarr
     coefficients = np.zeros((capacity, values.shape[1]), dtype=np.float64)
     coefficients[:, 0] = 1.0
     coefficients[:count] = weights
-    result = _constant_preserving_metric_mean(jnp.asarray(tensors), jnp.asarray(coefficients))
+    result = _constant_preserving_metric_mean(
+        jnp.asarray(tensors), jnp.asarray(coefficients)
+    )
     return np.asarray(result, dtype=np.float64)[:count].copy()
 
 
@@ -6730,8 +6732,12 @@ def _resume_local_metric_adaptation(
         stalled_edges,
     )
     _, _, final_ids = _target_order(state)
-    protected_edge_keys = np.sort(final_ids[topology.edges[topology.edge_protected]], axis=1)
-    return LocalMetricOutcome(edit, target_metric, evidence, protected_edge_keys, state, source)
+    protected_edge_keys = np.sort(
+        final_ids[topology.edges[topology.edge_protected]], axis=1
+    )
+    return LocalMetricOutcome(
+        edit, target_metric, evidence, protected_edge_keys, state, source
+    )
 
 
 def _published_state(
@@ -6746,7 +6752,10 @@ def _published_state(
     order, _, _ = _target_order(state)
     width = max(state.source_stencil_weights.shape[1], *(len(row) for row in stencils))
     sources, weights, valid = _pad_stencil_columns(
-        state.source_stencil_sources, state.source_stencil_weights, state.source_stencil_valid, width
+        state.source_stencil_sources,
+        state.source_stencil_weights,
+        state.source_stencil_valid,
+        width,
     )
     sources, weights, valid = sources.copy(), weights.copy(), valid.copy()
     exact = list(state.source_stencil_exact)
