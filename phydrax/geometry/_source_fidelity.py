@@ -118,6 +118,11 @@ type _ImplicitTriangleKey = tuple[
     _RootCellKey, tuple[_RootEdgeKey, _RootEdgeKey, _RootEdgeKey]
 ]
 
+def _triangle_chart(chart: tuple[Point2, ...], /) -> Triangle2:
+    if len(chart) != 3:
+        raise ValueError("Triangle source chart must contain exactly three points.")
+    return chart[0], chart[1], chart[2]
+
 
 def _root_edge_key(points: np.ndarray, /) -> _RootEdgeKey:
     if points.shape != (2, 3):
@@ -487,9 +492,11 @@ def _partition_findings(
         ):
             # Partition the exact parameter polygon for the existing triangle
             # intersection proof; the physical target remains a quadrilateral.
+            if len(chart) != 4:
+                raise ValueError("Quadrilateral source chart must contain four points.")
             triangles = ((chart[0], chart[1], chart[2]), (chart[0], chart[2], chart[3]))
         else:
-            triangles = (chart,)
+            triangles = (_triangle_chart(chart),)
         target_triangles.setdefault(int(patch), []).extend(triangles)
     findings: list[MeshCertificateFinding] = []
     if isinstance(witness, SurfaceChartWitness) and set(target_triangles) <= set(
@@ -1381,7 +1388,7 @@ def _chart_point_tables(
     geometry: CellGeometrySpec,
     /,
 ) -> tuple[
-    dict[int, tuple[int, int, tuple[int, Triangle2]]],
+    dict[int, tuple[int, int, tuple[int, tuple[Point2, ...]]]],
     tuple[int, ...],
     tuple[int, ...],
     tuple[tuple[str, ...], ...],
@@ -1441,7 +1448,7 @@ def _chart_point_tables(
             )
         patch_ids[witness_row] = patch
         occurrence_by_id[cell_id] = expected_path
-    by_id: dict[int, tuple[int, Triangle2]] = {
+    by_id: dict[int, tuple[int, tuple[Point2, ...]]] = {
         cell_id: (witness_patches[row], witness_charts[row])
         for row, cell_id in enumerate(witness_ids)
     }
@@ -1449,7 +1456,7 @@ def _chart_point_tables(
     rows = tuple(
         cell_id for cell_id in mesh_cells if by_id[cell_id][0] in selected_patches
     )
-    output: dict[int, tuple[int, int, tuple[int, Triangle2]]] = {
+    output: dict[int, tuple[int, int, tuple[int, tuple[Point2, ...]]]] = {
         cell_id: (mesh_cells[cell_id][0], mesh_cells[cell_id][1], by_id[cell_id])
         for cell_id in rows
     }
@@ -6019,7 +6026,7 @@ def certify_source_fidelity(
         witness_ids, witness_patches, witness_charts, strict=True
     ):
         if cell_id in selected_cells:
-            by_patch.setdefault(patch, []).append((cell_id, chart))
+            by_patch.setdefault(patch, []).append((cell_id, _triangle_chart(chart)))
     for patch, chart_rows in by_patch.items():
         surface = domain_source.domain.patches[patch].surface
         from ._meshing_domain import _outward_surface_parameter_box
