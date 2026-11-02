@@ -839,8 +839,10 @@ def _cad_trim_reference_loops_prepared(
     preparation.require(domain)
     junctions = _rooted_patch_chart_junctions(domain, patch, preparation)
     endpoints = tuple(
-        tuple((loop[slot - 1].representative, junction.representative)
-              for slot, junction in enumerate(loop))
+        tuple(
+            (loop[slot - 1].representative, junction.representative)
+            for slot, junction in enumerate(loop)
+        )
         for loop in junctions
     )
     patch_by_cell = {
@@ -918,11 +920,19 @@ def _cad_trim_reference_loops_prepared(
                 )
             for record, canonical_first, canonical_last in ordered:
                 canonical_first = _cad_pole_lens_endpoint(
-                    charts, patch, loop_index, use_index, canonical_first,
+                    charts,
+                    patch,
+                    loop_index,
+                    use_index,
+                    canonical_first,
                     record.parameters[0],
                 )
                 canonical_last = _cad_pole_lens_endpoint(
-                    charts, patch, loop_index, use_index, canonical_last,
+                    charts,
+                    patch,
+                    loop_index,
+                    use_index,
+                    canonical_last,
                     record.parameters[1],
                 )
                 p0, p1 = record.parameters
@@ -1466,7 +1476,11 @@ def _cad_target_root_partition(
                 ]
                 if len(matches) > 1 and patch_rows[row] in plane_patches:
                     plane = planes[patch_rows[row]]
-                    target_slots = tuple(row_targets.index(vertex) for vertex in endpoints)
+                    first_endpoint, last_endpoint = endpoints
+                    target_slots = (
+                        row_targets.index(first_endpoint),
+                        row_targets.index(last_endpoint),
+                    )
                     sided = []
                     for candidate in matches:
                         incidence = [
@@ -1478,14 +1492,24 @@ def _cad_target_root_partition(
                             continue
                         _, slot, first_uv, last_uv = incidence[0]
                         first_uv = _cad_pole_lens_endpoint(
-                            charts, patch_rows[row], candidate.loop_index,
-                            candidate.use_index, first_uv, candidate.parameters[0],
+                            charts,
+                            patch_rows[row],
+                            candidate.loop_index,
+                            candidate.use_index,
+                            first_uv,
+                            candidate.parameters[0],
                         )
                         last_uv = _cad_pole_lens_endpoint(
-                            charts, patch_rows[row], candidate.loop_index,
-                            candidate.use_index, last_uv, candidate.parameters[1],
+                            charts,
+                            patch_rows[row],
+                            candidate.loop_index,
+                            candidate.use_index,
+                            last_uv,
+                            candidate.parameters[1],
                         )
-                        root = charts.root_parameter_chart(root_rows[candidate.root_cell_id])
+                        root = charts.root_parameter_chart(
+                            root_rows[candidate.root_cell_id]
+                        )
                         if _cad_plane_seam_side(
                             plane,
                             root,

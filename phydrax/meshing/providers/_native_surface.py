@@ -202,6 +202,7 @@ def _accepted_source_splits(
         accepted.setdefault(proposal.curve, set()).add(proposal.parameter)
     return accepted
 
+
 @dataclass(slots=True)
 class _ChartMesh:
     patch: int
@@ -697,10 +698,10 @@ def _use_chart_point(
         return Fraction.from_float(float(uv[0])), Fraction.from_float(float(uv[1]))
     origin, direction = chart
     values = tuple(
-        origin[axis] + direction[axis] * native_exact
-        if isinstance(origin[axis], Fraction)
+        coordinate + slope * native_exact
+        if isinstance(coordinate, Fraction)
         else Fraction.from_float(float(uv[axis]))
-        for axis in range(2)
+        for axis, (coordinate, slope) in enumerate(zip(origin, direction, strict=True))
     )
     return values[0], values[1]
 
@@ -1117,7 +1118,9 @@ def _shared_affine_seam_proposals(
     from phydrax.geometry.brep._trim_helpers import period_offset
 
     groups: dict[tuple[int, Fraction, Fraction], list[int]] = {}
-    for row, (curve, pair) in enumerate(zip(segment_curves, segment_parameters, strict=True)):
+    for row, (curve, pair) in enumerate(
+        zip(segment_curves, segment_parameters, strict=True)
+    ):
         if curve < 0:
             continue
         lower, upper = sorted(pair)
@@ -1130,14 +1133,17 @@ def _shared_affine_seam_proposals(
         if segment_parameters[first_row] != segment_parameters[second_row][::-1]:
             continue
         first_occurrence, second_occurrence = (
-            segment_occurrences[first_row], segment_occurrences[second_row]
+            segment_occurrences[first_row],
+            segment_occurrences[second_row],
         )
         if first_occurrence == second_occurrence or any(
             occurrence[0] != patch for occurrence in (first_occurrence, second_occurrence)
         ):
             continue
         first_use = domain.patches[patch].loops[first_occurrence[1]][first_occurrence[2]]
-        second_use = domain.patches[patch].loops[second_occurrence[1]][second_occurrence[2]]
+        second_use = domain.patches[patch].loops[second_occurrence[1]][
+            second_occurrence[2]
+        ]
         if (
             not isinstance(first_use, domain_owner.PatchCurveUse)
             or not isinstance(second_use, domain_owner.PatchCurveUse)
@@ -1164,7 +1170,9 @@ def _shared_affine_seam_proposals(
             or domain.patches[patch].surface.native_period_symbols()[fixed] != "two_pi"
         ):
             continue
-        difference = chart_add(first_origin[fixed], chart_scale(second_origin[fixed], Fraction(-1)))
+        difference = chart_add(
+            first_origin[fixed], chart_scale(second_origin[fixed], Fraction(-1))
+        )
         if difference not in (
             period_offset(Fraction(0), Fraction(1)),
             period_offset(Fraction(0), Fraction(-1)),
@@ -1271,7 +1279,9 @@ def _source_curve_parameters(
                 else canonical_proposals[vertex]
             )
             if not min(low, high) < value < max(low, high):
-                raise ValueError("A CDT split is outside its exact source parent interval.")
+                raise ValueError(
+                    "A CDT split is outside its exact source parent interval."
+                )
             result[(vertex, curve)] = value
             return value
 
@@ -1458,7 +1468,9 @@ def _chart_cdt_scale(
     """
     from phydrax.geometry.brep._patches import surface_differential
 
-    center = np.min(points, axis=0) + 0.5 * (np.max(points, axis=0) - np.min(points, axis=0))
+    center = np.min(points, axis=0) + 0.5 * (
+        np.max(points, axis=0) - np.min(points, axis=0)
+    )
     differential = np.asarray(
         surface_differential(domain.patches[patch].surface, jnp.asarray(center)),
         dtype=np.float64,
@@ -1530,14 +1542,15 @@ def _make_chart_mesh(
     scale = _chart_cdt_scale(domain, patch, point_array)
     scale_vector = np.asarray((scale, 1.0), dtype=np.float64)
     scaled_points = point_array * scale_vector
-    scaled_holes = None if holes is None else holes * scale_vector
-    if (
-        not np.all(np.isfinite(scaled_points))
-        or not np.array_equal(scaled_points / scale_vector, point_array)
-        or (scaled_holes is not None and (
-            not np.all(np.isfinite(scaled_holes))
-            or not np.array_equal(scaled_holes / scale_vector, holes)
-        ))
+    scaled_holes = None
+    coordinate_pairs = [(point_array, scaled_points)]
+    if holes is not None:
+        scaled_holes = holes * scale_vector
+        coordinate_pairs.append((holes, scaled_holes))
+    if any(
+        not np.all(np.isfinite(scaled))
+        or not np.array_equal(scaled / scale_vector, original)
+        for original, scaled in coordinate_pairs
     ):
         # Scaling is only a conditioning choice.  If it cannot preserve every
         # input exactly, run the unchanged chart rather than reject the source.
@@ -1631,7 +1644,9 @@ def _make_chart_mesh(
         lower, upper = sorted(parent_parameters)
         parameter = source_parameters[(vertex, curve)]
         if not lower < parameter < upper:
-            raise ValueError("A native split proposal is outside its source parent interval.")
+            raise ValueError(
+                "A native split proposal is outside its source parent interval."
+            )
         split_proposals.append(
             _SourceSplitProposal(
                 curve, lower, upper, parameter, segment_occurrences[segment], vertex
@@ -4143,7 +4158,8 @@ def _folded_chart_edge(
                 (
                     chart.points[edges[index][0]][axis]
                     - chart.points[edges[index][1]][axis]
-                ) ** 2
+                )
+                ** 2
                 for axis in range(2)
             ),
             identities[index],
@@ -5949,12 +5965,16 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         # execution. Only authored curve-parameter sets can change across
         # synchronization rounds; retain a chart only under its exact inputs.
         patch_curves = {
-            patch: tuple(sorted({
-                use.curve
-                for loop in domain.patches[patch].loops
-                for use in loop
-                if isinstance(use, domain_owner.PatchCurveUse)
-            }))
+            patch: tuple(
+                sorted(
+                    {
+                        use.curve
+                        for loop in domain.patches[patch].loops
+                        for use in loop
+                        if isinstance(use, domain_owner.PatchCurveUse)
+                    }
+                )
+            )
             for patch in self.selected_patches
         }
         retained_charts: dict[
