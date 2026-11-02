@@ -393,6 +393,11 @@ Restricted implicit volume construction retains a host-only, object-bound
 validated embedding for subsequent coverage checks within the same operation.
 Constructing that record computes the embedding and renews local validity;
 an independently supplied embedding certificate is re-proved before reuse.
+Source-boundary chart witness chart IDs, source entity IDs and occurrence
+paths are immutable static string metadata; all numerical arrays remain dynamic
+PyTree leaves. This changes witness PyTree structure, container fingerprints and
+compilation keys: regenerate those identities rather than reusing old ones.
+The explicit source-witness identity still includes all three metadata fields.
 
 ## Virtual elements
 

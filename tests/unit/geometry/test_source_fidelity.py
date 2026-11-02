@@ -1,6 +1,8 @@
 from fractions import Fraction
 from typing import Any
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -572,6 +574,29 @@ def test_parametric_curve_fidelity_certifies_exact_map_and_refuses_omitted_sourc
         source,
         parameters=np.asarray((((0.0,), (1.0,)),), dtype=np.float64),
     )
+    leaves = jax.tree_util.tree_leaves(complete)
+    assert all(
+        any(leaf is getattr(complete, name) for leaf in leaves)
+        for name in (
+            "cell_global_ids", "entity_global_ids", "local_entity_indices",
+            "target_reference_vertices", "source_parameters", "orientations",
+            "implicit_cell_keys", "implicit_root_edge_keys", "target_face_vertex_global_ids",
+        )
+    )
+    assert all(
+        not any(isinstance(leaf, str) and leaf == item for leaf in leaves)
+        for item in (*complete.source_chart_ids, *complete.source_entity_ids)
+    )
+    compiled = eqx.filter_jit(
+        lambda value: jnp.sum(jnp.asarray(value.source_parameters) ** 2)
+    )
+    assert float(compiled(complete)) == 1.0
+    gradient = jax.grad(
+        lambda points: compiled(
+            eqx.tree_at(lambda value: value.source_parameters, complete, points)
+        )
+    )(jnp.asarray(complete.source_parameters))
+    np.testing.assert_array_equal(gradient, 2.0 * complete.source_parameters)
 
     certificate = certify_source_fidelity(
         mesh, geometry, source, tolerance=0.0, witness=complete
