@@ -379,15 +379,6 @@ def _cad_segment_incidence(
         raise TypeError(
             "CAD PLC incidence requires retained mathematical surface proofs."
         )
-    embedding.require_current(surface.mesh, surface.geometry)
-    fidelity.require_inputs(
-        surface.mesh,
-        surface.geometry,
-        surface.boundary_source,
-        tolerance=fidelity_tolerance,
-        maximum_normal_deviation=maximum_normal_deviation,
-        witness=surface.chart_witness,
-    )
     if embedding.status != "certified" or fidelity.status != "certified":
         raise ValueError(
             "CAD PLC surface embedding and source fidelity must be certified."
@@ -403,6 +394,18 @@ def _cad_segment_incidence(
         fresh_fidelity, fidelity
     ):
         raise ValueError("CAD PLC mathematical proofs differ from their source replay.")
+    # The retained archive graph may still contain column recipes.  Its exact
+    # projected content has just matched the freshly constructed proofs, whose
+    # own currentness checks operate on the restored scientific owners.
+    fresh_embedding.require_current(surface.mesh, surface.geometry)
+    fresh_fidelity.require_inputs(
+        surface.mesh,
+        surface.geometry,
+        surface.boundary_source,
+        tolerance=fidelity_tolerance,
+        maximum_normal_deviation=maximum_normal_deviation,
+        witness=surface.chart_witness,
+    )
     curve_ancestry = validate_cad_curve_ancestry(surface, fidelity_tolerance)
     if set(int(value) for value in segment_edge_ids) != set(curve_ancestry):
         raise ValueError(

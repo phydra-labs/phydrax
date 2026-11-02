@@ -91,11 +91,9 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
     """Compare canonical recipes and array payloads, streaming fidelity fields."""
     import numpy as np
 
-    if type(left) is not type(right):
-        return False
     from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 
-    if type(left) is SourceFidelityCertificate:
+    if type(left) is SourceFidelityCertificate and type(right) is SourceFidelityCertificate:
         from ._archive_layer_columns import _COLUMNS, _encode_column
 
         columns = _COLUMNS["SourceFidelityCertificate"]
@@ -110,6 +108,8 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
         return True
     left = model_archive_root_projection(left)
     right = model_archive_root_projection(right)
+    if type(left) is not type(right):
+        return False
     recipe = model_structure_recipe(left)
     if _canonical_recipe_payload(recipe) != _canonical_recipe_payload(
         model_structure_recipe(right)
