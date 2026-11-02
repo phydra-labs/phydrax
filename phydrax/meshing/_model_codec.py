@@ -99,15 +99,6 @@ def _register_model_archive_types() -> None:
     from .._identity import SemanticProvenance
     from .._model._artifacts import register_artifact_value
     from .._physical import SpatialCoordinateContract
-    from ..geometry.design._continuation import SketchContinuationReferenceArchiveRecipe
-    from ..geometry.design._reduced import (
-        _SketchDistanceRigidityWitness,
-        _SketchDistanceTriangleWitness,
-    )
-    from ..geometry.design._sketch_certificate import (
-        LineCircleConstruction,
-        TwoCircleConstruction,
-    )
     from ..discretization._axis import AxisDiscretization
     from ..discretization._axis_domain import AxisDomain
     from ..discretization._cell_complex import (
@@ -313,12 +304,21 @@ def _register_model_archive_types() -> None:
         BRepPartitionResultArchiveRecipe,
     )
     from ..geometry.brep._projection_contracts import BRepProjectionResult
+    from ..geometry.design._continuation import SketchContinuationReferenceArchiveRecipe
+    from ..geometry.design._reduced import (
+        _SketchDistanceRigidityWitness,
+        _SketchDistanceTriangleWitness,
+    )
     from ..geometry.design._schema import (
         DesignState,
         ParameterBinding,
         ParameterId,
         ParameterSchema,
         ParameterSpec,
+    )
+    from ..geometry.design._sketch_certificate import (
+        LineCircleConstruction,
+        TwoCircleConstruction,
     )
     from ..geometry.implicit._adaptive_discovery import (
         AdaptiveImplicitSurfaceArchiveRecipe,
