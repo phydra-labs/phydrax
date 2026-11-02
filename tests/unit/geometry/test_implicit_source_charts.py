@@ -1334,55 +1334,57 @@ def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof() ->
     )
 
 
-def test_implicit_chart_request_batches_preserve_full_proof_and_refusal(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("case", ("affine", "quadratic", "radical"))
+def test_face_enclosure_reuses_derivatives_without_changing_exact_bounds(
+    case: str,
 ) -> None:
-    import sys
+    from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 
-    from phydrax.geometry._surface_source_support import _same_tree_content
-
-    _, source, _, mesh, geometry, witness = _adaptive_source()
-    monkeypatch.setattr(source_charts, "_ROOT_CHART_REQUEST_BATCH", sys.maxsize)
-    all_at_once = certify_source_fidelity(
-        mesh,
-        geometry,
-        source,
-        witness=witness,
-        tolerance=0.5,
-        maximum_normal_deviation=np.pi,
+    first: source_charts.Polynomial = {
+        (0, 0): Fraction(1),
+        (1, 0): Fraction(2),
+        (0, 1): Fraction(3),
+    }
+    second: source_charts.Polynomial = {
+        (0, 0): Fraction(-1),
+        (1, 0): Fraction(1),
+    }
+    third: source_charts.Polynomial = {(0, 1): Fraction(1)}
+    if case == "quadratic":
+        first[(2, 0)] = Fraction(1, 7)
+        second[(1, 1)] = Fraction(-2, 9)
+    elif case == "radical":
+        first[(1, 0)] = RadicalElement.sqrt(2)
+        second[(0, 1)] = RadicalElement.sqrt(3)
+    expressions: source_charts.Polynomial3 = (first, second, third)
+    actual = source_charts._enclose_face(expressions)
+    bases = tuple(source_charts._enclose_polynomial(value) for value in expressions)
+    reference_tangents = tuple(
+        tuple(source_charts._enclosed_derivative(value, axis) for axis in (0, 1))
+        for value in bases
     )
-    invalid = eqx.tree_at(
-        lambda value: value.orientations,
-        witness,
-        -np.asarray(witness.orientations),
-    )
-    with pytest.raises(ValueError) as whole_refusal:
-        certify_source_fidelity(
-            mesh,
-            geometry,
-            source,
-            witness=invalid,
-            tolerance=0.5,
-            maximum_normal_deviation=np.pi,
+    reference_curvatures = tuple(
+        (
+            source_charts._enclosed_derivative(tangent[0], 0),
+            source_charts._enclosed_derivative(tangent[0], 1),
+            source_charts._enclosed_derivative(tangent[1], 1),
         )
-    monkeypatch.setattr(source_charts, "_ROOT_CHART_REQUEST_BATCH", 1)
-    partitioned = certify_source_fidelity(
-        mesh,
-        geometry,
-        source,
-        witness=witness,
-        tolerance=0.5,
-        maximum_normal_deviation=np.pi,
+        for tangent in reference_tangents
     )
-    with pytest.raises(ValueError) as batch_refusal:
-        certify_source_fidelity(
-            mesh,
-            geometry,
-            source,
-            witness=invalid,
-            tolerance=0.5,
-            maximum_normal_deviation=np.pi,
-        )
-    assert _same_tree_content(all_at_once, partitioned)
-    assert all_at_once.certificate_id == partitioned.certificate_id
-    assert str(whole_refusal.value) == str(batch_refusal.value)
+    for actual_rows, reference_rows in (
+        (actual.tangents, reference_tangents),
+        (actual.curvatures, reference_curvatures),
+    ):
+        for actual_row, reference_row in zip(actual_rows, reference_rows, strict=True):
+            for observed, expected in zip(actual_row, reference_row, strict=True):
+                assert observed.center == expected.center
+                assert observed.radii == expected.radii
+                assert observed.error == expected.error
+                assert source_charts._enclosed_interval(
+                    observed, source_charts._STANDARD_TRIANGLE
+                ) == source_charts._enclosed_interval(
+                    expected, source_charts._STANDARD_TRIANGLE
+                )
+    if case == "affine":
+        zero = actual.curvatures[0][0]
+        assert all(value is zero for row in actual.curvatures for value in row)

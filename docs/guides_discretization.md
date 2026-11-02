@@ -382,9 +382,6 @@ the target may inherit parent upper bounds only after exact chart correspondence
 and an oriented tiling proof; this route records distinct restriction evidence.
 Changed or projected chart rows are proved anew. Cold replay renews the parent
 proof and exact transition before replaying the restriction theorem.
-Implicit chart interval requests are evaluated in ordered workspace batches;
-every requested box and proof round remains present. Retained face generators
-and proof outputs still scale with the number of chart rows.
 Repeated immutable reference charts and witness rows share call-local storage;
 affine simplex embedding reads exact corner frames without retaining per-cell
 polynomials. For rational metric edits, authored exact stencil images remain
