@@ -6238,6 +6238,16 @@ def _validate_source_shadows(
             (value.radius, value.radius_exact, "CylinderPatch.radius"),
         ):
             _require_exact_numeric_shadow(numeric, exact, role)
+    elif isinstance(value, TorusPatch):
+        for numeric, exact, role in (
+            (value.center, value.center_exact, "TorusPatch.center"),
+            (value.first_axis, value.first_axis_exact, "TorusPatch.first_axis"),
+            (value.second_axis, value.second_axis_exact, "TorusPatch.second_axis"),
+            (value.axis, value.axis_exact, "TorusPatch.axis"),
+            (value.major_radius, value.major_radius_exact, "TorusPatch.major_radius"),
+            (value.minor_radius, value.minor_radius_exact, "TorusPatch.minor_radius"),
+        ):
+            _require_exact_numeric_shadow(numeric, exact, role)
     elif isinstance(value, BSplineSurfacePatch):
         for numeric, exact, role in (
             (

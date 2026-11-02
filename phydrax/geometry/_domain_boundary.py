@@ -49,7 +49,12 @@ from ._source_boundary_records import (
 )
 from ._triangulation import ConstrainedDelaunayTriangulation
 from .brep._model import BRepModel
-from .brep._patches import AbstractSurfacePatch, CircleCurve, ExactLineCurve, LineCurve
+from .brep._patches import (
+    AbstractSurfacePatch,
+    CircleCurve,
+    ExactLineCurve,
+    LineCurve,
+)
 
 
 _Point2 = tuple[Fraction, Fraction]
@@ -844,6 +849,7 @@ class _ChartedPatch(NamedTuple):
     surface: AbstractSurfacePatch
     exact_surface: tuple[Polynomial, ...] | None
     exact_spans: PreparedSourceSpans[RationalBSplineSurfaceSpan] | None
+    source_torus: bool
     uv_points: tuple[_Point2, ...]
     exact_charts: tuple[_Triangle2, ...]
     uv_triangles: np.ndarray
@@ -1984,6 +1990,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         from ._source_interpolation import (
             _exact_rational_span_interpolation_bounds,
             _exact_surface_interpolation_bound,
+            _has_torus_source_program,
             _has_unexpanded_exact_surface_carrier,
             exact_surface_coordinate_expressions,
         )
@@ -2002,6 +2009,26 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             else:
                 exact_surface_failed = False
 
+            source_torus = False
+            if (
+                exact_surface is None
+                and not exact_surface_failed
+                and _has_torus_source_program(surface)
+            ):
+                try:
+                    preparation.derivative_program(surface, 0)
+                    preparation.derivative_program(surface, 2)
+                except (
+                    ArithmeticError,
+                    FloatingPointError,
+                    NotImplementedError,
+                    TypeError,
+                    ValueError,
+                ):
+                    pass
+                else:
+                    source_torus = True
+
             exact_spans = None
             if exact_surface is None and not exact_surface_failed:
                 try:
@@ -2013,8 +2040,11 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 or (
                     exact_spans is None
                     and (
-                        not _source_coefficients_are_binary(surface)
-                        or _has_unexpanded_exact_surface_carrier(surface)
+                        not source_torus
+                        and (
+                            not _source_coefficients_are_binary(surface)
+                            or _has_unexpanded_exact_surface_carrier(surface)
+                        )
                     )
                 )
             ):
@@ -2065,6 +2095,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     surface,
                     exact_surface,
                     exact_spans,
+                    source_torus,
                     chart[0],
                     exact_charts,
                     uv_triangles,
@@ -2093,6 +2124,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             surface = entry.surface
             exact_surface = entry.exact_surface
             exact_spans = entry.exact_spans
+            source_torus = entry.source_torus
             uv_points = entry.uv_points
             exact_charts = entry.exact_charts
             uv_triangles = entry.uv_triangles
@@ -2104,6 +2136,91 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                         interpolation = _exact_rational_span_interpolation_bounds(
                             exact_spans, exact_charts
                         )
+                    elif source_torus:
+                        from ._meshing_domain import _outward_surface_parameter_box
+
+                        cells = []
+                        for exact_chart in exact_charts:
+                            lower = tuple(
+                                fraction_down(min(point[axis] for point in exact_chart))
+                                for axis in range(2)
+                            )
+                            upper = tuple(
+                                fraction_up(max(point[axis] for point in exact_chart))
+                                for axis in range(2)
+                            )
+                            cells.append(
+                                (lower, (upper[0], lower[1]), upper, (lower[0], upper[1]))
+                            )
+                        interpolation = self.domain.interpolation_bounds(
+                            patch,
+                            np.asarray(cells, dtype=np.float64),
+                            preparation=preparation,
+                        )
+                        if interpolation.shape != (len(exact_charts),) or not np.all(
+                            np.isfinite(interpolation)
+                        ):
+                            raise ValueError(
+                                "Exact torus Hessian bounds are unavailable."
+                            )
+                        for row, exact_chart in enumerate(exact_charts):
+                            endpoint_error = Fraction(0)
+                            for corner, point in enumerate(exact_chart):
+                                lower = tuple(fraction_down(value) for value in point)
+                                upper = tuple(fraction_up(value) for value in point)
+                                parameter_box = _outward_surface_parameter_box(
+                                    surface, lower, upper
+                                )
+                                if any(
+                                    Fraction.from_float(float(parameter_box[0, axis]))
+                                    > point[axis]
+                                    or Fraction.from_float(float(parameter_box[1, axis]))
+                                    < point[axis]
+                                    for axis in range(2)
+                                ):
+                                    raise ValueError(
+                                        "Torus point lies outside its source chart."
+                                    )
+                                box = preparation.surface_box(surface, parameter_box)
+                                if (
+                                    box.shape != (2, 3)
+                                    or not np.all(np.isfinite(box))
+                                    or np.any(box[0] > box[1])
+                                    or not np.all(np.isfinite(physical[row, corner]))
+                                ):
+                                    raise ValueError(
+                                        "Exact torus source point box is unavailable."
+                                    )
+                                squared = sum(
+                                    (
+                                        max(
+                                            abs(
+                                                Fraction.from_float(float(box[0, axis]))
+                                                - Fraction.from_float(
+                                                    float(physical[row, corner, axis])
+                                                )
+                                            ),
+                                            abs(
+                                                Fraction.from_float(float(box[1, axis]))
+                                                - Fraction.from_float(
+                                                    float(physical[row, corner, axis])
+                                                )
+                                            ),
+                                        )
+                                        ** 2
+                                        for axis in range(3)
+                                    ),
+                                    Fraction(0),
+                                )
+                                endpoint_error = max(
+                                    endpoint_error, fraction_sqrt_interval(squared)[1]
+                                )
+                            interpolation[row] = fraction_endpoint(
+                                Fraction.from_float(float(interpolation[row]))
+                                + endpoint_error,
+                                upper=True,
+                                saturate=True,
+                            )
                     else:
                         interpolation = self.domain.interpolation_bounds(
                             patch, uv_triangles, preparation=preparation
@@ -2294,6 +2411,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             patch: int,
             evaluator: PreparedIntervalFunction,
             parameter: _Point2,
+            source_torus: bool,
             /,
         ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Fraction]:
             chart = np.asarray([[float(value) for value in parameter]], dtype=np.float64)
@@ -2317,8 +2435,8 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 or not np.all(np.isfinite(sample))
                 or not np.all(np.isfinite(low))
                 or not np.all(np.isfinite(high))
-                or np.any(low > sample)
-                or np.any(sample > high)
+                or np.any(low > high)
+                or (not source_torus and (np.any(low > sample) or np.any(sample > high)))
             ):
                 raise ArithmeticError(
                     "Source point has no finite enclosing representative."
@@ -2366,15 +2484,19 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 (middle_first_second, middle_second_third, middle_third_first),
             )
 
+        from ._source_interpolation import _has_torus_source_program
         from .brep._root_bindings import _source_coefficients_are_binary
 
         for patch, source_triangles in parameter_patches:
             surface = self.domain.patches[patch].surface
-            if not _source_coefficients_are_binary(surface):
+            source_torus = _has_torus_source_program(surface)
+            if not source_torus and not _source_coefficients_are_binary(surface):
                 complete = False
                 continue
             try:
                 evaluator = preparation.derivative_program(surface, 0)
+                if source_torus:
+                    preparation.derivative_program(surface, 2)
             except (ArithmeticError, NotImplementedError, TypeError, ValueError):
                 complete = False
                 continue
@@ -2383,7 +2505,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 triangle = pending.pop()
                 try:
                     vertex_data = tuple(
-                        sample_point(patch, evaluator, parameter)
+                        sample_point(patch, evaluator, parameter, source_torus)
                         for parameter in triangle
                     )
                     center_parameter = (
@@ -2391,7 +2513,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                         sum((point[1] for point in triangle), Fraction(0)) / 3,
                     )
                     center, center_lower, center_upper, point_error = sample_point(
-                        patch, evaluator, center_parameter
+                        patch, evaluator, center_parameter, source_torus
                     )
                     chart_lower = tuple(
                         fraction_down(min(point[axis] for point in triangle))

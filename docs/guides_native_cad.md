@@ -346,6 +346,12 @@ silently running through the host interpreter. Native polynomial, sine/cosine,
 square-root, and derivative programs use outward rounding and are checked
 against the host enclosure contract.
 
+Direct and affine-placed native torus charts bind outward intervals for their
+authored exact coefficients when preparing point, Jacobian, and Hessian
+programs. Source covers and interpolation fidelity also include the gap
+between exact source corner enclosures and their numerical mesh realizations;
+nonbinary radii or placements are not silently replaced by rounded shadows.
+
 One local cylinder-chart map measurement evaluated 4,096 interval boxes with
 `CylinderPatch.evaluate` at `batch_capacity=64`. After two warm-ups, the median
 of seven timed passes measured 0.681 microseconds per box on the native route

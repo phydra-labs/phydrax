@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
 
 import numpy as np
+from jax import Array
 
 from .._interpolation._bspline_extraction import (
     PreparedSourceSpans,
@@ -40,11 +42,124 @@ from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ._curve_boundary import ParametricCurveBoundarySource, SegmentChartCurve
 from ._domain_boundary import MeshingDomainBoundarySource
 from ._embedding_state import MeshCertificateFinding
-from ._interval_enclosure import IntervalExtensionError
-from ._meshing_domain import _outward_surface_parameter_box, SourcePreparation
+from ._interval_enclosure import IntervalExtensionError, PreparedIntervalFunction
+from ._meshing_domain import SourcePreparation
 from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from ._rational import fraction_endpoint, rational_vector
 from ._source_boundary_records import SourceBoundaryChartWitness
+
+
+def _has_torus_source_program(surface: object, /) -> bool:
+    """Whether the exact source program supports this direct or placed torus."""
+    from ._meshing_domain import _PlacedSurfacePatch
+    from .brep._patches import TorusPatch
+
+    return isinstance(surface, TorusPatch) or (
+        isinstance(surface, _PlacedSurfacePatch)
+        and isinstance(surface.source, TorusPatch)
+    )
+
+
+def _prepare_torus_source_program(
+    surface: object, order: int, /
+) -> PreparedIntervalFunction | None:
+    """Prepare a torus interval program with its exact source coefficients.
+
+    The numeric coefficient vector is only a JAX execution shadow. Its captured
+    interval constants enclose the authored exact scalars, including nonbinary
+    radii, so point and derivative bounds are for the source, not the shadow.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    from ._interval_enclosure import prepare_interval_function
+    from ._meshing_domain import _PlacedSurfacePatch
+    from .brep._patches import (
+        _require_exact_numeric_shadow,
+        _validate_surface_source_shadows,
+        TorusPatch,
+    )
+
+    if not _has_torus_source_program(surface):
+        return None
+    if order not in (0, 1, 2):
+        raise ValueError("Torus source interval derivative order must be 0, 1, or 2.")
+    if isinstance(surface, _PlacedSurfacePatch):
+        torus = surface.source
+        if not isinstance(torus, TorusPatch):
+            raise TypeError("A placed torus program requires a native torus source.")
+        matrix = surface.placement.matrix
+        linear = tuple(tuple(matrix[i][j] for j in range(3)) for i in range(3))
+        offset = tuple(matrix[i][3] for i in range(3))
+        _require_exact_numeric_shadow(surface.linear, linear, "Placed torus linear")
+        _require_exact_numeric_shadow(surface.offset, offset, "Placed torus offset")
+
+        def transform(
+            vector: tuple[ExactScalar, ...], *, point: bool
+        ) -> tuple[ExactScalar, ...]:
+            return tuple(
+                sum(
+                    (linear[i][j] * vector[j] for j in range(3)),
+                    offset[i] if point else Fraction(0),
+                )
+                for i in range(3)
+            )
+
+        center = transform(torus.center_exact, point=True)
+        first = transform(torus.first_axis_exact, point=False)
+        second = transform(torus.second_axis_exact, point=False)
+        axis = transform(torus.axis_exact, point=False)
+    else:
+        if not isinstance(surface, TorusPatch):
+            return None
+        torus = surface
+        center, first, second, axis = (
+            torus.center_exact,
+            torus.first_axis_exact,
+            torus.second_axis_exact,
+            torus.axis_exact,
+        )
+    _validate_surface_source_shadows(torus)
+    exact = (
+        *center,
+        *first,
+        *second,
+        *axis,
+        torus.major_radius_exact,
+        torus.minor_radius_exact,
+    )
+    if len(exact) != 14:
+        raise ValueError("Torus source coefficients must have their native dimensions.")
+    nominal = np.asarray(tuple(float(value) for value in exact), dtype=np.float64)
+    intervals = tuple(coefficient_interval(value, bits=128) for value in exact)
+    lower = np.asarray(
+        tuple(fraction_endpoint(value[0], upper=False) for value in intervals),
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        tuple(fraction_endpoint(value[1], upper=True) for value in intervals),
+        dtype=np.float64,
+    )
+    coefficients = jnp.asarray(nominal)
+
+    def evaluate(uv: Array) -> Array:
+        longitude, latitude = uv[0], uv[1]
+        radial = (
+            jnp.cos(longitude) * coefficients[3:6]
+            + jnp.sin(longitude) * coefficients[6:9]
+        )
+        return (
+            coefficients[:3]
+            + (coefficients[12] + coefficients[13] * jnp.cos(latitude)) * radial
+            + coefficients[13] * jnp.sin(latitude) * coefficients[9:12]
+        )
+
+    derivative: Callable[[Array], Array] = evaluate
+    for _ in range(order):
+        derivative = jax.jacfwd(derivative)
+    return prepare_interval_function(
+        derivative, 2, constant_bounds=((nominal, lower, upper),)
+    )
 
 
 def _exact_rational_span_interpolation_bounds(
@@ -1089,6 +1204,11 @@ def certify_domain_surface_charts(
             if exact_surface is None:
                 spans = preparation.surface_spans(surface)
                 unexpanded_exact_carrier = _has_unexpanded_exact_surface_carrier(surface)
+                if _has_torus_source_program(surface):
+                    # Both programs bind the exact coefficient intervals.
+                    preparation.derivative_program(surface, 0)
+                    preparation.derivative_program(surface, 2)
+                    unexpanded_exact_carrier = False
         except (ArithmeticError, FloatingPointError, TypeError, ValueError) as error:
             for _ in rows:
                 findings.append(

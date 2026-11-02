@@ -916,6 +916,7 @@ class SourcePreparation:
             return _placed_point_box(
                 surface.placement, self.surface_box(surface.source, parameter_box)
             )
+        from .brep._patches import TorusPatch
         from .brep._root_bindings import _exact_span_surface_box
         from .brep._tspline import TSplineSurfacePatch
 
@@ -925,6 +926,13 @@ class SourcePreparation:
             if spans is None:
                 raise RuntimeError("A spline carrier prepared no exact spans.")
             return _exact_span_surface_box(spans, box[0], box[1])
+        if isinstance(surface, TorusPatch):
+            from .brep._root_bindings import _exact_torus_patch_box
+
+            box = np.asarray(
+                surface.validate_parameter_box(parameter_box), dtype=np.float64
+            )
+            return _exact_torus_patch_box(surface, box[0], box[1])
         return np.asarray(surface.bounding_box(parameter_box), dtype=np.float64)
 
     def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
@@ -951,6 +959,12 @@ class SourcePreparation:
         entry = self._programs.get(key)
         if entry is not None:
             return entry[1]
+        from ._source_interpolation import _prepare_torus_source_program
+
+        torus_program = _prepare_torus_source_program(surface, order)
+        if torus_program is not None:
+            self._programs[key] = (surface, torus_program)
+            return torus_program
         derivative: Callable[[Array], Array] = surface.evaluate
         for _ in range(order):
             derivative = jax.jacfwd(derivative)

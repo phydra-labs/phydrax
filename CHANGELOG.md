@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Native torus source covers and fidelity now bind exact direct and
+  affine-placed coefficients in outward point and derivative interval programs,
+  including nonbinary rational radii, rather than relying on rounded shadows.
 - Array-tree fingerprints stream keyed leaves without retaining a flattened leaf
   bank. Iterative traversal keeps ancestry storage linear in tree depth and
   preserves canonical fingerprint bytes for deeply nested trees.
