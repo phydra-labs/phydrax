@@ -4132,6 +4132,7 @@ def _add_global_vertex(
     source_indices: list[int],
     source_parameters: list[tuple[float, float]],
     /,
+    chart_point: np.ndarray | None = None,
 ) -> int:
     key = _global_vertex_key(domain, chart, local_row)
     uv = chart.points[local_row]
@@ -4144,10 +4145,11 @@ def _add_global_vertex(
         source_parameter = key[2]
         assert isinstance(source_parameter, Fraction)
         point = _source_curve_point(domain, index, source_parameter)
-        chart_point = domain.evaluate(
-            np.asarray((chart.patch,), dtype=np.int64),
-            np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
-        )[0]
+        if chart_point is None:
+            chart_point = domain.evaluate(
+                np.asarray((chart.patch,), dtype=np.int64),
+                np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
+            )[0]
         allowance = max(
             domain.tolerance * domain.scale,
             64.0 * np.finfo(np.float64).eps * max(domain.scale, 1.0),
@@ -4161,10 +4163,12 @@ def _add_global_vertex(
         parameter = (float(source_parameter), math.nan)
     else:
         dimension, index = 2, chart.patch
-        point = domain.evaluate(
-            np.asarray((chart.patch,), dtype=np.int64),
-            np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
-        )[0]
+        point = chart_point
+        if point is None:
+            point = domain.evaluate(
+                np.asarray((chart.patch,), dtype=np.int64),
+                np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
+            )[0]
         parameter = (float(uv[0]), float(uv[1]))
     if not np.all(np.isfinite(point)):
         raise _failure(
@@ -4193,6 +4197,26 @@ def _add_global_vertex(
                 entity_ids=(int(index),),
             )
     return row
+
+
+def _chart_vertex_points(
+    domain: domain_owner.MeshingDomain,
+    chart: _ChartMesh,
+    rows: list[int],
+    /,
+) -> dict[int, np.ndarray]:
+    """Evaluate new non-corner chart vertices in one source batch."""
+    selected = [row for row in rows if row not in chart.corners]
+    if not selected:
+        return {}
+    points = domain.evaluate(
+        np.full(len(selected), chart.patch, dtype=np.int64),
+        np.asarray(
+            [[float(value) for value in chart.points[row]] for row in selected],
+            dtype=np.float64,
+        ),
+    )
+    return dict(zip(selected, points, strict=True))
 
 
 def _chart_triangles(
@@ -4391,6 +4415,7 @@ def _refine_charts(
     }
     local_rows: list[dict[int, int]] = []
     for chart in charts:
+        chart_points = _chart_vertex_points(domain, chart, list(range(len(chart.points))))
         local_rows.append(
             {
                 row: _add_global_vertex(
@@ -4402,6 +4427,7 @@ def _refine_charts(
                     source_dimensions,
                     source_indices,
                     source_parameters,
+                    chart_points.get(row),
                 )
                 for row in range(len(chart.points))
             }
@@ -4732,6 +4758,12 @@ def _refine_charts(
                         midpoint_parameter,
                         source_last,
                     )
+                changed = True
+                requested[edge] = local_row
+            if not requested:
+                continue
+            chart_points = _chart_vertex_points(domain, chart, list(requested.values()))
+            for local_row in requested.values():
                 mapping[local_row] = _add_global_vertex(
                     domain,
                     chart,
@@ -4741,11 +4773,8 @@ def _refine_charts(
                     source_dimensions,
                     source_indices,
                     source_parameters,
+                    chart_points.get(local_row),
                 )
-                requested[edge] = local_row
-                changed = True
-            if not requested:
-                continue
             children: list[tuple[int, int, int]] = []
             for triangle in old_triangles:
                 a, b, c = triangle
@@ -5123,7 +5152,9 @@ def _surface_construction(
     ] = []
     cell_offset = 0
     for chart, local_rows in zip(refined.charts, refined.local_rows, strict=True):
-        # A pole fan can share the same authored corner through different UV rows.
+        # A collapsed pole has several chart rows but one authored corner.
+        # A fan edge can use a different pole row from its trim edge while
+        # sharing the exact non-pole row and the same source corner.
         pole_occurrences: dict[tuple[int, int], set[tuple[int, int, int]]] = {}
         for (first, last), (_, occurrence, _, _) in chart.boundary_edges.items():
             for pole, other in ((first, last), (last, first)):
