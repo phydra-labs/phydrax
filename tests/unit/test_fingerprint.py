@@ -123,6 +123,16 @@ def test_array_fingerprint_streams_nested_exact_reference_leaves() -> None:
     assert streamed_peak < legacy_peak
 
 
+def test_array_fingerprint_supports_deep_registered_trees() -> None:
+    tree: Any = np.asarray([1, 2], dtype=np.int64)
+    for _ in range(1024):
+        tree = (tree,)
+    assert array_tree_fingerprint(tree) == _legacy(tree)
+    assert array_tree_fingerprint(tree)["sha256"] == (
+        "e8bae5d15073b6c5fdcbc893374947c109df0a03b71652ca3c022544b49a93ab"
+    )
+
+
 def test_array_fingerprint_preserves_nan_bits() -> None:
     values = np.asarray(
         [0x7FF8000000000001, 0x7FF8000000000002, 0x8000000000000000], dtype=np.uint64

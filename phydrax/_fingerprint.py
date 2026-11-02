@@ -319,25 +319,37 @@ def canonical_mapping(value: Mapping[str, Any], /) -> dict[str, Any]:
 
 def _array_records(tree: PyTree[Any], /) -> Iterator[tuple[str, np.ndarray]]:
     """Traverse keyed leaves without retaining the complete flattened path bank."""
-    def walk(node: Any, path: tuple[Any, ...], /) -> Iterator[tuple[str, np.ndarray]]:
+    node: Any = tree
+    path: tuple[Any, ...] = ()
+    parents: list[tuple[tuple[Any, ...], Iterator[tuple[Any, Any]]]] = []
+    while True:
         if jax.tree_util.is_tree_node(type(node)):
             children, _ = jax.tree_util.flatten_one_level_with_keys(node)
-            for key, child in children:
-                yield from walk(child, (*path, key))
+            parents.append((path, iter(children)))
+        else:
+            try:
+                value = np.asarray(node)
+            except (TypeError, ValueError):
+                value = None
+            if value is not None:
+                if value.dtype.hasobject:
+                    if isinstance(node, np.ndarray):
+                        raise TypeError(
+                            f"Array leaf {jax.tree_util.keystr(path) or '<root>'} has object dtype and cannot be fingerprinted."
+                        )
+                else:
+                    yield jax.tree_util.keystr(path) or "<root>", value
+        while parents:
+            parent_path, children = parents[-1]
+            try:
+                key, node = next(children)
+            except StopIteration:
+                parents.pop()
+            else:
+                path = (*parent_path, key)
+                break
+        else:
             return
-        try:
-            value = np.asarray(node)
-        except (TypeError, ValueError):
-            return
-        if value.dtype.hasobject:
-            if isinstance(node, np.ndarray):
-                raise TypeError(
-                    f"Array leaf {jax.tree_util.keystr(path) or '<root>'} has object dtype and cannot be fingerprinted."
-                )
-            return
-        yield jax.tree_util.keystr(path) or "<root>", value
-
-    yield from walk(tree, ())
 
 
 __all__ = [
