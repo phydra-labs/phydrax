@@ -13,6 +13,7 @@ the validity owner.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from functools import cache
 from typing import Any, NamedTuple
 
@@ -86,6 +87,137 @@ class CellQualityEvaluation(StrictModule):
 def _nan_extreme(values: np.ndarray, reducer: Any, /) -> float:
     finite = values[~np.isnan(values)]
     return float(reducer(finite)) if finite.size else float("nan")
+
+
+def _triangle_minimum_sine_violations(
+    coordinates: np.ndarray, triangles: np.ndarray, sine_upper: Fraction, /
+) -> np.ndarray:
+    """Decide physical triangle minimum-angle bounds on represented coordinates.
+
+    Directed interval arithmetic decides easy faces in bounded batches. An
+    undecided face is resolved over exact binary64 rationals; no uncertain
+    screen result is accepted as a proof.
+    """
+    from ..geometry._interval_enclosure import (
+        interval_add,
+        interval_multiply,
+        interval_square,
+        interval_subtract,
+        Interval,
+    )
+    from ..geometry._rational import (
+        fraction_down,
+        fraction_up,
+        rational_cross,
+        rational_dot,
+        rational_vector,
+    )
+
+    if (
+        coordinates.ndim != 2
+        or coordinates.dtype != np.dtype(np.float64)
+        or coordinates.shape[1] != 3
+        or triangles.ndim != 2
+        or not np.issubdtype(triangles.dtype, np.integer)
+        or triangles.shape[1] != 3
+        or not np.all(np.isfinite(coordinates))
+        or sine_upper < 0
+        or sine_upper > 1
+        or np.any(triangles < 0)
+        or np.any(triangles >= len(coordinates))
+    ):
+        raise ValueError(
+            "Triangle quality requires finite represented 3D points and a sine bound."
+        )
+    result = np.empty((len(triangles),), dtype=np.bool_)
+
+    def arrays(value: Interval, /) -> tuple[np.ndarray, np.ndarray]:
+        lower = np.asarray(value[0], dtype=np.float64)
+        upper = np.asarray(value[1], dtype=np.float64)
+        if lower.shape != upper.shape:
+            raise ValueError(
+                "Triangle quality interval endpoints must have matching shapes."
+            )
+        return lower, upper
+
+    def norm_squared(
+        value: tuple[np.ndarray, np.ndarray], /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        square = arrays(interval_square(value))
+        if square[0].ndim != 2 or square[0].shape[1] != 3:
+            raise ValueError("Triangle quality vectors must have three coordinates.")
+        return arrays(
+            interval_add(
+                interval_add(
+                    (square[0][:, 0], square[1][:, 0]),
+                    (square[0][:, 1], square[1][:, 1]),
+                ),
+                (square[0][:, 2], square[1][:, 2]),
+            )
+        )
+
+    sine = (
+        np.asarray(fraction_down(sine_upper), dtype=np.float64),
+        np.asarray(fraction_up(sine_upper), dtype=np.float64),
+    )
+    sine_squared = interval_square(sine)
+    for start in range(0, len(triangles), 4096):
+        stop = min(start + 4096, len(triangles))
+        points = coordinates[triangles[start:stop]]
+        first = arrays(
+            interval_subtract((points[:, 1], points[:, 1]), (points[:, 0], points[:, 0]))
+        )
+        second = arrays(
+            interval_subtract((points[:, 2], points[:, 2]), (points[:, 0], points[:, 0]))
+        )
+        third = arrays(
+            interval_subtract((points[:, 2], points[:, 2]), (points[:, 1], points[:, 1]))
+        )
+        lengths = tuple(norm_squared(edge) for edge in (first, second, third))
+        cross = arrays(
+            interval_subtract(
+                interval_multiply(
+                    (first[0][:, (1, 2, 0)], first[1][:, (1, 2, 0)]),
+                    (second[0][:, (2, 0, 1)], second[1][:, (2, 0, 1)]),
+                ),
+                interval_multiply(
+                    (first[0][:, (2, 0, 1)], first[1][:, (2, 0, 1)]),
+                    (second[0][:, (1, 2, 0)], second[1][:, (1, 2, 0)]),
+                ),
+            )
+        )
+        cross_squared = norm_squared(cross)
+        minimum = (
+            np.minimum.reduce(tuple(length[0] for length in lengths)),
+            np.minimum.reduce(tuple(length[1] for length in lengths)),
+        )
+        left = arrays(
+            interval_multiply(
+                interval_multiply(interval_multiply(lengths[0], lengths[1]), lengths[2]),
+                sine_squared,
+            )
+        )
+        right = arrays(interval_multiply(minimum, cross_squared))
+        valid = (left[1] <= right[0]) & (cross_squared[0] > 0) & (minimum[0] > 0)
+        invalid = (left[0] > right[1]) | (cross_squared[1] <= 0) | (minimum[1] <= 0)
+        result[start:stop] = invalid
+        for row in np.flatnonzero(~(valid | invalid)):
+            a, b, c = (rational_vector(point) for point in points[row])
+            first_exact = tuple(y - x for x, y in zip(a, b, strict=True))
+            second_exact = tuple(y - x for x, y in zip(a, c, strict=True))
+            third_exact = tuple(y - x for x, y in zip(b, c, strict=True))
+            exact_lengths = tuple(
+                rational_dot(edge, edge)
+                for edge in (first_exact, second_exact, third_exact)
+            )
+            normal = rational_cross(first_exact, second_exact)
+            area_squared = rational_dot(normal, normal)
+            result[start + row] = (
+                area_squared <= 0
+                or exact_lengths[0] * exact_lengths[1] * exact_lengths[2] * sine_upper**2
+                > min(exact_lengths) * area_squared
+            )
+    return result
 
 
 class CellQualityReport(StrictModule, NonTrainableState):

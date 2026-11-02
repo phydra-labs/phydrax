@@ -1607,6 +1607,30 @@ def _quality_angle_degrees(
     return np.min(np.stack(values, axis=1), axis=1)
 
 
+def _hard_angle_violations(
+    coordinates: np.ndarray,
+    triangles: np.ndarray,
+    sine_upper: Fraction,
+    cache: dict[tuple[int, int, int], bool],
+    /,
+) -> np.ndarray:
+    from phydrax.meshing._quality import _triangle_minimum_sine_violations
+
+    keys: list[tuple[int, int, int]] = []
+    for triangle in triangles:
+        first, second, third = sorted(int(value) for value in triangle)
+        keys.append((first, second, third))
+    pending = tuple(dict.fromkeys(key for key in keys if key not in cache))
+    if pending:
+        decisions = _triangle_minimum_sine_violations(
+            coordinates, np.asarray(pending, dtype=np.int64), sine_upper
+        )
+        cache.update(
+            (key, bool(value)) for key, value in zip(pending, decisions, strict=True)
+        )
+    return np.asarray([cache[key] for key in keys], dtype=np.bool_)
+
+
 def _chart_bounds(
     domain: domain_owner.MeshingDomain,
     selected: tuple[int, ...],
@@ -4082,6 +4106,14 @@ def _refine_charts(
     curve_bounds_by_chart = tuple(_chart_curve_bounds(chart, chords) for chart in charts)
     trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
     cell_bounds: dict[_CellBoundKey, tuple[float, float]] = {}
+    angle_bad_cache: dict[tuple[int, int, int], bool] = {}
+    sine_upper = None
+    if specification.quality_target is not None and specification.quality_target.hard:
+        from phydrax.geometry._interval_enclosure import interval_sin
+
+        angle = np.asarray(specification.quality_target.minimum_angle, dtype=np.float64)
+        _, upper = interval_sin((angle, angle))
+        sine_upper = Fraction.from_float(float(upper))
     quality_angle = schedule.quality_angle_degrees
     if specification.quality_target is not None:
         quality_angle = max(
@@ -4199,6 +4231,10 @@ def _refine_charts(
             dtype=np.float64,
         )
         bad = (maximum_edge > edge_targets) | (deviations > deviation_targets)
+        if sine_upper is not None:
+            bad |= _hard_angle_violations(
+                physical, triangles, sine_upper, angle_bad_cache
+            )
         if specification.maximum_normal_deviation is not None:
             bad |= normal_bounds > specification.maximum_normal_deviation
         # A chart triangle near a singular chart row can map to a cell whose
