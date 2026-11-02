@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Array-tree fingerprints stream keyed leaves without retaining a flattened leaf
+  bank. Iterative traversal keeps ancestry storage linear in tree depth and
+  preserves canonical fingerprint bytes for deeply nested trees.
 - Nonaffine retained-root embedding proofs now pass the routed local coefficient
   bank to the canonical cell-expression owner, preserving valid root ancestry
   instead of dropping it after an argument mismatch.

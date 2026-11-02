@@ -5,8 +5,8 @@ import enum
 import hashlib
 import json
 import types
-from fractions import Fraction
 from collections.abc import Callable, Mapping
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -109,9 +109,9 @@ def test_array_fingerprint_matches_legacy(dtype: np.dtype, layout: str) -> None:
 
 
 def test_array_fingerprint_streams_nested_exact_reference_leaves() -> None:
-    record = collections.namedtuple("ReferenceRows", ("coordinates", "ids"))
+    ReferenceRows = collections.namedtuple("ReferenceRows", ("coordinates", "ids"))
     tree = {
-        "reference": record(
+        "reference": ReferenceRows(
             tuple(((Fraction(index, 7), Fraction(1, 3)),) for index in range(2048)),
             np.arange(2048, dtype=np.int64),
         ),
