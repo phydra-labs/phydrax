@@ -3,6 +3,33 @@
 ## Unreleased
 
 ### Fixed
+- Native torus source covers and fidelity now bind exact direct and
+  affine-placed coefficients in outward point and derivative interval programs,
+  including nonbinary rational radii, rather than relying on rounded shadows.
+- Array-tree fingerprints stream keyed leaves without retaining a flattened leaf
+  bank. Iterative traversal keeps ancestry storage linear in tree depth and
+  preserves canonical fingerprint bytes for deeply nested trees.
+- Exact tensor archive encoding streams canonical decimal text into one UTF-8
+  payload and row-offset array instead of retaining duplicate per-leaf string
+  and byte banks. Canonical bytes, empty-container evidence, and type checks
+  remain unchanged.
+- Material surface deformation explicitly validates triangular chart arity when
+  consuming generalized triangle/quadrilateral source records, preserving its
+  triangle-only exact partition contract instead of discarding extra corners.
+- Reduced sketch roots now pass full-system native stationarity as well as the
+  original residual test; conflicting weighted constraints retain the native
+  unreduced least-squares behavior.
+- Sketch continuation binds the full retained source and independently replays
+  its one-step archived solve checkpoint before accepting restored output.
+- Directed major sketch arcs retain their exact conic source and endpoint roots
+  rather than being refused by the half-turn `ProfileArc` restriction.
+- Exact radical normalization recognizes word-sized prime residues with a
+  deterministic 64-bit primality test without changing algebraic identities.
+- Sketch root evidence resolves numerical rank through the shared linalg policy
+  rather than a locally duplicated threshold.
+- Sketch array-input annotations now match the existing host and device array
+  conversion boundaries; the resulting compiler and sketch identities follow
+  the current representation rather than prior hashes.
 - Nonaffine retained-root embedding proofs now pass the routed local coefficient
   bank to the canonical cell-expression owner, preserving valid root ancestry
   instead of dropping it after an argument mismatch.
@@ -23,6 +50,21 @@
   lineage, and exact measures from paired current geometry before field/history
   transfer, refusing consistently rehashed false claims without changing accepted
   state. Distributed partition provenance uses canonical unversioned selectors.
+- Host and compiled-device optimal-point metric collapse search between seed
+  parameters for supported constant current vertex-ball tensors, with exact
+  source geometry and metric bounds. Unsupported and nonconstant seed misses
+  remain unresolved.
+- Surface metric adaptation binds local UV edits to the authored exact chart
+  bank and checks their canonical carriers before explicit source-face projection
+  and chart-copy synchronization for publication.
+- Surface metric publication remeasures the final projected and synchronized
+  chart tensors on unprotected edges and continues the original local engine
+  when an unmet publication differs from its local state.
+- Surface relocation requests with edits disabled report an unmet unit-mesh
+  criterion as stalled rather than complete.
+- Compiled metric adaptation pauses on nonfinite or nonpositive measured
+  lengths or nonfinite collapse scores, rolling back numerical-failure epochs
+  and periodic orbit transactions without mutating the caller's state.
 - Finite-element and finite-volume field queries now bind compiled geometry
   through the same content identity; default finite-volume simplex location uses
   the supported block's cell count.
@@ -32,6 +74,12 @@
   confirming qualification modules and Phydrax load from their isolated sources.
 
 ### Added
+- Sketches retain directed circular-arc incidence, support exact arc profile
+  lowering when represented endpoint radii agree, and provide explicitly
+  witnessed dimension-edit continuation with rollback.
+- Sketch root preparation propagates exact rational construction branches and
+  reduces supported grounded distance-rigid clusters to their remaining angle.
+  Accepted continuation exposes fixed-branch dimension JVP and VJP actions.
 - Explicit certified B-Rep source repair produces a separately identified
   revision, bounded displacement, and source-to-target correspondence without
   changing lossless import or exact sewing semantics.

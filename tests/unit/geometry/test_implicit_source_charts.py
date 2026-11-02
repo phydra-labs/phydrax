@@ -42,6 +42,7 @@ from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
     SourceBoundaryProjectionResult,
+    SourceBoundaryQuery,
     SourceBoundarySamples,
     SourceProjectionStatus,
 )
@@ -63,13 +64,13 @@ from phydrax.geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitSurface,
     discover_adaptive_implicit_surface,
 )
-from phydrax.geometry.implicit._policy import (
-    AdaptiveImplicitBoxIssue,
-    AdaptiveImplicitSurfacePolicy,
-)
 from phydrax.geometry.implicit._chart_restriction import (
     ImplicitChartPremise,
     ImplicitChartRows,
+)
+from phydrax.geometry.implicit._policy import (
+    AdaptiveImplicitBoxIssue,
+    AdaptiveImplicitSurfacePolicy,
 )
 from phydrax.geometry.implicit._source_charts import (
     _AdaptiveImplicitProjectionResult,
@@ -499,7 +500,9 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
     native = _NativeImplicitBoundaryQuery(
         source.query, source.source_id, source.source_revision, source.frame_id
     )
-    query_leaves = [leaf for leaf in jax.tree.leaves(source.query) if isinstance(leaf, Array)]
+    query_leaves = [
+        leaf for leaf in jax.tree.leaves(source.query) if isinstance(leaf, Array)
+    ]
     assert query_leaves
     for owner in (source, native):
         owner_leaves = jax.tree.leaves(owner)
@@ -928,9 +931,15 @@ def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
     replay_count = [0]
     original_revalidate = SourceFidelityCertificate.revalidate
 
-    def counted_revalidate(*args: object, **kwargs: object) -> None:
+    def counted_revalidate(
+        certificate: SourceFidelityCertificate,
+        bound_mesh: CellMesh,
+        bound_geometry: CellGeometrySpec,
+        bound_source: SourceBoundaryQuery,
+        /,
+    ) -> None:
         replay_count[0] += 1
-        original_revalidate(*args, **kwargs)
+        original_revalidate(certificate, bound_mesh, bound_geometry, bound_source)
 
     monkeypatch.setattr(SourceFidelityCertificate, "revalidate", counted_revalidate)
     validated_parent = ValidatedImplicitChartParent(mesh, geometry, source, parent)
@@ -1323,3 +1332,59 @@ def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof() ->
         np.asarray(full.deviation_bounds)[:, 0]
         <= np.asarray(inherited.deviation_bounds)[:, 1]
     )
+
+
+@pytest.mark.parametrize("case", ("affine", "quadratic", "radical"))
+def test_face_enclosure_reuses_derivatives_without_changing_exact_bounds(
+    case: str,
+) -> None:
+    from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+
+    first: source_charts.Polynomial = {
+        (0, 0): Fraction(1),
+        (1, 0): Fraction(2),
+        (0, 1): Fraction(3),
+    }
+    second: source_charts.Polynomial = {
+        (0, 0): Fraction(-1),
+        (1, 0): Fraction(1),
+    }
+    third: source_charts.Polynomial = {(0, 1): Fraction(1)}
+    if case == "quadratic":
+        first[(2, 0)] = Fraction(1, 7)
+        second[(1, 1)] = Fraction(-2, 9)
+    elif case == "radical":
+        first[(1, 0)] = RadicalElement.sqrt(2)
+        second[(0, 1)] = RadicalElement.sqrt(3)
+    expressions: source_charts.Polynomial3 = (first, second, third)
+    actual = source_charts._enclose_face(expressions)
+    bases = tuple(source_charts._enclose_polynomial(value) for value in expressions)
+    reference_tangents = tuple(
+        tuple(source_charts._enclosed_derivative(value, axis) for axis in (0, 1))
+        for value in bases
+    )
+    reference_curvatures = tuple(
+        (
+            source_charts._enclosed_derivative(tangent[0], 0),
+            source_charts._enclosed_derivative(tangent[0], 1),
+            source_charts._enclosed_derivative(tangent[1], 1),
+        )
+        for tangent in reference_tangents
+    )
+    for actual_rows, reference_rows in (
+        (actual.tangents, reference_tangents),
+        (actual.curvatures, reference_curvatures),
+    ):
+        for actual_row, reference_row in zip(actual_rows, reference_rows, strict=True):
+            for observed, expected in zip(actual_row, reference_row, strict=True):
+                assert observed.center == expected.center
+                assert observed.radii == expected.radii
+                assert observed.error == expected.error
+                assert source_charts._enclosed_interval(
+                    observed, source_charts._STANDARD_TRIANGLE
+                ) == source_charts._enclosed_interval(
+                    expected, source_charts._STANDARD_TRIANGLE
+                )
+    if case == "affine":
+        zero = actual.curvatures[0][0]
+        assert all(value is zero for row in actual.curvatures for value in row)

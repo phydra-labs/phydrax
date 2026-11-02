@@ -31,7 +31,7 @@ from .._controls import (
 )
 from .._organization import RegionRole
 from .._planar_bands import PlanarBandResult
-from .._scope import MeshingEntityKind
+from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import (
     CurvatureSizeControl,
     ProximitySizeControl,
@@ -49,6 +49,16 @@ from ._gmsh_options import (
     GmshSurfaceAlgorithm,
     GmshVolumeAlgorithm,
 )
+
+
+def _complete_face_sides(scope: MeshingScope, face: int, owners: tuple[int, ...], /) -> bool:
+    """Whether a source-face selection covers every incident solid side."""
+    sides = tuple(side for side in scope.side_records if side.face_index == face)
+    return (
+        not sides
+        or any(side.entity_id in scope.unqualified_entity_ids for side in sides)
+        or {side.solid_index for side in sides} == set(owners)
+    )
 
 
 def _sweep_preflight_issues(
@@ -81,7 +91,10 @@ def _sweep_preflight_issues(
             issues.append("EXACT_SWEEP volume scopes must be disjoint")
         for solid in volumes:
             controlled.setdefault(solid, (control_index, control))
-        for role, faces in (("source", source_faces), ("target", target_faces)):
+        for role, faces, scope in (
+            ("source", source_faces, control.wall_scope),
+            ("target", target_faces, control.cap_scope),
+        ):
             assigned = set()
             for face_value in faces:
                 face = int(face_value)
@@ -93,6 +106,14 @@ def _sweep_preflight_issues(
                     )
                     continue
                 solid = selected.pop()
+                if scope is not None and any(
+                    side.face_index == face and side.solid_index != solid
+                    for side in scope.side_records
+                ):
+                    issues.append(
+                        "EXACT_SWEEP wall and cap sides must match their controlled solid"
+                    )
+                    continue
                 if solid in assigned:
                     issues.append(
                         "Each controlled solid requires exactly one source and one target cap"
@@ -491,6 +512,12 @@ def _semantic_region_issues(
             matched = False
             for face in face_ids:
                 owners = model.topology.face_solids[int(face)]
+                if not _complete_face_sides(control.scope, int(face), owners):
+                    unsupported.append(
+                        f"PatchControl {control.name!r} selects only part of a shared "
+                        "face; Gmsh patches cannot represent an individual incident side"
+                    )
+                    continue
                 actual = tuple(sorted(solid_region[owner] for owner in owners))
                 if (
                     len(owners) not in (1, 2)
@@ -635,14 +662,25 @@ def _validate_gmsh_periodicity(
 ) -> None:
     for constraint in specification.periodic_constraints:
         scopes = (constraint.source_scope, constraint.target_scope)
-        if any(
-            value.entity_dimension not in (1, 2)
-            or _scope_indices(model, value, value.entity_dimension, domain=domain) is None
-            for value in scopes
-        ):
-            unsupported.append(
-                "Gmsh periodic scopes must select source BRep curves or surfaces"
+        for value in scopes:
+            identifiers = (
+                _scope_indices(model, value, value.entity_dimension, domain=domain)
+                if value.entity_dimension in (1, 2)
+                else None
             )
+            if identifiers is None:
+                unsupported.append(
+                    "Gmsh periodic scopes must select source BRep curves or surfaces"
+                )
+            elif value.entity_dimension == 2 and any(
+                not _complete_face_sides(
+                    value, int(face), model.topology.face_solids[int(face)]
+                )
+                for face in identifiers
+            ):
+                unsupported.append(
+                    "Gmsh periodic surfaces cannot represent an individual incident side"
+                )
         if scopes[0].entity_dimension != scopes[1].entity_dimension or len(
             scopes[0].entity_ids
         ) != len(scopes[1].entity_ids):

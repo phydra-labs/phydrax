@@ -541,6 +541,13 @@ Use one compact implementation/verification record: changed ownership surface, e
 - General quad/hex and singular-CAD required positive gates are either genuinely closed or explicitly reported uncompleted; safe refusal cannot satisfy an admitted positive.
 - Every current caller, example, type fixture, codec, generated record and affected consumer uses the clean API. No compatibility aliases, old quota signatures, fake fallbacks or resource-only tests survive.
 - Fresh-process and changed-placement continuation reconstruct the real scientific state without original objects or live proof issuers.
+- The approved CAD boundary-ancestry cutover carries canonical `GeometryAssociation`
+  exact edge intervals and `SurfaceSourceCharts` through PLC refinement to final
+  target edges. Coverage/homotopy retains explicit coedge incidence and native
+  gauges where unique source binding cannot otherwise be proved. Revalidate the
+  actual ancestry; nearby UV shadows or distance bounds are not seam identity.
+  Regenerate changed witness/certificate/archive identities, with numerical arrays
+  remaining dynamic.
 - Measured performance claims match actual comparable workloads and hardware. Lack of evidence is stated, not replaced with capability counts or cost-model counters.
 
 ## 13. Selected Solidcraft-derived extensions
@@ -586,6 +593,13 @@ Source references:
 incidence through `optim/_residual_graph.py` and `_graph_least_squares.py` where
 beneficial. Reuse `RootDOFEvidence`, native nonlinear linearization and linalg
 rank/nullspace evidence. General `GraphIR` is not a replacement residual solver.
+
+**Approved representation cutover:** extend canonical `Sketch` with explicit arc
+incidence and orientation, including directed major sweeps. Retain preparation
+evidence separately from numerical root/rank evidence, and persist sufficient
+source-bound checkpoint/transition inputs for independent continuation replay.
+Migrate callers and archives and regenerate changed identities; preserve the
+existing numerical field partition rather than hiding arrays as static metadata.
 
 **Required behavior and evidence:**
 - Keep constructive eligibility, a numerical seed, numerical rank/DOF, residual
@@ -634,6 +648,14 @@ bijective lineage; extend it rather than introducing another naming vocabulary.
   meshing and FE/FV, plus cold persistence and tamper refusal.
 - Provenance describes derivation; geometry and field claims still require their
   independent mathematical acceptance. Retain existing bijective behavior.
+- The approved side-aware `MeshingScope` cutover retains occurrence-qualified
+  region side and orientation through identity, scope operations and persistence.
+  Use existing `GeometryAssociation`, `RegionBoundaryEvidence` and mesh region
+  data to prove each selected facet's owner/neighbor relation; resolve through
+  native FE/FV side integration and supported interface semantics. Do not treat
+  an interior face as an ordinary physical boundary. Positive selections from
+  both sides of a shared face, permuted storage order, orientation changes and
+  cold tamper refusal are required; representation-only refusal is not completion.
 
 ### 13.4 Independent operation-sequence reference corpus
 

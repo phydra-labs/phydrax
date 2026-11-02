@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from benchmarks._memory import host_allocation_peak
 from phydrax._archive_columns import (
     ExactTensorArchiveRecipe,
     StaticColumnArchiveRecipe,
@@ -93,9 +94,12 @@ def test_fidelity_root_and_nested_records_project_row_banks() -> None:
         _restore_dataclass,
         model_archive_projection,
         model_archive_root_projection,
+        model_structure_matches_recipe,
+        model_structure_recipe,
         restore_row_record_recipes,
     )
     from phydrax.geometry._source_fidelity_certificate import SourceFidelityCertificate
+    from phydrax.meshing._model_codec import _register_model_archive_types
 
     fields = {field.name: None for field in dataclasses.fields(SourceFidelityCertificate)}
     fields.update(
@@ -103,6 +107,7 @@ def test_fidelity_root_and_nested_records_project_row_banks() -> None:
         source_patch_ids=(0,) * 4096,
         source_occurrence_paths=((),) * 4096,
     )
+    _register_model_archive_types()
     certificate = _restore_dataclass(SourceFidelityCertificate, fields)
     root = model_archive_root_projection(certificate)
     assert isinstance(root.source_cell_global_ids, ExactTensorArchiveRecipe)
@@ -118,6 +123,15 @@ def test_fidelity_root_and_nested_records_project_row_banks() -> None:
         restore_row_record_recipes(nested)[0].source_cell_global_ids
         == fields["source_cell_global_ids"]
     )
+    recipe = model_structure_recipe(certificate)
+    assert model_structure_matches_recipe(certificate, recipe)
+    assert not model_structure_matches_recipe(certificate, {**recipe, "extra": True})
+    for name in recipe["fields"]:
+        changed = {
+            **recipe,
+            "fields": {**recipe["fields"], name: {"kind": "literal", "value": "changed"}},
+        }
+        assert not model_structure_matches_recipe(certificate, changed)
 
 
 def test_nested_reference_exact_bank_uses_column_recipe() -> None:
@@ -359,6 +373,32 @@ def test_exact_column_preserves_large_rationals_and_repeated_static_rows() -> No
     assert column.decode() == values
 
 
+@pytest.mark.parametrize("count", (4096, 16384), ids=("small", "large"))
+def test_exact_tensor_encoding_workspace_is_bounded_by_payload(count: int) -> None:
+    values = tuple((row, row + 1) for row in range(count))
+    recipe, peak = host_allocation_peak(
+        lambda: ExactTensorArchiveRecipe.encode(values, rational=False)
+    )
+    assert recipe.decode() == values
+    payload_bytes = recipe.text.data.nbytes + recipe.text.ends.nbytes
+    assert peak <= 4 * payload_bytes + 64 * 1024
+
+
+def test_exact_tensor_retains_canonical_decimal_archive_bytes() -> None:
+    values = (
+        (Fraction(2, 3), Fraction(-5, 7)),
+        (Fraction(0), Fraction(1)),
+    )
+    recipe = ExactTensorArchiveRecipe.encode(values, rational=True)
+    np.testing.assert_array_equal(
+        recipe.text.data, np.frombuffer(b"2/3-5/701", dtype=np.uint8)
+    )
+    np.testing.assert_array_equal(
+        recipe.text.ends, np.asarray((3, 7, 8, 9), dtype=np.int64)
+    )
+    assert recipe.decode() == values
+
+
 def test_exact_reference_map_columns_preserve_polynomial_expression_kinds() -> None:
     from types import MappingProxyType
 
@@ -435,3 +475,19 @@ def test_exact_expression_columns_deduplicate_and_refuse_malformed_terms() -> No
     for changed in malformed:
         with pytest.raises((TypeError, ValueError)):
             changed.decode()
+
+
+def test_rational_term_rows_share_only_within_one_decode() -> None:
+    from phydrax.meshing._archive_layer_columns import _decode_column, _encode_column
+
+    numerator = (((1,), Fraction(2, 3)),)
+    denominator = (((0,), Fraction(1)),)
+    distinct = (((0,), Fraction(4)),)
+    rows = (((numerator, denominator),), ((distinct, denominator),)) * 64
+    recipe = _encode_column(rows, "rational_terms")
+    restored = _decode_column(recipe, "rational_terms")
+    assert restored == rows
+    assert restored[0] is restored[2]
+    assert restored[1] is restored[3]
+    assert restored[0] is not restored[1]
+    assert _decode_column(recipe, "rational_terms")[0] is not restored[0]

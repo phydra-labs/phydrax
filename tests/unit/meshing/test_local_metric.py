@@ -33,6 +33,16 @@ _LOWER = 1.0 / np.sqrt(2.0)
 _UPPER = np.sqrt(2.0)
 
 
+def test_host_interpolation_preserves_identical_tensor_exactly() -> None:
+    tensor = np.array([[2.3, 0.4], [0.4, 1.7]], dtype=np.float64)
+    values = np.broadcast_to(tensor, (3, 3, 2, 2)).copy()
+    weights = np.array([[0.2, 0.3, 0.5], [1.0, 0.0, 0.0], [0.1, 0.7, 0.2]])
+    np.testing.assert_array_equal(
+        local_metric._interpolate_metrics(values, weights),
+        np.broadcast_to(tensor, (3, 2, 2)),
+    )
+
+
 def _grid(count: Any, /, *, perturbation: Any = 0.0) -> Any:
     x, y = np.meshgrid(np.linspace(0.0, 1.0, count + 1), np.linspace(0.0, 1.0, count + 1))
     points = np.stack((x.ravel(), y.ravel()), axis=1)

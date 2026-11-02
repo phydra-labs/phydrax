@@ -3889,6 +3889,7 @@ def _surface_jacobian_bounds(
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Enclose the physical Jacobian columns of a source surface on a chart triangle."""
     from ._source_interpolation import (
+        _has_torus_source_program,
         _has_unexpanded_exact_surface_carrier,
         exact_surface_coordinate_expressions,
     )
@@ -3909,7 +3910,9 @@ def _surface_jacobian_bounds(
                 lower[physical_axis, parameter] = low
                 upper[physical_axis, parameter] = high
         return lower, upper
-    if _has_unexpanded_exact_surface_carrier(surface):
+    if _has_unexpanded_exact_surface_carrier(surface) and not _has_torus_source_program(
+        surface
+    ):
         return None
     chart_lower = tuple(min(point[axis] for point in uv_triangle) for axis in range(2))
     chart_upper = tuple(max(point[axis] for point in uv_triangle) for axis in range(2))
@@ -4556,20 +4559,26 @@ def _normal_deviation_for_cell(
     )
     if exact_plane is not None:
         return exact_plane
-    closed_form = _closed_form_normal_deviation(
-        surface_patch.surface,
-        surface_patch.orientation,
-        uv_triangle,
-        target_cross,
-        limit,
-    )
-    if closed_form is not None:
-        return closed_form
     surface = surface_patch.surface
     from ._source_interpolation import (
+        _has_torus_source_program,
         _has_unexpanded_exact_surface_carrier,
         exact_surface_coordinate_expressions,
     )
+
+    # The closed-form route uses binary coefficients, unlike the source-bound
+    # torus program and exact polynomial route below.
+    unexpanded_exact = _has_unexpanded_exact_surface_carrier(surface)
+    if not unexpanded_exact:
+        closed_form = _closed_form_normal_deviation(
+            surface,
+            surface_patch.orientation,
+            uv_triangle,
+            target_cross,
+            limit,
+        )
+        if closed_form is not None:
+            return closed_form
 
     exact_surface = exact_surface_coordinate_expressions(surface)
     source: _PatchDerivativeSource | None = None
@@ -4589,7 +4598,7 @@ def _normal_deviation_for_cell(
                 low[physical_axis, parameter] = lower
                 high[physical_axis, parameter] = upper
     else:
-        if _has_unexpanded_exact_surface_carrier(surface):
+        if unexpanded_exact and not _has_torus_source_program(surface):
             return None
         chart_lower = tuple(
             min(point[axis] for point in uv_triangle) for axis in range(2)

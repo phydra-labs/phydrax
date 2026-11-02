@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -21,6 +21,11 @@ from .._cad_revision import (
 )
 from ._model import BRepEntityId, BRepModel
 from ._projection_contracts import brep_entity_id
+
+
+if TYPE_CHECKING:
+    from ._constructors import BRepTessellationPolicy
+    from ._planar import PlanarPartitionPlan
 
 
 def _text(value: str, name: str) -> str:
@@ -54,6 +59,7 @@ def _entity_occurrence_id(entity: BRepEntityId, /) -> str:
         {"kind": "cad-qualified-entity-occurrence", "entity": _entity_text(entity)}
     )
 
+
 def _assembly_namespace_occurrence_id(
     source_id: str, source_revision: str, path: tuple[str, ...], /
 ) -> str:
@@ -65,7 +71,6 @@ def _assembly_namespace_occurrence_id(
             "path": path,
         }
     )
-
 
 
 def cad_revision_from_brep_model(model: BRepModel, /) -> CADRevision:
@@ -102,7 +107,9 @@ def cad_revision_from_brep_model(model: BRepModel, /) -> CADRevision:
             current = namespace
             while current not in namespace_paths:
                 if current in active:
-                    raise ValueError("Assembly container paths must form an acyclic forest.")
+                    raise ValueError(
+                        "Assembly container paths must form an acyclic forest."
+                    )
                 active.add(current)
                 chain.append(current)
                 parent = parents.get(current)
@@ -494,7 +501,12 @@ class BRepPartitionResult:
     regions: tuple[BRepPartitionRegion, ...]
     patches: tuple[BRepPartitionPatch, ...]
     report: BRepPartitionReport
+    plan: BRepPartitionPlan | PlanarPartitionPlan
     topological_dimension: int = 3
+    operand_association_graphs: tuple[tuple[str, AssociationGraph], ...] = field(
+        kw_only=True
+    )
+    tessellation_policy: BRepTessellationPolicy | None = field(kw_only=True)
     region_entity_kind: str = field(init=False)
     patch_entity_kind: str = field(init=False)
     named_region_entity_ids: tuple[tuple[str, tuple[BRepEntityId, ...]], ...] = field(
@@ -522,6 +534,20 @@ class BRepPartitionResult:
             raise TypeError("association_graph must be an AssociationGraph.")
         if not isinstance(self.report, BRepPartitionReport):
             raise TypeError("report must be a BRepPartitionReport.")
+        from ._constructors import BRepTessellationPolicy
+        from ._planar import PlanarPartitionPlan
+
+        if not isinstance(self.plan, (BRepPartitionPlan, PlanarPartitionPlan)):
+            raise TypeError("Partition result requires its authoritative operation plan.")
+        if self.tessellation_policy is not None and not isinstance(
+            self.tessellation_policy, BRepTessellationPolicy
+        ):
+            raise TypeError("Partition tessellation policy has the wrong type.")
+        if (
+            self.plan.plan_id != self.report.plan_id
+            or self.plan.topological_dimension != self.topological_dimension
+        ):
+            raise ValueError("Partition plan does not match the result report.")
         dimension = _partition_dimension(self.topological_dimension)
         if self.report.topological_dimension != dimension:
             raise ValueError("Partition result and report dimensions must match.")
@@ -547,6 +573,37 @@ class BRepPartitionResult:
             raise ValueError("Result revision must use the model semantic revision.")
         if self.association_graph.target_revision != self.revision:
             raise ValueError("Association graph must terminate at the result revision.")
+        operand_graphs = tuple(self.operand_association_graphs)
+        if len({name for name, _ in operand_graphs}) != len(operand_graphs):
+            raise ValueError("Partition operand history names must be unique.")
+        if isinstance(self.plan, BRepPartitionPlan):
+            operand_models = {
+                operand.operand_id: operand.model for operand in self.plan.operands
+            }
+        else:
+            operand_models = {
+                operand.operand_id: operand.source
+                for operand in self.plan.operands
+                if isinstance(operand.source, BRepModel)
+            }
+        if {name for name, _ in operand_graphs} != set(operand_models):
+            raise ValueError(
+                "Partition operand histories must exactly cover B-Rep operands."
+            )
+        for name, operand_graph in operand_graphs:
+            _text(name, "operand history name")
+            if not isinstance(operand_graph, AssociationGraph):
+                raise TypeError("Partition operand history must be an AssociationGraph.")
+            if operand_graph.source_revision != cad_revision_from_brep_model(
+                operand_models[name]
+            ):
+                raise ValueError(
+                    "Operand history source does not match its B-Rep operand."
+                )
+            if operand_graph.target_revision != self.association_graph.source_revision:
+                raise ValueError(
+                    "Operand history must terminate at the partition source revision."
+                )
         if (
             self.report.model_id != self.model.model_id
             or self.report.target_revision_id != self.revision.revision_id
@@ -632,6 +689,7 @@ class BRepPartitionResult:
         object.__setattr__(self, "regions", regions)
         object.__setattr__(self, "patches", patches)
         object.__setattr__(self, "topological_dimension", dimension)
+        object.__setattr__(self, "operand_association_graphs", operand_graphs)
         object.__setattr__(self, "named_region_entity_ids", named_regions)
         object.__setattr__(self, "named_patch_entity_ids", named_patches)
         object.__setattr__(
@@ -674,9 +732,92 @@ class BRepPartitionResult:
                 return patch
         raise KeyError(f"Unknown partition patch {expected!r}.")
 
+    def operand_association_graph(self, operand_id: str, /) -> AssociationGraph:
+        """Return the construction-certified operand-to-composite correspondence."""
+        expected = _text(operand_id, "operand history name")
+        for name, graph in self.operand_association_graphs:
+            if name == expected:
+                return graph
+        raise KeyError(f"Partition has no exact history for operand {expected!r}.")
+
+
+class BRepPartitionResultArchiveRecipe(NamedTuple):
+    """Constructor-owned partition state with a PyTree-visible B-Rep."""
+
+    model: BRepModel
+    revision: CADRevision
+    association_graph: AssociationGraph
+    regions: tuple[BRepPartitionRegion, ...]
+    patches: tuple[BRepPartitionPatch, ...]
+    report: BRepPartitionReport
+    topological_dimension: int
+    operand_association_graphs: tuple[tuple[str, AssociationGraph], ...]
+    plan: BRepPartitionPlan | PlanarPartitionPlan
+    tessellation_policy: BRepTessellationPolicy | None
+
 
 class BRepPartitionHistoryError(RuntimeError):
     """Report unresolved native source correspondence or partition history."""
+
+
+def _operand_composite_graph(
+    source: CADRevision,
+    target: CADRevision,
+    mapping: dict[str, str],
+    operand_id: str,
+    /,
+) -> AssociationGraph:
+    """Certify the construction's exact occurrence-preserving composite embedding."""
+    source_ids = {item.occurrence_id for item in source.occurrences}
+    if not set(mapping) <= source_ids:
+        raise BRepPartitionHistoryError(
+            "Operand composite mapping has foreign occurrences."
+        )
+    if len(set(mapping.values())) != len(mapping):
+        raise BRepPartitionHistoryError("Operand composite mapping aliases occurrences.")
+    for item in source.occurrences:
+        if item.occurrence_id not in mapping:
+            continue
+        mapped = target.occurrence(mapping[item.occurrence_id])
+        if (
+            mapped.entity_id != item.entity_id
+            or mapped.kind != item.kind
+            or mapped.orientation != item.orientation
+            or any(part not in mapping for part in item.path)
+            or mapped.path != tuple(mapping[part] for part in item.path)
+        ):
+            raise BRepPartitionHistoryError(
+                "Operand composite mapping changes occurrence identity."
+            )
+    certificate = canonical_fingerprint(
+        {
+            "kind": "native-brep-operand-composite-history",
+            "operand": operand_id,
+            "source": source.revision_id,
+            "target": target.revision_id,
+            "pairs": tuple(sorted(mapping.items())),
+        }
+    )
+    mapped_targets = set(mapping.values())
+    transaction = OccurrenceCorrespondenceTransaction(
+        certificate,
+        source.revision_id,
+        target.revision_id,
+        tuple(
+            OccurrenceCorrespondence(first, second, certificate)
+            for first, second in sorted(mapping.items())
+        ),
+        frozenset(source_ids - set(mapping)),
+        frozenset(
+            item.occurrence_id
+            for item in target.occurrences
+            if item.occurrence_id not in mapped_targets
+        ),
+        AssociationCoverageEvidence(
+            True, True, certificate, "native-partition-composite"
+        ),
+    )
+    return AssociationGraph(source, target, transaction)
 
 
 def _partition_source_revision(
@@ -684,6 +825,7 @@ def _partition_source_revision(
     operands: tuple[BRepPartitionOperand, ...],
 ) -> tuple[
     CADRevision,
+    tuple[dict[str, str], ...],
     tuple[dict[str, str], ...],
     tuple[dict[str, str], ...],
 ]:
@@ -700,6 +842,7 @@ def _partition_source_revision(
     occurrences: list[CADOccurrence] = []
     source_entities: list[dict[str, str]] = []
     source_namespaces: list[dict[str, str]] = []
+    source_mappings: list[dict[str, str]] = []
     for operand in operands:
         model = operand.model
         geometry = model.geometry
@@ -714,6 +857,7 @@ def _partition_source_revision(
             )
             for item in local_revision.occurrences
         }
+        source_mappings.append(local_to_partition)
         occurrences.extend(
             CADOccurrence(
                 revision_id,
@@ -736,7 +880,10 @@ def _partition_source_revision(
         ):
             entity = record.member
             if record.container != entity or entity.kind not in (
-                "solid", "face", "edge", "vertex"
+                "solid",
+                "face",
+                "edge",
+                "vertex",
             ):
                 continue
             local_id = _entity_occurrence_id(entity)
@@ -763,6 +910,7 @@ def _partition_source_revision(
         ),
         tuple(source_entities),
         tuple(source_namespaces),
+        tuple(source_mappings),
     )
 
 
@@ -772,13 +920,25 @@ def _full_overlay_partition_result(
     *,
     tessellation: Any | None,
 ) -> BRepPartitionResult:
+    from ._assembly import BRepAffinePlacement
     from ._boolean_core import BRepBooleanPolicy, RegionSelection
     from ._boolean_full_overlay import full_overlay_partition_brep
-    from ._assembly import BRepAffinePlacement
     from ._placement import entity_text, materialize_brep_occurrences
 
-    source, source_occurrences, source_namespaces = _partition_source_revision(
-        plan, operands
+    source, source_occurrences, source_namespaces, source_mappings = (
+        _partition_source_revision(plan, operands)
+    )
+    operand_graphs = tuple(
+        (
+            operand.operand_id,
+            _operand_composite_graph(
+                cad_revision_from_brep_model(operand.model),
+                source,
+                mapping,
+                operand.operand_id,
+            ),
+        )
+        for operand, mapping in zip(operands, source_mappings, strict=True)
     )
     identity = BRepAffinePlacement.identity().identity_payload()
     model_list: list[BRepModel] = []
@@ -826,7 +986,9 @@ def _full_overlay_partition_result(
             target_entity = source_to_target[source_entity]
             selected_solids.append((position, target_entity.index))
         target_to_source: dict[BRepEntityId, str] = {}
-        for source_entity, target_entity in zip(source_entities, target_entities, strict=True):
+        for source_entity, target_entity in zip(
+            source_entities, target_entities, strict=True
+        ):
             if source_entity.kind not in ("solid", "face", "edge", "vertex"):
                 continue
             source_occurrence_id = source_occurrences[position].get(
@@ -882,6 +1044,7 @@ def _full_overlay_partition_result(
         if entity is not None:
             target_occurrences[entity] = occurrence.occurrence_id
     pairs: set[tuple[str, str]] = set()
+
     def add_entity_correspondence(
         operand_index: int,
         source_entity: BRepEntityId,
@@ -985,14 +1148,20 @@ def _full_overlay_partition_result(
     regions = tuple(
         BRepPartitionRegion(
             name,
-            tuple(model.solid_ids[index] for index, owner in enumerate(owners) if owner == name),
+            tuple(
+                model.solid_ids[index]
+                for index, owner in enumerate(owners)
+                if owner == name
+            ),
         )
         for name in plan.policy.region_precedence
         if name in owners
     )
     grouped_faces: dict[tuple[str, ...], list[BRepEntityId]] = {}
     for face, solids in enumerate(model.topology.face_solids):
-        adjacent = tuple(sorted((owners[solid] for solid in solids), key=rank.__getitem__))
+        adjacent = tuple(
+            sorted((owners[solid] for solid in solids), key=rank.__getitem__)
+        )
         if len(adjacent) not in (1, 2):
             raise BRepPartitionHistoryError(
                 "Native partition produced a nonmanifold face-region incidence."
@@ -1024,7 +1193,17 @@ def _full_overlay_partition_result(
         sum(value.occurrence_id not in mapped_source for value in source.occurrences),
         len(target_ids - mapped_target),
     )
-    return BRepPartitionResult(model, target_revision, graph, regions, patches, report)
+    return BRepPartitionResult(
+        model,
+        target_revision,
+        graph,
+        regions,
+        patches,
+        report,
+        plan,
+        operand_association_graphs=operand_graphs,
+        tessellation_policy=tessellation,
+    )
 
 
 def partition_brep(
@@ -1042,15 +1221,12 @@ def partition_brep(
         if not isinstance(tessellation, BRepTessellationPolicy):
             raise TypeError("tessellation must be a BRepTessellationPolicy or None.")
     operands = tuple(sorted(plan.operands, key=lambda operand: operand.operand_id))
-    from ._boolean_core import rectilinear_family
+    from ._native_box_partition import partition_native_boxes
 
-    if rectilinear_family(tuple(operand.model for operand in operands)):
-        from ._native_box_partition import partition_native_boxes
-
-        try:
-            return partition_native_boxes(plan, tessellation=tessellation)
-        except NotImplementedError:
-            pass
+    try:
+        return partition_native_boxes(plan, tessellation=tessellation)
+    except NotImplementedError:
+        pass
     return _full_overlay_partition_result(plan, operands, tessellation=tessellation)
 
 

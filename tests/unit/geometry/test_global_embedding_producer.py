@@ -1172,6 +1172,49 @@ def test_restored_embedding_refuses_a_forged_stored_validity_proof() -> None:
         GlobalEmbeddingCertificate.from_stored_fields(stored)
 
 
+def test_computed_validity_host_proof_avoids_duplicate_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization._cell_geometry_validity import (
+        CellValidityPolicy,
+        ComputedCellValidity,
+    )
+
+    mesh, geometry, _ = _embedded_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        ((0, 1, 2), (0, 2, 3)),
+    )
+    calls = [0]
+    original = CellValidityCertificate.revalidate
+
+    def counted(
+        value: CellValidityCertificate,
+        bound_geometry: CellGeometrySpec,
+        /,
+        *,
+        mesh: CellMesh | None = None,
+    ) -> None:
+        calls[0] += 1
+        original(value, bound_geometry, mesh=mesh)
+
+    monkeypatch.setattr(CellValidityCertificate, "revalidate", counted)
+    computed = ComputedCellValidity(geometry, mesh, CellValidityPolicy(), None)
+    result = certify_global_embedding(
+        mesh, geometry, computed.certificate, validated_validity=computed
+    )
+    assert result.status == "certified"
+    assert calls == [0]
+    altered = eqx.tree_at(
+        lambda value: value.determinant_lower,
+        computed.certificate,
+        computed.certificate.determinant_lower * 0.5,
+    )
+    with pytest.raises(ValueError, match="different exact operands"):
+        certify_global_embedding(mesh, geometry, altered, validated_validity=computed)
+    with pytest.raises(ValueError, match="does not reproduce"):
+        certify_global_embedding(mesh, geometry, altered)
+
+
 def test_planar_segments_sharing_one_vertex_certify_their_exact_corner() -> None:
     # Planar segment contacts are lifted to R3 with z = 0; the shared corner
     # must still match its planar vertex.

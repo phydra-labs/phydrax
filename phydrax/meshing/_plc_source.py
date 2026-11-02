@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from fractions import Fraction
-from typing import TYPE_CHECKING, final, Literal
+from typing import final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -30,6 +30,10 @@ from ..typing import (
     parse,
     Scope,
 )
+
+if TYPE_CHECKING:
+    from ..geometry.brep._model import BRepGeometry
+
 
 if TYPE_CHECKING:
     from ..geometry.brep._model import BRepGeometry

@@ -805,6 +805,15 @@ fallback.
 model's revision inventory and complete topology selections. A B-Rep partition
 or process result carries its resulting `CADRevision` and `AssociationGraph`, so
 downstream scopes remain bound to the created physical entities.
+For an authored recipe name, `RecipeEntityNames.select_occurrence` requires an
+explicitly qualified B-Rep entity and the exact CAD occurrence inventory.
+`AssociationGraph.resolve_target` preserves single-entity ambiguity; its
+`resolve_target_selection` transports a declared descendant set and refuses
+deletion, unresolved history, partial merges, and incompatible orientations.
+Partitions expose operand-to-composite graphs before the operation graph, so
+selections can be composed without identifying entities by their shape. A
+same-kind descendant set does not name individual symmetric pieces; a unique
+piece still requires independently proved construction or incidence roles.
 
 ## B-Rep and planar partitions
 

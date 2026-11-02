@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
 from itertools import product
 from math import comb
-from typing import Any, cast, Literal, Protocol, runtime_checkable
+from typing import Any, cast, Literal, Protocol, runtime_checkable, TypedDict
 
 import equinox as eqx
 import jax
@@ -22,7 +22,7 @@ from .._fingerprint import (
     canonical_fingerprint,
     LazyCanonicalSequence,
 )
-from .._strict import StrictModule
+from .._strict import reconstruct_strict, register_strict_reconstruction, StrictModule
 from .._trainable import NonTrainableState
 from ..exterior._form_type import FormType, FormValueSpec
 from ..typing import ConvertibleToArray
@@ -627,6 +627,17 @@ def _require_stored_chart_term_types(row: object, /) -> None:
                         "Stored chart terms must use canonical exact scalar kinds."
                     )
 
+
+def _same_exact_stored_field(stored: object, canonical: object, /) -> bool:
+    """Compare retained immutable field values without Python cross-type equality."""
+    if type(stored) is not type(canonical):
+        return False
+    if type(stored) is tuple and type(canonical) is tuple:
+        return len(stored) == len(canonical) and all(
+            _same_exact_stored_field(left, right)
+            for left, right in zip(stored, canonical, strict=True)
+        )
+    return bool(stored == canonical)
 
 def _coordinate_coefficient_identity(
     value: ExactScalar | int | float, /
@@ -1575,8 +1586,10 @@ def elevate_spline_extraction(
         linear_combinations,
         multiply,
         power,
+        RationalPolynomial,
         scale,
     )
+    from ._exact_algebraic_geometry import rational_coefficient
 
     if len(degrees) != 2 or any(
         isinstance(value, bool) or not isinstance(value, (int, np.integer))
@@ -1602,10 +1615,19 @@ def elevate_spline_extraction(
         )
     tensor = tuple(multiply(u, v) for u in basis[0] for v in basis[1])
     extracted = linear_combinations(tensor, element.exact_extraction_operator)
-    extraction = tuple(
-        tuple(bernstein_coefficients(polynomial, "box", 2, degree=target))
-        for polynomial in extracted
-    )
+    rows: list[tuple[Fraction, ...]] = []
+    for polynomial in extracted:
+        if isinstance(polynomial, RationalPolynomial):
+            raise ValueError(
+                "Spline extraction elevation requires polynomial basis functions."
+            )
+        rows.append(
+            tuple(
+                rational_coefficient(value, role="Spline extraction coefficient")
+                for value in bernstein_coefficients(polynomial, "box", 2, degree=target)
+            )
+        )
+    extraction = tuple(rows)
     return SplineCellGeometryElement(
         element.anchor_ids,
         element.parameter_bounds,
@@ -1750,6 +1772,19 @@ def _pyramid_apex_removable_argument(argument: RationalPolynomial, /) -> bool:
     )
 
 
+class _PerCellRestrictedFields(TypedDict):
+    source_element: ScalarCoordinateElement
+    target_cell_ids: tuple[int, ...]
+    source_cell_ids: tuple[int, ...]
+    chart_coefficients: tuple[tuple[_ExactRationalChartTerms, ...], ...]
+    cell_kind: str
+    conformity: str
+    local_dof_count: int
+    degree: int
+    topological_dimension: int
+    element_id: str
+
+
 class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
     """Compose a basis through exact per-cell polynomial or rational charts.
 
@@ -1780,6 +1815,33 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
         chart_arguments: Sequence[Sequence[ExpressionInput]],
         /,
     ) -> None:
+        values = self._canonical_fields(
+            source_element,
+            target_cell_kind,
+            target_cell_ids,
+            source_cell_ids,
+            chart_arguments,
+        )
+        self.source_element = values["source_element"]
+        self.target_cell_ids = values["target_cell_ids"]
+        self.source_cell_ids = values["source_cell_ids"]
+        self.chart_coefficients = values["chart_coefficients"]
+        self.cell_kind = values["cell_kind"]
+        self.conformity = values["conformity"]
+        self.local_dof_count = values["local_dof_count"]
+        self.degree = values["degree"]
+        self.topological_dimension = values["topological_dimension"]
+        self.element_id = values["element_id"]
+
+    @staticmethod
+    def _canonical_fields(
+        source_element: ScalarCoordinateElement,
+        target_cell_kind: str,
+        target_cell_ids: Sequence[int] | np.ndarray,
+        source_cell_ids: Sequence[int] | np.ndarray,
+        chart_arguments: Sequence[Sequence[ExpressionInput]],
+        /,
+    ) -> _PerCellRestrictedFields:
         if not isinstance(source_element, ScalarCoordinateElement):
             raise TypeError("source_element must be a scalar coordinate element.")
         targets = _canonical_cell_id_tuple(target_cell_ids, "target_cell_ids")
@@ -1845,20 +1907,11 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
                 raise ValueError(
                     "A per-cell rational chart denominator is not proved nonzero over its target cell."
                 )
-        self.source_element = source_element
-        self.target_cell_ids = targets
-        self.source_cell_ids = sources
-        self.chart_coefficients = charts
-        self.cell_kind = str(target_cell_kind)
-        self.conformity = "H1"
-        self.local_dof_count = source_element.local_dof_count
-        self.degree = int(getattr(source_element, "degree", 1))
-        self.topological_dimension = target_dimension
-        self.element_id = canonical_fingerprint(
+        element_id = canonical_fingerprint(
             {
                 "kind": "per-cell-restricted-coordinate-element",
                 "source": source_element.element_id,
-                "target_kind": self.cell_kind,
+                "target_kind": str(target_cell_kind),
                 "target_cells": targets,
                 "source_cells": sources,
                 "charts": LazyCanonicalSequence(
@@ -1887,6 +1940,59 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
                 ),
             }
         )
+        return {
+            "source_element": source_element,
+            "target_cell_ids": targets,
+            "source_cell_ids": sources,
+            "chart_coefficients": charts,
+            "cell_kind": str(target_cell_kind),
+            "conformity": "H1",
+            "local_dof_count": source_element.local_dof_count,
+            "degree": int(getattr(source_element, "degree", 1)),
+            "topological_dimension": target_dimension,
+            "element_id": element_id,
+        }
+
+    @classmethod
+    def from_stored_fields(
+        cls,
+        value: PerCellRestrictedCellGeometryElement,
+        source_element: ScalarCoordinateElement,
+        chart_arguments: Sequence[Sequence[ExpressionInput]],
+        /,
+    ) -> PerCellRestrictedCellGeometryElement:
+        """Validate every stored chart before structural reconstruction."""
+        from .._fingerprint import canonical_json
+        from .._model._structure import model_archive_projection, model_structure_recipe
+        from ..geometry._mesh_certificates import _same_tree_content
+
+        if type(value) is not cls:
+            raise TypeError("Stored per-cell restriction has an unexpected type.")
+        stored_source = model_archive_projection(value.source_element)
+        rebuilt_source = model_archive_projection(source_element)
+        if canonical_json(model_structure_recipe(stored_source)) != canonical_json(
+            model_structure_recipe(rebuilt_source)
+        ) or not _same_tree_content(stored_source, rebuilt_source):
+            raise ValueError(
+                "Stored per-cell restriction names a different source element."
+            )
+        for row in value.chart_coefficients:
+            _require_stored_chart_term_types(row)
+        fields = cls._canonical_fields(
+            source_element,
+            value.cell_kind,
+            value.target_cell_ids,
+            value.source_cell_ids,
+            chart_arguments,
+        )
+        for name, rebuilt in fields.items():
+            if name != "source_element" and not _same_exact_stored_field(
+                getattr(value, name), rebuilt
+            ):
+                raise ValueError(
+                    "Stored per-cell restriction differs from its validated fields."
+                )
+        return reconstruct_strict(cls, fields)
 
     def chart_arguments(self, cell_row: int, /) -> tuple[Expression, ...]:
         row = int(cell_row)
@@ -1939,6 +2045,9 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
     @property
     def source_element_id(self) -> str:
         return self.source_element.element_id
+
+
+register_strict_reconstruction(PerCellRestrictedCellGeometryElement)
 
 
 ScalarCoordinateElement = (
@@ -3298,6 +3407,8 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         elements: Mapping[str, Any],
     ) -> CellGeometrySpec:
         """Renew source owners and decode canonical coordinate-element recipes."""
+        from dataclasses import fields
+
         from .._model._structure import (
             _FiniteElementSpecArchiveProjection,
             model_archive_projection,
@@ -3361,8 +3472,12 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             or rebuilt.source_mesh_id != value.source_mesh_id
             or rebuilt.source_topology_id != value.source_topology_id
             or rebuilt.source_map_id != value.source_map_id
-            or not _same_tree_content(
-                model_archive_projection(value), model_archive_projection(rebuilt)
+            or any(
+                not _same_tree_content(
+                    model_archive_projection(getattr(value, field.name)),
+                    model_archive_projection(getattr(rebuilt, field.name)),
+                )
+                for field in fields(cls)
             )
         ):
             raise ValueError("Stored CellGeometrySpec differs from reconstructed owners.")

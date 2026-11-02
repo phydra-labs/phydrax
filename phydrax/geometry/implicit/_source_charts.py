@@ -940,20 +940,31 @@ def _tangent_conditioner(
 
 def _enclose_face(expressions: Polynomial3, /) -> _FaceEnclosure:
     first, second, third = (_enclose_polynomial(value) for value in expressions)
+    zero_derivative = _EnclosedPolynomial({}, {}, 0.0)
+
+    def enclosed_derivative(
+        value: _EnclosedPolynomial, axis: int, /
+    ) -> _EnclosedPolynomial:
+        if not value.center and not value.radii:
+            return zero_derivative
+        result = _enclosed_derivative(value, axis)
+        if not result.center and not result.radii:
+            return zero_derivative
+        return result
 
     def tangent(
         value: _EnclosedPolynomial, /
     ) -> tuple[_EnclosedPolynomial, _EnclosedPolynomial]:
-        return _enclosed_derivative(value, 0), _enclosed_derivative(value, 1)
+        return enclosed_derivative(value, 0), enclosed_derivative(value, 1)
 
     def curvature(
-        value: _EnclosedPolynomial, /
+        first_derivatives: tuple[_EnclosedPolynomial, _EnclosedPolynomial], /
     ) -> tuple[_EnclosedPolynomial, _EnclosedPolynomial, _EnclosedPolynomial]:
-        along_u, along_v = tangent(value)
+        along_u, along_v = first_derivatives
         return (
-            _enclosed_derivative(along_u, 0),
-            _enclosed_derivative(along_u, 1),
-            _enclosed_derivative(along_v, 1),
+            enclosed_derivative(along_u, 0),
+            enclosed_derivative(along_u, 1),
+            enclosed_derivative(along_v, 1),
         )
 
     tangents = (tangent(first), tangent(second), tangent(third))
@@ -991,7 +1002,7 @@ def _enclose_face(expressions: Polynomial3, /) -> _FaceEnclosure:
     return _FaceEnclosure(
         (first, second, third),
         tangents,
-        (curvature(first), curvature(second), curvature(third)),
+        (curvature(tangents[0]), curvature(tangents[1]), curvature(tangents[2])),
         conditioner,
         tuple(conditioned),
     )
@@ -1477,6 +1488,7 @@ class _FaceRound:
 
 
 type _FaceReply = tuple[list[_PieceOutcome], list[_BoxResults]]
+
 type _FaceSteps[T] = Generator[_FaceRound, _FaceReply, T]
 
 

@@ -23,6 +23,92 @@ The installed isolation gate first verifies that the base Phydrax wheel refuses 
 
 External engines remain explicit optional comparisons. For example, `--scenario gmsh` or `--scenario planar-bands` runs the Gmsh comparison and reports missing dependencies separately; neither is part of the engine-free native gate. Native routes do not fall back to external geometry engines. Source approximations, exact CAD definitions, and mesh realizations retain distinct identities and fidelity claims.
 
+Sketch root preparation propagates fixed points, fixed circle radii,
+coincidence, horizontal and vertical coordinates, and midpoints only when the
+represented midpoint is exact. It retains every original residual. A reduced
+candidate is accepted only when both the complete residual and the native
+full-system least-squares stationarity test meet the declared tolerance.
+Otherwise the same native least-squares owner solves the unreduced problem from
+the original reference layout. In particular, conflicting weighted constraints are not
+silently treated as hard equalities. This preparation does not prove root
+uniqueness, and no gauge or least-motion objective is added.
+For two positive distance loci with distinct fixed centers, an exact rational
+discriminant and nonzero reference orientation establish a transversal
+algebraic branch. Its floating realization is checked against the full
+residual. Tangent or unresolved constructions are seeds only; this local branch
+evidence does not establish global root uniqueness.
+When a constructed branch is exactly rational, its algebraic point, not its
+rounded numerical realization, may anchor a subsequent two-circle
+construction. Non-rational constructed points are not used as exact anchors.
+For an axis-aligned line through a fixed endpoint and a positive distance to a
+fixed center, an exact discriminant and nonzero reference-side witness
+similarly identify a transversal branch. Other line/circle relations remain in
+the full residual.
+`SketchSolution.preparation` retains the reference, seed, fixed-coordinate
+facts, exact branch witnesses and whether the reduced root was accepted.
+Call its `verify` method with the sketch, dimension state and solve tolerance
+to replay its premises; this is separate from `root_evidence` and does not
+establish global uniqueness.
+For distance-triangulated components, `preparation.rigid_clusters` records an
+exact positive-discriminant witness for every added point and a nonzero
+reference orientation. Rigidity is conditional on simultaneous satisfaction of
+the recorded distances; this is not a root-existence certificate. A cluster
+with exactly one fixed anchor can be reduced to one orientation-preserving
+angle when every declared incident distance and every reference offset is
+exactly represented, its branch witness is valid, and it shares no other fixed
+or constructed coordinates. All original residuals remain, and a failed reduced
+root attempt falls back to the original full system. Other clusters remain
+numerical; no gauge is imposed.
+
+`SketchBranchWitness` identifies an ordered triple of points.
+`SketchContinuationReference` retains a converged layout and explicitly
+declared witnesses; `continue_sketch` checks their exact represented-coordinate
+orientation signs and numerical rank after a dimension edit. A rejected edit
+retains the reference unchanged. Matching endpoint signs do not prove that the
+continuous edit path was event-free or that the root is globally unique.
+`SketchContinuationResult.dimension_sensitivity`, `dimension_jvp`, and
+`dimension_vjp` require an accepted transition, independently replay its
+one-step checkpoint, and validate endpoint evidence before applying the
+fixed-branch implicit derivative. Standalone
+`Sketch.dimension_sensitivity` instead describes the local derivative of its
+supplied regular root, even if that root was an unaccepted diagnostic attempt.
+Derivative actions refuse a represented line-angle branch cut, collapsed
+carrier, rank change, or rejected branch transition rather than reporting a
+smooth derivative there.
+Sketch problem identity includes constraint incidence and branch selectors,
+including arc topology. Previous identities are not reused for the changed
+representation; compiler keys likewise follow the current residual code and
+captured values.
+Sketch arcs retain directed endpoint and center incidence, including selected
+major sweeps. Exact native profile lowering requires exact equality of the
+represented endpoint radii and zero proved endpoint gaps; its planar model
+retains bound native conic roots on the incident edge and coedge carriers.
+Numerical residual convergence alone is not promoted to an exact circular
+profile.
+
+A `SketchContinuationReference` retains its source sketch as well as the
+accepted root. For portable restoration, put it in a lifecycle `Composition`
+entry with role `model-state` and persist the composition through the existing
+model-archive API. Restoration reconstructs the sketch and independently replays
+the retained one-step solve checkpoint, then checks the accepted output,
+preparation, root, and branch evidence. This detects output changes against an
+unchanged checkpoint; it does not authenticate a wholesale replacement of both
+the source and checkpoint. Restoration does not require the original Python
+objects.
+Run `python examples/native_sketch_continuation.py` for the complete witnessed
+dimension edit and archive-restoration workflow.
+
+Run `python tools/sketch_preparation_benchmarks.py --counts 4 8 16` only
+without competing benchmarks. It records growing axis-constraint and
+distance-triangulated cluster scenarios, with preparation, Jacobian work, solve
+time, traced retained host memory, and prepared array bytes separately. The
+measurements are observations, not correctness or speed claims.
+
+Exact radical normalization uses a deterministic 64-bit primality decision for
+word-sized prime residues, including residues left after removing small factors.
+Larger integers retain complete exact factorization without an operation quota;
+no general complexity bound is claimed.
+
 Continuity is source-owned. Built-in analytic carriers declare C1 continuity
 over valid parameter ranges; custom `AbstractCurve` and `AbstractSurfacePatch`
 implementations must establish it explicitly rather than inherit a positive
@@ -37,6 +123,28 @@ Assembly definitions and uses are authored through `BRepAssemblyGraph`;
 occurrences retain exact placements and are expanded only when needed.
 Boolean operations return source geometry without generating triangles unless
 `BRepBooleanPolicy(tessellation=...)` explicitly requests a realization.
+
+`edit_brep_occurrence_placement` selects an exact assembly occurrence path and
+returns a new source model and occurrence correspondence. Uses are identified
+within their owning definition; a path edit copies shared ancestry rather than
+moving other instances. Exact host placements are not differentiable design
+parameters. A changed placement invalidates the old tessellation and other
+world-dependent evidence. Rebuild projection, contact, embedding and affected
+coupling against the new coordinates before accepting the result.
+The correspondence preserves topological incidence; a reflection's world
+handedness change is recorded separately and does not replace normal or
+Jacobian revalidation.
+
+For repeated motion, an in-hand `SourcePreparation` can create a preparation
+for the new meshing domain with `for_placement_domain`. It carries only exact
+local spline spans when the source dependencies and occurrence inventory match;
+placed spans and world-dependent proofs are constructed anew. Unknown or
+changed local dependencies take the cold path.
+
+The geometry realization benchmark includes repeated spline-backed assembly
+motion and records local span extraction and reuse separately from placement,
+world tessellation and proof, contact search, interface coupling and total
+work. Run performance measurements without competing benchmarks.
 
 Supported native analytic intersections, including unequal-radius
 perpendicular cylinders, preserve coupled source-defined branches even when
@@ -260,6 +368,12 @@ silently running through the host interpreter. Native polynomial, sine/cosine,
 square-root, and derivative programs use outward rounding and are checked
 against the host enclosure contract.
 
+Direct and affine-placed native torus charts bind outward intervals for their
+authored exact coefficients when preparing point, Jacobian, and Hessian
+programs. Source covers and interpolation fidelity also include the gap
+between exact source corner enclosures and their numerical mesh realizations;
+nonbinary radii or placements are not silently replaced by rounded shadows.
+
 One local cylinder-chart map measurement evaluated 4,096 interval boxes with
 `CylinderPatch.evaluate` at `batch_capacity=64`. After two warm-ups, the median
 of seven timed passes measured 0.681 microseconds per box on the native route
@@ -354,6 +468,20 @@ Boolean chart arrangements use the same exact affine-source recognizer as
 curve/surface correspondence. A clamped degree-one B-spline with equal
 weights is therefore an affine line, including its actual knot-parameter
 scale; unequal weights are not silently treated as affine parameterization.
+`repair_brep_source` is an explicit geometry- and interpretation-changing
+operation, separate from exact sewing and STEP import repair. It retains the
+input model and returns a separately identified source revision with entity
+correspondence and certified displacement evidence. Its completion policy
+identifies the bounded interpretation of gapped source trims, including the
+authored incidence, sheets, and winding; whole-region displacement is relative
+to that completed interpretation, not an asserted filled region of an
+otherwise undefined gapped loop. The tolerance is a caller-supplied upper
+bound in the model's length unit; use the original source's admitted tolerance,
+not a larger Boolean or meshing tolerance. Repair refuses unsupported,
+ambiguous, unproved, or out-of-budget constructions instead of welding nearby
+entities or silently fitting curves. The repaired result is not a lossless
+import of the original source.
+
 `repair_brep_source` is an explicit geometry- and interpretation-changing
 operation, separate from exact sewing and STEP import repair. It retains the
 input model and returns a separately identified source revision with entity

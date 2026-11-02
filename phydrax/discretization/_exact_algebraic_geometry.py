@@ -20,6 +20,38 @@ def _rational(value: RationalScalar) -> Fraction:
     raise TypeError(f"Expected an exact rational scalar, got {type(value).__name__}.")
 
 
+def _prime_uint64(value: int, /) -> bool:
+    """Deterministic Miller–Rabin decision for nonnegative 64-bit integers.
+
+    The seven bases are the complete unsigned-64-bit witness set published by
+    Jim Sinclair and summarized at https://miller-rabin.appspot.com/.
+    """
+    if value >= (1 << 64):
+        raise ValueError("The deterministic word-prime test requires a 64-bit input.")
+    if value < 2:
+        return False
+    if value in (2, 3):
+        return True
+    if value % 2 == 0:
+        return False
+    odd = value - 1
+    shifts = 0
+    while odd % 2 == 0:
+        odd //= 2
+        shifts += 1
+    for base in (2, 325, 9375, 28178, 450775, 9780504, 1795265022):
+        residue = pow(base % value, odd, value)
+        if residue in (0, 1, value - 1):
+            continue
+        for _ in range(shifts - 1):
+            residue = residue * residue % value
+            if residue == value - 1:
+                break
+        else:
+            return False
+    return True
+
+
 def _squarefree(value: int, /) -> tuple[int, int]:
     """Return ``outside, inside`` with ``value == outside**2 * inside``."""
     if type(value) is not int or value <= 0:
@@ -27,6 +59,8 @@ def _squarefree(value: int, /) -> tuple[int, int]:
     root = math.isqrt(value)
     if root * root == value:
         return root, 1
+    if value < (1 << 64) and _prime_uint64(value):
+        return 1, value
     outside = inside = 1
     divisor = 2
     while divisor * divisor <= value:
@@ -38,6 +72,8 @@ def _squarefree(value: int, /) -> tuple[int, int]:
             outside *= divisor ** (exponent // 2)
             if exponent % 2:
                 inside *= divisor
+            if value < (1 << 64) and _prime_uint64(value):
+                return outside, inside * value
         divisor = 3 if divisor == 2 else divisor + 2
     return outside, inside * value
 

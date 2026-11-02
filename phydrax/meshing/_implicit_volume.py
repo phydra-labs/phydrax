@@ -34,7 +34,8 @@ from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
-    certify_cell_geometry_validity,
+    CellValidityPolicy,
+    ComputedCellValidity,
 )
 from ..discretization._cell_mesh import CellMesh, TetrahedralConnectivity
 from ..geometry._global_embedding import ValidatedGlobalEmbedding
@@ -2692,9 +2693,14 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         cell_regions = np.zeros((mesh.blocks[0].cell_count,), dtype=np.int32)
         # The exact global embedding is computed once here and passed to
         # the coverage replay and to acceptance, which check its inputs.
-        validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+        computed_validity = ComputedCellValidity(
+            geometry, mesh, CellValidityPolicy(), None
+        )
+        validity = computed_validity.certificate
         validated_embedding = (
-            ValidatedGlobalEmbedding(mesh, geometry, validity)
+            ValidatedGlobalEmbedding(
+                mesh, geometry, validity, validated_validity=computed_validity
+            )
             if validity.all_certified
             else None
         )

@@ -345,6 +345,111 @@ def test_conical_hole_defeature_publishes_measured_shape_change() -> None:
     _contains(np.asarray(result.volume_change_enclosure), expected)
 
 
+@pytest.mark.parametrize("orientation", (-1, 1))
+def test_certified_simpson_remainder_encloses_oriented_quartic(orientation: int) -> None:
+    from fractions import Fraction
+
+    from phydrax.geometry.brep._measure import (
+        _cell_program,
+        _factor,
+        _new_family,
+        _with_hessian,
+    )
+
+    program = _cell_program(_with_hessian(lambda x: x[0] ** 4, fourth=True), 1)
+    family = _new_family(
+        "quartic",
+        program,
+        _factor(Fraction(orientation)),
+        np.asarray([[[0.0], [1.0]]]),
+    )
+    exact = Fraction(orientation, 5)
+    assert Fraction.from_float(float(family.lower[0])) <= exact
+    assert Fraction.from_float(float(family.upper[0])) >= exact
+    assert family.upper[0] - family.lower[0] < 1e-12
+
+
+@pytest.mark.parametrize("orientation", (-1, 1))
+def test_rooted_torus_quarter_meridian_green_enclosure(orientation: int) -> None:
+    from fractions import Fraction
+    from types import SimpleNamespace
+    from typing import cast
+
+    import mpmath
+
+    from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.geometry.brep._measure import (
+        _loop_ends,
+        _MeasureFailure,
+        _torus_periodic_face,
+        _VolumeSource,
+    )
+    from phydrax.geometry.brep._patches import (
+        CircleCurve,
+        ConicParameterRoot,
+        LineCurve,
+        TorusPatch,
+        TorusRootedCirclePCurve,
+    )
+
+    patch = TorusPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 3, 1)
+    meridian = CircleCurve((3, 0, 0), (1, 0, 0), (0, 0, 1), 1)
+    bottom = TorusRootedCirclePCurve(
+        ConicParameterRoot(meridian, Fraction(1), Fraction(0)), Fraction(0), 1
+    )
+    top = TorusRootedCirclePCurve(
+        ConicParameterRoot(meridian, Fraction(0), Fraction(1)), Fraction(0), 1
+    )
+    seam = LineCurve((0, 0), (0, 1))
+    geometry = SimpleNamespace(
+        pcurves=(bottom, PeriodicPCurve(seam, patch, (1, 0)), top, seam),
+        face_loops=(((0, 1, 2, 3),),),
+        edge_ranges=np.asarray(((0, 2 * pi), (0, pi / 2), (0, 2 * pi), (0, pi / 2))),
+        coedge_edges=(0, 1, 2, 1),
+        coedge_senses=(1, 1, -1, -1),
+    )
+    source = cast(
+        _VolumeSource,
+        SimpleNamespace(
+            geometry=geometry,
+            patches=(patch,),
+            parameter_bounds=np.asarray([[[-1e-15, 0], [2 * pi, pi / 2]]]),
+        ),
+    )
+    ends = _loop_ends(source, 0)
+    plan = _torus_periodic_face(source, 0, orientation, ends)
+    assert plan is not None and not plan.families
+    with mpmath.workdps(60):
+        reference = orientation * 2 * mpmath.pi / 3 * (10 + 9 * mpmath.pi / 4)
+        assert mpmath.mpf(plan.fixed[0]) <= reference <= mpmath.mpf(plan.fixed[1])
+    assert plan.fixed[1] - plan.fixed[0] < 1e-10
+
+    # Multiple loops are not silently treated as a simple once-wound face.
+    geometry.pcurves += (seam, top, geometry.pcurves[1], bottom)
+    geometry.coedge_edges = (0, 1, 2, 1, 1, 2, 1, 0)
+    geometry.coedge_senses = (1, 1, -1, -1, 1, 1, -1, -1)
+    geometry.face_loops = (((0, 1, 2, 3), (4, 5, 6, 7)),)
+    with pytest.raises(_MeasureFailure, match="not proved once-wound"):
+        _torus_periodic_face(source, 0, orientation, _loop_ends(source, 0))
+
+    geometry.face_loops = (((0, 1, 2, 3),),)
+    geometry.pcurves = (bottom, PeriodicPCurve(seam, patch, (2, 0)), top, seam)
+    geometry.edge_ranges = np.asarray(
+        ((0, 4 * pi), (0, pi / 2), (0, 4 * pi), (0, pi / 2))
+    )
+    with pytest.raises(_MeasureFailure, match="not proved once-wound"):
+        _torus_periodic_face(source, 0, orientation, _loop_ends(source, 0))
+
+    geometry.pcurves = (
+        bottom,
+        PeriodicPCurve(LineCurve((0, 0), (1, 1)), patch, (1, 0)),
+        top,
+        seam,
+    )
+    with pytest.raises(_MeasureFailure, match="not proved once-wound"):
+        _torus_periodic_face(source, 0, orientation, ends)
+
+
 def test_cylinder_green_strip_encloses_exact_primitive() -> None:
     from phydrax.geometry.brep._measure import _green_strip_program
     from phydrax.geometry.brep._patches import CylinderPatch, LineCurve
@@ -356,6 +461,174 @@ def test_cylinder_green_strip_encloses_exact_primitive() -> None:
     for parameter in (0.3, 0.35, 0.4):
         expected = (parameter + np.sin(parameter)) / 3.0
         assert lower[0, 0] <= expected <= upper[0, 0]
+
+
+def test_cylinder_green_uses_exact_section_and_radius_sources() -> None:
+    from fractions import Fraction
+
+    import mpmath
+
+    from phydrax.geometry.brep._measure import _green_strip_program
+    from phydrax.geometry.brep._patches import CylinderPatch, PlaneCylinderSectionPCurve
+
+    cylinder = CylinderPatch(
+        (1 / 3, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        0.1,
+        origin_exact=(Fraction(1, 3), Fraction(0), Fraction(0)),
+        radius_exact=Fraction(1, 10),
+    )
+    pcurve = PlaneCylinderSectionPCurve(
+        (Fraction(1, 10), Fraction(0)),
+        (Fraction(1), Fraction(1)),
+        (Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(0)),
+        parameter_range=(0.0, 1.0),
+    )
+    program = _green_strip_program(cylinder, pcurve, 0.0, cylinder=True)
+    lower, upper = program.evaluate(np.asarray([[0.3]]), np.asarray([[0.3]]))
+    with mpmath.workdps(60):
+        angle = mpmath.mpf(0.3) + mpmath.mpf(1) / 10
+        expected = (angle / 10 + mpmath.sin(angle) / 3) / 30
+        assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
+
+
+@pytest.mark.parametrize("turns", (1, -1, 2**53 + 1))
+def test_wrapped_section_green_uses_exact_period_and_coefficients(turns: int) -> None:
+    from fractions import Fraction
+
+    import mpmath
+
+    from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.geometry.brep._measure import (
+        _green_strip_program,
+        _parameter_area_program,
+    )
+    from phydrax.geometry.brep._patches import CylinderPatch, PlaneCylinderSectionPCurve
+
+    cylinder = CylinderPatch(
+        (1 / 3, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        0.1,
+        origin_exact=(Fraction(1, 3), Fraction(0), Fraction(0)),
+        radius_exact=Fraction(1, 10),
+    )
+    section = PlaneCylinderSectionPCurve(
+        (Fraction(1, 10), Fraction(0)),
+        (Fraction(1), Fraction(1)),
+        (Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(0)),
+        parameter_range=(0.0, 1.0),
+    )
+    wrapped = PeriodicPCurve(section, cylinder, (turns, 0))
+    green = _green_strip_program(cylinder, wrapped, 0.0, cylinder=True)
+    area = _parameter_area_program(wrapped)
+    lower, upper = green.evaluate(np.asarray([[0.3]]), np.asarray([[0.3]]))
+    area_lower, area_upper = area.evaluate(np.asarray([[0.3]]), np.asarray([[0.3]]))
+    with mpmath.workdps(70):
+        angle = mpmath.mpf(0.3) + mpmath.mpf(1) / 10 + turns * 2 * mpmath.pi
+        expected = (angle / 10 + mpmath.sin(angle) / 3) / 30
+        expected_area = (mpmath.mpf(1) / 10 + turns * 2 * mpmath.pi) / 2
+        assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
+        assert (
+            mpmath.mpf(area_lower[0, 0]) <= expected_area <= mpmath.mpf(area_upper[0, 0])
+        )
+
+
+def test_cylinder_green_binds_root_phase_and_native_period() -> None:
+    from fractions import Fraction
+
+    import mpmath
+
+    from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.geometry.brep._measure import _green_strip_program
+    from phydrax.geometry.brep._patches import (
+        CircleCurve,
+        ConicParameterRoot,
+        ConicRootLinePCurve,
+        CylinderPatch,
+    )
+
+    cylinder = CylinderPatch((1, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1)
+    circle = CircleCurve((0, 0), (1, 0), (0, 1), 1)
+    root = ConicParameterRoot(circle, Fraction(3, 5), Fraction(4, 5))
+    line = ConicRootLinePCurve(
+        root, Fraction(1, 7), Fraction(2, 3), phase_shift_exact=Fraction(1, 10)
+    )
+    pcurve = PeriodicPCurve(line, cylinder, (1, 0))
+    program = _green_strip_program(cylinder, pcurve, 0.0, cylinder=True)
+    lower, upper = program.evaluate(np.asarray([[0.3]]), np.asarray([[0.3]]))
+    with mpmath.workdps(60):
+        angle = mpmath.atan(mpmath.mpf(4) / 3) + mpmath.mpf(1) / 10 + 2 * mpmath.pi
+        expected = (angle + mpmath.sin(angle)) * mpmath.mpf(2) / 9
+        assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
+
+
+def test_plane_green_uses_exact_section_coefficients_and_root_phase() -> None:
+    from fractions import Fraction
+
+    import mpmath
+
+    from phydrax.geometry.brep._measure import _parameter_area_program
+    from phydrax.geometry.brep._patches import (
+        CircleCurve,
+        ConicParameterRoot,
+        PlaneCylinderSectionPCurve,
+    )
+
+    circle = CircleCurve((0, 0), (1, 0), (0, 1), 1)
+    root = ConicParameterRoot(circle, Fraction(0), Fraction(1))
+    curve = PlaneCylinderSectionPCurve(
+        (Fraction(1, 10), Fraction(1, 7)),
+        (Fraction(1, 5), Fraction(1, 3)),
+        (Fraction(1, 11), Fraction(1, 13)),
+        (Fraction(1, 17), Fraction(1, 19)),
+        parameter_range=(0.0, 1.0),
+        angle_offset_root=root,
+    )
+    program = _parameter_area_program(curve)
+    lower, upper = program.evaluate(np.asarray([[0.25]]), np.asarray([[0.25]]))
+    with mpmath.workdps(60):
+        t = mpmath.mpf(1) / 4
+        c, s = mpmath.cos(t), mpmath.sin(t)
+        u = mpmath.mpf(1) / 10 + t / 5 + c / 11 + s / 17 + mpmath.pi / 2
+        v = mpmath.mpf(1) / 7 + t / 3 + c / 13 + s / 19
+        du = mpmath.mpf(1) / 5 - s / 11 + c / 17
+        dv = mpmath.mpf(1) / 3 - s / 13 + c / 19
+        expected = (u * dv - v * du) / 2
+        assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
+
+
+def test_revolved_cylinder_green_uses_exact_meridian_radius() -> None:
+    from fractions import Fraction
+
+    from phydrax.geometry.brep._measure import (
+        _green_strip_program,
+        _surface_frame_program,
+    )
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+
+    profile = LineCurve(
+        (0, 0.1, 0),
+        (2, 0, 0),
+        origin_exact=(Fraction(0), Fraction(1, 10), Fraction(0)),
+    )
+    patch = RevolutionSurface(profile, (0, 0, 0), (1, 0, 0))
+    pcurve = LineCurve((0, 0), (1, 1))
+    program = _green_strip_program(patch, pcurve, 0.0, cylinder=True)
+    lower, upper = program.evaluate(np.asarray([[0.3]]), np.asarray([[0.3]]))
+    exact = Fraction.from_float(0.3) / 150
+    assert Fraction.from_float(float(lower[0, 0])) <= exact
+    assert Fraction.from_float(float(upper[0, 0])) >= exact
+
+    frame = _surface_frame_program(patch)
+    lower, upper = frame.evaluate(np.asarray([[0.3, 0.2]]), np.asarray([[0.3, 0.2]]))
+    assert Fraction.from_float(float(lower[0, 0])) <= Fraction(1, 150)
+    assert Fraction.from_float(float(upper[0, 0])) >= Fraction(1, 150)
 
 
 def test_measure_period_binding_preserves_directed_native_turn() -> None:
@@ -385,4 +658,17 @@ def test_iges_cylinder_intersection_source_volume_at_profile_accuracy(
 
     model, expected, _, _ = _quadric_case("iges", tmp_path)
     result = _source_volume_oracle(model, expected, "quadric-routine")
+    assert result["passed"] is True
+
+
+def test_repaired_step_external_combined_source_volume_at_profile_accuracy(
+    tmp_path: Path,
+) -> None:
+    from tools.meshing_qualification.scenarios.native_cad_profiles import (
+        _external_case,
+        _source_volume_oracle,
+    )
+
+    model, expected, _, _ = _external_case("external-combined", "step", tmp_path)
+    result = _source_volume_oracle(model, expected, "external-combined")
     assert result["passed"] is True

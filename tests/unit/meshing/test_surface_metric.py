@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -31,6 +34,7 @@ from phydrax.geometry.implicit import (
     AnalyticImplicitProfile,
     discover_adaptive_implicit_surface,
 )
+from phydrax.meshing import _surface_metric as surface_metric
 from phydrax.meshing._adaptation import (
     execute_mesh_adaptation,
     MeshAdaptationPolicy,
@@ -38,6 +42,7 @@ from phydrax.meshing._adaptation import (
     MeshAdaptationStatus,
     MetricMeshAdaptation,
     prepare_mesh_adaptation,
+    RelocationMeshAdaptation,
 )
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
@@ -273,9 +278,9 @@ def test_closed_brep_source_chart_metric_adaptation(family: str) -> None:
     np.testing.assert_array_equal(np.sort(mapped_cells), np.sort(target_cell_ids))
 
 
-def _implicit_sphere_source() -> tuple[
-    AnalyticImplicitProfile, CellMeshingResult, SpatialCoordinateContract
-]:
+def _implicit_sphere_source(
+    maximum_deviation: float = 0.5,
+) -> tuple[AnalyticImplicitProfile, CellMeshingResult, SpatialCoordinateContract]:
     contract = SpatialCoordinateContract.si()
     source_id = "surface-metric-implicit-sphere"
     revision = f"{source_id}-r1"
@@ -323,10 +328,7 @@ def _implicit_sphere_source() -> tuple[
         CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
         scope,
         size_controls=(),
-        # The deviation bound sets the discovery resolution: 0.5 keeps the certified
-        # root charts to about a thousand triangles, so one process builds, adapts and
-        # recertifies the sphere well inside the per-node budget.
-        maximum_deviation=0.5,
+        maximum_deviation=maximum_deviation,
     )
     options = NativeMeshingOptions(
         "implicit_surface",
@@ -444,7 +446,93 @@ def test_open_trimmed_sheet_metric_statistics_match_independent_pullback(
     assert outcome.evidence.unit_fraction == pytest.approx(
         float(np.mean((measured >= lower) & (measured <= upper)))
     )
-    assert outcome.status is SurfaceMetricStatus.COMPLETE
+    assert outcome.out_of_range_edges == int(
+        np.count_nonzero((measured < lower) | (measured > upper))
+    )
+    assert outcome.status is (
+        SurfaceMetricStatus.COMPLETE
+        if np.all((measured >= lower) & (measured <= upper))
+        else SurfaceMetricStatus.STALLED
+    )
+
+
+def test_surface_relocation_without_operations_does_not_claim_unit_mesh(
+    _trimmed_sheet: tuple[MeshingDomain, CellMeshingResult],
+) -> None:
+    domain, source = _trimmed_sheet
+    vertex_set = source.mesh.entity_set(0)
+    vertex_ids = np.asarray(vertex_set.entity_ids, dtype=np.int64)
+    metric = MeshMetricField(
+        MeshingScope(
+            source.mesh.mesh_id,
+            source.mesh.numeric_version,
+            MeshingEntityKind.MESH,
+            0,
+            vertex_set.entity_set_id,
+            vertex_ids,
+        ),
+        np.broadcast_to(np.eye(3), (vertex_ids.size, 3, 3)),
+        minimum_size=0.1,
+        maximum_size=2.0,
+    )
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            RelocationMeshAdaptation(metric),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_METRIC_SURFACE,
+                association_transfer=SurfaceAssociationTransfer(domain),
+                relocation=False,
+            ),
+        )
+    )
+    assert isinstance(result.evidence, SurfaceMetricOutcome)
+    assert result.evidence.out_of_range_edges > 0
+    assert not result.evidence.evidence.converged
+    assert result.status is MeshAdaptationStatus.STALLED
+
+
+@pytest.mark.parametrize("publication_period", (1, 3), ids=("fixed", "cycle"))
+def test_surface_publication_rechecks_final_metric_band(
+    _trimmed_sheet: tuple[MeshingDomain, CellMeshingResult],
+    monkeypatch: pytest.MonkeyPatch,
+    publication_period: int,
+) -> None:
+    _, source = _trimmed_sheet
+    assert source.surface_source is not None
+    prepared = prepare_surface_metric_source(
+        source.mesh, source.surface_source, _anisotropic_metric(source.mesh)
+    )
+    local_execute = surface_metric.execute_local_metric_adaptation
+    pullback = surface_metric._pullback_metrics
+    publication_index = 0
+
+    def published_pullback(*values: Any) -> np.ndarray:
+        nonlocal publication_index
+        scale = 1.0e6 * (1 + publication_index % publication_period)
+        publication_index += 1
+        return scale * pullback(*values)
+
+    def perturb_after_local(*args: Any, **kwargs: Any) -> Any:
+        local = local_execute(*args, **kwargs)
+        monkeypatch.setattr(surface_metric, "_pullback_metrics", published_pullback)
+        monkeypatch.setattr(
+            surface_metric, "_resume_local_metric_adaptation", lambda *values: local
+        )
+        return local
+
+    monkeypatch.setattr(
+        surface_metric, "execute_local_metric_adaptation", perturb_after_local
+    )
+    outcome = execute_surface_metric_adaptation(
+        prepared,
+        predicate_mode=PredicateMode.EXACT,
+        topology_operations=True,
+        relocation=True,
+    )
+    assert outcome.out_of_range_edges > 0
+    assert not outcome.evidence.converged
+    assert outcome.status is SurfaceMetricStatus.NUMERICAL_STOP
 
 
 def test_open_trimmed_sheet_adaptation_keeps_boundary_and_exact_source_points(
@@ -520,7 +608,9 @@ def _coarsening_metric(mesh: CellMesh, /) -> np.ndarray:
     return np.broadcast_to(tensor, (mesh.coordinates.shape[0], 3, 3)).copy()
 
 
-def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> None:
+def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     profile, source, contract = _implicit_sphere_source()
     mesh = source.mesh
     certification = source.certification
@@ -557,14 +647,38 @@ def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits() -> No
     np.testing.assert_array_equal(
         np.flatnonzero(prepared.collapsed_source_vertices), poles
     )
+    assert np.any(prepared.work_vertex_period_shifts)
+    assert any(
+        value != Fraction(float(value))
+        for point in prepared.work_vertex_charts
+        for value in point
+    )
+    original = surface_metric.execute_local_metric_adaptation
+    observed: list[tuple[tuple[Fraction, ...], ...]] = []
+
+    def local_with_exact_charts(*args: Any, **kwargs: Any) -> Any:
+        exact = kwargs["exact_source_points"]
+        observed.append(exact)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        surface_metric, "execute_local_metric_adaptation", local_with_exact_charts
+    )
     outcome = execute_surface_metric_adaptation(
         prepared,
         predicate_mode=PredicateMode.EXACT,
         topology_operations=True,
         relocation=True,
     )
+    assert observed == [prepared.work_vertex_charts]
     # Extraction vertices are not features: the cap refines across the seam and the
     # pole fan while the coarser remainder collapses and relocates free vertices.
+    # Regular passes stall on one short birth edge whose endpoint collapses both
+    # create an edge above sqrt(2); the stall escape merges its ends at the edge
+    # point that minimizes the longest star edge, and the unit mesh is reached.
+    assert outcome.status is SurfaceMetricStatus.COMPLETE
+    assert outcome.out_of_range_edges == 0
+    assert not outcome.evidence.stalled_edges
     assert outcome.splits > 0
     assert outcome.collapses > 0
     assert outcome.relocations > 0
@@ -649,8 +763,11 @@ def test_implicit_sphere_pole_fans_reach_unit_mesh_across_scales(
     assert not outcome.evidence.stalled_edges
 
 
-def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere() -> None:
-    profile, source, _ = _implicit_sphere_source()
+@pytest.mark.parametrize("maximum_deviation", (0.5, 0.2), ids=("coarse", "fine"))
+def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
+    maximum_deviation: float,
+) -> None:
+    profile, source, _ = _implicit_sphere_source(maximum_deviation)
     transfer = ImplicitAssociationTransfer(profile)
     transfer.validate_source(source)
     values = _coarsening_metric(source.mesh)
@@ -690,6 +807,10 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
     # collapses the extraction's short edges and completes.
     assert result.status is MeshAdaptationStatus.COMPLETE
     assert result.evidence.out_of_range_edges == 0
+    np.testing.assert_array_equal(
+        result.evidence.metric,
+        np.broadcast_to(values[0], result.evidence.metric.shape),
+    )
     assert result.evidence.collapses > 0
     assert result.transition is not None
     assert result.transition.geometry_transition is not None

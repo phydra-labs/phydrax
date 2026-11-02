@@ -11,8 +11,10 @@ import pytest
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._interpolation import TMesh2D
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
 from phydrax.geometry.brep._assembly import (
     BRepAffinePlacement,
+    BRepAssemblyDefinition,
     BRepAssemblyGraph,
     BRepAssemblyUse,
 )
@@ -34,6 +36,7 @@ from phydrax.geometry.brep._patches import (
     OffsetCurve,
     RuledSurface,
 )
+from phydrax.geometry.brep._placement import edit_brep_occurrence_placement
 from phydrax.geometry.brep._tessellation import tessellate_brep_model
 from phydrax.geometry.brep._tspline import TSplineSurfacePatch
 
@@ -173,6 +176,41 @@ def _bspline_bump_model(contract: SpatialCoordinateContract) -> BRepModel:
         report=source.report,
         trim_domains=source.trim_domains,
     )
+
+
+def test_local_span_reuse_requires_unchanged_brep_source() -> None:
+    model = _bspline_bump_model(SpatialCoordinateContract.si())
+    domain = MeshingDomain.from_brep(model)
+    preparation = SourcePreparation(domain)
+    original = preparation.surface_spans(model.patches[0])
+    same = preparation.for_placement_domain(MeshingDomain.from_brep(model))
+    assert original is not None
+    assert same.surface_spans(model.patches[0]) is original
+
+    changed = BRepModel(
+        geometry=model.geometry,
+        patches=model.patches,
+        parameter_bounds=model.parameter_bounds,
+        orientation=model.orientation,
+        physical_tags=("changed-tag",),
+        coordinate_contract=model.coordinate_contract,
+        report=model.report,
+        trim_domains=model.trim_domains,
+    )
+    cold = preparation.for_placement_domain(MeshingDomain.from_brep(changed))
+    assert cold.surface_spans(changed.patches[0]) is not original
+    reversed_incidence = BRepModel(
+        geometry=model.geometry,
+        patches=model.patches,
+        parameter_bounds=model.parameter_bounds,
+        orientation=-model.orientation,
+        physical_tags=model.physical_tags,
+        coordinate_contract=model.coordinate_contract,
+        report=model.report,
+        trim_domains=model.trim_domains,
+    )
+    cold = preparation.for_placement_domain(MeshingDomain.from_brep(reversed_incidence))
+    assert cold.surface_spans(reversed_incidence.patches[0]) is not original
 
 
 def _offset_ruled_model(contract: SpatialCoordinateContract) -> BRepModel:
@@ -570,6 +608,91 @@ def test_reflected_reused_solid_occurrences_remain_distinct_in_tessellation() ->
         tessellation.vertex_global_ids
     )
     assert realized.source_revision == tessellation.source_revision
+
+
+def test_repeated_spline_occurrence_motion_reuses_local_spans() -> None:
+    source = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+    bounds = np.asarray(source.parameter_bounds[0], dtype=np.float64)
+    parameters = np.asarray(
+        [[(u, v) for v in bounds[:, 1]] for u in bounds[:, 0]], dtype=np.float64
+    )
+    control = np.asarray(source.patches[0].evaluate(jnp.asarray(parameters)))
+    exact = tuple(
+        tuple(
+            tuple(Fraction.from_float(float(value)) for value in point) for point in row
+        )
+        for row in control
+    )
+    uknots = tuple(Fraction.from_float(float(value)) for value in bounds[:, 0])
+    vknots = tuple(Fraction.from_float(float(value)) for value in bounds[:, 1])
+    patch = BSplineSurfacePatch(
+        control,
+        np.ones((2, 2), dtype=np.float64),
+        np.asarray((uknots[0], uknots[0], uknots[1], uknots[1]), dtype=np.float64),
+        np.asarray((vknots[0], vknots[0], vknots[1], vknots[1]), dtype=np.float64),
+        1,
+        1,
+        exact_control_points=exact,
+        exact_weights=((Fraction(1), Fraction(1)), (Fraction(1), Fraction(1))),
+        exact_u_knots=(uknots[0], uknots[0], uknots[1], uknots[1]),
+        exact_v_knots=(vknots[0], vknots[0], vknots[1], vknots[1]),
+        control_point_ids=((0, 1), (2, 3)),
+    )
+    source = BRepModel(
+        geometry=source.geometry,
+        patches=(patch, *source.patches[1:]),
+        parameter_bounds=source.parameter_bounds,
+        orientation=source.orientation,
+        physical_tags=source.physical_tags,
+        coordinate_contract=source.coordinate_contract,
+        report=source.report,
+        trim_domains=source.trim_domains,
+    )
+    graph = BRepAssemblyGraph(
+        (
+            BRepAssemblyUse("first", definition_id="part"),
+            BRepAssemblyUse("second", definition_id="part"),
+        ),
+        (BRepAssemblyDefinition("part", (BRepAssemblyUse("leaf", solid_index=0),)),),
+        1,
+    )
+    model = _model_with_assembly(source, graph)
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    local = preparation.surface_spans(patch)
+    assert local is not None
+    placement = BRepAffinePlacement.from_matrix(
+        ((1, 0, 0, 2), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+    )
+    moved = edit_brep_occurrence_placement(model, ("first", "leaf"), placement).model
+    domain = MeshingDomain.from_brep(moved)
+    reused = preparation.for_placement_domain(domain)
+    assert reused.surface_spans(patch) is local
+    cold = SourcePreparation(domain)
+    for surface in (item.surface for item in domain.patches):
+        warm_spans = reused.surface_spans(surface)
+        cold_spans = cold.surface_spans(surface)
+        assert (warm_spans is None) == (cold_spans is None)
+        if warm_spans is not None and cold_spans is not None:
+            assert warm_spans.source_id == cold_spans.source_id
+    warm_mesh, warm_proof = tessellate_brep_model(moved, _policy(), preparation=reused)
+    cold_mesh, cold_proof = tessellate_brep_model(moved, _policy(), preparation=cold)
+    np.testing.assert_array_equal(warm_mesh.vertices, cold_mesh.vertices)
+    np.testing.assert_array_equal(warm_mesh.triangles, cold_mesh.triangles)
+    occurrence_ids = {
+        occurrence.path: index
+        for index, occurrence in enumerate(moved.geometry.iter_occurrences())
+    }
+    triangle_ids = np.asarray(warm_mesh.triangle_occurrence_ids)
+    witness_paths = warm_mesh.source_chart_witness.occurrence_paths
+    for path, occurrence_id in occurrence_ids.items():
+        rows = np.flatnonzero(triangle_ids == occurrence_id)
+        assert rows.size > 0
+        assert all(witness_paths[row] == path for row in rows)
+    assert warm_proof.certificate_id == cold_proof.certificate_id
 
 
 def test_singular_pole_trim_certifies_a_tessellation_with_bounded_evidence() -> None:

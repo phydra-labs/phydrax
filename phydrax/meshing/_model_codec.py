@@ -24,6 +24,9 @@ from .._model._structure import (
     _row_record_recipe_types,
     AdaptiveImplicitBoundarySourceArchiveRecipe,
     AnalyticImplicitProfileArchiveRecipe,
+    CADGraphArchiveRecipe,
+    CADRevisionArchiveRecipe,
+    CADTransactionArchiveRecipe,
     DistributedFiniteElementTransferArchiveRecipe,
     expand_shared_model_archive_recipe,
     FiniteElementAcceptedStateArchiveRecipe,
@@ -37,12 +40,15 @@ from .._model._structure import (
     MeshingDomainBoundarySourceArchiveRecipe,
     model_archive_root_projection,
     model_from_array_recipe,
+    model_structure_matches_recipe,
     model_structure_recipe,
     NativeImplicitBoundaryQueryArchiveRecipe,
     NativeMappedHexSourceArchiveRecipe,
     NativePlcSourceArchiveRecipe,
     pack_model_array_tree,
     ParametricCurveBoundarySourceArchiveRecipe,
+    PartitionOperandArchiveRecipe,
+    PartitionPlanArchiveRecipe,
     PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS,
     PeriodicFiniteElementTransferArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
@@ -198,6 +204,16 @@ def _register_model_archive_types() -> None:
     )
     from ..exterior._form_type import FormType, FormValueSpec
     from ..geometry._atlas import BoundaryAtlas, BoundaryFrame
+    from ..geometry._cad_revision import (
+        AssociationCoverageEvidence,
+        AssociationGraph,
+        CADOccurrence,
+        CADRevision,
+        CADSelectionSet,
+        CADSelector,
+        OccurrenceCorrespondence,
+        OccurrenceCorrespondenceTransaction,
+    )
     from ..geometry._common_root_volume_overlap import (
         CommonRootVolumeWitness,
         CurvedOverlapIntegrationEvidence,
@@ -280,13 +296,30 @@ def _register_model_archive_types() -> None:
     )
     from ..geometry.analytic._extended import _TorusKernel
     from ..geometry.analytic._primitives import _BallKernel
+    from ..geometry.brep._constructors import BRepTessellationPolicy
+    from ..geometry.brep._partition import (
+        BRepPartitionPatch,
+        BRepPartitionRegion,
+        BRepPartitionReport,
+        BRepPartitionResult,
+        BRepPartitionResultArchiveRecipe,
+    )
     from ..geometry.brep._projection_contracts import BRepProjectionResult
+    from ..geometry.design._continuation import SketchContinuationReferenceArchiveRecipe
+    from ..geometry.design._reduced import (
+        _SketchDistanceRigidityWitness,
+        _SketchDistanceTriangleWitness,
+    )
     from ..geometry.design._schema import (
         DesignState,
         ParameterBinding,
         ParameterId,
         ParameterSchema,
         ParameterSpec,
+    )
+    from ..geometry.design._sketch_certificate import (
+        LineCircleConstruction,
+        TwoCircleConstruction,
     )
     from ..geometry.implicit._adaptive_discovery import (
         AdaptiveImplicitSurfaceArchiveRecipe,
@@ -301,6 +334,14 @@ def _register_model_archive_types() -> None:
         RestrictedDelaunayBoundaryWitness,
         RestrictedDelaunayCoverageTransportWitness,
     )
+    from ..geometry.multiregion_surface._contracts import (
+        MultiRegionSurfaceCapacityEvidence,
+        MultiRegionSurfaceCapacityPlan,
+        MultiRegionSurfaceCounts,
+        MultiRegionSurfaceEvidence,
+        MultiRegionSurfaceStatus,
+    )
+    from ..geometry.multiregion_surface._topology import MultiRegionSurfaceTopology
     from ..geometry.reconstruction._boundary import (
         _TriangleBVHNode,
         ReconstructedTriangleBoundarySource,
@@ -322,7 +363,7 @@ def _register_model_archive_types() -> None:
         SamplingCoverageEvidence,
         ThinFeatureEvidence,
     )
-    from ..geometry.simplicial._regions import MeshRegion
+    from ..geometry.simplicial._regions import MeshRegion, PlanarMeshRegion
     from ..geometry.surface._contracts import (
         SurfaceInterface,
         SurfaceMetadata,
@@ -395,7 +436,7 @@ def _register_model_archive_types() -> None:
         RegionBoundaryEvidence,
         RegionRole,
     )
-    from ..meshing._scope import MeshingEntityKind, MeshingScope
+    from ..meshing._scope import MeshingEntityKind, MeshingScope, MeshingScopeSide
     from ..meshing._sizing import (
         CurvatureSizeControl,
         ProximitySizeControl,
@@ -549,6 +590,13 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", MappedReferenceBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SparseCoordinateOperatorArchiveRecipe),
         ("phydrax.model.archive", PeriodicFiniteElementTransferArchiveRecipe),
+        ("phydrax.model.archive", PartitionOperandArchiveRecipe),
+        ("phydrax.model.archive", PartitionPlanArchiveRecipe),
+        ("phydrax.model.archive", CADGraphArchiveRecipe),
+        ("phydrax.model.archive", CADRevisionArchiveRecipe),
+        ("phydrax.model.archive", CADTransactionArchiveRecipe),
+        ("phydrax.geometry.brep", BRepTessellationPolicy),
+        ("phydrax.geometry.simplicial", PlanarMeshRegion),
         ("phydrax.model.archive", DistributedFiniteElementTransferArchiveRecipe),
         ("phydrax.geometry.reconstruction", NormalEstimationEvidence),
         ("phydrax.geometry.reconstruction", PoissonSolveEvidence),
@@ -559,6 +607,25 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.reconstruction", ComponentFitEvidence),
         ("phydrax.geometry.reconstruction", ReconstructedTriangleBoundarySource),
         ("phydrax.geometry", BoundaryAtlas),
+        ("phydrax.geometry", AssociationCoverageEvidence),
+        ("phydrax.geometry", AssociationGraph),
+        ("phydrax.geometry", CADOccurrence),
+        ("phydrax.geometry", CADRevision),
+        ("phydrax.geometry", CADSelectionSet),
+        ("phydrax.geometry", CADSelector),
+        ("phydrax.geometry", OccurrenceCorrespondence),
+        ("phydrax.geometry", OccurrenceCorrespondenceTransaction),
+        ("phydrax.geometry.brep", BRepPartitionPatch),
+        ("phydrax.geometry.brep", BRepPartitionRegion),
+        ("phydrax.geometry.brep", BRepPartitionReport),
+        ("phydrax.geometry.brep", BRepPartitionResult),
+        ("phydrax.geometry.brep", BRepPartitionResultArchiveRecipe),
+        ("phydrax.geometry", MultiRegionSurfaceCapacityEvidence),
+        ("phydrax.geometry", MultiRegionSurfaceCapacityPlan),
+        ("phydrax.geometry", MultiRegionSurfaceCounts),
+        ("phydrax.geometry", MultiRegionSurfaceEvidence),
+        ("phydrax.geometry", MultiRegionSurfaceStatus),
+        ("phydrax.geometry", MultiRegionSurfaceTopology),
         ("phydrax.geometry", BoundaryFrame),
         ("phydrax.geometry", DomainCurveMap),
         ("phydrax.geometry", MeshingDomain),
@@ -783,6 +850,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", ProtectedFeature),
         ("phydrax.meshing", MeshingEntityKind),
         ("phydrax.meshing", MeshingScope),
+        ("phydrax.meshing", MeshingScopeSide),
         ("phydrax.geometry", PlanarEmbedding),
         ("phydrax.meshing", BackgroundMetricControl),
         ("phydrax.meshing", BackgroundMetricMode),
@@ -883,6 +951,11 @@ def _register_model_archive_types() -> None:
         ),
         ("phydrax.sparse", EdgeRelation),
         ("phydrax.sparse", SparseLinearMap),
+        ("phydrax.geometry.design", SketchContinuationReferenceArchiveRecipe),
+        ("phydrax.geometry.design", TwoCircleConstruction),
+        ("phydrax.geometry.design", LineCircleConstruction),
+        ("phydrax.geometry.design", _SketchDistanceRigidityWitness),
+        ("phydrax.geometry.design", _SketchDistanceTriangleWitness),
     )
     for namespace, value in types:
         try:
@@ -920,11 +993,46 @@ def restore_model_archive_value(
         SparseCommutingEvidence,
         SparseTransferEntryEvidence,
     )
+    from ..geometry._cad_revision import (
+        _restore_association_graph,
+        _restore_cad_selection,
+        AssociationCoverageEvidence,
+        AssociationGraph,
+        CADOccurrence,
+        CADRevision,
+        CADSelectionSet,
+        CADSelector,
+        OccurrenceCorrespondence,
+        OccurrenceCorrespondenceTransaction,
+    )
     from ..geometry._common_root_volume_overlap import (
         CurvedOverlapIntegrationPolicy,
     )
+    from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._surface_source_archive import restore_surface_source_charts
     from ..geometry._surface_source_support import SurfaceSourceCharts
+    from ..geometry.brep._constructors import BRepTessellationPolicy
+    from ..geometry.brep._model import BRepEntityId, BRepModel
+    from ..geometry.brep._partition import (
+        BRepPartitionOperand,
+        BRepPartitionPatch,
+        BRepPartitionPlan,
+        BRepPartitionPolicy,
+        BRepPartitionRegion,
+        BRepPartitionReport,
+        BRepPartitionResult,
+        BRepPartitionResultArchiveRecipe,
+        BRepPartitionRole,
+        cad_revision_from_brep_model,
+        partition_brep,
+    )
+    from ..geometry.brep._planar import (
+        partition_planar,
+        PlanarPartitionOperand,
+        PlanarPartitionPlan,
+    )
+    from ..geometry.simplicial._regions import PlanarMeshRegion
+    from ..interchange._cad_archive import _reconstruct_brep_graph
     from ..lifecycle._composition_rebind import (
         Composition,
         CompositionDependency,
@@ -937,6 +1045,9 @@ def restore_model_archive_value(
     from ..linalg._preconditioning import PreconditioningPolicy
     from ..linalg._properties import OperatorProperties
     from ..linalg._spaces import ArraySpaceArchiveRecipe
+    from ..meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
+    from ..meshing._controls import PatchControl
+    from ..meshing._scope import MeshingScope, MeshingScopeSide
     from ..sparse._linear import SparseCoordinateOperator
     from ..sparse._relation import EdgeRelation
     from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
@@ -944,6 +1055,10 @@ def restore_model_archive_value(
     from ._plc_source import _certify_cad_surface, PiecewiseLinearComplex
 
     _register_model_archive_types()
+    in_composition = False
+    pending_graphs: list[Any] = []
+    pending_selections: list[Any] = []
+    pending_sided_scopes: list[MeshingScope] = []
 
     def same_content(left: Any, right: Any) -> bool:
         left = model_archive_root_projection(left)
@@ -960,6 +1075,100 @@ def restore_model_archive_value(
         return left_arrays.keys() == right_arrays.keys() and all(
             np.array_equal(left_arrays[key], right_arrays[key]) for key in left_arrays
         )
+
+    def restore_partition_plan(stored: PartitionPlanArchiveRecipe) -> Any:
+        if type(stored) is not PartitionPlanArchiveRecipe:
+            raise TypeError("Partition archive requires its operation plan recipe.")
+        contract = _reconstruct_brep_graph(stored.coordinate_contract)
+        planar = stored.topological_dimension == 2
+        if not planar and stored.topological_dimension != 3:
+            raise ValueError("Unsupported partition plan dimension.")
+        solid_operands: list[BRepPartitionOperand] = []
+        planar_operands: list[PlanarPartitionOperand] = []
+        for operand in stored.operands:
+            if type(operand) is not PartitionOperandArchiveRecipe:
+                raise TypeError("Invalid partition operand recipe.")
+            source = operand.source
+            if type(source) is BRepModel:
+                source = _reconstruct_brep_graph(source)
+            elif planar and type(source) is PlanarMeshRegion:
+                edges = np.asarray(source.edges)
+                offsets = np.asarray(source.loop_offsets)
+                if (
+                    offsets.ndim != 1
+                    or len(offsets) < 2
+                    or offsets[0] != 0
+                    or offsets[-1] != len(edges)
+                    or np.any(np.diff(offsets) < 3)
+                    or edges.ndim != 2
+                    or edges.shape[1] != 2
+                ):
+                    raise ValueError("Invalid stored planar mesh loops.")
+                loops = tuple(
+                    [int(index) for index in edges[int(a) : int(b), 0]]
+                    for a, b in zip(offsets[:-1], offsets[1:], strict=True)
+                )
+                source = PlanarMeshRegion(
+                    source.vertices, loops, feature_id=source.feature_id
+                )
+                if not same_content(source, operand.source):
+                    raise ValueError("Stored planar mesh differs from its constructor.")
+            else:
+                raise TypeError("Unsupported partition operand source.")
+            if operand.selection is not None and not isinstance(
+                operand.selection, CADSelectionSet
+            ):
+                raise TypeError("Invalid stored partition selection.")
+            selection = (
+                None
+                if operand.selection is None
+                else _restore_cad_selection(operand.selection)
+            )
+            if not isinstance(operand.role, str):
+                raise TypeError("Invalid stored partition role.")
+            role = BRepPartitionRole(operand.role)
+            if planar:
+                if not isinstance(source, (BRepModel, PlanarMeshRegion)):
+                    raise TypeError("Invalid planar partition source.")
+                planar_operands.append(
+                    PlanarPartitionOperand(
+                        operand.operand_id,
+                        source,
+                        role,
+                        selection,
+                        operand.target_region_ids,
+                    )
+                )
+            else:
+                if not isinstance(source, BRepModel):
+                    raise TypeError("Invalid solid partition source.")
+                solid_operands.append(
+                    BRepPartitionOperand(
+                        operand.operand_id,
+                        source,
+                        role,
+                        selection,
+                        operand.target_region_ids,
+                    )
+                )
+        policy = BRepPartitionPolicy(stored.precedence)
+        if planar:
+            e = stored.embedding
+            if type(e) is not PlanarEmbedding:
+                raise TypeError("Planar plan requires its embedding.")
+            embedding = PlanarEmbedding(e.origin, e.x_axis, e.y_axis, e.normal)
+            if embedding != e:
+                raise ValueError("Stored planar embedding differs from its constructor.")
+            plan = PlanarPartitionPlan(
+                contract, embedding, tuple(planar_operands), policy
+            )
+        else:
+            if stored.embedding is not None:
+                raise ValueError("Solid partition cannot declare a planar embedding.")
+            plan = BRepPartitionPlan(contract, tuple(solid_operands), policy)
+        if plan.plan_id != stored.plan_id:
+            raise ValueError("Stored partition plan identity does not reproduce.")
+        return plan
 
     def rebuild_policy(policy: Any) -> Any:
         if policy is None or isinstance(policy, (bool, int, float, str, bytes, np.dtype)):
@@ -1022,6 +1231,16 @@ def restore_model_archive_value(
         return rebuilt
 
     def restore(item: Any, /) -> Any:
+        nonlocal in_composition
+        if type(item) is BRepModel:
+            return _reconstruct_brep_graph(item)
+        if type(item) is MeshingScope:
+            if not item.side_records:
+                return MeshingScope.from_stored_fields(item)
+            if not in_composition:
+                raise ValueError("Sided scope requires a replayed source model.")
+            pending_sided_scopes.append(item)
+            return item
         if type(item) is SurfaceSourceChartsArchiveRecipe:
             return restore_surface_source_charts(item)
         if type(item) is PiecewiseLinearComplexArchiveRecipe:
@@ -1059,6 +1278,136 @@ def restore_model_archive_value(
                 cad_embedding=embedding,
                 cad_fidelity=fidelity,
             )
+        if type(item) in (
+            MeshingScopeSide,
+            CADOccurrence,
+            CADRevision,
+            CADSelector,
+            OccurrenceCorrespondence,
+            OccurrenceCorrespondenceTransaction,
+            BRepPartitionPatch,
+            BRepPartitionRegion,
+            BRepPartitionReport,
+            BRepPartitionResult,
+            PartitionOperandArchiveRecipe,
+            PartitionPlanArchiveRecipe,
+            AssociationCoverageEvidence,
+        ):
+            raise ValueError(
+                "CAD partition components require an owning partition replay."
+            )
+        if type(item) is AssociationGraph:
+            if not in_composition:
+                raise ValueError(
+                    "CAD association graph requires an owning partition replay."
+                )
+            graph = _restore_association_graph(item)
+            pending_graphs.append(graph)
+            return graph
+        if type(item) is CADSelectionSet:
+            if not in_composition:
+                raise ValueError("CAD selection requires an owning partition replay.")
+            selection = _restore_cad_selection(item)
+            pending_selections.append(selection)
+            return selection
+        if type(item) is BRepPartitionResultArchiveRecipe:
+            from .._model._structure import model_archive_projection
+
+            plan = restore_partition_plan(item.plan)
+            if not same_content(model_archive_projection(plan), item.plan):
+                raise ValueError("Stored partition plan differs from its constructors.")
+            policy = item.tessellation_policy
+            if policy is not None:
+                if type(policy) is not BRepTessellationPolicy:
+                    raise TypeError("Invalid partition tessellation policy.")
+                policy = BRepTessellationPolicy(
+                    linear_deflection=policy.linear_deflection,
+                    angular_deflection=policy.angular_deflection,
+                    trim_samples_per_edge=policy.trim_samples_per_edge,
+                )
+                if not same_content(policy, item.tessellation_policy):
+                    raise ValueError(
+                        "Stored tessellation policy differs from its constructor."
+                    )
+            replay = (
+                partition_planar(plan, tessellation=policy)
+                if type(plan) is PlanarPartitionPlan
+                else partition_brep(plan, tessellation=policy)
+            )
+            model = _reconstruct_brep_graph(item.model)
+            graph = _restore_association_graph(item.association_graph)
+            if (
+                cad_revision_from_brep_model(model) != graph.target_revision
+                or item.revision != graph.target_revision
+            ):
+                raise ValueError(
+                    "Partition history target differs from its restored B-Rep."
+                )
+
+            def entity(value: BRepEntityId) -> BRepEntityId:
+                return BRepEntityId(
+                    value.source_id,
+                    value.source_revision,
+                    value.kind,
+                    value.index,
+                    value.occurrence_path,
+                )
+
+            regions = tuple(
+                BRepPartitionRegion(
+                    value.name,
+                    tuple(entity(x) for x in value.entity_ids),
+                    value.topological_dimension,
+                )
+                for value in item.regions
+            )
+            patches = tuple(
+                BRepPartitionPatch(
+                    value.name,
+                    tuple(entity(x) for x in value.entity_ids),
+                    value.adjacent_region_ids,
+                    value.topological_dimension,
+                )
+                for value in item.patches
+            )
+            report = BRepPartitionReport(
+                **{
+                    field.name: getattr(item.report, field.name)
+                    for field in dataclasses.fields(BRepPartitionReport)
+                    if field.init
+                }
+            )
+            operand_graphs = tuple(
+                (name, _restore_association_graph(value))
+                for name, value in item.operand_association_graphs
+            )
+            if (
+                not same_content(model, replay.model)
+                or not same_content(graph, replay.association_graph)
+                or not same_content(operand_graphs, replay.operand_association_graphs)
+                or not same_content(regions, replay.regions)
+                or not same_content(patches, replay.patches)
+                or not same_content(report, replay.report)
+                or item.revision != replay.revision
+            ):
+                raise ValueError(
+                    "Stored partition declarations differ from operation replay."
+                )
+            rebuilt = BRepPartitionResult(
+                model,
+                graph.target_revision,
+                graph,
+                regions,
+                patches,
+                report,
+                plan,
+                item.topological_dimension,
+                operand_association_graphs=operand_graphs,
+                tessellation_policy=policy,
+            )
+            if model_structure_recipe(rebuilt) != model_structure_recipe(item):
+                raise ValueError("Stored partition result changed during reconstruction.")
+            return rebuilt
         if type(item) is SimplexForestRecords:
             forest = SimplexForestRecords(
                 item.cell_ids,
@@ -1337,7 +1686,6 @@ def restore_model_archive_value(
                 from ..discretization.finite_volume._owner_local_remap import (
                     PreparedOwnerLocalConservativeRemap,
                 )
-                from ..meshing._contracts import VolumeMeshingSpec
 
                 if not isinstance(execution_group, ExecutionGroup):
                     raise TypeError(
@@ -1410,10 +1758,6 @@ def restore_model_archive_value(
                 from .._execution_runtime import ExecutionGroup
                 from ..discretization._view_support import OwnerLocalCellGeometry
                 from ..graph._partition import GraphPartitionPlan
-                from ..meshing._contracts import (
-                    SurfaceMeshingSpec,
-                    VolumeMeshingSpec,
-                )
 
                 if not isinstance(execution_group, ExecutionGroup):
                     raise TypeError(
@@ -1509,7 +1853,134 @@ def restore_model_archive_value(
                 == PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS
             ):
                 return _restore_periodic_finite_element_transfer_root(item, restore)
-            entries = tuple(restore(entry) for entry in item.entries)
+            previous = in_composition
+            graph_start = len(pending_graphs)
+            selection_start = len(pending_selections)
+            scope_start = len(pending_sided_scopes)
+            in_composition = True
+            try:
+                entries = tuple(restore(entry) for entry in item.entries)
+            finally:
+                in_composition = previous
+            graphs = tuple(
+                graph
+                for entry in entries
+                if type(entry.value) is BRepPartitionResult
+                for graph in (
+                    entry.value.association_graph,
+                    *(value for _, value in entry.value.operand_association_graphs),
+                )
+            )
+            for graph in pending_graphs[graph_start:]:
+                if not any(same_content(graph, owner) for owner in graphs):
+                    raise ValueError("CAD graph has no replayed owning partition.")
+            for selection in pending_selections[selection_start:]:
+                inventories = tuple(
+                    revision
+                    for graph in graphs
+                    for revision in (graph.source_revision, graph.target_revision)
+                    if revision.revision_id == selection.revision_id
+                )
+                if not inventories or any(
+                    inventory != inventories[0] for inventory in inventories
+                ):
+                    raise ValueError(
+                        "CAD selection has no unique current graph inventory."
+                    )
+                for selector in selection.selectors:
+                    if inventories[0].select(selector.occurrence_id) != selector:
+                        raise ValueError(
+                            "CAD selection does not match its current inventory."
+                        )
+            models = tuple(
+                entry.value if type(entry.value) is BRepModel else entry.value.model
+                for entry in entries
+                if type(entry.value) in (BRepModel, BRepPartitionResult)
+            )
+            visited: set[int] = set()
+            nested: list[object] = [entry.value for entry in entries]
+            while nested:
+                value = nested.pop()
+                if id(value) in visited:
+                    continue
+                visited.add(id(value))
+                if type(value) is MeshingScope:
+                    if value.side_records and all(
+                        value is not item for item in pending_sided_scopes[scope_start:]
+                    ):
+                        pending_sided_scopes.append(value)
+                    continue
+                if type(value) in (BRepModel, BRepPartitionResult, Composition):
+                    continue
+                if dataclasses.is_dataclass(value) and not isinstance(value, type):
+                    nested.extend(
+                        getattr(value, field.name) for field in dataclasses.fields(value)
+                    )
+                elif isinstance(value, (tuple, list, set, frozenset)):
+                    nested.extend(value)
+                elif isinstance(value, Mapping):
+                    nested.extend(value.values())
+            validated: dict[int, MeshingScope] = {}
+            scope_owners: dict[int, BRepModel] = {}
+            for scope in pending_sided_scopes[scope_start:]:
+                owners = tuple(
+                    model
+                    for model in models
+                    if (model.source_id, model.source_revision)
+                    == (scope.source_id, scope.source_revision)
+                )
+                if not owners or any(
+                    model.model_id != owners[0].model_id for model in owners
+                ):
+                    raise ValueError(
+                        "Sided scope requires one replayed current source model."
+                    )
+                validated[id(scope)] = MeshingScope.from_stored_fields(
+                    scope, source_model=owners[0]
+                )
+                scope_owners[id(scope)] = owners[0]
+
+            def rebuilt_entry_value(value: Any) -> Any:
+                if id(value) in validated:
+                    return validated[id(value)]
+                if type(value) is PatchControl and value.scope.side_records:
+                    return PatchControl.from_stored_fields(
+                        value, source_model=scope_owners[id(value.scope)]
+                    )
+                if type(value) in (SurfaceMeshingSpec, VolumeMeshingSpec):
+                    primary = (
+                        value.scope
+                        if type(value) is SurfaceMeshingSpec
+                        else value.boundary_scope
+                    )
+                    owners = tuple(
+                        model
+                        for model in models
+                        if (model.source_id, model.source_revision)
+                        == (primary.source_id, primary.source_revision)
+                    )
+                    if owners:
+                        return type(value).from_stored_fields(
+                            value, source_model=owners[0]
+                        )
+                return value
+
+            entries = tuple(
+                CompositionEntry(
+                    rebuilt_entry_value(entry.value),
+                    entry_id=entry.entry_id,
+                    role=entry.role,
+                    owner_id=entry.owner_id,
+                    structure_id=entry.structure_id,
+                    revision_id=entry.revision_id,
+                    semantics_id=entry.semantics_id,
+                    dependencies=entry.dependencies,
+                )
+                for entry in entries
+            )
+            del pending_sided_scopes[scope_start:]
+            del pending_graphs[graph_start:]
+            del pending_selections[selection_start:]
             composition = Composition(entries, boundary_id=item.boundary_id)
             if model_structure_recipe(composition) != model_structure_recipe(item):
                 raise ValueError("Stored Composition content changed.")
@@ -1973,12 +2444,13 @@ def read_model_artifact(
             raise ValueError("Restored model fields differ from the exact recipe.")
         raw = restore_row_record_recipes(raw)
         rebuilt = restore(raw)
+        del raw
         if type(rebuilt) is not expected_type:
             raise TypeError(
                 "The owning reconstruction function returned a different model type."
             )
         validate_tree(rebuilt)
-        if model_structure_recipe(rebuilt) != recipe:
+        if not model_structure_matches_recipe(rebuilt, recipe):
             raise ValueError(
                 "The owning constructor graph did not reproduce the model recipe."
             )

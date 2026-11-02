@@ -355,6 +355,20 @@ def _validated_rational_chart_tokens(
                 coordinates.append(canonical)
             points.append(tuple(coordinates))
         canonical_row = tuple(points)
+        if (
+            isinstance(row, tuple)
+            and row == canonical_row
+            and all(
+                isinstance(point, tuple)
+                and all(
+                    isinstance(token, tuple)
+                    and all(type(value) is int for value in token)
+                    for token in point
+                )
+                for point in row
+            )
+        ):
+            canonical_row = row
         result.append(distinct.setdefault(canonical_row, canonical_row))
     return tuple(result)
 
@@ -399,9 +413,9 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
         static=True
     )
     target_face_vertex_global_ids: np.ndarray
-    source_chart_ids: tuple[str, ...]
-    source_entity_ids: tuple[str, ...]
-    occurrence_paths: tuple[tuple[str, ...], ...]
+    source_chart_ids: tuple[str, ...] = eqx.field(static=True)
+    source_entity_ids: tuple[str, ...] = eqx.field(static=True)
+    occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     source_parameters: np.ndarray
     source_parameter_rational_tokens: SourceBoundaryRationalChartBank = eqx.field(
         static=True

@@ -1573,6 +1573,10 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             raise ValueError(
                 "Geometry transition evidence counts must match retained maps."
             )
+        # Endpoint map expressions and incidence indexes are proof-local; do not
+        # retain their large banks while fingerprinting the source geometry.
+        del source_maps, target_maps, source_kinds, target_kinds, seen_target_ids
+        del source_resolved, target_resolved, validated_banks
         self.source_mesh = source_mesh
         self.target_mesh = target_mesh
         self.source_geometry = source_geometry

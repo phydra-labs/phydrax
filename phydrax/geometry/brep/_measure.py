@@ -37,6 +37,7 @@ from jax import Array
 from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._exact_algebraic_geometry import coefficient_interval, ExactScalar
 from ...typing import as_array, Bool, checked, Dim, Float64, parse, Scope, Size
 from .._atlas import TrimDomain, TrimEnclosures
 from .._interval_enclosure import (
@@ -84,6 +85,7 @@ from ._patches import (
     RuledSurface,
     SpherePatch,
     TorusPatch,
+    TorusRootedCirclePCurve,
 )
 from ._placed import PlacedCurve, PlacedSurface
 from ._trim_helpers import period_scalar_bounds, PeriodOffset
@@ -308,6 +310,7 @@ def _curve_breaks(curve: AbstractCurve, /) -> np.ndarray | None:
             | HyperbolaCurve()
             | ConicRootLinePCurve()
             | PlaneCylinderSectionPCurve()
+            | TorusRootedCirclePCurve()
         ):
             return _NO_BREAKS
         case BSplineCurve():
@@ -393,10 +396,19 @@ def _surface_flux(patch: AbstractSurfacePatch, parameters: Array, /) -> Array:
     return jnp.dot(point, jnp.cross(frame[:, 0], frame[:, 1])) / 3.0
 
 
-def _with_hessian(function: Callable[[Array], Array], /) -> Callable[[Array], Array]:
+def _with_hessian(
+    function: Callable[[Array], Array], /, *, fourth: bool = False
+) -> Callable[[Array], Array]:
+    fourth_derivative = (
+        jax.jacfwd(jax.jacfwd(jax.jacfwd(jax.jacfwd(function)))) if fourth else None
+    )
+
     def jet(parameters: Array, /) -> Array:
         hessian = jax.jacfwd(jax.jacfwd(function))(parameters)
-        return jnp.concatenate((function(parameters)[None], hessian.reshape((-1,))))
+        values = (function(parameters)[None], hessian.reshape((-1,)))
+        if fourth_derivative is not None:
+            values += (fourth_derivative(parameters).reshape((-1,)),)
+        return jnp.concatenate(values)
 
     return jet
 
@@ -425,8 +437,82 @@ def _surface_flux_program(patch: AbstractSurfacePatch, /) -> PreparedIntervalFun
     )
 
 
-def _surface_frame_program(patch: AbstractSurfacePatch, /) -> PreparedIntervalFunction:
+def _surface_frame_program(patch: AbstractSurfacePatch, /) -> _IntervalProgram:
     """The chart integrand followed by ``S_u`` and ``S_v``."""
+    if isinstance(patch, CylinderPatch):
+        coefficients = (
+            *patch.origin_exact,
+            *patch.first_axis_exact,
+            *patch.second_axis_exact,
+            *patch.axis_exact,
+            patch.radius_exact,
+        )
+        bounds = tuple(coefficient_interval(value, bits=128) for value in coefficients)
+        lower = np.asarray([fraction_down(value[0]) for value in bounds])
+        upper = np.asarray([fraction_up(value[1]) for value in bounds])
+
+        def source_frame(parameters: Array, /) -> Array:
+            uv, values = parameters[:2], parameters[2:]
+            origin, first_axis, second_axis, axis = (
+                values[:3],
+                values[3:6],
+                values[6:9],
+                values[9:12],
+            )
+            radius = values[12]
+
+            def point(angles: Array, /) -> Array:
+                return (
+                    origin
+                    + radius
+                    * (jnp.cos(angles[0]) * first_axis + jnp.sin(angles[0]) * second_axis)
+                    + angles[1] * axis
+                )
+
+            frame = jax.jacfwd(point)(uv)
+            flux = jnp.dot(point(uv), jnp.cross(frame[:, 0], frame[:, 1])) / 3
+            return jnp.concatenate((flux[None], frame.T.reshape((-1,))))
+
+        return _BoundProgram(_cell_program(source_frame, 15), lower, upper)
+    straight = (
+        _straight_revolution(patch) if isinstance(patch, RevolutionSurface) else None
+    )
+    if straight is not None and straight.slope == 0:
+        coefficients = (
+            *straight.origin,
+            *straight.radial,
+            *straight.tangent,
+            *straight.axis,
+            straight.axial_origin,
+            straight.axial_rate,
+            straight.scale_origin,
+        )
+        bounds = tuple(coefficient_interval(value, bits=128) for value in coefficients)
+        lower = np.asarray([fraction_down(value[0]) for value in bounds])
+        upper = np.asarray([fraction_up(value[1]) for value in bounds])
+
+        def revolution_frame(parameters: Array, /) -> Array:
+            uv, values = parameters[:2], parameters[2:]
+            origin, radial, tangent, axis = (
+                values[:3],
+                values[3:6],
+                values[6:9],
+                values[9:12],
+            )
+            axial_origin, axial_rate, scale = values[12], values[13], values[14]
+
+            def point(angles: Array, /) -> Array:
+                return (
+                    origin
+                    + (axial_origin + axial_rate * angles[1]) * axis
+                    + scale * (jnp.cos(angles[0]) * radial + jnp.sin(angles[0]) * tangent)
+                )
+
+            frame = jax.jacfwd(point)(uv)
+            flux = jnp.dot(point(uv), jnp.cross(frame[:, 0], frame[:, 1])) / 3
+            return jnp.concatenate((flux[None], frame.T.reshape((-1,))))
+
+        return _BoundProgram(_cell_program(revolution_frame, 17), lower, upper)
     return prepare_interval_function(
         lambda parameters: jnp.concatenate(
             (
@@ -443,8 +529,64 @@ def _pcurve_point(pcurve: AbstractCurve, parameter: Array, /) -> Array:
     return jnp.reshape(pcurve.evaluate(jnp.reshape(parameter, ())), (2,))
 
 
-def _parameter_area_program(pcurve: AbstractCurve, /) -> PreparedIntervalFunction:
-    """Green density ``(u v' - v u') / 2`` of one p-curve and its second derivative."""
+def _section_source_bounds(curve: PlaneCylinderSectionPCurve, /) -> _Interval:
+    coefficients = (
+        *curve.offset_exact,
+        *curve.linear_exact,
+        *curve.cosine_exact,
+        *curve.sine_exact,
+    )
+    bounds = tuple(coefficient_interval(value, bits=128) for value in coefficients)
+    lower = [fraction_down(value[0]) for value in bounds]
+    upper = [fraction_up(value[1]) for value in bounds]
+    root = curve.angle_offset_root
+    lower.append(0.0 if root is None else root.parameter_lower)
+    upper.append(0.0 if root is None else root.parameter_upper)
+    return np.asarray(lower), np.asarray(upper)
+
+
+def _section_point(parameter: Array, coefficients: Array, /) -> Array:
+    return (
+        coefficients[:2]
+        + parameter * coefficients[2:4]
+        + jnp.cos(parameter) * coefficients[4:6]
+        + jnp.sin(parameter) * coefficients[6:8]
+        + jnp.stack((coefficients[8], jnp.zeros_like(parameter)))
+    )
+
+
+def _parameter_area_program(pcurve: AbstractCurve, /) -> _IntervalProgram:
+    """Green density ``(u v' - v u') / 2`` of one p-curve and its derivatives."""
+    section = pcurve
+    shifts = (0, 0)
+    while isinstance(section, PeriodicPCurve):
+        shifts = tuple(a + b for a, b in zip(shifts, section.period_shifts, strict=True))
+        section = section.source_curve
+    if isinstance(section, PlaneCylinderSectionPCurve):
+        lower, upper = _section_source_bounds(section)
+        if any(shifts):
+            bounds = [
+                period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(shift)))
+                for shift in shifts
+            ]
+            lower = np.concatenate((lower, [float(bound[0]) for bound in bounds]))
+            upper = np.concatenate((upper, [float(bound[1]) for bound in bounds]))
+
+        def jet(parameters: Array, /) -> Array:
+            coefficients = parameters[1:10]
+            shift = parameters[10:12] if any(shifts) else jnp.zeros((2,))
+
+            def point(value: Array, /) -> Array:
+                return _section_point(value, coefficients) + shift
+
+            def density(value: Array, /) -> Array:
+                position = point(value[0])
+                tangent = jax.jacfwd(point)(value[0])
+                return 0.5 * (position[0] * tangent[1] - position[1] * tangent[0])
+
+            return _with_hessian(density, fourth=True)(parameters[:1])
+
+        return _BoundProgram(_cell_program(jet, 1 + lower.size), lower, upper)
 
     def density(parameters: Array, /) -> Array:
         point = _pcurve_point(pcurve, parameters[0])
@@ -452,6 +594,26 @@ def _parameter_area_program(pcurve: AbstractCurve, /) -> PreparedIntervalFunctio
         return 0.5 * (point[0] * tangent[1] - point[1] * tangent[0])
 
     return _cell_program(_with_hessian(density), 1)
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundProgram:
+    """Bind exact source scalars as directed non-integrated interval inputs."""
+
+    program: PreparedIntervalFunction
+    lower: np.ndarray
+    upper: np.ndarray
+
+    def evaluate(self, lower: np.ndarray, upper: np.ndarray, /) -> _Interval:
+        count = lower.shape[0]
+        return self.program.evaluate(
+            np.concatenate(
+                (lower, np.broadcast_to(self.lower, (count, self.lower.size))), axis=1
+            ),
+            np.concatenate(
+                (upper, np.broadcast_to(self.upper, (count, self.upper.size))), axis=1
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,7 +633,7 @@ class _PeriodBoundProgram:
         )
 
 
-type _IntervalProgram = PreparedIntervalFunction | _PeriodBoundProgram
+type _IntervalProgram = PreparedIntervalFunction | _PeriodBoundProgram | _BoundProgram
 
 
 def _green_strip_program(
@@ -490,39 +652,193 @@ def _green_strip_program(
     gives the trimmed face integral by Green's theorem.
     """
 
-    chart_evaluator = (
-        pcurve._chart_evaluator_with_period(chart)
-        if chart is not None and isinstance(pcurve, IntersectionPCurve)
-        else None
-    )
+    lower: list[float] = []
+    upper: list[float] = []
+    chart_evaluator = None
+    chart_slice = None
+    if chart is not None and isinstance(pcurve, IntersectionPCurve):
+        chart_evaluator, chart_lower, chart_upper = (
+            pcurve._chart_evaluator_with_source_bounds(chart)
+        )
+        chart_slice = slice(len(lower), len(lower) + chart_lower.size)
+        lower.extend(chart_lower.tolist())
+        upper.extend(chart_upper.tolist())
 
-    def evaluator(period: Array | None) -> Callable[[Array], Array]:
+    def bind(values: Sequence[ExactScalar], /) -> slice:
+        start = len(lower)
+        for value in values:
+            lo, hi = coefficient_interval(value, bits=128)
+            lower.append(fraction_down(lo))
+            upper.append(fraction_up(hi))
+        return slice(start, len(lower))
+
+    shifts = (0, 0)
+    line = pcurve
+    while isinstance(line, PeriodicPCurve):
+        shifts = tuple(a + b for a, b in zip(shifts, line.period_shifts, strict=True))
+        line = line.source_curve
+    section_slice = None
+    if isinstance(line, PlaneCylinderSectionPCurve):
+        section_slice = slice(len(lower), len(lower) + 9)
+        section_low, section_high = _section_source_bounds(line)
+        lower.extend(section_low.tolist())
+        upper.extend(section_high.tolist())
+    line_slice = None
+    root_slice = None
+    if isinstance(line, LineCurve):
+        line_slice = bind((*line.origin_exact, *line.direction_exact))
+    elif isinstance(line, ExactLineCurve):
+        line_slice = bind(
+            (
+                *line.first_exact,
+                *(
+                    last - first
+                    for first, last in zip(line.first_exact, line.last_exact, strict=True)
+                ),
+            )
+        )
+    elif isinstance(line, ConicRootLinePCurve):
+        root_slice = slice(len(lower), len(lower) + 3)
+        domain = line.parameter_domain
+        parameter = 0.0 if domain is None else domain[0]
+        box = line.bounding_box(parameter, parameter)
+        lower.append(float(box[0, 0]))
+        upper.append(float(box[1, 0]))
+        bind((line.height_origin_exact, line.height_direction_exact))
+    elif section_slice is None:
+        shifts = (0, 0)
+    period_index = None
+    if chart_evaluator is not None:
+        period_index = len(lower)
+        period_low, period_high = period_scalar_bounds(
+            PeriodOffset(Fraction(0), Fraction(1))
+        )
+        lower.append(float(period_low))
+        upper.append(float(period_high))
+    shift_slice = None
+    if any(shifts):
+        shift_slice = slice(len(lower), len(lower) + 2)
+        for shift in shifts:
+            lo, hi = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(shift)))
+            lower.append(float(lo))
+            upper.append(float(hi))
+    cylinder_slice = None
+    if cylinder and isinstance(patch, CylinderPatch):
+        cylinder_slice = bind(
+            (
+                *patch.origin_exact,
+                *patch.first_axis_exact,
+                *patch.second_axis_exact,
+                *patch.axis_exact,
+                patch.radius_exact,
+            )
+        )
+    revolution_slice = None
+    straight = (
+        _straight_revolution(patch) if isinstance(patch, RevolutionSurface) else None
+    )
+    if cylinder and straight is not None and straight.slope == 0:
+        revolution_slice = bind(
+            (
+                *straight.origin,
+                *straight.radial,
+                *straight.tangent,
+                *straight.axis,
+                straight.axial_rate,
+                straight.scale_origin,
+            )
+        )
+
+    def evaluator(bound: Array) -> Callable[[Array], Array]:
         if chart_evaluator is not None:
-            assert period is not None
-            return lambda parameter: chart_evaluator(parameter, period)
+            assert period_index is not None and chart_slice is not None
+            return lambda parameter: chart_evaluator(
+                parameter, bound[period_index], bound[chart_slice]
+            )
+        if section_slice is not None:
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
+            return lambda parameter: (
+                _section_point(parameter, bound[section_slice]) + shift
+            )
+        if root_slice is not None:
+            root = bound[root_slice]
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
+            return lambda parameter: (
+                jnp.stack((root[0], root[1] + parameter * root[2])) + shift
+            )
+        if line_slice is not None:
+            line = bound[line_slice]
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
+            return lambda parameter: line[:2] + parameter * line[2:4] + shift
         return lambda parameter: _pcurve_point(pcurve, parameter)
 
     if cylinder:
-        # On an exact cylinder the divergence flux is a + b sin(u) + c cos(u),
-        # independent of v. Recover its coefficients at u=0 by differentiation
-        # and integrate that expression in u before enclosing the remaining
-        # one-dimensional Green integral.
-        def flux_at(angle: Array, /) -> Array:
-            return _surface_flux(patch, jnp.stack((angle, jnp.zeros_like(angle))))
 
-        def cylinder_density(parameters: Array, period: Array | None) -> Array:
-            evaluate = evaluator(period)
-            zero = parameters[0] * 0.0
-            value = flux_at(zero)
-            first = jax.grad(flux_at)(zero)
-            second = jax.grad(jax.grad(flux_at))(zero)
-
-            def primitive(angle: Array, /) -> Array:
-                return (
-                    (value + second) * angle
-                    + first * (1.0 - jnp.cos(angle))
-                    - second * jnp.sin(angle)
+        def cylinder_density(parameters: Array, bound: Array) -> Array:
+            evaluate = evaluator(bound)
+            if cylinder_slice is not None:
+                values = bound[cylinder_slice]
+                center, first_axis, second_axis, axis = (
+                    values[:3],
+                    values[3:6],
+                    values[6:9],
+                    values[9:12],
                 )
+                radius = values[12]
+                determinant = jnp.dot(first_axis, jnp.cross(second_axis, axis))
+                cosine = jnp.dot(center, jnp.cross(second_axis, axis))
+                sine = -jnp.dot(center, jnp.cross(first_axis, axis))
+
+                def primitive(angle: Array, /) -> Array:
+                    return (
+                        radius
+                        / 3
+                        * (
+                            radius * determinant * angle
+                            + cosine * jnp.sin(angle)
+                            + sine * (1 - jnp.cos(angle))
+                        )
+                    )
+            elif revolution_slice is not None:
+                values = bound[revolution_slice]
+                center, radial, tangent_axis, axis = (
+                    values[:3],
+                    values[3:6],
+                    values[6:9],
+                    values[9:12],
+                )
+                rate, scale = values[12], values[13]
+                determinant = jnp.dot(radial, jnp.cross(tangent_axis, axis))
+                cosine = jnp.dot(center, jnp.cross(tangent_axis, axis))
+                sine = -jnp.dot(center, jnp.cross(radial, axis))
+
+                def primitive(angle: Array, /) -> Array:
+                    return (
+                        rate
+                        * scale
+                        / 3
+                        * (
+                            scale * determinant * angle
+                            + cosine * jnp.sin(angle)
+                            + sine * (1 - jnp.cos(angle))
+                        )
+                    )
+            else:
+
+                def flux_at(angle: Array, /) -> Array:
+                    return _surface_flux(patch, jnp.stack((angle, jnp.zeros_like(angle))))
+
+                zero = parameters[0] * 0.0
+                value = flux_at(zero)
+                first = jax.grad(flux_at)(zero)
+                second = jax.grad(jax.grad(flux_at))(zero)
+
+                def primitive(angle: Array, /) -> Array:
+                    return (
+                        (value + second) * angle
+                        + first * (1.0 - jnp.cos(angle))
+                        - second * jnp.sin(angle)
+                    )
 
             point = evaluate(parameters[0])
             tangent = jax.jacfwd(evaluate)(parameters[0])
@@ -533,8 +849,8 @@ def _green_strip_program(
     else:
         dimension = 2
 
-        def density(parameters: Array, period: Array | None) -> Array:
-            evaluate = evaluator(period)
+        def density(parameters: Array, bound: Array) -> Array:
+            evaluate = evaluator(bound)
             point = evaluate(parameters[0])
             tangent = jax.jacfwd(evaluate)(parameters[0])
             width = point[0] - origin
@@ -543,14 +859,31 @@ def _green_strip_program(
 
         integrand = density
 
-    if chart is None:
-        return _cell_program(_with_hessian(lambda x: integrand(x, None)), dimension)
+    fourth = cylinder and (
+        isinstance(
+            pcurve,
+            (IntersectionPCurve, PlaneCylinderSectionPCurve, LineCurve, ExactLineCurve),
+        )
+        or line_slice is not None
+        or section_slice is not None
+    )
+    if not lower:
+        return _cell_program(
+            _with_hessian(lambda x: integrand(x, x[:0]), fourth=fourth),
+            dimension,
+        )
 
-    def jet_with_period(parameters: Array, /) -> Array:
-        period = parameters[-1]
-        return _with_hessian(lambda x: integrand(x, period))(parameters[:-1])
+    def jet_with_bounds(parameters: Array, /) -> Array:
+        bound = parameters[dimension:]
+        return _with_hessian(lambda x: integrand(x, bound), fourth=fourth)(
+            parameters[:dimension]
+        )
 
-    return _PeriodBoundProgram(_cell_program(jet_with_period, dimension + 1))
+    return _BoundProgram(
+        _cell_program(jet_with_bounds, dimension + len(lower)),
+        np.asarray(lower),
+        np.asarray(upper),
+    )
 
 
 def _pcurve_point_program(pcurve: AbstractCurve, /) -> PreparedIntervalFunction:
@@ -1031,6 +1364,53 @@ def _enclose(
             second = _arrays(interval_add(second, (-moment, moment)))
             for index in (first_axis, second_axis):
                 terms[index] = terms[index] + moment
+    if dimension == 1 and box_values[0].shape[1] == 3:
+        # Simpson's rule has remainder -f''''(xi) h**5 / 2880.  All
+        # nodes, derivatives, widths and arithmetic are interval-enclosed;
+        # intersect with the independent midpoint enclosure above.
+        endpoint_low, endpoint_high = _evaluate(
+            family.label,
+            family.program,
+            np.concatenate((low_corner, high_corner)),
+            np.concatenate((low_corner, high_corner)),
+        )
+        endpoints = (
+            endpoint_low[:size, 0],
+            endpoint_high[:size, 0],
+        )
+        endpoints = _arrays(
+            interval_add(endpoints, (endpoint_low[size:, 0], endpoint_high[size:, 0]))
+        )
+        weighted = _arrays(
+            interval_add(
+                endpoints,
+                interval_multiply(center_values, (np.float64(4), np.float64(4))),
+            )
+        )
+        simpson = _arrays(
+            interval_divide(
+                interval_multiply(weighted, area),
+                (np.float64(6), np.float64(6)),
+            )
+        )
+        width = (widths[0][:, 0], widths[1][:, 0])
+        fifth = width
+        for _ in range(4):
+            fifth = _arrays(interval_multiply(fifth, width))
+        remainder = _arrays(
+            interval_divide(
+                interval_multiply((box_values[0][:, 2], box_values[1][:, 2]), fifth),
+                (np.float64(2880), np.float64(2880)),
+            )
+        )
+        simpson = _arrays(interval_subtract(simpson, remainder))
+        second = (np.maximum(second[0], simpson[0]), np.minimum(second[1], simpson[1]))
+        rounding = _arrays(
+            interval_divide(
+                interval_multiply(weighted, area),
+                (np.float64(6), np.float64(6)),
+            )
+        )
     enclosure = (
         np.where(inside, np.maximum(second[0], zeroth[0]), zeroth[0]),
         np.where(inside, np.minimum(second[1], zeroth[1]), zeroth[1]),
@@ -1322,7 +1702,17 @@ def _loop_ends(source: _VolumeSource, face: int, /) -> _LoopEnds:
                 ends.append((_exact_end(exact[1]), _exact_end(exact[2])))
                 continue
             pcurve = geometry.pcurves[coedge]
-            if isinstance(pcurve, IntersectionPCurve):
+            if isinstance(
+                pcurve,
+                (
+                    IntersectionPCurve,
+                    TorusRootedCirclePCurve,
+                    ConicRootLinePCurve,
+                    PlaneCylinderSectionPCurve,
+                    PeriodicPCurve,
+                    AffinePCurve,
+                ),
+            ):
                 first, last = _traversal_range(geometry, coedge)
                 ends.append(
                     (
@@ -1368,6 +1758,177 @@ def _green_curve_breaks(curve: AbstractCurve, /) -> np.ndarray | None:
     return _curve_breaks(curve)
 
 
+def _torus_periodic_face(
+    source: _VolumeSource, face: int, sign: int, ends: _LoopEnds, /
+) -> _FacePlan | None:
+    """Green integral for latitude loops joined by exact native-turn meridians."""
+    geometry, patch = source.geometry, source.patches[face]
+    if not isinstance(patch, TorusPatch):
+        return None
+    loops = geometry.face_loops[face]
+    if not any(
+        isinstance(geometry.pcurves[coedge], TorusRootedCirclePCurve)
+        for loop in loops
+        for coedge in loop
+    ):
+        return None
+
+    def refuse() -> None:
+        raise _MeasureFailure(
+            "unsupported", f"source face {face} torus trim is not proved once-wound"
+        )
+
+    if len(loops) != 1:
+        refuse()
+    loop = loops[0]
+    seams: list[tuple[int, int]] = []
+    positions: list[int] = []
+    for position, coedge in enumerate(loop):
+        pcurve = geometry.pcurves[coedge]
+        if isinstance(pcurve, TorusRootedCirclePCurve):
+            continue
+        shifts = (0, 0)
+        if isinstance(pcurve, PeriodicPCurve):
+            shifts, pcurve = pcurve.period_shifts, pcurve.source_curve
+        if (
+            not isinstance(pcurve, LineCurve)
+            or pcurve.origin_exact != (Fraction(0), Fraction(0))
+            or pcurve.direction_exact != (Fraction(0), Fraction(1))
+            or shifts[1] != 0
+        ):
+            refuse()
+        seams.append((coedge, shifts[0]))
+        positions.append(position)
+    if len(seams) != 2:
+        refuse()
+    first_seam, second_seam = seams
+    if (
+        geometry.coedge_edges[first_seam[0]] != geometry.coedge_edges[second_seam[0]]
+        or geometry.coedge_senses[first_seam[0]]
+        != -geometry.coedge_senses[second_seam[0]]
+        or abs(first_seam[1] - second_seam[1]) != 1
+    ):
+        refuse()
+
+    # Between the two uses of the same seam each chain must traverse a
+    # single rooted latitude monotonically. This rules out repeated or
+    # backtracking windings even when the seam gauges differ by one turn.
+    first_position, second_position = positions
+    chains = (
+        loop[first_position + 1 : second_position],
+        (*loop[second_position + 1 :], *loop[:first_position]),
+    )
+    directions: list[int] = []
+    for chain in chains:
+        if not chain:
+            refuse()
+        first_curve = geometry.pcurves[chain[0]]
+        assert isinstance(first_curve, TorusRootedCirclePCurve)
+        first_root = first_curve.root_line.root
+        root_key = (first_root.cosine_exact, first_root.sine_exact, first_root.turns)
+        direction = first_curve.orientation * geometry.coedge_senses[chain[0]]
+        for coedge in chain:
+            curve = geometry.pcurves[coedge]
+            assert isinstance(curve, TorusRootedCirclePCurve)
+            root = curve.root_line.root
+            if (
+                root.cosine_exact,
+                root.sine_exact,
+                root.turns,
+            ) != root_key or curve.orientation * geometry.coedge_senses[
+                coedge
+            ] != direction:
+                refuse()
+        directions.append(direction)
+    if directions[0] != -directions[1]:
+        refuse()
+
+    coefficients = (
+        *patch.center_exact,
+        *patch.first_axis_exact,
+        *patch.second_axis_exact,
+        *patch.axis_exact,
+        patch.major_radius_exact,
+        patch.minor_radius_exact,
+    )
+    exact_bounds = tuple(coefficient_interval(value, bits=128) for value in coefficients)
+    coefficient_low = np.asarray([fraction_down(item[0]) for item in exact_bounds])
+    coefficient_high = np.asarray([fraction_up(item[1]) for item in exact_bounds])
+
+    def norm(first: int, last: int, /) -> float:
+        return _norm_bound(coefficient_low[first:last], coefficient_high[first:last])
+
+    major = max(abs(coefficient_low[12]), abs(coefficient_high[12]))
+    minor = max(abs(coefficient_low[13]), abs(coefficient_high[13]))
+    radial = norm(3, 6) + norm(6, 9)
+    axis = norm(9, 12)
+    position = norm(0, 3) + (major + minor) * radial + minor * axis
+    jacobian = (
+        (major + minor) * radial * _BOUND_HEADROOM,
+        minor * (radial + axis) * _BOUND_HEADROOM,
+    )
+    magnitude = position * jacobian[0] * jacobian[1] / 3.0 * _BOUND_HEADROOM
+
+    def full_turn(parameters: Array, /) -> Array:
+        center = parameters[:3]
+        first_axis = parameters[3:6]
+        second_axis = parameters[6:9]
+        axis_vector = parameters[9:12]
+        major_radius, minor_radius = parameters[12], parameters[13]
+        first, last, period = parameters[14], parameters[15], parameters[16]
+        normal = jnp.cross(first_axis, second_axis)
+        center_det = jnp.dot(center, normal)
+        axis_det = jnp.dot(axis_vector, normal)
+
+        def primitive(angle: Array, /) -> Array:
+            sine, cosine = jnp.sin(angle), jnp.cos(angle)
+            return center_det * (
+                -major_radius * cosine + minor_radius * sine**2 / 2
+            ) + axis_det * (
+                (major_radius**2 + minor_radius**2) * sine
+                + major_radius * minor_radius * (3 * angle / 2 + jnp.sin(2 * angle) / 4)
+            )
+
+        return jnp.reshape(
+            period * minor_radius * (primitive(last) - primitive(first)) / 3, (1,)
+        )
+
+    label = f"source face {face} torus Green primitive"
+    program = _prepare(label, lambda: _cell_program(full_turn, 17))
+    period_low, period_high = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(1)))
+    fixed: _Interval = (np.zeros(()), np.zeros(()))
+    for coedge, turns in seams:
+        if not turns:
+            continue
+        first, last = (
+            float(value)
+            for value in np.asarray(geometry.edge_ranges)[geometry.coedge_edges[coedge]]
+        )
+        lower = np.concatenate((coefficient_low, [first, last, float(period_low)]))[None]
+        upper = np.concatenate((coefficient_high, [first, last, float(period_high)]))[
+            None
+        ]
+        low, high = _evaluate(label, program, lower, upper)
+        factor = _factor(Fraction(sign * geometry.coedge_senses[coedge] * turns))
+        fixed = _arrays(
+            interval_add(fixed, interval_multiply((low[0, 0], high[0, 0]), factor))
+        )
+
+    chords = 0.0
+    longitude = 0.0
+    for loop_ends in ends:
+        for index, (start, end) in enumerate(loop_ends):
+            chords += _chord_distance(end, loop_ends[(index + 1) % len(loop_ends)][0])
+            longitude = max(
+                longitude,
+                *(abs(float(value)) for value in start.box[:, 0]),
+                *(abs(float(value)) for value in end.box[:, 0]),
+            )
+    bound = magnitude * longitude * chords * _BOUND_HEADROOM if chords else 0.0
+    fixed = _arrays(interval_add(fixed, (np.asarray(-bound), np.asarray(bound))))
+    return _FacePlan((), Fraction(0), (float(fixed[0]), float(fixed[1])), jacobian)
+
+
 def _plan_face(
     source: _VolumeSource, face: int, sign: int, ends: _LoopEnds, /
 ) -> _FacePlan:
@@ -1388,6 +1949,9 @@ def _plan_face(
         raise _MeasureFailure(
             "unsupported", f"{label} has no source-authoritative trim domain"
         )
+    torus_plan = _torus_periodic_face(source, face, sign, ends)
+    if torus_plan is not None:
+        return torus_plan
     if frame is not None:
         # Affine face: the constant flux times the Green area of its p-curve
         # loops, each loop closed by straight parameter chords.
@@ -1508,7 +2072,11 @@ def _plan_face(
                 piece_breaks = _green_curve_breaks(pcurve)
                 assert piece_breaks is not None
                 coedge_label = f"{label} coedge {coedge}"
-                if isinstance(pcurve, IntersectionPCurve):
+                if isinstance(pcurve, TorusRootedCirclePCurve):
+                    # The root is a constant latitude, so dv is identically
+                    # zero even when the longitude carries an exact turn.
+                    pass
+                elif isinstance(pcurve, IntersectionPCurve):
                     cuts = np.concatenate(
                         ([first], _interior_breaks(piece_breaks, first, last), [last])
                     )

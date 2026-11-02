@@ -117,6 +117,27 @@ def _cross(
     )
 
 
+def _carrier_normal(patch: object, /) -> Point | None:
+    if isinstance(patch, PlanePatch):
+        return _cross(
+            _fraction_point(np.asarray(patch.first_axis)),
+            _fraction_point(np.asarray(patch.second_axis)),
+        )
+    if isinstance(patch, ExtrusionSurface) and isinstance(
+        patch.curve, (LineCurve, ExactLineCurve)
+    ):
+        if isinstance(patch.curve, LineCurve):
+            first = _fraction_point(np.asarray(patch.curve.direction))
+        else:
+            first = (
+                patch.curve.last_exact[0] - patch.curve.first_exact[0],
+                patch.curve.last_exact[1] - patch.curve.first_exact[1],
+                patch.curve.last_exact[2] - patch.curve.first_exact[2],
+            )
+        return _cross(first, _fraction_point(np.asarray(patch.direction)))
+    return None
+
+
 def _box_bounds(model: BRepModel, /) -> Box:
     geometry = model.geometry
     occurrence_iterator = geometry.assembly_graph.iter_occurrences()
@@ -350,9 +371,7 @@ def _source_face_key(model: BRepModel, face_index: int, /) -> FaceKey:
         for coedge in loop
         for vertex in geometry.edge_vertices[geometry.coedge_edges[coedge]]
     }
-    points = tuple(
-        _fraction_point(np.asarray(geometry.vertex_points[index])) for index in vertex_ids
-    )
+    points = tuple(_source_vertex(geometry, index) for index in vertex_ids)
     return _face_key(points)
 
 
@@ -416,6 +435,9 @@ def _composite_revision(
                     assembly_path[-2] if len(assembly_path) > 1 else None,
                 )
             )
+            source_occurrence_ids[(operand.operand_id, item.occurrence_id)] = (
+                assembly_path[-1]
+            )
         for source_occurrence in geometry.iter_occurrences():
             solid = source_occurrence.solid_index
             solid_entity = BRepEntityId(
@@ -473,6 +495,31 @@ def _composite_revision(
                 source_occurrence_ids[(operand.operand_id, face_local_id)] = (
                     face_occurrence_id
                 )
+            for kind, indices in (
+                ("edge", range(geometry.topology.num_edges)),
+                ("vertex", range(geometry.topology.num_vertices)),
+            ):
+                for index in indices:
+                    entity = BRepEntityId(
+                        model.source_id,
+                        model.source_revision,
+                        kind,
+                        index,
+                        source_occurrence.path,
+                    )
+                    local_id = _entity_occurrence_id(entity)
+                    occurrence_id = f"{solid_path[-1]}/{kind}:{index}"
+                    occurrences.append(
+                        CADOccurrence(
+                            revision_id,
+                            occurrence_id,
+                            _entity_text(entity),
+                            kind,
+                            (*solid_path, occurrence_id),
+                            solid_path[-1],
+                        )
+                    )
+                    source_occurrence_ids[(operand.operand_id, local_id)] = occurrence_id
     return (
         CADRevision(revision_id, source_id, tuple(occurrences), plan_id),
         source_occurrence_ids,
@@ -1080,6 +1127,7 @@ def partition_native_boxes(
     from ._partition import (
         _entity_occurrence_id,
         _operand_selection,
+        BRepPartitionHistoryError,
         BRepPartitionPatch,
         BRepPartitionRegion,
         BRepPartitionReport,
@@ -1095,6 +1143,9 @@ def partition_native_boxes(
     solid_owner = layout.solid_owners
     source_occurrence_by_operand: dict[str, tuple[str, ...]] = {}
     source_face_keys: dict[str, tuple[tuple[str, FaceKey], ...]] = {}
+    source_face_context: dict[str, tuple[BRepPartitionOperand, int]] = {}
+    source_edges: list[tuple[str, Point, Point]] = []
+    source_vertices: list[tuple[str, Point]] = []
     for operand in plan.operands:
         geometry = operand.model.geometry
         selector = _operand_selection(operand).selectors[0]
@@ -1122,6 +1173,39 @@ def partition_native_boxes(
             for occurrence in geometry.iter_occurrences()
             for face in geometry.topology.solid_faces[occurrence.solid_index]
         )
+        for (source_id, _), face in zip(
+            source_face_keys[operand.operand_id],
+            geometry.topology.solid_faces[0],
+            strict=True,
+        ):
+            source_face_context[source_id] = (operand, face)
+        occurrence = next(geometry.iter_occurrences())
+        for kind, count in (
+            ("edge", geometry.topology.num_edges),
+            ("vertex", geometry.topology.num_vertices),
+        ):
+            for index in range(count):
+                entity = BRepEntityId(
+                    operand.model.source_id,
+                    operand.model.source_revision,
+                    kind,
+                    index,
+                    occurrence.path,
+                )
+                source_id = source_occurrence_ids[
+                    (operand.operand_id, _entity_occurrence_id(entity))
+                ]
+                if kind == "edge":
+                    first, last = geometry.edge_vertices[index]
+                    source_edges.append(
+                        (
+                            source_id,
+                            _source_vertex(geometry, first),
+                            _source_vertex(geometry, last),
+                        )
+                    )
+                else:
+                    source_vertices.append((source_id, _source_vertex(geometry, index)))
     target_solid_occurrences: dict[int, tuple[str, tuple[str, ...]]] = {}
     target_face_occurrences: dict[tuple[int, int], str] = {}
     for occurrence in model.geometry.iter_occurrences():
@@ -1147,6 +1231,8 @@ def partition_native_boxes(
         return tuple(chain)
 
     correspondence_pairs: set[tuple[str, str]] = set()
+    face_rebases: dict[tuple[str, str], tuple[int, str]] = {}
+    face_ancestry: dict[tuple[str, str], str] = {}
     for solid_index, atom_indices in enumerate(layout.solid_atoms):
         target_solid_id, occurrence_path = target_solid_occurrences[solid_index]
         target_assemblies = assembly_chain(target_revision, target_solid_id)
@@ -1191,7 +1277,173 @@ def partition_native_boxes(
                         for cell in layout.face_cells[face_index]
                     ):
                         continue
-                    correspondence_pairs.add((source_id, target_face_id))
+                    operand, source_face = source_face_context[source_id]
+                    axis, fixed = source_key[:2]
+                    source_normal = _carrier_normal(operand.model.patches[source_face])
+                    target_normal = _carrier_normal(model.patches[face_index])
+                    if source_normal is None or target_normal is None:
+                        raise BRepPartitionHistoryError(
+                            "Native box face ancestry requires certified plane carriers."
+                        )
+                    source_bounds = operand_boxes[operand.operand_id]
+                    target_shell = dict(
+                        zip(
+                            model.topology.solid_faces[solid_index],
+                            model.topology.solid_face_orientations[solid_index],
+                            strict=True,
+                        )
+                    )[face_index]
+                    if source_normal is not None and target_normal is not None:
+                        source_axis = source_normal[axis]
+                        target_axis = target_normal[axis]
+                        source_orientation = source_revision.occurrence(
+                            source_id
+                        ).orientation
+                        source_sign = int(
+                            np.asarray(operand.model.orientation)[source_face]
+                        )
+                        target_sign = int(np.asarray(model.orientation)[face_index])
+                        source_outward = -1 if fixed == source_bounds[0][axis] else 1
+                        target_outward = (
+                            1 if target_axis * target_sign * target_shell > 0 else -1
+                        )
+                        role = operand.role.value
+                        compatible_side = (
+                            True
+                            if role == "region"
+                            else target_outward == -source_outward
+                            and solid_owner[solid_index] in operand.target_region_ids
+                            and operand_boxes[solid_owner[solid_index]][0][axis]
+                            < fixed
+                            < operand_boxes[solid_owner[solid_index]][1][axis]
+                        )
+                        adjacent_atoms = []
+                        interface_neighbors: list[int] = []
+                        for atom_index in atom_indices:
+                            lower, upper = atoms[atom_index].bounds
+                            side = upper[axis] if target_outward > 0 else lower[axis]
+                            cell = _cell_key(_replace(lower, axis, fixed), upper, axis)
+                            inside = all(
+                                a >= b and c <= d
+                                for a, c, b, d in zip(
+                                    lower, upper, *source_bounds, strict=True
+                                )
+                            )
+                            if (
+                                side != fixed
+                                or cell not in layout.face_cells[face_index]
+                                or not _contained_face(cell, source_key)
+                            ):
+                                continue
+                            if role == "void":
+                                if not inside:
+                                    adjacent_atoms.append(atom_index)
+                            elif target_outward == source_outward:
+                                if inside:
+                                    adjacent_atoms.append(atom_index)
+                            elif not inside:
+                                neighbors = [
+                                    index
+                                    for index, neighbor in enumerate(atoms)
+                                    if (
+                                        neighbor.bounds[0][axis]
+                                        if target_outward > 0
+                                        else neighbor.bounds[1][axis]
+                                    )
+                                    == fixed
+                                    and _cell_key(
+                                        _replace(neighbor.bounds[0], axis, fixed),
+                                        neighbor.bounds[1],
+                                        axis,
+                                    )
+                                    == cell
+                                    and all(
+                                        a >= b and c <= d
+                                        for a, c, b, d in zip(
+                                            *neighbor.bounds, *source_bounds, strict=True
+                                        )
+                                    )
+                                ]
+                                if neighbors:
+                                    adjacent_atoms.append(atom_index)
+                                    interface_neighbors.extend(neighbors)
+                        if not compatible_side or not adjacent_atoms:
+                            continue
+                        correspondence_pairs.add((source_id, target_face_id))
+                        face_ancestry[(source_id, target_face_id)] = (
+                            canonical_fingerprint(
+                                {
+                                    "kind": "native-box-face-atom-ancestry",
+                                    "plan": plan.plan_id,
+                                    "operand": operand.operand_id,
+                                    "role": role,
+                                    "source": source_id,
+                                    "target": target_face_id,
+                                    "region": solid_owner[solid_index],
+                                    "axis": axis,
+                                    "source_outward": source_outward,
+                                    "target_outward": target_outward,
+                                    "adjacent_atoms": tuple(adjacent_atoms),
+                                    "interface_neighbors": tuple(
+                                        sorted(set(interface_neighbors))
+                                    ),
+                                }
+                            )
+                        )
+                        if (
+                            source_axis != 0
+                            and target_axis != 0
+                            and all(
+                                source_normal[index] == 0 and target_normal[index] == 0
+                                for index in range(3)
+                                if index != axis
+                            )
+                            and source_axis
+                            * source_sign
+                            * source_orientation
+                            * source_outward
+                            > 0
+                            and compatible_side
+                            and adjacent_atoms
+                            and (role != "region" or target_outward == source_outward)
+                        ):
+                            target_occurrence_orientation = target_revision.occurrence(
+                                target_face_id
+                            ).orientation
+                            transform = source_orientation * target_occurrence_orientation
+                            evidence = canonical_fingerprint(
+                                {
+                                    "kind": "native-box-face-incidence-rebase",
+                                    "plan": plan.plan_id,
+                                    "operand": operand.operand_id,
+                                    "role": role,
+                                    "target_regions": tuple(
+                                        sorted(operand.target_region_ids)
+                                    ),
+                                    "region": solid_owner[solid_index],
+                                    "source": source_id,
+                                    "target": target_face_id,
+                                    "axis": axis,
+                                    "source_carrier_sign": 1 if source_axis > 0 else -1,
+                                    "target_carrier_sign": 1 if target_axis > 0 else -1,
+                                    "source_model_orientation": source_sign,
+                                    "target_model_orientation": target_sign,
+                                    "source_incidence": source_orientation,
+                                    "target_incidence": target_shell,
+                                    "target_occurrence_orientation": target_occurrence_orientation,
+                                    "source_outward": source_outward,
+                                    "target_outward": target_outward,
+                                    "adjacent_atoms": tuple(adjacent_atoms),
+                                    "interface_neighbors": tuple(
+                                        sorted(set(interface_neighbors))
+                                    ),
+                                    "transform": transform,
+                                }
+                            )
+                            face_rebases[(source_id, target_face_id)] = (
+                                transform,
+                                evidence,
+                            )
                     for edge in model.topology.face_edges[face_index]:
                         if any(
                             _point_in_face(start, source_key)
@@ -1232,6 +1484,52 @@ def partition_native_boxes(
                                     ),
                                 )
                             )
+    for occurrence in model.geometry.iter_occurrences():
+        for edge in {
+            edge
+            for face in model.topology.solid_faces[occurrence.solid_index]
+            for edge in model.topology.face_edges[face]
+        }:
+            target_id = _entity_occurrence_id(
+                BRepEntityId(
+                    model.source_id,
+                    model.source_revision,
+                    "edge",
+                    edge,
+                    occurrence.path,
+                )
+            )
+            for source_id, first, last in source_edges:
+                if any(
+                    all(
+                        min(first[axis], last[axis])
+                        <= point[axis]
+                        <= max(first[axis], last[axis])
+                        for point in (start, end)
+                        for axis in range(3)
+                    )
+                    for start, end in layout.edge_segments[edge]
+                ):
+                    correspondence_pairs.add((source_id, target_id))
+        for vertex in {
+            vertex
+            for face in model.topology.solid_faces[occurrence.solid_index]
+            for edge in model.topology.face_edges[face]
+            for vertex in model.geometry.edge_vertices[edge]
+        }:
+            point = model.geometry.vertex_exact_points[vertex]
+            target_id = _entity_occurrence_id(
+                BRepEntityId(
+                    model.source_id,
+                    model.source_revision,
+                    "vertex",
+                    vertex,
+                    occurrence.path,
+                )
+            )
+            for source_id, source_point in source_vertices:
+                if point == source_point:
+                    correspondence_pairs.add((source_id, target_id))
     certificate_id = canonical_fingerprint(
         {
             "kind": "native-axis-box-partition-history",
@@ -1239,10 +1537,30 @@ def partition_native_boxes(
             "source_revision": source_revision.revision_id,
             "target_revision": target_revision.revision_id,
             "correspondences": tuple(sorted(correspondence_pairs)),
+            "face_rebases": tuple(sorted(face_rebases.items())),
+            "face_ancestry": tuple(sorted(face_ancestry.items())),
         }
     )
+
+    def correspondence(source_id: str, target_id: str, /) -> OccurrenceCorrespondence:
+        rebase = face_rebases.get((source_id, target_id))
+        if rebase is not None:
+            return OccurrenceCorrespondence(source_id, target_id, rebase[1], rebase[0])
+        unresolved_orientation = (
+            0
+            if source_revision.occurrence(source_id).kind == "face"
+            and target_revision.occurrence(target_id).kind == "face"
+            else None
+        )
+        return OccurrenceCorrespondence(
+            source_id,
+            target_id,
+            face_ancestry.get((source_id, target_id), certificate_id),
+            unresolved_orientation,
+        )
+
     correspondences = tuple(
-        OccurrenceCorrespondence(source_id, target_id, certificate_id)
+        correspondence(source_id, target_id)
         for source_id, target_id in sorted(correspondence_pairs)
     )
     coverage = AssociationCoverageEvidence(
@@ -1312,6 +1630,151 @@ def partition_native_boxes(
             for value in target_revision.occurrences
         ),
     )
+    operand_graphs = []
+    for operand in sorted(plan.operands, key=lambda value: value.operand_id):
+        local = cad_revision_from_brep_model(operand.model)
+        geometry = operand.model.geometry
+        occurrence = next(geometry.iter_occurrences())
+        solid_id = _operand_selection(operand).selectors[0].occurrence_id
+        composite_solid = source_occurrence_ids[(operand.operand_id, solid_id)]
+        face_orientations = {
+            _entity_occurrence_id(
+                BRepEntityId(
+                    operand.model.source_id,
+                    operand.model.source_revision,
+                    "face",
+                    face,
+                    occurrence.path,
+                )
+            ): orientation
+            for face, orientation in zip(
+                geometry.topology.solid_faces[occurrence.solid_index],
+                geometry.topology.solid_face_orientations[occurrence.solid_index],
+                strict=True,
+            )
+        }
+        member_ids = {
+            _entity_occurrence_id(
+                BRepEntityId(
+                    operand.model.source_id,
+                    operand.model.source_revision,
+                    kind,
+                    index,
+                    occurrence.path,
+                )
+            )
+            for kind, indices in (
+                ("face", geometry.topology.solid_faces[occurrence.solid_index]),
+                (
+                    "edge",
+                    {
+                        edge
+                        for face in geometry.topology.solid_faces[occurrence.solid_index]
+                        for edge in geometry.topology.face_edges[face]
+                    },
+                ),
+                (
+                    "vertex",
+                    {
+                        vertex
+                        for face in geometry.topology.solid_faces[occurrence.solid_index]
+                        for edge in geometry.topology.face_edges[face]
+                        for vertex in geometry.edge_vertices[edge]
+                    },
+                ),
+            )
+            for index in indices
+        }
+        bindings = []
+        for item in local.occurrences:
+            target_id = source_occurrence_ids.get(
+                (operand.operand_id, item.occurrence_id)
+            )
+            if target_id is None:
+                raise BRepPartitionHistoryError(
+                    "Box operand occurrence has no composite binding."
+                )
+            target_item = source_revision.occurrence(target_id)
+            if item.kind in ("face", "edge", "vertex"):
+                if item.occurrence_id not in member_ids:
+                    raise BRepPartitionHistoryError(
+                        "Box operand occurrence is not a solid member."
+                    )
+                expected_path = (
+                    *(
+                        source_occurrence_ids[(operand.operand_id, part)]
+                        for part in item.path[:-1]
+                    ),
+                    composite_solid,
+                    target_id,
+                )
+                expected_orientation = face_orientations.get(item.occurrence_id, 1)
+            else:
+                expected_path = tuple(
+                    source_occurrence_ids[(operand.operand_id, part)]
+                    for part in item.path
+                )
+                expected_orientation = item.orientation
+            if (
+                target_item.entity_id != item.entity_id
+                or target_item.kind != item.kind
+                or target_item.path != expected_path
+                or target_item.orientation != expected_orientation
+            ):
+                raise BRepPartitionHistoryError(
+                    "Box operand incidence binding is inconsistent."
+                )
+            evidence = canonical_fingerprint(
+                {
+                    "kind": "native-box-operand-incidence",
+                    "operand": operand.operand_id,
+                    "role": operand.role.value,
+                    "target_regions": tuple(sorted(operand.target_region_ids)),
+                    "solid": solid_id,
+                    "source": item.occurrence_id,
+                    "source_path": item.path,
+                    "source_orientation": item.orientation,
+                    "target": target_id,
+                    "target_path": target_item.path,
+                    "target_orientation": target_item.orientation,
+                }
+            )
+            bindings.append(
+                OccurrenceCorrespondence(
+                    item.occurrence_id,
+                    target_id,
+                    evidence,
+                    item.orientation * target_item.orientation,
+                )
+            )
+        binding_certificate = canonical_fingerprint(
+            {
+                "kind": "native-box-partition-operand-binding",
+                "plan": plan.plan_id,
+                "operand": operand.operand_id,
+                "source": local.revision_id,
+                "target": source_revision.revision_id,
+                "evidence": tuple(sorted(edge.evidence_id for edge in bindings)),
+            }
+        )
+        binding_transaction = OccurrenceCorrespondenceTransaction(
+            binding_certificate,
+            local.revision_id,
+            source_revision.revision_id,
+            tuple(bindings),
+            frozenset(),
+            frozenset(item.occurrence_id for item in source_revision.occurrences)
+            - frozenset(edge.target_occurrence_id for edge in bindings),
+            AssociationCoverageEvidence(
+                True, True, binding_certificate, "native-axis-box-operand-incidence"
+            ),
+        )
+        operand_graphs.append(
+            (
+                operand.operand_id,
+                AssociationGraph(local, source_revision, binding_transaction),
+            )
+        )
     return BRepPartitionResult(
         model,
         target_revision,
@@ -1319,6 +1782,9 @@ def partition_native_boxes(
         regions,
         patches,
         report,
+        plan,
+        operand_association_graphs=tuple(operand_graphs),
+        tessellation_policy=tessellation,
     )
 
 

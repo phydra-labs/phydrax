@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import isfinite
 from numbers import Integral, Real
@@ -390,10 +390,11 @@ class BRepAssemblyGraph:
         definition_map = {value.definition_id: value for value in definitions}
         if len(definition_map) != len(definitions):
             raise ValueError("Assembly definition IDs must be unique.")
-        use_ids: set[str] = set()
+        root_ids: set[str] = set()
         for use in roots:
-            self._validate_use(use, definition_map, use_ids)
+            self._validate_use(use, definition_map, root_ids)
         for definition in definitions:
+            use_ids: set[str] = set()
             for use in definition.uses:
                 self._validate_use(use, definition_map, use_ids)
         self._require_acyclic(definitions, definition_map)
@@ -424,7 +425,7 @@ class BRepAssemblyGraph:
         /,
     ) -> None:
         if use.use_id in use_ids:
-            raise ValueError("Assembly use IDs must be globally unique.")
+            raise ValueError("Assembly use IDs must be unique among siblings.")
         use_ids.add(use.use_id)
         if use.solid_index is not None and use.solid_index >= self.solid_count:
             raise ValueError("An assembly use references an absent solid.")
@@ -478,6 +479,106 @@ class BRepAssemblyGraph:
             for index in range(solid_count)
         )
         return cls(roots, (), solid_count)
+
+    def with_occurrence_placement(
+        self,
+        path: tuple[str, ...],
+        placement: BRepAffinePlacement,
+        /,
+        *,
+        evidence: BRepPlacementEvidence | None = None,
+    ) -> BRepAssemblyGraph:
+        """Copy the selected occurrence ancestry and replace its local placement."""
+        if (
+            not isinstance(path, tuple)
+            or not path
+            or any(not isinstance(part, str) or not part for part in path)
+        ):
+            raise ValueError("An occurrence path must contain named uses.")
+        if not isinstance(placement, BRepAffinePlacement):
+            raise TypeError("placement must be a BRepAffinePlacement.")
+        if evidence is not None and not isinstance(evidence, BRepPlacementEvidence):
+            raise TypeError("evidence must be BRepPlacementEvidence or None.")
+        definitions = {item.definition_id: item for item in self.definitions}
+        uses = self.roots
+        ancestry: list[tuple[BRepAssemblyUse, BRepAssemblyDefinition]] = []
+        selected: BRepAssemblyUse | None = None
+        for index, part in enumerate(path):
+            selected = next((use for use in uses if use.use_id == part), None)
+            if selected is None:
+                raise ValueError("The assembly occurrence path does not exist.")
+            if index + 1 == len(path):
+                break
+            if selected.definition_id is None:
+                raise ValueError("The assembly occurrence path extends beyond a solid.")
+            definition = definitions[selected.definition_id]
+            ancestry.append((selected, definition))
+            uses = definition.uses
+        if selected is None:
+            raise ValueError("The assembly occurrence path does not exist.")
+        replacement = replace(selected, placement=placement, placement_evidence=evidence)
+        added: list[BRepAssemblyDefinition] = []
+        reserved = set(definitions)
+        for parent, definition in reversed(ancestry):
+            base = f"{definition.definition_id}-placement"
+            name = base
+            suffix = 1
+            while name in reserved:
+                name = f"{base}-{suffix}"
+                suffix += 1
+            reserved.add(name)
+            children = tuple(
+                replacement if use.use_id == replacement.use_id else use
+                for use in definition.uses
+            )
+            added.append(BRepAssemblyDefinition(name, children))
+            replacement = replace(parent, definition_id=name)
+        roots = tuple(
+            replacement if use.use_id == replacement.use_id else use for use in self.roots
+        )
+        all_definitions = (*self.definitions, *added)
+        by_id = {definition.definition_id: definition for definition in all_definitions}
+
+        def reachable(root_uses: tuple[BRepAssemblyUse, ...], /) -> set[str]:
+            pending = [
+                use.definition_id for use in root_uses if use.definition_id is not None
+            ]
+            seen: set[str] = set()
+            while pending:
+                identifier = pending.pop()
+                if identifier in seen:
+                    continue
+                seen.add(identifier)
+                pending.extend(
+                    use.definition_id
+                    for use in by_id[identifier].uses
+                    if use.definition_id is not None
+                )
+            return seen
+
+        previously_reachable = reachable(self.roots)
+        authored_orphans = tuple(
+            definition
+            for definition in self.definitions
+            if definition.definition_id not in previously_reachable
+        )
+        orphan_dependencies = reachable(
+            tuple(use for definition in authored_orphans for use in definition.uses)
+        )
+        removed = previously_reachable - reachable(roots) - orphan_dependencies
+        retained_definitions = tuple(
+            definition
+            for definition in all_definitions
+            if definition.definition_id not in removed
+        )
+        retained_evidence = tuple(
+            (occurrence, value)
+            for occurrence, value in self.occurrence_evidence
+            if occurrence[: len(path)] != path
+        )
+        return BRepAssemblyGraph(
+            roots, retained_definitions, self.solid_count, retained_evidence
+        )
 
     def iter_occurrences(self, /) -> Iterator[BRepAssemblyOccurrence]:
         """Yield placed solid leaves and occurrence-bound placement certificates."""

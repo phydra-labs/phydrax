@@ -871,6 +871,72 @@ class SourcePreparation:
         preparation.require(domain)
         return preparation
 
+    def for_placement_domain(self, domain: MeshingDomain, /) -> SourcePreparation:
+        """Carry exact local spline spans into a placement-only B-Rep domain.
+
+        Both authorities and their complete non-placement source dependencies are
+        checked. Only in-hand spans of the same local carrier objects are carried;
+        placed spans, interval programs and all world evidence are rebuilt.
+        """
+        from .brep._assembly import BRepAssemblyGraph
+        from .brep._model import _brep_geometry_identity, _brep_model_source_revision
+
+        self.domain.require_current()
+        domain.require_current()
+        old = self.domain.brep_authority
+        new = domain.brep_authority
+        result = SourcePreparation(domain)
+        if old is None or new is None or old.source_id != new.source_id:
+            return result
+        if (
+            old.geometry.assembly_graph.solid_count
+            != new.geometry.assembly_graph.solid_count
+        ):
+            return result
+        canonical_assembly = BRepAssemblyGraph.single_solids(
+            old.geometry.assembly_graph.solid_count
+        )
+
+        def local_revision(model: BRepModel, /) -> str:
+            geometry_id = _brep_geometry_identity(
+                model.geometry, assembly_graph=canonical_assembly
+            )
+            return _brep_model_source_revision(
+                model.geometry,
+                model.patches,
+                np.asarray(model.parameter_bounds, dtype=np.float64),
+                np.asarray(model.orientation, dtype=np.float64),
+                model.trim_domains,
+                model.physical_tags,
+                model.coordinate_contract,
+                model.report,
+                geometry_identity=geometry_id,
+            )
+
+        if local_revision(old) != local_revision(new):
+            return result
+        old_occurrences = tuple(
+            (occurrence.path, occurrence.solid_index)
+            for occurrence in old.geometry.iter_occurrences()
+        )
+        new_occurrences = tuple(
+            (occurrence.path, occurrence.solid_index)
+            for occurrence in new.geometry.iter_occurrences()
+        )
+        if old_occurrences != new_occurrences:
+            return result
+        new_surfaces = {id(surface): surface for surface in new.patches}
+        for key, (surface, spans) in self._surface_spans.items():
+            if spans is not None and new_surfaces.get(key) is surface:
+                result._surface_spans[key] = (surface, spans)
+        new_curves = {
+            id(curve): curve for curve in (*new.geometry.curves, *new.geometry.pcurves)
+        }
+        for key, (curve, spans) in self._curve_spans.items():
+            if new_curves.get(key) is curve:
+                result._curve_spans[key] = (curve, spans)
+        return result
+
     def require(self, domain: MeshingDomain, /) -> None:
         """Refuse to answer queries of a different meshing domain."""
         if domain is not self.domain and domain.domain_id != self.domain.domain_id:
@@ -916,6 +982,7 @@ class SourcePreparation:
             return _placed_point_box(
                 surface.placement, self.surface_box(surface.source, parameter_box)
             )
+        from .brep._patches import TorusPatch
         from .brep._root_bindings import _exact_span_surface_box
         from .brep._tspline import TSplineSurfacePatch
 
@@ -925,6 +992,13 @@ class SourcePreparation:
             if spans is None:
                 raise RuntimeError("A spline carrier prepared no exact spans.")
             return _exact_span_surface_box(spans, box[0], box[1])
+        if isinstance(surface, TorusPatch):
+            from .brep._root_bindings import _exact_torus_patch_box
+
+            box = np.asarray(
+                surface.validate_parameter_box(parameter_box), dtype=np.float64
+            )
+            return _exact_torus_patch_box(surface, box[0], box[1])
         return np.asarray(surface.bounding_box(parameter_box), dtype=np.float64)
 
     def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
@@ -951,6 +1025,12 @@ class SourcePreparation:
         entry = self._programs.get(key)
         if entry is not None:
             return entry[1]
+        from ._source_interpolation import _prepare_torus_source_program
+
+        torus_program = _prepare_torus_source_program(surface, order)
+        if torus_program is not None:
+            self._programs[key] = (surface, torus_program)
+            return torus_program
         derivative: Callable[[Array], Array] = surface.evaluate
         for _ in range(order):
             derivative = jax.jacfwd(derivative)

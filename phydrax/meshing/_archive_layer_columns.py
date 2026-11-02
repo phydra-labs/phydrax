@@ -206,7 +206,17 @@ def _decode_column(value: Any, kind: str) -> Any:
     if kind == "rational_terms":
         if any(item[0] != "rational" for row in decoded for item in row):
             raise ValueError("Restricted cell columns must retain rational term pairs.")
-        return tuple(tuple((item[1], item[2]) for item in row) for row in decoded)
+        # Repeated exact charts share one immutable row within this decode.
+        # The table is scoped to this record and is never proof authority.
+        rows: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+        result = []
+        for row in decoded:
+            rebuilt = rows.get(row)
+            if rebuilt is None:
+                rebuilt = tuple((item[1], item[2]) for item in row)
+                rows[row] = rebuilt
+            result.append(rebuilt)
+        return tuple(result)
     return decoded
 
 

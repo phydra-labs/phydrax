@@ -1,6 +1,8 @@
 from fractions import Fraction
 from typing import Any
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -548,16 +550,17 @@ def _curve_witness(
     )
 
 
-def test_parametric_curve_fidelity_certifies_exact_map_and_refuses_omitted_source_interval() -> (
-    None
-):
+def _linear_curve_case(
+    *,
+    occurrence_paths: tuple[tuple[str, ...], ...] = ((),),
+) -> tuple[ParametricCurveBoundarySource, CellMesh, CellGeometrySpec]:
     source = ParametricCurveBoundarySource(
         (LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
         ((0.0, 1.0),),
         source_id="curve-source",
         source_revision="curve-revision-1",
         curve_entity_ids=("authored-edge",),
-        occurrence_paths=((),),
+        occurrence_paths=occurrence_paths,
         chart_ids=("authored-edge-chart",),
     )
     mesh = CellMesh(
@@ -566,6 +569,13 @@ def test_parametric_curve_fidelity_certifies_exact_map_and_refuses_omitted_sourc
         vertex_global_ids=np.asarray((29, 31), dtype=np.int64),
     )
     geometry = CellGeometrySpec.affine(mesh)
+    return source, mesh, geometry
+
+
+def test_parametric_curve_fidelity_certifies_exact_map_and_refuses_omitted_source_interval() -> (
+    None
+):
+    source, mesh, geometry = _linear_curve_case()
     complete = _curve_witness(
         mesh,
         geometry,
@@ -600,6 +610,51 @@ def test_parametric_curve_fidelity_certifies_exact_map_and_refuses_omitted_sourc
         certify_source_fidelity(
             mesh, geometry, source, tolerance=0.0, witness=wrong_occurrence
         )
+
+
+def test_chart_witness_static_metadata_keeps_numerical_leaves_compilable() -> None:
+    source, mesh, geometry = _linear_curve_case(
+        occurrence_paths=(("assembly", "instance"),),
+    )
+    witness = _curve_witness(
+        mesh,
+        geometry,
+        source,
+        parameters=np.asarray((((0.0,), (1.0,)),), dtype=np.float64),
+    )
+    leaves = jax.tree_util.tree_leaves(witness)
+    assert all(
+        any(leaf is value for leaf in leaves)
+        for value in (
+            witness.cell_global_ids,
+            witness.entity_global_ids,
+            witness.local_entity_indices,
+            witness.target_reference_vertices,
+            witness.source_parameters,
+            witness.orientations,
+            witness.implicit_cell_keys,
+            witness.implicit_root_edge_keys,
+            witness.target_face_vertex_global_ids,
+        )
+    )
+    assert all(
+        not any(isinstance(leaf, str) and leaf == item for leaf in leaves)
+        for item in (
+            *witness.source_chart_ids,
+            *witness.source_entity_ids,
+            *(part for path in witness.occurrence_paths for part in path),
+        )
+    )
+    compiled = eqx.filter_jit(
+        lambda value: jnp.sum(jnp.asarray(value.source_parameters) ** 2)
+    )
+    assert float(compiled(witness)) == 1.0
+    gradient = jax.grad(
+        lambda points: compiled(
+            eqx.tree_at(lambda value: value.source_parameters, witness, points)
+        )
+    )(jnp.asarray(witness.source_parameters))
+    np.testing.assert_array_equal(gradient, 2.0 * witness.source_parameters)
 
 
 def test_parametric_curve_fidelity_accepts_explicit_curved_approximation_tolerance() -> (
@@ -1431,7 +1486,6 @@ def test_trim_homotopy_rejects_crossing_source_loops() -> None:
             (square(Fraction(0), Fraction(0)), square(Fraction(1, 2), Fraction(1, 2))),
             SourcePreparation(_domain()),
         )
-
 
 def test_rooted_chart_endpoints_refuse_unproved_nearby_join() -> None:
     import equinox as eqx

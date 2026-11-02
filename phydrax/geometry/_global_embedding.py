@@ -31,6 +31,8 @@ from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
     CellValidityStatus,
+    ComputedCellValidity,
+    ValidatedCellValidityParent,
     certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import CellMesh
@@ -1502,6 +1504,9 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         periodic: PeriodicMeshTopology | None = None,
         periodic_restriction: PeriodicRestrictionPremise | None = None,
         nested_restriction: NestedRestrictionPremise | None = None,
+        validated_validity: ComputedCellValidity
+        | ValidatedCellValidityParent
+        | None = None,
     ) -> None:
         """Compute every proof obligation from inputs; no caller-supplied verdict exists.
 
@@ -1516,7 +1521,17 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             )
         if type(validity) is not CellValidityCertificate:
             raise TypeError("validity must be a CellValidityCertificate.")
-        validity.revalidate(geometry, mesh=mesh)
+        if validated_validity is None:
+            validity.revalidate(geometry, mesh=mesh)
+        elif type(validated_validity) in (
+            ComputedCellValidity,
+            ValidatedCellValidityParent,
+        ):
+            validated_validity.require(geometry, mesh, validity)
+        else:
+            raise TypeError(
+                "validated_validity must be a computed or replayed host proof."
+            )
         junctions = _junction_ids(mesh, junction_vertices)
         periodic_topology = _periodic_input(mesh, periodic)
         if periodic_restriction is not None:
@@ -6272,6 +6287,7 @@ def certify_global_embedding(
     periodic: PeriodicMeshTopology | None = None,
     periodic_restriction: PeriodicRestrictionPremise | None = None,
     nested_restriction: NestedRestrictionPremise | None = None,
+    validated_validity: ComputedCellValidity | ValidatedCellValidityParent | None = None,
 ) -> GlobalEmbeddingCertificate:
     """Certify exact global cell contacts after local coordinate-map validation.
 
@@ -6286,6 +6302,7 @@ def certify_global_embedding(
         periodic=periodic,
         periodic_restriction=periodic_restriction,
         nested_restriction=nested_restriction,
+        validated_validity=validated_validity,
     )
 
 
@@ -6300,11 +6317,17 @@ class ValidatedGlobalEmbedding:
         geometry: CellGeometrySpec,
         validity: CellValidityCertificate,
         /,
+        *,
+        validated_validity: ComputedCellValidity
+        | ValidatedCellValidityParent
+        | None = None,
     ) -> None:
         self.mesh = mesh
         self.geometry = geometry
         self.validity = validity
-        self.certificate = certify_global_embedding(mesh, geometry, validity)
+        self.certificate = certify_global_embedding(
+            mesh, geometry, validity, validated_validity=validated_validity
+        )
 
     def __setattr__(self, name: str, value: object) -> None:
         if hasattr(self, name):

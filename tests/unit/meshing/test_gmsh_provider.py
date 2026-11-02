@@ -712,3 +712,140 @@ def test_real_solid_scoped_uniform_size_refines_only_selected_region(
         < achieved[f"size:{baseline.control_id}:maximum_edge"]
     )
     assert result.compliance.passed
+
+
+def test_gmsh_preflight_authenticates_and_preserves_shared_face_sides(
+    tmp_path: Any,
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from phydrax.geometry._cad_revision import CADSelectionSet
+    from phydrax.geometry.brep._partition import (
+        _entity_occurrence_id,
+        cad_revision_from_brep_model,
+    )
+    from phydrax.meshing.providers._gmsh_import import _scope_indices
+    from phydrax.meshing.providers._gmsh_preflight import (
+        _semantic_region_issues,
+        _sweep_preflight_issues,
+        _validate_gmsh_periodicity,
+    )
+
+    source = _semantic_source(tmp_path / "sided.brep")
+    face = next(
+        index
+        for index, owners in enumerate(source.topology.face_solids)
+        if len(owners) == 2
+    )
+    revision = cad_revision_from_brep_model(source)
+    uses = tuple(
+        record
+        for record in source.geometry.qualified_entity_incidence(
+            source.source_id, source.source_revision
+        )
+        if record.container.kind == "solid"
+        and record.member.kind == "face"
+        and record.member.index == face
+    )
+    scopes = tuple(
+        phx.meshing.MeshingScope.from_geometry(
+            source,
+            CADSelectionSet(
+                revision.revision_id,
+                (revision.select(_entity_occurrence_id(use.member)),),
+            ),
+        )
+        for use in uses
+    )
+    assert len(scopes) == 2
+    both = scopes[0].union(scopes[1])
+    whole = phx.meshing.MeshingScope.from_geometry(source, source.face_ids[face])
+    base, regions = _semantic_specification(phx.meshing.GmshProvider(), source)
+
+    def issues_for(scope: Any) -> list[str]:
+        spec = phx.meshing.VolumeMeshingSpec(
+            base.target,
+            base.boundary_scope,
+            base.fill_strategy,
+            size_controls=base.size_controls,
+            region_controls=regions,
+            patch_controls=(
+                phx.meshing.PatchControl("interface", scope, ("left", "right")),
+            ),
+        )
+        issues: list[str] = []
+        _semantic_region_issues(spec, source, issues)
+        return issues
+
+    assert any("individual incident side" in issue for issue in issues_for(scopes[0]))
+    assert not issues_for(both)
+    assert not issues_for(whole)
+    record = scopes[0].side_records[0]
+    forged = phx.meshing.MeshingScope(
+        scopes[0].source_id,
+        scopes[0].source_revision,
+        scopes[0].entity_kind,
+        2,
+        scopes[0].entity_set_id,
+        scopes[0].entity_ids,
+        side_records=(replace(record, orientation=-record.orientation),),
+        unqualified_entity_ids=(),
+    )
+    assert _scope_indices(source, forged, 2) is None
+    assert _scope_indices(source, scopes[0], 2) is not None
+
+    selected_solid = scopes[0].side_records[0].solid_index
+    volume = phx.meshing.MeshingScope.from_geometry(
+        source, source.solid_ids[selected_solid]
+    )
+    exterior = next(
+        index
+        for index in source.topology.solid_faces[selected_solid]
+        if len(source.topology.face_solids[index]) == 1
+    )
+    cap = phx.meshing.MeshingScope.from_geometry(source, source.face_ids[exterior])
+    exterior_use = next(
+        item for item in source.geometry.qualified_entity_incidence(
+            source.source_id, source.source_revision
+        )
+        if item.container.kind == "solid" and item.member.kind == "face"
+        and item.member.index == exterior
+    )
+    exterior_side = phx.meshing.MeshingScope.from_geometry(
+        source,
+        CADSelectionSet(
+            revision.revision_id,
+            (revision.select(_entity_occurrence_id(exterior_use.member)),),
+        ),
+    )
+
+    def periodic_issues(left: Any, right: Any) -> list[str]:
+        constraint = phx.meshing.PeriodicConstraint(left, right, np.eye(4))
+        issues: list[str] = []
+        _validate_gmsh_periodicity(
+            SimpleNamespace(periodic_constraints=(constraint,)), source, issues
+        )
+        return issues
+
+    assert any("individual incident side" in issue for issue in periodic_issues(scopes[0], whole))
+    assert any("individual incident side" in issue for issue in periodic_issues(whole, scopes[0]))
+    assert not periodic_issues(both, whole)
+    assert not periodic_issues(exterior_side, cap)
+    assert any("source BRep curves or surfaces" in issue for issue in periodic_issues(forged, whole))
+    schedule = phx.meshing.LayerSchedule((0.1, 0.1))
+
+    def sweep_issues(wall: Any, target: Any) -> list[str]:
+        control = phx.meshing.BoundaryLayerControl(
+            wall,
+            schedule,
+            route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+            volume_scope=volume,
+            cap_scope=target,
+        )
+        return _sweep_preflight_issues(source, (control,), {"prism", "tetrahedron"}, 1)
+
+    assert any("sides must match" in issue for issue in sweep_issues(scopes[1], cap))
+    assert not any("sides must match" in issue for issue in sweep_issues(scopes[0], cap))
+    assert any("sides must match" in issue for issue in sweep_issues(cap, scopes[1]))
+    assert not any("sides must match" in issue for issue in sweep_issues(cap, scopes[0]))

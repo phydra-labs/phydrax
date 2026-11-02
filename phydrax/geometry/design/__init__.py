@@ -34,6 +34,10 @@ _CONTINUATION_EXPORTS = frozenset(
         "CSGContinuationPolicy",
         "CSGContinuationResult",
         "PreparedCSGContinuation",
+        "SketchBranchWitness",
+        "SketchContinuationReference",
+        "SketchContinuationResult",
+        "continue_sketch",
         "prepare_csg_continuation",
         "solve_csg_continuation",
     }
@@ -74,6 +78,7 @@ _SKETCH_EXPORTS = frozenset(
         "Radius",
         "Sketch",
         "SketchConstraint",
+        "SketchPreparationEvidence",
         "SketchSolution",
         "TangentCircles",
         "TangentLineCircle",
@@ -96,9 +101,7 @@ _NAMING_EXPORTS = frozenset(
     }
 )
 
-_SKETCH_PRIORITY_EXPORTS = frozenset(
-    {"SketchPrioritySolution", "solve_priority_sketch"}
-)
+_SKETCH_PRIORITY_EXPORTS = frozenset({"SketchPrioritySolution", "solve_priority_sketch"})
 _ROOT_EVIDENCE_EXPORTS = frozenset({"RootDOFEvidence"})
 
 
@@ -166,6 +169,10 @@ __all__ = [
     "ParameterEquality",
     "ParameterTarget",
     "PreparedCSGContinuation",
+    "SketchBranchWitness",
+    "SketchContinuationReference",
+    "SketchContinuationResult",
+    "continue_sketch",
     "prepare_csg_continuation",
     "solve_csg_continuation",
     "Perpendicular",
@@ -174,6 +181,7 @@ __all__ = [
     "Radius",
     "Sketch",
     "SketchConstraint",
+    "SketchPreparationEvidence",
     "SketchDimensionBinding",
     "SketchDimensionSensitivity",
     "SketchModelResult",

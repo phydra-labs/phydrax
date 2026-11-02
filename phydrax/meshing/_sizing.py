@@ -16,6 +16,7 @@ from .._bvh import bvh_nearest_items, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry.brep._model import BRepModel
 from ..typing import checked
 from ._metric import (
     _grade_scalar_sizes,
@@ -183,7 +184,11 @@ class UniformSizeControl(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[UniformSizeControl], value: UniformSizeControl, /
+        cls: type[UniformSizeControl],
+        value: UniformSizeControl,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> UniformSizeControl:
         if type(value) is not cls:
             raise TypeError("value must be UniformSizeControl.")
@@ -201,7 +206,7 @@ class UniformSizeControl(StrictModule, NonTrainableState):
         ):
             raise TypeError("Stored uniform size-control fields are not canonical.")
         rebuilt = cls(
-            MeshingScope.from_stored_fields(value.scope),
+            MeshingScope.from_stored_fields(value.scope, source_model=source_model),
             value.target_size,
             minimum_size=value.minimum_size,
             maximum_size=value.maximum_size,
@@ -277,7 +282,11 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[CurvatureSizeControl], value: CurvatureSizeControl, /
+        cls: type[CurvatureSizeControl],
+        value: CurvatureSizeControl,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> CurvatureSizeControl:
         if type(value) is not cls:
             raise TypeError("value must be CurvatureSizeControl.")
@@ -292,7 +301,7 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
         ):
             raise TypeError("Stored curvature size-control fields are not canonical.")
         rebuilt = cls(
-            MeshingScope.from_stored_fields(value.scope),
+            MeshingScope.from_stored_fields(value.scope, source_model=source_model),
             value.normal_angle,
             minimum_size=value.minimum_size,
             maximum_size=value.maximum_size,
@@ -388,11 +397,14 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
             }
         )
 
-
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[ProximitySizeControl], value: ProximitySizeControl, /
+        cls: type[ProximitySizeControl],
+        value: ProximitySizeControl,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> ProximitySizeControl:
         if type(value) is not cls:
             raise TypeError("value must be ProximitySizeControl.")
@@ -407,8 +419,12 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
         ):
             raise TypeError("Stored proximity size-control fields are not canonical.")
         rebuilt = cls(
-            MeshingScope.from_stored_fields(value.source_scope),
-            MeshingScope.from_stored_fields(value.target_scope),
+            MeshingScope.from_stored_fields(
+                value.source_scope, source_model=source_model
+            ),
+            MeshingScope.from_stored_fields(
+                value.target_scope, source_model=source_model
+            ),
             value.elements_per_gap,
             minimum_size=value.minimum_size,
             maximum_size=value.maximum_size,

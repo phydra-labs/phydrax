@@ -293,11 +293,18 @@ class CADSelectionSet:
 
 @dataclass(frozen=True, slots=True)
 class OccurrenceCorrespondence:
-    """One provider-certified exact edge in an occurrence association graph."""
+    """One provider-certified exact edge and optional orientation rebase.
+
+    ``None`` requires equal orientations; +1 or -1 certifies the multiplier
+    from source to target incidence orientation. Zero means that the edge
+    proves ancestry but does not certify orientation. The edge's evidence ID
+    carries any explicit multiplier's proof.
+    """
 
     source_occurrence_id: str
     target_occurrence_id: str
     evidence_id: str
+    orientation_transform: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -313,6 +320,11 @@ class OccurrenceCorrespondence:
         object.__setattr__(
             self, "evidence_id", _identifier("evidence_id", self.evidence_id)
         )
+        if self.orientation_transform is not None and (
+            type(self.orientation_transform) is not int
+            or self.orientation_transform not in (-1, 0, 1)
+        ):
+            raise ValueError("orientation_transform must be -1, 0, +1, or None.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -467,23 +479,48 @@ class AssociationGraph:
             raise ValueError(
                 "A target occurrence cannot be both resolved and unresolved."
             )
+
+        def inventory(revision: CADRevision) -> dict[str, object]:
+            return {
+                "revision_id": revision.revision_id,
+                "source_id": revision.source_id,
+                "provenance_id": revision.provenance_id,
+                "occurrences": sorted(
+                    (
+                        item.occurrence_id,
+                        item.entity_id,
+                        item.kind,
+                        item.path,
+                        item.parent_occurrence_id,
+                        item.orientation,
+                    )
+                    for item in revision.occurrences
+                ),
+            }
+
         graph_id = canonical_fingerprint(
             {
                 "kind": "cad-association-graph",
-                "source_revision": source_revision.revision_id,
-                "target_revision": target_revision.revision_id,
+                "source_revision": inventory(source_revision),
+                "target_revision": inventory(target_revision),
                 "transaction": transaction.transaction_id,
                 "edges": sorted(
                     (
                         value.source_occurrence_id,
                         value.target_occurrence_id,
                         value.evidence_id,
+                        value.orientation_transform,
                     )
                     for value in transaction.correspondences
                 ),
                 "unresolved_source": sorted(transaction.unresolved_source_ids),
                 "unresolved_target": sorted(transaction.unresolved_target_ids),
-                "coverage": transaction.coverage.certificate_id,
+                "coverage": {
+                    "certificate_id": transaction.coverage.certificate_id,
+                    "provider": transaction.coverage.provider,
+                    "source_exhaustive": transaction.coverage.source_exhaustive,
+                    "target_exhaustive": transaction.coverage.target_exhaustive,
+                },
             }
         )
         object.__setattr__(self, "source_revision", source_revision)
@@ -504,6 +541,27 @@ class AssociationGraph:
             for edge in self.transaction.correspondences
             if edge.target_occurrence_id == target_id
         )
+
+    def _require_orientation_transport(self, source_id: str, target_id: str, /) -> None:
+        source = self.source_revision.occurrence(source_id)
+        target = self.target_revision.occurrence(target_id)
+        if source.kind != target.kind:
+            return
+        edge = next(
+            value
+            for value in self.transaction.correspondences
+            if value.source_occurrence_id == source_id
+            and value.target_occurrence_id == target_id
+        )
+        multiplier = edge.orientation_transform
+        if (
+            multiplier == 0
+            or source.orientation * (1 if multiplier is None else multiplier)
+            != target.orientation
+        ):
+            raise ValueError(
+                "CAD selection cannot cross an uncertified orientation change."
+            )
 
     @checked
     def resolve_target(self, selector: CADSelector, /) -> AssociationResolution:
@@ -535,6 +593,7 @@ class AssociationGraph:
             status = AssociationStatus.MULTIPLE
             relation = "merge"
         else:
+            self._require_orientation_transport(selector.occurrence_id, target_ids[0])
             status = AssociationStatus.UNIQUE
             relation = "preserved"
         return AssociationResolution(
@@ -577,6 +636,7 @@ class AssociationGraph:
             status = AssociationStatus.MULTIPLE
             relation = "split"
         else:
+            self._require_orientation_transport(source_ids[0], selector.occurrence_id)
             status = AssociationStatus.UNIQUE
             relation = "preserved"
         return AssociationResolution(
@@ -590,11 +650,23 @@ class AssociationGraph:
         )
 
     @checked
-    def resolve_target_selection(self, selection: CADSelectionSet, /) -> CADSelectionSet:
-        """Map an exact set through all certified forward graph edges."""
+    def resolve_target_selection(
+        self, selection: CADSelectionSet, /, *, target_kind: str | None = None
+    ) -> CADSelectionSet:
+        """Transport a selection to same-kind descendants, or a declared target kind.
 
+        A merged target carries the selection meaning only if all its certified
+        preimages are selected. Cross-dimensional generated entities are included
+        only when their kind is explicitly requested.
+        """
         if selection.revision_id != self.source_revision.revision_id:
             raise ValueError("Selection belongs to another source CAD revision.")
+        coverage = self.transaction.coverage
+        if not coverage.source_exhaustive or not coverage.target_exhaustive:
+            raise ValueError("CAD selection requires exhaustive correspondence coverage.")
+        if target_kind is not None and target_kind not in _ALLOWED_OCCURRENCE_KINDS:
+            raise ValueError(f"Unsupported CAD occurrence kind {target_kind!r}.")
+        selected_ids = {selector.occurrence_id for selector in selection.selectors}
         candidates: dict[str, CADSelector] = {}
         for selector in selection.selectors:
             resolution = self.resolve_target(selector)
@@ -602,7 +674,32 @@ class AssociationGraph:
                 raise ValueError(
                     "CAD selection cannot cross unresolved correspondence history."
                 )
-            for candidate in resolution.candidate_selectors:
+            descendants = tuple(
+                candidate
+                for candidate in resolution.candidate_selectors
+                if candidate.kind
+                == (selector.kind if target_kind is None else target_kind)
+            )
+            if not descendants:
+                raise ValueError("CAD selection cannot cross a deleted occurrence.")
+            for candidate in descendants:
+                preimages = tuple(
+                    value
+                    for value in self._reverse_ids(candidate.occurrence_id)
+                    if self.source_revision.occurrence(value).kind == selector.kind
+                )
+                if not set(preimages) <= selected_ids:
+                    raise ValueError("CAD selection cannot cross a partial merge.")
+                orientations = {
+                    self.source_revision.occurrence(value).orientation
+                    for value in preimages
+                }
+                if len(orientations) > 1:
+                    raise ValueError(
+                        "CAD selection cannot merge incompatible orientations."
+                    )
+                for preimage in preimages:
+                    self._require_orientation_transport(preimage, candidate.occurrence_id)
                 candidates[candidate.occurrence_id] = candidate
         return CADSelectionSet(
             self.target_revision.revision_id,
@@ -613,10 +710,13 @@ class AssociationGraph:
     def resolve_preimage_selection(
         self, selection: CADSelectionSet, /
     ) -> CADSelectionSet:
-        """Map an exact set through all certified reverse graph edges."""
-
+        """Recover complete same-kind preimages without crossing a partial split."""
         if selection.revision_id != self.target_revision.revision_id:
             raise ValueError("Selection belongs to another target CAD revision.")
+        coverage = self.transaction.coverage
+        if not coverage.source_exhaustive or not coverage.target_exhaustive:
+            raise ValueError("CAD selection requires exhaustive correspondence coverage.")
+        selected_ids = {selector.occurrence_id for selector in selection.selectors}
         candidates: dict[str, CADSelector] = {}
         for selector in selection.selectors:
             resolution = self.resolve_preimage(selector)
@@ -624,12 +724,98 @@ class AssociationGraph:
                 raise ValueError(
                     "CAD selection cannot cross unresolved correspondence history."
                 )
-            for candidate in resolution.candidate_selectors:
+            preimages = tuple(
+                candidate
+                for candidate in resolution.candidate_selectors
+                if candidate.kind == selector.kind
+            )
+            if not preimages:
+                raise ValueError("CAD selection cannot cross a created occurrence.")
+            for candidate in preimages:
+                descendants = tuple(
+                    value
+                    for value in self._forward_ids(candidate.occurrence_id)
+                    if self.target_revision.occurrence(value).kind == selector.kind
+                )
+                if not set(descendants) <= selected_ids:
+                    raise ValueError("CAD selection cannot cross a partial split.")
+                self._require_orientation_transport(
+                    candidate.occurrence_id, selector.occurrence_id
+                )
                 candidates[candidate.occurrence_id] = candidate
         return CADSelectionSet(
             self.source_revision.revision_id,
             tuple(candidates.values()),
         )
+
+
+def _restore_cad_revision(value: CADRevision, /) -> CADRevision:
+    return CADRevision(
+        value.revision_id,
+        value.source_id,
+        tuple(
+            CADOccurrence(
+                item.revision_id,
+                item.occurrence_id,
+                item.entity_id,
+                item.kind,
+                item.path,
+                item.parent_occurrence_id,
+                item.orientation,
+            )
+            for item in value.occurrences
+        ),
+        value.provenance_id,
+    )
+
+
+def _restore_cad_selection(value: CADSelectionSet, /) -> CADSelectionSet:
+    restored = CADSelectionSet(
+        value.revision_id,
+        tuple(
+            CADSelector(
+                item.revision_id, item.occurrence_id, item.kind, item.path, item.entity_id
+            )
+            for item in value.selectors
+        ),
+    )
+    if restored.selection_id != value.selection_id:
+        raise ValueError("Stored CAD selection identity changed.")
+    return restored
+
+
+def _restore_association_graph(value: AssociationGraph, /) -> AssociationGraph:
+    transaction = value.transaction
+    coverage = transaction.coverage
+    rebuilt = AssociationGraph(
+        _restore_cad_revision(value.source_revision),
+        _restore_cad_revision(value.target_revision),
+        OccurrenceCorrespondenceTransaction(
+            transaction.transaction_id,
+            transaction.source_revision_id,
+            transaction.target_revision_id,
+            tuple(
+                OccurrenceCorrespondence(
+                    item.source_occurrence_id,
+                    item.target_occurrence_id,
+                    item.evidence_id,
+                    item.orientation_transform,
+                )
+                for item in transaction.correspondences
+            ),
+            transaction.unresolved_source_ids,
+            transaction.unresolved_target_ids,
+            AssociationCoverageEvidence(
+                coverage.source_exhaustive,
+                coverage.target_exhaustive,
+                coverage.certificate_id,
+                coverage.provider,
+            ),
+        ),
+    )
+    if rebuilt.graph_id != value.graph_id:
+        raise ValueError("Stored CAD association graph identity changed.")
+    return rebuilt
 
 
 __all__ = [

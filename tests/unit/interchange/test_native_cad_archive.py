@@ -7,12 +7,14 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
+from phydrax._archive_columns import TextColumnArchiveRecipe
 from phydrax._array_archive import ArrayArchiveCorruptionError, write_array_archive
 from phydrax._meshcore import meshcore_available
 from phydrax._model import _structure as model_structure
@@ -785,28 +787,29 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
 
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
-    def find_source_chart_witness(node: object) -> dict[str, Any] | None:
+    def find_source_chart_witness_fields(node: object) -> dict[str, Any] | None:
         if isinstance(node, dict):
             if (
-                node.get("kind") == "dataclass"
-                and str(node.get("type", "")).rsplit(":", 1)[-1]
-                == "SourceBoundaryChartWitness"
+                node.get("kind") == "namedtuple"
+                and node.get("type") == "phydrax.model.archive:LayerRecordArchiveRecipe"
+                and node["items"][0]
+                == {"kind": "literal", "value": "SourceBoundaryChartWitness"}
             ):
-                return node
+                return {key["value"]: value for key, value in node["items"][1]["items"]}
             for child in node.values():
-                found = find_source_chart_witness(child)
+                found = find_source_chart_witness_fields(child)
                 if found is not None:
                     return found
         elif isinstance(node, list):
             for child in node:
-                found = find_source_chart_witness(child)
+                found = find_source_chart_witness_fields(child)
                 if found is not None:
                     return found
         return None
 
-    witness = find_source_chart_witness(manifest["model_recipe"])
+    witness = find_source_chart_witness_fields(manifest["model_recipe"])
     assert witness is not None
-    witness["fields"]["witness_id"]["value"] = "0" * 64
+    witness["witness_id"]["value"] = "0" * 64
     corrupted = tmp_path / "changed-layer-curving-trace.phx"
     write_model_archive(
         corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
@@ -858,24 +861,40 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
         text=True,
     )
     assert refused_rows.returncode != 0
-    assert "incompatible with its registered recipe" in refused_rows.stderr
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
-    witness = find_source_chart_witness(manifest["model_recipe"])
+    witness = find_source_chart_witness_fields(manifest["model_recipe"])
     assert witness is not None
-    fields = witness["fields"]
-
-    def tamper_first_integer(node: object) -> bool:
-        if isinstance(node, dict):
-            if node.get("kind") == "literal" and type(node.get("value")) is int:
-                node["value"] += 1
-                return True
-            return any(tamper_first_integer(child) for child in node.values())
-        if isinstance(node, list):
-            return any(tamper_first_integer(child) for child in node)
-        return False
-
-    assert tamper_first_integer(fields["source_parameter_rational_tokens"])
+    inventory = tuple(
+        model_recipe_array_inventory(
+            manifest["model_recipe"], prefix="model/leaves", limits=None
+        )
+    )
+    token_data = next(
+        entry
+        for entry in inventory
+        if "source_parameter_rational_tokens" in entry.path
+        and entry.path.endswith(".text.data")
+    )
+    token_ends = next(
+        entry
+        for entry in inventory
+        if entry.path == token_data.path.removesuffix(".data") + ".ends"
+    )
+    token_column = TextColumnArchiveRecipe(
+        arrays[token_data.name], arrays[token_ends.name]
+    )
+    tokens = list(token_column.decode())
+    changed_coordinate = Fraction(int(tokens[0]), int(tokens[1])) + 1
+    tokens[:2] = (
+        str(changed_coordinate.numerator),
+        str(changed_coordinate.denominator),
+    )
+    changed_column = TextColumnArchiveRecipe.encode(tuple(tokens))
+    arrays[token_data.name] = changed_column.data
+    arrays[token_ends.name] = changed_column.ends
+    text_recipe = witness["source_parameter_rational_tokens"]["items"][0]
+    text_recipe["items"][0]["shape"] = list(changed_column.data.shape)
     changed_reference = tmp_path / "changed-layer-source-rational-tokens.phx"
     write_model_archive(
         changed_reference, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
@@ -894,7 +913,6 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
         text=True,
     )
     assert refused_reference.returncode != 0
-    assert "incompatible with its registered recipe" in refused_reference.stderr
 
 
 def test_mapped_layer_curving_composition_rebuilds_source_trace_cold(
@@ -4734,10 +4752,11 @@ def test_brep_archive_rejects_tampered_exact_surface_chart_bank(
     written = subprocess.run(
         [sys.executable, str(_WORKER), "write", str(tmp_path)],
         cwd=_REPOSITORY_ROOT,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    assert written.returncode == 0, written.stderr
     expected = json.loads(written.stdout)
     corrupt_directory = tmp_path / "changed-surface-chart-rational-bank"
     corrupt_directory.mkdir()

@@ -6,6 +6,7 @@ import hashlib
 import json
 import types
 from collections.abc import Callable, Mapping
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +106,43 @@ def test_array_fingerprint_matches_legacy(dtype: np.dtype, layout: str) -> None:
         case "empty":
             value = value[:0]
     assert array_tree_fingerprint({"array": value}) == _legacy({"array": value})
+
+
+def test_array_fingerprint_streams_nested_exact_reference_leaves() -> None:
+    ReferenceRows = collections.namedtuple("ReferenceRows", ("coordinates", "ids"))
+    tree = {
+        "reference": ReferenceRows(
+            tuple(((Fraction(index, 7), Fraction(1, 3)),) for index in range(2048)),
+            np.arange(2048, dtype=np.int64),
+        ),
+        "empty": None,
+    }
+    assert array_tree_fingerprint(tree) == _legacy(tree)
+    _, streamed_peak = host_allocation_peak(lambda: array_tree_fingerprint(tree))
+    _, legacy_peak = host_allocation_peak(lambda: _legacy(tree))
+    assert streamed_peak < legacy_peak
+
+
+def test_array_fingerprint_supports_deep_registered_trees() -> None:
+    tree: Any = np.asarray([1, 2], dtype=np.int64)
+    for _ in range(1024):
+        tree = (tree,)
+    assert array_tree_fingerprint(tree) == _legacy(tree)
+    assert array_tree_fingerprint(tree)["sha256"] == (
+        "e8bae5d15073b6c5fdcbc893374947c109df0a03b71652ca3c022544b49a93ab"
+    )
+
+
+def test_deep_fingerprint_retains_linear_ancestry_storage() -> None:
+    small: Any = np.asarray([1, 2], dtype=np.int64)
+    for _ in range(512):
+        small = (small,)
+    large = small
+    for _ in range(512):
+        large = (large,)
+    _, small_peak = host_allocation_peak(lambda: array_tree_fingerprint(small))
+    _, large_peak = host_allocation_peak(lambda: array_tree_fingerprint(large))
+    assert large_peak < small_peak * 3
 
 
 def test_array_fingerprint_preserves_nan_bits() -> None:

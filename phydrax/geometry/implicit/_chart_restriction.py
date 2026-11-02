@@ -514,10 +514,15 @@ def certify_implicit_chart_restriction(
         return None
     if any(any(row_edges.values()) for row_edges in edges.values()):
         return None
+    # The exact tiling scan is complete. Release its per-cell working banks
+    # before hashing the target geometry, whose PyTree traversal is itself large.
+    del mapped, parent_rows_by_cell, parent_identity, parent_corners, parent_solvers
+    del parent_parameters, matrices, area, edges, target_cells
+    geometry_id = cell_geometry_id(geometry)
     payload = {
         "kind": "implicit-chart-restriction-evidence",
         "route": CHART_RESTRICTION_ROUTE,
-        "mesh": (mesh.mesh_id, mesh.topology_id, cell_geometry_id(geometry)),
+        "mesh": (mesh.mesh_id, mesh.topology_id, geometry_id),
         "witness": witness.witness_id,
         "parent_certificate": parent.certificate_id,
         "transition": transition.transition_id,
@@ -531,7 +536,7 @@ def certify_implicit_chart_restriction(
             CHART_RESTRICTION_ROUTE,
             mesh.mesh_id,
             mesh.topology_id,
-            cell_geometry_id(geometry),
+            geometry_id,
             witness.witness_id,
             parent.certificate_id,
             transition.transition_id,

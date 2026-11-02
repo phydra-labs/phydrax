@@ -700,6 +700,19 @@ def test_per_cell_restriction_retains_and_evaluates_rational_chart() -> None:
         np.asarray((71,), dtype=np.int64),
         rational_chart_bank,
     )
+    from phydrax._fingerprint import array_tree_fingerprint
+
+    restored = PerCellRestrictedCellGeometryElement.from_stored_fields(
+        element, source_element, rational_chart_bank
+    )
+    assert restored.element_id == element.element_id
+    assert jax.tree_util.tree_structure(restored) == jax.tree_util.tree_structure(element)
+    assert array_tree_fingerprint(restored) == array_tree_fingerprint(element)
+    assert restored.chart_coefficients == element.chart_coefficients
+    with pytest.raises(ValueError, match="validated fields"):
+        PerCellRestrictedCellGeometryElement.from_stored_fields(
+            element, source_element, ((rational_y, rational_x, rational_z),)
+        )
 
     with pytest.raises(TypeError, match="target_cell_ids"):
         PerCellRestrictedCellGeometryElement(
@@ -980,3 +993,39 @@ def test_crossing_or_outside_target_cell_is_refused(
         exact_reference_chart_controls(
             domain, mesh, geometry, np.asarray((0,), dtype=np.int64)
         )
+
+
+def test_restored_per_cell_chart_refuses_equal_value_wrong_scalar_types() -> None:
+    from dataclasses import fields
+
+    from phydrax._strict import reconstruct_strict
+    from tests.unit.interchange._native_cad_archive_worker import (
+        _rebuild_continuation_value,
+    )
+
+    source = lagrange_element("tetrahedron", 1)
+    row = tuple(
+        {tuple(int(axis == column) for axis in range(3)): Fraction(1)}
+        for column in range(3)
+    )
+    element = PerCellRestrictedCellGeometryElement(
+        source, "tetrahedron", (10, 11), (20, 21), (row, row)
+    )
+    values = {field.name: getattr(element, field.name) for field in fields(element)}
+    values["local_dof_count"] = float(element.local_dof_count)
+    forged_count = reconstruct_strict(type(element), values)
+    with pytest.raises(ValueError, match="validated fields"):
+        PerCellRestrictedCellGeometryElement.from_stored_fields(
+            forged_count, source, (row, row)
+        )
+
+    values["local_dof_count"] = element.local_dof_count
+    valid_row = element.chart_coefficients[0]
+    numerator, denominator = valid_row[0]
+    forged_denominator = ((denominator[0][0], True), *denominator[1:])
+    forged_row = ((numerator, forged_denominator), *valid_row[1:])
+    assert forged_row == valid_row and hash(forged_row) == hash(valid_row)
+    values["chart_coefficients"] = (valid_row, forged_row)
+    forged_terms = reconstruct_strict(type(element), values)
+    with pytest.raises(TypeError, match="canonical exact scalar kinds"):
+        _rebuild_continuation_value(forged_terms)

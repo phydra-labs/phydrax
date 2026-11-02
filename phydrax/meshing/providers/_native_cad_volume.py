@@ -57,11 +57,7 @@ from .._native_construction import (
     NativeMeshConstruction,
     NativeMeshOrganization,
 )
-from .._plc_source import (
-    _certify_cad_surface,
-    PiecewiseLinearComplex,
-    PlcBoundaryPolicy,
-)
+from .._plc_source import _certify_cad_surface, PiecewiseLinearComplex, PlcBoundaryPolicy
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import UniformSizeControl
@@ -249,7 +245,7 @@ def _association_row_map(association: GeometryAssociation, /) -> dict[int, int]:
 
 
 def _exact_surface_points(
-    surface: CellMeshingResult, /
+    surface: CellMeshingResult | SurfaceSourceCharts, /
 ) -> tuple[np.ndarray, tuple[tuple[ExactScalar, ...], ...]]:
     mesh = surface.mesh
     if mesh.topological_dimension != 2 or mesh.ambient_dimension != 3:
@@ -601,6 +597,7 @@ def _cad_plc_data(
     segment_ids: list[str] = []
     segment_paths: list[tuple[str, ...]] = []
     segment_curve_rows: list[int] = []
+    segment_edge_ids: list[int] = []
     segment_brep_indices: list[int] = []
     segment_surface_edge_ids: list[int] = []
     segment_intervals: list[tuple[Fraction, Fraction]] = []
@@ -675,6 +672,7 @@ def _cad_plc_data(
             segment_ids.append(identity)
             segment_paths.append(path)
             segment_curve_rows.append(curve_row)
+            segment_edge_ids.append(global_id)
             segment_brep_indices.append(source_index)
             segment_surface_edge_ids.append(global_id)
             segment_intervals.append(interval)
@@ -707,34 +705,28 @@ def _cad_plc_data(
         plane = _exact_patch_plane(domain, patch)
         if plane is not None:
             facet_planes[patch] = plane
-    certification = surface.certification
-    certification_inputs = None if certification is None else certification.inputs
-    fidelity_tolerance = (
-        certification_inputs.fidelity_tolerance
-        if certification_inputs is not None
-        and certification_inputs.fidelity_tolerance is not None
-        else 0.0
-        if deviation is None
-        else deviation
-    )
-    normal_deviation = (
-        None
-        if certification_inputs is None
-        else certification_inputs.maximum_normal_deviation
-    )
-    junction_vertices = (
-        None if certification_inputs is None else certification_inputs.junction_vertices
-    )
-    embedding, fidelity = _certify_cad_surface(
-        surface_source, fidelity_tolerance, normal_deviation, junction_vertices
-    )
-    if certification is not None:
-        if _same_tree_content(certification.embedding, embedding):
-            embedding = certification.embedding
-        if certification.fidelity is not None and _same_tree_content(
-            certification.fidelity, fidelity
-        ):
-            fidelity = certification.fidelity
+    report = surface.certification
+    if report is None:
+        fidelity_tolerance = 0.0 if deviation is None else deviation
+        normal_deviation = None
+        embedding, fidelity = _certify_cad_surface(
+            surface_source, fidelity_tolerance, normal_deviation, None
+        )
+    else:
+        certification_inputs = report.inputs
+        fidelity_tolerance = certification_inputs.fidelity_tolerance
+        if fidelity_tolerance is None:
+            fidelity_tolerance = 0.0 if deviation is None else deviation
+        normal_deviation = certification_inputs.maximum_normal_deviation
+        embedding = report.embedding
+        fidelity = report.fidelity
+        if fidelity is None:
+            _, fidelity = _certify_cad_surface(
+                surface_source,
+                fidelity_tolerance,
+                normal_deviation,
+                certification_inputs.junction_vertices,
+            )
     complex_ = PiecewiseLinearComplex(
         np.asarray(
             [[float(value) for value in point] for point in plc_points], dtype=np.float64
@@ -751,6 +743,14 @@ def _cad_plc_data(
         segment_ids=tuple(segment_ids),
         segment_occurrence_paths=tuple(segment_paths),
         region_occurrence_paths=region_paths,
+        cad_source_charts=surface_source,
+        cad_fidelity_tolerance=fidelity_tolerance,
+        cad_maximum_normal_deviation=normal_deviation,
+        cad_embedding=embedding,
+        cad_fidelity=fidelity,
+        cad_vertex_rows=tuple(mesh_row_to_plc),
+        cad_segment_edge_ids=tuple(segment_edge_ids),
+        cad_polygon_cell_ids=tuple(triangle_cell_ids),
         boundary=boundary,
         facet_planes=facet_planes,
         facet_plane_tolerances=np.full(
@@ -1043,15 +1043,19 @@ def _domain_scope_rows(
         or scope.entity_set_id != domain.scope_entity_set_id(dimension)
     ):
         raise ValueError("CAD volume controls must bind their exact source entity set.")
-    scope_ids = np.asarray(scope.entity_ids, dtype=np.int64)
-    source_scope_ids = np.asarray(domain.scope_entity_ids(dimension), dtype=np.int64)
-    rows_by_scope_id = {
-        int(identifier): row for row, identifier in enumerate(source_scope_ids)
-    }
-    if any(int(identifier) not in rows_by_scope_id for identifier in scope_ids):
-        raise ValueError("CAD volume control scope contains an undeclared source entity.")
+    if scope.side_records:
+        if domain.brep_authority is None:
+            raise ValueError("CAD side scopes require their authoritative B-Rep model.")
+        MeshingScope.from_stored_fields(scope, source_model=domain.brep_authority)
     rows = np.asarray(
-        [rows_by_scope_id[int(identifier)] for identifier in scope_ids], dtype=np.int64
+        [
+            domain.resolve_entity_id(dimension, key, occurrence_path=path)
+            for identifier in np.asarray(scope.entity_ids, dtype=np.int64)
+            for key, path in (
+                domain.source_entity_key_for_scope(dimension, int(identifier)),
+            )
+        ],
+        dtype=np.int64,
     )
     if np.unique(rows).size != rows.size:
         raise ValueError("CAD volume scope repeats one source occurrence.")
@@ -1210,6 +1214,7 @@ def _translate_specification(
             )
         )
     region_controls: list[RegionControl] = []
+    region_names = [region.name for region in domain.regions]
     for control in specification.region_controls:
         selected_rows = _domain_scope_rows(domain, control.scope, 3)
         if selected_rows.size != 1:
@@ -1217,10 +1222,7 @@ def _translate_specification(
                 "CAD region control scope must identify exactly one source region."
             )
         row = int(selected_rows[0])
-        if domain.regions[row].name != control.region_name:
-            raise ValueError(
-                "CAD region control name differs from its scoped source region."
-            )
+        region_names[row] = control.region_name
         region_controls.append(
             RegionControl(
                 _plc_scope(
@@ -1237,6 +1239,24 @@ def _translate_specification(
     patch_controls: list[PatchControl] = []
     for control in specification.patch_controls:
         rows = _domain_scope_rows(domain, control.scope, 2)
+        if control.scope.side_records:
+            unqualified = set(control.scope.unqualified_entity_ids)
+            side_counts: dict[int, int] = {}
+            for side in control.scope.side_records:
+                side_counts[side.entity_id] = side_counts.get(side.entity_id, 0) + 1
+            for identifier, row in zip(
+                np.asarray(control.scope.entity_ids), rows, strict=True
+            ):
+                if int(identifier) in unqualified:
+                    continue
+                adjacent_count = sum(
+                    int(region) >= 0 for region in complex_.facet_regions[int(row)]
+                )
+                if side_counts.get(int(identifier), 0) != adjacent_count:
+                    raise ValueError(
+                        "A single interface side cannot be flattened into a patch control; "
+                        "mesh the shared facet and resolve its sided integration route."
+                    )
         expected_names = set(control.adjacent_region_names)
         adjacent_rows = sorted(
             {
@@ -1248,7 +1268,7 @@ def _translate_specification(
         )
         for facet in rows.tolist():
             facet_names = {
-                domain.regions[int(region)].name
+                region_names[int(region)]
                 for region in complex_.facet_regions[int(facet)]
                 if int(region) >= 0
             }
@@ -1372,8 +1392,10 @@ def cad_volume_support_issues(
         issues.append("an explicit CAD maximum_deviation no weaker than source authority")
     try:
         translated = _translate_specification(source, specification)
-    except (TypeError, ValueError, IndexError):
-        issues.append("CAD source controls resolvable through exact domain strata")
+    except (TypeError, ValueError, IndexError) as error:
+        issues.append(
+            f"CAD source controls resolvable through exact domain strata: {error}"
+        )
     else:
         issues.extend(volume_support_issues(source.plc_source, translated))
     return issues

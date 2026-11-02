@@ -371,6 +371,9 @@ certificates of the same policy explicitly: a cell whose exact coordinate map
 (cell kind and exact coefficients) has the digest of a map a parent proved
 reuses that proof, every other cell is proved, and the certificate equals the
 one a full proof produces.
+For affine two-dimensional maps into three-space, the exact Gram determinant
+is evaluated as the sum of squared exact 2-by-2 minors; the validity floor and
+outward-rounded bounds are unchanged.
 `CellValidityCertificate(geometry, mesh=..., policy=...)` computes the proof;
 its public constructor does not accept statuses or determinant bounds. Stored
 certificates are independently re-proved before reuse. Source fidelity follows
@@ -393,6 +396,11 @@ Restricted implicit volume construction retains a host-only, object-bound
 validated embedding for subsequent coverage checks within the same operation.
 Constructing that record computes the embedding and renews local validity;
 an independently supplied embedding certificate is re-proved before reuse.
+Source-boundary chart witness chart IDs, source entity IDs and occurrence
+paths are immutable static string metadata; all numerical arrays remain dynamic
+PyTree leaves. This changes witness PyTree structure, container fingerprints and
+compilation keys: regenerate those identities rather than reusing old ones.
+The explicit source-witness identity still includes all three metadata fields.
 
 ## Virtual elements
 

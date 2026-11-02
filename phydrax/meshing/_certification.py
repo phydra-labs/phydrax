@@ -18,7 +18,7 @@ from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
     ValidatedCellValidityParent,
-    certify_cell_geometry_validity,
+    ComputedCellValidity,
 )
 from ..discretization._surface_chart_records import SurfaceChartWitness
 from ..geometry._domain_certification import (
@@ -38,6 +38,7 @@ from ..geometry._mesh_certificates import (
     certificate_status,
     MeshCertificateStatus,
 )
+from ..geometry._meshing_domain import MeshingDomain
 from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
@@ -55,7 +56,16 @@ from ..geometry._source_fidelity_certificate import (
     SourceFidelityCertificate,
     SourceFidelityWitness,
 )
-from ..geometry.implicit._chart_restriction import ImplicitChartPremise, ValidatedImplicitChartParent
+from ..geometry.implicit._chart_restriction import (
+    ImplicitChartPremise,
+    ValidatedImplicitChartParent,
+)
+from ..geometry.multiregion_surface import (
+    MultiRegionSurfaceEvidence,
+    MultiRegionSurfaceState,
+    MultiRegionSurfaceTopology,
+    validate_multiregion_surface,
+)
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
 from ._audit import (
@@ -128,13 +138,87 @@ def _declared_junction_findings(
     )
 
 
-def _acceptance_audit_policy(inputs: MeshCertificationInputs, /) -> CellMeshAuditPolicy:
+def _multiregion_proof(
+    inputs: MeshCertificationInputs, organization: NativeMeshOrganization, /
+) -> MultiRegionSurfaceEvidence | None:
+    topology = organization.multiregion_surface
+    if topology is None:
+        return None
+    mesh = inputs.mesh
+    domain = inputs.feature_source
+    if not isinstance(domain, MeshingDomain) or mesh.topological_dimension != 2:
+        raise ValueError("A multiregion surface needs its authoritative meshing domain.")
+    associations = [
+        value
+        for value in organization.associations
+        if value.source_id == domain.source_id
+        and value.source_revision == domain.source_revision
+        and value.target_entity_set_id == mesh.entity_set(2).entity_set_id
+    ]
+    if len(associations) != 1:
+        raise ValueError("Multiregion faces require a unique source association.")
+    association = associations[0]
+    face_ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+    )
+    faces = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
+    )
+    rows = association.target_rows(face_ids)
+    if (
+        not np.all(np.asarray(association.resolved)[rows])
+        or np.any(np.asarray(association.ambiguous)[rows])
+        or np.any(np.asarray(association.orientations)[rows] != 1)
+    ):
+        raise ValueError("Multiregion faces need resolved, oriented source associations.")
+    try:
+        patches = np.asarray(
+            [
+                domain.resolve_entity_id(
+                    2,
+                    association.source_entity_ids[row],
+                    occurrence_path=association.source_occurrence_paths[row],
+                )
+                for row in rows
+            ],
+            dtype=np.int64,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Multiregion face association does not identify a source patch."
+        ) from exc
+    expected = domain.multiregion_surface(
+        mesh.coordinates,
+        faces,
+        patches,
+        vertex_global_ids=mesh.vertex_global_ids,
+        cell_global_ids=face_ids,
+    )
+    if expected is None or not _same_tree_content(expected, topology):
+        raise ValueError(
+            "Multiregion topology differs from source region-side incidence."
+        )
+    positions = np.zeros((topology.vertex_capacity, 3), dtype=np.float64)
+    positions[: topology.vertex_count] = np.asarray(mesh.coordinates)
+    proof = validate_multiregion_surface(
+        topology, MultiRegionSurfaceState(topology, positions)
+    )
+    if not proof.accepted:
+        raise ValueError(f"Multiregion surface validation failed: {proof.status.name}.")
+    return proof
+
+
+def _acceptance_audit_policy(
+    inputs: MeshCertificationInputs, multiregion: MultiRegionSurfaceEvidence | None, /
+) -> CellMeshAuditPolicy:
     disposition = CellMeshAuditDisposition
     declared_curve = (
         inputs.mesh.topological_dimension == 1 and inputs.junction_vertices is not None
     )
     return CellMeshAuditPolicy(
-        nonmanifold=disposition.RECORD if declared_curve else disposition.REJECT,
+        nonmanifold=disposition.RECORD
+        if declared_curve or multiregion is not None
+        else disposition.REJECT,
         watertight_boundary=(
             disposition.REJECT
             if "open_boundary" in inputs.schedule.required_audit_checks
@@ -144,7 +228,10 @@ def _acceptance_audit_policy(inputs: MeshCertificationInputs, /) -> CellMeshAudi
 
 
 def _audit_findings(
-    inputs: MeshCertificationInputs, audit: CellMeshAuditReport, /
+    inputs: MeshCertificationInputs,
+    audit: CellMeshAuditReport,
+    multiregion: MultiRegionSurfaceEvidence | None,
+    /,
 ) -> tuple[MeshCertificateFinding, ...]:
     missing = tuple(
         name
@@ -163,9 +250,11 @@ def _audit_findings(
         and not junctions
         else ()
     )
+    if multiregion is not None:
+        excused = ("nonmanifold_facets", "nonmanifold_edges", "nonmanifold_vertices")
     findings = list(junctions)
     required = set(inputs.schedule.required_audit_checks)
-    rejected = audit.issues
+    rejected = tuple(name for name in audit.issues if name not in excused)
     counted = tuple(
         name
         for name, count in audit.check_counts
@@ -290,9 +379,14 @@ def _acceptance_validity(
     inputs: MeshCertificationInputs,
     policy: CellMeshAuditPolicy,
     validity: CellValidityCertificate | None,
-    parent: CellValidityCertificate | ValidatedCellValidityParent | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] | None,
+    parent: CellValidityCertificate
+    | ValidatedCellValidityParent
+    | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+    | None,
     /,
-) -> CellValidityCertificate:
+) -> tuple[
+    CellValidityCertificate, ComputedCellValidity | ValidatedCellValidityParent | None
+]:
     """Reuse an in-hand proof of exactly these inputs or prove with parent records."""
     validity_policy = policy.validity_policy
     if validity is not None:
@@ -302,11 +396,16 @@ def _acceptance_validity(
             raise ValueError(
                 "An in-hand validity proof must use the acceptance validity policy."
             )
+        if validity.geometry is inputs.geometry and validity.mesh is inputs.mesh:
+            validated = ValidatedCellValidityParent(validity)
+            return validity, validated
         validity.revalidate(inputs.geometry, mesh=inputs.mesh)
-        return validity
+        return validity, None
     match parent:
         case None:
-            parents: tuple[CellValidityCertificate | ValidatedCellValidityParent, ...] = ()
+            parents: tuple[
+                CellValidityCertificate | ValidatedCellValidityParent, ...
+            ] = ()
         case CellValidityCertificate() | ValidatedCellValidityParent():
             parents = (parent,)
         case tuple():
@@ -315,18 +414,28 @@ def _acceptance_validity(
             raise TypeError(
                 "validity_parent must be CellValidityCertificate, a tuple of them, or None."
             )
-    if not all(type(value) in (CellValidityCertificate, ValidatedCellValidityParent) for value in parents):
+    if not all(
+        type(value) in (CellValidityCertificate, ValidatedCellValidityParent)
+        for value in parents
+    ):
         raise TypeError("validity_parent must hold validity certificates or validations.")
     # Proofs under another validity policy answer no acceptance obligation.
-    return certify_cell_geometry_validity(
+    computed = ComputedCellValidity(
         inputs.geometry,
-        mesh=inputs.mesh,
-        policy=validity_policy,
-        parent=tuple(
-            value for value in parents
-            if (value.certificate if isinstance(value, ValidatedCellValidityParent) else value).policy_id == validity_policy.policy_id
+        inputs.mesh,
+        validity_policy,
+        tuple(
+            value
+            for value in parents
+            if (
+                value.certificate
+                if isinstance(value, ValidatedCellValidityParent)
+                else value
+            ).policy_id
+            == validity_policy.policy_id
         ),
     )
+    return computed.certificate, computed
 
 
 @final
@@ -346,6 +455,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
     labels: tuple[MeshLabel, ...]
     attributes: tuple[MeshAttribute, ...]
     associations: tuple[GeometryAssociation, ...]
+    multiregion_surface: MultiRegionSurfaceTopology | None
+    multiregion_evidence: MultiRegionSurfaceEvidence | None
     audit: CellMeshAuditReport
     embedding: GlobalEmbeddingCertificate
     coverage: DomainCoverageCertificate | None
@@ -369,7 +480,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         fidelity_premise: ImplicitChartPremise | None = None,
         validated_chart_parent: ValidatedImplicitChartParent | None = None,
         validity: CellValidityCertificate | None = None,
-        validity_parent: CellValidityCertificate | ValidatedCellValidityParent
+        validity_parent: CellValidityCertificate
+        | ValidatedCellValidityParent
         | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
         | None = None,
     ) -> None:
@@ -405,8 +517,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             raise ValueError("Pass either an in-hand validity proof or its parents.")
         _require_route_geometry(inputs)
         organization_ = NativeMeshOrganization() if organization is None else organization
+        multiregion = _multiregion_proof(inputs, organization_)
         policy = (
-            _acceptance_audit_policy(inputs) if audit_policy is None else audit_policy
+            _acceptance_audit_policy(inputs, multiregion)
+            if audit_policy is None
+            else audit_policy
         )
         validated_ = inputs.require_current(
             inputs.mesh,
@@ -415,7 +530,9 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             source=inputs.source,
             validated=validated,
         )
-        validity = _acceptance_validity(inputs, policy, validity, validity_parent)
+        validity, validated_validity = _acceptance_validity(
+            inputs, policy, validity, validity_parent
+        )
         if embedding is None:
             embedding = certify_global_embedding(
                 inputs.mesh,
@@ -423,6 +540,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 validity,
                 junction_vertices=inputs.junction_vertices,
                 nested_restriction=embedding_premise,
+                validated_validity=validated_validity,
             )
         else:
             embedding.require_inputs(
@@ -444,7 +562,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             validity=validity,
             global_embedding=embedding,
         )
-        findings = list(_audit_findings(inputs, audit))
+        findings = list(_audit_findings(inputs, audit, multiregion))
         findings.extend(embedding.findings)
         fidelity = None
         if inputs.source is not None:
@@ -519,6 +637,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         self.labels = organization_.labels
         self.attributes = organization_.attributes
         self.associations = organization_.associations
+        self.multiregion_surface = organization_.multiregion_surface
+        self.multiregion_evidence = multiregion
         self.audit = audit
         self.embedding = embedding
         self.coverage = coverage
@@ -540,6 +660,9 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 "kind": "mesh-certification-report",
                 "inputs": self.inputs.request_id,
                 "audit": self.audit.report_id,
+                "multiregion": None
+                if self.multiregion_evidence is None
+                else self.multiregion_evidence.evidence_id,
                 "embedding": self.embedding.certificate_id,
                 "coverage": None
                 if self.coverage is None
@@ -631,6 +754,9 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             tuple(value.label_id for value in self.labels),
             tuple(value.attribute_id for value in self.attributes),
             tuple(value.association_id for value in self.associations),
+            None
+            if self.multiregion_surface is None
+            else self.multiregion_surface.lineage_id,
         )
         rebuilt = (
             None if organization.boundary is None else organization.boundary.model_id,
@@ -639,6 +765,9 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             tuple(value.label_id for value in organization.labels),
             tuple(value.attribute_id for value in organization.attributes),
             tuple(value.association_id for value in organization.associations),
+            None
+            if organization.multiregion_surface is None
+            else organization.multiregion_surface.lineage_id,
         )
         if stored != rebuilt:
             raise ValueError(
@@ -741,6 +870,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 labels=self.labels,
                 attributes=self.attributes,
                 associations=self.associations,
+                multiregion_surface=self.multiregion_surface,
             ),
         )
         self.require_passed()
@@ -773,6 +903,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 labels=self.labels,
                 attributes=self.attributes,
                 associations=self.associations,
+                multiregion_surface=self.multiregion_surface,
             ),
             embedding=embedding,
             embedding_premise=self.embedding.nested_restriction_premise,

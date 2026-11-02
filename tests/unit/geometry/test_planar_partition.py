@@ -400,6 +400,29 @@ def test_exact_face_and_edge_histories_cover_split_and_deleted_sources() -> None
     )
 
 
+def test_descending_planar_edge_transports_with_certified_orientation() -> None:
+    result = partition_planar(
+        _plan(
+            (_operand("region", _rectangle(0.0, 1.0, feature_id="region")),), ("region",)
+        )
+    )
+    graph = result.association_graph
+    source = next(
+        occurrence
+        for occurrence in graph.source_revision.occurrences
+        if occurrence.kind == "edge" and occurrence.orientation == -1
+    )
+    selected = CADSelectionSet.from_revision(
+        graph.source_revision, (source.occurrence_id,)
+    )
+    descendants = graph.resolve_target_selection(selected)
+    assert len(descendants.selectors) == 1
+    target = graph.target_revision.occurrence(descendants.selectors[0].occurrence_id)
+    assert target.kind == "edge"
+    assert target.orientation == 1
+    assert _area(result, "region") == pytest.approx(1.0)
+
+
 def test_exact_planar_brep_face_is_a_source_operand() -> None:
     source_mesh = _rectangle(0.0, 1.0, feature_id="source-mesh")
     source_model = partition_planar(
@@ -437,3 +460,74 @@ def test_planar_plan_requires_total_region_precedence() -> None:
             (_operand("region", _rectangle(0.0, 1.0, feature_id="region")),),
             ("other",),
         )
+
+
+def test_overridden_planar_region_side_remains_unresolved() -> None:
+    result = partition_planar(
+        _plan(
+            (
+                _operand("a", _rectangle(0.0, 2.0, feature_id="a")),
+                _operand("b", _rectangle(1.0, 3.0, feature_id="b")),
+            ),
+            ("a", "b"),
+        )
+    )
+    graph = result.association_graph
+    edges = tuple(
+        edge
+        for edge in graph.transaction.correspondences
+        if graph.source_revision.occurrence(edge.source_occurrence_id).kind == "edge"
+        and graph.target_revision.occurrence(edge.target_occurrence_id).kind == "edge"
+    )
+    target = next(
+        first.target_occurrence_id
+        for first in edges
+        if first.source_occurrence_id.startswith("operand:a:")
+        and first.orientation_transform in (-1, 1)
+        for second in edges
+        if second.target_occurrence_id == first.target_occurrence_id
+        and second.source_occurrence_id.startswith("operand:b:")
+        and second.orientation_transform == 0
+    )
+    assert any(
+        edge.target_occurrence_id == target and edge.orientation_transform == 0
+        for edge in edges
+        if edge.source_occurrence_id.startswith("operand:b:")
+    )
+
+
+def test_planar_void_edge_transports_to_cut_boundary() -> None:
+    result = partition_planar(
+        _plan(
+            (
+                _operand("region", _rectangle(0.0, 3.0, feature_id="region")),
+                _operand(
+                    "void",
+                    _rectangle(1.0, 2.0, feature_id="void"),
+                    BRepPartitionRole.VOID,
+                    targets=("region",),
+                ),
+            ),
+            ("region",),
+        )
+    )
+    graph = result.association_graph
+    edge = next(
+        edge
+        for edge in graph.transaction.correspondences
+        if edge.source_occurrence_id.startswith("operand:void:")
+        and graph.source_revision.occurrence(edge.source_occurrence_id).kind == "edge"
+        and graph.target_revision.occurrence(edge.target_occurrence_id).kind == "edge"
+        and edge.orientation_transform in (-1, 1)
+        and len(graph._reverse_ids(edge.target_occurrence_id)) == 1
+    )
+    selection = CADSelectionSet.from_revision(
+        graph.source_revision, (edge.source_occurrence_id,)
+    )
+    descendants = graph.resolve_target_selection(selection)
+    assert (
+        graph.target_revision.select(edge.target_occurrence_id) in descendants.selectors
+    )
+    assert sum(_area(result, region.name) for region in result.regions) == pytest.approx(
+        2.0
+    )

@@ -39,6 +39,7 @@ from ._patches import (
     BSplineSurfacePatch,
     CircleCurve,
     ConePatch,
+    ConicParameterRoot,
     ConicRootLinePCurve,
     CylinderPatch,
     ExactLineCurve,
@@ -2482,6 +2483,17 @@ def _profile_arcs(
     return tuple(pieces)
 
 
+def _upper_half_profile_admitted(
+    lower: ConicParameterRoot, upper: ConicParameterRoot, /
+) -> bool:
+    """Prove the ordered profile stays on one upper semicircle, not a wrapped arc."""
+    return (
+        lower.turns == upper.turns
+        and lower.sine_exact >= 0
+        and upper.sine_exact >= 0
+        and lower.parameter_upper < upper.parameter_lower
+    )
+
 def _analytic_revolution_profile(
     model: BRepModel, solid: int, /
 ) -> _RevolutionProfile | None:
@@ -2617,7 +2629,7 @@ def _analytic_revolution_profile(
                     roots.append((root, height))
                 roots.sort(key=lambda item: item[0].parameter_lower)
                 lower, upper = roots
-                if lower[0].parameter_upper >= upper[0].parameter_lower:
+                if not _upper_half_profile_admitted(lower[0], upper[0]):
                     return None
                 center_height = _exact_dot(offset, axis)
                 top = center_height + patch.minor_radius_exact

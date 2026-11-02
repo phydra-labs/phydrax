@@ -81,6 +81,7 @@ from ..geometry.brep._patches import (
 )
 from ..typing import checked, ConvertibleToArray
 from ._cad import (
+    assembly_use_label,
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_assembly_identifier_losses,
@@ -1810,7 +1811,10 @@ class _Resolver:
                     raise RuntimeError("Validated IGES subfigure child changed type.")
                 uses.append(use)
                 self.stage.provenance.append(
-                    (f"assembly-use:{use.use_id}", f"{definition.name} -> {child.name}")
+                    (
+                        assembly_use_label(definition_id, use.use_id),
+                        f"{definition.name} -> {child.name}",
+                    )
                 )
             definitions.append(BRepAssemblyDefinition(definition_id, tuple(uses)))
             self.stage.provenance.append(
@@ -1829,7 +1833,7 @@ class _Resolver:
             )
             root_rows.append((instance.number, use))
             self.stage.provenance.append(
-                (f"assembly-use:{use.use_id}", f"root instance {instance.name}")
+                (assembly_use_label(None, use.use_id), f"root instance {instance.name}")
             )
 
         for definition in definition_entries:
@@ -1844,7 +1848,7 @@ class _Resolver:
             )
             root_rows.append((definition.number, use))
             self.stage.provenance.append(
-                (f"assembly-use:{use_id}", f"root definition {definition.name}")
+                (assembly_use_label(None, use_id), f"root definition {definition.name}")
             )
 
         for entry in sorted(
@@ -1869,7 +1873,7 @@ class _Resolver:
             use = BRepAssemblyUse(use_id, placement, solid_index=solid)
             root_rows.append((entry.number, use))
             self.stage.provenance.append(
-                (f"assembly-use:{use_id}", f"root solid {entry.name}")
+                (assembly_use_label(None, use_id), f"root solid {entry.name}")
             )
 
         graph = BRepAssemblyGraph(
@@ -3423,7 +3427,7 @@ class _IgesWriter:
         for index, solid in enumerate(solids):
             self.assembly_provenance.append((f"solid:{index}", f"D{solid.number}"))
 
-        def use_instance(use: BRepAssemblyUse, /) -> _Out:
+        def use_instance(use: BRepAssemblyUse, owner: str | None, /) -> _Out:
             if use.solid_index is not None:
                 target = solid_definitions[use.solid_index]
             else:
@@ -3431,19 +3435,18 @@ class _IgesWriter:
                 if definition_id is None:
                     raise RuntimeError("A validated IGES assembly use lost its target.")
                 target = definition_records[definition_id]
-            transform = self._assembly_transform(use.placement, use.use_id)
+            label = assembly_use_label(owner, use.use_id)
+            transform = self._assembly_transform(use.placement, label)
             instance = self.add(
                 408,
                 [str(target), "0.", "0.", "0.", "1."],
                 transform=transform,
             )
-            self.assembly_provenance.append(
-                (f"assembly-use:{use.use_id}", f"D{instance.number}")
-            )
+            self.assembly_provenance.append((label, f"D{instance.number}"))
             return instance
 
         for definition_id, definition in definitions.items():
-            children = tuple(use_instance(use) for use in definition.uses)
+            children = tuple(use_instance(use, definition_id) for use in definition.uses)
             definition_records[definition_id].parameters = [
                 str(depths[definition_id]),
                 _hollerith(""),
@@ -3464,7 +3467,7 @@ class _IgesWriter:
             if index not in used_solid_indices:
                 record.root = True
         for use in graph.roots:
-            use_instance(use).root = True
+            use_instance(use, None).root = True
 
     def _text(self, extent: float) -> bytes:
         unit = self.model.coordinate_contract.length_unit

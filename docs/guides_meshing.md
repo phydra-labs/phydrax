@@ -511,6 +511,49 @@ one physical occurrence per definition; repeated definitions are rejected rather
 than merged. Scoped plans also refuse nonidentity assembly placements, which this
 source-directed import path cannot preserve.
 This keeps every patch adjacency tied to one exact B-Rep revision.
+An exact `CADSelectionSet` can also be passed to
+`MeshingScope.from_geometry(target_model, selection)`. For an operation's
+descendants, first use its `AssociationGraph.resolve_target_selection` and pass
+the resulting target-revision selection with that operation's target B-Rep model.
+For a partition operand, first transport from its model revision through
+`partition.operand_association_graph(operand_id)` into the partition's composite
+source revision, then through `partition.association_graph`. The same two steps
+apply at each subsequent partition, so the exact output selection—not a newly
+inferred geometric match—is the input to the next operation. Missing operand
+history is a refusal, not a request to infer a correspondence.
+The scope authenticates every selector against the model's occurrence inventory;
+it does not infer descendants or use geometric proximity. Selections must be
+nonempty and contain one supported entity kind. Graph transport defaults to
+same-kind descendants; use its `target_kind` argument for explicitly requested
+generated entities of another kind. Deleted or unresolved correspondence and
+partial merges cannot be transported as a selection.
+An orientation rebase must be certified by the correspondence; an
+ancestry-only edge with unresolved orientation cannot transport a selection.
+For a shared face, a CAD-selection scope retains each incident solid occurrence
+and its orientation even though its numeric facet slot denotes the shared facet.
+Unqualified facet selection and sided selection are distinct; an ambiguous
+coincident-copy pairing is refused instead of being inferred from ordering.
+Cold partition restoration replays the retained operand plan and verifies the
+result geometry, correspondence graphs, regions, and patches against that
+operation. A standalone graph is not proof of its own provenance. Organized
+partition names whose organization inputs were not retained are refused during
+reconstruction rather than authenticated by a fingerprint alone.
+A geometry scope can then be supplied to `RegionControl` or `PatchControl`;
+actual mesh boundary entities and boundary conditions still require the mesher's
+source association and resulting mesh organization, not the CAD IDs themselves.
+For FE, `resolve_mesh_scope(result.mesh, patch.scope)` yields an entity selection
+for a Dirichlet constraint. Unstructured FV instead accepts named boundary
+patches as mesh-face vertex incidences; construct those from the resolved mesh
+selection, assign every other exterior face to a patch, and let the FV plan
+validate and bind its own face ordering before applying boundary conditions.
+If split descendants have different adjacent regions, declare separate patch
+controls with their actual adjacencies; their resulting mesh scopes can be
+unioned before applying a shared condition. FE constraints must still anchor
+every connected component, including components separated by the operation.
+Native CAD volume controls resolve source IDs through the domain's exact
+entity key and occurrence path, not the order of its sorted numeric scope bank.
+Region control names are semantic labels; patch adjacency uses those declared
+names rather than requiring internal CAD domain region names.
 For a volume request scoped by its boundary faces, region controls still select
 three-dimensional solids from their own entity set. Face IDs and solid IDs are
 not compared as though they belonged to one set. Controls must retain the same
@@ -1499,22 +1542,37 @@ bound to the source vertices). Routes:
   raises its star's minimum quality or keeps it and strictly improves the
   worst-first quantized deviations of its edges. Neither rule creates vertices,
   so each phase terminates. A full pass that applies nothing outside the unit
-  criterion is a stall; it runs one escape phase of the split/collapse
-  hysteresis that admits every collapse up to metric length 2, births included
-  (the next split phase splits the long edges). The escape stands when the run
-  then reaches the unit criterion or a stall whose potential
+  criterion is a stall. It first tries optimal-point collapse: both endpoints
+  merge along an edge (or slide on the survivor's straight source curve)
+  without creating an edge above `sqrt(2)`. The host tries a fixed seed lattice
+  first. For identical current vertex-ball tensors with no callback, it also
+  subdivides the remaining representable parameters using interval geometry
+  and metric bounds. Other seed misses remain unresolved: ideal P1 bounds do
+  not certify JAX execution, and callback ranges alone do not certify the
+  executed locator and metric or guarantee progress. An accepted point retains
+  its exact source stencil. The compiled device search also subdivides the
+  remainder for nonperiodic interior stars with identical current tensors;
+  curve, periodic, and nonconstant missed remainders remain unresolved.
+  All merged-star cells and source stencils are rechecked, including periodic
+  orphan retirement. If this does not improve
+  the stall, an endpoint escape admits every collapse up to metric length 2,
+  births included (the next split phase splits the long edges). An escape
+  stands when the run reaches the unit criterion or a stall whose potential
   `(out-of-band edges, sum of floor(band excess of |ln L| / 2^-20))` is
-  strictly lower (which may escape again); otherwise the run returns the
-  escaped stall's state. Escaped stall potentials strictly decrease in the
+  strictly lower; otherwise it rolls back to the escaped stall and tries the
+  next escape, returning that stall if neither improves it. Host and device
+  routes use this same ordering. Escaped stall potentials strictly decrease in the
   well-founded lexicographic order on pairs of natural numbers, so escapes are
   finitely many and no pass cap is needed. Orientation decisions use the
   policy's predicate mode; unresolved filtered signs reject the operation. The
   status is COMPLETE when the unit-mesh criterion holds, STALLED or
   NUMERICAL_STOP otherwise; a stalled `LocalMetricEvidence.stalled_edges`
   lists every remaining edge (one per quotient orbit) with its metric length
-  and refusal reasons, for example `collapse=hysteresis+inadmissible;flip=invalid`
-  (`hysteresis`: above the split threshold, and the escape did not lower the
-  stall potential; `long`: above 2). `RelocationMeshAdaptation` moves vertices
+  and refusal reasons, for example
+  `collapse=hysteresis+inadmissible;optimal=long;flip=invalid`
+  (`hysteresis`: endpoint collapse exceeds the split threshold and its escape
+  did not lower the stall potential; host `optimal=long`: the searched segments
+  were excluded by bounds). `RelocationMeshAdaptation` moves vertices
   only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
@@ -1563,8 +1621,20 @@ or implicit root cell without a witnessed transition is refused. Target geometry
 is reconstructed under the retained source-fidelity displacement bound and an
 endpoint continuity check; target charts and source associations are rebound
 before certification.
+Local UV carriers must canonically round their exact source stencils before
+publication. Where a B-Rep target vertex belongs to a shared source face, the
+published chart instead uses the explicit exact face-restricted stencil; source
+edge restrictions use exact orthogonal projection. Periodic chart copies are
+synchronized by their exact source weights. The final published physical tensor
+is pulled back at the published chart points and measured again on the final
+unprotected edges, using periodic quotient representatives. If publication
+changes an unmet local state, the local engine continues from that state with
+the original source bindings. Numerical cycle detection retains one checkpoint,
+not a growing history of mesh-sized snapshots. A detected cycle reports
+`NUMERICAL_STOP`; it proves neither exact-source equality nor infeasibility.
 `COMPLETE`, `STALLED`, and `NUMERICAL_STOP` remain distinct; an unresolved
-predicate or an unmet unit-mesh criterion is not reported as success.
+predicate or an unmet unit-mesh criterion is not reported as success, including
+when both topology operations and relocation are disabled.
 
 Protected scopes (including periodic boundaries) are never split, moved, or
 removed; marks whose closure would split them are rejected and reported, with
@@ -1869,10 +1939,14 @@ rejection counts, unit-mesh measurements); capacity overflow restores the
 exact accepted arrays, grows the required static workspace at a host barrier,
 and retries the same operation. Invalid geometry is terminal and refuses
 later calls on that state.
+Nonfinite or nonpositive measured metric lengths and nonfinite collapse scores
+pause for host numerical resolution; affected numerical-failure epochs or
+periodic orbit transactions roll back without mutating the caller's state.
+Filtered geometric uncertainty remains separately resolvable.
 `commit_device_metric_adaptation` applies the same acceptance as
-`commit_adaptive_simplex` (terminal flags raise, `NEEDS_HOST_RESOLUTION` is
-resolved by exact host orientation of the committed cells), performs one
-transfer, and returns the `MeshAdaptationResult` with `DeviceMetricEvidence`; a
+`commit_adaptive_simplex` (terminal flags raise; filtered geometric
+`NEEDS_HOST_RESOLUTION` is resolved by exact host orientation of committed
+cells), performs one transfer, and returns the `MeshAdaptationResult` with `DeviceMetricEvidence`; a
 run that applied nothing is UNCHANGED, with convergence or stall in the
 evidence (as for `NATIVE_METRIC_2D`).
 
@@ -2000,6 +2074,42 @@ distinct. Unclassified rows also retain their owner and any known occurrence,
 but do not claim a resolved source stratum. Parent provenance is recorded in
 `parent_dimensions`, `parent_ids`, `parent_association_id`, and
 `GeometryAssociationProvenance`.
+
+CAD selection scopes are bound to the source owner and revision, the entity
+dimension, and the qualified occurrence, including its incident region side.
+The two sides of a shared face therefore have distinct scope identities even
+though they refer to the same geometric face. Reused definitions and independent
+coincident occurrences retain their own identities; equal coordinates or a
+shared definition do not authorize merging them. Selectors must authenticate
+against the target revision's occurrence inventory, and a scope from another
+owner or revision cannot be used as a substitute.
+When coincident repeated solid uses do not carry enough assembly ancestry to
+identify the shared-face slot pairing, a side selection is refused; occurrence
+ordering is not evidence of a pairing.
+
+For a purely sided CAD scope, `resolve_sided_integration_domains(result, source,
+scope, discretization, tolerance=...)` returns `(domain, side)` pairs suitable
+for `discretization.prepare_side_trace(field, domain, rule=rule, side=side)`.
+The required tolerance is a finite nonnegative source-association residual
+tolerance. The bridge partitions the result where owner/neighbor or
+exterior/interior routing differs,
+while retaining each selected side. Its outward normals are relative to the
+incident region, not the arbitrary storage order of mesh cells. The bridge rejects
+mixed sided and unqualified scopes; choose the intended semantics explicitly.
+A one-sided interface selection is not an exterior boundary condition:
+consumers that require an exterior boundary or cannot represent the selected
+side must reject it rather than silently apply it to both sides.
+For native volume meshing, declare the complete shared facet in `PatchControl`;
+then resolve each incident side separately against the accepted result. A
+single-side interface scope cannot be flattened into an undirected patch
+control.
+Gmsh likewise requires `PatchControl` and periodic surface scopes to select all
+incident sides of a shared face, or the unqualified whole face. A single
+exterior side is complete. For exact sweep, a sided wall or cap must
+belong to the selected volume solid. Geometric sizing controls may use sided
+scopes: sizing acts on the geometric entity rather than imposing a one-sided
+boundary condition.
+
 `associate_mesh_vertices` classifies each vertex geometrically: mesh-boundary
 vertices on the lowest-dimensional B-Rep entity within the classification
 tolerance, interior vertices of volume meshes in their solid.
