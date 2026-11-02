@@ -1369,24 +1369,28 @@ def _loop_edges(
         if len(vertices) > 1 and isinstance(curve3d, (CircleCurve, EllipseCurve)):
             next_index = (index + 1) % len(vertices)
             points = (exact_vertices[index], exact_vertices[next_index])
-            roots = tuple(
-                ConicParameterRoot.from_exact_point(curve3d, point, parameter)
-                for point, parameter in zip(points, (first, last), strict=True)
-            )
-            if all(
-                root is not None and root.exact_point() == point
-                and root.parameter_lower <= parameter <= root.parameter_upper
-                for root, point, parameter in zip(roots, points, (first, last), strict=True)
+            first_root = ConicParameterRoot.from_exact_point(curve3d, points[0], first)
+            last_root = ConicParameterRoot.from_exact_point(curve3d, points[1], last)
+            if (
+                first_root is not None
+                and last_root is not None
+                and first_root.exact_point() == points[0]
+                and last_root.exact_point() == points[1]
+                and first_root.parameter_lower <= first <= first_root.parameter_upper
+                and last_root.parameter_lower <= last <= last_root.parameter_upper
             ):
-                endpoint_roots = tuple(
-                    ConicParameterEndpoint(root, curve3d, None, point)
-                    for root, point in zip(roots, points, strict=True)
+                endpoint_roots = (
+                    ConicParameterEndpoint(first_root, curve3d, None, points[0]),
+                    ConicParameterEndpoint(last_root, curve3d, None, points[1]),
                 )
-                for vertex, root in zip(
-                    (vertices[index], vertices[next_index]), roots, strict=True
+                for vertex, root in (
+                    (vertices[index], first_root),
+                    (vertices[next_index], last_root),
                 ):
                     if builder.vertex_roots[vertex] is None:
-                        builder.vertex_roots[vertex] = BRepVertexRoot(BRepConicVertex(root))
+                        builder.vertex_roots[vertex] = BRepVertexRoot(
+                            BRepConicVertex(root)
+                        )
         edge = builder.edge(
             curve3d,
             first,
@@ -1416,14 +1420,18 @@ def _loop_edges(
                 builder.vertex_roots[vertex] = None
             else:
                 roots[endpoint] = ConicParameterEndpoint(
-                    binding.primary.root, curve, exact_parameter, binding.primary.point_exact
+                    binding.primary.root,
+                    curve,
+                    exact_parameter,
+                    binding.primary.point_exact,
                 )
         builder.edge_endpoint_roots[edge] = (roots[0], roots[1])
     for edge, _, _, _ in result:
         roots = builder.edge_endpoint_roots[edge]
-        builder.edge_endpoint_roots[edge] = tuple(
-            root if builder.vertex_roots[vertex] is not None else None
-            for root, vertex in zip(roots, builder.edge_vertices[edge], strict=True)
+        first_vertex, last_vertex = builder.edge_vertices[edge]
+        builder.edge_endpoint_roots[edge] = (
+            roots[0] if builder.vertex_roots[first_vertex] is not None else None,
+            roots[1] if builder.vertex_roots[last_vertex] is not None else None,
         )
     return tuple(result)
 
@@ -1597,7 +1605,9 @@ def _line_arc_contact(
     return False
 
 
-def _arc_circle(edge: _ProfileEdge, /) -> tuple[tuple[ExactScalar, ExactScalar], ExactScalar]:
+def _arc_circle(
+    edge: _ProfileEdge, /
+) -> tuple[tuple[ExactScalar, ExactScalar], ExactScalar]:
     if not isinstance(edge.pcurve, CircleCurve):
         raise NotImplementedError(
             "Curved profile relations currently require exact circles."
@@ -2302,14 +2312,14 @@ def _profile_cap(
         coedge_loop = []
         for edge, first, last, curve in edges:
             edge_roots = builder.edge_endpoint_roots[edge]
-            coedge_roots = tuple(
-                ConicParameterEndpoint(
-                    root.root, curve, root.parameter_exact, root.point_exact
-                )
-                if isinstance(root, ConicParameterEndpoint)
-                else None
-                for root in edge_roots
-            )
+            def coedge_root(root: RootEndpoint | None) -> ConicParameterEndpoint | None:
+                if isinstance(root, ConicParameterEndpoint):
+                    return ConicParameterEndpoint(
+                        root.root, curve, root.parameter_exact, root.point_exact
+                    )
+                return None
+
+            coedge_roots = (coedge_root(edge_roots[0]), coedge_root(edge_roots[1]))
             coedge = builder.coedge(edge, 1, curve, endpoint_roots=coedge_roots)
             coedge_loop.append(coedge)
             if (
