@@ -502,6 +502,38 @@ one physical occurrence per definition; repeated definitions are rejected rather
 than merged. Scoped plans also refuse nonidentity assembly placements, which this
 source-directed import path cannot preserve.
 This keeps every patch adjacency tied to one exact B-Rep revision.
+An exact `CADSelectionSet` can also be passed to
+`MeshingScope.from_geometry(target_model, selection)`. For an operation's
+descendants, first use its `AssociationGraph.resolve_target_selection` and pass
+the resulting target-revision selection with that operation's target B-Rep model.
+For a partition operand, first transport from its model revision through
+`partition.operand_association_graph(operand_id)` into the partition's composite
+source revision, then through `partition.association_graph`. The same two steps
+apply at each subsequent partition, so the exact output selection—not a newly
+inferred geometric match—is the input to the next operation. Missing operand
+history is a refusal, not a request to infer a correspondence.
+The scope authenticates every selector against the model's occurrence inventory;
+it does not infer descendants or use geometric proximity. Selections must be
+nonempty and contain one supported entity kind. Graph transport defaults to
+same-kind descendants; use its `target_kind` argument for explicitly requested
+generated entities of another kind. Deleted or unresolved correspondence and
+partial merges cannot be transported as a selection. A geometry scope can then
+be supplied to `RegionControl` or `PatchControl`;
+actual mesh boundary entities and boundary conditions still require the mesher's
+source association and resulting mesh organization, not the CAD IDs themselves.
+For FE, `resolve_mesh_scope(result.mesh, patch.scope)` yields an entity selection
+for a Dirichlet constraint. Unstructured FV instead accepts named boundary
+patches as mesh-face vertex incidences; construct those from the resolved mesh
+selection, assign every other exterior face to a patch, and let the FV plan
+validate and bind its own face ordering before applying boundary conditions.
+If split descendants have different adjacent regions, declare separate patch
+controls with their actual adjacencies; their resulting mesh scopes can be
+unioned before applying a shared condition. FE constraints must still anchor
+every connected component, including components separated by the operation.
+Native CAD volume controls resolve source IDs through the domain's exact
+entity key and occurrence path, not the order of its sorted numeric scope bank.
+Region control names are semantic labels; patch adjacency uses those declared
+names rather than requiring internal CAD domain region names.
 For a volume request scoped by its boundary faces, region controls still select
 three-dimensional solids from their own entity set. Face IDs and solid IDs are
 not compared as though they belonged to one set. Controls must retain the same

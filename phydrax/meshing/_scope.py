@@ -24,6 +24,7 @@ from ..typing import checked, ConvertibleToArray
 
 
 if TYPE_CHECKING:
+    from ..geometry._cad_revision import CADSelectionSet
     from ..geometry.brep._differentiable import FixedTopologyBRepSource
     from ..geometry.brep._model import BRepEntityId, BRepModel
     from ..geometry.brep._source import BRepSource
@@ -53,7 +54,11 @@ class _SourceEntityScopes(Protocol):
 
 
 def _geometry_model(
-    source: BRepModel | BRepSource | FixedTopologyBRepSource,
+    source: BRepModel
+    | BRepSource
+    | FixedTopologyBRepSource
+    | LabelFieldSurfaceExtractionResult
+    | _SourceEntityScopes,
     /,
 ) -> BRepModel:
     from ..geometry.brep._differentiable import FixedTopologyBRepSource
@@ -155,6 +160,50 @@ def _brep_scope_ids(
             )
         selected.append(matches[0])
     return target, np.asarray(selected, dtype=np.int64)
+
+
+def _cad_scope_ids(
+    source: BRepModel
+    | BRepSource
+    | FixedTopologyBRepSource
+    | LabelFieldSurfaceExtractionResult
+    | _SourceEntityScopes,
+    owner: _SourceEntityScopes,
+    selection: CADSelectionSet,
+    dimension: int | None,
+    /,
+) -> tuple[int, np.ndarray]:
+    """Authenticate selectors against the model inventory before projecting them."""
+    from ..geometry.brep._partition import (
+        _entity_occurrence_id,
+        cad_revision_from_brep_model,
+    )
+
+    model = _geometry_model(source)
+    revision = cad_revision_from_brep_model(model)
+    if selection.revision_id != revision.revision_id:
+        raise ValueError("CAD selection belongs to another source revision.")
+    if not selection.selectors:
+        raise ValueError("Meshing scopes must contain at least one entity.")
+    entities = {
+        _entity_occurrence_id(record.member): record.member
+        for record in model.geometry.qualified_entity_incidence(
+            model.source_id, model.source_revision
+        )
+    }
+    selected = []
+    for selector in selection.selectors:
+        try:
+            stored = revision.select(selector.occurrence_id)
+            entity = entities[selector.occurrence_id]
+        except KeyError as exc:
+            raise ValueError(
+                "CAD selector is not a declared BRep entity occurrence."
+            ) from exc
+        if selector != stored:
+            raise ValueError("CAD selector does not match the source revision inventory.")
+        selected.append(entity)
+    return _brep_scope_ids(owner, tuple(selected), dimension)
 
 
 def _geometry_scope_ids(
@@ -287,7 +336,6 @@ class MeshingScope(StrictModule, NonTrainableState):
             raise ValueError("Stored meshing scope differs from its exact entity bank.")
         return rebuilt
 
-
     @classmethod
     def from_geometry(
         cls,
@@ -296,14 +344,24 @@ class MeshingScope(StrictModule, NonTrainableState):
         | FixedTopologyBRepSource
         | LabelFieldSurfaceExtractionResult
         | _SourceEntityScopes,
-        entity_ids: Sequence[BRepEntityId] | BRepEntityId | ArrayLike,
+        entity_ids: Sequence[BRepEntityId] | BRepEntityId | CADSelectionSet | ArrayLike,
         /,
         *,
         dimension: int | None = None,
     ) -> MeshingScope:
-        """Bind exact source entities; ambiguous definition uses need an occurrence."""
+        """Bind exact source entities, including authenticated CAD occurrence sets.
+
+        CAD selections require their target BRep model or source and one nonempty
+        entity dimension. Transport across revisions must be performed explicitly
+        with an association graph before constructing the scope.
+        """
+        from ..geometry._cad_revision import CADSelectionSet
+
         owner = _source_scope_owner(source)
-        target, identifiers = _geometry_scope_ids(owner, entity_ids, dimension)
+        if isinstance(entity_ids, CADSelectionSet):
+            target, identifiers = _cad_scope_ids(source, owner, entity_ids, dimension)
+        else:
+            target, identifiers = _geometry_scope_ids(owner, entity_ids, dimension)
         return cls(
             owner.source_id,
             owner.source_revision,

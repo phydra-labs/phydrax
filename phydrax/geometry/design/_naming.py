@@ -14,7 +14,7 @@ import equinox as eqx
 from ..._strict import StrictModule
 from ..._validation import normalized_identifier
 from ...typing import checked, parse
-from .._cad_revision import AssociationGraph, CADOccurrence
+from .._cad_revision import AssociationGraph, CADOccurrence, CADRevision, CADSelectionSet
 from ..brep._model import BRepEntityId, BRepModel
 
 
@@ -175,6 +175,40 @@ class RecipeEntityNames(StrictModule):
         raise KeyError(
             "RecipeEntityNames.name.entity_id must identify an entity from this model; got a foreign or unbound entity."
         )
+
+    @checked
+    def select_occurrence(
+        self,
+        name: RecipeEntityName,
+        revision: CADRevision,
+        occurrence_id: str,
+        qualified_entity: BRepEntityId,
+        /,
+    ) -> CADSelectionSet:
+        """Bind a recipe name to one explicitly qualified CAD occurrence.
+
+        The caller supplies the occurrence path and revision inventory; neither a
+        display label nor a geometric match can choose an assembly occurrence.
+        The resulting set declares descendant-set intent for graph transport.
+        """
+        definition = self.resolve(name)
+        if (
+            qualified_entity.source_id != definition.source_id
+            or qualified_entity.source_revision != definition.source_revision
+            or qualified_entity.kind != definition.kind
+            or qualified_entity.index != definition.index
+        ):
+            raise RecipeNamingError(
+                "Qualified occurrence does not belong to the named definition."
+            )
+        occurrence = revision.occurrence(occurrence_id)
+        if occurrence.kind != name.kind or occurrence.entity_id != _entity_text(
+            qualified_entity
+        ):
+            raise RecipeNamingError(
+                "Qualified occurrence does not match the CAD revision inventory."
+            )
+        return CADSelectionSet(revision.revision_id, (revision.select(occurrence_id),))
 
 
 def _bijective_lineage(graph: AssociationGraph, /) -> dict[str, str]:

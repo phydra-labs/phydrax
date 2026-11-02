@@ -953,15 +953,15 @@ def _domain_scope_rows(
         or scope.entity_set_id != domain.scope_entity_set_id(dimension)
     ):
         raise ValueError("CAD volume controls must bind their exact source entity set.")
-    scope_ids = np.asarray(scope.entity_ids, dtype=np.int64)
-    source_scope_ids = np.asarray(domain.scope_entity_ids(dimension), dtype=np.int64)
-    rows_by_scope_id = {
-        int(identifier): row for row, identifier in enumerate(source_scope_ids)
-    }
-    if any(int(identifier) not in rows_by_scope_id for identifier in scope_ids):
-        raise ValueError("CAD volume control scope contains an undeclared source entity.")
     rows = np.asarray(
-        [rows_by_scope_id[int(identifier)] for identifier in scope_ids], dtype=np.int64
+        [
+            domain.resolve_entity_id(dimension, key, occurrence_path=path)
+            for identifier in np.asarray(scope.entity_ids, dtype=np.int64)
+            for key, path in (
+                domain.source_entity_key_for_scope(dimension, int(identifier)),
+            )
+        ],
+        dtype=np.int64,
     )
     if np.unique(rows).size != rows.size:
         raise ValueError("CAD volume scope repeats one source occurrence.")
@@ -1120,6 +1120,7 @@ def _translate_specification(
             )
         )
     region_controls: list[RegionControl] = []
+    region_names = [region.name for region in domain.regions]
     for control in specification.region_controls:
         selected_rows = _domain_scope_rows(domain, control.scope, 3)
         if selected_rows.size != 1:
@@ -1127,10 +1128,7 @@ def _translate_specification(
                 "CAD region control scope must identify exactly one source region."
             )
         row = int(selected_rows[0])
-        if domain.regions[row].name != control.region_name:
-            raise ValueError(
-                "CAD region control name differs from its scoped source region."
-            )
+        region_names[row] = control.region_name
         region_controls.append(
             RegionControl(
                 _plc_scope(
@@ -1158,7 +1156,7 @@ def _translate_specification(
         )
         for facet in rows.tolist():
             facet_names = {
-                domain.regions[int(region)].name
+                region_names[int(region)]
                 for region in complex_.facet_regions[int(facet)]
                 if int(region) >= 0
             }

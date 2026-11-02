@@ -669,6 +669,7 @@ def partition_native_planar_arrangement(
     """Partition exact straight-loop sources by rational arrangement in memory."""
     from ._partition import (
         _entity_text,
+        _operand_composite_graph,
         BRepPartitionPatch,
         BRepPartitionRegion,
         BRepPartitionReport,
@@ -682,6 +683,37 @@ def partition_native_planar_arrangement(
         plan, cells, tessellation
     )
     source_revision, source_ids = _source_revision(plan, source_faces)
+    operand_graphs = []
+    for operand in plan.operands:
+        if not isinstance(operand.source, BRepModel):
+            continue
+        mapping: dict[str, str] = {}
+        for source in source_faces:
+            if source.operand_id != operand.operand_id:
+                continue
+            if source.source_face_occurrence is not None:
+                mapping[source.source_face_occurrence.occurrence_id] = source_ids[
+                    (operand.operand_id, f"face:{source.face_index}")
+                ]
+            for index, occurrence in source.source_edge_occurrences:
+                mapping[occurrence.occurrence_id] = source_ids[
+                    (operand.operand_id, f"edge:{index}")
+                ]
+            for index, occurrence in source.source_vertex_occurrences:
+                mapping[occurrence.occurrence_id] = source_ids[
+                    (operand.operand_id, f"vertex:{index}")
+                ]
+        operand_graphs.append(
+            (
+                operand.operand_id,
+                _operand_composite_graph(
+                    cad_revision_from_brep_model(operand.source),
+                    source_revision,
+                    mapping,
+                    operand.operand_id,
+                ),
+            )
+        )
     target_revision = cad_revision_from_brep_model(model)
     role_by_id = {operand.operand_id: operand.role.value for operand in plan.operands}
     rank = {name: index for index, name in enumerate(plan.policy.region_precedence)}
@@ -837,6 +869,7 @@ def partition_native_planar_arrangement(
         patches,
         report,
         2,
+        operand_association_graphs=tuple(operand_graphs),
     )
 
 

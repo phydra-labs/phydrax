@@ -550,6 +550,7 @@ def _organized_partition(
         tuple(patches),
         raw.report,
         2,
+        operand_association_graphs=raw.operand_association_graphs,
     )
 
 

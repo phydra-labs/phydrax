@@ -207,6 +207,16 @@ def _register_model_archive_types() -> None:
     )
     from ..exterior._form_type import FormType, FormValueSpec
     from ..geometry._atlas import BoundaryAtlas, BoundaryFrame
+    from ..geometry._cad_revision import (
+        AssociationCoverageEvidence,
+        AssociationGraph,
+        CADOccurrence,
+        CADRevision,
+        CADSelectionSet,
+        CADSelector,
+        OccurrenceCorrespondence,
+        OccurrenceCorrespondenceTransaction,
+    )
     from ..geometry._common_root_volume_overlap import (
         CommonRootVolumeWitness,
         CurvedOverlapIntegrationEvidence,
@@ -289,6 +299,13 @@ def _register_model_archive_types() -> None:
     )
     from ..geometry.analytic._extended import _TorusKernel
     from ..geometry.analytic._primitives import _BallKernel
+    from ..geometry.brep._partition import (
+        BRepPartitionPatch,
+        BRepPartitionRegion,
+        BRepPartitionReport,
+        BRepPartitionResult,
+        BRepPartitionResultArchiveRecipe,
+    )
     from ..geometry.brep._projection_contracts import BRepProjectionResult
     from ..geometry.design._schema import (
         DesignState,
@@ -567,6 +584,19 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.reconstruction", ComponentFitEvidence),
         ("phydrax.geometry.reconstruction", ReconstructedTriangleBoundarySource),
         ("phydrax.geometry", BoundaryAtlas),
+        ("phydrax.geometry", AssociationCoverageEvidence),
+        ("phydrax.geometry", AssociationGraph),
+        ("phydrax.geometry", CADOccurrence),
+        ("phydrax.geometry", CADRevision),
+        ("phydrax.geometry", CADSelectionSet),
+        ("phydrax.geometry", CADSelector),
+        ("phydrax.geometry", OccurrenceCorrespondence),
+        ("phydrax.geometry", OccurrenceCorrespondenceTransaction),
+        ("phydrax.geometry.brep", BRepPartitionPatch),
+        ("phydrax.geometry.brep", BRepPartitionRegion),
+        ("phydrax.geometry.brep", BRepPartitionReport),
+        ("phydrax.geometry.brep", BRepPartitionResult),
+        ("phydrax.geometry.brep", BRepPartitionResultArchiveRecipe),
         ("phydrax.geometry", BoundaryFrame),
         ("phydrax.geometry", DomainCurveMap),
         ("phydrax.geometry", MeshingDomain),
@@ -933,9 +963,25 @@ def restore_model_archive_value(
         SparseCommutingEvidence,
         SparseTransferEntryEvidence,
     )
+    from ..geometry._cad_revision import (
+        _restore_association_graph,
+        _restore_cad_selection,
+        AssociationGraph,
+        CADSelectionSet,
+    )
     from ..geometry._common_root_volume_overlap import (
         CurvedOverlapIntegrationPolicy,
     )
+    from ..geometry.brep._model import BRepEntityId
+    from ..geometry.brep._partition import (
+        BRepPartitionPatch,
+        BRepPartitionRegion,
+        BRepPartitionReport,
+        BRepPartitionResult,
+        BRepPartitionResultArchiveRecipe,
+        cad_revision_from_brep_model,
+    )
+    from ..interchange._cad_archive import _reconstruct_brep_graph
     from ..lifecycle._composition_rebind import (
         Composition,
         CompositionDependency,
@@ -1016,6 +1062,70 @@ def restore_model_archive_value(
         return rebuilt
 
     def restore(item: Any, /) -> Any:
+        if type(item) is AssociationGraph:
+            return _restore_association_graph(item)
+        if type(item) is CADSelectionSet:
+            return _restore_cad_selection(item)
+        if type(item) is BRepPartitionResultArchiveRecipe:
+            model = _reconstruct_brep_graph(item.model)
+            graph = _restore_association_graph(item.association_graph)
+            if (
+                cad_revision_from_brep_model(model) != graph.target_revision
+                or item.revision != graph.target_revision
+            ):
+                raise ValueError(
+                    "Partition history target differs from its restored B-Rep."
+                )
+
+            def entity(value: BRepEntityId) -> BRepEntityId:
+                return BRepEntityId(
+                    value.source_id,
+                    value.source_revision,
+                    value.kind,
+                    value.index,
+                    value.occurrence_path,
+                )
+
+            regions = tuple(
+                BRepPartitionRegion(
+                    value.name,
+                    tuple(entity(x) for x in value.entity_ids),
+                    value.topological_dimension,
+                )
+                for value in item.regions
+            )
+            patches = tuple(
+                BRepPartitionPatch(
+                    value.name,
+                    tuple(entity(x) for x in value.entity_ids),
+                    value.adjacent_region_ids,
+                    value.topological_dimension,
+                )
+                for value in item.patches
+            )
+            report = BRepPartitionReport(
+                **{
+                    field.name: getattr(item.report, field.name)
+                    for field in dataclasses.fields(BRepPartitionReport)
+                    if field.init
+                }
+            )
+            rebuilt = BRepPartitionResult(
+                model,
+                graph.target_revision,
+                graph,
+                regions,
+                patches,
+                report,
+                item.topological_dimension,
+                tuple(
+                    (name, _restore_association_graph(value))
+                    for name, value in item.operand_association_graphs
+                ),
+            )
+            if model_structure_recipe(rebuilt) != model_structure_recipe(item):
+                raise ValueError("Stored partition result changed during reconstruction.")
+            return rebuilt
         if type(item) is SimplexForestRecords:
             forest = SimplexForestRecords(
                 item.cell_ids,
@@ -1467,6 +1577,39 @@ def restore_model_archive_value(
             ):
                 return _restore_periodic_finite_element_transfer_root(item, restore)
             entries = tuple(restore(entry) for entry in item.entries)
+            graphs = tuple(
+                entry.value for entry in entries if type(entry.value) is AssociationGraph
+            )
+            graphs += tuple(
+                graph
+                for entry in entries
+                if type(entry.value) is BRepPartitionResult
+                for graph in (
+                    entry.value.association_graph,
+                    *(value for _, value in entry.value.operand_association_graphs),
+                )
+            )
+            for entry in entries:
+                selection = entry.value
+                if type(selection) is not CADSelectionSet:
+                    continue
+                inventories = tuple(
+                    revision
+                    for graph in graphs
+                    for revision in (graph.source_revision, graph.target_revision)
+                    if revision.revision_id == selection.revision_id
+                )
+                if not inventories or any(
+                    inventory != inventories[0] for inventory in inventories
+                ):
+                    raise ValueError(
+                        "CAD selection has no unique current graph inventory."
+                    )
+                for selector in selection.selectors:
+                    if inventories[0].select(selector.occurrence_id) != selector:
+                        raise ValueError(
+                            "CAD selection does not match its current inventory."
+                        )
             composition = Composition(entries, boundary_id=item.boundary_id)
             if model_structure_recipe(composition) != model_structure_recipe(item):
                 raise ValueError("Stored Composition content changed.")

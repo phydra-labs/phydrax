@@ -1612,6 +1612,27 @@ def restore_row_record_recipes(value: Any, /) -> Any:
 def model_archive_projection(value: Any, /) -> Any:
     """Return a structural archive view with query caches replaced by owner inputs."""
     if (
+        type(value).__module__ == "phydrax.geometry.brep._partition"
+        and type(value).__name__ == "BRepPartitionResult"
+    ):
+        from ..geometry.brep._partition import (
+            BRepPartitionResult,
+            BRepPartitionResultArchiveRecipe,
+        )
+
+        if type(value) is not BRepPartitionResult:
+            raise TypeError("Partition archive projection requires the canonical type.")
+        return BRepPartitionResultArchiveRecipe(
+            model_archive_projection(value.model),
+            value.revision,
+            value.association_graph,
+            value.regions,
+            value.patches,
+            value.report,
+            value.topological_dimension,
+            value.operand_association_graphs,
+        )
+    if (
         type(value).__module__ == "phydrax.geometry.implicit._source_charts"
         and type(value).__name__ == "ImplicitRootChartEvidence"
     ):

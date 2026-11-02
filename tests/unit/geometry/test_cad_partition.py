@@ -11,11 +11,15 @@ import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._cad_revision import (
+    AssociationCoverageEvidence,
+    AssociationGraph,
     AssociationStatus,
     CADOccurrence,
     CADRevision,
     CADSelectionSet,
     CADSelector,
+    OccurrenceCorrespondence,
+    OccurrenceCorrespondenceTransaction,
 )
 from phydrax.geometry.brep._constructors import (
     brep_box,
@@ -33,6 +37,7 @@ from phydrax.geometry.brep._partition import (
     partition_brep,
 )
 from phydrax.geometry.brep._patches import ExactLineCurve, RevolutionSurface
+from phydrax.geometry.design import RecipeEntityName, RecipeEntityNames, RecipeNamingError
 from phydrax.meshing import MeshingScope
 from phydrax.units import MILLIMETER
 
@@ -311,13 +316,40 @@ def test_split_and_deleted_histories_map_exact_selection_sets() -> None:
     assert {value.kind for value in mapped.selectors} == {"solid"}
     assert deleted.status is AssociationStatus.NO_PREIMAGE
     assert deleted.relation == "deleted"
-    assert (
+    with pytest.raises(ValueError, match="deleted"):
         graph.resolve_target_selection(
             CADSelectionSet(graph.source_revision.revision_id, (void_selector,))
-        ).selectors
-        == ()
-    )
+        )
     assert result.report.deleted_source_occurrences > 0
+
+
+def test_changed_partition_branch_refuses_old_selection() -> None:
+    region = _box(0.0, 3.0)
+    first = _execute(
+        _plan(
+            (
+                _operand("region", region),
+                _operand("void", _box(1.0), BRepPartitionRole.VOID, targets=("region",)),
+            ),
+            ("region",),
+        )
+    )
+    changed = _execute(
+        _plan(
+            (
+                _operand("region", region),
+                _operand(
+                    "void", _box(0.0, 1.0), BRepPartitionRole.VOID, targets=("region",)
+                ),
+            ),
+            ("region",),
+        )
+    )
+    old = CADSelectionSet.from_revision(
+        first.association_graph.source_revision, ("operand:region:solid:0",)
+    )
+    with pytest.raises(ValueError, match="another source CAD revision"):
+        changed.association_graph.resolve_target_selection(old)
 
 
 def _l_shaped_partition(tessellation: Any = None) -> Any:
@@ -363,6 +395,17 @@ def test_region_solids_are_exact_unions_of_grid_atoms_with_maximal_faces() -> No
     assert len(first.candidate_selectors) == 1
     assert second.relation == "split-merge"
     assert len(second.candidate_selectors) == 2
+    selection_a = CADSelectionSet.from_revision(
+        graph.source_revision, ("operand:a:solid:0",)
+    )
+    with pytest.raises(ValueError, match="partial merge"):
+        graph.resolve_target_selection(selection_a)
+    both = CADSelectionSet.from_revision(
+        graph.source_revision, ("operand:a:solid:0", "operand:b:solid:0")
+    )
+    descendants = graph.resolve_target_selection(both)
+    assert len(descendants.selectors) == 2
+    assert len(MeshingScope.from_geometry(model, descendants).entity_ids) == 2
     transaction = graph.transaction
     assert {value.occurrence_id for value in graph.target_revision.occurrences} == {
         value.target_occurrence_id for value in transaction.correspondences
@@ -486,3 +529,256 @@ def test_revision_children_rejects_a_forged_parent_selector() -> None:
 
     with pytest.raises(ValueError, match="does not match the revision inventory"):
         revision.children(forged)
+
+
+def test_exact_selection_composes_split_and_merge_without_partial_reattachment() -> None:
+    def revision(identifier: str, entities: tuple[str, ...]) -> CADRevision:
+        return CADRevision(
+            identifier,
+            "source",
+            tuple(
+                CADOccurrence(identifier, entity, entity, "face", (entity,))
+                for entity in entities
+            ),
+            "provenance",
+        )
+
+    def graph(
+        source: CADRevision, target: CADRevision, pairs: tuple[tuple[str, str], ...]
+    ) -> AssociationGraph:
+        evidence = AssociationCoverageEvidence(True, True, "coverage", "test")
+        transaction = OccurrenceCorrespondenceTransaction(
+            f"{source.revision_id}-{target.revision_id}",
+            source.revision_id,
+            target.revision_id,
+            tuple(OccurrenceCorrespondence(a, b, "exact") for a, b in pairs),
+            frozenset(),
+            frozenset(),
+            evidence,
+        )
+        return AssociationGraph(source, target, transaction)
+
+    first = revision("first", ("wall",))
+    second = revision("second", ("left", "right"))
+    third = revision("third", ("merged",))
+    split = graph(first, second, (("wall", "left"), ("wall", "right")))
+    merge = graph(second, third, (("left", "merged"), ("right", "merged")))
+    wall = first.select("wall")
+    assert split.resolve_target(wall).status is AssociationStatus.MULTIPLE
+    with pytest.raises(ValueError, match="multiple"):
+        split.resolve_target(wall).require_unique()
+    descendants = split.resolve_target_selection(CADSelectionSet("first", (wall,)))
+    assert {value.occurrence_id for value in descendants.selectors} == {"left", "right"}
+    with pytest.raises(ValueError, match="partial merge"):
+        merge.resolve_target_selection(
+            CADSelectionSet("second", (second.select("left"),))
+        )
+    merged = merge.resolve_target_selection(descendants)
+    assert merged.selectors == (third.select("merged"),)
+
+
+def test_authored_name_binds_only_its_exact_qualified_source_occurrence() -> None:
+    region = _box(0.0, 3.0)
+    void = _box(1.0)
+    result = _execute(
+        _plan(
+            (
+                _operand("region", region),
+                _operand("void", void, BRepPartitionRole.VOID, targets=("region",)),
+            ),
+            ("region",),
+        )
+    )
+    names = tuple(
+        RecipeEntityName("face", "region", f"wall-{entity.index}", ("authored",))
+        for entity in region.face_ids
+    )
+    bindings = RecipeEntityNames(region, names, None)
+    qualified = next(
+        record.member
+        for record in region.geometry.qualified_entity_incidence(
+            region.source_id, region.source_revision
+        )
+        if record.member.kind == "face" and record.member.index == 0
+    )
+    from phydrax.geometry.brep._partition import _entity_text
+
+    graph = result.association_graph
+    occurrence = next(
+        value
+        for value in graph.source_revision.occurrences
+        if value.kind == "face" and value.entity_id == _entity_text(qualified)
+    )
+    selection = bindings.select_occurrence(
+        names[0], graph.source_revision, occurrence.occurrence_id, qualified
+    )
+    assert selection.selectors == (
+        graph.source_revision.select(occurrence.occurrence_id),
+    )
+    with pytest.raises(RecipeNamingError, match="definition"):
+        bindings.select_occurrence(
+            names[1], graph.source_revision, occurrence.occurrence_id, qualified
+        )
+
+
+def test_partition_selection_cold_archive_and_tampered_history_refusal(
+    tmp_path: Any,
+) -> None:
+    import dataclasses
+    import subprocess
+    import sys
+
+    from phydrax._array_archive import ArrayArchiveCorruptionError
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    result = _execute(
+        _plan(
+            (
+                _operand("region", _box(0.0, 3.0)),
+                _operand("void", _box(1.0), BRepPartitionRole.VOID, targets=("region",)),
+            ),
+            ("region",),
+        )
+    )
+    graph = result.association_graph
+    selection = graph.resolve_target_selection(
+        CADSelectionSet.from_revision(graph.source_revision, ("operand:region:solid:0",))
+    )
+
+    def composition(history: AssociationGraph, selected: CADSelectionSet) -> Composition:
+        return Composition(
+            (
+                CompositionEntry(
+                    result,
+                    entry_id="partition",
+                    role="model-state",
+                    owner_id="cad",
+                    structure_id=result.model.model_id,
+                    revision_id=result.revision.revision_id,
+                    semantics_id="exact-partition",
+                ),
+                CompositionEntry(
+                    history,
+                    entry_id="history",
+                    role="model-state",
+                    owner_id="cad",
+                    structure_id=history.graph_id,
+                    revision_id=history.graph_id,
+                    semantics_id="exact-history",
+                ),
+                CompositionEntry(
+                    selected,
+                    entry_id="selection",
+                    role="model-state",
+                    owner_id="cad",
+                    structure_id=selected.selection_id,
+                    revision_id=selected.revision_id,
+                    semantics_id="descendants",
+                    dependencies=(),
+                ),
+            ),
+            boundary_id="cad-selection",
+        )
+
+    path = write_model_artifact(
+        tmp_path / "selection.phx",
+        composition(graph, selection),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    restored = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.value("history").graph_id == graph.graph_id
+    assert restored.value("selection") == selection
+    assert restored.value("partition").operand_association_graph("region").graph_id == (
+        result.operand_association_graph("region").graph_id
+    )
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from phydrax.lifecycle import Composition; "
+                "from phydrax.meshing._model_codec import "
+                "MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_model_archive_value; "
+                "c=read_model_artifact(sys.argv[1], expected_type=Composition, "
+                "restore=restore_model_archive_value, limits=MODEL_ARCHIVE_LIMITS); "
+                "assert c.value('history').graph_id == sys.argv[2]; "
+                "assert c.value('selection').selection_id == sys.argv[3]; "
+                "assert c.value('partition').operand_association_graph('region').graph_id == sys.argv[4]"
+            ),
+            str(path),
+            graph.graph_id,
+            selection.selection_id,
+            result.operand_association_graph("region").graph_id,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert child.returncode == 0, child.stderr
+
+    altered = dataclasses.replace(
+        graph.source_revision.occurrences[0],
+        orientation=-graph.source_revision.occurrences[0].orientation,
+    )
+    revision = dataclasses.replace(
+        graph.source_revision,
+        occurrences=(altered, *graph.source_revision.occurrences[1:]),
+    )
+    forged = AssociationGraph(revision, graph.target_revision, graph.transaction)
+    object.__setattr__(forged, "graph_id", graph.graph_id)
+    path = write_model_artifact(
+        tmp_path / "forged.phx",
+        composition(forged, selection),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    with pytest.raises(
+        (ArrayArchiveCorruptionError, ValueError), match="identity|incompatible"
+    ):
+        read_model_artifact(
+            path,
+            expected_type=Composition,
+            restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+
+
+def test_partition_operand_graph_composes_real_operations() -> None:
+    original = _box(0.0, 3.0)
+    first = _execute(_plan((_operand("body", original),), ("body",)))
+    local = cad_revision_from_brep_model(original)
+    selected = CADSelectionSet.from_revision(
+        local,
+        tuple(item.occurrence_id for item in local.occurrences if item.kind == "solid"),
+    )
+    selected = first.operand_association_graph("body").resolve_target_selection(selected)
+    selected = first.association_graph.resolve_target_selection(selected)
+
+    second = _execute(
+        _plan(
+            (
+                _operand("body", first.model),
+                _operand("void", _box(1.0), BRepPartitionRole.VOID, targets=("body",)),
+            ),
+            ("body",),
+        )
+    )
+    selected = second.operand_association_graph("body").resolve_target_selection(selected)
+    resolution = second.association_graph.resolve_target(selected.selectors[0])
+    assert resolution.status is AssociationStatus.MULTIPLE
+    with pytest.raises(ValueError, match="multiple"):
+        resolution.require_unique()
+    selected = second.association_graph.resolve_target_selection(selected)
+    assert len(selected.selectors) == 2
+    assert len(MeshingScope.from_geometry(second.model, selected).entity_ids) == 2
