@@ -583,7 +583,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
         else:
             raw_occurrences = np.asarray(boundary_occurrences)
             if (
-                raw_occurrences.shape != (len(cell_ids), arity, 3)
+                raw_occurrences.shape not in ((0, arity, 3), (len(cell_ids), arity, 3))
                 or raw_occurrences.dtype.kind not in "iu"
                 or np.any(raw_occurrences > np.iinfo(np.int64).max)
             ):
@@ -591,7 +591,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                     "Root boundary occurrences must be aligned integer triples."
                 )
             occurrences = np.array(raw_occurrences, dtype=np.int64, copy=True)
-            for row in range(len(cell_ids)):
+            for row in range(occurrences.shape[0]):
                 for slot in range(arity):
                     patch, loop, use = (
                         int(occurrences[row, slot, axis]) for axis in range(3)
