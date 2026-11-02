@@ -96,12 +96,26 @@ def test_cylinder_requires_exact_native_deck_and_independent_frame() -> None:
     assert certify_source_embedding(CylinderPatch(O, X, Y, Z, 0), BOX) is None
 
 
-def test_revolution_only_provably_axial_line_cylinder() -> None:
+def test_revolution_cylinder_and_polar_plane_embedding() -> None:
     cylinder = RevolutionSurface(LineCurve(X, Z), O, Z)
     full = ((F(0), F(-2)), (T, F(3)))
     proof = certify_source_embedding(cylinder, full, deck_axes=(0,))
     assert proof is not None and proof.family == "revolution-cylinder"
-    assert certify_source_embedding(RevolutionSurface(LineCurve(X, X), O, Z), BOX) is None
+    plane = RevolutionSurface(LineCurve(O, X), O, Z)
+    disk = ((F(0), F(0)), (T, F(1)))
+    assert certify_source_embedding(plane, disk, deck_axes=(0,)) is None
+    polar = certify_source_embedding(plane, disk, deck_axes=(0,), pole_roots=(F(0),))
+    assert polar is not None and polar.family == "revolution-plane"
+    assert polar.replay(plane, disk, deck_axes=(0,), pole_roots=(F(0),))
+    assert certify_source_embedding(
+        plane, ((F(0), F(-1)), (T, F(1))), deck_axes=(0,), pole_roots=(F(0),)
+    ) is None
+    assert certify_source_embedding(
+        plane, disk, deck_axes=(0,), pole_roots=(F(1),)
+    ) is None
+    assert certify_source_embedding(
+        plane, ((F(0), F(1)), (T, F(2))), deck_axes=(0,)
+    ) is not None
     assert certify_source_embedding(RevolutionSurface(LineCurve(O, Z), O, Z), BOX) is None
     assert (
         certify_source_embedding(RevolutionSurface(LineCurve(X, (1, 0, 1)), O, Z), BOX)

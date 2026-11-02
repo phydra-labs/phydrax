@@ -811,7 +811,7 @@ def _cad_trim_reference_loops(
         _rooted_patch_chart_junctions,
     )
     from ._meshing_domain import PatchCurveUse, PatchPoleUse, SourcePreparation
-    from ._surface_source_support import _cad_root_edges
+    from ._surface_source_support import _cad_pole_lens_endpoint, _cad_root_edges
     from .brep._curve_approximation_topology import TrimReferenceSegment
 
     domain = charts.domain
@@ -899,6 +899,14 @@ def _cad_trim_reference_loops(
                     status="violated",
                 )
             for record, canonical_first, canonical_last in ordered:
+                canonical_first = _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, use_index, canonical_first,
+                    record.parameters[0],
+                )
+                canonical_last = _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, use_index, canonical_last,
+                    record.parameters[1],
+                )
                 p0, p1 = record.parameters
                 if (p1 > p0) != (use.sense > 0):
                     p0, p1 = p1, p0

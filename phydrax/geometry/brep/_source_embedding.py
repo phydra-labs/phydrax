@@ -50,7 +50,9 @@ if TYPE_CHECKING:
 type ExactChartBox = tuple[
     tuple[ChartScalar, ChartScalar], tuple[ChartScalar, ChartScalar]
 ]
-type _Family = Literal["plane", "cylinder", "revolution-cylinder", "sphere", "ring-torus"]
+type _Family = Literal[
+    "plane", "cylinder", "revolution-cylinder", "revolution-plane", "sphere", "ring-torus"
+]
 
 _TAU = PeriodOffset(Fraction(0), Fraction(1))
 _QUARTER = PeriodOffset(Fraction(0), Fraction(1, 4))
@@ -193,6 +195,35 @@ def _family(surface: AbstractSurfacePatch, /) -> _Family | None:
             and any(value != 0 for value in line.radial_origin)
         ):
             return "revolution-cylinder"
+        if (
+            line is not None
+            and line.axial_direction == 0
+            and any(value != 0 for value in line.radial_direction)
+        ):
+            return "revolution-plane"
+    return None
+
+
+def _revolution_plane_pole(surface: AbstractSurfacePatch, /) -> Fraction | None:
+    """Exact profile parameter of the unique polar fiber of a radial line."""
+    from .._meshing_domain import _PlacedSurfacePatch
+
+    while isinstance(surface, (PlacedSurface, _PlacedSurfacePatch)):
+        surface = surface.definition if isinstance(surface, PlacedSurface) else surface.source
+    if not isinstance(surface, RevolutionSurface):
+        return None
+    line = _prepare_revolution_line_profile(surface, surface.curve)
+    if line is None or line.axial_direction != 0:
+        return None
+    for origin, direction in zip(line.radial_origin, line.radial_direction, strict=True):
+        if direction:
+            root = -origin / direction
+            if isinstance(root, Fraction) and all(
+                a + root * b == 0
+                for a, b in zip(line.radial_origin, line.radial_direction, strict=True)
+            ):
+                return root
+            return None
     return None
 
 
@@ -304,6 +335,15 @@ def certify_source_embedding(
                 expected_poles.append(south)
             if _same(bounds[1][1], _QUARTER):
                 expected_poles.append(_QUARTER)
+        elif family == "revolution-plane":
+            root = _revolution_plane_pole(surface)
+            low, high = bounds[0][1], bounds[1][1]
+            if root is None or not isinstance(low, Fraction) or not isinstance(high, Fraction):
+                return None
+            if low < root < high:
+                return None
+            if root in (low, high):
+                expected_poles.append(root)
         if len(pole_roots) != len(expected_poles) or any(
             not _same(actual, expected)
             for actual, expected in zip(pole_roots, expected_poles, strict=True)
@@ -379,7 +419,7 @@ class BRepTrimSheetProof:
 
 
 def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof | None:
-    """Prove a cylindrical CAD trim boundary lies on one exact source sheet.
+    """Prove a cylindrical or exact polar-plane CAD source sheet.
 
     The full-turn quotient requires opposite coedge uses of one source edge on
     the exact constant lines 0 and τ. Root identity with those lines fixes an
@@ -389,10 +429,12 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
     separate solver region has the same symbolic full-period domain, or
     establish trim homotopy/partition.
     """
+    from .._domain_boundary import _rooted_patch_chart_endpoints, exact_plane_chart
     from .._meshing_domain import (
         _same_brep_trim_endpoint,
         MeshingDomain,
         PatchCurveUse,
+        PatchPoleUse,
         SourcePreparation,
     )
 
@@ -405,6 +447,34 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
         authority = domain.brep_authority
         face = domain.source_indices[2][patch]
         surface = domain.patches[patch].surface
+        if _family(surface) == "revolution-plane":
+            plane = exact_plane_chart(domain, patch)
+            if plane is None or surface.native_period_symbols()[0] != "two_pi":
+                return None
+            endpoints = _rooted_patch_chart_endpoints(domain, patch)
+            values = tuple(point[1] for loop in endpoints for edge in loop for point in edge)
+            if not values or min(values) == max(values):
+                return None
+            low, high = min(values), max(values)
+            root = _revolution_plane_pole(surface)
+            if root is None:
+                return None
+            poles = [
+                edge for loop, sides in zip(domain.patches[patch].loops, endpoints, strict=True)
+                for use, edge in zip(loop, sides, strict=True) if isinstance(use, PatchPoleUse)
+            ]
+            expected_poles = (root,) if root in (low, high) else ()
+            if len(poles) != len(expected_poles) or any(
+                a[1] != root or b[1] != root for a, b in poles
+            ):
+                return None
+            embedding = certify_source_embedding(
+                surface, ((Fraction(0), low), (_TAU, high)),
+                deck_axes=(0,), pole_roots=expected_poles,
+            )
+            if embedding is None:
+                return None
+            return BRepTrimSheetProof(domain, domain.domain_id, patch, embedding)
         if _family(surface) not in ("cylinder", "revolution-cylinder"):
             return None
         uses = domain.patches[patch].loops
@@ -564,7 +634,7 @@ def certify_cad_trim_sheet(
     """Compose source-only sheet authority with a bound reference homotopy.
 
     Homotopy embeddedness, the reference partition, and orientation are
-    independent obligations. Only cylindrical source carriers are admitted.
+    independent obligations. Polar planes retain their declared pole quotient.
     """
     from .._meshing_domain import SourcePreparation
     from .._surface_source_support import SurfaceSourceCharts, validate_cad_curve_ancestry
@@ -619,12 +689,20 @@ def _certify_cad_trim_sheet_validated(
             native_v_high, Fraction
         ):
             return None
-        v_low = min(
-            (native_v_low, *(Fraction.from_float(float(box[0, 1])) for box in boxes))
-        )
-        v_high = max(
-            (native_v_high, *(Fraction.from_float(float(box[1, 1])) for box in boxes))
-        )
+        if native.embedding.family == "revolution-plane":
+            if any(
+                not native_v_low <= point[1] <= native_v_high
+                for segment in pieces for point in (segment.start, segment.stop)
+            ):
+                return None
+            v_low, v_high = native_v_low, native_v_high
+        else:
+            v_low = min(
+                (native_v_low, *(Fraction.from_float(float(box[0, 1])) for box in boxes))
+            )
+            v_high = max(
+                (native_v_high, *(Fraction.from_float(float(box[1, 1])) for box in boxes))
+            )
         full_turn = native.embedding.deck_axes == (0,)
         if full_turn:
             for segment in pieces:
@@ -648,6 +726,7 @@ def _certify_cad_trim_sheet_validated(
             charts.domain.patches[patch].surface,
             bounds,
             deck_axes=native.embedding.deck_axes,
+            pole_roots=native.embedding.pole_roots,
         )
         if embedding is None:
             return None

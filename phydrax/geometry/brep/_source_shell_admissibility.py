@@ -561,8 +561,14 @@ class SourceShellAdmissibility:
         return certify_single_source_shell(charts, self.tolerance) == self
 
 
-def _single_shell_topology(model: BRepModel, /) -> bool:
-    """Prove edge balance and one cyclic rooted link at every source vertex."""
+def _single_shell_topology(model: BRepModel, domain: object, /) -> bool:
+    """Prove edge balance and cyclic vertex links after exact pole quotient."""
+    from .._domain_boundary import _rooted_patch_chart_junctions
+    from .._meshing_domain import MeshingDomain
+    from ._correspondence import _exact_brep_pole_collapse
+
+    if not isinstance(domain, MeshingDomain) or domain.brep_authority is not model:
+        return False
     geometry = model.geometry
     if len(geometry.solid_shells) != 1 or len(geometry.solid_shells[0]) != 1:
         return False
@@ -578,55 +584,59 @@ def _single_shell_topology(model: BRepModel, /) -> bool:
     edge_uses: dict[int, list[tuple[int, int]]] = {}
     links: dict[int, dict[tuple[int, int], list[tuple[int, int]]]] = {}
     ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
+    patch_by_face = {int(face): patch for patch, face in enumerate(domain.source_indices[2])}
     for face, shell_sign in zip(faces, signs, strict=True):
         face_sign = int(orientation[face]) * int(shell_sign)
         if face_sign not in (-1, 1):
             return False
         region = SurfaceRegion(model.patches[face], boolean_face_chart_box(model, face))
+        patch = patch_by_face.get(face)
+        if patch is None:
+            return False
+        _rooted_patch_chart_junctions(domain, patch)
         for loop in geometry.face_loops[face]:
             if not loop:
                 return False
-            for index, coedge in enumerate(loop):
+            for coedge, following in zip(loop, (*loop[1:], loop[0]), strict=True):
+                edge, next_edge = geometry.coedge_edges[coedge], geometry.coedge_edges[following]
+                end_slot = 1 if geometry.coedge_senses[coedge] > 0 else 0
+                next_slot = 0 if geometry.coedge_senses[following] > 0 else 1
+                if geometry.edge_vertices[edge][end_slot] != geometry.edge_vertices[next_edge][next_slot]:
+                    return False
+            regular = []
+            for coedge in loop:
                 edge = geometry.coedge_edges[coedge]
                 sense = geometry.coedge_senses[coedge]
                 curve_index = geometry.edge_curves[edge]
-                if curve_index < 0 or sense not in (-1, 1):
-                    return False
-                pcurve = geometry.pcurves[coedge]
-                periodic = _periodic_pcurve_source(pcurve, region.patch)
-                if periodic is None:
+                if sense not in (-1, 1):
                     return False
                 start, stop = (float(value) for value in ranges[edge])
-                if not exact_source_lift(
+                if curve_index < 0:
+                    vertex, other = geometry.edge_vertices[edge]
+                    if vertex != other or not _exact_brep_pole_collapse(
+                        None, model.patches[face], geometry.pcurves[coedge], start, stop,
+                        geometry.vertex_exact_points[vertex], geometry.vertex_roots[vertex],
+                        geometry.coedge_endpoint_roots[coedge],
+                    ):
+                        return False
+                    continue
+                periodic = _periodic_pcurve_source(geometry.pcurves[coedge], region.patch)
+                if periodic is None or not exact_source_lift(
                     geometry.curves[curve_index], periodic[0], region, start, stop
                 ):
                     return False
                 edge_uses.setdefault(edge, []).append((face, sense * face_sign))
-                following = loop[(index + 1) % len(loop)]
-                next_edge = geometry.coedge_edges[following]
-                next_sense = geometry.coedge_senses[following]
-                if next_sense not in (-1, 1):
-                    return False
+                regular.append(coedge)
+            if not regular:
+                return False
+            for index, coedge in enumerate(regular):
+                following = regular[(index + 1) % len(regular)]
+                edge, next_edge = geometry.coedge_edges[coedge], geometry.coedge_edges[following]
+                sense, next_sense = geometry.coedge_senses[coedge], geometry.coedge_senses[following]
                 end_slot = 1 if sense > 0 else 0
                 next_slot = 0 if next_sense > 0 else 1
                 vertex = geometry.edge_vertices[edge][end_slot]
                 if geometry.edge_vertices[next_edge][next_slot] != vertex:
-                    return False
-                root = geometry.vertex_roots[vertex]
-                endpoint = geometry.coedge_endpoint_roots[coedge][end_slot]
-                next_endpoint = geometry.coedge_endpoint_roots[following][next_slot]
-                if (
-                    root is None
-                    or endpoint is None
-                    or next_endpoint is None
-                    or not root.same_uv_endpoint(
-                        region.patch,
-                        pcurve,
-                        endpoint,
-                        geometry.pcurves[following],
-                        next_endpoint,
-                    )
-                ):
                     return False
                 first_node, second_node = (edge, end_slot), (next_edge, next_slot)
                 graph = links.setdefault(vertex, {})
@@ -681,6 +691,10 @@ def _reference_patch_partition(
     )
     if not triangles:
         return False
+    triangles = (
+        *triangles,
+        *(sliver for _, sliver in charts.boundary_source.collapsed_pole_slivers(patch, triangles)),
+    )
     signs = tuple(1 if _area2(t) > 0 else -1 if _area2(t) < 0 else 0 for t in triangles)
     if 0 in signs or len(set(signs)) != 1:
         return False
@@ -691,11 +705,30 @@ def _reference_patch_partition(
     def edge(first: tuple, last: tuple) -> tuple[tuple, int]:
         return ((first, last), 1) if first < last else ((last, first), -1)
 
+    vertices = {
+        point for triangle in triangles for point in triangle
+    } | {point for loop in loops for segment in loop for point in (segment.start, segment.stop)}
+
+    def parts(first: tuple, last: tuple) -> tuple[tuple[tuple, int], ...]:
+        dx, dy = last[0] - first[0], last[1] - first[1]
+        length = dx * dx + dy * dy
+        if not length:
+            return ()
+        points = sorted(
+            (
+                point for point in vertices
+                if (point[0] - first[0]) * dy == (point[1] - first[1]) * dx
+                and 0 <= (point[0] - first[0]) * dx + (point[1] - first[1]) * dy <= length
+            ),
+            key=lambda point: (point[0] - first[0]) * dx + (point[1] - first[1]) * dy,
+        )
+        return tuple(edge(a, b) for a, b in zip(points, points[1:]))
+
     incidence: dict[tuple, list[int]] = {}
     for triangle in triangles:
         for first, last in zip(triangle, (*triangle[1:], triangle[0]), strict=True):
-            key, sign = edge(first, last)
-            incidence.setdefault(key, []).append(sign)
+            for key, sign in parts(first, last):
+                incidence.setdefault(key, []).append(sign)
     boundary: dict[tuple, int] = {}
     for key, directions in incidence.items():
         if len(directions) == 1:
@@ -705,10 +738,10 @@ def _reference_patch_partition(
     authored: dict[tuple, int] = {}
     for loop in loops:
         for segment in loop:
-            key, sign = edge(segment.start, segment.stop)
-            if key in authored:
-                return False
-            authored[key] = sign
+            for key, sign in parts(segment.start, segment.stop):
+                if key in authored:
+                    return False
+                authored[key] = sign
     return boundary == authored or boundary == {
         key: -sign for key, sign in authored.items()
     }
@@ -766,7 +799,7 @@ def certify_single_source_shell(
                 surface = surface.source
             if not _same_tree_content(surface, model.patches[face]):
                 return None
-        if not _single_shell_topology(model):
+        if not _single_shell_topology(model, domain):
             return None
         bindings = validate_cad_curve_ancestry(charts, tolerance)
         preparation = SourcePreparation(domain)
@@ -830,6 +863,20 @@ def certify_single_source_shell(
                 if common:
                     return None
                 pair_certificates.append(separate.certificate_id)
+                continue
+            from ._boolean_full_overlay import _coaxial_faces_meet_on_shared_circle
+
+            regions = tuple(
+                SurfaceRegion(model.patches[face], boolean_face_chart_box(model, face))
+                for face in (first, second)
+            )
+            if _coaxial_faces_meet_on_shared_circle(model, (first, second), regions):
+                pair_certificates.append(canonical_fingerprint({
+                    "kind": "cad-source-coaxial-pair",
+                    "model": model.model_id,
+                    "faces": (first, second),
+                    "edges": tuple(sorted(common)),
+                }))
                 continue
             pair = certify_retained_branch_pair(model, first, second)
             if pair is None or set(pair.shared_edges) != common:

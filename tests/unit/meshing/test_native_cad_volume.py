@@ -465,10 +465,12 @@ def test_cad_pole_lens_uses_exact_collapsed_corner_only() -> None:
     from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
     from phydrax.geometry._meshing_domain import PatchCurveUse, PatchPoleUse
     from phydrax.geometry._surface_source_support import _cad_pole_lens_endpoint
+    from phydrax.geometry.brep._source_shell_admissibility import _single_shell_topology
 
     domain = MeshingDomain.from_brep(
         brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
     )
+    assert _single_shell_topology(domain.brep_authority, domain)
     charts = SimpleNamespace(domain=domain)
     for patch, surface in enumerate(domain.patches):
         for loop_index, uses in enumerate(surface.loops):

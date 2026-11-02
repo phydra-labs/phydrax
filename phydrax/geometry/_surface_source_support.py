@@ -1448,8 +1448,24 @@ def validate_cad_curve_ancestry(
                 loop_index, use_index = explicit[1], explicit[2]
             parameters = interval if sense > 0 else (interval[1], interval[0])
             selected = domain.patches[patch].loops[loop_index][use_index]
-            if len(candidates) > 1 and isinstance(selected.pcurve, (ExactLineCurve, LineCurve)):
-                start, stop = _line_endpoints(selected)
+            if len(candidates) > 1:
+                from .brep._source_embedding import _constant_chart_line, _same, _TAU
+
+                constants: list[tuple[int, Fraction]] = []
+                if isinstance(selected.pcurve, (ExactLineCurve, LineCurve)):
+                    start, stop = _line_endpoints(selected)
+                    constants.extend(
+                        (axis, start[axis])
+                        for axis in range(2) if start[axis] == stop[axis]
+                    )
+                else:
+                    line = _constant_chart_line(selected.pcurve, 0)
+                    surface = domain.patches[patch].surface
+                    if line is not None and surface.native_period_symbols()[0] == "two_pi":
+                        if _same(line[0], Fraction(0)):
+                            constants.append((0, Fraction(0)))
+                        elif _same(line[0], _TAU) and surface.periods[0] is not None:
+                            constants.append((0, Fraction.from_float(surface.periods[0])))
                 points = (
                     _cad_pole_lens_endpoint(
                         charts, patch, loop_index, use_index, first_uv, parameters[0]
@@ -1458,10 +1474,8 @@ def validate_cad_curve_ancestry(
                         charts, patch, loop_index, use_index, last_uv, parameters[1]
                     ),
                 )
-                for axis in range(2):
-                    if start[axis] == stop[axis] and any(
-                        point[axis] != start[axis] for point in points
-                    ):
+                for axis, value in constants:
+                    if any(point[axis] != value for point in points):
                         raise ValueError(
                             "CAD root edge changes its authored coedge occurrence."
                         )
