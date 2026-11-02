@@ -434,6 +434,31 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
     return domain, surface
 
 
+def test_exact_plane_trim_does_not_use_authored_chart_junctions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _domain_boundary
+
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
+    )
+    patch, plane = next(
+        (patch, chart)
+        for patch in range(len(domain.patches))
+        if (chart := exact_plane_chart(domain, patch)) is not None
+    )
+
+    def reject_authored(*args: object) -> None:
+        raise AssertionError("Alternate chart must not inspect authored UV roots.")
+
+    monkeypatch.setattr(_domain_boundary, "_rooted_patch_chart_junctions", reject_authored)
+    assert _domain_boundary._patch_chart_polygon(
+        domain, patch, trim_loops=plane.loops
+    ) is not None
+    with pytest.raises(AssertionError, match="authored UV roots"):
+        _domain_boundary._patch_chart_polygon(domain, patch)
+
+
 def test_cad_pole_lens_uses_exact_collapsed_corner_only() -> None:
     from types import SimpleNamespace
 

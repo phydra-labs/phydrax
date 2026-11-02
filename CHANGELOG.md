@@ -10,6 +10,8 @@
   boxes before the unchanged exact closed-contact test.
 - CAD pole-fan chart incidence and curve lenses use exact B-Rep collapsed-side
   authority when one physical pole has multiple valid UV representatives.
+- Independently derived exact plane trims validate their own chart junctions
+  without requiring uncertain authored UV junctions to be exact.
 - Native torus source covers and fidelity now bind exact direct and
   affine-placed coefficients in outward point and derivative interval programs,
   including nonbinary rational radii, rather than relying on rounded shadows.
