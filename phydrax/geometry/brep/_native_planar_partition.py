@@ -512,11 +512,12 @@ def _source_revision(
 
 def _cells(
     plan: PlanarPartitionPlan, sources: tuple[_PlanarSourceFace, ...], /
-) -> tuple[tuple[Cell, str], ...]:
+) -> tuple[tuple[tuple[Cell, str], ...], tuple[Cell, ...]]:
     regions = tuple(source.loops for source in sources)
     voids = tuple(value for value in plan.operands if value.role.value == "void")
     owners: list[tuple[Cell, str]] = []
-    for cell in arrange(regions):
+    arrangement = arrange(regions)
+    for cell in arrangement:
         memberships = {sources[index].operand_id for index in cell.members}
         owner = next(
             (name for name in plan.policy.region_precedence if name in memberships),
@@ -534,7 +535,7 @@ def _cells(
         raise ValueError("Every planar region must retain a positive-area cell.")
     rank = {name: index for index, name in enumerate(plan.policy.region_precedence)}
     owners.sort(key=lambda value: (value[0].loops, rank[value[1]]))
-    return tuple(owners)
+    return tuple(owners), arrangement
 
 
 def _build_model(
@@ -678,7 +679,7 @@ def partition_native_planar_arrangement(
     )
 
     source_faces = _planar_source_faces(plan)
-    cells = _cells(plan, source_faces)
+    cells, arrangement = _cells(plan, source_faces)
     model, target_edge_keys, target_vertex_points = _build_model(
         plan, cells, tessellation
     )
@@ -740,6 +741,17 @@ def partition_native_planar_arrangement(
             target_vertices.setdefault(index, []).append(occurrence_id)
     correspondence_pairs: set[tuple[str, str]] = set()
     edge_rebases: dict[tuple[str, str], tuple[int, str]] = {}
+    operands_by_id = {operand.operand_id: operand for operand in plan.operands}
+
+    def boundary_direction(cell: Cell, segment: Segment, /) -> int | None:
+        directions = {
+            1 if first < last else -1
+            for loop in cell.loops
+            for first, last in zip(loop, (*loop[1:], loop[0]), strict=True)
+            if _contains_segment(segment, (first, last))
+        }
+        return next(iter(directions)) if len(directions) == 1 else None
+
     for face_index, (cell, _) in enumerate(cells):
         target_face_id = target_occurrences[("face", face_index, ())]
         for member in cell.members:
@@ -754,17 +766,66 @@ def partition_native_planar_arrangement(
     for edge_index, segment in enumerate(target_edge_keys):
         for source_index, source in enumerate(source_faces):
             for source_edge_index, source_segment in source.edge_segments:
-                if not _contains_segment(segment, source_segment):
+                if segment[0] == segment[1] or not _contains_segment(
+                    segment, source_segment
+                ):
                     continue
                 source_id = source_ids[(source.operand_id, f"edge:{source_edge_index}")]
                 adjacent_faces = tuple(
                     face
                     for face in model.topology.edge_faces[edge_index]
                     if source_index in cells[face][0].members
+                    and cells[face][1] == source.operand_id
                 )
+                void_witnesses: list[
+                    tuple[int, int, str, tuple[int, ...], tuple[int, ...], int, int]
+                ] = []
+                if role_by_id[source.operand_id] == "void":
+                    targets = operands_by_id[source.operand_id].target_region_ids
+                    for face in model.topology.edge_faces[edge_index]:
+                        retained, owner = cells[face]
+                        retained_direction = boundary_direction(retained, segment)
+                        if (
+                            owner not in targets
+                            or source_index in retained.members
+                            or retained_direction is None
+                        ):
+                            continue
+                        for cell_index, removed in enumerate(arrangement):
+                            if source_index not in removed.members:
+                                continue
+                            memberships = {
+                                source_faces[index].operand_id
+                                for index in removed.members
+                            }
+                            removed_owner = next(
+                                (
+                                    name
+                                    for name in plan.policy.region_precedence
+                                    if name in memberships
+                                ),
+                                None,
+                            )
+                            removed_direction = boundary_direction(removed, segment)
+                            if (
+                                removed_owner == owner
+                                and removed_direction is not None
+                                and removed_direction == -retained_direction
+                            ):
+                                void_witnesses.append(
+                                    (
+                                        face,
+                                        cell_index,
+                                        owner,
+                                        retained.members,
+                                        removed.members,
+                                        retained_direction,
+                                        removed_direction,
+                                    )
+                                )
                 for target_id in target_edges.get(edge_index, ()):
                     correspondence_pairs.add((source_id, target_id))
-                    if role_by_id[source.operand_id] != "region" or not adjacent_faces:
+                    if not adjacent_faces and not void_witnesses:
                         continue
                     source_occurrence = source_revision.occurrence(source_id)
                     target_occurrence = target_revision.occurrence(target_id)
@@ -776,6 +837,12 @@ def partition_native_planar_arrangement(
                             "kind": "native-planar-edge-incidence-rebase",
                             "plan": plan.plan_id,
                             "operand": source.operand_id,
+                            "role": role_by_id[source.operand_id],
+                            "target_regions": tuple(
+                                sorted(
+                                    operands_by_id[source.operand_id].target_region_ids
+                                )
+                            ),
                             "source": source_id,
                             "target": target_id,
                             "source_segment": _exact_payload(source_segment),
@@ -787,6 +854,7 @@ def partition_native_planar_arrangement(
                             "source_orientation": source_occurrence.orientation,
                             "target_orientation": target_occurrence.orientation,
                             "adjacent_faces": adjacent_faces,
+                            "void_witnesses": tuple(void_witnesses),
                             "transform": transform,
                         }
                     )
