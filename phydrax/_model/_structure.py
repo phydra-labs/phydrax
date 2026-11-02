@@ -51,7 +51,6 @@ from .._strict import mark_strict_initialized, Strict
 from .._typing_plan import validate_tree
 from ._artifacts import artifact_value, artifact_value_id, register_artifact_value
 
-
 _PLC_TEXT_COLUMNS = frozenset(
     {"vertex_ids", "facet_ids", "segment_ids", "plc_edge_ids", "region_ids"}
 )
@@ -1594,7 +1593,9 @@ def model_structure_matches_recipe(value: Any, recipe: Mapping[str, Any], /) -> 
         type(value).__module__ != "phydrax.geometry._source_fidelity_certificate"
         or type(value).__name__ != "SourceFidelityCertificate"
     ):
-        return model_structure_recipe(value) == recipe
+        return _canonical_recipe_payload(model_structure_recipe(value)) == (
+            _canonical_recipe_payload(recipe)
+        )
     from ..meshing._archive_layer_columns import (
         _COLUMNS,
         _encode_column,
@@ -1619,7 +1620,9 @@ def model_structure_matches_recipe(value: Any, recipe: Mapping[str, Any], /) -> 
         if name in columns:
             field = _encode_column(field, columns[name])
         projected = model_archive_projection(field)
-        if model_structure_recipe(projected, path=f"model.{name}") != fields[name]:
+        if _canonical_recipe_payload(
+            model_structure_recipe(projected, path=f"model.{name}")
+        ) != _canonical_recipe_payload(fields[name]):
             return False
     return True
 
@@ -3082,7 +3085,20 @@ def pack_model_array_tree(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> dict[str, np.ndarray]:
     """Extract the exact dynamic arrays declared by a canonical recipe."""
-    value = model_archive_root_projection(value)
+    return _pack_projected_model_array_tree(
+        model_archive_root_projection(value), recipe, prefix=prefix, limits=limits
+    )
+
+
+def _pack_projected_model_array_tree(
+    value: Any,
+    recipe: Mapping[str, Any],
+    /,
+    *,
+    prefix: str,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+) -> dict[str, np.ndarray]:
+    """Extract arrays from an already projected canonical archive root."""
 
     descriptor_tree = _descriptor_tree(recipe, limits)
     descriptor_leaves, descriptor_definition = jax.tree_util.tree_flatten_with_path(

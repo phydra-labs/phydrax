@@ -170,6 +170,38 @@ class _SurfaceRootCells(StrictModule, NonTrainableState):
             self.spline_root_atlas.require_current()
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceSplitProposal:
+    """One new native proposal on an exact source parent interval."""
+
+    curve: int
+    lower: Fraction
+    upper: Fraction
+    parameter: Fraction
+    occurrence: tuple[int, int, int]
+    vertex: int
+
+
+def _accepted_source_splits(
+    charts: list[_ChartMesh],
+    /,
+) -> dict[int, set[Fraction]]:
+    """Choose one new event per exact source parent, independent of UV."""
+    proposals: dict[tuple[int, Fraction, Fraction], _SourceSplitProposal] = {}
+    for chart in charts:
+        for proposal in chart.split_proposals:
+            key = (proposal.curve, proposal.lower, proposal.upper)
+            previous = proposals.get(key)
+            if previous is None or (proposal.occurrence, proposal.vertex) < (
+                previous.occurrence,
+                previous.vertex,
+            ):
+                proposals[key] = proposal
+    accepted: dict[int, set[Fraction]] = {}
+    for proposal in proposals.values():
+        accepted.setdefault(proposal.curve, set()).add(proposal.parameter)
+    return accepted
+
 @dataclass(slots=True)
 class _ChartMesh:
     patch: int
@@ -185,6 +217,8 @@ class _ChartMesh:
     # Source-piece root cells the chart triangles were split at; every cell
     # lies inside one of them.
     root_cells: tuple[_SurfaceRootChart, ...] = ()
+    split_proposals: tuple[_SourceSplitProposal, ...] = ()
+    native_proposal_rows: frozenset[tuple[int, int]] = frozenset()
 
     def edge_parameters(
         self,
@@ -648,14 +682,27 @@ def _use_chart_point(
         and use.closes_chart_loop()
     ):
         parameter = Fraction(0)
-    native = float(_use_source_parameter(use, parameter))
+    from phydrax.geometry.brep._boolean_core import line_chart_coefficients
+
+    native_exact = _use_source_parameter(use, parameter)
+    native = float(native_exact)
     uv = np.asarray(
         use.pcurve.evaluate(jnp.asarray(native, dtype=jnp.float64)),
         dtype=np.float64,
     ).reshape((2,))
     if not np.all(np.isfinite(uv)):
         raise ValueError("Source p-curve evaluation must remain finite.")
-    return Fraction.from_float(float(uv[0])), Fraction.from_float(float(uv[1]))
+    chart = line_chart_coefficients(use.pcurve)
+    if chart is None:
+        return Fraction.from_float(float(uv[0])), Fraction.from_float(float(uv[1]))
+    origin, direction = chart
+    values = tuple(
+        origin[axis] + direction[axis] * native_exact
+        if isinstance(origin[axis], Fraction)
+        else Fraction.from_float(float(uv[axis]))
+        for axis in range(2)
+    )
+    return values[0], values[1]
 
 
 def _canonical_use_endpoints(
@@ -800,7 +847,7 @@ def _chart_inputs(
                     previous_parameter = point_curve_parameters.get((row, use.curve))
                     if previous_parameter is not None and previous_parameter != recorded:
                         raise _failure(
-                            "one source trim chart point has conflicting source-curve parameters",
+                            f"source curve {use.curve} on patch {patch} has conflicting parameters {previous_parameter!r} and {recorded!r} at chart point {uv!r}",
                             category=MeshingFailureCategory.INVALID_SOURCE,
                             entity_ids=(int(use.curve),),
                         )
@@ -1044,6 +1091,119 @@ def _chart_inputs(
     )
 
 
+def _shared_affine_seam_proposals(
+    domain: domain_owner.MeshingDomain,
+    patch: int,
+    triangulation: ConstrainedDelaunayTriangulation,
+    triangle_points: np.ndarray,
+    input_points: np.ndarray,
+    segments: np.ndarray,
+    segment_curves: tuple[int, ...],
+    segment_parameters: tuple[tuple[Fraction, Fraction], ...],
+    segment_occurrences: tuple[tuple[int, int, int], ...],
+    /,
+) -> dict[int, Fraction]:
+    """Bind new periodic-seam proposals to one exact source parameter.
+
+    Pairing uses the same authored curve, exactly reversed source intervals,
+    opposite uses and an exactly proved one-period chart transition. Numeric
+    proximity never forms an equivalence. Existing input vertices are untouched.
+    """
+    from phydrax.geometry.brep._boolean_core import (
+        chart_add,
+        chart_scale,
+        line_chart_coefficients,
+    )
+    from phydrax.geometry.brep._trim_helpers import period_offset
+
+    groups: dict[tuple[int, Fraction, Fraction], list[int]] = {}
+    for row, (curve, pair) in enumerate(zip(segment_curves, segment_parameters, strict=True)):
+        if curve < 0:
+            continue
+        lower, upper = sorted(pair)
+        groups.setdefault((curve, lower, upper), []).append(row)
+    admitted: dict[int, tuple[int, int, Fraction, Fraction, Fraction, Fraction]] = {}
+    for rows in groups.values():
+        if len(rows) != 2:
+            continue
+        first_row, second_row = rows
+        if segment_parameters[first_row] != segment_parameters[second_row][::-1]:
+            continue
+        first_occurrence, second_occurrence = (
+            segment_occurrences[first_row], segment_occurrences[second_row]
+        )
+        if first_occurrence == second_occurrence or any(
+            occurrence[0] != patch for occurrence in (first_occurrence, second_occurrence)
+        ):
+            continue
+        first_use = domain.patches[patch].loops[first_occurrence[1]][first_occurrence[2]]
+        second_use = domain.patches[patch].loops[second_occurrence[1]][second_occurrence[2]]
+        if (
+            not isinstance(first_use, domain_owner.PatchCurveUse)
+            or not isinstance(second_use, domain_owner.PatchCurveUse)
+            or first_use.curve != second_use.curve
+            or first_use.sense != -second_use.sense
+            or first_use.first != second_use.first
+            or first_use.last != second_use.last
+        ):
+            continue
+        first_chart = line_chart_coefficients(first_use.pcurve)
+        second_chart = line_chart_coefficients(second_use.pcurve)
+        if first_chart is None or second_chart is None:
+            continue
+        first_origin, direction = first_chart
+        second_origin, other_direction = second_chart
+        varying = [axis for axis in range(2) if direction[axis] != 0]
+        if len(varying) != 1 or direction != other_direction:
+            continue
+        axis = varying[0]
+        fixed = 1 - axis
+        if (
+            not isinstance(first_origin[axis], Fraction)
+            or first_origin[axis] != second_origin[axis]
+            or domain.patches[patch].surface.native_period_symbols()[fixed] != "two_pi"
+        ):
+            continue
+        difference = chart_add(first_origin[fixed], chart_scale(second_origin[fixed], Fraction(-1)))
+        if difference not in (
+            period_offset(Fraction(0), Fraction(1)),
+            period_offset(Fraction(0), Fraction(-1)),
+        ):
+            continue
+        native_first = Fraction.from_float(first_use.first)
+        native_last = Fraction.from_float(first_use.last)
+        if native_first == native_last:
+            continue
+        chart_origin = first_origin[axis]
+        if not isinstance(chart_origin, Fraction):
+            continue
+        record = (axis, fixed, chart_origin, direction[axis], native_first, native_last)
+        admitted[first_row] = record
+        admitted[second_row] = record
+    proposals: dict[int, Fraction] = {}
+    sources = np.asarray(triangulation.constraint_sources, dtype=np.int64)
+    for vertex in range(triangulation.input_point_count, len(triangle_points)):
+        segment = int(sources[vertex])
+        record = admitted.get(segment)
+        if record is None:
+            continue
+        axis, fixed, origin, direction, first, last = record
+        first_row, last_row = (int(value) for value in segments[segment])
+        if (
+            input_points[first_row, fixed] != input_points[last_row, fixed]
+            or triangle_points[vertex, fixed] != input_points[first_row, fixed]
+        ):
+            continue
+        coordinate = Fraction.from_float(float(triangle_points[vertex, axis]))
+        native = (coordinate - origin) / direction
+        value = (native - first) / (last - first)
+        lower, upper = sorted(segment_parameters[segment])
+        if not lower < value < upper:
+            raise ValueError("A shared seam split is outside its exact source interval.")
+        proposals[vertex] = value
+    return proposals
+
+
 def _source_curve_parameters(
     triangulation: ConstrainedDelaunayTriangulation,
     point_curve_parameters: dict[tuple[int, int], Fraction],
@@ -1051,6 +1211,8 @@ def _source_curve_parameters(
     segment_curves: tuple[int, ...],
     segment_parameters: tuple[tuple[Fraction, Fraction], ...],
     /,
+    *,
+    canonical_proposals: dict[int, Fraction] | None = None,
 ) -> dict[tuple[int, int], Fraction]:
     """Compose native CDT constraint ancestry to exact represented source parameters.
 
@@ -1072,7 +1234,6 @@ def _source_curve_parameters(
             "Native CDT constraint ancestry must align with its point table."
         )
     result = dict(point_curve_parameters)
-    composed: dict[int, list[Fraction]] = {}
 
     def parameter(vertex: int, curve: int, /) -> Fraction:
         try:
@@ -1104,22 +1265,13 @@ def _source_curve_parameters(
                 else parameter(parent, curve)
                 for parent in (first, last)
             )
-            value = Fraction(float(low + Fraction.from_float(ratio) * (high - low)))
-            # The native ratio is only known to binary64 resolution. When one source
-            # curve bounds several chart sides (a periodic seam), independent splits
-            # of the same source location differ only within that resolution; they
-            # name one shared source vertex instead of seeding a sub-ulp feature.
-            resolution = Fraction.from_float(
-                8.0 * math.ulp(1.0) * float(abs(high - low))
-                + 4.0 * math.ulp(float(value))
+            value = (
+                low + Fraction.from_float(ratio) * (high - low)
+                if canonical_proposals is None or vertex not in canonical_proposals
+                else canonical_proposals[vertex]
             )
-            siblings = composed.setdefault(curve, [])
-            value = next(
-                (sibling for sibling in siblings if abs(sibling - value) <= resolution),
-                value,
-            )
-            if value not in siblings:
-                siblings.append(value)
+            if not min(low, high) < value < max(low, high):
+                raise ValueError("A CDT split is outside its exact source parent interval.")
             result[(vertex, curve)] = value
             return value
 
@@ -1296,6 +1448,33 @@ def _pole_band_triangles(
     )
 
 
+def _chart_cdt_scale(
+    domain: domain_owner.MeshingDomain, patch: int, points: np.ndarray, /
+) -> float:
+    """Choose an exact dyadic chart scaling from a local physical metric.
+
+    This changes only the CDT scheduling coordinates; source charts, retained
+    constraints, and physical quality/fidelity certification remain unchanged.
+    """
+    from phydrax.geometry.brep._patches import surface_differential
+
+    center = np.min(points, axis=0) + 0.5 * (np.max(points, axis=0) - np.min(points, axis=0))
+    differential = np.asarray(
+        surface_differential(domain.patches[patch].surface, jnp.asarray(center)),
+        dtype=np.float64,
+    )
+    if differential.shape != (3, 2) or not np.all(np.isfinite(differential)):
+        return 1.0
+    speeds = np.linalg.norm(differential, axis=0)
+    if not np.all(np.isfinite(speeds)) or np.any(speeds <= 0):
+        return 1.0
+    ratio = float(speeds[0] / speeds[1])
+    if not math.isfinite(ratio) or ratio <= 0:
+        return 1.0
+    exponent = max(-128, min(128, round(math.log2(ratio))))
+    return math.ldexp(1.0, exponent)
+
+
 def _make_chart_mesh(
     domain: domain_owner.MeshingDomain,
     patch: int,
@@ -1348,21 +1527,55 @@ def _make_chart_mesh(
             dtype=np.float64,
         )
     )
-    try:
-        triangulation = ConstrainedDelaunayTriangulation(
-            point_array,
-            segments,
-            holes=holes,
-            keep_convex_hull=False,
-            min_angle=minimum_angle,
-        )
-    except (ValueError, RuntimeError) as error:
-        raise _failure(
-            f"native constrained chart triangulation failed for source patch {patch}: {error}",
-            category=MeshingFailureCategory.INVALID_SOURCE,
-            entity_ids=(int(patch),),
-        ) from error
-    triangle_points = np.asarray(triangulation.points, dtype=np.float64)
+    scale = _chart_cdt_scale(domain, patch, point_array)
+    scale_vector = np.asarray((scale, 1.0), dtype=np.float64)
+    scaled_points = point_array * scale_vector
+    scaled_holes = None if holes is None else holes * scale_vector
+    if (
+        not np.all(np.isfinite(scaled_points))
+        or not np.array_equal(scaled_points / scale_vector, point_array)
+        or (scaled_holes is not None and (
+            not np.all(np.isfinite(scaled_holes))
+            or not np.array_equal(scaled_holes / scale_vector, holes)
+        ))
+    ):
+        # Scaling is only a conditioning choice.  If it cannot preserve every
+        # input exactly, run the unchanged chart rather than reject the source.
+        scale_vector = np.ones(2, dtype=np.float64)
+        scaled_points = point_array
+        scaled_holes = holes
+    while True:
+        try:
+            triangulation = ConstrainedDelaunayTriangulation(
+                scaled_points,
+                segments,
+                holes=scaled_holes,
+                keep_convex_hull=False,
+                min_angle=minimum_angle,
+            )
+        except (ValueError, RuntimeError) as error:
+            raise _failure(
+                f"native constrained chart triangulation failed for source patch {patch}: {error}",
+                category=MeshingFailureCategory.INVALID_SOURCE,
+                entity_ids=(int(patch),),
+            ) from error
+        scaled_output = np.asarray(triangulation.points, dtype=np.float64)
+        triangle_points = scaled_output / scale_vector
+        if np.all(np.isfinite(triangle_points)) and np.array_equal(
+            triangle_points * scale_vector, scaled_output
+        ):
+            break
+        if scale_vector[0] == 1.0:
+            raise _failure(
+                "native CDT generated a nonfinite chart point",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                entity_ids=(int(patch),),
+            )
+        # A generated point may be unrepresentable even when the authored
+        # inputs scaled exactly. Retry the original, unconditioned chart.
+        scale_vector = np.ones(2, dtype=np.float64)
+        scaled_points = point_array
+        scaled_holes = holes
     if triangle_points.shape[0] < len(input_points) or not np.array_equal(
         triangle_points[: len(input_points)], point_array
     ):
@@ -1371,18 +1584,59 @@ def _make_chart_mesh(
             category=MeshingFailureCategory.INVALID_SOURCE,
             entity_ids=(int(patch),),
         )
+    canonical_proposals = _shared_affine_seam_proposals(
+        domain,
+        patch,
+        triangulation,
+        triangle_points,
+        point_array,
+        segments,
+        segment_curves,
+        segment_parameters,
+        segment_occurrences,
+    )
     source_parameters = _source_curve_parameters(
         triangulation,
         input_curve_parameters,
         segments,
         segment_curves,
         segment_parameters,
+        canonical_proposals=canonical_proposals,
     )
     chart_points = list(input_points)
     corner_rows = dict(input_corners)
     constraint_sources = np.asarray(triangulation.constraint_sources, dtype=np.int64)
     constraint_parents = np.asarray(triangulation.constraint_parents, dtype=np.int64)
     constraint_ratios = np.asarray(triangulation.constraint_ratios, dtype=np.float64)
+    split_proposals: list[_SourceSplitProposal] = []
+    native_proposal_rows: set[tuple[int, int]] = set()
+    for vertex in range(len(input_points), triangle_points.shape[0]):
+        segment = int(constraint_sources[vertex])
+        if segment < 0 or segment_curves[segment] < 0:
+            continue
+        curve = segment_curves[segment]
+        native_proposal_rows.add((vertex, curve))
+        parents = tuple(int(value) for value in constraint_parents[vertex])
+        if any(parent >= len(input_points) for parent in parents):
+            # Descendants of a competing proposal are never published before
+            # their own source parent has become an accepted input constraint.
+            continue
+        endpoints = tuple(int(value) for value in segments[segment])
+        parent_parameters = tuple(
+            segment_parameters[segment][endpoints.index(parent)]
+            if parent in endpoints
+            else input_curve_parameters[(parent, curve)]
+            for parent in parents
+        )
+        lower, upper = sorted(parent_parameters)
+        parameter = source_parameters[(vertex, curve)]
+        if not lower < parameter < upper:
+            raise ValueError("A native split proposal is outside its source parent interval.")
+        split_proposals.append(
+            _SourceSplitProposal(
+                curve, lower, upper, parameter, segment_occurrences[segment], vertex
+            )
+        )
     for vertex in range(len(input_points), triangle_points.shape[0]):
         segment = int(constraint_sources[vertex])
         point = triangle_points[vertex]
@@ -1568,6 +1822,8 @@ def _make_chart_mesh(
             for key, value in input_curve_parameters.items()
             if key[1] in turning and value == 0
         ),
+        split_proposals=tuple(split_proposals),
+        native_proposal_rows=frozenset(native_proposal_rows),
     )
 
 
@@ -3878,6 +4134,7 @@ def _add_global_vertex(
     source_indices: list[int],
     source_parameters: list[tuple[float, float]],
     /,
+    chart_point: np.ndarray | None = None,
 ) -> int:
     key = _global_vertex_key(domain, chart, local_row)
     uv = chart.points[local_row]
@@ -3890,10 +4147,11 @@ def _add_global_vertex(
         source_parameter = key[2]
         assert isinstance(source_parameter, Fraction)
         point = _source_curve_point(domain, index, source_parameter)
-        chart_point = domain.evaluate(
-            np.asarray((chart.patch,), dtype=np.int64),
-            np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
-        )[0]
+        if chart_point is None:
+            chart_point = domain.evaluate(
+                np.asarray((chart.patch,), dtype=np.int64),
+                np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
+            )[0]
         allowance = max(
             domain.tolerance * domain.scale,
             64.0 * np.finfo(np.float64).eps * max(domain.scale, 1.0),
@@ -3907,10 +4165,12 @@ def _add_global_vertex(
         parameter = (float(source_parameter), math.nan)
     else:
         dimension, index = 2, chart.patch
-        point = domain.evaluate(
-            np.asarray((chart.patch,), dtype=np.int64),
-            np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
-        )[0]
+        point = chart_point
+        if point is None:
+            point = domain.evaluate(
+                np.asarray((chart.patch,), dtype=np.int64),
+                np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
+            )[0]
         parameter = (float(uv[0]), float(uv[1]))
     if not np.all(np.isfinite(point)):
         raise _failure(
@@ -3939,6 +4199,26 @@ def _add_global_vertex(
                 entity_ids=(int(index),),
             )
     return row
+
+
+def _chart_vertex_points(
+    domain: domain_owner.MeshingDomain,
+    chart: _ChartMesh,
+    rows: list[int],
+    /,
+) -> dict[int, np.ndarray]:
+    """Evaluate new non-corner chart vertices in one source batch."""
+    selected = [row for row in rows if row not in chart.corners]
+    if not selected:
+        return {}
+    points = domain.evaluate(
+        np.full(len(selected), chart.patch, dtype=np.int64),
+        np.asarray(
+            [[float(value) for value in chart.points[row]] for row in selected],
+            dtype=np.float64,
+        ),
+    )
+    return dict(zip(selected, points, strict=True))
 
 
 def _chart_triangles(
@@ -4137,6 +4417,7 @@ def _refine_charts(
     }
     local_rows: list[dict[int, int]] = []
     for chart in charts:
+        chart_points = _chart_vertex_points(domain, chart, list(range(len(chart.points))))
         local_rows.append(
             {
                 row: _add_global_vertex(
@@ -4148,6 +4429,7 @@ def _refine_charts(
                     source_dimensions,
                     source_indices,
                     source_parameters,
+                    chart_points.get(row),
                 )
                 for row in range(len(chart.points))
             }
@@ -4478,6 +4760,12 @@ def _refine_charts(
                         midpoint_parameter,
                         source_last,
                     )
+                changed = True
+                requested[edge] = local_row
+            if not requested:
+                continue
+            chart_points = _chart_vertex_points(domain, chart, list(requested.values()))
+            for local_row in requested.values():
                 mapping[local_row] = _add_global_vertex(
                     domain,
                     chart,
@@ -4487,11 +4775,8 @@ def _refine_charts(
                     source_dimensions,
                     source_indices,
                     source_parameters,
+                    chart_points.get(local_row),
                 )
-                requested[edge] = local_row
-                changed = True
-            if not requested:
-                continue
             children: list[tuple[int, int, int]] = []
             for triangle in old_triangles:
                 a, b, c = triangle
@@ -4869,13 +5154,31 @@ def _surface_construction(
     ] = []
     cell_offset = 0
     for chart, local_rows in zip(refined.charts, refined.local_rows, strict=True):
+        # A collapsed pole has several chart rows but one authored corner.
+        # A fan edge can use a different pole row from its trim edge while
+        # sharing the exact non-pole row and the same source corner.
+        pole_occurrences: dict[tuple[int, int], set[tuple[int, int, int]]] = {}
+        for (first, last), (_, occurrence, _, _) in chart.boundary_edges.items():
+            for pole, other in ((first, last), (last, first)):
+                if pole in chart.corners and other not in chart.corners:
+                    key = (other, chart.corners[pole])
+                    pole_occurrences.setdefault(key, set()).add(occurrence)
         for local_row, triangle in enumerate(chart.triangles):
             for opposite in range(3):
                 first, last = triangle[(opposite + 1) % 3], triangle[(opposite + 2) % 3]
                 source = chart.boundary_edges.get(_edge_key(first, last))
-                if source is None:
-                    continue
-                _, occurrence, first_parameter, last_parameter = source
+                if source is not None:
+                    occurrence = source[1]
+                else:
+                    candidates: set[tuple[int, int, int]] = set()
+                    for pole, other in ((first, last), (last, first)):
+                        if pole in chart.corners and other not in chart.corners:
+                            candidates.update(
+                                pole_occurrences.get((other, chart.corners[pole]), ())
+                            )
+                    if len(candidates) != 1:
+                        continue
+                    occurrence = next(iter(candidates))
                 boundary_occurrences[cell_offset + local_row, opposite] = occurrence
         for (first, last), (curve, occurrence, source_first, source_last) in sorted(
             chart.boundary_edges.items()
@@ -5608,27 +5911,53 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                 math.degrees(self.specification.quality_target.minimum_angle),
             )
         root_charts_by_patch = _surface_root_charts(self.roots)
+        # Domain, pole charts, root atlas and quality angle are fixed for this
+        # execution. Only authored curve-parameter sets can change across
+        # synchronization rounds; retain a chart only under its exact inputs.
+        patch_curves = {
+            patch: tuple(sorted({
+                use.curve
+                for loop in domain.patches[patch].loops
+                for use in loop
+                if isinstance(use, domain_owner.PatchCurveUse)
+            }))
+            for patch in self.selected_patches
+        }
+        retained_charts: dict[
+            int, tuple[tuple[tuple[int, tuple[Fraction, ...]], ...], _ChartMesh]
+        ] = {}
         while True:
-            charts = [
-                _make_chart_mesh(
-                    domain,
-                    patch,
-                    parameters_by_curve,
-                    pole_charts,
-                    quality_angle,
+            charts = []
+            for patch in self.selected_patches:
+                key = tuple(
+                    (curve, tuple(sorted(parameters_by_curve[curve])))
+                    for curve in patch_curves[patch]
                 )
-                for patch in self.selected_patches
-            ]
-            for chart in charts:
-                _split_chart_at_source_cells(
-                    chart,
-                    root_charts_by_patch.get(chart.patch, ()),
-                )
+                retained = retained_charts.get(patch)
+                if retained is None or retained[0] != key:
+                    chart = _make_chart_mesh(
+                        domain, patch, parameters_by_curve, pole_charts, quality_angle
+                    )
+                    # Source-cell clipping must wait until native proposals
+                    # have been coordinated: cuts descending from a losing
+                    # proposal cannot become independent source events.
+                    retained_charts[patch] = (key, chart)
+                else:
+                    chart = retained[1]
+                charts.append(chart)
+            accepted = _accepted_source_splits(charts)
+            if accepted:
+                for curve, values in accepted.items():
+                    parameters_by_curve[curve].update(values)
+                continue
             expanded = {
                 curve: set(values) for curve, values in parameters_by_curve.items()
             }
             for chart in charts:
-                for (local, curve), parameter in chart.curve_parameters.items():
+                _split_chart_at_source_cells(
+                    chart, root_charts_by_patch.get(chart.patch, ())
+                )
+                for (_, curve), parameter in chart.curve_parameters.items():
                     expanded[curve].add(parameter)
             if all(expanded[curve] == parameters_by_curve[curve] for curve in curve_ids):
                 break

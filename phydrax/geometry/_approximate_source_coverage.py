@@ -41,8 +41,11 @@ from .implicit._adaptive_discovery import (
 
 
 if TYPE_CHECKING:
-    from ._meshing_domain import PatchCurveUse
+    from ._domain_boundary import _RootedJunction
+    from ._meshing_domain import PatchCurveUse, SourcePreparation
     from ._planar_coverage import OrientedFacet
+    from ._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
+    from .brep._curve_approximation_topology import TrimReferenceSegment
     from .implicit._source_charts import (
         AdaptiveImplicitRootChartMap,
         AdaptiveImplicitSourceQuery,
@@ -455,6 +458,11 @@ def _intersection_area(
     clip: tuple[tuple[Fraction, Fraction], ...],
     /,
 ) -> Fraction:
+    clip_area = _area2(clip)
+    if clip_area == 0:
+        return Fraction(0)
+    if clip_area < 0:
+        clip = tuple(reversed(clip))
     polygon = subject
     for line_first, line_second in zip(clip, (*clip[1:], clip[0]), strict=True):
         if not polygon:
@@ -779,6 +787,169 @@ def _cad_chart_curve_use(
     return matches[0]
 
 
+def _cad_trim_root_box(junction: _RootedJunction, /) -> np.ndarray:
+    from ._rational import fraction_down, fraction_up
+
+    return np.asarray(
+        (
+            (fraction_down(junction.lower[0]), fraction_down(junction.lower[1])),
+            (fraction_up(junction.upper[0]), fraction_up(junction.upper[1])),
+        ),
+        dtype=np.float64,
+    )
+
+
+def _cad_trim_reference_loops(
+    charts: SurfaceSourceCharts,
+    bindings: dict[int, tuple[_CadCurveUseBinding, ...]],
+    patch: int,
+    /,
+) -> tuple[tuple[TrimReferenceSegment, ...], ...]:
+    """Resolve coedges using a fresh source preparation."""
+    from ._meshing_domain import SourcePreparation
+    from ._surface_source_support import _cad_root_edges
+
+    _, adjacency = _cad_root_edges(charts)
+    return _cad_trim_reference_loops_prepared(
+        charts, bindings, patch, SourcePreparation(charts.domain), adjacency
+    )
+
+
+def _cad_trim_reference_loops_prepared(
+    charts: SurfaceSourceCharts,
+    bindings: dict[int, tuple[_CadCurveUseBinding, ...]],
+    patch: int,
+    preparation: SourcePreparation,
+    adjacency: dict[int, tuple[tuple[int, int, _Point2, _Point2], ...]],
+    /,
+) -> tuple[tuple[TrimReferenceSegment, ...], ...]:
+    """Resolve each authored coedge to its certified root-chart reference chain."""
+    from ._domain_boundary import _rooted_patch_chart_junctions
+    from ._meshing_domain import PatchCurveUse, PatchPoleUse
+    from ._surface_source_support import _cad_pole_lens_endpoint
+    from .brep._curve_approximation_topology import TrimReferenceSegment
+
+    domain = charts.domain
+    authority = domain.brep_authority
+    if authority is None:
+        raise SourceCoverageUnavailable(
+            "CAD trim homotopy requires BRep authority.", status="unresolved"
+        )
+    face = domain.source_indices[2][patch]
+    preparation.require(domain)
+    junctions = _rooted_patch_chart_junctions(domain, patch, preparation)
+    endpoints = tuple(
+        tuple((loop[slot - 1].representative, junction.representative)
+              for slot, junction in enumerate(loop))
+        for loop in junctions
+    )
+    patch_by_cell = {
+        int(identifier): int(charts.root_patches[row])
+        for row, identifier in enumerate(charts.cell_global_ids)
+    }
+    by_use: dict[tuple[int, int], list[tuple[_CadCurveUseBinding, _Point2, _Point2]]] = {}
+    for edge_id, records in bindings.items():
+        for record in records:
+            if patch_by_cell[record.root_cell_id] != patch:
+                continue
+            incident = tuple(
+                item for item in adjacency[edge_id] if item[0] == record.root_cell_id
+            )
+            if len(incident) != 1:
+                raise SourceCoverageUnavailable(
+                    "CAD coedge lost its unique root-chart edge.", status="violated"
+                )
+            by_use.setdefault((record.loop_index, record.use_index), []).append(
+                (record, incident[0][2], incident[0][3])
+            )
+    result: list[tuple[TrimReferenceSegment, ...]] = []
+    for loop_index, loop in enumerate(domain.patches[patch].loops):
+        output: list[TrimReferenceSegment] = []
+        coedges = authority.geometry.face_loops[face][loop_index]
+        for use_index, use in enumerate(loop):
+            previous = junctions[loop_index][use_index - 1]
+            following = junctions[loop_index][use_index]
+
+            start_root = authority.geometry.coedge_endpoint_roots[coedges[use_index]][
+                0 if use.sense > 0 else 1
+            ]
+            stop_root = authority.geometry.coedge_endpoint_roots[coedges[use_index]][
+                1 if use.sense > 0 else 0
+            ]
+            start_parameter_box = (
+                None if start_root is None else start_root.parameter_enclosure()
+            )
+            stop_parameter_box = (
+                None if stop_root is None else stop_root.parameter_enclosure()
+            )
+            if isinstance(use, PatchPoleUse):
+                start, stop = endpoints[loop_index][use_index]
+                first, last = (
+                    (Fraction.from_float(use.first), Fraction.from_float(use.last))
+                    if use.sense > 0
+                    else (Fraction.from_float(use.last), Fraction.from_float(use.first))
+                )
+                output.append(
+                    TrimReferenceSegment(
+                        use.pcurve,
+                        first,
+                        last,
+                        start,
+                        stop,
+                        _cad_trim_root_box(previous),
+                        _cad_trim_root_box(following),
+                        start_parameter_box,
+                        stop_parameter_box,
+                    )
+                )
+                continue
+            if not isinstance(use, PatchCurveUse):
+                raise SourceCoverageUnavailable(
+                    "CAD trim has an unsupported coedge.", status="unresolved"
+                )
+            records = by_use.get((loop_index, use_index), ())
+            ordered = sorted(
+                records, key=lambda value: min(value[0].parameters), reverse=use.sense < 0
+            )
+            if not ordered:
+                raise SourceCoverageUnavailable(
+                    "CAD source coedge has no complete root edge chain.",
+                    status="violated",
+                )
+            for record, canonical_first, canonical_last in ordered:
+                canonical_first = _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, use_index, canonical_first,
+                    record.parameters[0],
+                )
+                canonical_last = _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, use_index, canonical_last,
+                    record.parameters[1],
+                )
+                p0, p1 = record.parameters
+                if (p1 > p0) != (use.sense > 0):
+                    p0, p1 = p1, p0
+                    canonical_first, canonical_last = canonical_last, canonical_first
+                base = Fraction.from_float(use.first)
+                span = Fraction.from_float(use.last) - base
+                is_start = p0 == (0 if use.sense > 0 else 1)
+                is_stop = p1 == (1 if use.sense > 0 else 0)
+                output.append(
+                    TrimReferenceSegment(
+                        use.pcurve,
+                        base + span * p0,
+                        base + span * p1,
+                        canonical_first,
+                        canonical_last,
+                        _cad_trim_root_box(previous) if is_start else None,
+                        _cad_trim_root_box(following) if is_stop else None,
+                        start_parameter_box if is_start else None,
+                        stop_parameter_box if is_stop else None,
+                    )
+                )
+        result.append(tuple(output))
+    return tuple(result)
+
+
 def _cad_corner_key(domain: MeshingDomain, corner: int, /) -> tuple[object, ...]:
     return ("corner", domain.entity_id(0, corner), domain.source_occurrences[0][corner])
 
@@ -920,6 +1091,550 @@ def _cad_plane_curve_use(
     return matches[0]
 
 
+@dataclass(frozen=True, slots=True)
+class _CadTargetAncestry:
+    vertex_keys: dict[int, _VertexKey]
+    edge_uses: dict[
+        tuple[int, tuple[int, int]],
+        tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse],
+    ]
+
+
+def _cad_target_root_partition(
+    domain: MeshingDomain,
+    mesh: CellMesh,
+    witness: SourceBoundaryChartWitness,
+    patch_rows: list[int],
+    tolerance: float,
+    /,
+) -> _CadTargetAncestry:
+    """Replay exact target restrictions of the retained CAD root charts."""
+    from ..discretization._reference_cell import reference_cell_topology
+    from ..meshing._association import (
+        GeometryAssociationArchiveRecipe,
+        GeometryAssociationKind,
+        GeometryAssociationProvenance,
+        GeometrySourceEntityRole,
+    )
+    from ..meshing._plc_source import PiecewiseLinearComplex
+    from ..meshing.providers._native_cad_volume import _exact_patch_chart
+    from ..meshing.providers._native_plc_geometry import simplex_volume_entities
+    from ._domain_boundary import exact_plane_chart
+    from ._meshing_domain import PatchCurveUse, SourcePreparation
+    from ._surface_source_support import (
+        _cad_plane_seam_side,
+        _cad_pole_lens_endpoint,
+        _cad_root_edges,
+        validate_cad_curve_ancestry,
+    )
+
+    if witness.cad_plc is None:
+        raise SourceCoverageUnavailable(
+            "CAD root ancestry is absent.", status="unresolved"
+        )
+    try:
+        plc = PiecewiseLinearComplex.from_stored_fields(witness.cad_plc)
+        charts = plc.cad_source_charts
+        if charts is None or not _same_domain(charts.domain, domain):
+            raise ValueError("CAD root charts bind another source.")
+        charts.require_current()
+        bindings = validate_cad_curve_ancestry(charts, tolerance)
+        _, root_edges = _cad_root_edges(charts)
+    except (TypeError, ValueError) as error:
+        raise SourceCoverageUnavailable(
+            f"CAD root ancestry is invalid: {error}", status="violated"
+        ) from error
+
+    root_rows = {identifier: row for row, identifier in enumerate(charts.cell_global_ids)}
+    roots = np.asarray(witness.cad_root_cell_ids, dtype=np.int64)
+    if roots.shape != (len(patch_rows),):
+        raise SourceCoverageUnavailable(
+            "CAD root rows are misaligned.", status="violated"
+        )
+    cell_rows = {
+        int(identifier): (block, row)
+        for block in mesh.blocks
+        for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64))
+    }
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    targets: list[tuple[int, int, int]] = []
+    triangles: list[_Triangle2] = []
+    grouped: dict[int, list[_Triangle2]] = {}
+    plane_patches: set[int] = set()
+    planes = {patch: exact_plane_chart(domain, patch) for patch in set(patch_rows)}
+    affine_patches = {
+        patch
+        for patch in {
+            patch for root, patch in zip(roots, patch_rows, strict=True) if root == -1
+        }
+        if _exact_patch_chart(domain, patch) is not None
+    }
+    for row, (root_id, patch) in enumerate(zip(roots, patch_rows, strict=True)):
+        triangle = _triangle2(witness.source_parameter_chart(row))
+        if _area2(triangle) == 0:
+            raise SourceCoverageUnavailable(
+                "CAD target root chart is degenerate.", status="violated"
+            )
+        triangles.append(triangle)
+        found = cell_rows.get(int(witness.cell_global_ids[row]))
+        if found is None:
+            raise SourceCoverageUnavailable(
+                "CAD target cell is absent.", status="violated"
+            )
+        block, cell_row = found
+        reference = reference_cell_topology(block.cell_kind)
+        local_face = int(witness.local_entity_indices[row])
+        if not 0 <= local_face < len(reference.entities[2]):
+            raise SourceCoverageUnavailable(
+                "CAD target face is invalid.", status="violated"
+            )
+        slots = set(reference.entities[2][local_face])
+        corners = tuple(
+            tuple(_fraction(float(x)) for x in point) for point in reference.vertices
+        )
+        ids: list[int] = []
+        for point in _triangle3(witness.target_reference_chart(row)):
+            matches = [
+                slot
+                for slot, corner in enumerate(corners)
+                if point == corner and slot in slots
+            ]
+            if len(matches) != 1:
+                raise SourceCoverageUnavailable(
+                    "CAD target corner is not a face vertex.", status="violated"
+                )
+            ids.append(
+                int(vertex_ids[int(np.asarray(block.vertices)[cell_row, matches[0]])])
+            )
+        if len(set(ids)) != 3:
+            raise SourceCoverageUnavailable(
+                "CAD target face repeats a vertex.", status="violated"
+            )
+        targets.append((ids[0], ids[1], ids[2]))
+        if (
+            witness.source_entity_ids[row] != domain.entity_id(2, patch)
+            or witness.occurrence_paths[row] != domain.source_occurrences[2][patch]
+        ):
+            raise SourceCoverageUnavailable(
+                "CAD target row changes source identity.", status="violated"
+            )
+        plane = planes[patch]
+        if (
+            plane is not None
+            and witness.source_chart_ids[row] == plane.chart_id
+            and root_id != -1
+        ):
+            raise SourceCoverageUnavailable(
+                "A derived CAD plane chart cannot retain a nonlinear root triangle.",
+                status="violated",
+            )
+        if root_id >= 0:
+            root_row = root_rows.get(int(root_id))
+            if root_row is None or int(charts.root_patches[root_row]) != patch:
+                raise SourceCoverageUnavailable(
+                    "CAD target row changes root patch.", status="violated"
+                )
+            root = _triangle2(charts.root_parameter_chart(root_row))
+            if _area2(root) == 0 or _intersection_area(triangle, root) != abs(
+                _area2(triangle)
+            ):
+                raise SourceCoverageUnavailable(
+                    "CAD target row leaves its root chart.", status="violated"
+                )
+        if plane is not None and witness.source_chart_ids[row] == plane.chart_id:
+            plane_patches.add(patch)
+            continue
+        if patch in affine_patches:
+            if witness.source_chart_ids[row] != domain.entity_id(2, patch):
+                raise SourceCoverageUnavailable(
+                    "CAD affine plane changes source chart.", status="violated"
+                )
+            continue
+        if root_id == -1:
+            raise SourceCoverageUnavailable(
+                "Unrooted CAD chart is not an exact plane.", status="violated"
+            )
+        if witness.source_chart_ids[row] != domain.entity_id(2, patch):
+            raise SourceCoverageUnavailable(
+                "CAD target row changes root source identity.", status="violated"
+            )
+        grouped.setdefault(int(root_id), []).append(triangle)
+    rows_by_target_edge: dict[tuple[int, int], list[int]] = {}
+    for row, vertices in enumerate(targets):
+        for first, second in (
+            (vertices[0], vertices[1]),
+            (vertices[1], vertices[2]),
+            (vertices[2], vertices[0]),
+        ):
+            key = (min(first, second), max(first, second))
+            rows_by_target_edge.setdefault(key, []).append(row)
+    for root_id, root_row in root_rows.items():
+        patch = int(charts.root_patches[root_row])
+        if patch in plane_patches or patch in affine_patches:
+            if root_id in grouped:
+                raise SourceCoverageUnavailable(
+                    "CAD plane mixes source charts.", status="violated"
+                )
+            continue
+        root = _triangle2(charts.root_parameter_chart(root_row))
+        rows = grouped.get(root_id, [])
+        if not rows or sum((abs(_area2(t)) for t in rows), Fraction(0)) != abs(
+            _area2(root)
+        ):
+            raise SourceCoverageUnavailable(
+                "CAD target rows do not cover their root chart.", status="violated"
+            )
+        for first, second in combinations(rows, 2):
+            if _intersection_area(first, second):
+                raise SourceCoverageUnavailable(
+                    "CAD target root rows overlap.", status="violated"
+                )
+
+    for patch in plane_patches | affine_patches:
+        rows = tuple(
+            triangles[row] for row, value in enumerate(patch_rows) if value == patch
+        )
+        plane = planes[patch]
+        if patch in plane_patches:
+            if plane is None or any(
+                witness.source_chart_ids[row] != plane.chart_id
+                for row, value in enumerate(patch_rows)
+                if value == patch
+            ):
+                raise SourceCoverageUnavailable(
+                    "CAD plane mixes source charts.", status="violated"
+                )
+            declared = charts.boundary_source._trim_partition_reference_unchecked(
+                patch, rows, SourcePreparation(domain), plane=True
+            )[0]
+        else:
+            declared = dict(charts.boundary_source.boundary_parameter_triangles())[patch]
+        source_area = sum((abs(_area2(t)) for t in declared), Fraction(0))
+        if (
+            not declared
+            or sum((abs(_area2(t)) for t in rows), Fraction(0)) != source_area
+            or any(
+                sum((_intersection_area(t, root) for root in declared), Fraction(0))
+                != abs(_area2(t))
+                for t in rows
+            )
+            or any(
+                _intersection_area(rows[first], rows[second])
+                for first, second in _possibly_overlapping_pairs(rows, rows, True)
+            )
+        ):
+            raise SourceCoverageUnavailable(
+                "CAD plane rows do not partition the exact plane reference.",
+                status="violated",
+            )
+
+    curve_associations = [
+        value
+        for value in charts.associations
+        if value.association_kind is GeometryAssociationKind.CURVE
+        and value.target_entity_set_id == charts.mesh.entity_set(1).entity_set_id
+    ]
+    vertex_keys: dict[int, _VertexKey] = {}
+    edge_uses: dict[
+        tuple[int, tuple[int, int]],
+        tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse],
+    ] = {}
+    association = witness.cad_curve_association
+    if bindings:
+        if len(curve_associations) != 1 or association is None:
+            raise SourceCoverageUnavailable(
+                "CAD target curve lineage is absent.", status="violated"
+            )
+        original = GeometryAssociationArchiveRecipe.from_association(
+            curve_associations[0]
+        ).restore()
+        association = GeometryAssociationArchiveRecipe.from_association(
+            association
+        ).restore()
+        association.validate_target(mesh.entity_set(1))
+        if (
+            association.provenance is not GeometryAssociationProvenance.LINEAGE
+            or association.parent_association_id != original.association_id
+            or association.source_id != charts.source_id
+            or association.source_revision != charts.source_revision
+        ):
+            raise SourceCoverageUnavailable(
+                "CAD target curve lineage changes its parent.", status="violated"
+            )
+        originals = {
+            int(value): row
+            for row, value in enumerate(np.asarray(original.target_global_ids))
+        }
+        edge_vertices, _ = simplex_volume_entities(mesh)
+        edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+        target_edges = {
+            int(identifier): tuple(int(vertex_ids[int(v)]) for v in edge)
+            for identifier, edge in zip(edge_ids, edge_vertices, strict=True)
+        }
+        parts: dict[int, list[tuple[Fraction, Fraction]]] = {}
+        for index, raw_edge in enumerate(np.asarray(association.target_global_ids)):
+            edge_id = int(raw_edge)
+            parent = int(association.parent_ids[index])
+            old = originals.get(parent)
+            interval = association.source_parameter_intervals[index]
+            if (
+                old is None
+                or parent not in bindings
+                or edge_id not in target_edges
+                or int(association.parent_dimensions[index]) != 1
+                or int(association.source_dimensions[index]) != 1
+                or association.source_roles[index] is not GeometrySourceEntityRole.EDGE
+                or not bool(association.resolved[index])
+                or bool(association.ambiguous[index])
+                or association.source_entity_ids[index] != original.source_entity_ids[old]
+                or int(association.source_indices[index])
+                != int(original.source_indices[old])
+                or association.source_occurrence_paths[index]
+                != original.source_occurrence_paths[old]
+                or interval is None
+                or original.source_parameter_intervals[old] is None
+            ):
+                raise SourceCoverageUnavailable(
+                    "CAD target curve changes root ancestry.", status="violated"
+                )
+            root_interval = original.source_parameter_intervals[old]
+            assert root_interval is not None
+            if not root_interval[0] <= interval[0] < interval[1] <= root_interval[1]:
+                raise SourceCoverageUnavailable(
+                    "CAD target curve interval leaves its root.", status="violated"
+                )
+            parts.setdefault(parent, []).append(interval)
+            binding0 = bindings[parent][0]
+            curve = binding0.curve_row
+            owner_patch, owner_loop, owner_index = domain.curve_owners[curve]
+            owner = domain.patches[owner_patch].loops[owner_loop][owner_index]
+            sense = 1 if owner.last > owner.first else -1
+            direction = int(association.orientations[index]) * sense
+            if direction not in (-1, 1):
+                raise SourceCoverageUnavailable(
+                    "CAD target curve orientation is invalid.", status="violated"
+                )
+            endpoint_parameters = (
+                interval if direction > 0 else (interval[1], interval[0])
+            )
+            endpoints = target_edges[edge_id]
+            for vertex, parameter in zip(endpoints, endpoint_parameters, strict=True):
+                if parameter in (0, 1):
+                    corner = (
+                        domain.curves[curve].start
+                        if parameter == 0
+                        else domain.curves[curve].end
+                    )
+                    key = _cad_corner_key(domain, corner)
+                else:
+                    actual = Fraction.from_float(float(owner.first)) + parameter * (
+                        Fraction.from_float(float(owner.last))
+                        - Fraction.from_float(float(owner.first))
+                    )
+                    key = (
+                        "curve",
+                        domain.entity_id(1, curve),
+                        domain.source_occurrences[1][curve],
+                        actual,
+                    )
+                previous = vertex_keys.setdefault(vertex, key)
+                if previous != key:
+                    raise SourceCoverageUnavailable(
+                        "CAD target vertex changes source occurrence.", status="violated"
+                    )
+            sorted_edge = (min(endpoints), max(endpoints))
+            incident_rows = rows_by_target_edge.get(sorted_edge, ())
+            for row in incident_rows:
+                row_targets = targets[row]
+                matches = [
+                    binding
+                    for binding in bindings[parent]
+                    if (
+                        int(charts.root_patches[root_rows[binding.root_cell_id]])
+                        == patch_rows[row]
+                        and (
+                            binding.root_cell_id == int(roots[row])
+                            or (
+                                roots[row] == -1
+                                and (
+                                    patch_rows[row] in affine_patches
+                                    or patch_rows[row] in plane_patches
+                                )
+                            )
+                        )
+                    )
+                ]
+                if len(matches) > 1 and patch_rows[row] in plane_patches:
+                    plane = planes[patch_rows[row]]
+                    target_slots = tuple(row_targets.index(vertex) for vertex in endpoints)
+                    sided = []
+                    for candidate in matches:
+                        incidence = [
+                            item
+                            for item in root_edges[parent]
+                            if item[0] == candidate.root_cell_id
+                        ]
+                        if len(incidence) != 1:
+                            continue
+                        _, slot, first_uv, last_uv = incidence[0]
+                        first_uv = _cad_pole_lens_endpoint(
+                            charts, patch_rows[row], candidate.loop_index,
+                            candidate.use_index, first_uv, candidate.parameters[0],
+                        )
+                        last_uv = _cad_pole_lens_endpoint(
+                            charts, patch_rows[row], candidate.loop_index,
+                            candidate.use_index, last_uv, candidate.parameters[1],
+                        )
+                        root = charts.root_parameter_chart(root_rows[candidate.root_cell_id])
+                        if _cad_plane_seam_side(
+                            plane,
+                            root,
+                            slot,
+                            (first_uv, last_uv),
+                            triangles[row],
+                            target_slots,
+                            candidate.parameters,
+                            endpoint_parameters,
+                        ):
+                            sided.append(candidate)
+                    matches = sided
+                if len(matches) != 1:
+                    raise SourceCoverageUnavailable(
+                        f"CAD target edge {edge_id} (root {parent}, patch {patch_rows[row]}, "
+                        f"chart {roots[row]}) lacks its root coedge: "
+                        f"{len(matches)} matching occurrences.",
+                        status="violated",
+                    )
+                binding = matches[0]
+                incidence = [
+                    item for item in root_edges[parent] if item[0] == binding.root_cell_id
+                ]
+                if len(incidence) != 1:
+                    raise SourceCoverageUnavailable(
+                        "CAD root edge incidence is ambiguous.", status="violated"
+                    )
+                first_uv, last_uv = incidence[0][2:]
+                if patch_rows[row] in plane_patches:
+                    plane = exact_plane_chart(domain, patch_rows[row])
+                    if plane is None:
+                        raise SourceCoverageUnavailable(
+                            "CAD plane chart authority is missing.", status="violated"
+                        )
+                    first_uv, last_uv = (
+                        plane.chart_point(first_uv),
+                        plane.chart_point(last_uv),
+                    )
+                start, stop = binding.parameters
+                row_uv = dict(zip(row_targets, triangles[row], strict=True))
+                for vertex, parameter in zip(endpoints, endpoint_parameters, strict=True):
+                    t = (parameter - start) / (stop - start)
+                    expected = tuple(
+                        a + t * (b - a) for a, b in zip(first_uv, last_uv, strict=True)
+                    )
+                    if row_uv[vertex] != expected:
+                        raise SourceCoverageUnavailable(
+                            "CAD target endpoint changes its root edge chart.",
+                            status="violated",
+                        )
+                use = domain.patches[patch_rows[row]].loops[binding.loop_index][
+                    binding.use_index
+                ]
+                if not isinstance(use, PatchCurveUse):
+                    raise SourceCoverageUnavailable(
+                        "CAD curve ancestry names a collapsed pole use.",
+                        status="violated",
+                    )
+                source_parameters = tuple(
+                    Fraction.from_float(float(use.first))
+                    + p
+                    * (
+                        Fraction.from_float(float(use.last))
+                        - Fraction.from_float(float(use.first))
+                    )
+                    for p in endpoint_parameters
+                )
+                ordered = (
+                    source_parameters
+                    if endpoints == sorted_edge
+                    else source_parameters[::-1]
+                )
+                edge_uses[(row, sorted_edge)] = (
+                    (domain.entity_id(1, curve), domain.source_occurrences[1][curve]),
+                    ordered[0],
+                    ordered[1],
+                    use,
+                )
+            if not incident_rows:
+                raise SourceCoverageUnavailable(
+                    "CAD target curve edge has no boundary chart incidence.",
+                    status="violated",
+                )
+        for parent in bindings:
+            old = originals[parent]
+            root_interval = original.source_parameter_intervals[old]
+            children = sorted(parts.get(parent, ()))
+            if (
+                root_interval is None
+                or not children
+                or children[0][0] != root_interval[0]
+                or children[-1][1] != root_interval[1]
+                or any(a[1] != b[0] for a, b in zip(children, children[1:]))
+            ):
+                raise SourceCoverageUnavailable(
+                    "CAD target curve intervals do not partition their root.",
+                    status="violated",
+                )
+    elif association is not None:
+        raise SourceCoverageUnavailable(
+            "CAD target curve lineage has no root curves.", status="violated"
+        )
+    for patch, target_ids, triangle in zip(patch_rows, targets, triangles, strict=True):
+        for vertex, point in zip(target_ids, triangle, strict=True):
+            key = vertex_keys.get(vertex)
+            if key is not None and key[0] != "patch":
+                continue
+            interior = (
+                "patch",
+                domain.entity_id(2, patch),
+                domain.source_occurrences[2][patch],
+                point,
+            )
+            if key is not None and key != interior:
+                raise SourceCoverageUnavailable(
+                    "CAD interior vertex changes source chart.", status="violated"
+                )
+            vertex_keys[vertex] = interior
+    return _CadTargetAncestry(vertex_keys, edge_uses)
+
+
+def _cad_validate_coedge_pair(
+    first_use: tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse]
+    | None,
+    second_use: tuple[tuple[str, tuple[str, ...]], Fraction, Fraction, PatchCurveUse]
+    | None,
+    first_region_sign: int,
+    second_region_sign: int,
+    /,
+) -> None:
+    if first_use is None or second_use is None:
+        raise SourceCoverageUnavailable(
+            "CAD seam lacks bound root coedges.", status="violated"
+        )
+    if first_use[:3] != second_use[:3]:
+        raise SourceCoverageUnavailable(
+            "Adjacent CAD charts do not map their shared target edge to the same authored coedge occurrence and traversal.",
+            status="violated",
+        )
+    if (
+        first_region_sign * first_use[3].sense + second_region_sign * second_use[3].sense
+        != 0
+    ):
+        raise SourceCoverageUnavailable(
+            "Adjacent CAD chart coedges do not have opposite material-region traversal.",
+            status="violated",
+        )
+
+
 def _cad_chart_topology_degree(
     domain: MeshingDomain,
     mesh: CellMesh,
@@ -932,6 +1647,7 @@ def _cad_chart_topology_degree(
     face_outward_sign: dict[tuple[int, int], int],
     plane_patches: frozenset[int],
     /,
+    ancestry: _CadTargetAncestry | None = None,
 ) -> tuple[tuple[tuple[int, ...], int, int, int, int, int], ...]:
     """Prove a per-region chart homeomorphism and compute its oriented degree.
 
@@ -1010,15 +1726,24 @@ def _cad_chart_topology_degree(
         row_targets.append((ids[0], ids[1], ids[2]))
         row_uv.append(uv)
         # Plane-chart rows are labelled below, once every curve label is known.
-        row_labels.append(
-            ((), (), ())
-            if patch in plane_patches
-            else (
-                _cad_chart_vertex_key(domain, patch, uv[0]),
-                _cad_chart_vertex_key(domain, patch, uv[1]),
-                _cad_chart_vertex_key(domain, patch, uv[2]),
+        if patch in plane_patches:
+            row_labels.append(((), (), ()))
+        else:
+            labels = tuple(
+                ancestry.vertex_keys.get(
+                    vertex,
+                    (
+                        "patch",
+                        domain.entity_id(2, patch),
+                        domain.source_occurrences[2][patch],
+                        point,
+                    ),
+                )
+                if ancestry is not None
+                else _cad_chart_vertex_key(domain, patch, point)
+                for vertex, point in zip(ids, uv, strict=True)
             )
-        )
+            row_labels.append((labels[0], labels[1], labels[2]))
     if plane_patches:
         curve_rows: dict[tuple[object, object], int] = {
             (domain.entity_id(1, curve), domain.source_occurrences[1][curve]): curve
@@ -1054,6 +1779,14 @@ def _cad_chart_topology_degree(
                 for point in row_uv[row]
             )
             row_labels[row] = (first, second, third)
+            if ancestry is not None:
+                labels = tuple(
+                    ancestry.vertex_keys.get(vertex, label)
+                    for vertex, label in zip(
+                        row_targets[row], row_labels[row], strict=True
+                    )
+                )
+                row_labels[row] = (labels[0], labels[1], labels[2])
 
     target_edges: dict[tuple[int, tuple[int, int]], list[int]] = {}
     source_edges: dict[
@@ -1183,59 +1916,54 @@ def _cad_chart_topology_degree(
                 raise SourceCoverageUnavailable(
                     "Target CAD edge has no paired source chart edge.", status="violated"
                 )
-            if patch_rows[first_row] != patch_rows[second_row]:
+            bound_seam = ancestry is not None and (
+                (first_row, edge) in ancestry.edge_uses
+                or (second_row, edge) in ancestry.edge_uses
+            )
+            if patch_rows[first_row] != patch_rows[second_row] or bound_seam:
                 first_patch, second_patch = patch_rows[first_row], patch_rows[second_row]
                 first_uv = dict(zip(first_targets, row_uv[first_row], strict=True))
                 second_uv = dict(zip(second_targets, row_uv[second_row], strict=True))
-                first_use = (
-                    _cad_plane_curve_use(
-                        domain,
-                        first_patch,
-                        first_labels[endpoints[0]],
-                        first_labels[endpoints[1]],
+                if ancestry is not None:
+                    first_use = ancestry.edge_uses.get((first_row, edge))
+                    second_use = ancestry.edge_uses.get((second_row, edge))
+                else:
+                    first_use = (
+                        _cad_plane_curve_use(
+                            domain,
+                            first_patch,
+                            first_labels[endpoints[0]],
+                            first_labels[endpoints[1]],
+                        )
+                        if first_patch in plane_patches
+                        else _cad_chart_curve_use(
+                            domain,
+                            first_patch,
+                            first_uv[endpoints[0]],
+                            first_uv[endpoints[1]],
+                        )
                     )
-                    if first_patch in plane_patches
-                    else _cad_chart_curve_use(
-                        domain,
-                        first_patch,
-                        first_uv[endpoints[0]],
-                        first_uv[endpoints[1]],
+                    second_use = (
+                        _cad_plane_curve_use(
+                            domain,
+                            second_patch,
+                            second_labels[endpoints[0]],
+                            second_labels[endpoints[1]],
+                        )
+                        if second_patch in plane_patches
+                        else _cad_chart_curve_use(
+                            domain,
+                            second_patch,
+                            second_uv[endpoints[0]],
+                            second_uv[endpoints[1]],
+                        )
                     )
+                _cad_validate_coedge_pair(
+                    first_use,
+                    second_use,
+                    dict(signs_by_patch[first_patch]).get(region, 0),
+                    dict(signs_by_patch[second_patch]).get(region, 0),
                 )
-                second_use = (
-                    _cad_plane_curve_use(
-                        domain,
-                        second_patch,
-                        second_labels[endpoints[0]],
-                        second_labels[endpoints[1]],
-                    )
-                    if second_patch in plane_patches
-                    else _cad_chart_curve_use(
-                        domain,
-                        second_patch,
-                        second_uv[endpoints[0]],
-                        second_uv[endpoints[1]],
-                    )
-                )
-                if first_use[0] != second_use[0] or (first_use[1], first_use[2]) != (
-                    second_use[1],
-                    second_use[2],
-                ):
-                    raise SourceCoverageUnavailable(
-                        "Adjacent CAD charts do not map their shared target edge to the same authored coedge occurrence and traversal.",
-                        status="violated",
-                    )
-                first_region_sign = dict(signs_by_patch[first_patch]).get(region, 0)
-                second_region_sign = dict(signs_by_patch[second_patch]).get(region, 0)
-                if (
-                    first_region_sign * first_use[3].sense
-                    + second_region_sign * second_use[3].sense
-                    != 0
-                ):
-                    raise SourceCoverageUnavailable(
-                        "Adjacent CAD chart coedges do not have opposite material-region traversal.",
-                        status="violated",
-                    )
         for edge, owners in region_source_edges.items():
             if len(owners) != 2 or sum(sign for _, sign in owners) != 0:
                 raise SourceCoverageUnavailable(
@@ -1379,7 +2107,16 @@ def _cad_chart_partition(
             status="violated",
         )
     pairs, signs_by_patch = cad_material_sides(domain)
-    declared_by_patch = dict(source.boundary_parameter_triangles())
+    rooted = False
+    try:
+        declared_by_patch = dict(source.boundary_parameter_triangles())
+    except (ArithmeticError, NotImplementedError, ValueError):
+        if witness.cad_plc is None:
+            raise
+        # An uncertain source root is not an exact trim vertex. The retained
+        # source charts must instead supply the independent rooted proof below.
+        declared_by_patch = {}
+        rooted = True
     targets_by_patch: dict[int, list[_Triangle2]] = {}
     plane_by_patch: dict[int, bool] = {}
     patch_rows: list[int] = []
@@ -1420,8 +2157,33 @@ def _cad_chart_partition(
             "CAD boundary chart witness omits or adds an authored source patch.",
             status="violated",
         )
+    ancestry = None
+    if rooted:
+        from .brep._source_shell_admissibility import certify_single_source_shell
+
+        plc = witness.cad_plc
+        if (
+            plc is None
+            or plc.cad_source_charts is None
+            or plc.cad_fidelity_tolerance is None
+        ):
+            raise SourceCoverageUnavailable(
+                "Rooted CAD coverage requires retained source charts and fidelity premises.",
+                status="unresolved",
+            )
+        ancestry = _cad_target_root_partition(
+            domain, mesh, witness, patch_rows, plc.cad_fidelity_tolerance
+        )
+        if (
+            certify_single_source_shell(plc.cad_source_charts, plc.cad_fidelity_tolerance)
+            is None
+        ):
+            raise SourceCoverageUnavailable(
+                "Rooted CAD source shell embedding or material orientation remains unresolved.",
+                status="unresolved",
+            )
     preparation = SourcePreparation(source.domain)
-    for patch, plane in plane_by_patch.items():
+    for patch, plane in () if rooted else plane_by_patch.items():
         if plane:
             # A curved plane-chart trim is referenced by the target's boundary
             # chords, each separated from its source arc by a certified lens.
@@ -1429,7 +2191,7 @@ def _cad_chart_partition(
                 patch, tuple(targets_by_patch[patch]), preparation, plane=True
             )[0]
     plane_patches = frozenset(patch for patch, plane in plane_by_patch.items() if plane)
-    for patch in source.patches:
+    for patch in () if rooted else source.patches:
         declared = tuple(declared_by_patch[patch])
         target = tuple(targets_by_patch.get(patch, ()))
         if patch not in plane_patches:
@@ -1546,6 +2308,7 @@ def _cad_chart_partition(
         cell_region,
         face_outward_sign,
         plane_patches,
+        ancestry,
     )
     degrees = tuple(
         canonical_fingerprint(
@@ -1577,7 +2340,14 @@ def _cad_chart_partition(
         )
         for region_row in range(len(domain.regions))
     )
-    return sum(len(triangles) for triangles in declared_by_patch.values()), degrees
+    count = (
+        len(witness.cad_plc.cad_source_charts.cell_global_ids)
+        if rooted
+        and witness.cad_plc is not None
+        and witness.cad_plc.cad_source_charts is not None
+        else sum(len(triangles) for triangles in declared_by_patch.values())
+    )
+    return count, degrees
 
 
 def _same_domain(first: MeshingDomain, second: MeshingDomain, /) -> bool:

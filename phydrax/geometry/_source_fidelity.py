@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
+from itertools import product
 from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
 import numpy as np
@@ -240,6 +241,47 @@ def _screened_intersection_areas(
             )
         else:
             yield left, right, _intersection_area(first[left], second[right])
+
+
+def _same_triangle_chain_boundary(
+    first: tuple[Triangle2, ...], second: tuple[Triangle2, ...], /
+) -> bool:
+    """Compare exact oriented boundaries, allowing collinear edge subdivision.
+
+    Each nondegenerate triangle is oriented positively. A directed edge adds
+    signed endpoint events on its exact supporting line; equal event banks
+    therefore mean equal boundary currents, including coincident partial edges.
+    Equal compactly supported planar 2-chains then have equal multiplicity
+    almost everywhere. The caller independently checks both partitions for
+    positive-area overlap.
+    """
+    events: dict[tuple[bool, Fraction, Fraction, Fraction], int] = {}
+    for triangles, chain_sign in ((first, 1), (second, -1)):
+        for triangle in triangles:
+            area = _area2(triangle)
+            if not area:
+                continue
+            orientation = chain_sign if area > 0 else -chain_sign
+            for start, stop in zip(
+                triangle, triangle[1:] + triangle[:1], strict=True
+            ):
+                dx = stop[0] - start[0]
+                dy = stop[1] - start[1]
+                if dx:
+                    slope = dy / dx
+                    line = (False, slope, start[1] - slope * start[0])
+                    lower, upper = sorted((start[0], stop[0]))
+                    direction = orientation if dx > 0 else -orientation
+                elif dy:
+                    line = (True, start[0], Fraction(0))
+                    lower, upper = sorted((start[1], stop[1]))
+                    direction = orientation if dy > 0 else -orientation
+                else:
+                    continue
+                for position, delta in ((lower, direction), (upper, -direction)):
+                    key = (*line, position)
+                    events[key] = events.get(key, 0) + delta
+    return not any(events.values())
 
 
 def _surface_source_chart_rows(
@@ -572,15 +614,17 @@ def _partition_findings(
                 target, target, self_pairs=True
             )
         )
-        target_covered = [Fraction(0) for _ in target]
-        for target_row, _, area in _screened_intersection_areas(
-            target, declared, self_pairs=False
-        ):
-            target_covered[target_row] += area
-        target_outside = any(
-            covered != area
-            for covered, area in zip(target_covered, target_areas, strict=True)
-        )
+        target_outside = False
+        if not source_overlap and not _same_triangle_chain_boundary(declared, target):
+            target_covered = [Fraction(0) for _ in target]
+            for target_row, _, area in _screened_intersection_areas(
+                target, declared, self_pairs=False
+            ):
+                target_covered[target_row] += area
+            target_outside = any(
+                covered != area
+                for covered, area in zip(target_covered, target_areas, strict=True)
+            )
         if source_overlap:
             findings.append(
                 MeshCertificateFinding(
@@ -1160,11 +1204,27 @@ def _validate_source_fidelity_witness(
         orientations=np.asarray(witness.orientations),
         implicit_cell_keys=np.asarray(witness.implicit_cell_keys),
         implicit_root_edge_keys=np.asarray(witness.implicit_root_edge_keys),
+        cad_plc=witness.cad_plc,
+        cad_curve_association=witness.cad_curve_association,
+        cad_root_cell_ids=witness.cad_root_cell_ids,
     )
     if renewed.witness_id != witness.witness_id:
         raise ValueError(
             "Source chart witness identity does not reproduce its current arrays."
         )
+    if witness.cad_plc is not None:
+        from ._surface_source_support import _same_tree_content
+
+        charts = witness.cad_plc.cad_source_charts
+        if (
+            not isinstance(source, MeshingDomainBoundarySource)
+            or not _same_tree_content(source.domain, charts.domain)
+            or not set(source.patches).issubset(charts.boundary_source.patches)
+        ):
+            raise ValueError("CAD witness source query must retain its PLC domain and scope.")
+        source.require_current()
+        if witness.cad_curve_association is not None:
+            witness.cad_curve_association.validate_target(mesh.entity_set(1))
 
     if isinstance(source, MappedReferenceBoundarySource):
         if witness.source_query_id != source.query_id:
@@ -4710,17 +4770,35 @@ def _curved_trim_lens_caps(
 ) -> dict[int, Fraction]:
     """Bound the physical distance a curved-trim lens adds to each target cell."""
     caps: dict[int, Fraction] = {}
-    for lens in lenses:
-        cap, lower, upper = _curved_trim_lens_cap(surface, lens, preparation)
-        if cap == 0:
-            continue
-        for cell_id, chart in chart_rows:
-            if all(
-                min(point[axis] for point in chart) <= upper[axis]
-                and max(point[axis] for point in chart) >= lower[axis]
-                for axis in range(2)
-            ):
-                caps[cell_id] = max(caps.get(cell_id, Fraction(0)), cap)
+    active = tuple(
+        (cap, lower, upper)
+        for lens in lenses
+        for cap, lower, upper in (_curved_trim_lens_cap(surface, lens, preparation),)
+        if cap
+    )
+    if not active or not chart_rows:
+        return caps
+    charts = tuple(chart for _, chart in chart_rows)
+    lens_boxes = polygon_boxes(tuple((lower, upper) for _, lower, upper in active))
+    chart_boxes = polygon_boxes(charts)
+    if lens_boxes is None or chart_boxes is None:
+        pairs = product(range(len(active)), range(len(charts)))
+    else:
+        pairs = (
+            (int(lens_row), int(chart_row))
+            for lens_row, chart_row in box_overlap_pairs(
+                len(active), len(charts), lens_boxes, chart_boxes, self_pairs=False
+            )
+        )
+    for lens_row, chart_row in pairs:
+        cap, lower, upper = active[lens_row]
+        cell_id, chart = chart_rows[chart_row]
+        if all(
+            min(point[axis] for point in chart) <= upper[axis]
+            and max(point[axis] for point in chart) >= lower[axis]
+            for axis in range(2)
+        ):
+            caps[cell_id] = max(caps.get(cell_id, Fraction(0)), cap)
     return caps
 
 

@@ -493,6 +493,11 @@ def _restore_local_record(
         rebuilt = owner(*(fields[key] for key in names if key != identity))
     elif name == "SourceBoundaryChartWitness":
         identity = "witness_id"
+        if fields["cad_plc"] is not None:
+            from ._model_codec import restore_model_archive_value
+
+            fields = dict(fields)
+            fields["cad_plc"] = restore_model_archive_value(fields["cad_plc"])
         rebuilt = owner(
             **{key: value for key, value in fields.items() if key != identity}
         )

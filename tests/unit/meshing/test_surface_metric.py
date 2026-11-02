@@ -141,6 +141,58 @@ def _trimmed_sheet() -> tuple[MeshingDomain, CellMeshingResult]:
     return domain, source
 
 
+def test_surface_metric_transports_exact_boundary_occurrences(
+    _trimmed_sheet: tuple[MeshingDomain, CellMeshingResult],
+) -> None:
+    from fractions import Fraction
+
+    from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
+    from phydrax.meshing._surface_metric import _target_boundary_occurrences
+
+    _, source = _trimmed_sheet
+    charts = source.surface_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    populated = np.flatnonzero(np.any(charts.boundary_occurrences >= 0, axis=(1, 2)))
+    assert populated.size
+    row = int(populated[0])
+    parent = charts.root_parameter_chart(row)
+    half = Fraction(1, 2)
+    reference = ((Fraction(0), Fraction(0)), (half, Fraction(0)), (Fraction(0), half))
+    child = (
+        parent[0],
+        tuple((parent[0][axis] + parent[1][axis]) / 2 for axis in range(2)),
+        tuple((parent[0][axis] + parent[2][axis]) / 2 for axis in range(2)),
+    )
+    mapping = ReferenceCellMapWitnesses(
+        np.asarray((123,), dtype=np.int64),
+        np.asarray((charts.cell_global_ids[row],), dtype=np.int64),
+        "triangle",
+        "triangle",
+        np.asarray([reference], dtype=np.float64),
+        (reference,),
+    )
+    occurrences = _target_boundary_occurrences(
+        charts,
+        np.asarray((123,), dtype=np.int64),
+        np.asarray((int(charts.root_patches[row]),), dtype=np.int64),
+        (child,),
+        (mapping,),
+    )
+    assert occurrences is not None
+    np.testing.assert_array_equal(occurrences[0, 0], (-1, -1, -1))
+    np.testing.assert_array_equal(
+        occurrences[0, 1:], charts.boundary_occurrences[row, 1:]
+    )
+    with pytest.raises(ValueError, match="omits target cells"):
+        _target_boundary_occurrences(
+            charts,
+            np.asarray((123,), dtype=np.int64),
+            np.asarray((int(charts.root_patches[row]),), dtype=np.int64),
+            (child,),
+            (),
+        )
+
+
 def _closed_brep_surface(
     family: str, /
 ) -> tuple[MeshingDomain, CellMesh, SurfaceSourceCharts]:

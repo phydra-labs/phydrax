@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+from dataclasses import replace
 from fractions import Fraction
 from itertools import combinations
 from pathlib import Path
+from typing import Any
 
+import equinox as eqx
 import numpy as np
 import pytest
 
@@ -35,6 +40,7 @@ from phydrax.geometry.brep._projection_contracts import brep_entity_id
 from phydrax.meshing._association import (
     GeometryAssociation,
     GeometryAssociationKind,
+    GeometryAssociationProvenance,
     GeometrySourceEntityRole,
 )
 from phydrax.meshing._contracts import (
@@ -49,11 +55,14 @@ from phydrax.meshing._controls import (
     RegionControl,
     RegionSeed,
 )
+from phydrax.meshing._model_codec import write_model_artifact
+from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import UniformSizeControl
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
+from phydrax.meshing.providers import _native_cad_volume as cad_volume
 from phydrax.meshing.providers._native_cad_volume import (
     NativeCadVolumeSource,
     prepare_native_cad_volume,
@@ -158,6 +167,10 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
             )
     source_curve_by_vertex_pair: dict[tuple[int, int], int] = {}
     source_edge_vertices = np.asarray(model.geometry.edge_vertices, dtype=np.int64)
+    curve_row_by_source = {
+        int(source_index): row
+        for row, source_index in enumerate(domain.source_indices[1])
+    }
     for edge, vertices in enumerate(source_edge_vertices.tolist()):
         first_vertex, second_vertex = int(vertices[0]), int(vertices[1])
         source_curve_by_vertex_pair[
@@ -237,8 +250,17 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
             edge_paths.append(curve_path)
             first_parameter = curve_parameter(first, int(curve_index))
             second_parameter = curve_parameter(second, int(curve_index))
-            first_exact = Fraction.from_float(first_parameter)
-            second_exact = Fraction.from_float(second_parameter)
+            curve_row = curve_row_by_source[int(curve_index)]
+            patch, loop, position = domain.curve_owners[curve_row]
+            owner = domain.patches[patch].loops[loop][position]
+            owner_first = Fraction.from_float(float(owner.first))
+            owner_last = Fraction.from_float(float(owner.last))
+            first_exact = (Fraction.from_float(first_parameter) - owner_first) / (
+                owner_last - owner_first
+            )
+            second_exact = (Fraction.from_float(second_parameter) - owner_first) / (
+                owner_last - owner_first
+            )
             edge_parameter_intervals.append(
                 (first_exact, second_exact)
                 if first_exact < second_exact
@@ -412,7 +434,359 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
     return domain, surface
 
 
+def test_exact_plane_trim_does_not_use_authored_chart_junctions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _domain_boundary
+
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
+    )
+    patch, plane = next(
+        (patch, chart)
+        for patch in range(len(domain.patches))
+        if (chart := exact_plane_chart(domain, patch)) is not None
+    )
+
+    def reject_authored(*args: object) -> None:
+        raise AssertionError("Alternate chart must not inspect authored UV roots.")
+
+    monkeypatch.setattr(_domain_boundary, "_rooted_patch_chart_junctions", reject_authored)
+    assert _domain_boundary._patch_chart_polygon(
+        domain, patch, trim_loops=plane.loops
+    ) is not None
+    with pytest.raises(AssertionError, match="authored UV roots"):
+        _domain_boundary._patch_chart_polygon(domain, patch)
+
+
+def test_cad_pole_lens_uses_exact_collapsed_corner_only() -> None:
+    from types import SimpleNamespace
+
+    from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
+    from phydrax.geometry._meshing_domain import PatchCurveUse, PatchPoleUse
+    from phydrax.geometry._surface_source_support import _cad_pole_lens_endpoint
+    from phydrax.geometry.brep._source_shell_admissibility import _single_shell_topology
+
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
+    )
+    assert _single_shell_topology(domain.brep_authority, domain)
+    charts = SimpleNamespace(domain=domain)
+    for patch, surface in enumerate(domain.patches):
+        for loop_index, uses in enumerate(surface.loops):
+            for index, use in enumerate(uses):
+                if not isinstance(use, PatchCurveUse):
+                    continue
+                previous = (index - 1) % len(uses)
+                if not isinstance(uses[previous], PatchPoleUse):
+                    continue
+                endpoints = _rooted_patch_chart_endpoints(domain, patch)[loop_index]
+                start, stop = endpoints[previous]
+                midpoint = ((start[0] + stop[0]) / 2, (start[1] + stop[1]) / 2)
+                parameter = Fraction(0 if use.sense > 0 else 1)
+                junction = endpoints[index][0]
+                assert _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, index, midpoint, parameter
+                ) == junction
+                off_side = (midpoint[0], midpoint[1] + 1)
+                assert _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, index, off_side, parameter
+                ) == off_side
+                assert _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, index, midpoint, Fraction(1, 2)
+                ) == midpoint
+                return
+    pytest.fail("Cylinder has no regular coedge following a pole side.")
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_cad_plane_seam_side_uses_oriented_source_chart(reverse: bool) -> None:
+    from phydrax.geometry._domain_boundary import ExactPlaneChart, _TURN
+    from phydrax.geometry._surface_source_support import _cad_plane_seam_side
+
+    zero, one, two = Fraction(0), Fraction(1), Fraction(2)
+    turn = Fraction.from_float(_TURN)
+    plane = ExactPlaneChart(
+        "plane", (zero, zero, zero), (one, zero, zero), (zero, one, zero),
+        (), zero, 1,
+    )
+    target = ((one, zero), (two, zero), (one, -one))
+    edge = (1, 0) if reverse else (0, 1)
+    parameters = (one, zero) if reverse else (zero, one)
+    for angle, interior, expected in ((zero, one, True), (turn, turn - one, False)):
+        root = ((interior, one), (angle, one), (angle, two))
+        assert _cad_plane_seam_side(
+            plane, root, 0, (root[1], root[2]), target, edge,
+            (zero, one), parameters,
+        ) is expected
+    other_side = ((one, zero), (two, zero), (one, one))
+    root = ((turn - one, one), (turn, one), (turn, two))
+    assert _cad_plane_seam_side(
+        plane, root, 0, (root[1], root[2]), other_side, edge,
+        (zero, one), parameters,
+    )
+    pole_root = ((one, one), (zero, zero), (zero, one))
+    pole_target = ((zero, zero), (one, zero), (one, -one))
+    assert _cad_plane_seam_side(
+        plane, pole_root, 0, (pole_root[1], pole_root[2]), pole_target, edge,
+        (zero, one), parameters,
+    )
+
+
+def test_cad_pole_fan_interior_edge_requires_exact_common_fiber() -> None:
+    from types import SimpleNamespace
+
+    from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
+    from phydrax.geometry._meshing_domain import PatchPoleUse
+    from phydrax.geometry._surface_source_support import (
+        _validate_cad_chart_edge_incidence,
+    )
+
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
+    )
+    for patch, surface in enumerate(domain.patches):
+        for loop_index, loop in enumerate(surface.loops):
+            for use_index, use in enumerate(loop):
+                if not isinstance(use, PatchPoleUse):
+                    continue
+                start, stop = _rooted_patch_chart_endpoints(domain, patch)[loop_index][
+                    use_index
+                ]
+                one = ((2 * start[0] + stop[0]) / 3, (2 * start[1] + stop[1]) / 3)
+                two = ((start[0] + 2 * stop[0]) / 3, (start[1] + 2 * stop[1]) / 3)
+                apex = (one[0], one[1] + 1)
+                charts = SimpleNamespace(
+                    domain=domain,
+                    cell_global_ids=(10, 11),
+                    root_patches=np.asarray((patch, patch)),
+                    boundary_occurrences=np.full((2, 3, 3), -1),
+                )
+                adjacent = {1: ((10, 0, one, apex), (11, 0, two, apex))}
+                _validate_cad_chart_edge_incidence(charts, adjacent, set())
+                forged = {
+                    1: ((10, 0, one, apex), (11, 0, (two[0], two[1] + 1), apex))
+                }
+                with pytest.raises(ValueError, match="unbound or unproved"):
+                    _validate_cad_chart_edge_incidence(charts, forged, set())
+                return
+    pytest.fail("Cylinder has no pole side.")
+
+
+def test_cad_periodic_coedge_pair_requires_both_occurrences_and_opposite_sense() -> None:
+    from fractions import Fraction
+    from types import SimpleNamespace
+
+    from phydrax.geometry._approximate_source_coverage import (
+        _cad_validate_coedge_pair,
+        SourceCoverageUnavailable,
+    )
+
+    curve = ("curve", ("instance",))
+    first = (curve, Fraction(0), Fraction(1, 2), SimpleNamespace(sense=1))
+    opposite = (curve, Fraction(0), Fraction(1, 2), SimpleNamespace(sense=-1))
+    _cad_validate_coedge_pair(first, opposite, 1, 1)
+    with pytest.raises(SourceCoverageUnavailable, match="lacks bound"):
+        _cad_validate_coedge_pair(first, None, 1, 1)
+    with pytest.raises(SourceCoverageUnavailable, match="same authored"):
+        _cad_validate_coedge_pair(
+            first, (curve, Fraction(0), Fraction(1, 3), opposite[3]), 1, 1
+        )
+    with pytest.raises(SourceCoverageUnavailable, match="opposite"):
+        _cad_validate_coedge_pair(first, first, 1, 1)
+
+
+def test_cad_root_curve_ancestry_replays_complete_source_chains() -> None:
+    from phydrax.geometry._surface_source_support import validate_cad_curve_ancestry
+
+    domain, surface = _cad_surface()
+    charts = surface.surface_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    bindings = validate_cad_curve_ancestry(charts, 0.1)
+    assert bindings
+    assert {binding.curve_row for rows in bindings.values() for binding in rows} == set(
+        range(len(domain.curves))
+    )
+
+
+def test_cad_trim_homotopy_replays_box_root_chains() -> None:
+    from phydrax.geometry._approximate_source_coverage import _cad_trim_reference_loops
+    from phydrax.geometry._meshing_domain import SourcePreparation
+    from phydrax.geometry._surface_source_support import validate_cad_curve_ancestry
+    from phydrax.geometry.brep._curve_approximation_topology import (
+        certify_trim_reference_homotopy,
+    )
+
+    domain, surface = _cad_surface()
+    charts = surface.surface_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    bindings = validate_cad_curve_ancestry(charts, 0.1)
+    preparation = SourcePreparation(domain)
+    for patch in range(len(domain.patches)):
+        loops = _cad_trim_reference_loops(charts, bindings, patch)
+        assert certify_trim_reference_homotopy(loops, preparation)
+
+
+def _assert_curve_ancestry(
+    source: NativeCadVolumeSource, construction: NativeMeshConstruction, *, fixed: bool
+) -> None:
+    witness = construction.certification.fidelity_witness
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    assert witness.cad_plc is source.plc_source.complex
+    roots = np.asarray(witness.cad_root_cell_ids, dtype=np.int64)
+    assert roots.shape == np.asarray(witness.entity_global_ids).shape
+    assert set(roots.tolist()).issubset({-1, *source.surface_source.cell_global_ids})
+    association = witness.cad_curve_association
+    assert association is not None
+    assert association.association_kind is GeometryAssociationKind.CURVE
+    assert (
+        association.target_entity_set_id == construction.mesh.entity_set(1).entity_set_id
+    )
+    assert any(
+        value.association_id == association.association_id
+        for value in construction.organization.associations
+    )
+    (brep_edges,) = tuple(
+        value
+        for value in construction.organization.associations
+        if value.association_kind is GeometryAssociationKind.BREP
+        and value.target_entity_set_id == association.target_entity_set_id
+    )
+    brep_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(brep_edges.target_global_ids))
+    }
+    for row, identifier in enumerate(np.asarray(association.target_global_ids)):
+        brep_row = brep_rows[int(identifier)]
+        assert (
+            brep_edges.source_entity_ids[brep_row] == association.source_entity_ids[row]
+        )
+        assert (
+            brep_edges.source_occurrence_paths[brep_row]
+            == association.source_occurrence_paths[row]
+        )
+        assert int(brep_edges.orientations[brep_row]) == int(
+            association.orientations[row]
+        )
+    (original,) = tuple(
+        value
+        for value in source.surface.associations
+        if value.association_kind is GeometryAssociationKind.CURVE
+        and value.target_entity_set_id == source.surface.mesh.entity_set(1).entity_set_id
+    )
+    assert association.provenance is GeometryAssociationProvenance.LINEAGE
+    assert association.parent_association_id == original.association_id
+    assert np.all(np.asarray(association.parent_dimensions, dtype=np.int64) == 1)
+    original_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(original.target_global_ids))
+    }
+    for row, parent_id in enumerate(np.asarray(association.parent_ids)):
+        parent_row = original_rows[int(parent_id)]
+        parent_interval = original.source_parameter_intervals[parent_row]
+        interval = association.source_parameter_intervals[row]
+        assert parent_interval is not None and interval is not None
+        assert parent_interval[0] <= interval[0] < interval[1] <= parent_interval[1]
+        assert (
+            association.source_entity_ids[row] == original.source_entity_ids[parent_row]
+        )
+        assert (
+            association.source_occurrence_paths[row]
+            == original.source_occurrence_paths[parent_row]
+        )
+    source_intervals = tuple(
+        zip(
+            original.source_entity_ids,
+            original.source_occurrence_paths,
+            original.source_parameter_intervals,
+            strict=True,
+        )
+    )
+    target_intervals = tuple(
+        zip(
+            association.source_entity_ids,
+            association.source_occurrence_paths,
+            association.source_parameter_intervals,
+            strict=True,
+        )
+    )
+    assert set(np.asarray(association.orientations).tolist()).issubset({-1, 1})
+    matched = 0
+    for entity_id, path, root in source_intervals:
+        assert root is not None
+        children = sorted(
+            interval
+            for child_id, child_path, interval in target_intervals
+            if child_id == entity_id
+            and child_path == path
+            and interval is not None
+            and root[0] <= interval[0] < interval[1] <= root[1]
+        )
+        assert children
+        assert children[0][0] == root[0]
+        assert children[-1][1] == root[1]
+        assert all(first[1] == second[0] for first, second in zip(children, children[1:]))
+        if fixed:
+            assert children == [root]
+        matched += len(children)
+    assert matched == len(target_intervals)
+    original_connectivity = source.surface.mesh.connectivity
+    target_connectivity = construction.mesh.connectivity
+    assert isinstance(original_connectivity, PolygonalConnectivity)
+    assert isinstance(target_connectivity, SimplicialConnectivity)
+    original_edges = np.asarray(original_connectivity.edges, dtype=np.int64)
+    target_edges = np.asarray(target_connectivity.entities[1], dtype=np.int64)
+    original_edge_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(source.surface.mesh.entity_set(1).entity_ids)
+    }
+    target_edge_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(construction.mesh.entity_set(1).entity_ids)
+    }
+    original_points = np.asarray(source.surface.mesh.coordinates)
+    target_points = np.asarray(construction.mesh.coordinates)
+    original_orientations = np.asarray(original.orientations, dtype=np.int8)
+    target_orientations = np.asarray(association.orientations, dtype=np.int8)
+    for row, (entity_id, path, interval) in enumerate(target_intervals):
+        assert interval is not None
+        parents = [
+            parent
+            for parent, (source_id, source_path, root) in enumerate(source_intervals)
+            if source_id == entity_id
+            and source_path == path
+            and root is not None
+            and root[0] <= interval[0] < interval[1] <= root[1]
+        ]
+        assert len(parents) == 1
+        parent = parents[0]
+        original_row = original_edge_rows[int(original.target_global_ids[parent])]
+        target_row = target_edge_rows[int(association.target_global_ids[row])]
+        original_vertices = original_points[original_edges[original_row]]
+        target_vertices = target_points[target_edges[target_row]]
+        direction = float(
+            np.dot(
+                original_vertices[1] - original_vertices[0],
+                target_vertices[1] - target_vertices[0],
+            )
+        )
+        assert (
+            direction * int(original_orientations[parent]) * int(target_orientations[row])
+            > 0
+        )
+
+
 def test_quadric_boundary_meets_fixed_tetrahedral_face_quality(tmp_path: Path) -> None:
+    from phydrax.geometry._approximate_source_coverage import _cad_trim_reference_loops
+    from phydrax.geometry._meshing_domain import SourcePreparation
+    from phydrax.geometry._surface_source_support import validate_cad_curve_ancestry
+    from phydrax.geometry.brep._curve_approximation_topology import (
+        certify_trim_reference_homotopy,
+    )
+    from phydrax.geometry.brep._source_embedding import certify_cad_trim_sheet
+    from phydrax.geometry.brep._source_shell_admissibility import (
+        certify_single_source_shell,
+    )
     from tools.meshing_qualification.scenarios.native_cad_profiles import _quadric_case
 
     model, _, _, _ = _quadric_case("iges", tmp_path)
@@ -441,6 +815,17 @@ def test_quadric_boundary_meets_fixed_tetrahedral_face_quality(tmp_path: Path) -
         .execute()
     )
     assert result.compliance.passed
+    assert isinstance(result.surface_source, SurfaceSourceCharts)
+    curve_ancestry = validate_cad_curve_ancestry(result.surface_source, deviation)
+    assert curve_ancestry
+    preparation = SourcePreparation(domain)
+    for patch in range(len(domain.patches)):
+        assert certify_cad_trim_sheet(result.surface_source, patch, deviation) is not None
+        assert certify_trim_reference_homotopy(
+            _cad_trim_reference_loops(result.surface_source, curve_ancestry, patch),
+            preparation,
+        )
+    assert certify_single_source_shell(result.surface_source, deviation) is not None
     coordinates = np.asarray(result.mesh.coordinates, dtype=np.float64)
     triangles = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int64) for block in result.mesh.blocks)
@@ -462,7 +847,9 @@ def test_quadric_boundary_meets_fixed_tetrahedral_face_quality(tmp_path: Path) -
     )
 
 
-def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() -> None:
+def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance(
+    tmp_path: Path,
+) -> None:
     contract = phx.SpatialCoordinateContract.si()
     domain, surface = _cad_surface()
     source = NativeCadVolumeSource(
@@ -490,6 +877,10 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() ->
         )
     assert source.plc_source.complex.boundary == "fixed"
     assert source.plc_source.complex.geometry is None
+    assert source.plc_source.complex.cad_source_charts is source.surface_source
+    assert source.plc_source.complex.cad_embedding.status == "certified"
+    assert source.plc_source.complex.cad_fidelity.status == "certified"
+    assert source.plc_source.complex.cad_fidelity_tolerance == 0.1
     assert source.plc_source.complex.region_ids == tuple(
         domain.entity_id(3, row) for row in range(len(domain.regions))
     )
@@ -624,6 +1015,75 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() ->
     assert isinstance(witness, SourceBoundaryChartWitness)
     assert witness.source_query_id == fidelity_source.source_scope_id
     witness.require_current(construction.mesh, construction.geometry, fidelity_source)
+    from phydrax.geometry._approximate_source_coverage import (
+        _cad_target_root_partition,
+        SourceCoverageUnavailable,
+    )
+
+    patch_rows = [
+        domain.resolve_entity_id(2, entity, occurrence_path=path)
+        for entity, path in zip(
+            witness.source_entity_ids, witness.occurrence_paths, strict=True
+        )
+    ]
+    ancestry = _cad_target_root_partition(
+        domain, construction.mesh, witness, patch_rows, 0.05
+    )
+    assert ancestry.vertex_keys
+    assert ancestry.edge_uses
+    roots = np.asarray(witness.cad_root_cell_ids, dtype=np.int64).copy()
+    first = next(row for row, root in enumerate(roots) if root >= 0)
+    second = next(
+        row for row, root in enumerate(roots) if root >= 0 and root != roots[first]
+    )
+    roots[first], roots[second] = roots[second], roots[first]
+    reordered = eqx.tree_at(lambda value: value.cad_root_cell_ids, witness, roots)
+    with pytest.raises(SourceCoverageUnavailable):
+        _cad_target_root_partition(domain, construction.mesh, reordered, patch_rows, 0.05)
+    with pytest.raises(ValueError):
+        reordered.require_current(
+            construction.mesh, construction.geometry, fidelity_source
+        )
+    curve_association = witness.cad_curve_association
+    assert curve_association is not None
+    changed_curve = eqx.tree_at(
+        lambda value: value.orientations,
+        curve_association,
+        -curve_association.orientations,
+    )
+    changed_witness = eqx.tree_at(
+        lambda value: value.cad_curve_association, witness, changed_curve
+    )
+    with pytest.raises((SourceCoverageUnavailable, ValueError)):
+        _cad_target_root_partition(
+            domain, construction.mesh, changed_witness, patch_rows, 0.05
+        )
+    with pytest.raises(ValueError):
+        changed_witness.require_current(
+            construction.mesh, construction.geometry, fidelity_source
+        )
+    _assert_curve_ancestry(source, construction, fixed=True)
+    archive_path = tmp_path / "cad-chart-witness.phx"
+    write_model_artifact(archive_path, witness, limits=None)
+    worker = (
+        Path(__file__).resolve().parents[1]
+        / "interchange"
+        / "_native_cad_archive_worker.py"
+    )
+    restored = subprocess.run(
+        [
+            sys.executable,
+            str(worker),
+            "read-cad-chart-witness",
+            str(archive_path),
+            witness.witness_id,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert restored.returncode == 0, restored.stderr
+    assert "cad-chart-witness-cold-restored" in restored.stdout
     assert (
         construction.certification.protected_features == specification.protected_features
     )
@@ -682,7 +1142,8 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() ->
     )
     assert construction.organization.associations
     assert all(
-        association.association_kind is GeometryAssociationKind.BREP
+        association.association_kind
+        in (GeometryAssociationKind.BREP, GeometryAssociationKind.CURVE)
         for association in construction.organization.associations
     )
     complex_ = source.plc_source.complex
@@ -699,6 +1160,7 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() ->
         association
         for association in construction.organization.associations
         if association.target_entity_set_id == edge_entity_set_id
+        and association.association_kind is GeometryAssociationKind.BREP
     )
     if len(edge_associations) != 1:
         raise AssertionError("CAD volume must publish one BRep edge association.")
@@ -801,9 +1263,9 @@ def test_native_cad_region_control_identity_is_preserved_in_boundary_evidence() 
     )
 
 
-def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnesses() -> (
-    None
-):
+def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnesses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Each planar box face is a declared exact plane: conforming refinement
     # places facet split points on it (TetMesh witness stratum 3), and the
     # chart witness maps every boundary vertex through the patch's one exact
@@ -839,6 +1301,15 @@ def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnes
         ),
         maximum_deviation=0.05,
     )
+    generated = []
+    generate = cad_volume.generate_plc_volume
+
+    def capture(*args: Any, **kwargs: Any) -> NativeMeshConstruction:
+        result = generate(*args, **kwargs)
+        generated.append(result)
+        return result
+
+    monkeypatch.setattr(cad_volume, "generate_plc_volume", capture)
     construction = prepare_native_cad_volume(
         source,
         specification,
@@ -856,6 +1327,73 @@ def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnes
     witness.require_current(
         construction.mesh, construction.geometry, source.fidelity_source
     )
+    _assert_curve_ancestry(source, construction, fixed=False)
+    (raw_construction,) = generated
+    reordered_source = eqx.tree_at(
+        lambda value: value.source_triangle_cell_ids,
+        source,
+        np.roll(np.asarray(source.source_triangle_cell_ids), 1),
+    )
+    with pytest.raises(ValueError, match="canonical PLC row bindings"):
+        cad_volume._cad_volume_chart_witness(
+            reordered_source,
+            raw_construction,
+            construction.geometry,
+            witness.cad_curve_association,
+        )
+    authored_ids = set(source.plc_source.complex.segment_ids)
+    source_row = next(
+        row
+        for row, identifier in enumerate(raw_construction.segment_ids)
+        if identifier in authored_ids
+    )
+    corrupt_endpoints = np.array(raw_construction.source_segment_vertices, copy=True)
+    corrupt_endpoints[source_row] = corrupt_endpoints[source_row, ::-1]
+    with pytest.raises(ValueError, match="canonical endpoints"):
+        cad_volume._cad_curve_association(
+            source, replace(raw_construction, source_segment_vertices=corrupt_endpoints)
+        )
+    target_row = next(
+        row
+        for row, parent in enumerate(raw_construction.segment_source_edges)
+        if int(parent) == source_row
+    )
+    endpoint = int(raw_construction.segments[target_row, 0])
+    input_vertices = np.array(raw_construction.input_vertices, copy=True)
+    witness_strata = np.array(raw_construction.witness_strata, copy=True)
+    input_vertices[endpoint] = -1
+    witness_strata[endpoint] = 0
+    with pytest.raises(ValueError, match="endpoint lacks"):
+        cad_volume._cad_curve_association(
+            source,
+            replace(
+                raw_construction,
+                input_vertices=input_vertices,
+                witness_strata=witness_strata,
+            ),
+        )
+    keep = np.arange(raw_construction.segments.shape[0]) != target_row
+    with pytest.raises(ValueError, match="partition"):
+        cad_volume._cad_curve_association(
+            source,
+            replace(
+                raw_construction,
+                segments=raw_construction.segments[keep],
+                segment_source_edges=raw_construction.segment_source_edges[keep],
+                segment_source_ids=tuple(
+                    value
+                    for row, value in enumerate(raw_construction.segment_source_ids)
+                    if row != target_row
+                ),
+                segment_source_occurrence_paths=tuple(
+                    value
+                    for row, value in enumerate(
+                        raw_construction.segment_source_occurrence_paths
+                    )
+                    if row != target_row
+                ),
+            ),
+        )
 
     coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
     block = construction.mesh.blocks[0]
@@ -990,6 +1528,65 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
     }
     assert len(planes) == 2
     assert set(planes) <= set(witness.source_chart_ids)
+    from phydrax.geometry._approximate_source_coverage import (
+        _cad_target_root_partition,
+        SourceCoverageUnavailable,
+    )
+
+    assert witness.cad_plc is not None
+    charts = witness.cad_plc.cad_source_charts
+    assert charts is not None
+    from phydrax.geometry._meshing_domain import PatchCurveUse
+    from phydrax.geometry._surface_source_support import validate_cad_curve_ancestry
+
+    occurrences = np.array(charts.boundary_occurrences, copy=True)
+    swapped = False
+    for row, slot in np.argwhere(occurrences[:, :, 0] >= 0):
+        patch, loop, use_index = (int(value) for value in occurrences[row, slot])
+        uses = charts.domain.patches[patch].loops[loop]
+        use = uses[use_index]
+        if not isinstance(use, PatchCurveUse):
+            continue
+        alternatives = [
+            index for index, other in enumerate(uses)
+            if index != use_index and isinstance(other, PatchCurveUse)
+            and other.curve == use.curve
+        ]
+        if alternatives:
+            occurrences[row, slot, 2] = alternatives[0]
+            swapped = True
+            break
+    assert swapped
+    forged_charts = SurfaceSourceCharts(
+        charts.domain, charts.mesh, charts.geometry, charts.coordinate_contract,
+        charts.root_parameters, charts.root_patches, charts.associations,
+        charts.boundary_source, source_root_cell_ids=charts.source_root_cell_ids,
+        source_piece_ids=charts.source_piece_ids,
+        root_parameter_exact=charts.root_parameter_exact,
+        boundary_occurrences=occurrences,
+    )
+    with pytest.raises(ValueError, match="authored coedge occurrence"):
+        validate_cad_curve_ancestry(forged_charts, 1e4)
+    patch_rows = [
+        domain.resolve_entity_id(2, entity, occurrence_path=path)
+        for entity, path in zip(
+            witness.source_entity_ids, witness.occurrence_paths, strict=True
+        )
+    ]
+    plane_row = next(
+        row for row, chart_id in enumerate(witness.source_chart_ids) if chart_id in planes
+    )
+    root_row = next(
+        row
+        for row, patch in enumerate(charts.root_patches)
+        if int(patch) == patch_rows[plane_row]
+    )
+    roots = np.asarray(witness.cad_root_cell_ids, dtype=np.int64).copy()
+    assert roots[plane_row] == -1
+    roots[plane_row] = charts.cell_global_ids[root_row]
+    forged = eqx.tree_at(lambda value: value.cad_root_cell_ids, witness, roots)
+    with pytest.raises(SourceCoverageUnavailable, match="nonlinear root triangle"):
+        _cad_target_root_partition(domain, result.mesh, forged, patch_rows, 0.05)
     coordinates = np.asarray(result.mesh.coordinates, dtype=np.float64)
     block = result.mesh.blocks[0]
     cell_rows = {

@@ -56,7 +56,6 @@ def _archive_array(value: object, /) -> np.ndarray:
         raise TypeError("Stored source archive data must be a numeric array.")
     return np.asarray(value)
 
-
 def _domain(value: MeshingDomainArchiveRecipe, /) -> MeshingDomain:
     if (
         type(value) is not MeshingDomainArchiveRecipe

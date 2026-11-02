@@ -79,6 +79,39 @@ type _ChartPoint = tuple[Fraction, Fraction]
 type _TrimUse = tuple[PatchCurveUse, tuple[_ChartPoint, _ChartPoint]]
 
 
+def _quad_boundary_occurrences(
+    patch: int, charts: list[tuple[_ChartPoint, ...]], uses: list[_TrimUse], /
+) -> np.ndarray:
+    """Retain exact authored coedge incidence on rectangular source charts."""
+    edge_slots = reference_cell_topology("quadrilateral").entities[1]
+    occurrences = np.full((len(charts), 4, 3), -1, dtype=np.int64)
+
+    def on_segment(point: _ChartPoint, first: _ChartPoint, last: _ChartPoint, /) -> bool:
+        direction = (last[0] - first[0], last[1] - first[1])
+        offset = (point[0] - first[0], point[1] - first[1])
+        along = offset[0] * direction[0] + offset[1] * direction[1]
+        return (
+            offset[0] * direction[1] == offset[1] * direction[0]
+            and 0 <= along <= direction[0] ** 2 + direction[1] ** 2
+        )
+
+    for row, chart in enumerate(charts):
+        if len(chart) != 4:
+            raise ValueError("Quadrilateral source charts require four exact corners.")
+        for slot, edge in enumerate(edge_slots):
+            first, last = chart[int(edge[0])], chart[int(edge[1])]
+            matches = tuple(
+                index
+                for index, (_, endpoints) in enumerate(uses)
+                if on_segment(first, *endpoints) and on_segment(last, *endpoints)
+            )
+            if len(matches) > 1:
+                raise ValueError("Quadrilateral chart edge has ambiguous source coedges.")
+            if matches:
+                occurrences[row, slot] = (patch, 0, matches[0])
+    return occurrences
+
+
 def _exact_line_endpoints(
     use: PatchCurveUse, /
 ) -> tuple[_ChartPoint, _ChartPoint] | None:
@@ -652,6 +685,7 @@ def execute_tensor_quads(
         source_root_cell_ids=np.asarray(source_ids, dtype=np.int64),
         source_piece_ids=tuple(pieces),
         root_parameter_exact=tuple(charts),
+        boundary_occurrences=_quad_boundary_occurrences(patch, charts, uses),
     )
     chart = source_charts.chart_witness
     witness = SurfaceChartWitness(

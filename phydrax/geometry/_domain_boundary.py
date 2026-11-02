@@ -679,7 +679,9 @@ def _patch_chart_polygon(
     if rooted and trim_loops is not None:
         raise ValueError("Rooted chart representatives require the authored chart.")
     rooted_endpoints = _rooted_patch_chart_endpoints(domain, patch) if rooted else None
-    if not rooted and domain.brep_authority is not None:
+    # Alternate exact-plane loops have their own chart junctions; authored UV
+    # root uncertainty does not transfer to that independently derived chart.
+    if not rooted and trim_loops is None and domain.brep_authority is not None:
         if any(
             junction.lower != junction.upper
             for loop in _rooted_patch_chart_junctions(domain, patch)
