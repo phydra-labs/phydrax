@@ -127,6 +127,13 @@ def _chart_corner_count(cell_kind: str, /) -> int:
     raise ValueError("Surface charts require a triangle or quadrilateral cell kind.")
 
 
+def material_triangle(chart: _ExactChart, /) -> _ExactTriangle:
+    """Admit one canonical chart to the triangle-only material partition."""
+    if len(chart) != 3:
+        raise ValueError("Surface material deformation requires triangular charts.")
+    return chart[0], chart[1], chart[2]
+
+
 def _area(points: tuple[_ExactPoint, ...], /) -> Fraction:
     if len(points) < 3:
         return Fraction(0)
@@ -821,7 +828,8 @@ class PreparedSurfaceChartDeformation(StrictModule, NonTrainableState):
                 np.asarray(self.material_root_witness.patches) == occurrence.patch
             )
             root_charts = tuple(
-                self.material_root_witness.exact_chart(int(row)) for row in root_rows
+                material_triangle(self.material_root_witness.exact_chart(int(row)))
+                for row in root_rows
             )
             root_ids = np.asarray(
                 self.material_root_witness.cell_global_ids, dtype=np.int64

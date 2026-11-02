@@ -38,6 +38,7 @@ from ._surface_chart_records import (
     material_piece_id,
     material_point,
     material_reference,
+    material_triangle,
     PreparedSurfaceChartDeformation,
     PreparedSurfaceChartOccurrence,
     PreparedSurfaceChartPiece,
@@ -454,7 +455,9 @@ def _witness_bank(
             raise ValueError(
                 "Surface chart witness changes its source occurrence identity."
             )
-    charts = tuple(witness.exact_chart(int(row)) for row in witness_rows)
+    charts = tuple(
+        material_triangle(witness.exact_chart(int(row))) for row in witness_rows
+    )
     by_patch = {
         int(patch): tuple(int(row) for row in np.flatnonzero(patches == patch))
         for patch in np.unique(patches)
@@ -468,7 +471,7 @@ def _chart_patch_rows(
     witness_patches = np.asarray(witness.patches, dtype=np.int64)
     witness_rows = tuple(int(row) for row in np.flatnonzero(witness_patches == patch))
 
-    charts = tuple(witness.exact_chart(row) for row in witness_rows)
+    charts = tuple(material_triangle(witness.exact_chart(row)) for row in witness_rows)
     roots = np.asarray(witness.source_root_cell_ids, dtype=np.int64)[list(witness_rows)]
     return witness_rows, charts, roots
 

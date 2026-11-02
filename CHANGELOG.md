@@ -10,6 +10,9 @@
   payload and row-offset array instead of retaining duplicate per-leaf string
   and byte banks. Canonical bytes, empty-container evidence, and type checks
   remain unchanged.
+- Material surface deformation explicitly validates triangular chart arity when
+  consuming generalized triangle/quadrilateral source records, preserving its
+  triangle-only exact partition contract instead of discarding extra corners.
 - Reduced sketch roots now pass full-system native stationarity as well as the
   original residual test; conflicting weighted constraints retain the native
   unreduced least-squares behavior.
