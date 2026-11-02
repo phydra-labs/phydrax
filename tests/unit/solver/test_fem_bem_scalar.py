@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from phydrax import DerivativeRoute, DerivativeSurface
+from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellMesh
 from phydrax.discretization._topology import EntitySelection
 from phydrax.discretization.fem._generic import (
@@ -13,7 +14,8 @@ from phydrax.discretization.fem._generic import (
     FiniteElementPlan,
 )
 from phydrax.discretization.fem._reference import lagrange_element
-from phydrax.geometry import MeshRegion
+from phydrax.geometry import edit_brep_occurrence_placement, MeshRegion
+from phydrax.geometry.brep import brep_box, BRepAffinePlacement
 from phydrax.linalg import (
     DifferentiationMode,
     DifferentiationPolicy,
@@ -120,6 +122,153 @@ def test_matching_interface_has_exact_trace_orientation_and_conormal_flux(
     assert float(interface.coordinate_max_error) == 0.0
     assert float(interface.flux_closure_norm) < 2.0e-12
     assert abs(float(interface.integrated_flux(expected_conormal))) < 2.0e-12
+
+
+def test_native_placement_rebuilds_fem_bem_interface_and_rejects_stale_geometry() -> None:
+    source = brep_box(
+        (0, 0, 0), (1, 1, 1), coordinate_contract=SpatialCoordinateContract.si()
+    )
+    rotation = BRepAffinePlacement.from_matrix(
+        ((0, -1, 0, 2), (1, 0, 0, 1), (0, 0, 1, 0), (0, 0, 0, 1))
+    )
+    edit = edit_brep_occurrence_placement(source, ("solid-0",), rotation)
+    occurrence = next(edit.model.geometry.iter_occurrences())
+    local_points = (
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (1, 1, 0),
+        (0, 0, 1),
+        (1, 0, 1),
+        (0, 1, 1),
+        (1, 1, 1),
+    )
+    faces = jnp.asarray(
+        (
+            (0, 2, 3),
+            (0, 3, 1),
+            (4, 5, 7),
+            (4, 7, 6),
+            (0, 1, 5),
+            (0, 5, 4),
+            (2, 6, 7),
+            (2, 7, 3),
+            (0, 4, 6),
+            (0, 6, 2),
+            (1, 3, 7),
+            (1, 7, 5),
+        ),
+        dtype=jnp.int32,
+    )
+    cells = np.asarray(
+        (
+            (0, 1, 3, 7),
+            (0, 3, 2, 7),
+            (0, 2, 6, 7),
+            (0, 6, 4, 7),
+            (0, 4, 5, 7),
+            (0, 5, 1, 7),
+        )
+    )
+    local_array = np.asarray(local_points, dtype=float)
+    for cell in cells:
+        if np.linalg.det((local_array[cell[1:]] - local_array[cell[0]]).T) < 0:
+            cell[1], cell[2] = cell[2], cell[1]
+    coordinates = jnp.asarray(
+        [
+            tuple(float(x) for x in occurrence.placement.apply(point))
+            for point in local_points
+        ],
+        dtype=_TETRA_VERTICES.dtype,
+    )
+    cold_coordinates = jnp.asarray(
+        (
+            (2, 1, 0),
+            (2, 2, 0),
+            (1, 1, 0),
+            (1, 2, 0),
+            (2, 1, 1),
+            (2, 2, 1),
+            (1, 1, 1),
+            (1, 2, 1),
+        ),
+        dtype=_TETRA_VERTICES.dtype,
+    )
+
+    def prepare(points: Any, version: str) -> tuple[Any, Any, Any, Any]:
+        mesh = CellMesh.from_tetrahedra(points, jnp.asarray(cells, dtype=jnp.int32))
+        field = FiniteElementFieldSpec("u", lagrange_element("tetrahedron", 1))
+        fem = FiniteElementPlan(mesh, field).prepare(numeric_version=version)
+        surface = MeshRegion(points, faces, feature_id="placed-interface")
+        policy = LaplaceSingleLayerDP0GalerkinPolicy3D(
+            regular_order=3,
+            singular_order=3,
+            near_order=3,
+            near_ratio=1.0,
+            absolute_tolerance=2.0e-3,
+            relative_tolerance=2.0e-3,
+            target_block_size=4,
+            source_block_size=4,
+        )
+        calderon = prepare_scalar_calderon_dp0_3d(
+            surface, policy=policy, numeric_version=version
+        )
+        return (
+            fem,
+            surface,
+            calderon,
+            prepare_scalar_laplace_fem_bem_3d(fem, surface, calderon),
+        )
+
+    old_fem, old_surface, old_calderon, old = prepare(
+        jnp.asarray(local_points, dtype=_TETRA_VERTICES.dtype), source.source_revision
+    )
+    fem, surface, calderon, moved = prepare(coordinates, edit.model.source_revision)
+    _, _, _, cold = prepare(cold_coordinates, "cold-placement")
+    np.testing.assert_allclose(coordinates, cold_coordinates)
+    np.testing.assert_allclose(
+        moved.interface.interface_coordinates, cold.interface.interface_coordinates
+    )
+    np.testing.assert_allclose(
+        moved.interface.outward_normals, cold.interface.outward_normals
+    )
+    np.testing.assert_allclose(
+        moved.interface.outward_normals,
+        np.asarray(old.interface.outward_normals)
+        @ np.asarray(rotation.matrix, dtype=float)[:3, :3].T,
+        atol=2.0e-12,
+    )
+    gradient = jnp.asarray((0.75, -0.5, 0.25), dtype=coordinates.dtype)
+    coefficients = 1.25 + coordinates @ gradient
+    np.testing.assert_allclose(
+        moved.interface.trace(coefficients), cold.interface.trace(coefficients)
+    )
+    np.testing.assert_allclose(
+        moved.interface.conormal(coefficients), cold.interface.conormal(coefficients)
+    )
+    np.testing.assert_allclose(
+        moved.interface.conormal(coefficients),
+        moved.interface.outward_normals @ gradient,
+        atol=2.0e-12,
+    )
+    assert float(moved.interface.minimum_orientation_cosine) > 0
+    with pytest.raises(ValueError):
+        prepare_scalar_laplace_fem_bem_3d(fem, old_surface, old_calderon)
+    # MeshRegion normalizes a globally reversed closed shell, but rejects an
+    # inconsistent individual face before it can become a coupling input.
+    inconsistent_faces = faces.at[0].set(faces[0, ::-1])
+    with pytest.raises(ValueError, match="inconsistent orientation"):
+        prepare_scalar_laplace_fem_bem_3d(
+            fem,
+            MeshRegion(coordinates, inconsistent_faces, feature_id="reversed"),
+            calderon,
+        )
+    old_coefficients = 1.25 + old_fem.default_runtime.coordinates @ gradient
+    np.testing.assert_allclose(
+        old.interface.conormal(old_coefficients),
+        old.interface.outward_normals @ gradient,
+        atol=2.0e-12,
+    )
 
 
 def test_interface_and_coupled_block_have_exact_transposes(tetra_coupling: Any) -> None:

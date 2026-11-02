@@ -61,6 +61,7 @@ _DEFERRED_EXPORTS = {
     "BRepPartitionReport": "._partition",
     "BRepPartitionResult": "._partition",
     "BRepPartitionRole": "._partition",
+    "BRepPlacementEditResult": "._placement",
     "BRepProjectionPolicy": "._projection_contracts",
     "BRepProjectionResult": "._projection_contracts",
     "BRepProjectionStatus": "._projection_contracts",
@@ -128,6 +129,7 @@ _DEFERRED_EXPORTS = {
     "brep_torus": "._constructors",
     "brep_offset": "._constructors",
     "brep_trim_domain": "._constructors",
+    "edit_brep_occurrence_placement": "._placement",
     "evaluate_fixed_topology_mesh": "._differentiable",
     "partition_brep": "._partition",
     "partition_planar": "._planar",
@@ -246,6 +248,10 @@ if TYPE_CHECKING:
         BRepPartitionRole as BRepPartitionRole,
         cad_revision_from_brep_model as cad_revision_from_brep_model,
         partition_brep as partition_brep,
+    )
+    from ._placement import (
+        BRepPlacementEditResult as BRepPlacementEditResult,
+        edit_brep_occurrence_placement as edit_brep_occurrence_placement,
     )
     from ._patches import (
         AbstractCurve as AbstractCurve,

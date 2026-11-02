@@ -223,6 +223,32 @@ def test_assembly_occurrences_preserve_definition_uses_and_exact_placements() ->
     assert placed.source_revision != model.source_revision
 
 
+def test_occurrence_placement_copies_shared_ancestry_without_moving_aliases() -> None:
+    graph = BRepAssemblyGraph(
+        (
+            BRepAssemblyUse("first", definition_id="component"),
+            BRepAssemblyUse("second", definition_id="component"),
+        ),
+        (BRepAssemblyDefinition("component", (BRepAssemblyUse("leaf", solid_index=0),)),),
+        1,
+    )
+    moved = BRepAffinePlacement.from_matrix(
+        ((1, 0, 0, 2), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+    )
+    updated = graph.with_occurrence_placement(("first", "leaf"), moved)
+    original = tuple(graph.iter_occurrences())
+    occurrences = tuple(updated.iter_occurrences())
+    assert tuple(item.path for item in occurrences) == (
+        ("first", "leaf"),
+        ("second", "leaf"),
+    )
+    assert occurrences[0].placement == moved
+    assert occurrences[1].placement == original[1].placement
+    assert original[0].placement == BRepAffinePlacement.identity()
+    with pytest.raises(ValueError, match="path"):
+        graph.with_occurrence_placement(("first", "missing"), moved)
+
+
 def test_t_spline_patch_keeps_exact_raw_third_weights_and_shared_realization() -> None:
     mesh = TMesh2D.tensor_product((Fraction(0), Fraction(1)), (Fraction(0), Fraction(1)))
     count = mesh.coefficient_count
@@ -415,6 +441,7 @@ def test_t_spline_root_atlas_separates_control_cells_and_piece_ids() -> None:
 
 def test_bspline_root_atlas_preserves_exact_control_and_weight_banks() -> None:
     from phydrax.discretization._cell_geometry import SplineCellGeometryElement
+
     contract = SpatialCoordinateContract.si()
     source = _square_model(contract, "d" * 64)
     root_two = RadicalElement.sqrt(Fraction(2))

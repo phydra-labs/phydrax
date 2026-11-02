@@ -18,14 +18,20 @@ from ...geometry._cad_revision import (
     OccurrenceCorrespondenceTransaction,
 )
 from ...typing import checked
-from ._assembly import BRepAssemblyGraph
-from ._constructors import BRepTessellationPolicy, _Builder, assemble_brep_model
+from ._assembly import (
+    _determinant3,
+    BRepAffinePlacement,
+    BRepAssemblyGraph,
+    BRepAssemblyUse,
+    BRepPlacementEvidence,
+)
+from ._constructors import _Builder, assemble_brep_model, BRepTessellationPolicy
 from ._intersection import ConicParameterEndpoint, NativePeriodEndpoint, RootEndpoint
-from ._model import BRepEntityId, BRepModel
+from ._model import BRepEntityId, BRepGeometry, BRepModel
+from ._partition import _assembly_namespace_occurrence_id, cad_revision_from_brep_model
 from ._patches import AbstractCurve
 from ._placed import PlacedCurve, PlacedSurface
 from ._root_bindings import BRepPlacedVertex, BRepVertexRoot
-from ._partition import cad_revision_from_brep_model
 
 
 type _EntityIndexMap = dict[str, dict[int, int]]
@@ -85,6 +91,199 @@ class BRepPlacementResult:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class BRepPlacementEditResult:
+    """Rebuilt model and lineage with exact world-handedness changes by path.
+
+    ``placement_orientation_changes`` records the determinant-sign ratio of the
+    new and old composed placements. It is distinct from topological incidence
+    orientation, which the placement edit preserves.
+    """
+
+    model: BRepModel
+    association_graph: AssociationGraph
+    certificate_id: str
+    placement_orientation_changes: tuple[tuple[tuple[str, ...], int], ...]
+
+
+def _occurrence_placements(
+    graph: BRepAssemblyGraph, /
+) -> dict[tuple[str, ...], BRepAffinePlacement]:
+    definitions = {item.definition_id: item for item in graph.definitions}
+    result: dict[tuple[str, ...], BRepAffinePlacement] = {}
+    stack: list[tuple[BRepAssemblyUse, tuple[str, ...], BRepAffinePlacement]] = [
+        (use, (), BRepAffinePlacement.identity()) for use in graph.roots
+    ]
+    while stack:
+        use, parent, outer = stack.pop()
+        path = (*parent, use.use_id)
+        composed = outer.compose(use.placement)
+        result[path] = composed
+        if use.definition_id is not None:
+            stack.extend(
+                (child, path, composed) for child in definitions[use.definition_id].uses
+            )
+    return result
+
+
+@checked
+def edit_brep_occurrence_placement(
+    model: BRepModel,
+    path: tuple[str, ...],
+    placement: BRepAffinePlacement,
+    /,
+    *,
+    evidence: BRepPlacementEvidence | None = None,
+) -> BRepPlacementEditResult:
+    """Replace one local occurrence placement and publish exact host-side lineage.
+
+    Paths identify uses within their owning assembly, including shared definitions.
+    The source remains unchanged; the rebuilt model has no old tessellation or
+    source-binding proof. This operation is not a dynamic JAX transformation.
+    """
+    model.require_current()
+    source = model.geometry
+    graph = source.assembly_graph.with_occurrence_placement(
+        path, placement, evidence=evidence
+    )
+    geometry = BRepGeometry(
+        vertex_points=source.vertex_points,
+        vertex_exact_points=source.vertex_exact_points,
+        vertex_roots=source.vertex_roots,
+        edge_endpoint_roots=source.edge_endpoint_roots,
+        coedge_endpoint_roots=source.coedge_endpoint_roots,
+        edge_vertex_gap_bounds=source.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=source.edge_face_gap_bounds,
+        curves=source.curves,
+        edge_curves=source.edge_curves,
+        edge_ranges=source.edge_ranges,
+        edge_vertices=source.edge_vertices,
+        pcurves=source.pcurves,
+        coedge_edges=source.coedge_edges,
+        coedge_senses=source.coedge_senses,
+        face_loops=source.face_loops,
+        shell_faces=source.shell_faces,
+        shell_orientations=source.shell_orientations,
+        solid_shells=source.solid_shells,
+        assembly_graph=graph,
+    )
+    target = BRepModel(
+        geometry=geometry,
+        patches=model.patches,
+        parameter_bounds=model.parameter_bounds,
+        orientation=model.orientation,
+        physical_tags=model.physical_tags,
+        coordinate_contract=model.coordinate_contract,
+        report=model.report,
+        trim_domains=model.trim_domains,
+    )
+    if target.source_revision == model.source_revision:
+        raise ValueError("The placement edit must change the source revision.")
+
+    old_placements = _occurrence_placements(source.assembly_graph)
+    new_placements = _occurrence_placements(graph)
+    if old_placements.keys() != new_placements.keys():
+        raise ValueError("The placement edit must preserve occurrence paths.")
+
+    def placement_orientation_change(path_: tuple[str, ...], /) -> int:
+        old = old_placements[path_]
+        new = new_placements[path_]
+        old_det = _determinant3(tuple(row[:3] for row in old.matrix[:3]))
+        new_det = _determinant3(tuple(row[:3] for row in new.matrix[:3]))
+        return 1 if (old_det > 0) == (new_det > 0) else -1
+
+    placement_orientation_changes = tuple(
+        (occurrence_path, placement_orientation_change(occurrence_path))
+        for occurrence_path in sorted(old_placements)
+    )
+
+    source_revision = cad_revision_from_brep_model(model)
+    target_revision = cad_revision_from_brep_model(target)
+    source_entities = {
+        record.member
+        for record in source.qualified_entity_incidence(
+            model.source_id, model.source_revision
+        )
+    }
+    target_entities = {
+        record.member
+        for record in geometry.qualified_entity_incidence(
+            target.source_id, target.source_revision
+        )
+    }
+    entity_pairs = []
+    for entity in source_entities:
+        mapped = BRepEntityId(
+            target.source_id,
+            target.source_revision,
+            entity.kind,
+            entity.index,
+            entity.occurrence_path,
+        )
+        if mapped not in target_entities:
+            raise ValueError("The placement edit changed qualified entity identity.")
+        entity_pairs.append((entity_occurrence(entity), entity_occurrence(mapped), 1))
+    if len(entity_pairs) != len(target_entities):
+        raise ValueError("The placement edit changed the qualified entity inventory.")
+
+    namespaces = (
+        {entity.occurrence_path for entity in source_entities if entity.occurrence_path}
+        | {container.path for container in source.iter_assembly_containers()}
+        | {occurrence.path for occurrence in source.iter_occurrences()}
+    )
+    pairs = entity_pairs + [
+        (
+            _assembly_namespace_occurrence_id(
+                model.source_id, model.source_revision, namespace
+            ),
+            _assembly_namespace_occurrence_id(
+                target.source_id, target.source_revision, namespace
+            ),
+            1,
+        )
+        for namespace in namespaces
+    ]
+    if {item[0] for item in pairs} != {
+        item.occurrence_id for item in source_revision.occurrences
+    } or {item[1] for item in pairs} != {
+        item.occurrence_id for item in target_revision.occurrences
+    }:
+        raise ValueError("The placement edit did not map both complete CAD inventories.")
+    certificate = canonical_fingerprint(
+        {
+            "kind": "exact-brep-occurrence-placement-edit",
+            "source_revision": model.source_revision,
+            "target_revision": target.source_revision,
+            "path": path,
+            "placement": placement.identity_payload(),
+            "evidence": None if evidence is None else evidence.payload(),
+            "placement_orientation_changes": placement_orientation_changes,
+            "correspondences": tuple(sorted(pairs)),
+        }
+    )
+    correspondences = tuple(
+        OccurrenceCorrespondence(old, new, certificate, sign)
+        for old, new, sign in sorted(pairs)
+    )
+    transaction = OccurrenceCorrespondenceTransaction(
+        certificate,
+        source_revision.revision_id,
+        target_revision.revision_id,
+        correspondences,
+        frozenset(),
+        frozenset(),
+        AssociationCoverageEvidence(
+            True, True, certificate, "native-exact-occurrence-placement-edit"
+        ),
+    )
+    return BRepPlacementEditResult(
+        target,
+        AssociationGraph(source_revision, target_revision, transaction),
+        certificate,
+        placement_orientation_changes,
+    )
+
+
 @checked
 def materialize_brep_occurrences(
     model: BRepModel,
@@ -104,8 +303,8 @@ def materialize_brep_occurrences(
         raise ValueError(
             "Occurrence materialization requires at least one source solid occurrence."
         )
-    from ._carrier_pieces import carrier_payload
     from ...linalg._exact import determinant_exact
+    from ._carrier_pieces import carrier_payload
 
     source_occurrences = tuple(
         sorted(geometry.iter_occurrences(), key=lambda item: item.path)
@@ -337,12 +536,8 @@ def materialize_brep_occurrences(
                 else None
             )
             mapped_roots = (
-                mapped_period_root(
-                    roots[0], edge_curve=curve, pcurve=edge_pcurve
-                ),
-                mapped_period_root(
-                    roots[1], edge_curve=curve, pcurve=edge_pcurve
-                ),
+                mapped_period_root(roots[0], edge_curve=curve, pcurve=edge_pcurve),
+                mapped_period_root(roots[1], edge_curve=curve, pcurve=edge_pcurve),
             )
             endpoints = tuple(vertex_map[index] for index in geometry.edge_vertices[edge])
             if curve is None:
@@ -370,9 +565,7 @@ def materialize_brep_occurrences(
                     coedge_roots = geometry.coedge_endpoint_roots[coedge]
                     edge_curve_index = geometry.edge_curves[source_edge]
                     coedge_edge_curve = (
-                        None
-                        if edge_curve_index < 0
-                        else curve_map[edge_curve_index]
+                        None if edge_curve_index < 0 else curve_map[edge_curve_index]
                     )
                     endpoint_roots = (
                         mapped_period_root(
@@ -574,6 +767,8 @@ def materialize_brep_occurrences(
 
 
 __all__ = [
+    "BRepPlacementEditResult",
+    "edit_brep_occurrence_placement",
     "BRepPlacementResult",
     "entity_occurrence",
     "entity_text",

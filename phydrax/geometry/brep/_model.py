@@ -1033,12 +1033,15 @@ def _validate_geometry_source_carriers(
             _rebuild_endpoint_root(root, cache)
 
 
-def _brep_geometry_identity(geometry: BRepGeometry, /) -> str:
+def _brep_geometry_identity(
+    geometry: BRepGeometry, /, *, assembly_graph: BRepAssemblyGraph | None = None
+) -> str:
     root_payloads = _root_binding_payloads(
         geometry.vertex_roots,
         geometry.edge_endpoint_roots,
         geometry.coedge_endpoint_roots,
     )
+    assembly = geometry.assembly_graph if assembly_graph is None else assembly_graph
     return canonical_fingerprint(
         {
             "kind": "brep-source-geometry",
@@ -1078,9 +1081,9 @@ def _brep_geometry_identity(geometry: BRepGeometry, /) -> str:
                 "num_vertices": geometry.topology.num_vertices,
             },
             "assembly": {
-                "source": geometry.assembly_graph.identity_payload(),
-                "structure": str(jax.tree_util.tree_structure(geometry.assembly_graph)),
-                "arrays": array_tree_fingerprint(geometry.assembly_graph),
+                "source": assembly.identity_payload(),
+                "structure": str(jax.tree_util.tree_structure(assembly)),
+                "arrays": array_tree_fingerprint(assembly),
             },
         }
     )
@@ -3087,6 +3090,8 @@ def _brep_model_source_revision(
     coordinate_contract: SpatialCoordinateContract,
     report: BRepImportReport,
     /,
+    *,
+    geometry_identity: str | None = None,
 ) -> str:
     trim_identity = tuple(
         None if domain is None else domain.identity_payload() for domain in trim_domains
@@ -3095,7 +3100,9 @@ def _brep_model_source_revision(
         {
             "kind": "brep-source-revision",
             "coordinate_contract": coordinate_contract.spatial_id,
-            "geometry": geometry.geometry_id,
+            "geometry": geometry.geometry_id
+            if geometry_identity is None
+            else geometry_identity,
             "source_accuracy": report.curve_surface_tolerance,
             "face_table": tuple(
                 {

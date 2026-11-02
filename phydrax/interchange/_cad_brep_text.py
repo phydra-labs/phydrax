@@ -45,12 +45,16 @@ within that limit remain carried evidence and do not create loss.
 Provenance maps native inventory indices to ``TShapes#N`` declarations.
 Located import labels retain nonzero source location-reference chains;
 occurrence/root entries retain raw orientation/number/location references.
+Assembly-use provenance keys encode ``[definition_id-or-null, use_id]`` as
+JSON; null denotes the root table. Occurrence normalization paths retain
+their full source path and use JSON encoding rather than joined identifiers.
 Synthesized natural-boundary entities have no external declaration mapping.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import mmap
 import os
 import re
@@ -105,6 +109,7 @@ from ._cad import (
     _cad_export_gap_surfaces,
     _certified_cad_export_tolerances,
     _written_upper_bound,
+    assembly_use_label,
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_physical_tag_losses,
@@ -1949,7 +1954,7 @@ class _Resolver:
                             definition_id=f"brep-text-definition-{target.number}",
                         )
                     )
-                self.assembly_provenance[f"assembly-use:{use_id}"] = (
+                self.assembly_provenance[assembly_use_label(definition_id, use_id)] = (
                     self._reference_label(target, (reference.location,))
                 )
             definitions.append(BRepAssemblyDefinition(definition_id, tuple(uses)))
@@ -2053,12 +2058,13 @@ class _Resolver:
                                 "definitions and free geometry",
                             )
                         continue
-                    self.assembly_provenance[f"assembly-use:{use_id}"] = (
+                    self.assembly_provenance[assembly_use_label(None, use_id)] = (
                         self._reference_label(target, (root.location, reference.location))
                     )
-        self.assembly_provenance["assembly-use:root"] = (
-            f"{root.orientation}{root.number} {root.location}"
-        )
+        if any(use.use_id == "root" for use in roots):
+            self.assembly_provenance[assembly_use_label(None, "root")] = (
+                f"{root.orientation}{root.number} {root.location}"
+            )
         graph = BRepAssemblyGraph(
             tuple(roots), tuple(definitions), len(self.stage.solids)
         )
@@ -2860,6 +2866,7 @@ class _Writer:
             )
         records: dict[str, int] = {}
         state: dict[str, int] = {}
+        use_targets: dict[tuple[str | None, str], int] = {}
         for root_id in sorted(definitions):
             if state.get(root_id, 0) == 2:
                 continue
@@ -2878,20 +2885,11 @@ class _Writer:
                                     "Validated assembly use lost its definition target."
                                 )
                             target = records[use.definition_id]
-                        location = self._assembly_location(
-                            use.placement, f"assembly-use:{use.use_id}"
-                        )
+                        label = assembly_use_label(definition_id, use.use_id)
+                        location = self._assembly_location(use.placement, label)
                         children.append(("+", target, location))
-                        self.reference_records.append(
-                            (f"assembly-use:{use.use_id}", "+", target, location)
-                        )
-                        self.path_normalizations.append(
-                            (
-                                "occurrence",
-                                (use.use_id,),
-                                (f"TShapes#{len(self.records) - target}",),
-                            )
-                        )
+                        self.reference_records.append((label, "+", target, location))
+                        use_targets[(definition_id, use.use_id)] = target
                     record = self.record("Co", "", children)
                     records[definition_id] = record
                     self.entity_records.append(
@@ -2939,20 +2937,26 @@ class _Writer:
                 if use.definition_id is None:
                     raise RuntimeError("Validated assembly root lost its target.")
                 target = records[use.definition_id]
-            location = self._assembly_location(
-                use.placement, f"assembly-use:{use.use_id}"
-            )
+            label = assembly_use_label(None, use.use_id)
+            location = self._assembly_location(use.placement, label)
             root_references.append(("+", target, location))
-            self.reference_records.append(
-                (f"assembly-use:{use.use_id}", "+", target, location)
-            )
+            self.reference_records.append((label, "+", target, location))
+            use_targets[(None, use.use_id)] = target
+        pending_paths: list[tuple[str | None, BRepAssemblyUse, tuple[str, ...]]] = [
+            (None, use, ()) for use in reversed(graph.roots)
+        ]
+        while pending_paths:
+            owner, use, parent_path = pending_paths.pop()
+            path = (*parent_path, use.use_id)
+            target = use_targets[(owner, use.use_id)]
             self.path_normalizations.append(
-                (
-                    "occurrence",
-                    (use.use_id,),
-                    (f"TShapes#{len(self.records) - target}",),
-                )
+                ("occurrence", path, (f"TShapes#{len(self.records) - target}",))
             )
+            if use.definition_id is not None:
+                pending_paths.extend(
+                    (use.definition_id, child, path)
+                    for child in reversed(definitions[use.definition_id].uses)
+                )
         if len(root_references) > 1:
             self.path_normalizations.append(
                 (
@@ -3408,7 +3412,7 @@ def write_brep_text(
         counts[kind] += 1
     losses = tuple(
         AdapterLoss(
-            f"{kind}-path:{'/'.join(source)}",
+            f"{kind}-path:{json.dumps(source, ensure_ascii=True, separators=(',', ':'))}",
             "export",
             "transformed",
             f"BRep text stores topology, not source identifiers: {source!r} -> {target!r}.",

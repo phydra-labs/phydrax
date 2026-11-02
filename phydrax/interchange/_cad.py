@@ -14,6 +14,7 @@ definitions and uses as a shared graph without expanding occurrences.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
@@ -122,6 +123,13 @@ from ._report import (
     AdapterWaiver,
 )
 from ._step_metadata import StepEntityMetadata
+
+
+def assembly_use_label(owner: str | None, use_id: str, /) -> str:
+    """Encode a definition-local use identity; None denotes the root table."""
+    return "assembly-use:" + json.dumps(
+        (owner, use_id), ensure_ascii=True, separators=(",", ":")
+    )
 
 
 _TWO_PI = 2.0 * pi

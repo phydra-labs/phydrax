@@ -1,21 +1,28 @@
+import json
 from decimal import Decimal, localcontext
+from pathlib import Path
 
 import numpy as np
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.brep._assembly import (
     BRepAffinePlacement,
+    BRepAssemblyDefinition,
     BRepAssemblyGraph,
     BRepAssemblyUse,
 )
 from phydrax.geometry.brep._constructors import brep_box
 from phydrax.geometry.brep._model import BRepGeometry, BRepModel
-from phydrax.interchange._cad import CadImportPolicy
+from phydrax.interchange._cad import assembly_use_label, CadImportPolicy
+from phydrax.interchange._cad_brep_text import read_brep_text, write_brep_text
 from phydrax.interchange._cad_carriers import RigidPlacement
 from phydrax.interchange._cad_placement_evidence import (
     certify_placed_model,
     source_placement_evidence,
 )
+from phydrax.interchange._iges import read_iges, write_iges
+from phydrax.interchange._step import read_step, write_step
+from phydrax.units import METER
 
 
 def _model_with_graph(model: BRepModel, graph: BRepAssemblyGraph, /) -> BRepModel:
@@ -151,3 +158,73 @@ def test_placement_evidence_is_bound_to_translated_rotated_occurrence() -> None:
     assert certified.model_extent > 0.0
     assert certified.point_deviation_bound >= oracle
     assert certified.point_deviation_bound <= 1.0e-12
+
+
+def test_exchange_qualifies_reused_use_ids_and_preserves_full_paths(
+    tmp_path: Path,
+) -> None:
+    contract = SpatialCoordinateContract.si()
+    identity = BRepAffinePlacement.identity()
+    graph = BRepAssemblyGraph(
+        roots=(
+            BRepAssemblyUse("left", identity, definition_id="root"),
+            BRepAssemblyUse("right", identity, definition_id="a"),
+        ),
+        definitions=(
+            BRepAssemblyDefinition(
+                "root", (BRepAssemblyUse("x/y", identity, solid_index=0),)
+            ),
+            BRepAssemblyDefinition(
+                "a", (BRepAssemblyUse("x/y", identity, solid_index=0),)
+            ),
+        ),
+        solid_count=1,
+    )
+    model = _model_with_graph(
+        brep_box((0.0, 0.0, 0.0), (1.0, 2.0, 3.0), coordinate_contract=contract),
+        graph,
+    )
+    expected = {
+        assembly_use_label(None, "left"),
+        assembly_use_label(None, "right"),
+        assembly_use_label("root", "x/y"),
+        assembly_use_label("a", "x/y"),
+    }
+    assert len(expected) == 4
+    assert assembly_use_label(None, "x") != assembly_use_label("root", "x")
+    assert assembly_use_label("a:b", "c") != assembly_use_label("a", "b:c")
+
+    for extension, writer, reader in (
+        ("step", write_step, read_step),
+        ("iges", write_iges, read_iges),
+        ("brep", write_brep_text, read_brep_text),
+    ):
+        path = tmp_path / f"qualified.{extension}"
+        exported = writer(model, path)
+        labels = [
+            key for key, _ in exported.provenance if key.startswith("assembly-use:")
+        ]
+        assert len(labels) == len(set(labels))
+        assert expected <= set(labels)
+        kwargs = {"source_length_unit": METER} if extension == "brep" else {}
+        restored = reader(
+            path, CadImportPolicy(contract), trusted_root=tmp_path, **kwargs
+        )
+        imported_labels = [
+            key for key, _ in restored.provenance if key.startswith("assembly-use:")
+        ]
+        assert len(imported_labels) == len(set(imported_labels))
+        assert all(
+            len(json.loads(key.removeprefix("assembly-use:"))) == 2
+            for key in imported_labels
+        )
+        if extension == "brep":
+            fields = {loss.path for loss in exported.report.losses}
+            for occurrence_path in (("left", "x/y"), ("right", "x/y")):
+                assert (
+                    "occurrence-path:"
+                    + json.dumps(
+                        occurrence_path, ensure_ascii=True, separators=(",", ":")
+                    )
+                    in fields
+                )

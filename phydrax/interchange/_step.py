@@ -78,6 +78,7 @@ from ._cad import (
     _cad_export_gap_surfaces,
     _certified_cad_export_tolerances,
     _validate_curve_parameter_range,
+    assembly_use_label,
     build_cad_export_report,
     build_cad_import_tolerance_evidence,
     cad_export_assembly_identifier_losses,
@@ -2559,7 +2560,10 @@ def _step_assembly_graph(
             use_id = f"step-representation-use-#{representation}-solid-{solid_position}"
             uses.append(BRepAssemblyUse(use_id, identity, solid_index=solid))
             provenance.append(
-                (f"assembly-use:{use_id}", f"representation:#{representation}")
+                (
+                    assembly_use_label(representation_ids[representation], use_id),
+                    f"representation:#{representation}",
+                )
             )
         for item_position, (item, mapped, placement) in enumerate(
             decoder.mapped_items.get(representation, ())
@@ -2573,7 +2577,12 @@ def _step_assembly_graph(
                     placement_evidence=source_placement_evidence(placement),
                 )
             )
-            provenance.append((f"assembly-use:{use_id}", f"mapped-item:#{item}"))
+            provenance.append(
+                (
+                    assembly_use_label(representation_ids[representation], use_id),
+                    f"mapped-item:#{item}",
+                )
+            )
         definition_id = representation_ids[representation]
         definitions.append(BRepAssemblyDefinition(definition_id, tuple(uses)))
         provenance.append(
@@ -2601,7 +2610,10 @@ def _step_assembly_graph(
                 )
             )
             provenance.append(
-                (f"assembly-use:{use_id}", f"product-representation:#{representation}")
+                (
+                    assembly_use_label(product_definition_ids[product], use_id),
+                    f"product-representation:#{representation}",
+                )
             )
         for usage, child in assembly.children.get(product, ()):
             child_representations = product_representations[child]
@@ -2617,7 +2629,12 @@ def _step_assembly_graph(
                     placement_evidence=source_placement_evidence(placement),
                 )
             )
-            provenance.append((f"assembly-use:{use_id}", decoder.instances[usage].label))
+            provenance.append(
+                (
+                    assembly_use_label(product_definition_ids[product], use_id),
+                    decoder.instances[usage].label,
+                )
+            )
         definition_id = product_definition_ids[product]
         definitions.append(BRepAssemblyDefinition(definition_id, tuple(uses)))
         provenance.append(
@@ -2631,7 +2648,9 @@ def _step_assembly_graph(
                 use_id, identity, definition_id=product_definition_ids[product]
             )
         )
-        provenance.append((f"assembly-use:{use_id}", decoder.instances[product].label))
+        provenance.append(
+            (assembly_use_label(None, use_id), decoder.instances[product].label)
+        )
     represented = {
         representation
         for product in product_order
@@ -2650,7 +2669,7 @@ def _step_assembly_graph(
             )
         )
         provenance.append(
-            (f"assembly-use:{use_id}", decoder.instances[representation].label)
+            (assembly_use_label(None, use_id), decoder.instances[representation].label)
         )
     graph = BRepAssemblyGraph(
         tuple(root_uses), tuple(definitions), len(decoder._stage().solids)
@@ -4133,7 +4152,7 @@ class _Writer:
             [],
         )
         root_node[3].append(root_node[2])
-        pending: list[tuple[int | str, int, int, str]] = []
+        pending: list[tuple[int | str, int, int, str | None]] = []
 
         def placement_frame(placement: BRepAffinePlacement, label: str, /) -> int:
             matrix = placement.matrix
@@ -4186,7 +4205,7 @@ class _Writer:
         def emit_use(
             use: BRepAssemblyUse,
             parent_definition: int,
-            parent_key: str,
+            parent_key: str | None,
             parent_items: list[int],
         ) -> None:
             if use.solid_index is not None:
@@ -4198,13 +4217,14 @@ class _Writer:
                     raise RuntimeError("Validated assembly use lost its target.")
                 child_definition, _, source_axis, _ = nodes[use.definition_id]
                 child_representation = use.definition_id
-            target_axis = placement_frame(use.placement, f"assembly-use:{use.use_id}")
+            label = assembly_use_label(parent_key, use.use_id)
+            target_axis = placement_frame(use.placement, label)
             parent_items.append(target_axis)
             usage = self.add(
                 "NEXT_ASSEMBLY_USAGE_OCCURRENCE('','','',"
                 f"#{parent_definition},#{child_definition},$)"
             )
-            self.assembly_provenance.append((f"assembly-use:{use.use_id}", f"#{usage}"))
+            self.assembly_provenance.append((label, f"#{usage}"))
             usage_shape = self.add(f"PRODUCT_DEFINITION_SHAPE('','',#{usage})")
             transform = self.add(
                 f"ITEM_DEFINED_TRANSFORMATION('','',#{source_axis},#{target_axis})"
@@ -4217,7 +4237,7 @@ class _Writer:
             for use in assembly_definition.uses:
                 emit_use(use, parent_definition, identifier, items)
         for use in graph.roots:
-            emit_use(use, root_definition, "root", root_node[3])
+            emit_use(use, root_definition, None, root_node[3])
         self.assembly_losses.append(
             AdapterLoss(
                 "geometry.assembly-root",
@@ -4236,7 +4256,7 @@ class _Writer:
                 changes_interpretation=True,
             )
         )
-        representations: dict[str, int] = {}
+        representations: dict[str | None, int] = {}
         for identifier, (_, shape, _, items) in nodes.items():
             representation = self.add(
                 f"SHAPE_REPRESENTATION('',{_refs(items)},#{context})"
@@ -4247,7 +4267,7 @@ class _Writer:
             f"SHAPE_REPRESENTATION('',{_refs(root_node[3])},#{context})"
         )
         self.add(f"SHAPE_DEFINITION_REPRESENTATION(#{root_shape},#{root_representation})")
-        representations["root"] = root_representation
+        representations[None] = root_representation
         for child_representation, transform, shape, parent in pending:
             if isinstance(child_representation, str):
                 child_representation = representations[child_representation]

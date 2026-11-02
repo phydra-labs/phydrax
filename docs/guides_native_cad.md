@@ -124,6 +124,28 @@ occurrences retain exact placements and are expanded only when needed.
 Boolean operations return source geometry without generating triangles unless
 `BRepBooleanPolicy(tessellation=...)` explicitly requests a realization.
 
+`edit_brep_occurrence_placement` selects an exact assembly occurrence path and
+returns a new source model and occurrence correspondence. Uses are identified
+within their owning definition; a path edit copies shared ancestry rather than
+moving other instances. Exact host placements are not differentiable design
+parameters. A changed placement invalidates the old tessellation and other
+world-dependent evidence. Rebuild projection, contact, embedding and affected
+coupling against the new coordinates before accepting the result.
+The correspondence preserves topological incidence; a reflection's world
+handedness change is recorded separately and does not replace normal or
+Jacobian revalidation.
+
+For repeated motion, an in-hand `SourcePreparation` can create a preparation
+for the new meshing domain with `for_placement_domain`. It carries only exact
+local spline spans when the source dependencies and occurrence inventory match;
+placed spans and world-dependent proofs are constructed anew. Unknown or
+changed local dependencies take the cold path.
+
+The geometry realization benchmark includes repeated spline-backed assembly
+motion and records local span extraction and reuse separately from placement,
+world tessellation and proof, contact search, interface coupling and total
+work. Run performance measurements without competing benchmarks.
+
 Supported native analytic intersections, including unequal-radius
 perpendicular cylinders, preserve coupled source-defined branches even when
 the curves are non-rational. Face-cell construction retains their source

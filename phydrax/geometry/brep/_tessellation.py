@@ -531,12 +531,16 @@ def tessellate_brep_model(
     model: BRepModel,
     policy: BRepTessellationPolicy,
     /,
+    *,
+    preparation: SourcePreparation | None = None,
 ) -> tuple[BRepTessellation, SourceFidelityCertificate]:
     """Realize native source charts as conforming linear triangles with enclosures.
 
     Returns the tessellation with the source-fidelity certificate that proved
     it; pass both to ``BRepModel`` so the model binds that proof instead of
     recomputing it.
+    An in-hand preparation must be bound to the current model's meshing domain;
+    use ``for_placement_domain`` to carry eligible local spans from a prior pose.
     """
     if not model.patches:
         raise ValueError("A faceless B-Rep has no surface tessellation.")
@@ -544,7 +548,7 @@ def tessellate_brep_model(
     domain = MeshingDomain.from_brep(model)
     # Every attempt and its certification query the same sources; their exact
     # spans, interval programs and mapped p-curve Hessians are prepared once.
-    preparation = SourcePreparation(domain)
+    preparation = SourcePreparation.of(domain, preparation)
     linear_target = policy.linear_deflection
     history: list[tuple[float, float, float]] = []
     while True:
