@@ -1346,7 +1346,11 @@ def _curve_cad_result(
         "status": curved.status.value,
         "policy_id": policy.policy_id,
         "residual_tolerance_m": policy.residual_tolerance,
-        "maximum_source_residual_m": curved.evidence.maximum_residual,
+        "maximum_source_residual_m": (
+            curved.evidence.maximum_residual
+            if math.isfinite(curved.evidence.maximum_residual)
+            else None
+        ),
         "evidence_id": curved.evidence.evidence_id,
         "accepted_round": curved.accepted_round,
         "requested_geometry_order": 2,
