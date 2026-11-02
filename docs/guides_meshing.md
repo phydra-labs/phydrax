@@ -341,6 +341,11 @@ source curve is discretized in its canonical parameter once and that chain is
 shared by every selected trim use. Mapped interval boxes bound both physical
 chord deviation and edge length; those bounds, rather than a finite witness
 sample, drive trim refinement and remain in the construction evidence.
+Native chart triangulations coordinate newly requested trim splits by source
+curve and exact parent interval before publishing them. Competing uses accept
+one event and remesh from the shared parameter; authored points are never
+merged by chart-coordinate proximity. Independent intervals may advance in the
+same round, and later quality requests remain eligible.
 
 At a certified shared-root junction, the chart partition uses one deterministic
 representative on the proved native sheet. That representative is a point of
