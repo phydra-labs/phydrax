@@ -1095,7 +1095,12 @@ def _cad_target_root_partition(
     from ..meshing.providers._native_plc_geometry import simplex_volume_entities
     from ._domain_boundary import exact_plane_chart
     from ._meshing_domain import PatchCurveUse, SourcePreparation
-    from ._surface_source_support import _cad_root_edges, validate_cad_curve_ancestry
+    from ._surface_source_support import (
+        _cad_plane_seam_side,
+        _cad_pole_lens_endpoint,
+        _cad_root_edges,
+        validate_cad_curve_ancestry,
+    )
 
     if witness.cad_plc is None:
         raise SourceCoverageUnavailable(
@@ -1433,9 +1438,46 @@ def _cad_target_root_partition(
                         )
                     )
                 ]
+                if len(matches) > 1 and patch_rows[row] in plane_patches:
+                    plane = planes[patch_rows[row]]
+                    target_slots = tuple(row_targets.index(vertex) for vertex in endpoints)
+                    sided = []
+                    for candidate in matches:
+                        incidence = [
+                            item
+                            for item in root_edges[parent]
+                            if item[0] == candidate.root_cell_id
+                        ]
+                        if len(incidence) != 1:
+                            continue
+                        _, slot, first_uv, last_uv = incidence[0]
+                        first_uv = _cad_pole_lens_endpoint(
+                            charts, patch_rows[row], candidate.loop_index,
+                            candidate.use_index, first_uv, candidate.parameters[0],
+                        )
+                        last_uv = _cad_pole_lens_endpoint(
+                            charts, patch_rows[row], candidate.loop_index,
+                            candidate.use_index, last_uv, candidate.parameters[1],
+                        )
+                        root = charts.root_parameter_chart(root_rows[candidate.root_cell_id])
+                        if _cad_plane_seam_side(
+                            plane,
+                            root,
+                            slot,
+                            (first_uv, last_uv),
+                            triangles[row],
+                            target_slots,
+                            candidate.parameters,
+                            endpoint_parameters,
+                        ):
+                            sided.append(candidate)
+                    matches = sided
                 if len(matches) != 1:
                     raise SourceCoverageUnavailable(
-                        "CAD target edge lacks its root coedge.", status="violated"
+                        f"CAD target edge {edge_id} (root {parent}, patch {patch_rows[row]}, "
+                        f"chart {roots[row]}) lacks its root coedge: "
+                        f"{len(matches)} matching occurrences.",
+                        status="violated",
                     )
                 binding = matches[0]
                 incidence = [

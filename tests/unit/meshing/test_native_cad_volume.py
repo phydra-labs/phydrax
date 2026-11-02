@@ -497,6 +497,40 @@ def test_cad_pole_lens_uses_exact_collapsed_corner_only() -> None:
     pytest.fail("Cylinder has no regular coedge following a pole side.")
 
 
+@pytest.mark.parametrize("reverse", (False, True))
+def test_cad_plane_seam_side_uses_oriented_source_chart(reverse: bool) -> None:
+    from phydrax.geometry._domain_boundary import ExactPlaneChart, _TURN
+    from phydrax.geometry._surface_source_support import _cad_plane_seam_side
+
+    zero, one, two = Fraction(0), Fraction(1), Fraction(2)
+    turn = Fraction.from_float(_TURN)
+    plane = ExactPlaneChart(
+        "plane", (zero, zero, zero), (one, zero, zero), (zero, one, zero),
+        (), zero, 1,
+    )
+    target = ((one, zero), (two, zero), (one, -one))
+    edge = (1, 0) if reverse else (0, 1)
+    parameters = (one, zero) if reverse else (zero, one)
+    for angle, interior, expected in ((zero, one, True), (turn, turn - one, False)):
+        root = ((interior, one), (angle, one), (angle, two))
+        assert _cad_plane_seam_side(
+            plane, root, 0, (root[1], root[2]), target, edge,
+            (zero, one), parameters,
+        ) is expected
+    other_side = ((one, zero), (two, zero), (one, one))
+    root = ((turn - one, one), (turn, one), (turn, two))
+    assert _cad_plane_seam_side(
+        plane, root, 0, (root[1], root[2]), other_side, edge,
+        (zero, one), parameters,
+    )
+    pole_root = ((one, one), (zero, zero), (zero, one))
+    pole_target = ((zero, zero), (one, zero), (one, -one))
+    assert _cad_plane_seam_side(
+        plane, pole_root, 0, (pole_root[1], pole_root[2]), pole_target, edge,
+        (zero, one), parameters,
+    )
+
+
 def test_cad_pole_fan_interior_edge_requires_exact_common_fiber() -> None:
     from types import SimpleNamespace
 

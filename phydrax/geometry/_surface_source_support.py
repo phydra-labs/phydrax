@@ -971,6 +971,55 @@ def _cad_root_edges(
         raise ValueError("CAD root chart rows do not align with mesh cells.")
     return edge_vertices, {key: tuple(value) for key, value in adjacent.items()}
 
+def _cad_plane_seam_side(
+    plane: object,
+    root: tuple[tuple[Fraction, Fraction], ...],
+    slot: int,
+    root_edge: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+    target: tuple[tuple[Fraction, Fraction], ...],
+    target_edge: tuple[int, int],
+    root_parameters: tuple[Fraction, Fraction],
+    target_parameters: tuple[Fraction, Fraction],
+    /,
+) -> bool:
+    """Prove the same oriented side of a polar seam after plane transport."""
+    from ._domain_boundary import ExactPlaneChart, _TURN
+
+    if not isinstance(plane, ExactPlaneChart) or len(root) != 3 or len(target) != 3:
+        return False
+    if slot not in (0, 1, 2) or set(target_edge) not in ({0, 1}, {1, 2}, {0, 2}):
+        return False
+    first, last = root_edge
+    third = root[slot]
+    turn = Fraction.from_float(_TURN)
+    if first[0] != last[0] or first[0] not in (0, turn):
+        return False
+    if first[0] == 0:
+        if not 0 < third[0] < turn / 4:
+            return False
+    elif not turn * 3 / 4 < third[0] < turn:
+        return False
+    if any(plane.radius_sign * (plane.radius_offset + p[1]) < 0 for p in (first, last)):
+        return False
+    if plane.radius_sign * (plane.radius_offset + third[1]) <= 0:
+        return False
+    a, b = (target[index] for index in target_edge)
+    c = target[3 - target_edge[0] - target_edge[1]]
+    if (root_parameters[1] - root_parameters[0]) * (
+        target_parameters[1] - target_parameters[0]
+    ) < 0:
+        a, b = b, a
+
+    def cross(p: tuple[Fraction, Fraction], q: tuple[Fraction, Fraction],
+              r: tuple[Fraction, Fraction]) -> Fraction:
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    # On these quarter-turn neighborhoods the revolution-to-plane map is
+    # orientation preserving and stays on one side of the seam. The signs
+    # compare exact rational determinants, not rounded physical coordinates.
+    return cross(first, last, third) * cross(a, b, c) > 0
+
+
 def _cad_pole_lens_endpoint(
     charts: SurfaceSourceCharts,
     patch: int,
