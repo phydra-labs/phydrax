@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -41,6 +41,10 @@ from ._patches import (
 )
 from ._placed import PlacedSurface
 from ._trim_helpers import PeriodOffset
+
+if TYPE_CHECKING:
+    from .._meshing_domain import SourcePreparation
+    from .._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
 
 
 type ExactChartBox = tuple[
@@ -562,20 +566,43 @@ def certify_cad_trim_sheet(
     Homotopy embeddedness, the reference partition, and orientation are
     independent obligations. Only cylindrical source carriers are admitted.
     """
-    from .._approximate_source_coverage import _cad_trim_reference_loops
     from .._meshing_domain import SourcePreparation
     from .._surface_source_support import SurfaceSourceCharts, validate_cad_curve_ancestry
-    from ._curve_approximation_topology import _trim_reference_box
 
     if not isinstance(charts, SurfaceSourceCharts) or type(patch) is not int:
         return None
     try:
         charts.require_current()
+        bindings = validate_cad_curve_ancestry(charts, tolerance)
+        return _certify_cad_trim_sheet_validated(
+            charts, bindings, patch, SourcePreparation(charts.domain)
+        )
+    except (
+        ArithmeticError,
+        IndexError,
+        KeyError,
+        NotImplementedError,
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+
+def _certify_cad_trim_sheet_validated(
+    charts: SurfaceSourceCharts,
+    bindings: dict[int, tuple[_CadCurveUseBinding, ...]],
+    patch: int,
+    preparation: SourcePreparation,
+    /,
+) -> CadTrimSheetProof | None:
+    """Compose a sheet using ancestry replayed by the enclosing proof."""
+    from .._approximate_source_coverage import _cad_trim_reference_loops
+    from ._curve_approximation_topology import _trim_reference_box
+
+    try:
         native = certify_brep_trim_sheet(charts.domain, patch)
         if native is None:
             return None
-        preparation = SourcePreparation(charts.domain)
-        bindings = validate_cad_curve_ancestry(charts, tolerance)
         reference = _cad_trim_reference_loops(charts, bindings, patch)
         pieces = tuple(segment for loop in reference for segment in loop)
         if not pieces:

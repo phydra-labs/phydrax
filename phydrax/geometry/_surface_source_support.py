@@ -971,6 +971,58 @@ def _cad_root_edges(
         raise ValueError("CAD root chart rows do not align with mesh cells.")
     return edge_vertices, {key: tuple(value) for key, value in adjacent.items()}
 
+def _cad_pole_lens_endpoint(
+    charts: SurfaceSourceCharts,
+    patch: int,
+    loop: int,
+    use_index: int,
+    point: tuple[Fraction, Fraction],
+    parameter: Fraction,
+    /,
+) -> tuple[Fraction, Fraction]:
+    """Represent an authenticated collapsed pole by its coedge junction.
+
+    Only an exact point on a declared straight pole side may be replaced, and
+    only at the matching end of the named coedge. Both UV representatives
+    denote the same source corner; no physical mesh point is changed.
+    """
+    from ._domain_boundary import _line_endpoints, _rooted_patch_chart_endpoints
+    from ._meshing_domain import PatchCurveUse, PatchPoleUse
+    from .brep._patches import ExactLineCurve, LineCurve
+
+    if parameter not in (0, 1):
+        return point
+    uses = charts.domain.patches[patch].loops[loop]
+    use = uses[use_index]
+    if not isinstance(use, PatchCurveUse):
+        return point
+    endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)[loop]
+    traversal_start = (parameter == 0) == (use.sense > 0)
+    junction = endpoints[use_index][0 if traversal_start else 1]
+    neighbor = (
+        (use_index - 1) % len(uses)
+        if traversal_start
+        else (use_index + 1) % len(uses)
+    )
+    pole = uses[neighbor]
+    if (
+        not isinstance(pole, PatchPoleUse)
+        or charts.domain.brep_authority is None
+        or not isinstance(pole.pcurve, (ExactLineCurve, LineCurve))
+    ):
+        return point
+    start, stop = endpoints[neighbor]
+    if (start, stop) != _line_endpoints(pole):
+        return point
+    if junction not in (start, stop):
+        return point
+    dx, dy = stop[0] - start[0], stop[1] - start[1]
+    px, py = point[0] - start[0], point[1] - start[1]
+    along = px * dx + py * dy
+    if px * dy == py * dx and 0 <= along <= dx * dx + dy * dy:
+        return junction
+    return point
+
 
 def _cad_curve_use_lens(
     charts: SurfaceSourceCharts,
@@ -1000,6 +1052,12 @@ def _cad_curve_use_lens(
         source_first, source_last = fraction_down(exact_first), fraction_up(exact_last)
     else:
         source_first, source_last = fraction_up(exact_first), fraction_down(exact_last)
+    first_uv = _cad_pole_lens_endpoint(
+        charts, patch, loop, use_index, first_uv, parameters[0]
+    )
+    last_uv = _cad_pole_lens_endpoint(
+        charts, patch, loop, use_index, last_uv, parameters[1]
+    )
     lens = _curved_trim_lens(
         use, first_uv, last_uv, source_first, source_last, preparation
     )

@@ -242,6 +242,47 @@ def _screened_intersection_areas(
             yield left, right, _intersection_area(first[left], second[right])
 
 
+def _same_triangle_chain_boundary(
+    first: tuple[Triangle2, ...], second: tuple[Triangle2, ...], /
+) -> bool:
+    """Compare exact oriented boundaries, allowing collinear edge subdivision.
+
+    Each nondegenerate triangle is oriented positively. A directed edge adds
+    signed endpoint events on its exact supporting line; equal event banks
+    therefore mean equal boundary currents, including coincident partial edges.
+    Equal compactly supported planar 2-chains then have equal multiplicity
+    almost everywhere. The caller independently checks both partitions for
+    positive-area overlap.
+    """
+    events: dict[tuple[bool, Fraction, Fraction, Fraction], int] = {}
+    for triangles, chain_sign in ((first, 1), (second, -1)):
+        for triangle in triangles:
+            area = _area2(triangle)
+            if not area:
+                continue
+            orientation = chain_sign if area > 0 else -chain_sign
+            for start, stop in zip(
+                triangle, triangle[1:] + triangle[:1], strict=True
+            ):
+                dx = stop[0] - start[0]
+                dy = stop[1] - start[1]
+                if dx:
+                    slope = dy / dx
+                    line = (False, slope, start[1] - slope * start[0])
+                    lower, upper = sorted((start[0], stop[0]))
+                    direction = orientation if dx > 0 else -orientation
+                elif dy:
+                    line = (True, start[0], Fraction(0))
+                    lower, upper = sorted((start[1], stop[1]))
+                    direction = orientation if dy > 0 else -orientation
+                else:
+                    continue
+                for position, delta in ((lower, direction), (upper, -direction)):
+                    key = (*line, position)
+                    events[key] = events.get(key, 0) + delta
+    return not any(events.values())
+
+
 def _surface_source_chart_rows(
     source: MeshingDomainBoundarySource,
     witness: SourceBoundaryChartWitness,
@@ -572,15 +613,17 @@ def _partition_findings(
                 target, target, self_pairs=True
             )
         )
-        target_covered = [Fraction(0) for _ in target]
-        for target_row, _, area in _screened_intersection_areas(
-            target, declared, self_pairs=False
-        ):
-            target_covered[target_row] += area
-        target_outside = any(
-            covered != area
-            for covered, area in zip(target_covered, target_areas, strict=True)
-        )
+        target_outside = False
+        if not source_overlap and not _same_triangle_chain_boundary(declared, target):
+            target_covered = [Fraction(0) for _ in target]
+            for target_row, _, area in _screened_intersection_areas(
+                target, declared, self_pairs=False
+            ):
+                target_covered[target_row] += area
+            target_outside = any(
+                covered != area
+                for covered, area in zip(target_covered, target_areas, strict=True)
+            )
         if source_overlap:
             findings.append(
                 MeshCertificateFinding(

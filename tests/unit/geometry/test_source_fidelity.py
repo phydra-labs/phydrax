@@ -49,6 +49,7 @@ from phydrax.geometry._source_fidelity import (
     _normal_deviation_for_cell,
     _partition_findings,
     _require_reference_chart_partition,
+    _same_triangle_chain_boundary,
     _surface_target_chart_rows,
     _triangle_centroid_balls,
     _volume_boundary_facet_lookup,
@@ -67,6 +68,25 @@ from phydrax.geometry.brep._patches import (
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 from phydrax.units import METER, MILLIMETER
+
+
+def test_triangle_chain_boundary_handles_subdivision_and_forgeries() -> None:
+    def point(x: int, y: int) -> tuple[Fraction, Fraction]:
+        return Fraction(x), Fraction(y)
+
+    a, b, c, d = point(0, 0), point(2, 0), point(2, 2), point(0, 2)
+    m = point(1, 0)
+    original = ((a, b, c), (a, c, d))
+    subdivided = ((a, m, c), (m, b, c), (a, c, d))
+    reversed_rows = tuple(tuple(reversed(triangle)) for triangle in subdivided)
+    assert _same_triangle_chain_boundary(original, subdivided)
+    assert _same_triangle_chain_boundary(original, reversed_rows)
+    assert not _same_triangle_chain_boundary(original, subdivided[:-1])
+    assert not _same_triangle_chain_boundary(original, (*subdivided, subdivided[0]))
+    shifted = tuple(
+        tuple((x + 1, y) for x, y in triangle) for triangle in original
+    )
+    assert not _same_triangle_chain_boundary(original, shifted)
 
 
 class _PwlBoundaryOwner:

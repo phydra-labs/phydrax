@@ -1130,10 +1130,13 @@ def _cad_target_root_partition(
     triangles: list[_Triangle2] = []
     grouped: dict[int, list[_Triangle2]] = {}
     plane_patches: set[int] = set()
+    planes = {patch: exact_plane_chart(domain, patch) for patch in set(patch_rows)}
     affine_patches = {
         patch
-        for root, patch in zip(roots, patch_rows, strict=True)
-        if root == -1 and _exact_patch_chart(domain, patch) is not None
+        for patch in {
+            patch for root, patch in zip(roots, patch_rows, strict=True) if root == -1
+        }
+        if _exact_patch_chart(domain, patch) is not None
     }
     for row, (root_id, patch) in enumerate(zip(roots, patch_rows, strict=True)):
         triangle = _triangle2(witness.source_parameter_chart(row))
@@ -1184,7 +1187,7 @@ def _cad_target_root_partition(
             raise SourceCoverageUnavailable(
                 "CAD target row changes source identity.", status="violated"
             )
-        plane = exact_plane_chart(domain, patch)
+        plane = planes[patch]
         if (
             plane is not None
             and witness.source_chart_ids[row] == plane.chart_id
@@ -1260,7 +1263,7 @@ def _cad_target_root_partition(
         rows = tuple(
             triangles[row] for row, value in enumerate(patch_rows) if value == patch
         )
-        plane = exact_plane_chart(domain, patch)
+        plane = planes[patch]
         if patch in plane_patches:
             if plane is None or any(
                 witness.source_chart_ids[row] != plane.chart_id
@@ -1284,7 +1287,10 @@ def _cad_target_root_partition(
                 != abs(_area2(t))
                 for t in rows
             )
-            or any(_intersection_area(a, b) for a, b in combinations(rows, 2))
+            or any(
+                _intersection_area(rows[first], rows[second])
+                for first, second in _possibly_overlapping_pairs(rows, rows, True)
+            )
         ):
             raise SourceCoverageUnavailable(
                 "CAD plane rows do not partition the exact plane reference.",

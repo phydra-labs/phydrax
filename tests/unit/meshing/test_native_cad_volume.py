@@ -434,6 +434,44 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
     return domain, surface
 
 
+def test_cad_pole_lens_uses_exact_collapsed_corner_only() -> None:
+    from types import SimpleNamespace
+
+    from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
+    from phydrax.geometry._meshing_domain import PatchCurveUse, PatchPoleUse
+    from phydrax.geometry._surface_source_support import _cad_pole_lens_endpoint
+
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
+    )
+    charts = SimpleNamespace(domain=domain)
+    for patch, surface in enumerate(domain.patches):
+        for loop_index, uses in enumerate(surface.loops):
+            for index, use in enumerate(uses):
+                if not isinstance(use, PatchCurveUse):
+                    continue
+                previous = (index - 1) % len(uses)
+                if not isinstance(uses[previous], PatchPoleUse):
+                    continue
+                endpoints = _rooted_patch_chart_endpoints(domain, patch)[loop_index]
+                start, stop = endpoints[previous]
+                midpoint = ((start[0] + stop[0]) / 2, (start[1] + stop[1]) / 2)
+                parameter = Fraction(0 if use.sense > 0 else 1)
+                junction = endpoints[index][0]
+                assert _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, index, midpoint, parameter
+                ) == junction
+                off_side = (midpoint[0], midpoint[1] + 1)
+                assert _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, index, off_side, parameter
+                ) == off_side
+                assert _cad_pole_lens_endpoint(
+                    charts, patch, loop_index, index, midpoint, Fraction(1, 2)
+                ) == midpoint
+                return
+    pytest.fail("Cylinder has no regular coedge following a pole side.")
+
+
 def test_cad_periodic_coedge_pair_requires_both_occurrences_and_opposite_sense() -> None:
     from fractions import Fraction
     from types import SimpleNamespace

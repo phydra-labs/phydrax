@@ -731,7 +731,7 @@ def certify_single_source_shell(
     from ._assembly import BRepAffinePlacement
     from ._curve_approximation_topology import certify_trim_reference_homotopy
     from ._measure import brep_shell_volume_sign
-    from ._source_embedding import certify_cad_trim_sheet
+    from ._source_embedding import _certify_cad_trim_sheet_validated
 
     if (
         not isinstance(charts, SurfaceSourceCharts)
@@ -772,7 +772,7 @@ def certify_single_source_shell(
         preparation = SourcePreparation(domain)
         sheet_certificates: list[str] = []
         for patch in range(len(domain.patches)):
-            sheet = certify_cad_trim_sheet(charts, patch, tolerance)
+            sheet = _certify_cad_trim_sheet_validated(charts, bindings, patch, preparation)
             if sheet is None:
                 return None
             loops = _cad_trim_reference_loops(charts, bindings, patch)
