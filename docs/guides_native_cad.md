@@ -245,6 +245,9 @@ replace a deep offset chain with sampled endpoints.
 Native-period endpoint binding covers both isoparametric directions of an offset
 revolution. Conic and B-spline endpoint frames preserve exact real coefficients,
 including rational-valued radical norms and nonrational exact radii.
+For a rooted sphere-revolution pole, the offset preserves the conic-rooted
+latitude carrier and rebinds its native-period endpoint witnesses to the
+offset surface; the rounded latitude is not used as exact pole authority.
 Endpoint-to-vertex gap limits are checked against outward distance bounds; a
 finite bound is not an exact-incidence proof. Root and source bindings remain
 independently validated.
