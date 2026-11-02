@@ -26,12 +26,14 @@ from phydrax.geometry._meshing_domain import (
     MeshingSourceAccuracy,
     MeshingSurfacePatch,
     PatchCurveUse,
+    SourcePreparation,
 )
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
 )
 from phydrax.geometry._source_fidelity import (
+    _surface_jacobian_bounds,
     certify_source_fidelity,
     validate_source_fidelity_witness,
 )
@@ -988,6 +990,22 @@ def test_parametric_surface_route_adapts_exact_reconstructed_meshregion() -> Non
     assert set(face_association.source_entity_ids) == {
         domain.entity_id(2, row) for row in range(len(domain.patches))
     }
+
+
+def test_rational_surface_jacobian_uses_positive_source_spans() -> None:
+    domain = _curved_trim_domain()
+    surface = domain.patches[0].surface
+    preparation = SourcePreparation(domain)
+    triangle = ((Fraction(0), Fraction(0)), (Fraction(1), Fraction(0)),
+                (Fraction(0), Fraction(1)))
+    bounds = _surface_jacobian_bounds(surface, triangle, preparation)
+    assert bounds is not None
+    lower, upper = bounds
+    exact = np.asarray(((0.5, 0.0), (0.0, 1.0), (0.0, 0.0)))
+    assert np.all(lower <= exact)
+    assert np.all(exact <= upper)
+    outside = ((Fraction(-1), Fraction(0)), *triangle[1:])
+    assert _surface_jacobian_bounds(surface, outside, preparation) is None
 
 
 def test_parametric_surface_route_meshes_shared_curved_nurbs_trims() -> None:

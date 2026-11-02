@@ -346,6 +346,8 @@ curve and exact parent interval before publishing them. Competing uses accept
 one event and remesh from the shared parameter; authored points are never
 merged by chart-coordinate proximity. Independent intervals may advance in the
 same round, and later quality requests remain eligible.
+For rational spline surfaces, trim-lens Jacobian bounds use the prepared exact
+knot-span derivative enclosures and their positive-denominator certificates.
 
 At a certified shared-root junction, the chart partition uses one deterministic
 representative on the proved native sheet. That representative is a point of

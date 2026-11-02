@@ -3954,6 +3954,28 @@ def _surface_jacobian_bounds(
                 lower[physical_axis, parameter] = low
                 upper[physical_axis, parameter] = high
         return lower, upper
+    spans = preparation.surface_spans(surface)
+    if spans is not None:
+        from ._meshing_domain import _span_enclosures_for_chart
+
+        enclosures = _span_enclosures_for_chart(spans, uv_triangle)
+        if not enclosures or any(not value.positive_denominator for value in enclosures):
+            return None
+        bounds = (
+            tuple(value.du_bounds for value in enclosures),
+            tuple(value.dv_bounds for value in enclosures),
+        )
+        lower = np.empty((3, 2), dtype=np.float64)
+        upper = np.empty_like(lower)
+        for parameter, columns in enumerate(bounds):
+            for physical_axis in range(3):
+                lower[physical_axis, parameter] = fraction_endpoint(
+                    min(column[physical_axis][0] for column in columns), upper=False
+                )
+                upper[physical_axis, parameter] = fraction_endpoint(
+                    max(column[physical_axis][1] for column in columns), upper=True
+                )
+        return lower, upper
     if _has_unexpanded_exact_surface_carrier(surface) and not _has_torus_source_program(
         surface
     ):
