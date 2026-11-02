@@ -353,6 +353,10 @@ def target_topology(
                         )
                     )
                 else:
+                    # The endpoint parameter is the physical edge parameter t.
+                    # The patch axis supplies only a native-period authority;
+                    # its chart coordinate may have a separate exact phase and
+                    # deck shift, which the pcurve binding must compose.
                     patch = patches[coedge_faces[coedge]]
                     axis = 0
                     base = pcurve

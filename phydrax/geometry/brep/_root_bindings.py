@@ -2110,9 +2110,15 @@ class BRepVertexRoot(StrictModule):
         if isinstance(endpoint, ConicParameterEndpoint):
             if not self.supports_endpoint(endpoint):
                 return None
-            return _exact_conic_uv_endpoint(patch, curve, endpoint)
+            return _exact_conic_uv_endpoint(patch, curve, endpoint) or (
+                _exact_revolution_pole_uv_endpoint(self, patch, curve, endpoint)
+            )
         if isinstance(endpoint, NativePeriodEndpoint):
-            return _exact_native_period_uv_endpoint(self, patch, curve, endpoint)
+            return (
+                _exact_native_period_uv_endpoint(self, patch, curve, endpoint)
+                or _exact_native_cylinder_uv_endpoint(self, patch, curve, endpoint)
+                or _exact_revolution_pole_uv_endpoint(self, patch, curve, endpoint)
+            )
         return None
 
     def source_endpoint_uv_box(
@@ -2141,6 +2147,25 @@ class BRepVertexRoot(StrictModule):
                     tuple(fraction_down(bound[0]) for bound in bounds),
                     tuple(fraction_up(bound[1]) for bound in bounds),
                 ),
+                dtype=np.float64,
+            )
+        if chart is not None and len(chart) == 5 and chart[0] == "revolution-pole":
+            from ._patches import _conic_parameter_root_bounds
+
+            longitude, cosine, sine, turns = chart[1:]
+            if (
+                not isinstance(longitude, (Fraction, PeriodOffset))
+                or not isinstance(cosine, (Fraction, RadicalElement))
+                or not isinstance(sine, (Fraction, RadicalElement))
+                or type(turns) is not int
+            ):
+                return None
+            longitude_low, longitude_high = period_scalar_bounds(longitude)
+            latitude_low, latitude_high = _conic_parameter_root_bounds(
+                cosine, sine, turns
+            )
+            return np.asarray(
+                ((longitude_low, latitude_low), (longitude_high, latitude_high)),
                 dtype=np.float64,
             )
         if chart is not None and chart[0] in ("cylinder", "torus"):
@@ -2324,6 +2349,186 @@ class BRepVertexRoot(StrictModule):
         ):
             return True
         return joint is None and _same_parameter_source(first_root, second_root)
+
+
+def _exact_revolution_pole_uv_endpoint(
+    vertex: BRepVertexRoot,
+    patch: AbstractSurfacePatch,
+    curve: AbstractCurve,
+    endpoint: ConicParameterEndpoint | NativePeriodEndpoint,
+    /,
+) -> tuple[object, ...] | None:
+    """Replay the source-rooted pole chart and retain its native longitude sheet."""
+    from .._rational import rational_vector
+    from ._boolean_core import AffinePCurve, line_chart_coefficients
+    from ._correspondence import _exact_vertex_root_source
+    from ._patches import _validate_source_shadows, ConicRootLinePCurve, RevolutionSurface
+
+    if not isinstance(patch, RevolutionSurface):
+        return None
+    point, root = _exact_vertex_root_source(vertex)
+    if (
+        point is None
+        or root is None
+        or not _same_parameter_source(root.conic, patch.curve)
+        or root.exact_point() != point
+    ):
+        return None
+    axis_origin = rational_vector(np.asarray(patch.axis_origin))
+    axis = rational_vector(np.asarray(patch.axis_direction))
+    relative = tuple(point[i] - axis_origin[i] for i in range(3))
+    if (
+        relative[1] * axis[2] - relative[2] * axis[1] != 0
+        or relative[2] * axis[0] - relative[0] * axis[2] != 0
+        or relative[0] * axis[1] - relative[1] * axis[0] != 0
+    ):
+        return None
+    try:
+        _validate_source_shadows(curve, set())
+    except (TypeError, ValueError):
+        return None
+    if isinstance(endpoint, NativePeriodEndpoint):
+        if (
+            not isinstance(curve, AffinePCurve)
+            or not isinstance(curve.curve, ConicRootLinePCurve)
+            or curve.matrix != ((Fraction(0), Fraction(1)), (Fraction(1), Fraction(0)))
+            or curve.offset != (Fraction(0), Fraction(0))
+            or curve.curve.phase_shift_exact != 0
+            or curve.curve.height_origin_exact != 0
+            or curve.curve.height_direction_exact != 1
+            or curve.curve.root.identity_payload() != root.identity_payload()
+            or endpoint.patch is None
+            or not _same_parameter_source(endpoint.patch, patch)
+            or endpoint.axis != 0
+            or not _same_parameter_source(endpoint.curve, curve)
+            or endpoint.rational != 0
+            or endpoint.turns not in (0, 1)
+        ):
+            return None
+        longitude = endpoint.exact_parameter
+    else:
+        chart = line_chart_coefficients(curve)
+        if chart is None:
+            return None
+        origin, direction = chart
+        if (
+            not _same_parameter_source(endpoint.carrier, curve)
+            or endpoint.parameter_exact is not None
+            or not _same_parameter_source(endpoint.root.conic, patch.curve)
+            or endpoint.point_exact != point
+            or endpoint.root.exact_point() != point
+            or direction != (Fraction(0), Fraction(1))
+            or origin[1] != 0
+        ):
+            return None
+        longitude = origin[0]
+        root = endpoint.root
+    return (
+        "revolution-pole",
+        longitude,
+        root.cosine_exact,
+        root.sine_exact,
+        root.turns,
+    )
+
+
+def _exact_native_cylinder_uv_endpoint(
+    vertex: BRepVertexRoot,
+    patch: AbstractSurfacePatch,
+    curve: AbstractCurve,
+    endpoint: NativePeriodEndpoint,
+    /,
+) -> tuple[object, ...] | None:
+    """Compose a physical native parameter with the cylinder's exact chart phase."""
+    from ._correspondence import _exact_vertex_root_source, _periodic_pcurve_source
+    from ._patches import (
+        _combine_conic_parameter_roots,
+        _validate_source_shadows,
+        ConicParameterRoot,
+        CylinderPatch,
+        PlaneCylinderSectionPCurve,
+    )
+
+    if (
+        not isinstance(patch, CylinderPatch)
+        or not _same_parameter_source(endpoint.curve, curve)
+        or endpoint.patch is None
+        or not _same_parameter_source(endpoint.patch, patch)
+        or endpoint.axis != 0
+        or endpoint.rational != 0
+    ):
+        return None
+    quarters = endpoint.turns * 4
+    if quarters.denominator != 1:
+        return None
+    periodic = _periodic_pcurve_source(curve, patch)
+    if periodic is None:
+        return None
+    source, shifts = periodic
+    if (
+        not isinstance(source, PlaneCylinderSectionPCurve)
+        or shifts[1] != 0
+        or source.offset_exact[0] != 0
+        or source.linear_exact != (Fraction(1), Fraction(0))
+        or source.cosine_exact[0] != 0
+        or source.sine_exact[0] != 0
+    ):
+        return None
+    try:
+        _validate_source_shadows(curve, set())
+    except (TypeError, ValueError):
+        return None
+    point, vertex_root = _exact_vertex_root_source(vertex)
+    if point is None or vertex_root is None:
+        return None
+    cosine, sine = ((1, 0), (0, 1), (-1, 0), (0, -1))[quarters.numerator % 4]
+    phase = source.angle_offset_root
+    try:
+        parameter_root = ConicParameterRoot(
+            vertex_root.conic,
+            Fraction(cosine),
+            Fraction(sine),
+            turns=quarters.numerator // 4,
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if phase is None:
+        chart_root = parameter_root
+    elif phase.cosine_exact == 1 and phase.sine_exact == 0:
+        chart_root = ConicParameterRoot(
+            vertex_root.conic,
+            parameter_root.cosine_exact,
+            parameter_root.sine_exact,
+            turns=parameter_root.turns + phase.turns,
+        )
+    else:
+        chart_root = _combine_conic_parameter_roots(parameter_root, phase)
+    if chart_root is None:
+        return None
+    height = (
+        source.offset_exact[1]
+        + source.cosine_exact[1] * cosine
+        + source.sine_exact[1] * sine
+    )
+    actual = tuple(
+        patch.origin_exact[i]
+        + patch.radius_exact
+        * (
+            chart_root.cosine_exact * patch.first_axis_exact[i]
+            + chart_root.sine_exact * patch.second_axis_exact[i]
+        )
+        + height * patch.axis_exact[i]
+        for i in range(3)
+    )
+    if actual != point:
+        return None
+    return (
+        "cylinder",
+        chart_root.cosine_exact,
+        chart_root.sine_exact,
+        chart_root.turns + shifts[0],
+        height,
+    )
 
 
 def _exact_native_period_uv_endpoint(
@@ -2622,18 +2827,25 @@ def _exact_conic_uv_endpoint(
             return None
         angle_cosine, angle_sine, turns, height = chart
     elif isinstance(source, ConicRootLinePCurve):
-        if endpoint.parameter_exact is None:
+        if (
+            endpoint.parameter_exact is None
+            or endpoint.root.exact_point() != endpoint.point_exact
+            or source.phase_shift_exact != 0
+        ):
             return None
         angular_root = source.root
-        if endpoint.root.identity_payload() != angular_root.identity_payload():
-            return None
         circle = angular_root.conic
         if (
             not isinstance(circle, CircleCurve)
-            or circle.center_exact != (Fraction(0), Fraction(0), Fraction(0))
             or circle.first_axis_exact != patch.first_axis_exact
             or circle.second_axis_exact != patch.second_axis_exact
-            or circle.radius_exact != 1
+            or (
+                (circle.center_exact, circle.radius_exact)
+                not in (
+                    ((Fraction(0), Fraction(0), Fraction(0)), Fraction(1)),
+                    (patch.origin_exact, patch.radius_exact),
+                )
+            )
             or circle.native_period_symbol() != "two_pi"
             or angular_root.cosine_exact * angular_root.cosine_exact
             + angular_root.sine_exact * angular_root.sine_exact

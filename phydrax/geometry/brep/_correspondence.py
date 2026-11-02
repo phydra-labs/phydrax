@@ -300,22 +300,45 @@ def _exact_brep_pole_collapse(
     period = revolution.periods[0]
     if period is None or last - first != period:
         return False
-    affine = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
-    if affine is None:
-        return False
-    origin, direction = affine
-    chart_start = tuple(
-        origin[axis] + Fraction.from_float(float(first)) * direction[axis]
-        for axis in range(2)
-    )
-    if direction != (Fraction(1), Fraction(0)) or chart_start[0] != first_root.rational:
-        return False
-    if isinstance(revolution, SpherePatch):
-        return exact_sphere_pole(revolution, chart_start[1]) == source_pole
     if conic_root is not None:
-        if chart_start[1] != Fraction.from_float(conic_root.parameter):
+        from ._boolean_core import AffinePCurve
+        from ._patches import _validate_source_shadows
+
+        if (
+            not isinstance(pcurve, AffinePCurve)
+            or not isinstance(pcurve.curve, ConicRootLinePCurve)
+            or pcurve.matrix != ((Fraction(0), Fraction(1)), (Fraction(1), Fraction(0)))
+            or pcurve.offset != (Fraction(0), Fraction(0))
+            or pcurve.curve.phase_shift_exact != 0
+            or pcurve.curve.height_origin_exact != 0
+            or pcurve.curve.height_direction_exact != 1
+            or not _same_source_definition(pcurve.curve.root, conic_root)
+            or Fraction.from_float(float(first)) != first_root.rational
+        ):
+            return False
+        domain = pcurve.parameter_domain
+        if domain is not None and (first < domain[0] or last > domain[1]):
+            return False
+        try:
+            _validate_source_shadows(pcurve, set())
+        except (TypeError, ValueError):
             return False
     else:
+        affine = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
+        if affine is None:
+            return False
+        origin, direction = affine
+        chart_start = tuple(
+            origin[axis] + Fraction.from_float(float(first)) * direction[axis]
+            for axis in range(2)
+        )
+        if (
+            direction != (Fraction(1), Fraction(0))
+            or chart_start[0] != first_root.rational
+        ):
+            return False
+        if isinstance(revolution, SpherePatch):
+            return exact_sphere_pole(revolution, chart_start[1]) == source_pole
         profile = _affine_curve_coefficients(
             revolution.curve, (Fraction(0), Fraction(0), Fraction(0))
         )
@@ -328,6 +351,8 @@ def _exact_brep_pole_collapse(
         )
         if profile_point != source_pole:
             return False
+    if not isinstance(revolution, RevolutionSurface):
+        return False
     axis_origin = rational_vector(np.asarray(revolution.axis_origin, dtype=np.float64))
     axis_direction = rational_vector(
         np.asarray(revolution.axis_direction, dtype=np.float64)
