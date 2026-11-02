@@ -497,3 +497,28 @@ turns; publication then certifies the face gap of the recovered p-curve, so
 decimal rounding in the file is bounded rather than assumed away. Torus seam
 edges lift exactly onto the closing sheet, and p-curves that differ from their
 source chart by whole native periods are accepted as the same image.
+
+## Independent operation-sequence references
+
+`native-cad-operation-sequences` is registered in the existing qualification
+runner. It retains separate records for thin enclosures and wall slots, patterned
+holes and parameter edits, body splits, tangent/coincident Boolean identities,
+and a native blend followed by a mixed plane/cylinder cut.
+
+The qualification corpus uses independently authored meter-valued recipes rather
+than importing another kernel's success labels. Rectilinear references are signed
+boxes clipped analytically from the recipe: their volume, area, centroid moments,
+and second moments do not come from the native Boolean result.
+
+Boundary comparison checks the complete oriented planar boundary. Every source
+edge must be exactly axis-aligned, and every vertex must have a singleton rational
+source enclosure. A common plane partition contains all reference and output
+edges; winding is constant on each open rectangle, so its comparison is exhaustive,
+not a sampled locality check. Signed-tetrahedron boundary moments provide another
+independent check. Equal-volume translations and equal-volume, equal-centroid
+cavity substitutions must still fail.
+
+Curved cases use analytic integrals with independently bounded constants. These
+references supplement, rather than replace, source fidelity, embedding, region
+ownership, and coverage proofs. Each unresolved operation remains a failed case;
+it is not omitted or relabeled as a successful reference.

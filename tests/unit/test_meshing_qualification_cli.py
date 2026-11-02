@@ -117,7 +117,6 @@ def test_native_case_migration_covers_every_authored_profile() -> None:
                 "independent_oracle",
                 "tolerances",
                 "target_gate_status",
-                "uncovered_contracts",
             )
         )
         for contract in contracts

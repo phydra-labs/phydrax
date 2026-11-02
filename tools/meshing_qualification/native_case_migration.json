@@ -215,6 +215,15 @@
       "independent_oracle": "Fresh FE harmonic solve and next solve; exact restored P1/P0 field ownership; nonconstant P1 transfer of sin(2π(ξ0+2ξ1)) against an independent Hessian bound and winding-sensitive lifted-image check; conservative P0 cell averages of the same periodic field integrated over lifted triangles, with owner-reduced source/target content evidence; exact orbit/winding identity; FV runtime/epoch/state/cell-ID identity, accepted next step, positivity and conservation ledger.",
       "tolerances": {"fe_solution_error": 2e-9, "fe_normalized_residual": 2e-9, "fe_transfer_absolute": 1e-12, "fe_conservative_integral_absolute": "rounding bound from owner-reduced source absolute content", "periodic_p1_interpolation": "independent Hessian interpolation bound from valid stencil weights and lifted source/target distances", "periodic_orbit_and_winding_identity": "exact", "fv_state_identity": "exact", "fv_next_step": "one accepted step with positive admissibility and finite ledger"},
       "coverage_status": "Failing gate until the owner-local periodic P1/P0 source-to-adapted topology transaction, restored banks/material/RNG/clock, and FV owner-local changed-placement continuation are exercised and the next physical solves pass."
+    },
+    {
+      "workflow": "cad-operation-sequences",
+      "target_scenario": "native-cad-operation-sequences",
+      "source": "Independently authored thin-wall enclosure and slot, patterned holes and parameter edit, disconnected body split, tangent/coincident Boolean identities, and native fillet followed by a mixed plane/cylinder cut.",
+      "source_provenance": "PHYDRA-authored meter-valued recipes; Solidcraft oracle methodology informed the case selection, but no donor code, assets, expected values or success labels are copied.",
+      "independent_oracle": "Analytically clipped signed-box volume and boundary chains, exact planar winding coverage, independent signed-tetrahedron first/second moments, topology counts, native/STEP roundtrip geometry, and analytic curved volumes using Machin-bounded pi.",
+      "tolerances": {"rectilinear_geometry_and_moments": "exact", "curved_volume_relative_enclosure": 1e-10, "interchange_geometry_loss": "none", "volume_preserving_geometry_faults": "must refuse"},
+      "coverage_status": "Rectilinear sequences and volume-preserving fault checks passed; the mixed curved cut remains a failing gate until native source intersection resolves."
     }
   ],
   "administrative_fields_removed": ["work/query/scratch/data/memory credits or caps", "timeouts and execution deadlines", "resource receipts", "capacity trials", "optional-provider substitution", "external completion labels", "generation aliases"],

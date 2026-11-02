@@ -29,6 +29,10 @@ NATIVE_CASE_REGISTRY = {
         ".scenarios.native_cad_profiles",
         "native_cad_profile_matrix",
     ),
+    "native-cad-operation-sequences": (
+        ".scenarios.native_operation_sequences",
+        "native_operation_sequences",
+    ),
     "native-planar-semantic": (".scenarios.native_cad", "qualify_planar_semantic"),
     "native-supermesh": (".scenarios.mesh_transfer", "qualify_supermesh"),
     "native-remap-p1": (".scenarios.mesh_transfer", "qualify_remap_p1"),
