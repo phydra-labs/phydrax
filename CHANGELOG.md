@@ -8,6 +8,8 @@
   independent overlap and material-orientation checks remain in force.
 - Curved-trim fidelity screens lens-to-chart candidates with outward-rounded
   boxes before the unchanged exact closed-contact test.
+- CAD pole-fan chart incidence and curve lenses use exact B-Rep collapsed-side
+  authority when one physical pole has multiple valid UV representatives.
 - Native torus source covers and fidelity now bind exact direct and
   affine-placed coefficients in outward point and derivative interval programs,
   including nonbinary rational radii, rather than relying on rounded shadows.
