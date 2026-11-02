@@ -1561,14 +1561,16 @@ def _make_chart_mesh(
             ) from error
         scaled_output = np.asarray(triangulation.points, dtype=np.float64)
         triangle_points = scaled_output / scale_vector
-        if not np.all(np.isfinite(scaled_output)):
+        if np.all(np.isfinite(triangle_points)) and np.array_equal(
+            triangle_points * scale_vector, scaled_output
+        ):
+            break
+        if scale_vector[0] == 1.0:
             raise _failure(
                 "native CDT generated a nonfinite chart point",
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 entity_ids=(int(patch),),
             )
-        if np.array_equal(triangle_points * scale_vector, scaled_output):
-            break
         # A generated point may be unrepresentable even when the authored
         # inputs scaled exactly. Retry the original, unconditioned chart.
         scale_vector = np.ones(2, dtype=np.float64)
