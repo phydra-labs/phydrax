@@ -3620,15 +3620,21 @@ def _surface_target_chart_rows(
             raise ValueError(
                 "Full-source surface chart witness must bind every target cell."
             )
-        reference_triangles = tuple(
-            _exact_triangle2(
-                _fractions_from_chart_tokens(
-                    witness.target_reference_rational_tokens, row
+        exact_rows: dict[tuple[tuple[tuple[int, int], ...], ...], Triangle2] = {}
+        reference_list: list[Triangle2] = []
+        for row, tokens in enumerate(witness.target_reference_rational_tokens):
+            triangle = exact_rows.get(tokens)
+            if triangle is None:
+                triangle = _exact_triangle2(
+                    _fractions_from_chart_tokens(
+                        witness.target_reference_rational_tokens, row
+                    )
                 )
-            )
-            for row in range(count)
-        )
+                exact_rows[tokens] = triangle
+            reference_list.append(triangle)
+        reference_triangles = tuple(reference_list)
         by_cell: dict[int, list[Triangle2]] = {}
+        unique_cells = len(set(cell_ids)) == count
         for row in range(count):
             cell_id = cell_ids[row]
             found = cells.get(cell_id)
@@ -3639,14 +3645,19 @@ def _surface_target_chart_rows(
                 raise ValueError(
                     "Surface source charts currently require triangle target cells."
                 )
-            by_cell.setdefault(cell_id, []).append(reference_triangles[row])
+            if not unique_cells:
+                by_cell.setdefault(cell_id, []).append(reference_triangles[row])
         standard: Triangle2 = (
             (Fraction(0), Fraction(0)),
             (Fraction(1), Fraction(0)),
             (Fraction(0), Fraction(1)),
         )
-        for triangles in by_cell.values():
-            _require_reference_chart_partition(tuple(triangles), (standard,))
+        if unique_cells:
+            for triangle in dict.fromkeys(reference_triangles):
+                _require_reference_chart_partition((triangle,), (standard,))
+        else:
+            for triangles in by_cell.values():
+                _require_reference_chart_partition(tuple(triangles), (standard,))
         return (
             tuple((cells[cell_id][0], cells[cell_id][1]) for cell_id in cell_ids),
             reference_triangles,
