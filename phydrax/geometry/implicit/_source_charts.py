@@ -1477,6 +1477,11 @@ class _FaceRound:
 
 
 type _FaceReply = tuple[list[_PieceOutcome], list[_BoxResults]]
+
+# Execution workspace only: every request is evaluated, in the same round and
+# order. Face generators and retained proof outcomes still scale with row count.
+_ROOT_CHART_REQUEST_BATCH = 1024
+
 type _FaceSteps[T] = Generator[_FaceRound, _FaceReply, T]
 
 
@@ -1495,6 +1500,16 @@ def _evaluate_box_requests(
     /,
 ) -> list[_BoxResults]:
     """Enclose every requested box of all pieces in one batched evaluation."""
+    if len(requests) > _ROOT_CHART_REQUEST_BATCH:
+        return [
+            result
+            for start in range(0, len(requests), _ROOT_CHART_REQUEST_BATCH)
+            for result in _evaluate_box_requests(
+                bounds,
+                hessian_program,
+                requests[start : start + _ROOT_CHART_REQUEST_BATCH],
+            )
+        ]
     field_boxes = [box for request in requests for box in request.field]
     hessian_boxes = [box for request in requests for box in request.hessian]
     field_values: list[_FieldBox] = []

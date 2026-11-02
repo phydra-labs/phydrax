@@ -1332,3 +1332,57 @@ def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof() ->
         np.asarray(full.deviation_bounds)[:, 0]
         <= np.asarray(inherited.deviation_bounds)[:, 1]
     )
+
+
+def test_implicit_chart_request_batches_preserve_full_proof_and_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from phydrax.geometry._surface_source_support import _same_tree_content
+
+    _, source, _, mesh, geometry, witness = _adaptive_source()
+    monkeypatch.setattr(source_charts, "_ROOT_CHART_REQUEST_BATCH", sys.maxsize)
+    all_at_once = certify_source_fidelity(
+        mesh,
+        geometry,
+        source,
+        witness=witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+    invalid = eqx.tree_at(
+        lambda value: value.orientations,
+        witness,
+        -np.asarray(witness.orientations),
+    )
+    with pytest.raises(ValueError) as whole_refusal:
+        certify_source_fidelity(
+            mesh,
+            geometry,
+            source,
+            witness=invalid,
+            tolerance=0.5,
+            maximum_normal_deviation=np.pi,
+        )
+    monkeypatch.setattr(source_charts, "_ROOT_CHART_REQUEST_BATCH", 1)
+    partitioned = certify_source_fidelity(
+        mesh,
+        geometry,
+        source,
+        witness=witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+    with pytest.raises(ValueError) as batch_refusal:
+        certify_source_fidelity(
+            mesh,
+            geometry,
+            source,
+            witness=invalid,
+            tolerance=0.5,
+            maximum_normal_deviation=np.pi,
+        )
+    assert _same_tree_content(all_at_once, partitioned)
+    assert all_at_once.certificate_id == partitioned.certificate_id
+    assert str(whole_refusal.value) == str(batch_refusal.value)
