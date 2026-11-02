@@ -320,12 +320,12 @@ def canonical_mapping(value: Mapping[str, Any], /) -> dict[str, Any]:
 def _array_records(tree: PyTree[Any], /) -> Iterator[tuple[str, np.ndarray]]:
     """Traverse keyed leaves without retaining the complete flattened path bank."""
     node: Any = tree
-    path: tuple[Any, ...] = ()
-    parents: list[tuple[tuple[Any, ...], Iterator[tuple[Any, Any]]]] = []
+    path: list[Any] = []
+    parents: list[Iterator[tuple[Any, Any]]] = []
     while True:
         if jax.tree_util.is_tree_node(type(node)):
             children, _ = jax.tree_util.flatten_one_level_with_keys(node)
-            parents.append((path, iter(children)))
+            parents.append(iter(children))
         else:
             try:
                 value = np.asarray(node)
@@ -335,18 +335,22 @@ def _array_records(tree: PyTree[Any], /) -> Iterator[tuple[str, np.ndarray]]:
                 if value.dtype.hasobject:
                     if isinstance(node, np.ndarray):
                         raise TypeError(
-                            f"Array leaf {jax.tree_util.keystr(path) or '<root>'} has object dtype and cannot be fingerprinted."
+                            f"Array leaf {jax.tree_util.keystr(tuple(path)) or '<root>'} has object dtype and cannot be fingerprinted."
                         )
                 else:
-                    yield jax.tree_util.keystr(path) or "<root>", value
+                    yield jax.tree_util.keystr(tuple(path)) or "<root>", value
+            if path:
+                path.pop()
         while parents:
-            parent_path, children = parents[-1]
+            children = parents[-1]
             try:
                 key, node = next(children)
             except StopIteration:
                 parents.pop()
+                if path:
+                    path.pop()
             else:
-                path = (*parent_path, key)
+                path.append(key)
                 break
         else:
             return

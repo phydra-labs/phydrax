@@ -133,6 +133,18 @@ def test_array_fingerprint_supports_deep_registered_trees() -> None:
     )
 
 
+def test_deep_fingerprint_retains_linear_ancestry_storage() -> None:
+    small: Any = np.asarray([1, 2], dtype=np.int64)
+    for _ in range(512):
+        small = (small,)
+    large = small
+    for _ in range(512):
+        large = (large,)
+    _, small_peak = host_allocation_peak(lambda: array_tree_fingerprint(small))
+    _, large_peak = host_allocation_peak(lambda: array_tree_fingerprint(large))
+    assert large_peak < small_peak * 3
+
+
 def test_array_fingerprint_preserves_nan_bits() -> None:
     values = np.asarray(
         [0x7FF8000000000001, 0x7FF8000000000002, 0x8000000000000000], dtype=np.uint64
