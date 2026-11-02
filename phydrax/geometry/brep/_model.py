@@ -1975,8 +1975,14 @@ def _certify_edge_vertex_gap_bounds(
         root = edge_roots[edge][endpoint]
         exact_vertex = exact_vertices[vertex]
         from ._carrier_pieces import carrier_payload
-        from ._intersection import BranchRootEndpoint, IntersectionCurvePointRoot
+        from ._intersection import (
+            BranchRootEndpoint,
+            ConicParameterEndpoint,
+            IntersectionCurvePointRoot,
+        )
         from ._intersection_curve import IntersectionCurve
+        from ._patches import CircleCurve, LineCurve
+        from ._root_bindings import BRepConicVertex
 
         vertex_root = vertex_roots[vertex]
         if (
@@ -1992,6 +1998,41 @@ def _certify_edge_vertex_gap_bounds(
             == (float(ranges[edge, endpoint]), float(ranges[edge, endpoint]))
             and root.certifies_point_root(
                 IntersectionCurvePointRoot(curve, float(ranges[edge, endpoint]))
+            )
+        ):
+            return 0.0
+        if (
+            isinstance(root, ConicParameterEndpoint)
+            and vertex_root is not None
+            and vertex_root.supports_endpoint(root)
+            and carrier_payload(root.carrier) == carrier_payload(curve)
+        ):
+            if (
+                isinstance(curve, CircleCurve)
+                and root.parameter_exact is None
+                and carrier_payload(root.root.conic) == carrier_payload(curve)
+                and root.root.exact_point() == root.point_exact
+            ):
+                return 0.0
+            if isinstance(curve, LineCurve) and root.parameter_exact is not None:
+                image = exact_curve_parameter_point(curve, root.parameter_exact)
+                if image == root.point_exact:
+                    return 0.0
+        if (
+            isinstance(root, NativePeriodEndpoint)
+            and root.patch is None
+            and root.rational == 0
+            and root.turns.denominator == 1
+            and isinstance(curve, CircleCurve)
+            and carrier_payload(root.curve) == carrier_payload(curve)
+            and vertex_root is not None
+            and isinstance(vertex_root.primary, BRepConicVertex)
+            and vertex_root.primary.point_exact
+            == tuple(
+                center + curve.radius_exact * axis
+                for center, axis in zip(
+                    curve.center_exact, curve.first_axis_exact, strict=True
+                )
             )
         ):
             return 0.0

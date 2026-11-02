@@ -3996,6 +3996,9 @@ def _linear_pcurve_velocity(
 ) -> tuple[ExactScalar, ExactScalar] | None:
     from ._boolean_core import AffinePCurve, PeriodicPCurve
 
+    if isinstance(curve, TorusRootedCirclePCurve):
+        return Fraction(curve.orientation), Fraction(0)
+
     if isinstance(curve, ConicRootLinePCurve):
         return Fraction(0), curve.height_direction_exact
     if isinstance(curve, ExactLineCurve):
@@ -4072,6 +4075,87 @@ def _surface_mapped_native_period(
             "The exact native period has no positive finite binary64 realization."
         )
     return period, "two_pi"
+
+
+class TorusRootedCirclePCurve(AbstractCurve):
+    """Torus latitude ``(orientation*t + turns*2π, root)`` with exact phase."""
+
+    root_line: ConicRootLinePCurve
+    turns: Fraction = eqx.field(static=True)
+    orientation: int = eqx.field(static=True)
+    longitude_offset: Array
+
+    def __init__(
+        self,
+        root: ConicParameterRoot,
+        turns: Fraction,
+        orientation: int,
+        /,
+        *,
+        parameter_range: tuple[float, float] | None = None,
+    ) -> None:
+        if not isinstance(turns, Fraction):
+            raise TypeError("Torus longitude phase must be rational native-period turns.")
+        if type(orientation) is not int or orientation not in (-1, 1):
+            raise ValueError("Torus longitude orientation must be +1 or -1.")
+        offset = float(turns) * tau
+        if not np.isfinite(offset):
+            raise ValueError("Torus longitude phase must have a finite numeric shadow.")
+        self.root_line = ConicRootLinePCurve(root, 0, 1, parameter_range=parameter_range)
+        self.turns = turns
+        self.orientation = orientation
+        self.longitude_offset = jnp.asarray(offset, dtype=jnp.float64)
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 2
+
+    @property
+    def parameter_domain(self) -> tuple[float, float] | None:
+        return self.root_line.parameter_domain
+
+    def evaluate(self, parameters: Array, /) -> Array:
+        values = jnp.asarray(parameters, dtype=self.longitude_offset.dtype)
+        return jnp.stack(
+            (
+                self.orientation * values + self.longitude_offset,
+                jnp.broadcast_to(self.root_line.angle, values.shape),
+            ),
+            axis=-1,
+        )
+
+    def is_c1_on(self, first: float, last: float, /) -> bool:
+        return self.root_line.is_c1_on(first, last)
+
+    def derivative_bounds(
+        self, first: float, last: float, /, *, order: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        self.root_line.derivative_bounds(first, last, order=order)
+        direction = np.asarray((self.orientation, 0.0), dtype=np.float64)
+        return direction, direction.copy()
+
+    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
+        from ._trim_helpers import period_offset, period_scalar_bounds
+
+        root_box = self.root_line.bounding_box(first, last)
+        endpoints = sorted(
+            (
+                self.orientation * Fraction.from_float(float(first)),
+                self.orientation * Fraction.from_float(float(last)),
+            )
+        )
+        lower = period_scalar_bounds(period_offset(endpoints[0], self.turns))[0]
+        upper = period_scalar_bounds(period_offset(endpoints[1], self.turns))[1]
+        return np.asarray(((lower, root_box[0, 0]), (upper, root_box[1, 0])))
+
+    def identity_payload(self) -> dict[str, object]:
+        return {
+            "kind": "torus-rooted-circle-pcurve",
+            "root": self.root_line.root.identity_payload(),
+            "turns": (self.turns.numerator, self.turns.denominator),
+            "orientation": self.orientation,
+            "parameter_range": self.parameter_domain,
+        }
 
 
 class ConicRootLinePCurve(AbstractCurve):
@@ -6205,6 +6289,20 @@ def _validate_source_shadows(
                 value.fixed_value_exact,
                 "SurfaceIsoparametricCurve.fixed_value",
             )
+    elif isinstance(value, TorusRootedCirclePCurve):
+        if (
+            not isinstance(value.turns, Fraction)
+            or type(value.orientation) is not int
+            or value.orientation not in (-1, 1)
+            or not isinstance(value.root_line, ConicRootLinePCurve)
+            or value.root_line.phase_shift_exact != 0
+            or not np.array_equal(
+                np.asarray(value.longitude_offset),
+                np.asarray(float(value.turns) * tau, dtype=np.float64),
+            )
+        ):
+            raise ValueError("Torus rooted p-curve shadow differs from its exact phase.")
+        _validate_source_shadows(value.root_line, visited)
     elif isinstance(value, ConicRootLinePCurve):
         _validate_conic_parameter_root(value.root, visited)
         _require_exact_numeric_shadow(
