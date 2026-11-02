@@ -1396,6 +1396,35 @@ def _loop_edges(
             endpoint_roots=endpoint_roots,
         )
         result.append((edge, first, last, curve2d))
+    # A rooted vertex must bind every incident edge, not only its conic.
+    # Prove the other carrier's exact parameter point before attaching it.
+    from ._intersection_curve import exact_curve_parameter_point
+
+    for edge, first, last, _ in result:
+        curve = builder.curves[builder.edge_curves[edge]]
+        roots = list(builder.edge_endpoint_roots[edge])
+        for endpoint, (vertex, parameter) in enumerate(
+            zip(builder.edge_vertices[edge], (first, last), strict=True)
+        ):
+            binding = builder.vertex_roots[vertex]
+            if roots[endpoint] is not None or binding is None:
+                continue
+            assert isinstance(binding.primary, BRepConicVertex)
+            exact_parameter = Fraction.from_float(parameter)
+            point = exact_curve_parameter_point(curve, exact_parameter)
+            if point is None or tuple(point) != binding.primary.point_exact:
+                builder.vertex_roots[vertex] = None
+            else:
+                roots[endpoint] = ConicParameterEndpoint(
+                    binding.primary.root, curve, exact_parameter, binding.primary.point_exact
+                )
+        builder.edge_endpoint_roots[edge] = (roots[0], roots[1])
+    for edge, _, _, _ in result:
+        roots = builder.edge_endpoint_roots[edge]
+        builder.edge_endpoint_roots[edge] = tuple(
+            root if builder.vertex_roots[vertex] is not None else None
+            for root, vertex in zip(roots, builder.edge_vertices[edge], strict=True)
+        )
     return tuple(result)
 
 
@@ -2274,7 +2303,9 @@ def _profile_cap(
         for edge, first, last, curve in edges:
             edge_roots = builder.edge_endpoint_roots[edge]
             coedge_roots = tuple(
-                ConicParameterEndpoint(root.root, curve, None, root.point_exact)
+                ConicParameterEndpoint(
+                    root.root, curve, root.parameter_exact, root.point_exact
+                )
                 if isinstance(root, ConicParameterEndpoint)
                 else None
                 for root in edge_roots
