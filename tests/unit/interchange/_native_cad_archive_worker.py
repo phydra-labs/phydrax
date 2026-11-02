@@ -358,6 +358,7 @@ from phydrax.meshing._hex_schedule import NativeHexGridSchedule
 from phydrax.meshing._lineage import CellMeshTransition, VertexInterpolationStencil
 from phydrax.meshing._model_codec import (
     MODEL_ARCHIVE_LIMITS,
+    read_model_archive_fields,
     read_model_artifact,
     write_model_artifact,
 )
@@ -4622,6 +4623,8 @@ def _rebuild_source_fidelity_certificate(
     source: SourceBoundaryQuery,
     source_record: object,
     /,
+    *,
+    prepared_parent: object | None = None,
 ) -> SourceFidelityCertificate:
     if type(value) is not SourceFidelityCertificate:
         raise TypeError("Stored source fidelity proof has an unexpected concrete type.")
@@ -4634,24 +4637,36 @@ def _rebuild_source_fidelity_certificate(
     witness = (
         None if value.witness is None else _rebuild_source_fidelity_witness(value.witness)
     )
-    from phydrax.geometry.implicit._chart_restriction import ImplicitChartPremise
+    from phydrax.geometry.implicit._chart_restriction import (
+        ImplicitChartPremise,
+        ValidatedImplicitChartParent,
+    )
 
     chart_parent = None
+    validated_parent = None
     if value.chart_premise is not None:
         retained = value.chart_premise
         if type(retained) is not ImplicitChartPremise:
             raise TypeError("Stored chart restriction lost its exact parent premise.")
-        parent_mesh = _rebuild_as(retained.parent_mesh, CellMesh)
-        parent_geometry = _rebuild_geometry_for_mesh(
-            retained.parent_geometry, parent_mesh
-        )
-        parent_certificate = _rebuild_source_fidelity_certificate(
-            retained.parent_certificate,
-            parent_mesh,
-            parent_geometry,
-            source,
-            source_record,
-        )
+        if prepared_parent is None:
+            parent_mesh = _rebuild_as(retained.parent_mesh, CellMesh)
+            parent_geometry = _rebuild_geometry_for_mesh(
+                retained.parent_geometry, parent_mesh
+            )
+            parent_certificate = _rebuild_source_fidelity_certificate(
+                retained.parent_certificate,
+                parent_mesh,
+                parent_geometry,
+                source,
+                source_record,
+            )
+        elif type(prepared_parent) is ValidatedImplicitChartParent:
+            validated_parent = prepared_parent
+            parent_mesh = prepared_parent.mesh
+            parent_geometry = prepared_parent.geometry
+            parent_certificate = prepared_parent.certificate
+        else:
+            raise TypeError("Prepared chart parent must be a validated host artifact.")
         transition = (
             None
             if retained.transition is None
@@ -4670,6 +4685,7 @@ def _rebuild_source_fidelity_certificate(
         maximum_normal_deviation=value.maximum_normal_deviation,
         witness=witness,
         chart_parent=chart_parent,
+        validated_chart_parent=validated_parent,
     )
     if (
         certificate.certificate_id != value.certificate_id
@@ -4727,16 +4743,71 @@ def _write_implicit_chart_restriction(directory: Path, /) -> None:
 
 
 def _read_implicit_chart_restriction(path: Path, expected: dict[str, str], /) -> None:
+    from phydrax.geometry._surface_source_support import _same_tree_content
+    from phydrax.geometry.implicit._chart_restriction import (
+        ImplicitChartPremise,
+        ValidatedImplicitChartParent,
+    )
+
+    fields = read_model_archive_fields(
+        path,
+        expected_type=SourceFidelityCertificate,
+        fields=(
+            "source",
+            "chart_premise.parent_mesh",
+            "chart_premise.parent_geometry",
+            "chart_premise.parent_certificate",
+        ),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    source_record = fields["source"]
+    stored_parent_mesh = fields["chart_premise.parent_mesh"]
+    stored_parent_geometry = fields["chart_premise.parent_geometry"]
+    stored_parent_certificate = fields["chart_premise.parent_certificate"]
+    del fields
+    source = _rebuild_continuation_value(source_record)
+    if not isinstance(source, SourceBoundaryQuery):
+        raise TypeError("Cold restriction source lost its query contract.")
+    parent_mesh = _rebuild_as(stored_parent_mesh, CellMesh)
+    parent_geometry = _rebuild_geometry_for_mesh(stored_parent_geometry, parent_mesh)
+    parent_certificate = _rebuild_source_fidelity_certificate(
+        stored_parent_certificate, parent_mesh, parent_geometry, source, source_record
+    )
+    prepared_parent = ValidatedImplicitChartParent(
+        parent_mesh, parent_geometry, source, parent_certificate
+    )
+
     def rebuild(value: object) -> SourceFidelityCertificate:
+        nonlocal \
+            source_record, \
+            stored_parent_mesh, \
+            stored_parent_geometry, \
+            stored_parent_certificate
         if type(value) is not SourceFidelityCertificate:
             raise TypeError("Cold restriction root must be SourceFidelityCertificate.")
+        retained = value.chart_premise
+        if (
+            type(retained) is not ImplicitChartPremise
+            or not _same_tree_content(value.source, source_record)
+            or not _same_tree_content(retained.parent_mesh, stored_parent_mesh)
+            or not _same_tree_content(retained.parent_geometry, stored_parent_geometry)
+            or not _same_tree_content(
+                retained.parent_certificate, stored_parent_certificate
+            )
+        ):
+            raise ValueError("Archive parent premises changed between admitted reads.")
+        # The second admitted archive has been compared field-for-field to the
+        # prevalidated parent. Its raw prerequisite copies no longer serve replay.
+        del (
+            source_record,
+            stored_parent_mesh,
+            stored_parent_geometry,
+            stored_parent_certificate,
+        )
         mesh = _rebuild_as(value.binding.mesh, CellMesh)
         geometry = _rebuild_geometry_for_mesh(value.binding.geometry, mesh)
-        source = _rebuild_continuation_value(value.source)
-        if not isinstance(source, SourceBoundaryQuery):
-            raise TypeError("Cold restriction source lost its query contract.")
         return _rebuild_source_fidelity_certificate(
-            value, mesh, geometry, source, value.source
+            value, mesh, geometry, source, value.source, prepared_parent=prepared_parent
         )
 
     certificate = read_model_artifact(
@@ -6036,15 +6107,19 @@ def _rebuild_continuation_value(
         return rebuilt
     if isinstance(value, PerCellRestrictedCellGeometryElement):
         source_element = _rebuild_scalar_coordinate_element(value.source_element)
-        charts = tuple(
-            value.chart_arguments(row) for row in range(len(value.target_cell_ids))
-        )
-        return PerCellRestrictedCellGeometryElement(
-            source_element,
-            value.cell_kind,
-            value.target_cell_ids,
-            value.source_cell_ids,
-            charts,
+        # Retain one validated expression row per exact repeated chart template.
+        # Re-expanding every row as dictionaries before the constructor defeats
+        # its own call-local canonical sharing on large refined blocks.
+        chart_templates = {}
+        charts = []
+        for row, terms in enumerate(value.chart_coefficients):
+            chart = chart_templates.get(terms)
+            if chart is None:
+                chart = value.chart_arguments(row)
+                chart_templates[terms] = chart
+            charts.append(chart)
+        return PerCellRestrictedCellGeometryElement.from_stored_fields(
+            value, source_element, charts
         )
     if isinstance(value, RationalComposedCellGeometryElement):
         source_element = _rebuild_scalar_coordinate_element(value.source_element)

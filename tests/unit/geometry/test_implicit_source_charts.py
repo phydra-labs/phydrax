@@ -39,6 +39,7 @@ from phydrax.geometry._certificate import (
 from phydrax.geometry._contracts import CompiledGeometry, GeometryKernel, GeometryKind
 from phydrax.geometry._sampling import RejectionSamplingPlan
 from phydrax.geometry._source_boundary_records import (
+    SourceBoundaryQuery,
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
     SourceBoundaryProjectionResult,
@@ -499,7 +500,9 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
     native = _NativeImplicitBoundaryQuery(
         source.query, source.source_id, source.source_revision, source.frame_id
     )
-    query_leaves = [leaf for leaf in jax.tree.leaves(source.query) if isinstance(leaf, Array)]
+    query_leaves = [
+        leaf for leaf in jax.tree.leaves(source.query) if isinstance(leaf, Array)
+    ]
     assert query_leaves
     for owner in (source, native):
         owner_leaves = jax.tree.leaves(owner)
@@ -928,9 +931,15 @@ def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
     replay_count = [0]
     original_revalidate = SourceFidelityCertificate.revalidate
 
-    def counted_revalidate(*args: object, **kwargs: object) -> None:
+    def counted_revalidate(
+        certificate: SourceFidelityCertificate,
+        bound_mesh: CellMesh,
+        bound_geometry: CellGeometrySpec,
+        bound_source: SourceBoundaryQuery,
+        /,
+    ) -> None:
         replay_count[0] += 1
-        original_revalidate(*args, **kwargs)
+        original_revalidate(certificate, bound_mesh, bound_geometry, bound_source)
 
     monkeypatch.setattr(SourceFidelityCertificate, "revalidate", counted_revalidate)
     validated_parent = ValidatedImplicitChartParent(mesh, geometry, source, parent)

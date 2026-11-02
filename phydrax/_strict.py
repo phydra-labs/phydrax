@@ -22,6 +22,7 @@ import abc
 import dataclasses
 import re
 import types
+from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
@@ -178,6 +179,7 @@ def mark_strict_initialized(instance: Any, /) -> None:
     if not isinstance(instance, eqx.Module):
         object.__setattr__(instance, "_strict_initialized", True)
 
+
 _reconstructible_strict_types: set[type[StrictModule]] = set()
 _ReconstructedStrict = TypeVar("_ReconstructedStrict", bound="StrictModule")
 
@@ -190,14 +192,16 @@ def register_strict_reconstruction(value_type: type[StrictModule], /) -> None:
 
 
 def reconstruct_strict(
-    value_type: type[_ReconstructedStrict], values: dict[str, Any], /
+    value_type: type[_ReconstructedStrict], values: Mapping[str, Any], /
 ) -> _ReconstructedStrict:
     """Reconstruct registered structure, not mathematical proof authority."""
     if value_type not in _reconstructible_strict_types:
         raise TypeError("Strict reconstruction requires an explicitly registered type.")
     expected = {field.name for field in dataclasses.fields(value_type)}
     if set(values) != expected:
-        raise ValueError("Strict reconstruction requires the complete declared field set.")
+        raise ValueError(
+            "Strict reconstruction requires the complete declared field set."
+        )
     result = object.__new__(value_type)
     for name, value in values.items():
         object.__setattr__(result, name, value)
@@ -205,7 +209,6 @@ def reconstruct_strict(
         validate_constructed(result)
     mark_strict_initialized(result)
     return result
-
 
 
 class Strict(metaclass=_StrictMeta):

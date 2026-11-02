@@ -609,9 +609,11 @@ def _iter_embedding_cells(
                 frame = _straight_simplex_frame(
                     element, references, dimension, route_rows.shape[1]
                 )
-        for local_index, (row, route, valid, cell_id) in enumerate(
-            zip(rows, route_rows, active, ids, strict=True)
-        ):
+        for local_index in range(rows.shape[0]):
+            row = rows[local_index : local_index + 1].reshape(-1)
+            route = route_rows[local_index : local_index + 1].reshape(-1)
+            valid = active[local_index : local_index + 1].reshape(-1)
+            cell_id = int(ids[local_index])
             active_row = tuple(
                 int(vertex) for vertex, keep in zip(row, valid, strict=True) if keep
             )

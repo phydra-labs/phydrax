@@ -700,6 +700,19 @@ def test_per_cell_restriction_retains_and_evaluates_rational_chart() -> None:
         np.asarray((71,), dtype=np.int64),
         rational_chart_bank,
     )
+    from phydrax._fingerprint import array_tree_fingerprint
+
+    restored = PerCellRestrictedCellGeometryElement.from_stored_fields(
+        element, source_element, rational_chart_bank
+    )
+    assert restored.element_id == element.element_id
+    assert jax.tree_util.tree_structure(restored) == jax.tree_util.tree_structure(element)
+    assert array_tree_fingerprint(restored) == array_tree_fingerprint(element)
+    assert restored.chart_coefficients == element.chart_coefficients
+    with pytest.raises(ValueError, match="validated fields"):
+        PerCellRestrictedCellGeometryElement.from_stored_fields(
+            element, source_element, ((rational_y, rational_x, rational_z),)
+        )
 
     with pytest.raises(TypeError, match="target_cell_ids"):
         PerCellRestrictedCellGeometryElement(
