@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Sequence
+from dataclasses import fields
+from fractions import Fraction
 from typing import Literal, TYPE_CHECKING, TypeAlias
 from uuid import uuid4
 
@@ -20,7 +22,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._validation import normalized_identifier
 from ._schema import DesignState, ParameterId, ParameterSchema
-from ._sketch_certificate import RootDOFEvidence
+from ._sketch_certificate import (
+    LineCircleConstruction,
+    RootDOFEvidence,
+    TwoCircleConstruction,
+)
 from ._sketch_dimensions import (
     compile_sketch_dimensions,
     require_dimension_state,
@@ -28,7 +34,11 @@ from ._sketch_dimensions import (
     SketchDimensionBinding,
     SketchDimensionSensitivity,
 )
-from ._solve import solve_design_residual
+from ._solve import (
+    prepare_sketch_fixed_coordinates,
+    seed_sketch_circle_intersections,
+    solve_prepared_sketch_residual,
+)
 
 
 if TYPE_CHECKING:
@@ -36,6 +46,7 @@ if TYPE_CHECKING:
     from ...optim import DifferentialEvolutionSearch
     from ...typing import PRNGKey
     from ..analytic import Circle
+    from ._reduced import _SketchDistanceRigidityWitness
     from ..brep._constructors import PlanarProfile, ProfilePlane
     from ..brep._model import BRepModel
     from ..simplicial import PlanarMeshRegion
@@ -118,7 +129,7 @@ class FixedPoint(AbstractSketchConstraint):
     point: int = eqx.field(static=True)
     target: Array
 
-    def __init__(self, point: int, target: Array, *, weight: float = 1.0) -> None:
+    def __init__(self, point: int, target: ArrayLike, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         target_ = jnp.asarray(target, dtype=jnp.float64)
         if target_.shape != (2,):
@@ -500,6 +511,118 @@ SketchConstraint: TypeAlias = (
 )
 
 
+class SketchPreparationEvidence(StrictModule):
+    """Inputs and algebraic witnesses of one prepared root attempt.
+
+    This records eligibility and initialization separately from convergence,
+    numerical rank, and uniqueness. Stored witnesses describe the original
+    represented inputs; a consumer must replay their premises before reuse.
+    ``reduced_root_accepted`` is an execution observation, not a certificate
+    that the recorded path was executed.
+    """
+
+    problem_id: str = eqx.field(static=True)
+    reference_coordinates: Array
+    seed_coordinates: Array
+    pinned_indices: tuple[int, ...] = eqx.field(static=True)
+    pinned_values: Array
+    constructions: tuple[
+        tuple[int, TwoCircleConstruction | LineCircleConstruction], ...
+    ] = eqx.field(static=True)
+    rigid_clusters: tuple[_SketchDistanceRigidityWitness, ...] = eqx.field(static=True)
+    reduced_root_accepted: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        problem_id: str,
+        reference_coordinates: ArrayLike,
+        seed_coordinates: ArrayLike,
+        pinned_indices: tuple[int, ...],
+        pinned_values: ArrayLike,
+        constructions: tuple[
+            tuple[int, TwoCircleConstruction | LineCircleConstruction], ...
+        ],
+        rigid_clusters: tuple[_SketchDistanceRigidityWitness, ...],
+        reduced_root_accepted: bool,
+        /,
+    ) -> None:
+        if not isinstance(problem_id, str) or not problem_id:
+            raise ValueError("problem_id must be a non-empty string.")
+        reference = jnp.asarray(reference_coordinates, dtype=jnp.float64).reshape((-1,))
+        seed = jnp.asarray(seed_coordinates, dtype=jnp.float64).reshape((-1,))
+        values = jnp.asarray(pinned_values, dtype=jnp.float64).reshape((-1,))
+        indices = tuple(pinned_indices)
+        if reference.shape != seed.shape or values.size != len(indices):
+            raise ValueError("Preparation coordinates and fixed values must align.")
+        if len(set(indices)) != len(indices) or any(
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            or index >= reference.size
+            for index in indices
+        ):
+            raise ValueError("Preparation fixed indices must be distinct and in range.")
+        if any(
+            not isinstance(point, int)
+            or isinstance(point, bool)
+            or point < 0
+            or 2 * point + 1 >= reference.size
+            or not isinstance(witness, (LineCircleConstruction, TwoCircleConstruction))
+            for point, witness in constructions
+        ):
+            raise ValueError(
+                "Preparation constructions must identify valid point witnesses."
+            )
+        if rigid_clusters:
+            from ._reduced import _SketchDistanceRigidityWitness
+
+            if any(
+                not isinstance(item, _SketchDistanceRigidityWitness)
+                for item in rigid_clusters
+            ):
+                raise TypeError("rigid_clusters must contain exact distance witnesses.")
+        if reduced_root_accepted and not (indices or constructions):
+            raise ValueError("A reduced root requires an admitted construction.")
+        if not isinstance(reduced_root_accepted, bool):
+            raise TypeError("reduced_root_accepted must be bool.")
+        self.problem_id = problem_id
+        self.reference_coordinates = reference
+        self.seed_coordinates = seed
+        self.pinned_indices = indices
+        self.pinned_values = values
+        self.constructions = tuple(constructions)
+        self.rigid_clusters = tuple(rigid_clusters)
+        self.reduced_root_accepted = reduced_root_accepted
+
+    def verify(
+        self, sketch: Sketch, dimensions: DesignState, /, *, tolerance: float
+    ) -> None:
+        """Replay every retained preparation premise against the supplied sketch."""
+        if not isinstance(sketch, Sketch) or self.problem_id != sketch._problem_id():
+            raise ValueError("Preparation belongs to a different sketch.")
+        if (
+            not isinstance(dimensions, DesignState)
+            or dimensions.schema != sketch.dimension_schema
+        ):
+            raise ValueError("Preparation dimensions do not match the sketch.")
+        if (
+            self.reference_coordinates.size
+            != sketch.points.size + sketch.circle_radii.size
+        ):
+            raise ValueError("Preparation reference has the wrong coordinate extent.")
+        indices, values, seed, constructions, rigid_clusters = sketch._prepare_components(
+            self.reference_coordinates, dimensions, tolerance
+        )
+        if (
+            indices != self.pinned_indices
+            or not np.array_equal(np.asarray(values), np.asarray(self.pinned_values))
+            or not np.array_equal(np.asarray(seed), np.asarray(self.seed_coordinates))
+            or constructions != self.constructions
+            or rigid_clusters != self.rigid_clusters
+        ):
+            raise ValueError("Preparation witnesses do not match the supplied sketch.")
+
+
 class SketchSolution(StrictModule):
     points: Array
     circle_radii: Array
@@ -509,6 +632,7 @@ class SketchSolution(StrictModule):
     iterations: Array
     status: Array
     root_evidence: RootDOFEvidence
+    preparation: SketchPreparationEvidence
     dimensions: DesignState
 
     def __init__(
@@ -522,10 +646,17 @@ class SketchSolution(StrictModule):
         iterations: ArrayLike,
         status: ArrayLike,
         root_evidence: RootDOFEvidence,
+        preparation: SketchPreparationEvidence,
         dimensions: DesignState,
     ) -> None:
         if not isinstance(root_evidence, RootDOFEvidence):
             raise TypeError("root_evidence must be RootDOFEvidence.")
+        if not isinstance(preparation, SketchPreparationEvidence):
+            raise TypeError("preparation must be SketchPreparationEvidence.")
+        if preparation.problem_id != root_evidence.problem_id:
+            raise ValueError(
+                "Preparation and root evidence must identify the same problem."
+            )
         if not isinstance(dimensions, DesignState):
             raise TypeError("dimensions must be a DesignState.")
         self.points = jnp.asarray(points, dtype=jnp.float64)
@@ -536,6 +667,7 @@ class SketchSolution(StrictModule):
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
         self.root_evidence = root_evidence
+        self.preparation = preparation
         self.dimensions = dimensions
 
 
@@ -621,12 +753,27 @@ class SketchModelResult(StrictModule):
 
 
 class Sketch(StrictModule):
-    """A pure-JAX 2D line/circle sketch with declarative geometric constraints."""
+    """A pure-JAX 2D line, circle and directed-arc sketch.
+
+    Each arc is specified by ``arc_endpoints[i]`` (start and end point indices),
+    ``arc_centers[i]`` (a center point index), and the boolean
+    ``arc_counterclockwise[i]``. Arc incidence adds an equal-endpoint-radius
+    residual; its center and endpoints remain ordinary sketch point variables.
+    Standalone circles retain their separate radius variables.
+
+    ``to_source`` remains the line-loop/circle geometry-source conversion.
+    ``to_profile`` additionally lowers a single connected line/arc cycle to
+    native circular segments. Endpoint radii must agree exactly in represented
+    coordinates, in addition to native profile geometry validation.
+    """
 
     points: Array
     lines: Array
     circle_centers: Array
     circle_radii: Array
+    arc_endpoints: Array
+    arc_centers: Array
+    arc_counterclockwise: Array
     constraints: tuple[AbstractSketchConstraint, ...]
     constraint_ids: tuple[str, ...] = eqx.field(static=True)
     constraint_priorities: tuple[int, ...] = eqx.field(static=True)
@@ -637,11 +784,14 @@ class Sketch(StrictModule):
 
     def __init__(
         self,
-        points: Array,
+        points: ArrayLike,
         *,
-        lines: Array | None = None,
-        circle_centers: Array | None = None,
-        circle_radii: Array | None = None,
+        lines: ArrayLike | None = None,
+        circle_centers: ArrayLike | None = None,
+        circle_radii: ArrayLike | None = None,
+        arc_endpoints: ArrayLike | None = None,
+        arc_centers: ArrayLike | None = None,
+        arc_counterclockwise: ArrayLike | None = None,
         constraints: Sequence[AbstractSketchConstraint] = (),
         feature_id: str | None = None,
         constraint_ids: Sequence[str] | None = None,
@@ -663,6 +813,21 @@ class Sketch(StrictModule):
             if circle_radii is None
             else np.asarray(circle_radii, dtype=np.float64).reshape((-1,))
         )
+        endpoints_host = (
+            np.empty((0, 2), dtype=np.int32)
+            if arc_endpoints is None
+            else np.asarray(arc_endpoints)
+        )
+        arc_centers_host = (
+            np.empty((0,), dtype=np.int32)
+            if arc_centers is None
+            else np.asarray(arc_centers)
+        )
+        arc_directions_host = (
+            np.empty((0,), dtype=np.bool_)
+            if arc_counterclockwise is None
+            else np.asarray(arc_counterclockwise)
+        )
         if points_host.ndim != 2 or points_host.shape[1] != 2:
             raise ValueError("points must have shape (num_points, 2).")
         if np.any(~np.isfinite(points_host)):
@@ -679,6 +844,29 @@ class Sketch(StrictModule):
             raise ValueError("circle_centers reference an absent point.")
         if np.any(~np.isfinite(radii_host)) or np.any(radii_host <= 0.0):
             raise ValueError("circle_radii must be finite and positive.")
+        if endpoints_host.ndim != 2 or endpoints_host.shape[1] != 2:
+            raise ValueError("arc_endpoints must have shape (num_arcs, 2).")
+        if arc_centers_host.shape != (endpoints_host.shape[0],):
+            raise ValueError("arc_centers must contain one point index per arc.")
+        if arc_directions_host.shape != (endpoints_host.shape[0],):
+            raise ValueError("arc_counterclockwise must contain one boolean per arc.")
+        if not np.issubdtype(endpoints_host.dtype, np.integer) or not np.issubdtype(
+            arc_centers_host.dtype, np.integer
+        ):
+            raise TypeError("Arc endpoints and centers must contain integer indices.")
+        if arc_directions_host.dtype != np.bool_:
+            raise TypeError("arc_counterclockwise must contain booleans.")
+        if (
+            np.any(endpoints_host < 0)
+            or np.any(endpoints_host >= points_host.shape[0])
+            or np.any(arc_centers_host < 0)
+            or np.any(arc_centers_host >= points_host.shape[0])
+        ):
+            raise ValueError("Arcs reference an absent point.")
+        if np.any(endpoints_host[:, 0] == endpoints_host[:, 1]):
+            raise ValueError("Every arc must have distinct endpoints.")
+        if np.any(endpoints_host == arc_centers_host[:, None]):
+            raise ValueError("An arc center must be distinct from its endpoints.")
         constraints_ = tuple(constraints)
         if any(not isinstance(item, AbstractSketchConstraint) for item in constraints_):
             raise TypeError("constraints must contain sketch constraint objects.")
@@ -777,6 +965,9 @@ class Sketch(StrictModule):
         self.lines = jnp.asarray(lines_host, dtype=jnp.int32)
         self.circle_centers = jnp.asarray(centers_host, dtype=jnp.int32)
         self.circle_radii = jnp.asarray(radii_host, dtype=jnp.float64)
+        self.arc_endpoints = jnp.asarray(endpoints_host, dtype=jnp.int32)
+        self.arc_centers = jnp.asarray(arc_centers_host, dtype=jnp.int32)
+        self.arc_counterclockwise = jnp.asarray(arc_directions_host, dtype=jnp.bool_)
         self.constraints = constraints_
         self.constraint_ids = constraint_ids_
         self.constraint_priorities = constraint_priorities_
@@ -878,13 +1069,21 @@ class Sketch(StrictModule):
 
     def residual(
         self,
-        points: Array,
-        circle_radii: Array,
+        points: ArrayLike,
+        circle_radii: ArrayLike,
         /,
         *,
         dimensions: DesignState | None = None,
     ) -> Array:
-        values = self._residual_components(points, circle_radii, dimensions=dimensions)
+        points_ = jnp.asarray(points, dtype=self.points.dtype).reshape(self.points.shape)
+        radii_ = jnp.asarray(circle_radii, dtype=self.circle_radii.dtype).reshape(
+            self.circle_radii.shape
+        )
+        values = self._residual_components(points_, radii_, dimensions=dimensions)
+        if self.arc_endpoints.shape[0]:
+            vectors = points_[self.arc_endpoints] - points_[self.arc_centers, None]
+            incidence = _finite_norm(vectors[:, 0]) - _finite_norm(vectors[:, 1])
+            values = (*values, incidence)
         if not values:
             return jnp.empty((0,), dtype=self.points.dtype)
         return jnp.concatenate(values)
@@ -896,16 +1095,72 @@ class Sketch(StrictModule):
                 "feature_id": self.feature_id,
                 "lines": np.asarray(self.lines).tolist(),
                 "circle_centers": np.asarray(self.circle_centers).tolist(),
-                "constraint_types": [
-                    type(value).__qualname__ for value in self.constraints
+                "constraints": [
+                    {
+                        "type": f"{type(value).__module__}.{type(value).__qualname__}",
+                        "static": {
+                            item.name: (
+                                str(field_value)
+                                if isinstance(field_value, ParameterId)
+                                else field_value
+                            )
+                            for item in fields(value)
+                            if item.metadata.get("static", False)
+                            for field_value in (getattr(value, item.name),)
+                        },
+                    }
+                    for value in self.constraints
                 ],
                 "constraint_ids": list(self.constraint_ids),
                 "constraint_priorities": list(self.constraint_priorities),
                 "dimension_ids": [
                     str(value) for value in self.dimension_schema.parameter_ids
                 ],
+                "arc_endpoints": np.asarray(self.arc_endpoints).tolist(),
+                "arc_centers": np.asarray(self.arc_centers).tolist(),
+                "arc_counterclockwise": np.asarray(self.arc_counterclockwise).tolist(),
             }
         )
+
+    def _prepare_components(
+        self, initial: Array, dimension_state: DesignState, tolerance: float, /
+    ) -> tuple[
+        tuple[int, ...],
+        Array,
+        Array,
+        tuple[tuple[int, TwoCircleConstruction | LineCircleConstruction], ...],
+        tuple[_SketchDistanceRigidityWitness, ...],
+    ]:
+        pinned_indices, pinned_values = prepare_sketch_fixed_coordinates(
+            self, dimension_state
+        )
+        cluster_seed = initial
+        rigid_clusters: tuple[_SketchDistanceRigidityWitness, ...] = ()
+        if any(isinstance(item, PointDistance) for item in self.constraints):
+            from ._reduced import _prepare_sketch_rigid_clusters
+
+            point_size = self.points.size
+            cluster = _prepare_sketch_rigid_clusters(
+                self,
+                initial[:point_size].reshape(self.points.shape),
+                dimensions=dimension_state,
+                tolerance=tolerance,
+            )
+            cluster_seed = initial.at[:point_size].set(cluster.seed_points.reshape((-1,)))
+            rigid_clusters = tuple(
+                item.exact_distance_witness
+                for item in cluster.clusters
+                if item.exact_distance_witness is not None
+            )
+        prepared_seed, constructions = seed_sketch_circle_intersections(
+            self,
+            dimension_state,
+            initial,
+            pinned_indices,
+            pinned_values,
+            initial_seed=cluster_seed,
+        )
+        return pinned_indices, pinned_values, prepared_seed, constructions, rigid_clusters
 
     def solve(
         self,
@@ -956,9 +1211,16 @@ class Sketch(StrictModule):
             upper = jnp.full(initial.shape, jnp.inf, dtype=initial.dtype)
             bounds = (lower, upper)
         problem_id = self._problem_id()
-        solved = solve_design_residual(
+        pinned_indices, pinned_values, prepared_seed, constructions, rigid_clusters = (
+            self._prepare_components(initial, dimension_state, tolerance)
+        )
+        solved, reduced_root_accepted = solve_prepared_sketch_residual(
             residual,
             initial,
+            prepared_seed,
+            pinned_indices,
+            pinned_values,
+            constructions,
             max_iterations=max_iterations,
             tolerance=tolerance,
             damping=damping,
@@ -974,6 +1236,16 @@ class Sketch(StrictModule):
             jacobian,
             residual_tolerance=tolerance,
         )
+        preparation = SketchPreparationEvidence(
+            problem_id,
+            initial,
+            prepared_seed,
+            pinned_indices,
+            pinned_values,
+            constructions,
+            rigid_clusters,
+            reduced_root_accepted,
+        )
         return SketchSolution(
             points=points,
             circle_radii=radii,
@@ -983,6 +1255,7 @@ class Sketch(StrictModule):
             iterations=solved.iterations,
             status=solved.status,
             root_evidence=root_evidence,
+            preparation=preparation,
             dimensions=dimension_state,
         )
 
@@ -1010,6 +1283,50 @@ class Sketch(StrictModule):
             damping=damping,
         )
 
+    def _validate_solution_root(self, solution: SketchSolution, /) -> None:
+        """Replay numerical root evidence before deriving a scientific result."""
+        if not isinstance(solution, SketchSolution):
+            raise TypeError("solution must be a SketchSolution.")
+        if solution.root_evidence.problem_id != self._problem_id():
+            raise ValueError("Sketch solution belongs to a different sketch definition.")
+        if solution.dimensions.schema != self.dimension_schema:
+            raise ValueError("Sketch solution dimensions do not match the sketch.")
+        if (
+            solution.points.shape != self.points.shape
+            or solution.circle_radii.shape != self.circle_radii.shape
+        ):
+            raise ValueError("Sketch solution layout does not match the sketch.")
+        if not bool(np.asarray(solution.converged)):
+            raise ValueError("A converged sketch root is required.")
+        solution.preparation.verify(
+            self, solution.dimensions, tolerance=solution.root_evidence.residual_tolerance
+        )
+        coordinates = jnp.concatenate(
+            (solution.points.reshape((-1,)), solution.circle_radii)
+        )
+
+        def residual(vector: Array) -> Array:
+            return self.residual(
+                vector[: self.points.size].reshape(self.points.shape),
+                vector[self.points.size :],
+                dimensions=solution.dimensions,
+            )
+
+        values = residual(coordinates)
+        evidence = RootDOFEvidence(
+            self._problem_id(),
+            coordinates,
+            values,
+            jax.jacfwd(residual)(coordinates),
+            residual_tolerance=solution.root_evidence.residual_tolerance,
+        )
+        if (
+            not evidence.root_converged
+            or evidence.evidence_id != solution.root_evidence.evidence_id
+            or not np.array_equal(np.asarray(values), np.asarray(solution.residual))
+        ):
+            raise ValueError("Sketch root evidence does not match the supplied solution.")
+
     def dimension_sensitivity(
         self,
         solution: SketchSolution,
@@ -1017,14 +1334,9 @@ class Sketch(StrictModule):
         /,
     ) -> SketchDimensionSensitivity:
         """Differentiate a regular converged sketch root with respect to one named dimension."""
-        if not isinstance(solution, SketchSolution):
-            raise TypeError("solution must be a SketchSolution.")
         if not isinstance(parameter_id, ParameterId):
             raise TypeError("parameter_id must be ParameterId.")
-        if solution.root_evidence.problem_id != self._problem_id():
-            raise ValueError("Sketch solution belongs to a different sketch definition.")
-        if not bool(np.asarray(solution.converged)):
-            raise ValueError("Dimension sensitivity requires a converged sketch root.")
+        self._validate_solution_root(solution)
         if not solution.root_evidence.regular_root_indicated:
             raise NotImplementedError(
                 "Dimension sensitivity requires a full-column-rank local root."
@@ -1054,6 +1366,15 @@ class Sketch(StrictModule):
             if np.any(np.linalg.norm(vectors, axis=1) == 0.0):
                 raise NotImplementedError(
                     "Dimension sensitivity is unsupported at a collapsed sketch line."
+                )
+        if self.arc_endpoints.shape[0]:
+            arc_vectors = (
+                points_host[np.asarray(self.arc_endpoints, dtype=np.int32)]
+                - points_host[np.asarray(self.arc_centers, dtype=np.int32), None]
+            )
+            if np.any(np.linalg.norm(arc_vectors, axis=2) == 0.0):
+                raise NotImplementedError(
+                    "Dimension sensitivity is unsupported at a collapsed sketch arc."
                 )
         centers = points_host[np.asarray(self.circle_centers, dtype=np.int32)]
         radii_host = np.asarray(solution.circle_radii, dtype=np.float64)
@@ -1150,6 +1471,10 @@ class Sketch(StrictModule):
     ) -> Circle | PlanarMeshRegion:
         """Lower one closed line loop or one circle to a geometry source."""
 
+        if self.arc_endpoints.shape[0]:
+            raise NotImplementedError(
+                "Arc profiles are unsupported by Sketch.to_source; use to_profile."
+            )
         points = np.asarray(self.points if solution is None else solution.points)
         radii = np.asarray(
             self.circle_radii if solution is None else solution.circle_radii
@@ -1208,46 +1533,131 @@ class Sketch(StrictModule):
         plane: ProfilePlane | None = None,
     ) -> SketchProfileResult:
         """Lower one converged sketch root to an exact native planar profile."""
-        if not isinstance(solution, SketchSolution):
-            raise TypeError("solution must be a SketchSolution.")
-        if solution.root_evidence.problem_id != self._problem_id():
-            raise ValueError("Sketch solution belongs to a different sketch definition.")
-        if not bool(np.asarray(solution.converged)):
-            raise ValueError("Source-profile lowering requires a converged sketch root.")
-        if not solution.root_evidence.root_converged:
-            raise ValueError("Root evidence does not resolve a sketch residual root.")
+        self._validate_solution_root(solution)
         if not isinstance(name, str):
             raise TypeError("name must be a string.")
         recipe_name = name.strip()
         if not recipe_name:
             raise ValueError("name must be non-empty.")
         from ..analytic import Circle
-        from ..brep._constructors import PlanarProfile, ProfileLoop, ProfilePlane
+        from ..brep._constructors import (
+            PlanarProfile,
+            ProfileArc,
+            ProfileLine,
+            ProfileLoop,
+            ProfilePlane,
+        )
         from ..simplicial import PlanarMeshRegion
 
         plane_ = ProfilePlane() if plane is None else plane
         if not isinstance(plane_, ProfilePlane):
             raise TypeError("plane must be a ProfilePlane or None.")
-        source = self.to_source(solution)
-        if isinstance(source, Circle):
-            outer = ProfileLoop.circle(
-                np.asarray(source.center, dtype=np.float64),
-                float(source.radius),
-            )
+        if self.arc_endpoints.shape[0]:
+            if self.circle_centers.shape[0]:
+                raise NotImplementedError(
+                    "Mixed standalone circles and arc profiles are unsupported."
+                )
+            points = np.asarray(solution.points, dtype=np.float64)
+            lines = np.asarray(self.lines, dtype=np.int32)
+            arcs = np.asarray(self.arc_endpoints, dtype=np.int32)
+            centers = np.asarray(self.arc_centers, dtype=np.int32)
+            directions = np.asarray(self.arc_counterclockwise, dtype=np.bool_)
+            edges = np.concatenate((lines, arcs), axis=0)
+            adjacency: dict[int, list[int]] = {}
+            for index, (start, end) in enumerate(edges.tolist()):
+                adjacency.setdefault(start, []).append(index)
+                adjacency.setdefault(end, []).append(index)
+            if any(len(incident) != 2 for incident in adjacency.values()):
+                raise ValueError("Line and arc profiles must form one closed cycle.")
+            start = min(adjacency)
+            current = start
+            used: set[int] = set()
+            vertices: list[tuple[float, float]] = []
+            segments: list[ProfileLine | ProfileArc] = []
+            geometry_segments: list[dict[str, object]] = []
+            while True:
+                candidates = [index for index in adjacency[current] if index not in used]
+                if not candidates:
+                    break
+                index = candidates[0]
+                used.add(index)
+                first, last = edges[index]
+                forward = int(first) == current
+                following = int(last if forward else first)
+                vertices.append((float(points[current, 0]), float(points[current, 1])))
+                if index < len(lines):
+                    segments.append(ProfileLine())
+                    geometry_segments.append({"kind": "line"})
+                else:
+                    arc_index = index - len(lines)
+                    center = (
+                        float(points[centers[arc_index], 0]),
+                        float(points[centers[arc_index], 1]),
+                    )
+                    exact_center = tuple(Fraction.from_float(value) for value in center)
+                    exact_start = tuple(
+                        Fraction.from_float(float(value)) for value in points[current]
+                    )
+                    exact_end = tuple(
+                        Fraction.from_float(float(value)) for value in points[following]
+                    )
+                    start_radius_squared = sum(
+                        (value - origin) ** 2
+                        for value, origin in zip(exact_start, exact_center, strict=True)
+                    )
+                    end_radius_squared = sum(
+                        (value - origin) ** 2
+                        for value, origin in zip(exact_end, exact_center, strict=True)
+                    )
+                    if (
+                        start_radius_squared == 0
+                        or start_radius_squared != end_radius_squared
+                    ):
+                        raise ValueError(
+                            "Exact arc lowering requires both endpoints on the same "
+                            "positive-radius circle in represented coordinates."
+                        )
+                    direction = (
+                        bool(directions[arc_index])
+                        if forward
+                        else not bool(directions[arc_index])
+                    )
+                    segments.append(ProfileArc(center, direction))
+                    geometry_segments.append(
+                        {"kind": "arc", "center": center, "counterclockwise": direction}
+                    )
+                current = following
+                if current == start:
+                    break
+            if current != start or len(used) != len(edges):
+                raise ValueError("Line and arc profiles must form one connected cycle.")
+            outer = ProfileLoop(tuple(vertices), tuple(segments))
             profile_geometry = {
-                "kind": "circle",
-                "center": np.asarray(source.center, dtype=np.float64).tolist(),
-                "radius": float(source.radius),
-            }
-        elif isinstance(source, PlanarMeshRegion):
-            vertices = np.asarray(source.vertices, dtype=np.float64)
-            outer = ProfileLoop.polygon(vertices)
-            profile_geometry = {
-                "kind": "polygon",
-                "vertices": vertices.tolist(),
+                "kind": "line-arc-loop",
+                "vertices": vertices,
+                "segments": geometry_segments,
             }
         else:
-            raise TypeError("Sketch.to_source returned an unsupported source type.")
+            source = self.to_source(solution)
+            if isinstance(source, Circle):
+                outer = ProfileLoop.circle(
+                    np.asarray(source.center, dtype=np.float64),
+                    float(source.radius),
+                )
+                profile_geometry = {
+                    "kind": "circle",
+                    "center": np.asarray(source.center, dtype=np.float64).tolist(),
+                    "radius": float(source.radius),
+                }
+            elif isinstance(source, PlanarMeshRegion):
+                vertices = np.asarray(source.vertices, dtype=np.float64)
+                outer = ProfileLoop.polygon(vertices)
+                profile_geometry = {
+                    "kind": "polygon",
+                    "vertices": vertices.tolist(),
+                }
+            else:
+                raise TypeError("Sketch.to_source returned an unsupported source type.")
         profile = PlanarProfile(
             plane_,
             outer,
@@ -1260,6 +1670,9 @@ class Sketch(StrictModule):
                 "circle_centers": np.asarray(
                     self.circle_centers, dtype=np.int32
                 ).tolist(),
+                "arc_endpoints": np.asarray(self.arc_endpoints).tolist(),
+                "arc_centers": np.asarray(self.arc_centers).tolist(),
+                "arc_counterclockwise": np.asarray(self.arc_counterclockwise).tolist(),
                 "plane": {
                     "origin": np.asarray(plane_.origin, dtype=np.float64).tolist(),
                     "x_axis": np.asarray(plane_.x_axis, dtype=np.float64).tolist(),
@@ -1322,6 +1735,7 @@ __all__ = [
     "Radius",
     "Sketch",
     "SketchConstraint",
+    "SketchPreparationEvidence",
     "SketchSolution",
     "TangentCircles",
     "TangentLineCircle",

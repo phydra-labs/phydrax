@@ -5,16 +5,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+import inspect
 from math import isfinite
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._geometry_predicates import PredicateMode, orient2d
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
 from ...typing import PRNGKey
@@ -22,6 +26,13 @@ from .._contracts import CompiledGeometry, GeometrySource, GeometryTolerance
 from ..analytic._operations import BlendCSG, SharpCSG
 from ._constraints import AbstractDesignConstraint, DesignConstraintSystem
 from ._schema import DesignState, ParameterId, ParameterSchema
+from ._sketch import Sketch, SketchPreparationEvidence, SketchSolution
+from ._sketch_certificate import (
+    LineCircleConstruction,
+    RootDOFEvidence,
+    TwoCircleConstruction,
+)
+from ._sketch_dimensions import SketchDimensionSensitivity
 
 
 class CSGContinuationPolicy(StrictModule):
@@ -280,10 +291,485 @@ def solve_csg_continuation(
     )
 
 
+class SketchBranchWitness(StrictModule):
+    """An ordered triple of point indices whose orientation is tracked."""
+
+    points: tuple[int, int, int] = eqx.field(static=True)
+
+    def __init__(self, points: Sequence[int], /) -> None:
+        indices = tuple(points)
+        if len(indices) != 3 or any(
+            isinstance(index, bool) or not isinstance(index, int) or index < 0
+            for index in indices
+        ):
+            raise ValueError("A branch witness requires three nonnegative point indices.")
+        if len(set(indices)) != 3:
+            raise ValueError("A branch witness requires three distinct points.")
+        self.points = indices
+
+
+def _sketch_witness_signs(
+    points: ArrayLike, witnesses: tuple[SketchBranchWitness, ...], /
+) -> tuple[int, ...] | None:
+    layout = np.asarray(points)
+    if not np.all(np.isfinite(layout)):
+        return None
+    signs: list[int] = []
+    for witness in witnesses:
+        a, b, c = witness.points
+        result = orient2d(layout[a], layout[b], layout[c], mode=PredicateMode.EXACT)
+        if not bool(np.asarray(result.certain)):
+            return None
+        sign = int(np.asarray(result.signs))
+        if sign == 0:
+            return None
+        signs.append(sign)
+    return tuple(signs)
+
+
+class SketchContinuationReference(StrictModule):
+    """A solved reference layout and its explicitly declared orientation witnesses.
+
+    Witness signs only distinguish the specified represented point orientations;
+    they do not prove global branch uniqueness or exclude an intervening event.
+    No gauge or least-motion objective is added to the numerical problem.
+    """
+
+    sketch: Sketch
+    solution: SketchSolution
+    witnesses: tuple[SketchBranchWitness, ...] = eqx.field(static=True)
+    witness_signs: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        sketch: Sketch,
+        solution: SketchSolution,
+        witnesses: Sequence[SketchBranchWitness],
+        /,
+    ) -> None:
+        if not isinstance(sketch, Sketch) or not isinstance(solution, SketchSolution):
+            raise TypeError("Expected a Sketch and a SketchSolution.")
+        if solution.root_evidence.problem_id != sketch._problem_id():
+            raise ValueError("Reference solution belongs to a different sketch.")
+        if solution.dimensions.schema != sketch.dimension_schema:
+            raise ValueError("Reference dimensions do not match the sketch.")
+        solution.preparation.verify(
+            sketch,
+            solution.dimensions,
+            tolerance=solution.root_evidence.residual_tolerance,
+        )
+        if solution.points.shape != sketch.points.shape or (
+            solution.circle_radii.shape != sketch.circle_radii.shape
+        ):
+            raise ValueError("Reference layout does not match the sketch.")
+        if (
+            not bool(np.asarray(solution.converged))
+            or not solution.root_evidence.root_converged
+        ):
+            raise ValueError("Reference must be a converged numerical root.")
+        radii = np.asarray(solution.circle_radii)
+        if not np.all(np.isfinite(radii)) or np.any(radii <= 0):
+            raise ValueError("Reference radii must be finite and positive.")
+        coordinates = jnp.concatenate(
+            (solution.points.reshape((-1,)), solution.circle_radii)
+        )
+        point_size = solution.points.size
+
+        def residual(vector: Array) -> Array:
+            points = vector[:point_size].reshape(sketch.points.shape)
+            return sketch.residual(
+                points, vector[point_size:], dimensions=solution.dimensions
+            )
+
+        values = residual(coordinates)
+        evidence = RootDOFEvidence(
+            sketch._problem_id(),
+            coordinates,
+            values,
+            jax.jacfwd(residual)(coordinates),
+            residual_tolerance=solution.root_evidence.residual_tolerance,
+        )
+        recorded = solution.root_evidence
+        if not evidence.root_converged:
+            raise ValueError("Reference layout is not a converged numerical root.")
+        if (
+            evidence.evidence_id != recorded.evidence_id
+            or evidence.jacobian_rank != recorded.jacobian_rank
+            or evidence.regular_root_indicated != recorded.regular_root_indicated
+        ):
+            raise ValueError(
+                "Reference root evidence does not match the supplied sketch and layout."
+            )
+        if not np.array_equal(np.asarray(solution.residual), np.asarray(values)):
+            raise ValueError(
+                "Reference residual does not match the supplied sketch and layout."
+            )
+        witnesses_ = tuple(witnesses)
+        if any(not isinstance(item, SketchBranchWitness) for item in witnesses_):
+            raise TypeError("witnesses must contain SketchBranchWitness objects.")
+        if any(max(item.points) >= sketch.points.shape[0] for item in witnesses_):
+            raise ValueError("A branch witness references an absent point.")
+        signs = _sketch_witness_signs(solution.points, witnesses_)
+        if signs is None:
+            raise ValueError(
+                "Reference witnesses must have resolved nonzero orientations."
+            )
+        self.sketch = sketch
+        self.solution = solution
+        self.witnesses = witnesses_
+        self.witness_signs = signs
+
+
+_SKETCH_ARCHIVE_CONSTRAINT_NAMES = (
+    "Coincident",
+    "FixedPoint",
+    "PointDistance",
+    "Horizontal",
+    "Vertical",
+    "Parallel",
+    "Perpendicular",
+    "EqualLength",
+    "LineAngle",
+    "Midpoint",
+    "PointOnLine",
+    "Radius",
+    "TangentLineCircle",
+    "TangentCircles",
+)
+
+
+class SketchContinuationReferenceArchiveRecipe(NamedTuple):
+    """Authoritative sketch inputs and accepted layout, replayed on restoration."""
+
+    points: Any
+    lines: Any
+    circle_centers: Any
+    circle_radii: Any
+    arc_endpoints: Any
+    arc_centers: Any
+    arc_counterclockwise: Any
+    constraints: tuple[Any, ...]
+    feature_id: str
+    constraint_ids: tuple[str, ...]
+    constraint_priorities: tuple[int, ...]
+    dimensions: tuple[Any, ...]
+    accepted_points: Any
+    accepted_radii: Any
+    preparation_reference: Any
+    preparation_seed: Any
+    preparation_pinned_indices: tuple[int, ...]
+    preparation_pinned_values: Any
+    preparation_constructions: tuple[Any, ...]
+    preparation_rigid_clusters: tuple[Any, ...]
+    preparation_reduced_root_accepted: bool
+    residual_tolerance: float
+    evidence_id: str
+    iterations: int
+    status: int
+    witnesses: tuple[tuple[int, int, int], ...]
+    witness_signs: tuple[int, ...]
+
+    @classmethod
+    def from_reference(
+        cls, reference: SketchContinuationReference, /
+    ) -> SketchContinuationReferenceArchiveRecipe:
+        from . import _sketch as sketch_module
+
+        if type(reference) is not SketchContinuationReference:
+            raise TypeError("Expected an exact SketchContinuationReference.")
+        sketch = reference.sketch
+        checked = SketchContinuationReference(
+            sketch, reference.solution, reference.witnesses
+        )
+        if checked.witness_signs != reference.witness_signs:
+            raise ValueError("Reference witness evidence does not match the layout.")
+        constraints = []
+        for constraint in sketch.constraints:
+            name = type(constraint).__name__
+            if name not in _SKETCH_ARCHIVE_CONSTRAINT_NAMES or type(
+                constraint
+            ) is not getattr(sketch_module, name):
+                raise TypeError(
+                    f"No sketch archive recipe for constraint {type(constraint)!r}."
+                )
+            fields = {}
+            for field in inspect.signature(type(constraint).__init__).parameters:
+                if field == "self":
+                    continue
+                value = getattr(constraint, field)
+                if isinstance(value, ParameterId):
+                    value = (value.feature_id, value.name)
+                elif isinstance(value, (jax.Array, np.ndarray)):
+                    value = np.asarray(value)
+                fields[field] = value
+            constraints.append((name, fields))
+        solution = reference.solution
+        return cls(
+            np.asarray(sketch.points),
+            np.asarray(sketch.lines),
+            np.asarray(sketch.circle_centers),
+            np.asarray(sketch.circle_radii),
+            np.asarray(sketch.arc_endpoints),
+            np.asarray(sketch.arc_centers),
+            np.asarray(sketch.arc_counterclockwise),
+            tuple(constraints),
+            sketch.feature_id,
+            sketch.constraint_ids,
+            sketch.constraint_priorities,
+            tuple(np.asarray(value) for value in solution.dimensions.values),
+            np.asarray(solution.points),
+            np.asarray(solution.circle_radii),
+            np.asarray(solution.preparation.reference_coordinates),
+            np.asarray(solution.preparation.seed_coordinates),
+            solution.preparation.pinned_indices,
+            np.asarray(solution.preparation.pinned_values),
+            solution.preparation.constructions,
+            solution.preparation.rigid_clusters,
+            solution.preparation.reduced_root_accepted,
+            solution.root_evidence.residual_tolerance,
+            solution.root_evidence.evidence_id,
+            int(np.asarray(solution.iterations)),
+            int(np.asarray(solution.status)),
+            tuple(witness.points for witness in reference.witnesses),
+            reference.witness_signs,
+        )
+
+    def restore(self, /) -> SketchContinuationReference:
+        from . import _sketch as sketch_module
+        from ._reduced import (
+            _SketchDistanceRigidityWitness,
+            _SketchDistanceTriangleWitness,
+        )
+
+        constraints = []
+        for name, stored_fields in self.constraints:
+            if name not in _SKETCH_ARCHIVE_CONSTRAINT_NAMES:
+                raise ValueError(f"Unknown archived sketch constraint {name!r}.")
+            fields = dict(stored_fields)
+            if fields.get("parameter_id") is not None:
+                fields["parameter_id"] = ParameterId(*fields["parameter_id"])
+            constraints.append(getattr(sketch_module, name)(**fields))
+        sketch = Sketch(
+            self.points,
+            lines=self.lines,
+            circle_centers=self.circle_centers,
+            circle_radii=self.circle_radii,
+            arc_endpoints=self.arc_endpoints,
+            arc_centers=self.arc_centers,
+            arc_counterclockwise=self.arc_counterclockwise,
+            constraints=constraints,
+            feature_id=self.feature_id,
+            constraint_ids=self.constraint_ids,
+            constraint_priorities=self.constraint_priorities,
+        )
+        dimensions = DesignState(sketch.dimension_schema, self.dimensions)
+        points = jnp.asarray(self.accepted_points, dtype=jnp.float64)
+        radii = jnp.asarray(self.accepted_radii, dtype=jnp.float64)
+        coordinates = jnp.concatenate((points.reshape((-1,)), radii))
+        point_size = points.size
+
+        def residual(vector: Array) -> Array:
+            return sketch.residual(
+                vector[:point_size].reshape(sketch.points.shape),
+                vector[point_size:],
+                dimensions=dimensions,
+            )
+
+        values = residual(coordinates)
+        evidence = RootDOFEvidence(
+            sketch._problem_id(),
+            coordinates,
+            values,
+            jax.jacfwd(residual)(coordinates),
+            residual_tolerance=self.residual_tolerance,
+        )
+        if evidence.evidence_id != self.evidence_id or not evidence.root_converged:
+            raise ValueError("Archived sketch root evidence failed replay.")
+        if any(
+            type(witness) not in (TwoCircleConstruction, LineCircleConstruction)
+            for _, witness in self.preparation_constructions
+        ):
+            raise ValueError("Unknown archived sketch construction type.")
+        if any(
+            type(witness) is not _SketchDistanceRigidityWitness
+            or any(
+                type(triangle) is not _SketchDistanceTriangleWitness
+                for triangle in witness.triangles
+            )
+            for witness in self.preparation_rigid_clusters
+        ):
+            raise ValueError("Unknown archived rigid sketch witness type.")
+        preparation = SketchPreparationEvidence(
+            sketch._problem_id(),
+            self.preparation_reference,
+            self.preparation_seed,
+            self.preparation_pinned_indices,
+            self.preparation_pinned_values,
+            self.preparation_constructions,
+            self.preparation_rigid_clusters,
+            self.preparation_reduced_root_accepted,
+        )
+        solution = SketchSolution(
+            points=points,
+            circle_radii=radii,
+            residual=values,
+            residual_norm=jnp.linalg.norm(values),
+            converged=True,
+            iterations=self.iterations,
+            status=self.status,
+            root_evidence=evidence,
+            preparation=preparation,
+            dimensions=dimensions,
+        )
+        reference = SketchContinuationReference(
+            sketch,
+            solution,
+            tuple(SketchBranchWitness(value) for value in self.witnesses),
+        )
+        if reference.witness_signs != self.witness_signs:
+            raise ValueError("Archived sketch branch evidence failed replay.")
+        return reference
+
+
+class SketchContinuationResult(StrictModule):
+    """Attempted root and accepted reference, kept separate for rollback."""
+
+    reference: SketchContinuationReference
+    attempt: SketchSolution
+    prior_reference: SketchContinuationReference
+    accepted: bool = eqx.field(static=True)
+    reason: str = eqx.field(static=True)
+
+    def dimension_sensitivity(
+        self, sketch: Sketch, parameter_id: ParameterId, /
+    ) -> SketchDimensionSensitivity:
+        """Pointwise sensitivity after a replayed endpoint transition, not a path proof."""
+        if not self.accepted or self.reason != "accepted":
+            raise ValueError("Continuation sensitivity requires an accepted transition.")
+        prior = SketchContinuationReference(
+            sketch, self.prior_reference.solution, self.prior_reference.witnesses
+        )
+        current = SketchContinuationReference(
+            sketch, self.reference.solution, self.reference.witnesses
+        )
+        attempted = SketchContinuationReference(sketch, self.attempt, prior.witnesses)
+        prior_points = tuple(item.points for item in prior.witnesses)
+        current_points = tuple(item.points for item in current.witnesses)
+        if (
+            prior_points != current_points
+            or prior.witness_signs != self.prior_reference.witness_signs
+            or current.witness_signs != self.reference.witness_signs
+            or prior.witness_signs != current.witness_signs
+            or attempted.witness_signs != current.witness_signs
+        ):
+            raise ValueError(
+                "Continuation witness evidence does not match the transition."
+            )
+        old_evidence = prior.solution.root_evidence
+        new_evidence = attempted.solution.root_evidence
+        if (
+            old_evidence.jacobian_rank != new_evidence.jacobian_rank
+            or old_evidence.regular_root_indicated != new_evidence.regular_root_indicated
+        ):
+            raise ValueError(
+                "Continuation sensitivity requires unchanged rank and regularity."
+            )
+        current_solution = current.solution
+        if (
+            current_solution.root_evidence.evidence_id != new_evidence.evidence_id
+            or current_solution.dimensions.schema != self.attempt.dimensions.schema
+            or any(
+                not np.array_equal(np.asarray(first), np.asarray(second))
+                for first, second in zip(
+                    current_solution.dimensions.values,
+                    self.attempt.dimensions.values,
+                    strict=True,
+                )
+            )
+            or not np.array_equal(
+                np.asarray(current_solution.points), np.asarray(self.attempt.points)
+            )
+            or not np.array_equal(
+                np.asarray(current_solution.circle_radii),
+                np.asarray(self.attempt.circle_radii),
+            )
+        ):
+            raise ValueError("Accepted reference does not match the attempted root.")
+        return sketch.dimension_sensitivity(self.attempt, parameter_id)
+
+
+def continue_sketch(
+    sketch: Sketch,
+    reference: SketchContinuationReference,
+    dimensions: DesignState,
+    /,
+    *,
+    solve_options: Mapping[str, Any] | None = None,
+) -> SketchContinuationResult:
+    """Solve an edit from a reference, retaining it unchanged on rejection.
+
+    Only endpoint witness signs and numerical rank/regularity are compared.
+    Acceptance is not a proof that the path between layouts was event-free.
+    This host-side operation can be called independently from any saved reference.
+    """
+    if not isinstance(sketch, Sketch) or not isinstance(
+        reference, SketchContinuationReference
+    ):
+        raise TypeError("Expected a Sketch and SketchContinuationReference.")
+    if reference.solution.root_evidence.problem_id != sketch._problem_id():
+        raise ValueError("Reference solution belongs to a different sketch.")
+    checked = SketchContinuationReference(sketch, reference.solution, reference.witnesses)
+    if checked.witness_signs != reference.witness_signs:
+        raise ValueError("Reference witness evidence does not match the layout.")
+    if (
+        not isinstance(dimensions, DesignState)
+        or dimensions.schema != sketch.dimension_schema
+    ):
+        raise ValueError("dimensions must match the sketch dimension schema.")
+    options = {} if solve_options is None else dict(solve_options)
+    if "initial_coordinates" in options or "dimensions" in options:
+        raise ValueError("Continuation controls initial_coordinates and dimensions.")
+    initial = jnp.concatenate(
+        (reference.solution.points.reshape((-1,)), reference.solution.circle_radii)
+    )
+    attempt = sketch.solve(initial_coordinates=initial, dimensions=dimensions, **options)
+    evidence = attempt.root_evidence
+    previous = reference.solution.root_evidence
+    if not bool(np.asarray(attempt.converged)) or not evidence.root_converged:
+        reason = "not_converged"
+    elif (
+        evidence.jacobian_rank != previous.jacobian_rank
+        or evidence.regular_root_indicated != previous.regular_root_indicated
+    ):
+        reason = "rank_changed"
+    else:
+        signs = _sketch_witness_signs(attempt.points, reference.witnesses)
+        if signs is None:
+            reason = "witness_unresolved"
+        elif signs != reference.witness_signs:
+            reason = "witness_changed"
+        else:
+            reason = "accepted"
+    next_reference = reference
+    if reason == "accepted":
+        try:
+            next_reference = SketchContinuationReference(
+                sketch, attempt, reference.witnesses
+            )
+        except ValueError:
+            reason = "invalid_attempt"
+    accepted = reason == "accepted"
+    return SketchContinuationResult(next_reference, attempt, reference, accepted, reason)
+
+
 __all__ = [
     "CSGContinuationPolicy",
     "CSGContinuationResult",
     "PreparedCSGContinuation",
+    "SketchBranchWitness",
+    "SketchContinuationReference",
+    "SketchContinuationResult",
+    "continue_sketch",
     "prepare_csg_continuation",
     "solve_csg_continuation",
 ]

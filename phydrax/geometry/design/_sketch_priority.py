@@ -132,6 +132,9 @@ def solve_priority_sketch(
             else provisional_solution.points,
             lines=sketch.lines,
             circle_centers=sketch.circle_centers,
+            arc_endpoints=sketch.arc_endpoints,
+            arc_centers=sketch.arc_centers,
+            arc_counterclockwise=sketch.arc_counterclockwise,
             circle_radii=(
                 sketch.circle_radii
                 if provisional_solution is None

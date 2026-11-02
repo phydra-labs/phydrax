@@ -23,6 +23,69 @@ The installed isolation gate first verifies that the base Phydrax wheel refuses 
 
 External engines remain explicit optional comparisons. For example, `--scenario gmsh` or `--scenario planar-bands` runs the Gmsh comparison and reports missing dependencies separately; neither is part of the engine-free native gate. Native routes do not fall back to external geometry engines. Source approximations, exact CAD definitions, and mesh realizations retain distinct identities and fidelity claims.
 
+Sketch root preparation propagates fixed points, fixed circle radii,
+coincidence, horizontal and vertical coordinates, and midpoints only when the
+represented midpoint is exact. It retains every original residual. A reduced
+candidate is accepted only when the complete residual converges; otherwise the
+same native least-squares owner solves the unreduced problem from the original
+reference layout. In particular, conflicting weighted constraints are not
+silently treated as hard equalities. This preparation does not prove root
+uniqueness, and no gauge or least-motion objective is added.
+For two positive distance loci with distinct fixed centers, an exact rational
+discriminant and nonzero reference orientation establish a transversal
+algebraic branch. Its floating realization is checked against the full
+residual. Tangent or unresolved constructions are seeds only; this local branch
+evidence does not establish global root uniqueness.
+For an axis-aligned line through a fixed endpoint and a positive distance to a
+fixed center, an exact discriminant and nonzero reference-side witness
+similarly identify a transversal branch. Other line/circle relations remain in
+the full residual.
+`SketchSolution.preparation` retains the reference, seed, fixed-coordinate
+facts, exact branch witnesses and whether the reduced root was accepted.
+Call its `verify` method with the sketch, dimension state and solve tolerance
+to replay its premises; this is separate from `root_evidence` and does not
+establish global uniqueness.
+For distance-triangulated components, `preparation.rigid_clusters` records an
+exact positive-discriminant witness for every added point and a nonzero
+reference orientation. Rigidity is conditional on simultaneous satisfaction of
+the recorded distances; this is not a root-existence certificate. Separately,
+a component with pointwise numerical rigidity indicated at its reference layout
+and exactly one fixed-point relation may be translated to the fixed target as a
+seed. Cluster variables remain in the numerical problem and no gauge is added.
+Multiple anchors and unsupported components remain in the full problem.
+
+`SketchBranchWitness` identifies an ordered triple of points.
+`SketchContinuationReference` retains a converged layout and explicitly
+declared witnesses; `continue_sketch` checks their exact represented-coordinate
+orientation signs and numerical rank after a dimension edit. A rejected edit
+retains the reference unchanged. Matching endpoint signs do not prove that the
+continuous edit path was event-free or that the root is globally unique.
+`SketchContinuationResult.dimension_sensitivity` requires an accepted
+transition; standalone `Sketch.dimension_sensitivity` instead describes the
+local derivative of its supplied regular root, even if that root was an
+unaccepted diagnostic attempt.
+Sketch problem identity includes constraint incidence and branch selectors,
+including arc topology. Previous identities are not reused for the changed
+representation; compiler keys likewise follow the current residual code and
+captured values.
+Sketch arcs retain directed endpoint and center incidence. Exact native profile
+lowering requires exact equality of the represented endpoint radii; numerical
+residual convergence alone is not promoted to an exact circular profile.
+
+A `SketchContinuationReference` retains its source sketch as well as the
+accepted root. For portable restoration, put it in a lifecycle `Composition`
+entry with role `model-state` and persist the composition through the existing
+model-archive API. Restoration reconstructs the sketch and replays preparation,
+root, and branch evidence; it does not require the original Python objects.
+Run `python examples/native_sketch_continuation.py` for the complete witnessed
+dimension edit and archive-restoration workflow.
+
+Run `python tools/sketch_preparation_benchmarks.py --counts 4 8 16` only
+without competing benchmarks. It records growing axis-constraint and
+distance-triangulated cluster scenarios, with preparation, Jacobian work, solve
+time, traced retained host memory, and prepared array bytes separately. The
+measurements are observations, not correctness or speed claims.
+
 Continuity is source-owned. Built-in analytic carriers declare C1 continuity
 over valid parameter ranges; custom `AbstractCurve` and `AbstractSurfacePatch`
 implementations must establish it explicitly rather than inherit a positive

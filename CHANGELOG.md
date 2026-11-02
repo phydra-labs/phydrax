@@ -10,6 +10,11 @@
   payload and row-offset array instead of retaining duplicate per-leaf string
   and byte banks. Canonical bytes, empty-container evidence, and type checks
   remain unchanged.
+- Sketch root evidence resolves numerical rank through the shared linalg policy
+  rather than a locally duplicated threshold.
+- Sketch array-input annotations now match the existing host and device array
+  conversion boundaries; the resulting compiler and sketch identities follow
+  the current representation rather than prior hashes.
 - Nonaffine retained-root embedding proofs now pass the routed local coefficient
   bank to the canonical cell-expression owner, preserving valid root ancestry
   instead of dropping it after an argument mismatch.
@@ -54,6 +59,9 @@
   confirming qualification modules and Phydrax load from their isolated sources.
 
 ### Added
+- Sketches retain directed circular-arc incidence, support exact arc profile
+  lowering when represented endpoint radii agree, and provide explicitly
+  witnessed dimension-edit continuation with rollback.
 - Whole-solid CAD layer sweeps now retain an exterior cap with no core region
   when authored slabs exactly cover the controlled solid. Periodic layer/core
   source preparation carries the accepted orbit identity and bound source charts.

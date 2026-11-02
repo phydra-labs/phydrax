@@ -1452,6 +1452,18 @@ def _row_record_archive_recipe(value: Any, /) -> object | None:
     layer_recipe = layer_record_archive_recipe(value)
     if layer_recipe is not None:
         return layer_recipe
+    if (
+        module == "phydrax.geometry.design._continuation"
+        and name == "SketchContinuationReference"
+    ):
+        from ..geometry.design._continuation import (
+            SketchContinuationReference,
+            SketchContinuationReferenceArchiveRecipe,
+        )
+
+        if type(value) is not SketchContinuationReference:
+            raise TypeError("Sketch continuation projection requires its owner type.")
+        return SketchContinuationReferenceArchiveRecipe.from_reference(value)
     if module == "phydrax.meshing._association" and name == "GeometryAssociation":
         from ..meshing._association import (
             GeometryAssociation,
@@ -1497,6 +1509,7 @@ def _row_record_archive_recipe(value: Any, /) -> object | None:
 def _row_record_recipe_types() -> frozenset[type]:
     from ..discretization._surface_chart_records import SurfaceChartWitnessArchiveRecipe
     from ..geometry._embedding_state import MeshEmbeddingWitnessArchiveRecipe
+    from ..geometry.design._continuation import SketchContinuationReferenceArchiveRecipe
     from ..geometry.surface._contracts import SurfaceMetadataArchiveRecipe
     from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
     from ..meshing._association import GeometryAssociationArchiveRecipe
@@ -1507,6 +1520,7 @@ def _row_record_recipe_types() -> frozenset[type]:
             LayerRecordArchiveRecipe,
             MeshEmbeddingWitnessArchiveRecipe,
             SurfaceChartWitnessArchiveRecipe,
+            SketchContinuationReferenceArchiveRecipe,
             SurfaceMetadataArchiveRecipe,
         }
     )

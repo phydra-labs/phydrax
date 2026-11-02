@@ -989,8 +989,7 @@ def test_sketch_and_design_constraint_solvers_lower_to_geometry() -> None:
         jnp.asarray([[0.0, 0.0], [1.2, 0.1], [1.1, 1.0], [0.0, 0.9]]),
         lines=jnp.asarray([[0, 1], [1, 2], [2, 3], [3, 0]]),
         constraints=(
-            # ty: ignore[invalid-argument-type]
-            phx.geometry.FixedPoint(0, (0.0, 0.0)),
+            phx.geometry.FixedPoint(0, jnp.asarray((0.0, 0.0))),
             phx.geometry.Horizontal(0),
             phx.geometry.Vertical(1),
             phx.geometry.Horizontal(2),
