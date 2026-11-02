@@ -55,7 +55,7 @@ from .._native_construction import (
     NativeMeshConstruction,
     NativeMeshOrganization,
 )
-from .._plc_source import PiecewiseLinearComplex, PlcBoundaryPolicy
+from .._plc_source import _certify_cad_surface, PiecewiseLinearComplex, PlcBoundaryPolicy
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import UniformSizeControl
@@ -161,7 +161,7 @@ class _BRepRowResolver:
 
 
 def _association_for(
-    surface: CellMeshingResult, dimension: int, /, *, required: bool
+    surface: CellMeshingResult | SurfaceSourceCharts, dimension: int, /, *, required: bool
 ) -> GeometryAssociation | None:
     entity_set = surface.mesh.entity_set(dimension)
     expected_kind = (
@@ -227,7 +227,7 @@ def _association_row_map(association: GeometryAssociation, /) -> dict[int, int]:
 
 
 def _exact_surface_points(
-    surface: CellMeshingResult, /
+    surface: CellMeshingResult | SurfaceSourceCharts, /
 ) -> tuple[np.ndarray, tuple[tuple[ExactScalar, ...], ...]]:
     mesh = surface.mesh
     if mesh.topological_dimension != 2 or mesh.ambient_dimension != 3:
@@ -562,6 +562,7 @@ def _cad_plc_data(
     segment_ids: list[str] = []
     segment_paths: list[tuple[str, ...]] = []
     segment_curve_rows: list[int] = []
+    segment_edge_ids: list[int] = []
     segment_brep_indices: list[int] = []
     if edge_association is not None:
         edge_rows = _association_row_map(edge_association)
@@ -624,6 +625,7 @@ def _cad_plc_data(
             segment_ids.append(identity)
             segment_paths.append(path)
             segment_curve_rows.append(curve_row)
+            segment_edge_ids.append(global_id)
             segment_brep_indices.append(source_index)
     if set(segment_curve_rows) != active_curve_rows:
         raise ValueError(
@@ -654,6 +656,26 @@ def _cad_plc_data(
         plane = _exact_patch_plane(domain, patch)
         if plane is not None:
             facet_planes[patch] = plane
+    report = surface.certification
+    if report is None:
+        fidelity_tolerance = 0.0 if deviation is None else deviation
+        normal_deviation = None
+        embedding, fidelity = _certify_cad_surface(
+            surface_source, fidelity_tolerance, normal_deviation, None
+        )
+    else:
+        certification_inputs = report.inputs
+        fidelity_tolerance = certification_inputs.fidelity_tolerance
+        if fidelity_tolerance is None:
+            fidelity_tolerance = 0.0 if deviation is None else deviation
+        normal_deviation = certification_inputs.maximum_normal_deviation
+        embedding = report.embedding
+        fidelity = report.fidelity
+        if fidelity is None:
+            _, fidelity = _certify_cad_surface(
+                surface_source, fidelity_tolerance, normal_deviation,
+                certification_inputs.junction_vertices,
+            )
     complex_ = PiecewiseLinearComplex(
         np.asarray(
             [[float(value) for value in point] for point in plc_points], dtype=np.float64
@@ -670,6 +692,14 @@ def _cad_plc_data(
         segment_ids=tuple(segment_ids),
         segment_occurrence_paths=tuple(segment_paths),
         region_occurrence_paths=region_paths,
+        cad_source_charts=surface_source,
+        cad_fidelity_tolerance=fidelity_tolerance,
+        cad_maximum_normal_deviation=normal_deviation,
+        cad_embedding=embedding,
+        cad_fidelity=fidelity,
+        cad_vertex_rows=tuple(mesh_row_to_plc),
+        cad_segment_edge_ids=tuple(segment_edge_ids),
+        cad_polygon_cell_ids=tuple(triangle_cell_ids),
         boundary=boundary,
         facet_planes=facet_planes,
         facet_plane_tolerances=np.full(
@@ -953,6 +983,10 @@ def _domain_scope_rows(
         or scope.entity_set_id != domain.scope_entity_set_id(dimension)
     ):
         raise ValueError("CAD volume controls must bind their exact source entity set.")
+    if scope.side_records:
+        if domain.brep_authority is None:
+            raise ValueError("CAD side scopes require their authoritative B-Rep model.")
+        MeshingScope.from_stored_fields(scope, source_model=domain.brep_authority)
     rows = np.asarray(
         [
             domain.resolve_entity_id(dimension, key, occurrence_path=path)
@@ -1145,6 +1179,24 @@ def _translate_specification(
     patch_controls: list[PatchControl] = []
     for control in specification.patch_controls:
         rows = _domain_scope_rows(domain, control.scope, 2)
+        if control.scope.side_records:
+            unqualified = set(control.scope.unqualified_entity_ids)
+            side_counts: dict[int, int] = {}
+            for side in control.scope.side_records:
+                side_counts[side.entity_id] = side_counts.get(side.entity_id, 0) + 1
+            for identifier, row in zip(
+                np.asarray(control.scope.entity_ids), rows, strict=True
+            ):
+                if int(identifier) in unqualified:
+                    continue
+                adjacent_count = sum(
+                    int(region) >= 0 for region in complex_.facet_regions[int(row)]
+                )
+                if side_counts.get(int(identifier), 0) != adjacent_count:
+                    raise ValueError(
+                        "A single interface side cannot be flattened into a patch control; "
+                        "mesh the shared facet and resolve its sided integration route."
+                    )
         expected_names = set(control.adjacent_region_names)
         adjacent_rows = sorted(
             {

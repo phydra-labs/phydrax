@@ -18,6 +18,9 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import normalized_identifier
 from ..discretization import CellGeometrySpec
+from ..geometry._global_embedding import GlobalEmbeddingCertificate
+from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
+from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..typing import (
     checked,
     ConvertibleToArray,
@@ -29,10 +32,7 @@ from ..typing import (
 )
 
 if TYPE_CHECKING:
-    from ..geometry._surface_source_support import SurfaceSourceCharts
     from ..geometry.brep._model import BRepGeometry
-    from ..geometry._global_embedding import GlobalEmbeddingCertificate
-    from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 
 
 def _occurrence_path_bank(
@@ -299,10 +299,7 @@ def _cad_segment_incidence(
 ) -> None:
     """Replay exact CAD surface and source incidence before joining occurrences."""
     from ..geometry._meshing_domain import PatchCurveUse
-    from ..geometry._surface_source_support import SurfaceSourceCharts
-    from ..geometry._global_embedding import GlobalEmbeddingCertificate
     from ..geometry._mesh_certificates import _same_tree_content
-    from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
     from ._association import _ordered_vertices
     from .providers._native_cad_volume import (
         _association_for, _association_row_map, _BRepRowResolver, _exact_surface_points,

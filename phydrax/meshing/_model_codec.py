@@ -309,6 +309,14 @@ def _register_model_archive_types() -> None:
         _SketchDistanceRigidityWitness,
         _SketchDistanceTriangleWitness,
     )
+    from ..geometry.multiregion_surface._contracts import (
+        MultiRegionSurfaceCapacityEvidence,
+        MultiRegionSurfaceCapacityPlan,
+        MultiRegionSurfaceCounts,
+        MultiRegionSurfaceEvidence,
+        MultiRegionSurfaceStatus,
+    )
+    from ..geometry.multiregion_surface._topology import MultiRegionSurfaceTopology
     from ..geometry.design._schema import (
         DesignState,
         ParameterBinding,
@@ -427,7 +435,7 @@ def _register_model_archive_types() -> None:
         RegionBoundaryEvidence,
         RegionRole,
     )
-    from ..meshing._scope import MeshingEntityKind, MeshingScope
+    from ..meshing._scope import MeshingEntityKind, MeshingScope, MeshingScopeSide
     from ..meshing._sizing import (
         CurvatureSizeControl,
         ProximitySizeControl,
@@ -610,6 +618,12 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.brep", BRepPartitionReport),
         ("phydrax.geometry.brep", BRepPartitionResult),
         ("phydrax.geometry.brep", BRepPartitionResultArchiveRecipe),
+        ("phydrax.geometry", MultiRegionSurfaceCapacityEvidence),
+        ("phydrax.geometry", MultiRegionSurfaceCapacityPlan),
+        ("phydrax.geometry", MultiRegionSurfaceCounts),
+        ("phydrax.geometry", MultiRegionSurfaceEvidence),
+        ("phydrax.geometry", MultiRegionSurfaceStatus),
+        ("phydrax.geometry", MultiRegionSurfaceTopology),
         ("phydrax.geometry", BoundaryFrame),
         ("phydrax.geometry", DomainCurveMap),
         ("phydrax.geometry", MeshingDomain),
@@ -834,6 +848,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", ProtectedFeature),
         ("phydrax.meshing", MeshingEntityKind),
         ("phydrax.meshing", MeshingScope),
+        ("phydrax.meshing", MeshingScopeSide),
         ("phydrax.geometry", PlanarEmbedding),
         ("phydrax.meshing", BackgroundMetricControl),
         ("phydrax.meshing", BackgroundMetricMode),
@@ -1026,6 +1041,9 @@ def restore_model_archive_value(
     from ..linalg._preconditioning import PreconditioningPolicy
     from ..linalg._properties import OperatorProperties
     from ..linalg._spaces import ArraySpaceArchiveRecipe
+    from ..meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
+    from ..meshing._controls import PatchControl
+    from ..meshing._scope import MeshingScope, MeshingScopeSide
     from ..sparse._linear import SparseCoordinateOperator
     from ..sparse._relation import EdgeRelation
     from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
@@ -1035,6 +1053,7 @@ def restore_model_archive_value(
     in_composition = False
     pending_graphs: list[Any] = []
     pending_selections: list[Any] = []
+    pending_sided_scopes: list[MeshingScope] = []
 
     def same_content(left: Any, right: Any) -> bool:
         left = model_archive_root_projection(left)
@@ -1208,7 +1227,17 @@ def restore_model_archive_value(
 
     def restore(item: Any, /) -> Any:
         nonlocal in_composition
+        if type(item) is BRepModel:
+            return _reconstruct_brep_graph(item)
+        if type(item) is MeshingScope:
+            if not item.side_records:
+                return MeshingScope.from_stored_fields(item)
+            if not in_composition:
+                raise ValueError("Sided scope requires a replayed source model.")
+            pending_sided_scopes.append(item)
+            return item
         if type(item) in (
+            MeshingScopeSide,
             CADOccurrence,
             CADRevision,
             CADSelector,
@@ -1615,7 +1644,6 @@ def restore_model_archive_value(
                 from ..discretization.finite_volume._owner_local_remap import (
                     PreparedOwnerLocalConservativeRemap,
                 )
-                from ..meshing._contracts import VolumeMeshingSpec
 
                 if not isinstance(execution_group, ExecutionGroup):
                     raise TypeError(
@@ -1688,10 +1716,6 @@ def restore_model_archive_value(
                 from .._execution_runtime import ExecutionGroup
                 from ..discretization._view_support import OwnerLocalCellGeometry
                 from ..graph._partition import GraphPartitionPlan
-                from ..meshing._contracts import (
-                    SurfaceMeshingSpec,
-                    VolumeMeshingSpec,
-                )
 
                 if not isinstance(execution_group, ExecutionGroup):
                     raise TypeError(
@@ -1790,6 +1814,7 @@ def restore_model_archive_value(
             previous = in_composition
             graph_start = len(pending_graphs)
             selection_start = len(pending_selections)
+            scope_start = len(pending_sided_scopes)
             in_composition = True
             try:
                 entries = tuple(restore(entry) for entry in item.entries)
@@ -1825,6 +1850,93 @@ def restore_model_archive_value(
                         raise ValueError(
                             "CAD selection does not match its current inventory."
                         )
+            models = tuple(
+                entry.value if type(entry.value) is BRepModel else entry.value.model
+                for entry in entries
+                if type(entry.value) in (BRepModel, BRepPartitionResult)
+            )
+            visited: set[int] = set()
+            nested: list[object] = [entry.value for entry in entries]
+            while nested:
+                value = nested.pop()
+                if id(value) in visited:
+                    continue
+                visited.add(id(value))
+                if type(value) is MeshingScope:
+                    if value.side_records and all(
+                        value is not item for item in pending_sided_scopes[scope_start:]
+                    ):
+                        pending_sided_scopes.append(value)
+                    continue
+                if type(value) in (BRepModel, BRepPartitionResult, Composition):
+                    continue
+                if dataclasses.is_dataclass(value) and not isinstance(value, type):
+                    nested.extend(
+                        getattr(value, field.name) for field in dataclasses.fields(value)
+                    )
+                elif isinstance(value, (tuple, list, set, frozenset)):
+                    nested.extend(value)
+                elif isinstance(value, Mapping):
+                    nested.extend(value.values())
+            validated: dict[int, MeshingScope] = {}
+            scope_owners: dict[int, BRepModel] = {}
+            for scope in pending_sided_scopes[scope_start:]:
+                owners = tuple(
+                    model
+                    for model in models
+                    if (model.source_id, model.source_revision)
+                    == (scope.source_id, scope.source_revision)
+                )
+                if not owners or any(
+                    model.model_id != owners[0].model_id for model in owners
+                ):
+                    raise ValueError(
+                        "Sided scope requires one replayed current source model."
+                    )
+                validated[id(scope)] = MeshingScope.from_stored_fields(
+                    scope, source_model=owners[0]
+                )
+                scope_owners[id(scope)] = owners[0]
+
+            def rebuilt_entry_value(value: Any) -> Any:
+                if id(value) in validated:
+                    return validated[id(value)]
+                if type(value) is PatchControl and value.scope.side_records:
+                    return PatchControl.from_stored_fields(
+                        value, source_model=scope_owners[id(value.scope)]
+                    )
+                if type(value) in (SurfaceMeshingSpec, VolumeMeshingSpec):
+                    primary = (
+                        value.scope
+                        if type(value) is SurfaceMeshingSpec
+                        else value.boundary_scope
+                    )
+                    owners = tuple(
+                        model
+                        for model in models
+                        if (model.source_id, model.source_revision)
+                        == (primary.source_id, primary.source_revision)
+                    )
+                    if owners:
+                        return type(value).from_stored_fields(
+                            value, source_model=owners[0]
+                        )
+                return value
+
+            entries = tuple(
+                CompositionEntry(
+                    rebuilt_entry_value(entry.value),
+                    entry_id=entry.entry_id,
+                    role=entry.role,
+                    owner_id=entry.owner_id,
+                    structure_id=entry.structure_id,
+                    revision_id=entry.revision_id,
+                    semantics_id=entry.semantics_id,
+                    dependencies=entry.dependencies,
+                )
+                for entry in entries
+            )
+            del pending_sided_scopes[scope_start:]
             del pending_graphs[graph_start:]
             del pending_selections[selection_start:]
             composition = Composition(entries, boundary_id=item.boundary_id)

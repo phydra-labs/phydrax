@@ -520,10 +520,10 @@ generated entities of another kind. Deleted or unresolved correspondence and
 partial merges cannot be transported as a selection.
 An orientation rebase must be certified by the correspondence; an
 ancestry-only edge with unresolved orientation cannot transport a selection.
-For a shared face, a mesh scope currently represents the complete shared facet,
-not one region side: selecting only one incident occurrence is refused. A
-complete set of incident uses can select the shared facet when assembly-copy
-pairing is exact; ambiguous coincident repeated copies are refused.
+For a shared face, a CAD-selection scope retains each incident solid occurrence
+and its orientation even though its numeric facet slot denotes the shared facet.
+Unqualified facet selection and sided selection are distinct; an ambiguous
+coincident-copy pairing is refused instead of being inferred from ordering.
 Cold partition restoration replays the retained operand plan and verifies the
 result geometry, correspondence graphs, regions, and patches against that
 operation. A standalone graph is not proof of its own provenance. Organized
@@ -2065,6 +2065,36 @@ distinct. Unclassified rows also retain their owner and any known occurrence,
 but do not claim a resolved source stratum. Parent provenance is recorded in
 `parent_dimensions`, `parent_ids`, `parent_association_id`, and
 `GeometryAssociationProvenance`.
+
+CAD selection scopes are bound to the source owner and revision, the entity
+dimension, and the qualified occurrence, including its incident region side.
+The two sides of a shared face therefore have distinct scope identities even
+though they refer to the same geometric face. Reused definitions and independent
+coincident occurrences retain their own identities; equal coordinates or a
+shared definition do not authorize merging them. Selectors must authenticate
+against the target revision's occurrence inventory, and a scope from another
+owner or revision cannot be used as a substitute.
+When coincident repeated solid uses do not carry enough assembly ancestry to
+identify the shared-face slot pairing, a side selection is refused; occurrence
+ordering is not evidence of a pairing.
+
+For a purely sided CAD scope, `resolve_sided_integration_domains(result, source,
+scope, discretization, tolerance=...)` returns `(domain, side)` pairs suitable
+for `discretization.prepare_side_trace(field, domain, rule=rule, side=side)`.
+The required tolerance is a finite nonnegative source-association residual
+tolerance. The bridge partitions the result where owner/neighbor or
+exterior/interior routing differs,
+while retaining each selected side. Its outward normals are relative to the
+incident region, not the arbitrary storage order of mesh cells. The bridge rejects
+mixed sided and unqualified scopes; choose the intended semantics explicitly.
+A one-sided interface selection is not an exterior boundary condition:
+consumers that require an exterior boundary or cannot represent the selected
+side must reject it rather than silently apply it to both sides.
+For native volume meshing, declare the complete shared facet in `PatchControl`;
+then resolve each incident side separately against the accepted result. A
+single-side interface scope cannot be flattened into an undirected patch
+control.
+
 `associate_mesh_vertices` classifies each vertex geometrically: mesh-boundary
 vertices on the lowest-dimensional B-Rep entity within the classification
 tolerance, interior vertices of volume meshes in their solid.

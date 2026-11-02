@@ -17,6 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, nonnegative_integer, normalized_identifier
 from ..geometry._planar_embedding import PlanarEmbedding
+from ..geometry.brep._model import BRepModel
 from ..typing import checked, parse
 from ._controls import (
     BackgroundMetricControl,
@@ -559,16 +560,28 @@ def _stored_tuple(value: object, name: str, /) -> tuple[Any, ...]:
     return value
 
 
-def _restore_size_controls(values: object, /) -> tuple[SizeControl, ...]:
+def _restore_size_controls(
+    values: object, /, *, source_model: BRepModel | None = None
+) -> tuple[SizeControl, ...]:
     stored = _stored_tuple(values, "size_controls")
     rebuilt: list[SizeControl] = []
     for control in stored:
         if type(control) is UniformSizeControl:
-            rebuilt.append(UniformSizeControl.from_stored_fields(control))
+            rebuilt.append(
+                UniformSizeControl.from_stored_fields(control, source_model=source_model)
+            )
         elif type(control) is CurvatureSizeControl:
-            rebuilt.append(CurvatureSizeControl.from_stored_fields(control))
+            rebuilt.append(
+                CurvatureSizeControl.from_stored_fields(
+                    control, source_model=source_model
+                )
+            )
         elif type(control) is ProximitySizeControl:
-            rebuilt.append(ProximitySizeControl.from_stored_fields(control))
+            rebuilt.append(
+                ProximitySizeControl.from_stored_fields(
+                    control, source_model=source_model
+                )
+            )
         else:
             raise TypeError("Stored size controls contain an unsupported exact type.")
     return tuple(rebuilt)
@@ -751,7 +764,11 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[SurfaceMeshingSpec], value: SurfaceMeshingSpec, /
+        cls: type[SurfaceMeshingSpec],
+        value: SurfaceMeshingSpec,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> SurfaceMeshingSpec:
         if type(value) is not cls:
             raise TypeError("value must be SurfaceMeshingSpec.")
@@ -759,26 +776,28 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             raise TypeError("Stored SurfaceMeshingSpec deterministic must be bool.")
         target = CellMeshingTarget.from_stored_fields(value.target)
         planar_embedding = _restore_planar_embedding(value.planar_embedding)
-        scope = MeshingScope.from_stored_fields(value.scope)
-        size_controls = _restore_size_controls(value.size_controls)
+        scope = MeshingScope.from_stored_fields(value.scope, source_model=source_model)
+        size_controls = _restore_size_controls(
+            value.size_controls, source_model=source_model
+        )
         protected_features = tuple(
-            ProtectedFeature.from_stored_fields(item)
+            ProtectedFeature.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.protected_features, "protected_features")
         )
         region_controls = tuple(
-            RegionControl.from_stored_fields(item)
+            RegionControl.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.region_controls, "region_controls")
         )
         patch_controls = tuple(
-            PatchControl.from_stored_fields(item)
+            PatchControl.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.patch_controls, "patch_controls")
         )
         periodic_constraints = tuple(
-            PeriodicConstraint.from_stored_fields(item)
+            PeriodicConstraint.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.periodic_constraints, "periodic_constraints")
         )
         layer_controls = tuple(
-            BoundaryLayerControl.from_stored_fields(item)
+            BoundaryLayerControl.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.layer_controls, "layer_controls")
         )
         size_compliance = SizeCompliancePolicy.from_stored_fields(value.size_compliance)
@@ -790,7 +809,9 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         background_metric = (
             None
             if value.background_metric is None
-            else BackgroundMetricControl.from_stored_fields(value.background_metric)
+            else BackgroundMetricControl.from_stored_fields(
+                value.background_metric, source_model=source_model
+            )
         )
         rebuilt = cls(
             target,
@@ -1087,25 +1108,33 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[VolumeMeshingSpec], value: VolumeMeshingSpec, /
+        cls: type[VolumeMeshingSpec],
+        value: VolumeMeshingSpec,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> VolumeMeshingSpec:
         if type(value) is not cls:
             raise TypeError("value must be VolumeMeshingSpec.")
         if type(value.deterministic) is not bool:
             raise TypeError("Stored VolumeMeshingSpec deterministic must be bool.")
         target = CellMeshingTarget.from_stored_fields(value.target)
-        boundary_scope = MeshingScope.from_stored_fields(value.boundary_scope)
-        size_controls = _restore_size_controls(value.size_controls)
+        boundary_scope = MeshingScope.from_stored_fields(
+            value.boundary_scope, source_model=source_model
+        )
+        size_controls = _restore_size_controls(
+            value.size_controls, source_model=source_model
+        )
         protected_features = tuple(
-            ProtectedFeature.from_stored_fields(item)
+            ProtectedFeature.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.protected_features, "protected_features")
         )
         region_controls = tuple(
-            RegionControl.from_stored_fields(item)
+            RegionControl.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.region_controls, "region_controls")
         )
         patch_controls = tuple(
-            PatchControl.from_stored_fields(item)
+            PatchControl.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.patch_controls, "patch_controls")
         )
         region_seeds = tuple(
@@ -1113,15 +1142,15 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             for item in _stored_tuple(value.region_seeds, "region_seeds")
         )
         hole_seeds = tuple(
-            HoleSeed.from_stored_fields(item)
+            HoleSeed.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.hole_seeds, "hole_seeds")
         )
         layer_controls = tuple(
-            BoundaryLayerControl.from_stored_fields(item)
+            BoundaryLayerControl.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.layer_controls, "layer_controls")
         )
         periodic_constraints = tuple(
-            PeriodicConstraint.from_stored_fields(item)
+            PeriodicConstraint.from_stored_fields(item, source_model=source_model)
             for item in _stored_tuple(value.periodic_constraints, "periodic_constraints")
         )
         size_compliance = SizeCompliancePolicy.from_stored_fields(value.size_compliance)

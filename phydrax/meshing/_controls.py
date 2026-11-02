@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
 from ..discretization import CellMesh
+from ..geometry.brep._model import BRepModel
 from ..geometry.brep._patches import AbstractCurve, AbstractSurfacePatch
 from ..typing import checked, ConvertibleToArray
 from . import _organization
@@ -120,7 +121,11 @@ class ProtectedFeature(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[ProtectedFeature], value: ProtectedFeature, /
+        cls: type[ProtectedFeature],
+        value: ProtectedFeature,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> ProtectedFeature:
         if type(value) is not cls:
             raise TypeError("value must be ProtectedFeature.")
@@ -129,7 +134,7 @@ class ProtectedFeature(StrictModule, NonTrainableState):
         if type(value.hard) is not bool:
             raise TypeError("Stored protected-feature hard must be bool.")
         rebuilt = cls(
-            MeshingScope.from_stored_fields(value.scope),
+            MeshingScope.from_stored_fields(value.scope, source_model=source_model),
             value.feature_kind,
             maximum_deviation=value.maximum_deviation,
             hard=value.hard,
@@ -229,12 +234,14 @@ class HoleSeed(StrictModule, NonTrainableState):
 
     @classmethod
     @checked
-    def from_stored_fields(cls: type[HoleSeed], value: HoleSeed, /) -> HoleSeed:
+    def from_stored_fields(
+        cls: type[HoleSeed], value: HoleSeed, /, *, source_model: BRepModel | None = None
+    ) -> HoleSeed:
         if type(value) is not cls:
             raise TypeError("value must be HoleSeed.")
         rebuilt = cls(
             value.point,
-            MeshingScope.from_stored_fields(value.scope),
+            MeshingScope.from_stored_fields(value.scope, source_model=source_model),
         )
         if (
             rebuilt.seed_id != value.seed_id
@@ -289,14 +296,18 @@ class RegionControl(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[RegionControl], value: RegionControl, /
+        cls: type[RegionControl],
+        value: RegionControl,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> RegionControl:
         if type(value) is not cls:
             raise TypeError("value must be RegionControl.")
         if type(value.meshing_enabled) is not bool:
             raise TypeError("Stored region-control meshing_enabled must be bool.")
         rebuilt = cls(
-            MeshingScope.from_stored_fields(value.scope),
+            MeshingScope.from_stored_fields(value.scope, source_model=source_model),
             value.region_name,
             value.material_id,
             value.role,
@@ -361,7 +372,11 @@ class PatchControl(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[PatchControl], value: PatchControl, /
+        cls: type[PatchControl],
+        value: PatchControl,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> PatchControl:
         if type(value) is not cls:
             raise TypeError("value must be PatchControl.")
@@ -369,7 +384,7 @@ class PatchControl(StrictModule, NonTrainableState):
             raise TypeError("Stored patch-control required must be bool.")
         rebuilt = cls(
             value.name,
-            MeshingScope.from_stored_fields(value.scope),
+            MeshingScope.from_stored_fields(value.scope, source_model=source_model),
             value.adjacent_region_names,
             required=value.required,
         )
@@ -680,7 +695,11 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[BoundaryLayerControl], value: BoundaryLayerControl, /
+        cls: type[BoundaryLayerControl],
+        value: BoundaryLayerControl,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> BoundaryLayerControl:
         if type(value) is not cls:
             raise TypeError("value must be BoundaryLayerControl.")
@@ -703,15 +722,19 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
         ):
             raise TypeError("Stored boundary-layer control fields are not canonical.")
         rebuilt = cls(
-            MeshingScope.from_stored_fields(value.wall_scope),
+            MeshingScope.from_stored_fields(value.wall_scope, source_model=source_model),
             LayerSchedule.from_stored_fields(value.schedule),
             route=value.route,
             volume_scope=None
             if value.volume_scope is None
-            else MeshingScope.from_stored_fields(value.volume_scope),
+            else MeshingScope.from_stored_fields(
+                value.volume_scope, source_model=source_model
+            ),
             cap_scope=None
             if value.cap_scope is None
-            else MeshingScope.from_stored_fields(value.cap_scope),
+            else MeshingScope.from_stored_fields(
+                value.cap_scope, source_model=source_model
+            ),
             collision=value.collision,
             corner=value.corner,
             feature_angle=value.feature_angle,
@@ -793,7 +816,11 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[PeriodicConstraint], value: PeriodicConstraint, /
+        cls: type[PeriodicConstraint],
+        value: PeriodicConstraint,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> PeriodicConstraint:
         if type(value) is not cls:
             raise TypeError("value must be PeriodicConstraint.")
@@ -807,8 +834,12 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
         ):
             raise TypeError("Stored periodic-constraint fields are not canonical.")
         rebuilt = cls(
-            MeshingScope.from_stored_fields(value.source_scope),
-            MeshingScope.from_stored_fields(value.target_scope),
+            MeshingScope.from_stored_fields(
+                value.source_scope, source_model=source_model
+            ),
+            MeshingScope.from_stored_fields(
+                value.target_scope, source_model=source_model
+            ),
             value.transform,
             tolerance=value.tolerance,
             conforming_required=value.conforming_required,
@@ -914,7 +945,11 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[BackgroundMetricControl], value: BackgroundMetricControl, /
+        cls: type[BackgroundMetricControl],
+        value: BackgroundMetricControl,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> BackgroundMetricControl:
         if type(value) is not cls:
             raise TypeError("value must be BackgroundMetricControl.")
@@ -928,7 +963,9 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
         ):
             raise TypeError("Stored background metric edge length must be float or None.")
         mesh = CellMesh.from_stored_fields(value.mesh)
-        metric = MeshMetricField.from_stored_fields(value.metric)
+        metric = MeshMetricField.from_stored_fields(
+            value.metric, source_model=source_model
+        )
         coordinate_contract = SpatialCoordinateContract.from_dict(
             value.coordinate_contract.to_dict()
         )

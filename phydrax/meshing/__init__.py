@@ -297,6 +297,8 @@ _DEFERRED_EXPORTS = {
     "MeshingRuntimeInfo": "._result",
     "MeshingEntityKind": "._scope",
     "MeshingScope": "._scope",
+    "MeshingScopeSide": "._scope",
+    "resolve_sided_integration_domains": "._side_routing",
     "resolve_mesh_scope": "._scope",
     "ScopeResolutionReport": "._scope",
     "AbstractMeshingSession": "._session",
@@ -710,10 +712,12 @@ if TYPE_CHECKING:
     from ._scope import (
         MeshingEntityKind,
         MeshingScope,
+        MeshingScopeSide,
         resolve_mesh_scope,
         ScopeResolutionReport,
     )
     from ._session import AbstractMeshingSession
+    from ._side_routing import resolve_sided_integration_domains
     from ._sizing import (
         CurvatureSizeControl,
         ProximitySizeControl,
@@ -1002,6 +1006,7 @@ __all__ = [
     "MeshingProviderInfo",
     "MeshingRuntimeInfo",
     "MeshingScope",
+    "MeshingScopeSide",
     "MeshingSourceDescriptor",
     "MeshingSourceKind",
     "MeshingStageKind",
@@ -1153,6 +1158,7 @@ __all__ = [
     "rederive_association",
     "resolve_mesh_file_profile",
     "resolve_mesh_scope",
+    "resolve_sided_integration_domains",
     "resolve_size_controls",
     "size_field_metric",
     "summarize_cell_quality",

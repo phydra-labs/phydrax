@@ -1,4 +1,5 @@
 from fractions import Fraction
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
@@ -319,7 +320,9 @@ def test_cad_selection_scope_authenticates_occurrences_and_revision() -> None:
     scopes = tuple(MeshingScope.from_geometry(model, value) for value in selections)
     for scope, entity in zip(scopes, face_entities, strict=True):
         expected = MeshingScope.from_geometry(model, entity)
-        assert scope.scope_id == expected.scope_id
+        np.testing.assert_array_equal(scope.entity_ids, expected.entity_ids)
+        assert scope.scope_id != expected.scope_id
+        assert scope.side_records[0].face.occurrence_id == _entity_occurrence_id(entity)
     assert scopes[0].scope_id != scopes[1].scope_id
     patch = PatchControl("wall", scopes[0], ("region",))
     assert patch.scope.scope_id == scopes[0].scope_id
@@ -350,7 +353,10 @@ def test_cad_selection_scope_authenticates_occurrences_and_revision() -> None:
         MeshingScope.from_geometry(model, selections[0], dimension=3)
 
 
-def test_shared_face_cad_sides_require_complete_representable_scope() -> None:
+@pytest.mark.parametrize("box_order", ((0.0, 1.0), (1.0, 0.0)))
+def test_shared_face_cad_sides_retain_qualified_identity(
+    tmp_path: Path, box_order: tuple[float, float]
+) -> None:
     from OCP.BOPAlgo import BOPAlgo_Splitter
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
@@ -359,7 +365,7 @@ def test_shared_face_cad_sides_require_complete_representable_scope() -> None:
     from phydrax.interchange import import_occt_shape
 
     splitter = BOPAlgo_Splitter()
-    for x in (0.0, 1.0):
+    for x in box_order:
         splitter.AddArgument(
             BRepPrimAPI_MakeBox(gp_Pnt(x, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
         )
@@ -387,22 +393,159 @@ def test_shared_face_cad_sides_require_complete_representable_scope() -> None:
         revision.select(_entity_occurrence_id(member)) for member in members
     )
     assert len({selector.path for selector in selectors}) == 2
-    for selector in selectors:
-        with pytest.raises(ValueError, match="cannot represent only one occurrence side"):
-            MeshingScope.from_geometry(
-                model, CADSelectionSet(revision.revision_id, (selector,))
-            )
+    scopes = tuple(
+        MeshingScope.from_geometry(
+            model, CADSelectionSet(revision.revision_id, (selector,))
+        )
+        for selector in selectors
+    )
+    assert scopes[0].scope_id != scopes[1].scope_id
+    np.testing.assert_array_equal(scopes[0].entity_ids, scopes[1].entity_ids)
+    assert all(len(scope.side_records) == 1 for scope in scopes)
+    assert {scope.side_records[0].face.occurrence_id for scope in scopes} == {
+        selector.occurrence_id for selector in selectors
+    }
+    assert len({scope.side_records[0].solid.occurrence_id for scope in scopes}) == 2
+    assert {scope.side_records[0].orientation for scope in scopes} == {-1, 1}
 
     selection = CADSelectionSet(revision.revision_id, selectors)
     scope = MeshingScope.from_geometry(model, selection)
+    assert scopes[0].union(scopes[1]).scope_id == scope.scope_id
+    assert scope.difference(scopes[0]).scope_id == scopes[1].scope_id
+    with pytest.raises(ValueError, match="empty"):
+        scopes[0].intersection(scopes[1])
+    whole_face = MeshingScope.from_geometry(model, model.face_ids[shared[0]])
+    assert whole_face.intersection(scopes[0]).scope_id == scopes[0].scope_id
+    assert scopes[0].intersection(whole_face).scope_id == scopes[0].scope_id
+    with pytest.raises(ValueError, match="empty"):
+        scopes[0].difference(whole_face)
+    with pytest.raises(ValueError):
+        whole_face.difference(scopes[0])
+    mixed = whole_face.union(scopes[0])
+    assert mixed.unqualified_entity_ids == whole_face.unqualified_entity_ids
+    assert mixed.side_records == scopes[0].side_records
+    assert mixed.scope_id != whole_face.scope_id
     domain = MeshingDomain.from_brep(model)
     rows = tuple(
         row for row, index in enumerate(domain.source_indices[2]) if index == shared[0]
     )
     assert len(rows) == 1
-    from phydrax.meshing.providers._native_cad_volume import _domain_scope_rows
 
-    np.testing.assert_array_equal(_domain_scope_rows(domain, scope, 2), rows)
+    import dataclasses
+    import subprocess
+    import sys
+
+    from phydrax._array_archive import ArrayArchiveCorruptionError
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    def composition(selected: MeshingScope, *, include_side: bool = True) -> Composition:
+        source_entry = CompositionEntry(
+            model,
+            entry_id="cad/source",
+            role="model-state",
+            owner_id=model.source_id,
+            structure_id=model.model_id,
+            revision_id=model.source_revision,
+            semantics_id="brep-source",
+        )
+        side_entry = CompositionEntry(
+            selected,
+            entry_id="cad/side",
+            role="model-state",
+            owner_id=model.source_id,
+            structure_id=selected.scope_id,
+            revision_id=selected.source_revision,
+            semantics_id="cad-face-side",
+            dependencies=(source_entry.binding("revision"),),
+        )
+        patch = PatchControl("interface", selected, ("left", "right"))
+        patch_entry = CompositionEntry(
+            patch,
+            entry_id="cad/patch",
+            role="model-state",
+            owner_id=model.source_id,
+            structure_id=patch.control_id,
+            revision_id=selected.source_revision,
+            semantics_id="cad-patch-control",
+            dependencies=(source_entry.binding("revision"),),
+        )
+        entries = (
+            (source_entry, side_entry, patch_entry)
+            if include_side
+            else (source_entry, patch_entry)
+        )
+        return Composition(entries, boundary_id="cad-side-archive")
+
+    path = write_model_artifact(
+        tmp_path / "side-scope.phx", composition(scopes[0]), limits=MODEL_ARCHIVE_LIMITS
+    )
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; from phydrax.lifecycle import Composition; "
+                "from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, "
+                "read_model_artifact, restore_model_archive_value; "
+                "c=read_model_artifact(sys.argv[1], expected_type=Composition, "
+                "restore=restore_model_archive_value, limits=MODEL_ARCHIVE_LIMITS); "
+                "assert c.value('cad/source').source_revision == sys.argv[2]; "
+                "assert c.value('cad/side').scope_id == sys.argv[3]; "
+                "assert c.value('cad/side').side_records[0].face.occurrence_id == sys.argv[4]; "
+                "assert c.value('cad/patch').scope.scope_id == sys.argv[3]"
+            ),
+            str(path),
+            model.source_revision,
+            scopes[0].scope_id,
+            scopes[0].side_records[0].face.occurrence_id,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert child.returncode == 0, child.stderr
+
+    # Rehash the forged side so refusal proves source incidence authentication,
+    # rather than merely noticing a stale scope fingerprint.
+    side = scopes[0].side_records[0]
+    forged_side = dataclasses.replace(side, orientation=-side.orientation)
+    forged = MeshingScope._from_parts(
+        scopes[0].source_id,
+        scopes[0].source_revision,
+        scopes[0].entity_kind,
+        scopes[0].entity_dimension,
+        scopes[0].entity_set_id,
+        scopes[0].unqualified_entity_ids,
+        (forged_side,),
+    )
+    forged_path = write_model_artifact(
+        tmp_path / "forged-side.phx", composition(forged), limits=MODEL_ARCHIVE_LIMITS
+    )
+    with pytest.raises((ArrayArchiveCorruptionError, ValueError)):
+        read_model_artifact(
+            forged_path,
+            expected_type=Composition,
+            restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+    forged_patch_path = write_model_artifact(
+        tmp_path / "forged-patch.phx",
+        composition(forged, include_side=False),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    with pytest.raises((ArrayArchiveCorruptionError, ValueError)):
+        read_model_artifact(
+            forged_patch_path,
+            expected_type=Composition,
+            restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
     assert domain.source_occurrences[2][rows[0]] in {
         member.occurrence_path for member in members
     }
@@ -410,6 +553,163 @@ def test_shared_face_cad_sides_require_complete_representable_scope() -> None:
         PatchControl("interface", scope, ("left", "right")).scope.scope_id
         == scope.scope_id
     )
+
+    # Mesh the shared face and trace a discontinuous field whose cell values
+    # independently identify the physical half-space and its outward normal.
+    region_controls = tuple(
+        RegionControl(
+            MeshingScope.from_geometry(model, entity),
+            f"region-{index}",
+            f"material-{index}",
+            RegionRole.SOLID,
+        )
+        for index, entity in enumerate(model.solid_ids)
+    )
+    boundary = MeshingScope.whole(model, 2)
+    specification = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3, 3, phx.meshing.CellFamilyPolicy(required=("tetrahedron",))
+        ),
+        boundary,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(phx.meshing.UniformSizeControl(boundary, 0.5),),
+        region_controls=region_controls,
+        patch_controls=(PatchControl("interface", scope, ("region-0", "region-1")),),
+        maximum_deviation=0.05,
+    )
+    one_sided = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3, 3, phx.meshing.CellFamilyPolicy(required=("tetrahedron",))
+        ),
+        boundary,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(phx.meshing.UniformSizeControl(boundary, 0.5),),
+        region_controls=region_controls,
+        patch_controls=(PatchControl("interface", scopes[0], ("region-0", "region-1")),),
+        maximum_deviation=0.05,
+    )
+    renewed_patch = PatchControl.from_stored_fields(
+        one_sided.patch_controls[0], source_model=model
+    )
+    renewed_spec = phx.meshing.VolumeMeshingSpec.from_stored_fields(
+        one_sided, source_model=model
+    )
+    assert renewed_patch.scope.scope_id == scopes[0].scope_id
+    assert renewed_spec.patch_controls[0].scope.scope_id == scopes[0].scope_id
+    foreign_model = brep_box(
+        (0.0, 0.0, 0.0),
+        (3.0, 1.0, 1.0),
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+    for source_model in (None, foreign_model):
+        with pytest.raises((TypeError, ValueError)):
+            PatchControl.from_stored_fields(
+                one_sided.patch_controls[0], source_model=source_model
+            )
+        with pytest.raises((TypeError, ValueError)):
+            phx.meshing.VolumeMeshingSpec.from_stored_fields(
+                one_sided, source_model=source_model
+            )
+    with pytest.raises(
+        (ValueError, phx.meshing.MeshingFailure),
+        match="single interface side cannot be flattened",
+    ):
+        phx.meshing.NativeMeshingProvider().plan(model, one_sided).execute()
+    result = phx.meshing.NativeMeshingProvider().plan(model, specification).execute()
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u", phx.discretization.discontinuous_element("simplex:3", 1)
+    )
+    block = result.mesh.blocks[0]
+    cells = np.asarray(block.vertices)
+    original_centers = np.asarray(result.mesh.coordinates)[cells].mean(axis=1)
+    reversed_mesh = CellMesh(
+        result.mesh.coordinates,
+        (
+            CellBlock(
+                block.name,
+                block.cell_kind,
+                cells[::-1],
+                global_ids=np.asarray(block.global_ids)[::-1],
+            ),
+        ),
+        vertex_global_ids=result.mesh.vertex_global_ids,
+        numeric_version=result.mesh.numeric_version,
+    )
+    # Same canonical topology and global IDs, genuinely reversed storage.
+    assert reversed_mesh.mesh_id == result.mesh.mesh_id
+    np.testing.assert_array_equal(reversed_mesh.blocks[0].vertices, cells[::-1])
+    for mesh in (result.mesh, reversed_mesh):
+        prepared = phx.discretization.FiniteElementPlan(mesh, field).prepare()
+        fv = phx.discretization.UnstructuredFiniteVolumePlan(
+            np.asarray(mesh.coordinates),
+            tetrahedra=np.asarray(mesh.blocks[0].vertices),
+            vertex_global_ids=np.asarray(mesh.vertex_global_ids),
+            cell_global_ids=np.asarray(mesh.blocks[0].global_ids),
+        ).prepare(numeric_version=mesh.numeric_version)
+        fv_values = np.where(np.asarray(fv.cell_centers)[:, 0] < 1.0, -1.0, 1.0)[:, None]
+        unqualified = MeshingScope.from_geometry(model, model.face_ids[shared[0]])
+        with pytest.raises(ValueError):
+            phx.meshing.resolve_sided_integration_domains(
+                result, model, scopes[0].union(unqualified), prepared, tolerance=1e-8
+            )
+        for invalid_tolerance in (-1.0, float("nan"), float("inf")):
+            with pytest.raises(ValueError):
+                phx.meshing.resolve_sided_integration_domains(
+                    result, model, scopes[0], prepared, tolerance=invalid_tolerance
+                )
+        centers = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)].mean(
+            axis=1
+        )
+        routes = np.asarray(prepared.dof_maps[0].cell_dofs[0])
+        coefficients = np.zeros(prepared.dof_maps[0].global_dof_count)
+        coefficients[routes] = np.where(centers[:, 0, None] < 1.0, -1.0, 1.0)
+        observed = set()
+        for side_scope in scopes:
+            zone = next(
+                zone
+                for zone in result.zones
+                if zone.name == f"region-{side_scope.side_records[0].solid_index}"
+            )
+            zone_selection = phx.meshing.resolve_mesh_scope(result.mesh, zone.scope)
+            zone_centers = original_centers[np.asarray(zone_selection.mask)]
+            assert zone_centers.size
+            expected = -1.0 if np.mean(zone_centers[:, 0]) < 1.0 else 1.0
+            observed.add(expected)
+            domains = phx.meshing.resolve_sided_integration_domains(
+                result, model, side_scope, prepared, tolerance=1e-8
+            )
+            assert domains
+            for integration_domain, side in domains:
+                trace = prepared.prepare_side_trace(
+                    "u",
+                    integration_domain,
+                    rule=phx.discretization.FacetTraceRule(points=2),
+                    side=side,
+                )
+                np.testing.assert_allclose(trace.sites[..., 0], 1.0, atol=1e-10)
+                np.testing.assert_allclose(
+                    trace.apply(jnp.asarray(coefficients)), expected, atol=1e-10
+                )
+                np.testing.assert_allclose(trace.normals[..., 0], -expected, atol=1e-10)
+                np.testing.assert_allclose(trace.normals[..., 1:], 0.0, atol=1e-10)
+            fv_domains = phx.meshing.resolve_sided_integration_domains(
+                result, model, side_scope, fv, tolerance=1e-8
+            )
+            assert fv_domains
+            for integration_domain, side in fv_domains:
+                trace = fv.prepare_side_trace(
+                    fv.cell_space.name,
+                    integration_domain,
+                    rule=phx.discretization.FacetTraceRule(points=2),
+                    side=side,
+                )
+                np.testing.assert_allclose(trace.sites[..., 0], 1.0, atol=1e-10)
+                np.testing.assert_allclose(
+                    trace.apply(jnp.asarray(fv_values)), expected, atol=1e-10
+                )
+                np.testing.assert_allclose(trace.normals[..., 0], -expected, atol=1e-10)
+                np.testing.assert_allclose(trace.normals[..., 1:], 0.0, atol=1e-10)
+        assert observed == {-1.0, 1.0}
 
     original = model.geometry
     assembly = BRepAssemblyGraph(
@@ -460,12 +760,16 @@ def test_shared_face_cad_sides_require_complete_representable_scope() -> None:
         if record.member.kind == "face" and record.member.index == shared[0]
     }
     assert len(repeated_members) == 4
-    repeated_selection = CADSelectionSet.from_revision(
-        repeated_revision,
-        tuple(_entity_occurrence_id(member) for member in repeated_members),
-    )
-    with pytest.raises(ValueError, match="ambiguous coincident assembly copies"):
-        MeshingScope.from_geometry(repeated, repeated_selection)
+    # These four roots provide no assembly ancestry pairing the two solids
+    # into copies. Occurrence order must not invent such a pairing.
+    for member in repeated_members:
+        with pytest.raises(ValueError):
+            MeshingScope.from_geometry(
+                repeated,
+                CADSelectionSet.from_revision(
+                    repeated_revision, (_entity_occurrence_id(member),)
+                ),
+            )
 
 
 def test_partition_descendants_bind_region_control_exactly() -> None:

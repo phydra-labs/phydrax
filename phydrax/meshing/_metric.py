@@ -34,6 +34,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
+from ..geometry.brep._model import BRepModel
 from ..linalg import (
     DensePropertyVerificationPolicy,
     hermitian_exp,
@@ -354,11 +355,15 @@ class MeshMetricField(StrictModule, NonTrainableState):
     @classmethod
     @checked
     def from_stored_fields(
-        cls: type[MeshMetricField], value: MeshMetricField, /
+        cls: type[MeshMetricField],
+        value: MeshMetricField,
+        /,
+        *,
+        source_model: BRepModel | None = None,
     ) -> MeshMetricField:
         if type(value) is not cls:
             raise TypeError("value must be MeshMetricField.")
-        scope = MeshingScope.from_stored_fields(value.scope)
+        scope = MeshingScope.from_stored_fields(value.scope, source_model=source_model)
         rebuilt = cls(
             scope,
             value.values,
