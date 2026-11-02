@@ -1396,6 +1396,43 @@ def test_trim_homotopy_proves_unequal_obtuse_adjacency() -> None:
     assert _adjacent_trim_projection(first, second, SourcePreparation(_domain()))
 
 
+def test_trim_homotopy_rejects_crossing_source_loops() -> None:
+    from phydrax.geometry.brep._curve_approximation_topology import (
+        BranchTopologyCertificationError,
+        certify_trim_reference_homotopy,
+        TrimReferenceSegment,
+    )
+
+    def square(x: Fraction, y: Fraction) -> tuple[TrimReferenceSegment, ...]:
+        points = ((x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1))
+        segments = []
+        for index, first in enumerate(points):
+            last = points[(index + 1) % 4]
+            segments.append(
+                TrimReferenceSegment(
+                    LineCurve(
+                        tuple(float(value) for value in first),
+                        tuple(float(last[axis] - first[axis]) for axis in range(2)),
+                    ),
+                    Fraction(0),
+                    Fraction(1),
+                    first,
+                    last,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            )
+        return tuple(segments)
+
+    with pytest.raises(BranchTopologyCertificationError, match="representability"):
+        certify_trim_reference_homotopy(
+            (square(Fraction(0), Fraction(0)), square(Fraction(1, 2), Fraction(1, 2))),
+            SourcePreparation(_domain()),
+        )
+
+
 def test_rooted_chart_endpoints_refuse_unproved_nearby_join() -> None:
     import equinox as eqx
 
