@@ -1365,12 +1365,35 @@ def _loop_edges(
     for index in range(len(loop.vertices)):
         curve2d, first, last = _segment_curve(loop, index)
         curve3d = _space_curve(curve2d, plane)
+        endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None] = (None, None)
+        if len(vertices) > 1 and isinstance(curve3d, (CircleCurve, EllipseCurve)):
+            next_index = (index + 1) % len(vertices)
+            points = (exact_vertices[index], exact_vertices[next_index])
+            roots = tuple(
+                ConicParameterRoot.from_exact_point(curve3d, point, parameter)
+                for point, parameter in zip(points, (first, last), strict=True)
+            )
+            if all(
+                root is not None and root.exact_point() == point
+                and root.parameter_lower <= parameter <= root.parameter_upper
+                for root, point, parameter in zip(roots, points, (first, last), strict=True)
+            ):
+                endpoint_roots = tuple(
+                    ConicParameterEndpoint(root, curve3d, None, point)
+                    for root, point in zip(roots, points, strict=True)
+                )
+                for vertex, root in zip(
+                    (vertices[index], vertices[next_index]), roots, strict=True
+                ):
+                    if builder.vertex_roots[vertex] is None:
+                        builder.vertex_roots[vertex] = BRepVertexRoot(BRepConicVertex(root))
         edge = builder.edge(
             curve3d,
             first,
             last,
             vertices[index],
             vertices[(index + 1) % len(vertices)],
+            endpoint_roots=endpoint_roots,
         )
         result.append((edge, first, last, curve2d))
     return tuple(result)
@@ -1441,21 +1464,36 @@ def _profile_edge(
     raise TypeError(f"Unsupported profile edge segment: {type(segment).__name__}.")
 
 
+def _profile_radical_sign(
+    a: ExactScalar, b: ExactScalar, radicand: ExactScalar, /
+) -> int:
+    """Sign of a + b sqrt(radicand), with exact algebraic coefficients."""
+    if radicand < 0:
+        raise ValueError("A profile contact radicand must be nonnegative.")
+    if b == 0 or radicand == 0:
+        return (a > 0) - (a < 0)
+    if a == 0:
+        return (b > 0) - (b < 0)
+    if (a > 0) == (b > 0):
+        return 1 if a > 0 else -1
+    comparison = a * a - b * b * radicand
+    return ((comparison > 0) - (comparison < 0)) * (1 if a > 0 else -1)
+
+
 def _line_arc_contact(
     line: _ProfileEdge,
     arc: _ProfileEdge,
     allowed: frozenset[tuple[Fraction, Fraction]],
     /,
 ) -> bool:
-    from ._exact import radical_sign
-
+    radical_sign = _profile_radical_sign
     if not isinstance(line.pcurve, LineCurve) or not isinstance(arc.pcurve, CircleCurve):
         return False
     start = tuple(Fraction(float(value)) for value in line.start)
     end = tuple(Fraction(float(value)) for value in line.end)
     direction = tuple(b - a for a, b in zip(start, end, strict=True))
-    center = tuple(Fraction(float(value)) for value in np.asarray(arc.pcurve.center))
-    radius = Fraction(float(arc.pcurve.radius))
+    center = arc.pcurve.center_exact
+    radius_squared = arc.pcurve.radius_exact * arc.pcurve.radius_exact
     relative = tuple(a - b for a, b in zip(start, center, strict=True))
     quadratic = sum((value * value for value in direction), Fraction(0))
     if quadratic == 0:
@@ -1463,7 +1501,7 @@ def _line_arc_contact(
     linear = 2 * sum(
         (a * b for a, b in zip(relative, direction, strict=True)), Fraction(0)
     )
-    constant = sum((value * value for value in relative), Fraction(0)) - radius**2
+    constant = sum((value * value for value in relative), Fraction(0)) - radius_squared
     discriminant = linear * linear - 4 * quadratic * constant
     if discriminant < 0:
         return False
@@ -1530,25 +1568,23 @@ def _line_arc_contact(
     return False
 
 
-def _arc_circle(edge: _ProfileEdge, /) -> tuple[tuple[Fraction, Fraction], Fraction]:
+def _arc_circle(edge: _ProfileEdge, /) -> tuple[tuple[ExactScalar, ExactScalar], ExactScalar]:
     if not isinstance(edge.pcurve, CircleCurve):
         raise NotImplementedError(
             "Curved profile relations currently require exact circles."
         )
-    center = tuple(
-        Fraction.from_float(float(value)) for value in np.asarray(edge.pcurve.center)
-    )
-    radius = Fraction.from_float(float(edge.pcurve.radius))
+    center = edge.pcurve.center_exact
+    radius = edge.pcurve.radius_exact
     return (center[0], center[1]), radius * radius
 
 
 def _radical_is_vertex(
-    point: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
-    radicand: Fraction,
+    point: tuple[tuple[ExactScalar, ExactScalar], tuple[ExactScalar, ExactScalar]],
+    radicand: ExactScalar,
     vertices: frozenset[tuple[Fraction, Fraction]],
     /,
 ) -> bool:
-    from ._exact import radical_sign
+    radical_sign = _profile_radical_sign
 
     base, radical = point
     return any(
@@ -1562,11 +1598,11 @@ def _radical_is_vertex(
 
 def _arc_contains_radical(
     edge: _ProfileEdge,
-    point: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
-    radicand: Fraction,
+    point: tuple[tuple[ExactScalar, ExactScalar], tuple[ExactScalar, ExactScalar]],
+    radicand: ExactScalar,
     /,
 ) -> bool:
-    from ._exact import radical_sign
+    radical_sign = _profile_radical_sign
 
     if edge.start == edge.end:
         return True
@@ -2236,7 +2272,14 @@ def _profile_cap(
     for edges in loops:
         coedge_loop = []
         for edge, first, last, curve in edges:
-            coedge = builder.coedge(edge, 1, curve)
+            edge_roots = builder.edge_endpoint_roots[edge]
+            coedge_roots = tuple(
+                ConicParameterEndpoint(root.root, curve, None, root.point_exact)
+                if isinstance(root, ConicParameterEndpoint)
+                else None
+                for root in edge_roots
+            )
+            coedge = builder.coedge(edge, 1, curve, endpoint_roots=coedge_roots)
             coedge_loop.append(coedge)
             if (
                 builder.edge_vertices[edge][0] == builder.edge_vertices[edge][1]
