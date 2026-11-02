@@ -43,6 +43,7 @@ from .implicit._chart_restriction import (
     ImplicitChartPremise,
     ImplicitChartRestrictionEvidence,
     ImplicitChartRows,
+    ValidatedImplicitChartParent,
 )
 
 
@@ -413,11 +414,15 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         geometry: CellGeometrySpec,
         source: SourceBoundaryQuery,
         /,
+        *,
+        validated_chart_parent: ValidatedImplicitChartParent | None = None,
     ) -> None:
         """Recompute the proof; stored identities are not proof authority."""
         from ._source_fidelity import certify_source_fidelity
 
         self.require_current(mesh, geometry, source)
+        if self.chart_premise is None and validated_chart_parent is not None:
+            raise ValueError("A validated chart parent requires a retained premise.")
         if self.chart_premise is not None:
             premise = self.chart_premise
             if premise.transition is not None:
@@ -430,6 +435,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             maximum_normal_deviation=self.maximum_normal_deviation,
             witness=self.witness,
             chart_parent=self.chart_premise,
+            validated_chart_parent=validated_chart_parent,
         )
         if (
             fresh.certificate_id != self.certificate_id

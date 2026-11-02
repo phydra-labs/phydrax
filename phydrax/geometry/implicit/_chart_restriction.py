@@ -143,17 +143,53 @@ class ImplicitChartRows(StrictModule):
         return result
 
 
-@dataclass(frozen=True, slots=True)
 class ValidatedImplicitChartParent:
-    """Host-only mathematical replay bound to the exact parent operands."""
+    """Operation-scoped mathematical replay bound to exact parent operands."""
 
-    mesh: CellMesh
-    geometry: CellGeometrySpec
-    source: SourceBoundaryQuery
-    certificate: SourceFidelityCertificate
+    __slots__ = ("mesh", "geometry", "source", "certificate", "ancestor")
 
-    def __post_init__(self) -> None:
-        self.certificate.revalidate(self.mesh, self.geometry, self.source)
+    def __init__(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: SourceBoundaryQuery,
+        certificate: SourceFidelityCertificate,
+        /,
+    ) -> None:
+        from .._source_fidelity_certificate import SourceFidelityCertificate
+
+        if type(certificate) is not SourceFidelityCertificate:
+            raise TypeError("Validated chart parent requires an exact fidelity certificate.")
+        premise = certificate.chart_premise
+        ancestor = (
+            None
+            if premise is None
+            else ValidatedImplicitChartParent(
+                premise.parent_mesh,
+                premise.parent_geometry,
+                source,
+                premise.parent_certificate,
+            )
+        )
+        if ancestor is None:
+            certificate.revalidate(mesh, geometry, source)
+        else:
+            certificate.revalidate(
+                mesh, geometry, source, validated_chart_parent=ancestor
+            )
+        self.mesh = mesh
+        self.geometry = geometry
+        self.source = source
+        self.certificate = certificate
+        self.ancestor = ancestor
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if hasattr(self, name):
+            raise AttributeError("A validated chart parent is immutable.")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("A validated chart parent is immutable.")
 
 
 class ImplicitChartPremise(StrictModule):
@@ -199,7 +235,7 @@ class ImplicitChartPremise(StrictModule):
         parent = self.parent_certificate
         if validated is None:
             parent.revalidate(self.parent_mesh, self.parent_geometry, source)
-        else:
+        elif type(validated) is ValidatedImplicitChartParent:
             if (
                 validated.mesh is not self.parent_mesh
                 or validated.geometry is not self.parent_geometry
@@ -208,6 +244,8 @@ class ImplicitChartPremise(StrictModule):
             ):
                 raise ValueError("Validated chart parent binds different exact operands.")
             parent.require_current(self.parent_mesh, self.parent_geometry, source)
+        else:
+            raise TypeError("validated chart parent must be an exact host proof artifact.")
         normal = (
             None if maximum_normal_deviation is None else float(maximum_normal_deviation)
         )

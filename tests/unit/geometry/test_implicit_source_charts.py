@@ -1255,12 +1255,17 @@ def test_adaptive_implicit_discovery_keeps_the_last_refusal_when_anchors_are_exh
     assert np.any(np.asarray(surface.scaffold.corner_signs) == 0)
 
 
-def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof() -> None:
+def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from phydrax.discretization._cell_geometry_transition_types import (
         _reference_map_groups,
     )
     from phydrax.geometry._source_fidelity import certify_source_fidelity
-    from phydrax.geometry.implicit._chart_restriction import ImplicitChartPremise
+    from phydrax.geometry.implicit._chart_restriction import (
+        ImplicitChartPremise,
+        ValidatedImplicitChartParent,
+    )
     from phydrax.meshing._adaptation import (
         _retarget_source_boundary_chart_witness,
         execute_mesh_adaptation,
@@ -1332,9 +1337,26 @@ def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof() ->
         np.asarray(full.deviation_bounds)[:, 0]
         <= np.asarray(inherited.deviation_bounds)[:, 1]
     )
+    validated = ValidatedImplicitChartParent(target.mesh, target.geometry, query, inherited)
+    ancestor = validated.ancestor
+    assert ancestor is not None and ancestor.certificate is parent
+    assert ancestor.certificate.chart_rows is not None
+    proved = _counting_build_face(monkeypatch)
+    restored = certify_source_fidelity(
+        mesh,
+        geometry,
+        query,
+        witness=witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+        chart_parent=ImplicitChartPremise(target.mesh, target.geometry, inherited, None),
+        validated_chart_parent=validated,
+    )
+    assert not proved
+    assert restored.certificate_id == parent.certificate_id
 
 
-@pytest.mark.parametrize("case", ("affine", "quadratic", "radical"))
+@pytest.mark.parametrize("case", ("affine", "quadratic", "cubic", "radical"))
 def test_face_enclosure_reuses_derivatives_without_changing_exact_bounds(
     case: str,
 ) -> None:
@@ -1353,10 +1375,25 @@ def test_face_enclosure_reuses_derivatives_without_changing_exact_bounds(
     if case == "quadratic":
         first[(2, 0)] = Fraction(1, 7)
         second[(1, 1)] = Fraction(-2, 9)
+    elif case == "cubic":
+        first[(2, 1)] = Fraction(3, 17)
+        third[(0, 3)] = Fraction(-1, 13)
     elif case == "radical":
         first[(1, 0)] = RadicalElement.sqrt(2)
         second[(0, 1)] = RadicalElement.sqrt(3)
     expressions: source_charts.Polynomial3 = (first, second, third)
+    arguments = (
+        {(1, 0): Fraction(1)},
+        {(0, 1): Fraction(1)},
+    )
+    composed = source_charts._triangle_coordinate_expressions(
+        expressions, source_charts._STANDARD_TRIANGLE
+    )
+    assert composed is expressions
+    for observed, source_expression in zip(composed, expressions, strict=True):
+        reference = source_charts.compose_expression(source_expression, arguments)
+        assert isinstance(reference, dict)
+        assert tuple(observed.items()) == tuple(reference.items())
     actual = source_charts._enclose_face(expressions)
     bases = tuple(source_charts._enclose_polynomial(value) for value in expressions)
     reference_tangents = tuple(

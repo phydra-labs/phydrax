@@ -670,6 +670,7 @@ def _validate_reference_chart_argument_rows(
         tuple(Fraction(float(value)) for value in point)
         for point in target_topology.vertices
     )
+    validated_rows: set[tuple[object, ...]] = set()
     for cell_index, (row, corners) in enumerate(
         zip(arguments, exact_vertices, strict=True)
     ):
@@ -685,6 +686,10 @@ def _validate_reference_chart_argument_rows(
                 raise TypeError(
                     "Exact chart rows must use immutable polynomial or rational expressions."
                 )
+        identity = reference_chart_arguments_identity((row,))
+        key = (identity, corners)
+        if key in validated_rows:
+            continue
         if not reference_chart_arguments_contain_source_cell(
             target_kind, source_kind, row
         ):
@@ -702,6 +707,7 @@ def _validate_reference_chart_argument_rows(
             raise ValueError(
                 f"Exact chart row {cell_index} does not reproduce its retained rational reference corners."
             )
+        validated_rows.add(key)
 
 
 def exact_reference_cell_vertices(

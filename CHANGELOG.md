@@ -48,6 +48,9 @@
   filtering selected source occurrences, and uses exact rational spline corner
   bounds rather than widened numerical point boxes. Surface feature tolerances
   are applied per selected patch, with hard and soft obligations distinguished.
+- Implicit mesh coarsening reuses exactly matched chart-row evidence from
+  mathematically replayed ancestors, with operation-local proof handoffs and
+  unchanged transition, coverage, and embedding checks.
 - Staged native archive reads reject malformed column payloads and inconsistent
   local record identities even in unselected fields, before returning prerequisite
   data or replaying scientific proofs.

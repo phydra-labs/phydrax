@@ -36,6 +36,7 @@ from phydrax.discretization._nested_reference import (
 from phydrax.discretization._nested_reference_types import (
     evaluate_reference_chart_arguments,
     exact_reference_cell_vertices,
+    ExactReferenceChartExpression,
     freeze_reference_chart_arguments,
     NestedReferenceWitnesses,
     reference_chart_arguments_contain_source_cell,
@@ -1029,3 +1030,42 @@ def test_restored_per_cell_chart_refuses_equal_value_wrong_scalar_types() -> Non
     forged_terms = reconstruct_strict(type(element), values)
     with pytest.raises(TypeError, match="canonical exact scalar kinds"):
         _rebuild_continuation_value(forged_terms)
+
+
+def test_equal_reference_chart_templates_share_only_exact_validated_proofs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.discretization._nested_reference_types as reference_types
+
+    x: Polynomial = {(1, 0): Fraction(1)}
+    y: Polynomial = {(0, 1): Fraction(1)}
+    row = freeze_reference_chart_arguments(((x, y),))[0]
+    corners = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    calls = [0]
+    original = reference_types.reference_chart_arguments_contain_source_cell
+
+    def counted(
+        target_kind: str,
+        source_kind: str,
+        arguments: tuple[ExactReferenceChartExpression, ...],
+        /,
+    ) -> bool:
+        calls[0] += 1
+        return original(target_kind, source_kind, arguments)
+
+    monkeypatch.setattr(
+        reference_types, "reference_chart_arguments_contain_source_cell", counted
+    )
+    reference_types._validate_reference_chart_argument_rows(
+        (row, row), "triangle", "triangle", (corners, corners)
+    )
+    assert calls == [1]
+    changed = (corners[0], corners[1], (Fraction(0), Fraction(1, 2)))
+    with pytest.raises(ValueError, match="does not reproduce"):
+        reference_types._validate_reference_chart_argument_rows(
+            (row, row), "triangle", "triangle", (corners, changed)
+        )

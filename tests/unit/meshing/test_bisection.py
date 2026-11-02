@@ -92,6 +92,30 @@ def _adapt(
         prepare_mesh_adaptation(source, request, policy=policy)
     )
 
+def test_coarsening_defers_early_chart_replay_error_for_unchanged_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.meshing import _adaptation
+
+    source = _certified(_triangle_grid(1, 1))
+    refined = _adapt(source, _cell_ids(source.mesh))
+
+    def fail_replay(source: Any) -> None:
+        raise ValueError("chart replay refused")
+
+    monkeypatch.setattr(_adaptation, "_validated_source_chart_parent", fail_replay)
+    unchanged = _adapt(
+        refined.target, (), _cell_ids(refined.target.mesh)[:1],
+        hierarchy=refined.hierarchy,
+    )
+    assert unchanged.status in (MeshAdaptationStatus.UNCHANGED, MeshAdaptationStatus.PARTIAL)
+    with pytest.raises(ValueError, match="chart replay refused"):
+        _adapt(
+            refined.target, (), _cell_ids(refined.target.mesh),
+            hierarchy=refined.hierarchy,
+        )
+
+
 
 def _cells(mesh: CellMesh) -> np.ndarray:
     return np.concatenate(tuple(np.asarray(block.vertices) for block in mesh.blocks))

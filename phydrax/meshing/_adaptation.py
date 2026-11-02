@@ -44,7 +44,10 @@ from ..discretization._cell_geometry_transition_types import (
     CellGeometryTransitionEvidence,
     exact_linear_combinations,
 )
-from ..discretization._cell_geometry_validity import cell_geometry_id, ValidatedCellValidityParent
+from ..discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    ValidatedCellValidityParent,
+)
 from ..discretization._coordinate_enclosure import (
     axes,
     compose_expression,
@@ -98,6 +101,7 @@ from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
+    SourceBoundaryRationalChartBank,
     SourceBoundaryDistanceWitness,
     SourceBoundaryPointWitness,
     SurfaceEnvelopeDistanceWitness,
@@ -110,7 +114,10 @@ from ..geometry._volume_material_deformation import (
 )
 from ..geometry._volume_material_map import VolumeMaterialChain, VolumeMaterialMap
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
-from ..geometry.implicit._chart_restriction import ImplicitChartPremise, ValidatedImplicitChartParent
+from ..geometry.implicit._chart_restriction import (
+    ImplicitChartPremise,
+    ValidatedImplicitChartParent,
+)
 from ..geometry.implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayBoundaryWitness,
     RestrictedDelaunayCoverageTransportWitness,
@@ -3874,6 +3881,21 @@ def _retarget_source_boundary_chart_witness(
     maps = _reference_map_rows(reference_maps)
     coarsened_by_target: dict[int, list[int]] = {}
     coarsening_reference: dict[int, tuple[int, tuple[tuple[Fraction, ...], ...]]] = {}
+    coarsening_tokens: dict[int, tuple[tuple[tuple[int, int], ...], ...]] = {}
+    token_templates: dict[
+        tuple[tuple[tuple[int, int], ...], ...],
+        tuple[tuple[tuple[int, int], ...], ...],
+    ] = {}
+
+    def reference_tokens(
+        points: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[tuple[tuple[int, int], ...], ...]:
+        tokens = tuple(
+            tuple((value.numerator, value.denominator) for value in point)
+            for point in points
+        )
+        return token_templates.setdefault(tokens, tokens)
+
     mixed_reference_transforms: dict[
         int,
         tuple[
@@ -3894,6 +3916,7 @@ def _retarget_source_boundary_chart_witness(
             if fine in coarsening_reference:
                 raise ValueError("Coarsening ancestry repeats a fine source cell.")
             coarsening_reference[fine] = (coarse, exact_vertices)
+            coarsening_tokens[fine] = reference_tokens(exact_vertices)
             coarsened_by_target.setdefault(coarse, []).append(fine)
     for mixed_map in mixed_coarsening_maps:
         child_ids = np.asarray(mixed_map.child_cell_ids, dtype=np.int64)
@@ -3909,6 +3932,7 @@ def _retarget_source_boundary_chart_witness(
                 mixed_map.parent_cell_id,
                 exact_vertices,
             )
+            coarsening_tokens[child_id] = reference_tokens(exact_vertices)
             coarsened_by_target.setdefault(mixed_map.parent_cell_id, []).append(child_id)
             mixed_reference_transforms[child_id] = mixed_affine_maps[
                 (mixed_map.parent_cell_id, child_id)
@@ -3956,14 +3980,28 @@ def _retarget_source_boundary_chart_witness(
     source_entity_ids = np.asarray(witness.entity_global_ids, dtype=np.int64)
     witnessed_source_entities = set(int(value) for value in source_entity_ids)
     witnessed_source_cells = set(int(value) for value in source_cell_ids)
-    old_reference_exact = tuple(
-        witness.target_reference_chart(row)
-        for row in range(len(witness.source_chart_ids))
-    )
-    old_parameters_exact = tuple(
-        witness.source_parameter_chart(row)
-        for row in range(len(witness.source_chart_ids))
-    )
+
+    def exact_charts(
+        tokens: SourceBoundaryRationalChartBank, /
+    ) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+        distinct = {}
+        rows = []
+        for chart in tokens:
+            exact = distinct.get(chart)
+            if exact is None:
+                exact = tuple(
+                    tuple(
+                        Fraction(numerator, denominator)
+                        for numerator, denominator in point
+                    )
+                    for point in chart
+                )
+                distinct[chart] = exact
+            rows.append(exact)
+        return tuple(rows)
+
+    old_reference_exact = exact_charts(witness.target_reference_rational_tokens)
+    old_parameters_exact = exact_charts(witness.source_parameter_rational_tokens)
     parameter_points = {point for row in old_parameters_exact for point in row}
     parameter_vertex_ids = {
         point: row for row, point in enumerate(sorted(parameter_points))
@@ -4058,12 +4096,28 @@ def _retarget_source_boundary_chart_witness(
     parameter_charts: dict[
         tuple[object, ...], tuple[tuple[Fraction, ...], ...] | None
     ] = {}
+    source_reference_by_kind: dict[str, tuple[tuple[Fraction, ...], ...]] = {}
+    source_chart_ids = witness.source_chart_ids
+    source_entity_keys = witness.source_entity_ids
+    source_occurrence_paths = witness.occurrence_paths
+    source_parameter_tokens = witness.source_parameter_rational_tokens
+    source_orientations: dict[tuple[object, ...], int] = {}
+    target_orientations: dict[tuple[object, ...], int] = {}
+    chart_weight_cache: dict[tuple[object, ...], tuple[Fraction, ...] | None] = {}
+    mixed_transform_tokens = {
+        child: reference_tokens((*matrix, offset))
+        for child, (matrix, offset) in mixed_reference_transforms.items()
+    }
+    mapped_charts: dict[tuple[object, ...], tuple[tuple[Fraction, ...], ...]] = {}
     for block in target.blocks:
         topology = reference_cell_topology(block.cell_kind)
         exact_topology_vertices = tuple(
             tuple(Fraction(float(value)) for value in point)
             for point in topology.vertices
         )
+        parent_corners_by_local: dict[int, tuple[tuple[Fraction, ...], ...]] = {
+            -1: exact_topology_vertices
+        }
         cell_vertices = np.asarray(block.vertices, dtype=np.int64)
         target_cell_ids = np.asarray(block.global_ids, dtype=np.int64)
         for cell_row, target_cell_id_raw in enumerate(target_cell_ids):
@@ -4086,13 +4140,20 @@ def _retarget_source_boundary_chart_witness(
                         raise ValueError(
                             "Coarsening chart ancestry changes its simplex family."
                         )
-                    source_topology = reference_cell_topology(source_block.cell_kind)
-                    source_reference_vertices = tuple(
-                        tuple(Fraction(float(value)) for value in point)
-                        for point in np.asarray(
-                            source_topology.vertices, dtype=np.float64
-                        )
+                    source_reference_vertices = source_reference_by_kind.get(
+                        source_block.cell_kind
                     )
+                    if source_reference_vertices is None:
+                        source_topology = reference_cell_topology(source_block.cell_kind)
+                        source_reference_vertices = tuple(
+                            tuple(Fraction(float(value)) for value in point)
+                            for point in np.asarray(
+                                source_topology.vertices, dtype=np.float64
+                            )
+                        )
+                        source_reference_by_kind[source_block.cell_kind] = (
+                            source_reference_vertices
+                        )
                     for old_row in source_rows_by_cell.get(source_cell_id, ()):
                         source_entity_id = int(source_entity_ids[old_row])
                         target_entity_id = target_cell_id
@@ -4130,80 +4191,126 @@ def _retarget_source_boundary_chart_witness(
                                     "A coarsened source chart facet has no unique parent local entity."
                                 )
                             local_entity = matching_local_entities[0]
-                        reference_points = []
                         mixed_transform = mixed_reference_transforms.get(source_cell_id)
-                        for exact_point in old_reference_exact[old_row]:
-                            if mixed_transform is not None:
-                                matrix, offset = mixed_transform
+                        chart_key = (
+                            witness.target_reference_rational_tokens[old_row],
+                            source_block.cell_kind,
+                            coarsening_tokens[source_cell_id],
+                            mixed_transform_tokens.get(source_cell_id),
+                            top_dimension,
+                        )
+                        target_reference = mapped_charts.get(chart_key)
+                        if target_reference is None:
+                            reference_points = []
+                            for exact_point, exact_tokens in zip(
+                                old_reference_exact[old_row],
+                                witness.target_reference_rational_tokens[old_row],
+                                strict=True,
+                            ):
+                                if mixed_transform is not None:
+                                    matrix, offset = mixed_transform
+                                    reference_points.append(
+                                        tuple(
+                                            offset[axis]
+                                            + sum(
+                                                (
+                                                    matrix[axis][dimension]
+                                                    * exact_point[dimension]
+                                                    for dimension in range(top_dimension)
+                                                ),
+                                                Fraction(0),
+                                            )
+                                            for axis in range(top_dimension)
+                                        )
+                                    )
+                                    continue
+                                weight_key = (
+                                    exact_tokens,
+                                    source_block.cell_kind,
+                                    top_dimension,
+                                )
+                                if weight_key not in chart_weight_cache:
+                                    chart_weight_cache[weight_key] = (
+                                        _simplex_chart_weights(
+                                            exact_point,
+                                            source_reference_vertices,
+                                            top_dimension,
+                                        )
+                                    )
+                                weights = chart_weight_cache[weight_key]
+                                if weights is None:
+                                    raise ValueError(
+                                        "A source chart piece lies outside its exact coarsening cell map."
+                                    )
                                 reference_points.append(
                                     tuple(
-                                        offset[axis]
-                                        + sum(
+                                        sum(
                                             (
-                                                matrix[axis][dimension]
-                                                * exact_point[dimension]
-                                                for dimension in range(top_dimension)
+                                                weights[corner] * exact_cell[corner][axis]
+                                                for corner in range(len(weights))
                                             ),
                                             Fraction(0),
                                         )
                                         for axis in range(top_dimension)
                                     )
                                 )
-                                continue
-                            weights = _simplex_chart_weights(
-                                exact_point,
-                                source_reference_vertices,
-                                top_dimension,
-                            )
-                            if weights is None:
-                                raise ValueError(
-                                    "A source chart piece lies outside its exact coarsening cell map."
-                                )
-                            reference_points.append(
-                                tuple(
-                                    sum(
-                                        (
-                                            weights[corner] * exact_cell[corner][axis]
-                                            for corner in range(len(weights))
-                                        ),
-                                        Fraction(0),
-                                    )
-                                    for axis in range(top_dimension)
-                                )
-                            )
-                        target_reference = tuple(reference_points)
+                            target_reference = tuple(reference_points)
+                            mapped_charts[chart_key] = target_reference
                         parameters_exact = old_parameters_exact[old_row]
-                        if _chart_orientation(parameters_exact, chart_dimension) == 0:
+                        parameter_key = source_parameter_tokens[old_row]
+                        if parameter_key not in source_orientations:
+                            source_orientations[parameter_key] = _chart_orientation(
+                                parameters_exact, chart_dimension
+                            )
+                        source_orientation = source_orientations[parameter_key]
+                        if source_orientation == 0:
                             raise ValueError(
                                 "A coarsened source chart piece is degenerate."
                             )
-                        if chart_dimension == 1:
-                            target_orientation = 1
-                        elif top_dimension == 2:
-                            target_orientation = _chart_orientation(target_reference, 2)
-                        else:
-                            from ..geometry._source_fidelity import _face_reference_chart
+                        orientation_key = (chart_key, local_entity, block.cell_kind)
+                        target_orientation = target_orientations.get(orientation_key)
+                        if target_orientation is None:
+                            if chart_dimension == 1:
+                                target_orientation = 1
+                            elif top_dimension == 2:
+                                target_orientation = _chart_orientation(
+                                    target_reference, 2
+                                )
+                            else:
+                                from ..geometry._source_fidelity import (
+                                    _face_reference_chart,
+                                )
 
-                            target_chart, _ = _face_reference_chart(
-                                block.cell_kind,
-                                local_entity,
-                                target_reference,
-                            )
-                            target_orientation = _chart_orientation(
-                                np.asarray(target_chart[0], dtype=np.float64), 2
-                            )
+                                target_chart, _ = _face_reference_chart(
+                                    block.cell_kind,
+                                    local_entity,
+                                    target_reference,
+                                )
+                                target_orientation = _chart_orientation(
+                                    np.asarray(target_chart[0], dtype=np.float64), 2
+                                )
+                            target_orientations[orientation_key] = target_orientation
                         if target_orientation == 0:
                             raise ValueError(
                                 "A coarsened source chart piece has degenerate target orientation."
                             )
                         chart_key = (
                             target_entity_id,
-                            witness.source_chart_ids[old_row],
-                            witness.source_entity_ids[old_row],
-                            witness.occurrence_paths[old_row],
+                            source_chart_ids[old_row],
+                            source_entity_keys[old_row],
+                            source_occurrence_paths[old_row],
                         )
                         parameter_vertices = _source_parameter_vertices(parameters_exact)
                         side = (target_cell_id, local_entity)
+                        parent_corners = parent_corners_by_local.get(local_entity)
+                        if parent_corners is None:
+                            parent_corners = tuple(
+                                exact_topology_vertices[int(local)]
+                                for local in topology.entities[chart_dimension][
+                                    local_entity
+                                ]
+                            )
+                            parent_corners_by_local[local_entity] = parent_corners
                         candidates.setdefault(chart_key, {}).setdefault(side, []).append(
                             {
                                 "cell_id": target_cell_id,
@@ -4211,25 +4318,10 @@ def _retarget_source_boundary_chart_witness(
                                 "local_entity": local_entity,
                                 "reference": target_reference,
                                 "parameters_exact": parameters_exact,
-                                "orientation": _chart_orientation(
-                                    parameters_exact, chart_dimension
-                                )
-                                * target_orientation,
+                                "orientation": source_orientation * target_orientation,
                                 "vertices": parameter_vertices,
                                 "source_row": old_row,
-                                "parent_corners": tuple(
-                                    tuple(
-                                        Fraction(float(value))
-                                        for value in topology.vertices[int(local)]
-                                    )
-                                    for local in (
-                                        range(len(topology.vertices))
-                                        if local_entity < 0
-                                        else topology.entities[chart_dimension][
-                                            local_entity
-                                        ]
-                                    )
-                                ),
+                                "parent_corners": parent_corners,
                                 "cell_kind": block.cell_kind,
                             }
                         )
@@ -4428,6 +4520,8 @@ def _retarget_source_boundary_chart_witness(
                         }
                     )
 
+    merged_weight_cache: dict[tuple[object, ...], tuple[Fraction, ...] | None] = {}
+
     def merged_pieces(rows: list[dict[str, Any]], /) -> list[dict[str, Any]]:
         """Merge the child pieces of one restored parent entity into its chart."""
         if len(rows) < 2 or any("parent_corners" not in value for value in rows):
@@ -4460,8 +4554,15 @@ def _retarget_source_boundary_chart_witness(
         if any(corner not in point_parameters for corner in corners):
             raise ValueError("A restored chart entity corner has no source chart piece.")
         corner_parameters = tuple(point_parameters[corner] for corner in corners)
+        corner_tokens = reference_tokens(corners)
         for point, parameter in point_parameters.items():
-            weights = _simplex_chart_weights(point, corners, chart_dimension)
+            point_tokens = tuple((value.numerator, value.denominator) for value in point)
+            weight_key = (point_tokens, corner_tokens, chart_dimension)
+            if weight_key not in merged_weight_cache:
+                merged_weight_cache[weight_key] = _simplex_chart_weights(
+                    point, corners, chart_dimension
+                )
+            weights = merged_weight_cache[weight_key]
             if weights is None or parameter != tuple(
                 sum(
                     (
@@ -5480,6 +5581,22 @@ def _rebind_surface_metric_witness(
     raise TypeError("Unsupported surface metric chart witness.")
 
 
+def _validated_source_chart_parent(
+    source: CellMeshingResult, /
+) -> ValidatedImplicitChartParent | None:
+    certification = source.certification
+    fidelity = None if certification is None else certification.fidelity
+    if (
+        fidelity is not None
+        and isinstance(fidelity.witness, SourceBoundaryChartWitness)
+        and (fidelity.chart_rows is not None or fidelity.status == "certified")
+    ):
+        return ValidatedImplicitChartParent(
+            source.mesh, source.geometry, fidelity.source, fidelity
+        )
+    return None
+
+
 def _finalize_native(
     prepared: PreparedMeshAdaptation,
     edit: CellTopologyEdit,
@@ -5496,23 +5613,17 @@ def _finalize_native(
     surface_metric_outcome: SurfaceMetricOutcome | None = None,
     coverage_renewal: PolyhedralCoverageRenewal | None = None,
     exact_source_vertices: tuple[tuple[Fraction, ...], ...] | None = None,
+    validated_chart_parent: ValidatedImplicitChartParent | None = None,
 ) -> _NativeTarget:
     """Assemble, inherit organization and associations, certify, and bind transfer."""
 
     source = prepared.source
     source_certification = source.certification
-    parent_fidelity = None if source_certification is None else source_certification.fidelity
-    validated_chart_parent = (
-        ValidatedImplicitChartParent(
-            source.mesh, source.geometry, parent_fidelity.source, parent_fidelity
-        )
-        if parent_fidelity is not None
-        and isinstance(parent_fidelity.witness, SourceBoundaryChartWitness)
-        and parent_fidelity.chart_rows is not None
-        else None
-    )
+    if validated_chart_parent is None:
+        validated_chart_parent = _validated_source_chart_parent(source)
     validated_validity_parent = (
-        None if source_certification is None
+        None
+        if source_certification is None
         else ValidatedCellValidityParent(source.audit.validity)
     )
     periodic_source = source.mesh.periodic_topology is not None
@@ -5809,6 +5920,24 @@ def _finalize_native(
         and source.certification.embedding.status == "certified"
         else None
     )
+    fidelity_premise = _fidelity_premise(source, certification_inputs, transition_geometry)
+    if (
+        coarsening is not None
+        and fidelity_premise is not None
+        and validated_chart_parent is not None
+        and validated_chart_parent.ancestor is not None
+        and validated_chart_parent.ancestor.certificate.chart_rows is not None
+    ):
+        # The retained original proof was mathematically replayed while
+        # validating the refined parent. Reuse only exact matching row inputs;
+        # changed coarsened rows still take the full proof route.
+        validated_chart_parent = validated_chart_parent.ancestor
+        fidelity_premise = ImplicitChartPremise(
+            validated_chart_parent.mesh,
+            validated_chart_parent.geometry,
+            validated_chart_parent.certificate,
+            None,
+        )
     target = certify_cell_mesh(
         mesh,
         source.coordinate_contract,
@@ -5820,9 +5949,7 @@ def _finalize_native(
         certification_inputs=certification_inputs,
         validated_witnesses=validated_witnesses,
         embedding_premise=embedding_premise,
-        fidelity_premise=_fidelity_premise(
-            source, certification_inputs, transition_geometry
-        ),
+        fidelity_premise=fidelity_premise,
         validated_chart_parent=validated_chart_parent,
         patches=patches,
         zones=zones,
@@ -5912,6 +6039,16 @@ def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutco
         raise TypeError("Native bisection hierarchy must be BisectionHierarchy or None.")
     policy = prepared.policy
     constraints = prepared.constraints
+    # Replay before constructing the coarsening forest and edit. Defer a
+    # replay failure until an actual edit is known: an unchanged request
+    # does not consume a source proof.
+    validated_chart_parent = None
+    chart_replay_error = None
+    if np.asarray(request.coarsen_cell_ids).size:
+        try:
+            validated_chart_parent = _validated_source_chart_parent(prepared.source)
+        except Exception as error:
+            chart_replay_error = error
     outcome = execute_bisection(
         prepared.source.mesh,
         np.asarray(request.refine_cell_ids, dtype=np.int64),
@@ -5940,6 +6077,8 @@ def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutco
             if partial
             else MeshAdaptationStatus.UNCHANGED,
         )
+    if chart_replay_error is not None:
+        raise chart_replay_error
     match (refined, coarsened):
         case (True, False):
             kind = MeshTransitionKind.REFINE
@@ -5952,6 +6091,7 @@ def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutco
         outcome.edit,
         kind,
         conservative=not coarsened,
+        validated_chart_parent=validated_chart_parent,
         periodic_edge_lock=request.periodic_edge_lock,
         refinement_parent_cell_ids=outcome.refinement_parent_cell_global_ids,
         refinement_source_edge_ids=outcome.refinement_source_edge_global_ids,

@@ -1378,6 +1378,15 @@ def _triangle_coordinate_expressions(
     cell_expressions: Polynomial3,
     corners: ReferenceTriangle,
 ) -> Polynomial3:
+    # The standard reference triangle is the identity chart. Canonical target
+    # map polynomials already retain nonzero exact terms in their proof order,
+    # so composition would reproduce those same dictionaries verbatim.
+    if corners == _STANDARD_TRIANGLE and all(
+        len(exponent) == 2 and bool(coefficient)
+        for expression in cell_expressions
+        for exponent, coefficient in expression.items()
+    ):
+        return cell_expressions
     arguments: tuple[Polynomial, ...] = tuple(
         {
             (0, 0): corners[0][axis],
@@ -1588,7 +1597,11 @@ def _run_piece_steps(
         )
         query_results.extend(results[len(indices) :])
         pending = {}
-        for index, result in zip(indices, results[: len(indices)], strict=True):
+        for offset, index in enumerate(indices):
+            result = results[offset]
+            # Each response is consumed exactly once. Release it before the
+            # next proof allocates its next-round boxes.
+            results[offset] = ((), ())
             try:
                 pending[index] = steps[index].send(result)
             except StopIteration as stop:
@@ -3553,7 +3566,7 @@ def _shared_edge_map_issues(
     from ...discretization._reference_cell import reference_cell_topology
 
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    edge_maps: dict[tuple[int, int], tuple[int, Polynomial3]] = {}
+    edge_maps: dict[tuple[int, int], tuple[int, int, int]] = {}
     root_at_vertex: dict[int, GridEdge | None] = {}
     issues: dict[int, str] = {}
     standard: TriangleReference = _STANDARD_TRIANGLE
@@ -3638,13 +3651,22 @@ def _shared_edge_map_issues(
             edge_key = (min(first_id, second_id), max(first_id, second_id))
             canonical_map: Polynomial3 = (first_map, second_map, third_map)
             previous_edge = edge_maps.get(edge_key)
-            if previous_edge is not None and previous_edge[1] != canonical_map:
+            previous_map = None
+            if previous_edge is not None:
+                previous_row, previous_start, previous_stop = previous_edge
+                previous_map = tuple(
+                    _edge_polynomial(
+                        expression, standard[previous_start], standard[previous_stop]
+                    )
+                    for expression in faces[previous_row].face_expressions
+                )
+            if previous_edge is not None and previous_map != canonical_map:
                 issues[row] = (
                     "Adjacent high-order target charts disagree exactly on a shared "
                     "physical edge map."
                 )
                 break
-            edge_maps[edge_key] = (row, canonical_map)
+            edge_maps[edge_key] = (row, start_corner, stop_corner)
     return issues
 
 
@@ -3698,16 +3720,16 @@ def _prepare_root_charts(
     tolerance: float | None,
     maximum_normal_deviation: float | None,
     target_rows: tuple[tuple[int, int], ...] | None,
-    reuse: ImplicitChartRows | None = None,
+    reuse: ValidatedImplicitChartParent | None = None,
 ) -> AdaptiveImplicitRootChartMap:
     """`prepare_adaptive_implicit_root_charts` body.
 
     ``target_rows`` are the witness's target chart rows from a caller that has
     already validated this mesh, geometry, source and witness; ``None``
-    validates them and derives the rows here. ``reuse`` holds a parent
-    certificate's certified rows for this source, tolerance and normal limit:
-    a row whose proof inputs equal one of them takes that evidence by identity
-    instead of being proved; such faces carry no piece proofs, so the map is
+    validates them and derives the rows here. ``reuse`` is an operation-local
+    chain of replayed parent capabilities. A digest selects candidate rows,
+    but exact proof inputs and chart metadata must agree before evidence is
+    reused; such faces carry no piece proofs, so the map is
     then for certification only.
     """
     from ...geometry._source_fidelity import (
@@ -3795,23 +3817,61 @@ def _prepare_root_charts(
         _face_setup(row, target_row, target, witness, surface, root_rows, cell_rows)
         for row, target_row in enumerate(target_rows)
     ]
-    reused_rows = {} if reuse is None else reuse.lookup()
+    # A digest selects candidates only; the original exact proof inputs and
+    # source-chart metadata must still compare equal before taking evidence.
+    candidates: dict[bytes, list[_FaceSetup]] = {}
+    if reuse is not None:
+        for setup in setups:
+            if setup.identity_key is not None:
+                candidates.setdefault(setup.identity_key, []).append(setup)
     prepared: list[_PreparedFace | None] = [None] * len(setups)
-    proved: list[int] = []
-    for setup in setups:
-        parent_row = (
-            None if setup.identity_key is None else reused_rows.get(setup.identity_key)
-        )
-        if parent_row is None:
-            proved.append(setup.row)
-            continue
-        assert reuse is not None
-        prepared[setup.row] = _reused_face(
-            setup,
-            witness,
-            reuse.values[parent_row],
-            _face_root_corners(setup, root_rows, root_by_point),
-        )
+    capability = reuse
+    while capability is not None:
+        certificate = capability.certificate
+        rows = certificate.chart_rows
+        parent_witness = certificate.witness
+        if (
+            rows is not None
+            and isinstance(parent_witness, SourceBoundaryChartWitness)
+            and capability.source is source
+            and certificate.tolerance == tolerance_
+            and certificate.maximum_normal_deviation == normal_
+        ):
+            certificate.require_current(capability.mesh, capability.geometry, source)
+            parent_rows, _, _ = _surface_target_chart_rows(
+                capability.mesh, capability.geometry, None, parent_witness,
+                full_source=False,
+            )
+            parent_target = _target_map_source(capability.mesh, capability.geometry)
+            for index in np.flatnonzero(rows.reusable):
+                index = int(index)
+                key = rows.keys[index].tobytes()
+                if key not in candidates:
+                    continue
+                parent_setup = _face_setup(
+                    index, parent_rows[index], parent_target, parent_witness,
+                    surface, root_rows, cell_rows,
+                )
+                for setup in candidates[key]:
+                    if prepared[setup.row] is not None:
+                        continue
+                    if (
+                        setup.cell_key == parent_setup.cell_key
+                        and setup.root_edges == parent_setup.root_edges
+                        and setup.source_parameters == parent_setup.source_parameters
+                        and tuple(tuple(expr.items()) for expr in setup.target_expressions)
+                        == tuple(tuple(expr.items()) for expr in parent_setup.target_expressions)
+                        and witness.source_chart_ids[setup.row] == parent_witness.source_chart_ids[index]
+                        and witness.source_entity_ids[setup.row] == parent_witness.source_entity_ids[index]
+                        and witness.occurrence_paths[setup.row] == parent_witness.occurrence_paths[index]
+                    ):
+                        prepared[setup.row] = _reused_face(
+                            setup, witness, rows.values[index],
+                            _face_root_corners(setup, root_rows, root_by_point),
+                        )
+        capability = capability.ancestor
+    proved = [setup.row for setup in setups if prepared[setup.row] is None]
+    del candidates
     for row, face in zip(
         proved,
         _run_faces(
@@ -4650,10 +4710,15 @@ def certify_adaptive_implicit_charts(
     witness = chart_witness
     if root_charts is not None and chart_parent is not None:
         raise ValueError("Prepared root charts and a chart parent are exclusive.")
-    reuse: ImplicitChartRows | None = None
+    reuse: ValidatedImplicitChartParent | None = None
     if chart_parent is not None:
         if not isinstance(chart_parent, ImplicitChartPremise):
             raise TypeError("chart_parent must be ImplicitChartPremise or None.")
+        if validated_chart_parent is None:
+            validated_chart_parent = ValidatedImplicitChartParent(
+                chart_parent.parent_mesh, chart_parent.parent_geometry,
+                source, chart_parent.parent_certificate,
+            )
         parent = chart_parent.certified_parent(
             source, tolerance, maximum_normal_deviation, validated=validated_chart_parent
         )
@@ -4665,9 +4730,7 @@ def certify_adaptive_implicit_charts(
                 return _restricted_certificate(
                     mesh, geometry, source, witness, parent, chart_parent, restriction
                 )
-            reuse = parent.chart_rows
-            if reuse is not None:
-                reuse.require_current()
+            reuse = validated_chart_parent
     if root_charts is not None:
         root_charts.require_request(
             mesh,
