@@ -4159,7 +4159,7 @@ def _single_chart_sphere_offset(
     source_id: str,
     include_parameter_range: bool,
 ) -> BRepOffsetResult | None:
-    from ._boolean_core import PeriodicPCurve
+    from ._boolean_core import AffinePCurve, PeriodicPCurve
     from ._carrier_pieces import carrier_payload
     from ._intersection import NativePeriodEndpoint
     from ._offset_result import exact_operation_offset_result
@@ -4325,7 +4325,20 @@ def _single_chart_sphere_offset(
             shifts, pcurve = pcurve.period_shifts, pcurve.source_curve
         if not isinstance(pcurve, LineCurve):
             return None
-        origin, direction = exact_vector(pcurve.origin), exact_vector(pcurve.direction)
+        origin_exact, direction_exact = pcurve.origin_exact, pcurve.direction_exact
+        if len(origin_exact) != 2 or len(direction_exact) != 2:
+            return None
+        first, second = origin_exact
+        first_direction, second_direction = direction_exact
+        if (
+            not isinstance(first, Fraction)
+            or not isinstance(second, Fraction)
+            or not isinstance(first_direction, Fraction)
+            or not isinstance(second_direction, Fraction)
+        ):
+            return None
+        origin = (first, second)
+        direction = (first_direction, second_direction)
         variable = tuple(
             axis for axis in range(2) if direction[axis] == 1 and direction[1 - axis] == 0
         )
@@ -4339,6 +4352,30 @@ def _single_chart_sphere_offset(
             variable_axis,
             fixed_axis,
             origin[fixed_axis] + shifts[fixed_axis] * period_exact,
+        )
+
+    def rooted_pole(pcurve: AbstractCurve, vertex: int, /) -> bool:
+        root = geometry.vertex_roots[vertex]
+        if (
+            not isinstance(patch, RevolutionSurface)
+            or not isinstance(root, BRepVertexRoot)
+            or not isinstance(root.primary, BRepConicVertex)
+            or not isinstance(pcurve, AffinePCurve)
+            or not isinstance(pcurve.curve, ConicRootLinePCurve)
+        ):
+            return False
+        line = pcurve.curve
+        source = root.primary
+        return (
+            pcurve.matrix == ((Fraction(0), Fraction(1)), (Fraction(1), Fraction(0)))
+            and pcurve.offset == (Fraction(0), Fraction(0))
+            and line.height_origin_exact == 0
+            and line.height_direction_exact == 1
+            and line.phase_shift_exact == 0
+            and line.root.root_id == source.root.root_id
+            and carrier_payload(line.root.conic) == carrier_payload(patch.curve)
+            and source.root.exact_point() == source.point_exact
+            and not any(source.offset_exact)
         )
 
     degenerate_vertices: set[int] = set()
@@ -4356,19 +4393,20 @@ def _single_chart_sphere_offset(
             or last != period_exact
         ):
             return None
-        info = line_data(geometry.pcurves[coedges[0]])
-        if info is None or info[0] != 0:
-            return None
-        latitude = info[2]
-        if latitude not in profile_limits:
-            return None
-        roots = geometry.edge_endpoint_roots[edge]
         pcurve = geometry.pcurves[coedges[0]]
-        if not all(isinstance(root, NativePeriodEndpoint) for root in roots):
-            return None
+        if has_source_pole_roots:
+            if not rooted_pole(pcurve, endpoints[0]):
+                return None
+        else:
+            info = line_data(pcurve)
+            if info is None or info[0] != 0 or info[2] not in profile_limits:
+                return None
+        roots = geometry.edge_endpoint_roots[edge]
         start_root, end_root = roots
-        assert isinstance(start_root, NativePeriodEndpoint)
-        assert isinstance(end_root, NativePeriodEndpoint)
+        if not isinstance(start_root, NativePeriodEndpoint) or not isinstance(
+            end_root, NativePeriodEndpoint
+        ):
+            return None
         if not (
             carrier_payload(start_root.curve) == carrier_payload(pcurve)
             and carrier_payload(end_root.curve) == carrier_payload(pcurve)
@@ -4384,11 +4422,11 @@ def _single_chart_sphere_offset(
             return None
         coedge_roots = geometry.coedge_endpoint_roots[coedges[0]]
         if any(root is not None for root in coedge_roots):
-            if not all(isinstance(root, NativePeriodEndpoint) for root in coedge_roots):
-                return None
             coedge_start, coedge_end = coedge_roots
-            assert isinstance(coedge_start, NativePeriodEndpoint)
-            assert isinstance(coedge_end, NativePeriodEndpoint)
+            if not isinstance(coedge_start, NativePeriodEndpoint) or not isinstance(
+                coedge_end, NativePeriodEndpoint
+            ):
+                return None
             if not (
                 carrier_payload(coedge_start.curve) == carrier_payload(pcurve)
                 and carrier_payload(coedge_end.curve) == carrier_payload(pcurve)

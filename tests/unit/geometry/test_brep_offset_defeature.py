@@ -367,6 +367,9 @@ def test_single_chart_analytic_torus_offset_binds_its_source_entities() -> None:
 
 
 def test_single_chart_analytic_sphere_offset_binds_pole_occurrences() -> None:
+    from phydrax.geometry.brep._boolean_core import AffinePCurve
+    from phydrax.geometry.brep._patches import ConicRootLinePCurve
+
     source = brep_sphere(1.0, coordinate_contract=_CONTRACT)
     before = _snapshot(source)
 
@@ -393,6 +396,23 @@ def test_single_chart_analytic_sphere_offset_binds_pole_occurrences() -> None:
     )
     assert len(degenerate_edges) == 2
     for edge in degenerate_edges:
+        source_coedge = next(
+            row
+            for row, source_edge in enumerate(source.geometry.coedge_edges)
+            if source_edge == edge
+        )
+        target_coedge = next(
+            row
+            for row, target_edge in enumerate(target.geometry.coedge_edges)
+            if target_edge == edge_map[edge]
+        )
+        source_pcurve = source.geometry.pcurves[source_coedge]
+        target_pcurve = target.geometry.pcurves[target_coedge]
+        assert isinstance(source_pcurve, AffinePCurve)
+        assert isinstance(target_pcurve, AffinePCurve)
+        assert isinstance(source_pcurve.curve, ConicRootLinePCurve)
+        assert isinstance(target_pcurve.curve, ConicRootLinePCurve)
+        assert source_pcurve.curve.root.root_id == target_pcurve.curve.root.root_id
         source_roots = source.geometry.edge_endpoint_roots[edge]
         target_roots = target.geometry.edge_endpoint_roots[edge_map[edge]]
         assert all(isinstance(root, NativePeriodEndpoint) for root in source_roots)
