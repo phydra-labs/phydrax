@@ -1534,6 +1534,37 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
     assert witness.cad_plc is not None
     charts = witness.cad_plc.cad_source_charts
     assert charts is not None
+    from phydrax.geometry._meshing_domain import PatchCurveUse
+    from phydrax.geometry._surface_source_support import validate_cad_curve_ancestry
+
+    occurrences = np.array(charts.boundary_occurrences, copy=True)
+    swapped = False
+    for row, slot in np.argwhere(occurrences[:, :, 0] >= 0):
+        patch, loop, use_index = (int(value) for value in occurrences[row, slot])
+        uses = charts.domain.patches[patch].loops[loop]
+        use = uses[use_index]
+        if not isinstance(use, PatchCurveUse):
+            continue
+        alternatives = [
+            index for index, other in enumerate(uses)
+            if index != use_index and isinstance(other, PatchCurveUse)
+            and other.curve == use.curve
+        ]
+        if alternatives:
+            occurrences[row, slot, 2] = alternatives[0]
+            swapped = True
+            break
+    assert swapped
+    forged_charts = SurfaceSourceCharts(
+        charts.domain, charts.mesh, charts.geometry, charts.coordinate_contract,
+        charts.root_parameters, charts.root_patches, charts.associations,
+        charts.boundary_source, source_root_cell_ids=charts.source_root_cell_ids,
+        source_piece_ids=charts.source_piece_ids,
+        root_parameter_exact=charts.root_parameter_exact,
+        boundary_occurrences=occurrences,
+    )
+    with pytest.raises(ValueError, match="authored coedge occurrence"):
+        validate_cad_curve_ancestry(forged_charts, 1e4)
     patch_rows = [
         domain.resolve_entity_id(2, entity, occurrence_path=path)
         for entity, path in zip(

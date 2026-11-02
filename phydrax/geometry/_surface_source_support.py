@@ -1319,7 +1319,9 @@ def validate_cad_curve_ancestry(
         GeometryAssociationKind,
         GeometrySourceEntityRole,
     )
+    from ._domain_boundary import _line_endpoints
     from ._meshing_domain import PatchCurveUse, SourcePreparation
+    from .brep._patches import ExactLineCurve, LineCurve
 
     if not isinstance(charts, SurfaceSourceCharts):
         raise TypeError("CAD curve ancestry requires SurfaceSourceCharts.")
@@ -1445,6 +1447,24 @@ def validate_cad_curve_ancestry(
                     )
                 loop_index, use_index = explicit[1], explicit[2]
             parameters = interval if sense > 0 else (interval[1], interval[0])
+            selected = domain.patches[patch].loops[loop_index][use_index]
+            if len(candidates) > 1 and isinstance(selected.pcurve, (ExactLineCurve, LineCurve)):
+                start, stop = _line_endpoints(selected)
+                points = (
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, use_index, first_uv, parameters[0]
+                    ),
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, use_index, last_uv, parameters[1]
+                    ),
+                )
+                for axis in range(2):
+                    if start[axis] == stop[axis] and any(
+                        point[axis] != start[axis] for point in points
+                    ):
+                        raise ValueError(
+                            "CAD root edge changes its authored coedge occurrence."
+                        )
             _cad_curve_use_lens(
                 charts,
                 patch,
