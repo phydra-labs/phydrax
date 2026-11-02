@@ -2240,6 +2240,111 @@ class BRepVertexRoot(StrictModule):
         return joint is None and _same_parameter_source(first_root, second_root)
 
 
+def _torus_conic_uv_endpoint(
+    patch: AbstractSurfacePatch,
+    source: AbstractCurve,
+    endpoint: ConicParameterEndpoint,
+    shifts: tuple[int, int],
+    /,
+) -> tuple[object, ...] | None:
+    """Identify a torus endpoint by exact angular directions and chart sheets."""
+    from ._patches import (
+        _validate_source_shadows,
+        LineCurve,
+        TorusPatch,
+        TorusRootedCirclePCurve,
+    )
+
+    if not isinstance(patch, TorusPatch) or patch.native_period_symbols() != (
+        "two_pi",
+        "two_pi",
+    ):
+        return None
+    try:
+        _validate_source_shadows(source, set())
+    except (TypeError, ValueError):
+        return None
+    if endpoint.root.exact_point() != endpoint.point_exact:
+        return None
+
+    def phase(
+        cosine: ExactScalar,
+        sine: ExactScalar,
+        turns: int,
+        orientation: int,
+        quarter_turns: int,
+        /,
+    ) -> tuple[ExactScalar, ExactScalar, int]:
+        # The principal conic parameter is in [0, 2π). Determine its
+        # quadrant and boundary exactly, including axes, before rotating.
+        if sine == 0 and cosine == 1:
+            quadrant, boundary = 0, True
+        elif sine > 0 and cosine > 0:
+            quadrant, boundary = 0, False
+        elif sine > 0 and cosine <= 0:
+            quadrant, boundary = 1, cosine == 0
+        elif sine <= 0 and cosine < 0:
+            quadrant, boundary = 2, sine == 0
+        else:
+            quadrant, boundary = 3, cosine == 0
+        if orientation == 1:
+            sheet = turns + (quadrant + quarter_turns) // 4
+        else:
+            sheet = -turns + (quarter_turns - quadrant - (not boundary)) // 4
+            sine = -sine
+        a, b = ((1, 0), (0, 1), (-1, 0), (0, -1))[quarter_turns % 4]
+        return a * cosine - b * sine, b * cosine + a * sine, sheet
+
+    if endpoint.parameter_exact is None:
+        parameter = (
+            endpoint.root.cosine_exact,
+            endpoint.root.sine_exact,
+            endpoint.root.turns,
+        )
+    elif endpoint.parameter_exact == 0:
+        parameter = (Fraction(1), Fraction(0), 0)
+    else:
+        # A nonzero rational radian is not an exact conic phase.
+        return None
+
+    if isinstance(source, TorusRootedCirclePCurve):
+        quarters = source.turns * 4
+        if quarters.denominator != 1:
+            return None
+        longitude = phase(*parameter, source.orientation, quarters.numerator)
+        root = source.root_line.root
+        latitude = (root.cosine_exact, root.sine_exact, root.turns)
+    elif isinstance(source, LineCurve):
+        if source.origin_exact != (Fraction(0), Fraction(0)) or (
+            source.direction_exact
+            not in ((Fraction(0), Fraction(1)), (Fraction(0), Fraction(-1)))
+        ):
+            return None
+        longitude = (Fraction(1), Fraction(0), 0)
+        latitude = phase(*parameter, 1 if source.direction_exact[1] == 1 else -1, 0)
+    else:
+        return None
+
+    uc, us, ut = longitude
+    vc, vs, vt = latitude
+    center, first, second, axis = (
+        patch.center_exact,
+        patch.first_axis_exact,
+        patch.second_axis_exact,
+        patch.axis_exact,
+    )
+    radius = patch.major_radius_exact + patch.minor_radius_exact * vc
+    point = tuple(
+        center[i]
+        + radius * (uc * first[i] + us * second[i])
+        + patch.minor_radius_exact * vs * axis[i]
+        for i in range(3)
+    )
+    if point != endpoint.point_exact:
+        return None
+    return ("torus", uc, us, ut + shifts[0], vc, vs, vt + shifts[1])
+
+
 def _exact_conic_uv_endpoint(
     patch: AbstractSurfacePatch,
     curve: AbstractCurve,
@@ -2260,6 +2365,7 @@ def _exact_conic_uv_endpoint(
         LineCurve,
         PlaneCylinderSectionPCurve,
         PlanePatch,
+        TorusPatch,
     )
 
     if isinstance(curve, CurveTrimSegment) or not _same_parameter_source(
@@ -2284,6 +2390,14 @@ def _exact_conic_uv_endpoint(
     domain = source.parameter_domain
     if domain is not None and not domain[0] <= float(parameter) <= domain[1]:
         return None
+    if isinstance(patch, TorusPatch):
+        from ._patches import _validate_source_shadows
+
+        try:
+            _validate_source_shadows(curve, set())
+        except (TypeError, ValueError):
+            return None
+        return _torus_conic_uv_endpoint(patch, source, endpoint, (shifts[0], shifts[1]))
 
     if isinstance(patch, PlanePatch):
         if shifts != [0, 0]:

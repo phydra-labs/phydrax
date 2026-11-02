@@ -3565,6 +3565,100 @@ class IntersectionPCurve(AbstractCurve):
             return self.last - self.first
         return None
 
+    def _chart_evaluator_with_source_bounds(
+        self, chart: int, /
+    ) -> tuple[Callable[[Array, Array, Array], Array], np.ndarray, np.ndarray]:
+        """Prepare a fixed analytic chart with directed exact-source inputs.
+
+        The returned coefficient bounds enclose the exact rational cylinder
+        family, rather than the floating execution shadows of its surfaces.
+        """
+        from .._rational import fraction_down, fraction_up, rational_dot
+
+        family = orthogonal_cylinder_family(self.curve.first, self.curve.second)
+        if family is None:
+            raise NotImplementedError(
+                "Exact source bounds require an orthogonal cylinder family."
+            )
+        branch_sign = _orthogonal_cylinder_curve_branch_sign(self.curve, family)
+        if branch_sign is None:
+            raise ValueError(
+                "An analytic cylinder p-curve requires a proved branch sign."
+            )
+        angle_data = _orthogonal_cylinder_chart_angle_data(
+            self.curve, family, chart, branch_sign
+        )
+        if angle_data is None:
+            raise NotImplementedError(
+                "The cylinder chart lacks an exact analytic angle mode."
+            )
+        angle_mode, angle_sign, angle_turns = angle_data
+        theta_axis = 2 * family.small_index
+        start = Fraction.from_float(
+            float(np.asarray(self.curve.chart_start)[chart, theta_axis])
+        )
+        end = Fraction.from_float(
+            float(np.asarray(self.curve.chart_end)[chart, theta_axis])
+        )
+        large_first = cast(tuple[Fraction, ...], family.large.first_axis_exact)
+        large_second = cast(tuple[Fraction, ...], family.large.second_axis_exact)
+        small_axis = cast(tuple[Fraction, ...], family.small.axis_exact)
+        coefficients = (
+            start,
+            end,
+            family.large_radius,
+            family.small_radius,
+            family.delta_n,
+            family.delta_large_axis,
+            family.delta_small_axis,
+            *family.small_normal_coefficients,
+            *family.small_large_axis_coefficients,
+            rational_dot(small_axis, large_first),
+            rational_dot(family.normal, large_first),
+            rational_dot(small_axis, large_second),
+            rational_dot(family.normal, large_second),
+            family.source_slopes[family.large_index],
+            family.source_slopes[family.small_index],
+            Fraction.from_float(self.first) + Fraction.from_float(self.last),
+        )
+        lower = np.asarray(
+            [fraction_down(value) for value in coefficients], dtype=np.float64
+        )
+        upper = np.asarray(
+            [fraction_up(value) for value in coefficients], dtype=np.float64
+        )
+
+        def evaluate(parameter: Array, period: Array, values: Array, /) -> Array:
+            carrier = values[17] - parameter if self.reversed else parameter
+            theta = values[0] + (carrier - chart) * (values[1] - values[0])
+            cosine, sine = jnp.cos(theta), jnp.sin(theta)
+            radial_n = values[4] + values[3] * (values[7] * cosine + values[8] * sine)
+            axial_large = values[5] + values[3] * (values[9] * cosine + values[10] * sine)
+            axial_small = branch_sign * jnp.sqrt(
+                values[2] * values[2] - radial_n * radial_n
+            )
+            first_component = axial_small * values[11] + radial_n * values[12]
+            second_component = axial_small * values[13] + radial_n * values[14]
+            if angle_mode == 1:
+                angle = angle_sign * 0.25 * period - jnp.arctan(
+                    first_component / second_component
+                )
+            else:
+                angle = jnp.arctan(second_component / first_component)
+                if angle_sign < 0:
+                    angle = angle + 0.5 * period
+            angle = angle + angle_turns * period
+            large_profile = axial_large / values[15]
+            small_profile = (axial_small - values[6]) / values[16]
+            parameters = (
+                jnp.stack((angle, large_profile, theta, small_profile))
+                if family.large_index == 0
+                else jnp.stack((theta, small_profile, angle, large_profile))
+            )
+            return parameters[:2] if self.side == "first" else parameters[2:]
+
+        return evaluate, lower, upper
+
     def _chart_evaluator_with_period(
         self, chart: int, /
     ) -> Callable[[Array, Array], Array]:

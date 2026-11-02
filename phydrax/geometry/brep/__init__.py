@@ -73,6 +73,7 @@ _DEFERRED_EXPORTS = {
     "BRepSewingResult": "._sewing",
     "BRepSource": "._source",
     "BRepSourceDerivativeError": "._source",
+    "BRepSourceRepairResult": "._source_repair",
     "BRepTessellationPolicy": "._constructors",
     "BRepTessellation": "._model",
     "BRepTopology": "._model",
@@ -132,6 +133,7 @@ _DEFERRED_EXPORTS = {
     "partition_planar": "._planar",
     "prepare_brep_projection": "._projection",
     "sew_brep": "._sewing",
+    "repair_brep_source": "._source_repair",
     "surface_differential": "._patches",
     "surface_jacobian": "._patches",
     "surface_normal": "._patches",
@@ -299,5 +301,9 @@ if TYPE_CHECKING:
     from ._source import (
         BRepSource as BRepSource,
         BRepSourceDerivativeError as BRepSourceDerivativeError,
+    )
+    from ._source_repair import (
+        BRepSourceRepairResult as BRepSourceRepairResult,
+        repair_brep_source as repair_brep_source,
     )
     from ._tspline import TSplineSurfacePatch as TSplineSurfacePatch

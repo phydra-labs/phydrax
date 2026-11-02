@@ -829,12 +829,7 @@ def _query_separation(
     dimensions = np.full((len(faces),), int(BRepEntityDimension.FACE), dtype=np.int32)
     projected = query.project(points, dimensions, np.asarray(faces, dtype=np.int32))
     statuses = np.asarray(projected.status)
-    if np.any(
-        np.isin(
-            statuses,
-            (int(BRepProjectionStatus.FAILED), int(BRepProjectionStatus.UNRESOLVED)),
-        )
-    ):
+    if np.any(statuses == int(BRepProjectionStatus.FAILED)):
         return None
     lower_bounds = np.asarray(projected.distance_lower_bounds, dtype=np.float64)
     if not np.all(np.isfinite(lower_bounds)):

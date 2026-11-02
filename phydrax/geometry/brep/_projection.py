@@ -158,6 +158,44 @@ def _unresolved(dimension: int, index: int, path: tuple[str, ...] = ()) -> _Hit:
     )
 
 
+def _bounded_unresolved_face(
+    model: BRepModel, face: int, point: np.ndarray, path: tuple[str, ...], /
+) -> _Hit:
+    """Retain a proved distance enclosure without claiming a nearest point."""
+    from ._repair_annulus_projection import project_annulus, recognize_annulus
+    from ._repair_torus_projection import (
+        recognize_torus_strip,
+        torus_strip_distance_bounds,
+    )
+
+    bounds: tuple[float, float] | None = None
+    patch = model.patches[face]
+    if isinstance(patch, PlanePatch):
+        annulus = recognize_annulus(model, face)
+        if annulus is not None:
+            evidence = project_annulus(annulus, point)
+            if evidence is not None:
+                bounds = evidence.lower, evidence.upper
+    elif isinstance(patch, TorusPatch):
+        strip = recognize_torus_strip(model, face)
+        if strip is not None:
+            bounds = torus_strip_distance_bounds(strip, point)
+    if bounds is None:
+        return _unresolved(2, face, path)
+    return _Hit(
+        2,
+        face,
+        _NAN3.copy(),
+        _NAN2.copy(),
+        bounds[0],
+        bounds[1],
+        _UNRESOLVED,
+        _NAN3.copy(),
+        _NAN_FRAME3.copy(),
+        path,
+    )
+
+
 def _failed(ambient: int, /) -> _Hit:
     return _Hit(
         -1,
@@ -2444,6 +2482,175 @@ def _profile_arcs(
     return tuple(pieces)
 
 
+def _analytic_revolution_profile(
+    model: BRepModel, solid: int, /
+) -> _RevolutionProfile | None:
+    """Prove a closed coaxial annulus/strip boundary as a meridian profile."""
+    from ._boolean_core import PeriodicPCurve
+    from ._constructors import _check_solid_edge_balance
+    from ._model import _certify_edge_face_gap_bounds
+    from ._patches import TorusRootedCirclePCurve
+    from ._source_repair_face_completion import (
+        _annulus_face,
+        _annulus_rings,
+        _strip_face,
+        _strip_rings,
+    )
+
+    geometry = model.geometry
+    faces = model.topology.solid_faces[solid]
+    cylinders = [
+        model.patches[face]
+        for face in faces
+        if isinstance(model.patches[face], CylinderPatch)
+    ]
+    if not cylinders or geometry.edge_vertex_gap_bounds is not None:
+        return None
+    reference = cylinders[0]
+    if not isinstance(reference, CylinderPatch):
+        return None
+    if any(
+        not isinstance(value, Fraction)
+        for value in (
+            *reference.origin_exact,
+            *reference.axis_exact,
+            *reference.first_axis_exact,
+        )
+    ):
+        return None
+    origin = cast(_ExactVector, reference.origin_exact)
+    axis = cast(_ExactVector, reference.axis_exact)
+    radial_axis = cast(_ExactVector, reference.first_axis_exact)
+    if (
+        _exact_dot(axis, axis) != 1
+        or _exact_dot(radial_axis, radial_axis) != 1
+        or _exact_dot(axis, radial_axis) != 0
+    ):
+        return None
+    try:
+        _check_solid_edge_balance(
+            geometry, np.asarray(model.orientation, dtype=np.float64)
+        )
+        gaps = _certify_edge_face_gap_bounds(
+            geometry,
+            model.patches,
+            parameter_bounds=model.parameter_bounds,
+            exact_unsupported=True,
+            certified_degenerate_coedges=True,
+        )
+        if gaps is None or any(gap != 0 for gap in gaps):
+            return None
+        lines: list[_ProfileLine] = []
+        arcs: list[_ProfileArc] = []
+
+        def ring_data(ring: tuple[int, ...]) -> tuple[CircleCurve, ExactScalar]:
+            edge = geometry.coedge_edges[ring[0]]
+            curve = geometry.curves[geometry.edge_curves[edge]]
+            if not isinstance(curve, CircleCurve):
+                raise ValueError("A revolution profile boundary must be circular.")
+            delta = tuple(a - b for a, b in zip(curve.center_exact, origin, strict=True))
+            height = _exact_dot(delta, axis)
+            if any(a != height * b for a, b in zip(delta, axis, strict=True)):
+                raise ValueError("A revolution profile boundary must share the axis.")
+            return curve, height
+
+        for face in faces:
+            patch = model.patches[face]
+            if isinstance(patch, PlanePatch):
+                _annulus_face(model, model, face)
+                rings = _annulus_rings(geometry, face)
+                first, last = (ring_data(ring) for ring in rings)
+                if first[1] != last[1]:
+                    return None
+                lines.append(
+                    _ProfileLine(
+                        (first[1], last[1]),
+                        (
+                            cast(
+                                _ExactVector,
+                                tuple(first[0].radius_exact * x for x in radial_axis),
+                            ),
+                            cast(
+                                _ExactVector,
+                                tuple(last[0].radius_exact * x for x in radial_axis),
+                            ),
+                        ),
+                    )
+                )
+            elif isinstance(patch, (CylinderPatch, TorusPatch)):
+                if patch.axis_exact != axis:
+                    return None
+                support_center = (
+                    patch.origin_exact
+                    if isinstance(patch, CylinderPatch)
+                    else patch.center_exact
+                )
+                offset = tuple(a - b for a, b in zip(support_center, origin, strict=True))
+                if any(_exact_cross(offset, axis)):
+                    return None
+                _strip_face(model, model, face)
+                rings = _strip_rings(geometry, face)[:2]
+                data = [ring_data(ring) for ring in rings]
+                if isinstance(patch, CylinderPatch):
+                    if any(curve.radius_exact != patch.radius_exact for curve, _ in data):
+                        return None
+                    radial = cast(
+                        _ExactVector, tuple(patch.radius_exact * x for x in radial_axis)
+                    )
+                    lines.append(_ProfileLine((data[0][1], data[1][1]), (radial, radial)))
+                    continue
+                roots = []
+                for ring, (curve, height) in zip(rings, data, strict=True):
+                    chart = geometry.pcurves[ring[0]]
+                    while isinstance(chart, PeriodicPCurve):
+                        chart = chart.source_curve
+                    if not isinstance(chart, TorusRootedCirclePCurve):
+                        return None
+                    root = chart.root_line.root
+                    if (
+                        root.sine_exact < 0
+                        or curve.radius_exact
+                        != patch.major_radius_exact
+                        + patch.minor_radius_exact * root.cosine_exact
+                    ):
+                        return None
+                    roots.append((root, height))
+                roots.sort(key=lambda item: item[0].parameter_lower)
+                lower, upper = roots
+                if lower[0].parameter_upper >= upper[0].parameter_lower:
+                    return None
+                center_height = _exact_dot(offset, axis)
+                top = center_height + patch.minor_radius_exact
+                endpoints = [(lower[1], _exact_sign(lower[0].cosine_exact))]
+                if lower[0].cosine_exact > 0 and upper[0].cosine_exact < 0:
+                    endpoints.append((top, 0))
+                elif lower[0].cosine_exact * upper[0].cosine_exact < 0:
+                    return None
+                endpoints.append((upper[1], _exact_sign(upper[0].cosine_exact)))
+                for first, last in zip(endpoints, endpoints[1:], strict=False):
+                    side = first[1] or last[1]
+                    if side not in (-1, 1):
+                        return None
+                    arcs.append(
+                        _ProfileArc(
+                            center_height,
+                            patch.major_radius_exact * patch.major_radius_exact,
+                            patch.minor_radius_exact * patch.minor_radius_exact,
+                            side,
+                            (
+                                _ArcEnd(float(first[0]), first[0]),
+                                _ArcEnd(float(last[0]), last[0]),
+                            ),
+                            0.0,
+                        )
+                    )
+            else:
+                return None
+        return _RevolutionProfile(origin, axis, tuple(lines), tuple(arcs))
+    except (ValueError, TypeError, NotImplementedError):
+        return None
+
+
 def _closed_revolution_profile(
     model: BRepModel, solid: int, /
 ) -> _RevolutionProfile | None:
@@ -2452,6 +2659,9 @@ def _closed_revolution_profile(
     Every face must be a full-turn revolution about one exact unit axis of a
     line or circle profile lying in a plane through the axis.
     """
+    analytic = _analytic_revolution_profile(model, solid)
+    if analytic is not None:
+        return analytic
     from .._rational import rational_vector
 
     origin: _ExactVector | None = None
@@ -3031,6 +3241,10 @@ class NativeBRepProjection(AbstractBRepProjection):
                     embedding=None,
                     affine_frame=self.affine_projection_frames[index],
                 )
+                if hit.status == _UNRESOLVED:
+                    hit = _bounded_unresolved_face(
+                        self.model, index, local, occurrence.path
+                    )
             else:
                 return _failed(self.ambient_dimension)
             if hit.status not in (_FAILED, _UNRESOLVED) and occurrence.path:
@@ -3788,7 +4002,11 @@ class NativeBRepProjection(AbstractBRepProjection):
                         )
                     )
                     continue
-                if any(hit.status == _UNRESOLVED for hit in face_hits):
+                if any(
+                    hit.status == _UNRESOLVED
+                    and hit.lower <= self.policy.classifier_tolerance
+                    for hit in face_hits
+                ):
                     unresolved.append(_unresolved(3, occurrence.solid, occurrence.path))
                     continue
                 contained = self._contains_solid(local, occurrence.solid)

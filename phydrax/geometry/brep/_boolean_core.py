@@ -999,14 +999,70 @@ def _coedge_trim(geometry: BRepGeometry, coedge: int, /) -> CurveTrimSegment:
     )
 
 
+def _cardinal_conic_phase(root: object, /) -> ChartScalar | None:
+    from ._patches import ConicParameterRoot
+
+    if not isinstance(root, ConicParameterRoot):
+        return None
+    radial = (root.cosine_exact, root.sine_exact)
+    for quarter, direction in enumerate(((1, 0), (0, 1), (-1, 0), (0, -1))):
+        if radial == direction:
+            return PeriodOffset(Fraction(0), Fraction(root.turns) + Fraction(quarter, 4))
+    return None
+
+
+def _coedge_affine_axis(
+    curve: AbstractCurve, axis: int, /
+) -> tuple[ChartScalar, Fraction] | None:
+    """Extract an exact affine coordinate even when the other coordinate is harmonic."""
+    from ._patches import _validate_source_shadows, PlaneCylinderSectionPCurve
+
+    coefficients = line_chart_coefficients(curve)
+    if coefficients is not None:
+        return coefficients[0][axis], coefficients[1][axis]
+    try:
+        _validate_source_shadows(curve, set())
+    except (TypeError, ValueError):
+        return None
+    shifts = 0
+    while isinstance(curve, PeriodicPCurve):
+        if (
+            curve.period_shifts[axis]
+            and curve.patch.native_period_symbols()[axis] != "two_pi"
+        ):
+            return None
+        shifts += curve.period_shifts[axis]
+        curve = curve.source_curve
+    if not isinstance(curve, PlaneCylinderSectionPCurve) or (
+        curve.cosine_exact[axis] != 0 or curve.sine_exact[axis] != 0
+    ):
+        return None
+    try:
+        origin: ChartScalar = rational_coefficient(
+            curve.offset_exact[axis], role="chart origin"
+        )
+        direction = rational_coefficient(curve.linear_exact[axis], role="chart direction")
+    except (TypeError, ValueError):
+        return None
+    if axis == 0 and curve.angle_offset_root is not None:
+        phase = _cardinal_conic_phase(curve.angle_offset_root)
+        if phase is None:
+            return None
+        origin = chart_add(origin, phase)
+    return chart_add(origin, PeriodOffset(Fraction(0), Fraction(shifts))), direction
+
+
 def _coedge_axis_values(
     geometry: BRepGeometry, coedge: int, axis: int, /
 ) -> tuple[ChartScalar, ChartScalar] | None:
-    """Exact chart coordinates of an affine p-curve at its authored endpoints."""
-    coefficients = line_chart_coefficients(geometry.pcurves[coedge])
+    """Exact chart coordinates of a proved affine coordinate at both endpoints."""
+    coefficients = _coedge_affine_axis(geometry.pcurves[coedge], axis)
     if coefficients is None:
         return None
     origin, direction = coefficients
+    if direction == 0:
+        # The fixed coordinate does not depend on how either endpoint is rooted.
+        return origin, origin
     edge = geometry.coedge_edges[coedge]
     values: list[ChartScalar] = []
     for value, root in zip(
@@ -1019,9 +1075,21 @@ def _coedge_axis_values(
                 parameter: ChartScalar = Fraction(float(value))
             case NativePeriodEndpoint():
                 parameter = root.exact_parameter
+            case ConicParameterEndpoint():
+                from ._intersection import _same_parameter_source
+
+                if not _same_parameter_source(root.carrier, geometry.pcurves[coedge]):
+                    return None
+                if root.parameter_exact is not None:
+                    parameter = root.parameter_exact
+                else:
+                    phase = _cardinal_conic_phase(root.root)
+                    if phase is None:
+                        return None
+                    parameter = phase
             case _:
                 return None
-        values.append(chart_add(origin[axis], chart_scale(parameter, direction[axis])))
+        values.append(chart_add(origin, chart_scale(parameter, direction)))
     return values[0], values[1]
 
 

@@ -4,6 +4,7 @@ import base64
 import gzip
 import hashlib
 import math
+from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal
@@ -601,7 +602,67 @@ def _external_case(
     boolean_record = None
     expected_volume = washer_volume_m3
     loops: tuple[tuple[float, float, float, float], ...] = ()
+    repair_record = None
     if case == "external-combined":
+        admitted_limit = source_losslessness["minimum_declared_tolerance"]
+        if (
+            not isinstance(admitted_limit, (int, float))
+            or isinstance(admitted_limit, bool)
+            or imported.source_tolerance is None
+        ):
+            raise RuntimeError("The original STEP source has no usable repair tolerance.")
+        if not imported.source_tolerances:
+            raise RuntimeError("The original STEP source declares no repair budget.")
+        tolerance = min(
+            float(admitted_limit),
+            imported.source_tolerance,
+            *(
+                value * imported.source_length_unit_meters
+                for _, value in imported.source_tolerances
+            ),
+        )
+        original_revision = model.source_revision
+        repair = phx.geometry.brep.repair_brep_source(model, tolerance=float(tolerance))
+        if (
+            model.source_revision != original_revision
+            or repair.source_revision != original_revision
+        ):
+            raise RuntimeError(
+                "Source repair altered or misidentified its original operand."
+            )
+        if (
+            repair.target_revision == original_revision
+            or repair.max_displacement > tolerance
+        ):
+            raise RuntimeError(
+                "Source repair failed its revision or displacement contract."
+            )
+        repair_record = {
+            "source_revision": repair.source_revision,
+            "target_revision": repair.target_revision,
+            "certificate_id": repair.certificate_id,
+            "tolerance_m": float(tolerance),
+            "maximum_displacement_m": repair.max_displacement,
+            "changes_interpretation": repair.changes_interpretation,
+            "completion_semantics": repair.completion_semantics,
+            "completion_evidence": repair.completion_evidence,
+            "completion_connector_bound_m": repair.completion_connector_bound,
+            "completed_face_to_repaired_bound_m": repair.face_source_to_target_bound,
+            "repaired_face_to_completed_bound_m": repair.face_target_to_source_bound,
+            "correspondence": {
+                kind: [
+                    {"source": asdict(source), "target": asdict(target)}
+                    for source, target in sorted(mapping.items())
+                ]
+                for kind, mapping in (
+                    ("solids", repair.solid_map),
+                    ("faces", repair.face_map),
+                    ("edges", repair.edge_map),
+                    ("vertices", repair.vertex_map),
+                )
+            },
+        }
+        model = repair.model
         cutter = phx.geometry.brep.brep_cylinder(
             0.0004,
             0.08,
@@ -640,6 +701,7 @@ def _external_case(
             "geometric_losslessness": source_losslessness,
         },
         "requested_format_roundtrip": roundtrip,
+        "explicit_source_repair": repair_record,
         "analytic_volume_m3": expected_volume,
         "manufactured_length_m": 0.0315,
         "analytic_volume_method": "independent Pappus revolution integral of the NIST profile; combined case subtracts the donor's independent radial-cylinder integral",

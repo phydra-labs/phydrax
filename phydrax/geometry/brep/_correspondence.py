@@ -52,6 +52,7 @@ from ._patches import (
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
     TorusPatch,
+    TorusRootedCirclePCurve,
 )
 from ._placed import PlacedCurve, PlacedSurface
 from ._source_correspondence import (
@@ -991,6 +992,62 @@ def _same_conic_root_extrusion_line_lift(
     return source == (origin, slope)
 
 
+def _periodic_conic_root_cylinder_line_lift(
+    curve: AbstractCurve,
+    pcurve: AbstractCurve,
+    patch: CylinderPatch,
+    region: SurfaceRegion,
+    first: float,
+    last: float,
+    /,
+) -> bool:
+    """Prove an integer-period gauge of an exact cylinder generator."""
+    from ._patches import _validate_source_shadows
+    from ._trim_helpers import period_offset, period_scalar_bounds
+
+    periodic = _periodic_pcurve_source(pcurve, patch)
+    if periodic is None:
+        return False
+    source, shifts = periodic
+    if not isinstance(source, ConicRootLinePCurve):
+        return False
+    if shifts[1] or source.phase_shift_exact != 0:
+        return False
+    try:
+        _validate_source_shadows(pcurve, set())
+    except (TypeError, ValueError):
+        return False
+    for domain in (curve.parameter_domain, pcurve.parameter_domain):
+        if domain is not None and (first < domain[0] or last > domain[1]):
+            return False
+    box = _revolution_region_box(region)
+    if box is None:
+        return False
+    period = patch.periods[0]
+    full_period = period is not None and box[1][0] - box[0][0] >= Fraction.from_float(
+        float(period)
+    )
+    if not full_period:
+        for bound in source.root.parameter_enclosure():
+            lower, upper = period_scalar_bounds(
+                period_offset(Fraction.from_float(float(bound)), Fraction(shifts[0]))
+            )
+            if (
+                Fraction.from_float(float(lower)) < box[0][0]
+                or Fraction.from_float(float(upper)) > box[1][0]
+            ):
+                return False
+    for parameter in (first, last):
+        height = (
+            source.height_origin_exact
+            + source.height_direction_exact * Fraction.from_float(float(parameter))
+        )
+        lower, upper = coefficient_interval(height, bits=128)
+        if lower < box[0][1] or upper > box[1][1]:
+            return False
+    return _same_conic_root_cylinder_line_lift(curve, source, patch)
+
+
 def _same_conic_root_cylinder_line_lift(
     curve: AbstractCurve,
     pcurve: ConicRootLinePCurve,
@@ -1706,6 +1763,113 @@ def _revolution_angular_circle_lift(
     return False
 
 
+def torus_rooted_circle_pcurve(
+    root: ConicParameterRoot,
+    turns: Fraction,
+    orientation: int,
+    /,
+    *,
+    parameter_range: tuple[float, float] | None = None,
+) -> TorusRootedCirclePCurve:
+    """Construct the exact torus latitude chart ``(orientation*t + turns*2π, root)``.
+
+    The root is a parameter root on the torus's exact meridian circle.
+    ``turns`` is a rational number of mathematical native periods, not radians.
+    """
+    return TorusRootedCirclePCurve(
+        root, turns, orientation, parameter_range=parameter_range
+    )
+
+
+def _torus_phased_rooted_circle_lift(
+    curve: AbstractCurve,
+    pcurve: AbstractCurve,
+    patch: TorusPatch,
+    region: SurfaceRegion,
+    first: float,
+    last: float,
+    /,
+) -> bool:
+    from ._patches import _validate_source_shadows
+    from ._trim_helpers import period_offset, period_scalar_bounds
+
+    source = _periodic_pcurve_source(pcurve, patch)
+    if source is None:
+        return False
+    rooted, shifts = source
+    if not isinstance(rooted, TorusRootedCirclePCurve):
+        return False
+
+    if (
+        not isinstance(curve, CircleCurve)
+        or curve.ambient_dimension != 3
+        or curve.native_period_symbol() != "two_pi"
+        or patch.native_period_symbols() != ("two_pi", "two_pi")
+    ):
+        return False
+    curve_domain = curve.parameter_domain
+    if curve_domain is not None and (first < curve_domain[0] or last > curve_domain[1]):
+        return False
+    try:
+        _validate_source_shadows(pcurve, set())
+    except (TypeError, ValueError):
+        return False
+    domain = pcurve.parameter_domain
+    if domain is not None and (first < domain[0] or last > domain[1]):
+        return False
+    box = _revolution_region_box(region)
+    root = rooted.root_line.root
+    if box is None or not _conic_parameter_root_in_interval(root, box[0][1], box[1][1]):
+        return False
+    # A whole native-period chart covers all longitude representatives.
+    span = box[1][0] - box[0][0]
+    period_lower, _ = period_scalar_bounds(period_offset(Fraction(0), Fraction(1)))
+    if shifts[1] and (
+        abs(shifts[1]) != 1
+        or box[1][1] - box[0][1] < Fraction.from_float(float(period_lower))
+    ):
+        return False
+    if span < Fraction.from_float(float(period_lower)):
+        endpoints = sorted(
+            rooted.orientation * Fraction.from_float(value) for value in (first, last)
+        )
+        lower = period_scalar_bounds(
+            period_offset(endpoints[0], rooted.turns + shifts[0])
+        )[0]
+        upper = period_scalar_bounds(
+            period_offset(endpoints[1], rooted.turns + shifts[0])
+        )[1]
+        if float(lower) < float(box[0][0]) or float(upper) > float(box[1][0]):
+            return False
+    quarter = rooted.turns * 4
+    if quarter.denominator != 1:
+        return False
+    cosine, sine = ((1, 0), (0, 1), (-1, 0), (0, -1))[quarter.numerator % 4]
+    center, a, b, axis = (
+        patch.center_exact,
+        patch.first_axis_exact,
+        patch.second_axis_exact,
+        patch.axis_exact,
+    )
+    major, minor = patch.major_radius_exact, patch.minor_radius_exact
+    meridian = (
+        tuple(center[i] + major * a[i] for i in range(3)),
+        tuple(minor * a[i] for i in range(3)),
+        tuple(minor * axis[i] for i in range(3)),
+    )
+    if _harmonic_coefficients(root.conic) != meridian:
+        return False
+    radius = major + minor * root.cosine_exact
+    expected = (
+        tuple(center[i] + minor * root.sine_exact * axis[i] for i in range(3)),
+        tuple(radius * (cosine * a[i] + sine * b[i]) for i in range(3)),
+        tuple(
+            rooted.orientation * radius * (-sine * a[i] + cosine * b[i]) for i in range(3)
+        ),
+    )
+    return _harmonic_coefficients(curve) == expected
+
+
 def _torus_rooted_circle_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
@@ -1771,11 +1935,21 @@ def _torus_coordinate_circle_lift(
         or patch.native_period_symbols() != ("two_pi", "two_pi")
     ):
         return False
-    chart = _surface_chart_coefficients(pcurve, region, first, last)
+    from ._trim_helpers import PeriodOffset
+
+    chart = periodic_affine_line_chart(pcurve, region, first, last)
     if chart is None:
         return False
-    uv_origin, uv_direction, _ = chart
-    if uv_origin != (Fraction(0), Fraction(0)):
+    uv_origin, uv_direction = chart
+    if any(
+        value != 0
+        and not (
+            isinstance(value, PeriodOffset)
+            and value.rational == 0
+            and value.turns.denominator == 1
+        )
+        for value in uv_origin
+    ):
         return False
     center = patch.center_exact
     first_axis = patch.first_axis_exact
@@ -3079,6 +3253,12 @@ def exact_source_lift(
         curve, pcurve, region.patch
     ):
         return True
+    if isinstance(
+        region.patch, CylinderPatch
+    ) and _periodic_conic_root_cylinder_line_lift(
+        curve, pcurve, region.patch, region, first, last
+    ):
+        return True
     if (
         isinstance(curve, SurfaceMappedCurve)
         and isinstance(curve.pcurve, ConicRootLinePCurve)
@@ -3160,6 +3340,10 @@ def exact_source_lift(
         or _revolution_angular_circle_lift(
             curve, pcurve, region.patch, region, first, last
         )
+    ):
+        return True
+    if isinstance(region.patch, TorusPatch) and _torus_phased_rooted_circle_lift(
+        curve, pcurve, region.patch, region, first, last
     ):
         return True
     if isinstance(region.patch, TorusPatch) and (
@@ -3253,4 +3437,4 @@ def exact_source_lift(
     return False
 
 
-__all__ = ["exact_source_lift", "native_edge_pcurve"]
+__all__ = ["exact_source_lift", "native_edge_pcurve", "torus_rooted_circle_pcurve"]

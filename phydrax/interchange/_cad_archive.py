@@ -82,6 +82,7 @@ from ..geometry.brep._patches import (
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
     TorusPatch,
+    TorusRootedCirclePCurve,
 )
 from ..geometry.brep._tspline import TSplineSurfacePatch
 from ..meshing._model_codec import read_model_artifact, write_model_artifact
@@ -143,6 +144,7 @@ _BREP_TYPES = (
     SpherePatch,
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
+    TorusRootedCirclePCurve,
     TorusPatch,
     TSplineSurfacePatch,
 )
@@ -1354,6 +1356,29 @@ def _construct_dataclass(model_type: type, fields: Mapping[str, Any], /) -> Any:
             fields["sine_exact"],
             turns=fields["turns"],
         )
+    if model_type is TorusRootedCirclePCurve:
+        if set(fields) != {"root_line", "turns", "orientation", "longitude_offset"}:
+            raise ValueError("Stored torus rooted p-curve fields are not canonical.")
+        root_line = fields["root_line"]
+        if not isinstance(root_line, ConicRootLinePCurve):
+            raise ValueError("Stored torus rooted p-curve requires a conic root line.")
+        curve = TorusRootedCirclePCurve(
+            root_line.root,
+            fields["turns"],
+            fields["orientation"],
+            parameter_range=root_line.parameter_domain,
+        )
+        if (
+            root_line.identity_payload() != curve.root_line.identity_payload()
+            or not np.array_equal(
+                np.asarray(root_line.angle), np.asarray(curve.root_line.angle)
+            )
+            or not np.array_equal(
+                np.asarray(fields["longitude_offset"]), np.asarray(curve.longitude_offset)
+            )
+        ):
+            raise ValueError("Stored torus rooted p-curve differs from its exact source.")
+        return curve
     if model_type is ConicRootLinePCurve:
         expected_fields = {
             "root",
