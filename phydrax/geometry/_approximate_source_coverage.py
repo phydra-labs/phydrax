@@ -1094,7 +1094,7 @@ def _cad_target_root_partition(
     from ..meshing.providers._native_cad_volume import _exact_patch_chart
     from ..meshing.providers._native_plc_geometry import simplex_volume_entities
     from ._domain_boundary import exact_plane_chart
-    from ._meshing_domain import SourcePreparation
+    from ._meshing_domain import PatchCurveUse, SourcePreparation
     from ._surface_source_support import _cad_root_edges, validate_cad_curve_ancestry
 
     if witness.cad_plc is None:
@@ -1225,6 +1225,15 @@ def _cad_target_root_partition(
                 "CAD target row changes root source identity.", status="violated"
             )
         grouped.setdefault(int(root_id), []).append(triangle)
+    rows_by_target_edge: dict[tuple[int, int], list[int]] = {}
+    for row, vertices in enumerate(targets):
+        for first, second in (
+            (vertices[0], vertices[1]),
+            (vertices[1], vertices[2]),
+            (vertices[2], vertices[0]),
+        ):
+            key = (min(first, second), max(first, second))
+            rows_by_target_edge.setdefault(key, []).append(row)
     for root_id, root_row in root_rows.items():
         patch = int(charts.root_patches[root_row])
         if patch in plane_patches or patch in affine_patches:
@@ -1397,11 +1406,9 @@ def _cad_target_root_partition(
                         "CAD target vertex changes source occurrence.", status="violated"
                     )
             sorted_edge = (min(endpoints), max(endpoints))
-            matched_rows = 0
-            for row, row_targets in enumerate(targets):
-                if not set(endpoints) <= set(row_targets):
-                    continue
-                matched_rows += 1
+            incident_rows = rows_by_target_edge.get(sorted_edge, ())
+            for row in incident_rows:
+                row_targets = targets[row]
                 matches = [
                     binding
                     for binding in bindings[parent]
@@ -1458,8 +1465,6 @@ def _cad_target_root_partition(
                 use = domain.patches[patch_rows[row]].loops[binding.loop_index][
                     binding.use_index
                 ]
-                from ._meshing_domain import PatchCurveUse
-
                 if not isinstance(use, PatchCurveUse):
                     raise SourceCoverageUnavailable(
                         "CAD curve ancestry names a collapsed pole use.",
@@ -1485,7 +1490,7 @@ def _cad_target_root_partition(
                     ordered[1],
                     use,
                 )
-            if not matched_rows:
+            if not incident_rows:
                 raise SourceCoverageUnavailable(
                     "CAD target curve edge has no boundary chart incidence.",
                     status="violated",
