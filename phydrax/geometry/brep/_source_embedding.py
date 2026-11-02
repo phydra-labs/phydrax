@@ -45,6 +45,7 @@ from ._trim_helpers import PeriodOffset
 if TYPE_CHECKING:
     from .._meshing_domain import SourcePreparation
     from .._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
+    from ._curve_approximation_topology import TrimReferenceSegment
 
 
 type ExactChartBox = tuple[
@@ -671,6 +672,8 @@ def _certify_cad_trim_sheet_validated(
     patch: int,
     preparation: SourcePreparation,
     /,
+    *,
+    reference: tuple[tuple[TrimReferenceSegment, ...], ...] | None = None,
 ) -> CadTrimSheetProof | None:
     """Compose a sheet using ancestry replayed by the enclosing proof."""
     from .._approximate_source_coverage import _cad_trim_reference_loops
@@ -680,7 +683,8 @@ def _certify_cad_trim_sheet_validated(
         native = certify_brep_trim_sheet(charts.domain, patch)
         if native is None:
             return None
-        reference = _cad_trim_reference_loops(charts, bindings, patch)
+        if reference is None:
+            reference = _cad_trim_reference_loops(charts, bindings, patch)
         pieces = tuple(segment for loop in reference for segment in loop)
         if not pieces:
             return None

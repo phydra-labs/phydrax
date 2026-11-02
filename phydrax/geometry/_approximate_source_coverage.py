@@ -42,7 +42,7 @@ from .implicit._adaptive_discovery import (
 
 if TYPE_CHECKING:
     from ._domain_boundary import _RootedJunction
-    from ._meshing_domain import PatchCurveUse
+    from ._meshing_domain import PatchCurveUse, SourcePreparation
     from ._planar_coverage import OrientedFacet
     from ._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
     from .brep._curve_approximation_topology import TrimReferenceSegment
@@ -805,13 +805,28 @@ def _cad_trim_reference_loops(
     patch: int,
     /,
 ) -> tuple[tuple[TrimReferenceSegment, ...], ...]:
-    """Resolve each authored coedge to its certified root-chart reference chain."""
-    from ._domain_boundary import (
-        _rooted_patch_chart_endpoints,
-        _rooted_patch_chart_junctions,
+    """Resolve coedges using a fresh source preparation."""
+    from ._meshing_domain import SourcePreparation
+    from ._surface_source_support import _cad_root_edges
+
+    _, adjacency = _cad_root_edges(charts)
+    return _cad_trim_reference_loops_prepared(
+        charts, bindings, patch, SourcePreparation(charts.domain), adjacency
     )
-    from ._meshing_domain import PatchCurveUse, PatchPoleUse, SourcePreparation
-    from ._surface_source_support import _cad_pole_lens_endpoint, _cad_root_edges
+
+
+def _cad_trim_reference_loops_prepared(
+    charts: SurfaceSourceCharts,
+    bindings: dict[int, tuple[_CadCurveUseBinding, ...]],
+    patch: int,
+    preparation: SourcePreparation,
+    adjacency: dict[int, tuple[tuple[int, int, _Point2, _Point2], ...]],
+    /,
+) -> tuple[tuple[TrimReferenceSegment, ...], ...]:
+    """Resolve each authored coedge to its certified root-chart reference chain."""
+    from ._domain_boundary import _rooted_patch_chart_junctions
+    from ._meshing_domain import PatchCurveUse, PatchPoleUse
+    from ._surface_source_support import _cad_pole_lens_endpoint
     from .brep._curve_approximation_topology import TrimReferenceSegment
 
     domain = charts.domain
@@ -821,10 +836,13 @@ def _cad_trim_reference_loops(
             "CAD trim homotopy requires BRep authority.", status="unresolved"
         )
     face = domain.source_indices[2][patch]
-    preparation = SourcePreparation(domain)
+    preparation.require(domain)
     junctions = _rooted_patch_chart_junctions(domain, patch, preparation)
-    endpoints = _rooted_patch_chart_endpoints(domain, patch)
-    _, adjacency = _cad_root_edges(charts)
+    endpoints = tuple(
+        tuple((loop[slot - 1].representative, junction.representative)
+              for slot, junction in enumerate(loop))
+        for loop in junctions
+    )
     patch_by_cell = {
         int(identifier): int(charts.root_patches[row])
         for row, identifier in enumerate(charts.cell_global_ids)

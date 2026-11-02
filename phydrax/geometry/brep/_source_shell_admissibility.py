@@ -776,10 +776,14 @@ def certify_single_source_shell(
     distance is used as a source-shell premise.
     """
     from ..._bvh import bvh_overlap_pair_blocks, prepare_bvh
-    from .._approximate_source_coverage import _cad_trim_reference_loops
+    from .._approximate_source_coverage import _cad_trim_reference_loops_prepared
     from .._meshing_domain import _PlacedSurfacePatch, SourcePreparation
     from .._rational import fraction_down, fraction_up
-    from .._surface_source_support import SurfaceSourceCharts, validate_cad_curve_ancestry
+    from .._surface_source_support import (
+        _cad_root_edges,
+        SurfaceSourceCharts,
+        validate_cad_curve_ancestry,
+    )
     from ._assembly import BRepAffinePlacement
     from ._curve_approximation_topology import certify_trim_reference_homotopy
     from ._measure import brep_shell_volume_sign
@@ -822,12 +826,17 @@ def certify_single_source_shell(
             return None
         bindings = validate_cad_curve_ancestry(charts, tolerance)
         preparation = SourcePreparation(domain)
+        _, adjacency = _cad_root_edges(charts)
         sheet_certificates: list[str] = []
         for patch in range(len(domain.patches)):
-            sheet = _certify_cad_trim_sheet_validated(charts, bindings, patch, preparation)
+            loops = _cad_trim_reference_loops_prepared(
+                charts, bindings, patch, preparation, adjacency
+            )
+            sheet = _certify_cad_trim_sheet_validated(
+                charts, bindings, patch, preparation, reference=loops
+            )
             if sheet is None:
                 return None
-            loops = _cad_trim_reference_loops(charts, bindings, patch)
             certify_trim_reference_homotopy(loops, preparation)
             if not _reference_patch_partition(charts, patch, loops):
                 return None
