@@ -429,7 +429,11 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
     separate solver region has the same symbolic full-period domain, or
     establish trim homotopy/partition.
     """
-    from .._domain_boundary import _rooted_patch_chart_endpoints, exact_plane_chart
+    from .._domain_boundary import (
+        _exact_line_junction_box,
+        _rooted_patch_chart_endpoints,
+        exact_plane_chart,
+    )
     from .._meshing_domain import (
         _same_brep_trim_endpoint,
         MeshingDomain,
@@ -560,7 +564,9 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
             a, b = (neighbor, ui) if start else (ui, neighbor)
             if not _same_brep_trim_endpoint(
                 authority, face, edges[a], edges[b], loop[a], loop[b]
-            ):
+            ) and _exact_line_junction_box(
+                authority, face, edges[a], edges[b], loop[a], loop[b]
+            ) is None:
                 return None
             return line[0]
 
