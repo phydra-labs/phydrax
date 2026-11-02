@@ -101,7 +101,7 @@ def _changed_interval(association: GeometryAssociation, /) -> GeometryAssociatio
 
 def _forged_plc(
     plc: PiecewiseLinearComplex,
-    defect: Literal["coedge", "interval", "certificate", "region"],
+    defect: Literal["coedge", "interval", "certificate", "status", "claim", "region"],
     /,
 ) -> PiecewiseLinearComplex:
     forged = copy.copy(plc)
@@ -130,10 +130,20 @@ def _forged_plc(
             object.__setattr__(charts, "associations", tuple(associations))
         object.__setattr__(charts, "source_chart_id", charts._identity())
         object.__setattr__(forged, "cad_source_charts", charts)
-    elif defect == "certificate":
+    elif defect in ("certificate", "status", "claim"):
         fidelity = copy.copy(plc.cad_fidelity)
         assert fidelity is not None
-        object.__setattr__(fidelity, "tolerance", fidelity.tolerance + 1.0)
+        if defect == "certificate":
+            object.__setattr__(fidelity, "tolerance", fidelity.tolerance + 1.0)
+        elif defect == "status":
+            object.__setattr__(fidelity, "status", "violated")
+        else:
+            bound = fidelity.maximum_normal_deviation_bound
+            object.__setattr__(
+                fidelity,
+                "maximum_normal_deviation_bound",
+                1.0 if bound is None else bound + 1.0,
+            )
         object.__setattr__(fidelity, "certificate_id", fidelity._derived_certificate_id())
         object.__setattr__(forged, "cad_fidelity", fidelity)
     else:
@@ -204,14 +214,17 @@ def test_cad_plc_composition_replays_in_cold_process(
     _run_cold(path, cad_plc.complex_id, rejected=False)
 
 
-@pytest.mark.parametrize("defect", ("coedge", "interval", "certificate", "region"))
+@pytest.mark.parametrize(
+    "defect", ("coedge", "interval", "certificate", "status", "claim", "region")
+)
 def test_cad_plc_cold_archive_refuses_rehashed_forgery(
     cad_plc: PiecewiseLinearComplex,
     tmp_path: Path,
-    defect: Literal["coedge", "interval", "certificate", "region"],
+    defect: Literal["coedge", "interval", "certificate", "status", "claim", "region"],
 ) -> None:
     forged = _forged_plc(cad_plc, defect)
-    assert forged.complex_id != cad_plc.complex_id
+    if defect != "claim":
+        assert forged.complex_id != cad_plc.complex_id
     path = write_model_artifact(
         tmp_path / f"forged-{defect}.phx",
         _composition(forged),
@@ -263,3 +276,40 @@ def test_cad_plc_static_banks_are_exact_dynamic_columns(
     )
     with pytest.raises(ValueError):
         PiecewiseLinearComplexArchiveRecipe(fields).decode()
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    (
+        ((1,), (True,)),
+        ((1,), (1.0,)),
+        ((np.array([1], dtype=np.int32),), (np.array([1], dtype=np.int64),)),
+        ({"control": 1}, {"control": True}),
+        ({"control": 1}, {"other": 1}),
+    ),
+)
+def test_cad_proof_recipe_comparison_refuses_kind_dtype_and_field_changes(
+    left: object, right: object
+) -> None:
+    from phydrax.meshing._model_codec import _same_model_content
+
+    assert not _same_model_content(left, right)
+
+
+def test_cad_plc_replays_one_complete_report(
+    cad_plc: PiecewiseLinearComplex, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.meshing import _plc_source
+
+    original = _plc_source._certify_cad_surface
+    calls = 0
+
+    def certify(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(_plc_source, "_certify_cad_surface", certify)
+    restored = PiecewiseLinearComplex.from_stored_fields(cad_plc)
+    assert restored.complex_id == cad_plc.complex_id
+    assert calls == 1

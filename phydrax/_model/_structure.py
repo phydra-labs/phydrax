@@ -1593,7 +1593,9 @@ def model_structure_matches_recipe(value: Any, recipe: Mapping[str, Any], /) -> 
         type(value).__module__ != "phydrax.geometry._source_fidelity_certificate"
         or type(value).__name__ != "SourceFidelityCertificate"
     ):
-        return model_structure_recipe(value) == recipe
+        return _canonical_recipe_payload(model_structure_recipe(value)) == (
+            _canonical_recipe_payload(recipe)
+        )
     from ..meshing._archive_layer_columns import (
         _COLUMNS,
         _encode_column,
@@ -1618,7 +1620,9 @@ def model_structure_matches_recipe(value: Any, recipe: Mapping[str, Any], /) -> 
         if name in columns:
             field = _encode_column(field, columns[name])
         projected = model_archive_projection(field)
-        if model_structure_recipe(projected, path=f"model.{name}") != fields[name]:
+        if _canonical_recipe_payload(
+            model_structure_recipe(projected, path=f"model.{name}")
+        ) != _canonical_recipe_payload(fields[name]):
             return False
     return True
 

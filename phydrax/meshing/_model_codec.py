@@ -20,6 +20,7 @@ from .._array_archive import (
 )
 from .._model._artifacts import artifact_value, artifact_value_id
 from .._model._structure import (
+    _canonical_recipe_payload,
     _recipe_array_nodes,
     _row_record_recipe_types,
     AdaptiveImplicitBoundarySourceArchiveRecipe,
@@ -85,6 +86,44 @@ _MODEL_ARRAYS = "model/leaves"
 # member, and aggregate byte limits still bound every allocation. Every other
 # admission bound keeps its conservative default.
 MODEL_ARCHIVE_LIMITS = ArrayArchiveLimits(max_manifest_nesting=64, max_members=4097)
+
+def _same_model_content(left: Any, right: Any, /) -> bool:
+    """Compare canonical recipes and array payloads, streaming fidelity fields."""
+    import numpy as np
+
+    if type(left) is not type(right):
+        return False
+    from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
+
+    if type(left) is SourceFidelityCertificate:
+        from ._archive_layer_columns import _COLUMNS, _encode_column
+
+        columns = _COLUMNS["SourceFidelityCertificate"]
+        for field in dataclasses.fields(left):
+            a = object.__getattribute__(left, field.name)
+            b = object.__getattribute__(right, field.name)
+            if field.name in columns:
+                a = _encode_column(a, columns[field.name])
+                b = _encode_column(b, columns[field.name])
+            if not _same_model_content(a, b):
+                return False
+        return True
+    left = model_archive_root_projection(left)
+    right = model_archive_root_projection(right)
+    recipe = model_structure_recipe(left)
+    if _canonical_recipe_payload(recipe) != _canonical_recipe_payload(
+        model_structure_recipe(right)
+    ):
+        return False
+    left_arrays = pack_model_array_tree(
+        left, recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
+    )
+    right_arrays = pack_model_array_tree(
+        right, recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
+    )
+    return left_arrays.keys() == right_arrays.keys() and all(
+        np.array_equal(left_arrays[key], right_arrays[key]) for key in left_arrays
+    )
 
 
 def _register_model_archive_types() -> None:
@@ -1052,7 +1091,7 @@ def restore_model_archive_value(
     from ..sparse._relation import EdgeRelation
     from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
     from ._distribution_migration import OwnerLocalMigrationState
-    from ._plc_source import _certify_cad_surface, PiecewiseLinearComplex
+    from ._plc_source import PiecewiseLinearComplex
 
     _register_model_archive_types()
     in_composition = False
@@ -1064,7 +1103,9 @@ def restore_model_archive_value(
         left = model_archive_root_projection(left)
         right = model_archive_root_projection(right)
         left_recipe = model_structure_recipe(left)
-        if left_recipe != model_structure_recipe(right):
+        if _canonical_recipe_payload(left_recipe) != _canonical_recipe_payload(
+            model_structure_recipe(right)
+        ):
             return False
         left_arrays = pack_model_array_tree(
             left, left_recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
@@ -1262,21 +1303,8 @@ def restore_model_archive_value(
                 or item.cad_fidelity_tolerance is None
             ):
                 raise ValueError("Stored CAD PLC is missing independent surface proofs.")
-            embedding, fidelity = _certify_cad_surface(
-                charts,
-                item.cad_fidelity_tolerance,
-                item.cad_maximum_normal_deviation,
-                np.asarray(item.cad_embedding.binding.junction_vertices, dtype=np.int64),
-            )
-            if not same_content(embedding, item.cad_embedding) or not same_content(
-                fidelity, item.cad_fidelity
-            ):
-                raise ValueError("Stored CAD PLC proofs differ from mathematical replay.")
             return PiecewiseLinearComplex.from_stored_fields(
-                item,
-                cad_source_charts=charts,
-                cad_embedding=embedding,
-                cad_fidelity=fidelity,
+                item, cad_source_charts=charts
             )
         if type(item) in (
             MeshingScopeSide,
