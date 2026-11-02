@@ -396,6 +396,13 @@ Restricted implicit volume construction retains a host-only, object-bound
 validated embedding for subsequent coverage checks within the same operation.
 Constructing that record computes the embedding and renews local validity;
 an independently supplied embedding certificate is re-proved before reuse.
+Within one acceptance operation, freshly computed local validity can be handed
+to global embedding through an object-bound host artifact. Its constructor
+computes the proof; it cannot accept a caller-supplied verdict, and it is not an
+archive trust token. Bare certificates and restored values still undergo their
+independent replay. Implicit chart preparation shares exact zero derivatives and
+reuses each face's tangents for curvature without changing global proof rounds,
+gradient-failure handling, coefficient order, or certificate contents.
 Source-boundary chart witness chart IDs, source entity IDs and occurrence
 paths are immutable static string metadata; all numerical arrays remain dynamic
 PyTree leaves. This changes witness PyTree structure, container fingerprints and

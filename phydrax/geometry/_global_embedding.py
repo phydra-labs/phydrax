@@ -31,9 +31,9 @@ from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
     CellValidityStatus,
+    certify_cell_geometry_validity,
     ComputedCellValidity,
     ValidatedCellValidityParent,
-    certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_enclosure import (

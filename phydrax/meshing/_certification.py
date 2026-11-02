@@ -17,8 +17,8 @@ from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
-    ValidatedCellValidityParent,
     ComputedCellValidity,
+    ValidatedCellValidityParent,
 )
 from ..discretization._surface_chart_records import SurfaceChartWitness
 from ..geometry._domain_certification import (
