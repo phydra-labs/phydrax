@@ -1221,6 +1221,56 @@ def test_parametric_surface_route_grades_planar_disk_poles_without_thin_bands() 
     assert float(np.min(angles)) >= 10.0
 
 
+def test_cad_surface_curve_ancestry_replays_root_edge_chains() -> None:
+    from phydrax.geometry._surface_source_support import (
+        SurfaceSourceCharts,
+        validate_cad_curve_ancestry,
+    )
+    from phydrax.geometry.brep import brep_box
+
+    contract = SpatialCoordinateContract.si()
+    model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
+    domain = MeshingDomain.from_brep(model)
+    scope = MeshingScope.whole(model, 2)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.7, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=0.1,
+    )
+    construction = prepare_native_surface(
+        domain, specification, NativeMeshingOptions("parametric_surface"), contract
+    ).execute()
+    charts = construction.organization.surface_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    bindings = validate_cad_curve_ancestry(charts, 0.1)
+    assert {binding.curve_row for rows in bindings.values() for binding in rows} == set(
+        range(len(domain.curves))
+    )
+    forged_occurrences = np.array(charts.boundary_occurrences, copy=True)
+    row, slot = np.argwhere(forged_occurrences[:, :, 0] >= 0)[0]
+    patch, loop, use = (int(value) for value in forged_occurrences[row, slot])
+    forged_occurrences[row, slot, 2] = (use + 1) % len(domain.patches[patch].loops[loop])
+    forged = SurfaceSourceCharts(
+        domain,
+        charts.mesh,
+        charts.geometry,
+        charts.coordinate_contract,
+        charts.root_parameters,
+        charts.root_patches,
+        charts.associations,
+        charts.boundary_source,
+        source_root_cell_ids=charts.source_root_cell_ids,
+        source_piece_ids=charts.source_piece_ids,
+        root_parameter_exact=charts.root_parameter_exact,
+        boundary_occurrences=forged_occurrences,
+    )
+    with pytest.raises(ValueError, match="coedge occurrence"):
+        validate_cad_curve_ancestry(forged, 0.1)
+
+
 def test_hard_surface_angle_decides_represented_face_ratio_at_threshold() -> None:
     from phydrax.meshing._quality import _triangle_minimum_sine_violations
 
