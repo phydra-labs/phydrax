@@ -4869,13 +4869,29 @@ def _surface_construction(
     ] = []
     cell_offset = 0
     for chart, local_rows in zip(refined.charts, refined.local_rows, strict=True):
+        # A pole fan can share the same authored corner through different UV rows.
+        pole_occurrences: dict[tuple[int, int], set[tuple[int, int, int]]] = {}
+        for (first, last), (_, occurrence, _, _) in chart.boundary_edges.items():
+            for pole, other in ((first, last), (last, first)):
+                if pole in chart.corners and other not in chart.corners:
+                    key = (other, chart.corners[pole])
+                    pole_occurrences.setdefault(key, set()).add(occurrence)
         for local_row, triangle in enumerate(chart.triangles):
             for opposite in range(3):
                 first, last = triangle[(opposite + 1) % 3], triangle[(opposite + 2) % 3]
                 source = chart.boundary_edges.get(_edge_key(first, last))
-                if source is None:
-                    continue
-                _, occurrence, first_parameter, last_parameter = source
+                if source is not None:
+                    occurrence = source[1]
+                else:
+                    candidates: set[tuple[int, int, int]] = set()
+                    for pole, other in ((first, last), (last, first)):
+                        if pole in chart.corners and other not in chart.corners:
+                            candidates.update(
+                                pole_occurrences.get((other, chart.corners[pole]), ())
+                            )
+                    if len(candidates) != 1:
+                        continue
+                    occurrence = next(iter(candidates))
                 boundary_occurrences[cell_offset + local_row, opposite] = occurrence
         for (first, last), (curve, occurrence, source_first, source_last) in sorted(
             chart.boundary_edges.items()
