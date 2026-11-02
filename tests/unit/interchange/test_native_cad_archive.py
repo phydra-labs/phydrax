@@ -4752,10 +4752,11 @@ def test_brep_archive_rejects_tampered_exact_surface_chart_bank(
     written = subprocess.run(
         [sys.executable, str(_WORKER), "write", str(tmp_path)],
         cwd=_REPOSITORY_ROOT,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    assert written.returncode == 0, written.stderr
     expected = json.loads(written.stdout)
     corrupt_directory = tmp_path / "changed-surface-chart-rational-bank"
     corrupt_directory.mkdir()

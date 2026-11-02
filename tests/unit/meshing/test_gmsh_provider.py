@@ -718,6 +718,7 @@ def test_gmsh_preflight_authenticates_and_preserves_shared_face_sides(
     tmp_path: Any,
 ) -> None:
     from dataclasses import replace
+    from types import SimpleNamespace
 
     from phydrax.geometry._cad_revision import CADSelectionSet
     from phydrax.geometry.brep._partition import (
@@ -728,6 +729,7 @@ def test_gmsh_preflight_authenticates_and_preserves_shared_face_sides(
     from phydrax.meshing.providers._gmsh_preflight import (
         _semantic_region_issues,
         _sweep_preflight_issues,
+        _validate_gmsh_periodicity,
     )
 
     source = _semantic_source(tmp_path / "sided.brep")
@@ -803,6 +805,34 @@ def test_gmsh_preflight_authenticates_and_preserves_shared_face_sides(
         if len(source.topology.face_solids[index]) == 1
     )
     cap = phx.meshing.MeshingScope.from_geometry(source, source.face_ids[exterior])
+    exterior_use = next(
+        item for item in source.geometry.qualified_entity_incidence(
+            source.source_id, source.source_revision
+        )
+        if item.container.kind == "solid" and item.member.kind == "face"
+        and item.member.index == exterior
+    )
+    exterior_side = phx.meshing.MeshingScope.from_geometry(
+        source,
+        CADSelectionSet(
+            revision.revision_id,
+            (revision.select(_entity_occurrence_id(exterior_use.member)),),
+        ),
+    )
+
+    def periodic_issues(left: Any, right: Any) -> list[str]:
+        constraint = phx.meshing.PeriodicConstraint(left, right, np.eye(4))
+        issues: list[str] = []
+        _validate_gmsh_periodicity(
+            SimpleNamespace(periodic_constraints=(constraint,)), source, issues
+        )
+        return issues
+
+    assert any("individual incident side" in issue for issue in periodic_issues(scopes[0], whole))
+    assert any("individual incident side" in issue for issue in periodic_issues(whole, scopes[0]))
+    assert not periodic_issues(both, whole)
+    assert not periodic_issues(exterior_side, cap)
+    assert any("source BRep curves or surfaces" in issue for issue in periodic_issues(forged, whole))
     schedule = phx.meshing.LayerSchedule((0.1, 0.1))
 
     def sweep_issues(wall: Any, target: Any) -> list[str]:

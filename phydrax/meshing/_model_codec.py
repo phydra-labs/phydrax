@@ -1011,6 +1011,7 @@ def restore_model_archive_value(
     )
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._surface_source_archive import restore_surface_source_charts
+    from ..geometry._surface_source_support import SurfaceSourceCharts
     from ..geometry.brep._constructors import BRepTessellationPolicy
     from ..geometry.brep._model import BRepEntityId, BRepModel
     from ..geometry.brep._partition import (
@@ -1249,17 +1250,19 @@ def restore_model_archive_value(
             stored_charts = item.cad_source_charts
             if stored_charts is None:
                 return PiecewiseLinearComplex.from_stored_fields(item)
-            if type(stored_charts) is not SurfaceSourceChartsArchiveRecipe:
-                raise TypeError(
-                    "Stored CAD PLC requires its registered source-chart recipe."
-                )
+            if type(stored_charts) is SurfaceSourceChartsArchiveRecipe:
+                charts = restore_surface_source_charts(stored_charts)
+            elif type(stored_charts) is SurfaceSourceCharts:
+                stored_charts.require_current()
+                charts = stored_charts
+            else:
+                raise TypeError("Stored CAD PLC requires canonical source charts.")
             if (
                 item.cad_embedding is None
                 or item.cad_fidelity is None
                 or item.cad_fidelity_tolerance is None
             ):
                 raise ValueError("Stored CAD PLC is missing independent surface proofs.")
-            charts = restore_surface_source_charts(stored_charts)
             embedding, fidelity = _certify_cad_surface(
                 charts,
                 item.cad_fidelity_tolerance,

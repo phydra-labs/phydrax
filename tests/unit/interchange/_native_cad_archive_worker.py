@@ -110,6 +110,7 @@ from phydrax._model._structure import (
     NativePlcSourceArchiveRecipe,
     ParametricCurveBoundarySourceArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
+    PiecewiseLinearComplexArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
     PreparedSurfaceSourceSupportArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
@@ -360,6 +361,7 @@ from phydrax.meshing._model_codec import (
     MODEL_ARCHIVE_LIMITS,
     read_model_archive_fields,
     read_model_artifact,
+    restore_model_archive_value,
     write_model_artifact,
 )
 from phydrax.meshing._native_construction import NativeMeshOrganization
@@ -2825,7 +2827,9 @@ def _rebuild_cut_coordinate_map(
 ) -> _CutCoordinateMap:
     if type(value) is not _CutCoordinateMap:
         raise TypeError("Stored cut-coordinate map has an unexpected concrete type.")
-    source = PiecewiseLinearComplex.from_stored_fields(value.source_complex)
+    source = restore_model_archive_value(value.source_complex)
+    if type(source) is not PiecewiseLinearComplex:
+        raise TypeError("Cut-coordinate replay did not renew its PLC source.")
     source_mesh = _rebuild_continuation_value(value.source_mesh)
     if not isinstance(source_mesh, CellMesh):
         raise TypeError("Cut-coordinate replay did not renew its source mesh.")
@@ -5433,8 +5437,8 @@ def _rebuild_continuation_value(
                 "Surface model identity differs from its reconstructed owners."
             )
         return model
-    if type(value) is PiecewiseLinearComplex:
-        return PiecewiseLinearComplex.from_stored_fields(value)
+    if type(value) in (PiecewiseLinearComplex, PiecewiseLinearComplexArchiveRecipe):
+        return restore_model_archive_value(value)
     if type(value) is NativeHexGridSchedule:
         schedule = NativeHexGridSchedule(
             value.route,
@@ -6578,8 +6582,8 @@ def _rebuild_continuation_value(
         return _rebuild_cell_geometry_restriction_source(value)
     if type(value) is ExactPowerCellGeometrySource:
         domain_source = value.domain_source
-        if type(domain_source) is PiecewiseLinearComplex:
-            domain_source = PiecewiseLinearComplex.from_stored_fields(domain_source)
+        if type(domain_source) in (PiecewiseLinearComplex, PiecewiseLinearComplexArchiveRecipe):
+            domain_source = restore_model_archive_value(domain_source)
         elif type(domain_source) is MappedReferenceDomain:
             domain_source = _rebuild_as(domain_source, MappedReferenceDomain)
         elif domain_source is not None:
@@ -11117,9 +11121,7 @@ def _rebuild_coordinate_map_composition(value: object, /) -> Composition:
             "Coordinate-map Composition entries differ from its explicit restart schema."
         )
     rebuilt_values: dict[str, object] = {
-        "power/domain": PiecewiseLinearComplex.from_stored_fields(
-            entries["power/domain"].value
-        ),
+        "power/domain": restore_model_archive_value(entries["power/domain"].value),
         "power/carrier-mesh": _rebuild_continuation_value(
             entries["power/carrier-mesh"].value
         ),
@@ -11132,9 +11134,7 @@ def _rebuild_coordinate_map_composition(value: object, /) -> Composition:
         "power/refined-mesh": _rebuild_continuation_value(
             entries["power/refined-mesh"].value
         ),
-        "cut/domain": PiecewiseLinearComplex.from_stored_fields(
-            entries["cut/domain"].value
-        ),
+        "cut/domain": restore_model_archive_value(entries["cut/domain"].value),
         "cut/fill-mesh": _rebuild_continuation_value(entries["cut/fill-mesh"].value),
         "cut/output-mesh": _rebuild_continuation_value(entries["cut/output-mesh"].value),
     }

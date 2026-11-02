@@ -2094,8 +2094,9 @@ For native volume meshing, declare the complete shared facet in `PatchControl`;
 then resolve each incident side separately against the accepted result. A
 single-side interface scope cannot be flattened into an undirected patch
 control.
-Gmsh likewise requires `PatchControl` to select all incident sides of a shared
-face, or the unqualified whole face. For exact sweep, a sided wall or cap must
+Gmsh likewise requires `PatchControl` and periodic surface scopes to select all
+incident sides of a shared face, or the unqualified whole face. A single
+exterior side is complete. For exact sweep, a sided wall or cap must
 belong to the selected volume solid. Geometric sizing controls may use sided
 scopes: sizing acts on the geometric entity rather than imposing a one-sided
 boundary condition.

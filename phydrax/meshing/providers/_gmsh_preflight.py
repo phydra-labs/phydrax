@@ -31,7 +31,7 @@ from .._controls import (
 )
 from .._organization import RegionRole
 from .._planar_bands import PlanarBandResult
-from .._scope import MeshingEntityKind
+from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import (
     CurvatureSizeControl,
     ProximitySizeControl,
@@ -49,6 +49,16 @@ from ._gmsh_options import (
     GmshSurfaceAlgorithm,
     GmshVolumeAlgorithm,
 )
+
+
+def _complete_face_sides(scope: MeshingScope, face: int, owners: tuple[int, ...], /) -> bool:
+    """Whether a source-face selection covers every incident solid side."""
+    sides = tuple(side for side in scope.side_records if side.face_index == face)
+    return (
+        not sides
+        or any(side.entity_id in scope.unqualified_entity_ids for side in sides)
+        or {side.solid_index for side in sides} == set(owners)
+    )
 
 
 def _sweep_preflight_issues(
@@ -502,19 +512,7 @@ def _semantic_region_issues(
             matched = False
             for face in face_ids:
                 owners = model.topology.face_solids[int(face)]
-                sides = tuple(
-                    side
-                    for side in control.scope.side_records
-                    if side.face_index == int(face)
-                )
-                if (
-                    sides
-                    and not any(
-                        side.entity_id in control.scope.unqualified_entity_ids
-                        for side in sides
-                    )
-                    and {side.solid_index for side in sides} != set(owners)
-                ):
+                if not _complete_face_sides(control.scope, int(face), owners):
                     unsupported.append(
                         f"PatchControl {control.name!r} selects only part of a shared "
                         "face; Gmsh patches cannot represent an individual incident side"
@@ -664,14 +662,25 @@ def _validate_gmsh_periodicity(
 ) -> None:
     for constraint in specification.periodic_constraints:
         scopes = (constraint.source_scope, constraint.target_scope)
-        if any(
-            value.entity_dimension not in (1, 2)
-            or _scope_indices(model, value, value.entity_dimension, domain=domain) is None
-            for value in scopes
-        ):
-            unsupported.append(
-                "Gmsh periodic scopes must select source BRep curves or surfaces"
+        for value in scopes:
+            identifiers = (
+                _scope_indices(model, value, value.entity_dimension, domain=domain)
+                if value.entity_dimension in (1, 2)
+                else None
             )
+            if identifiers is None:
+                unsupported.append(
+                    "Gmsh periodic scopes must select source BRep curves or surfaces"
+                )
+            elif value.entity_dimension == 2 and any(
+                not _complete_face_sides(
+                    value, int(face), model.topology.face_solids[int(face)]
+                )
+                for face in identifiers
+            ):
+                unsupported.append(
+                    "Gmsh periodic surfaces cannot represent an individual incident side"
+                )
         if scopes[0].entity_dimension != scopes[1].entity_dimension or len(
             scopes[0].entity_ids
         ) != len(scopes[1].entity_ids):

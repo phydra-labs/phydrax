@@ -245,6 +245,7 @@ def _mapped_reference(value: object, /) -> MappedReferenceDomain:
 def _power_map(
     value: object, mesh: CellMesh, /
 ) -> ExactPowerCellGeometrySource | MappedPowerCellGeometrySource:
+    from .._model._structure import PiecewiseLinearComplexArchiveRecipe
     from ..discretization._exact_power_geometry import ExactPowerCellGeometrySource
     from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..meshing._model_codec import restore_model_archive_value
@@ -261,7 +262,7 @@ def _power_map(
     if type(value) is not ExactPowerCellGeometrySource:
         raise TypeError("Expected a registered exact power source.")
     domain = value.domain_source
-    if type(domain) is PiecewiseLinearComplex:
+    if type(domain) in (PiecewiseLinearComplex, PiecewiseLinearComplexArchiveRecipe):
         domain = restore_model_archive_value(domain)
     elif type(domain) is MappedReferenceDomain:
         domain = _mapped_reference(domain)

@@ -1170,3 +1170,82 @@ def test_split_face_descendants_drive_fe_and_fv_boundary_conditions() -> None:
     ).size
     selection = phx.meshing.resolve_mesh_scope(result.mesh, scopes[0].union(scopes[1]))
     _assert_fe_fv_boundary_conditions(result, selection)
+
+
+def test_gmsh_periodic_preflight_preserves_cad_sides_without_gmsh() -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from OCP.BOPAlgo import BOPAlgo_Splitter
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    from phydrax.geometry.brep._partition import _entity_occurrence_id
+    from phydrax.interchange import import_occt_shape
+    from phydrax.meshing.providers._gmsh_preflight import _validate_gmsh_periodicity
+
+    splitter = BOPAlgo_Splitter()
+    for x in (0.0, 1.0):
+        splitter.AddArgument(
+            BRepPrimAPI_MakeBox(gp_Pnt(x, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
+        )
+    splitter.Perform()
+    assert not splitter.HasErrors()
+    model = import_occt_shape(
+        splitter.Shape(), coordinate_contract=SpatialCoordinateContract.si()
+    ).model
+    face = next(
+        index for index, owners in enumerate(model.topology.face_solids)
+        if len(owners) == 2
+    )
+    exterior = next(
+        index for index, owners in enumerate(model.topology.face_solids)
+        if len(owners) == 1
+    )
+    revision = cad_revision_from_brep_model(model)
+    incidence = model.geometry.qualified_entity_incidence(
+        model.source_id, model.source_revision
+    )
+
+    def sides(index: int) -> tuple[MeshingScope, ...]:
+        return tuple(
+            MeshingScope.from_geometry(
+                model,
+                CADSelectionSet(
+                    revision.revision_id,
+                    (revision.select(_entity_occurrence_id(use.member)),),
+                ),
+            )
+            for use in incidence
+            if use.container.kind == "solid" and use.member.kind == "face"
+            and use.member.index == index
+        )
+
+    shared_sides = sides(face)
+    assert len(shared_sides) == 2
+    exterior_sides = sides(exterior)
+    assert len(exterior_sides) == 1
+    whole = MeshingScope.from_geometry(model, model.face_ids[face])
+    both = shared_sides[0].union(shared_sides[1])
+    record = shared_sides[0].side_records[0]
+    forged = MeshingScope(
+        shared_sides[0].source_id, shared_sides[0].source_revision,
+        shared_sides[0].entity_kind, 2, shared_sides[0].entity_set_id,
+        shared_sides[0].entity_ids,
+        side_records=(replace(record, orientation=-record.orientation),),
+        unqualified_entity_ids=(),
+    )
+
+    def periodic_issues(left: MeshingScope, right: MeshingScope) -> list[str]:
+        constraint = phx.meshing.PeriodicConstraint(left, right, np.eye(4))
+        issues: list[str] = []
+        _validate_gmsh_periodicity(
+            SimpleNamespace(periodic_constraints=(constraint,)), model, issues
+        )
+        return issues
+
+    assert any("individual incident side" in issue for issue in periodic_issues(shared_sides[0], whole))
+    assert any("individual incident side" in issue for issue in periodic_issues(whole, shared_sides[0]))
+    assert not periodic_issues(both, whole)
+    assert not periodic_issues(exterior_sides[0], whole)
+    assert any("source BRep curves or surfaces" in issue for issue in periodic_issues(forged, whole))
