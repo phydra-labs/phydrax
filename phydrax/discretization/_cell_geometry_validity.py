@@ -1231,6 +1231,16 @@ def _affine_determinant(
         )
     if ambient == dimension:
         return determinant_exact(jacobian)
+    if ambient == 3 and dimension == 2:
+        # Cauchy–Binet: det(JᵀJ) is the sum of squared 2×2 row minors.
+        # This is the same exact Gram determinant, without constructing its
+        # symmetric matrix and multiplying its already-reduced entries.
+        minors = (
+            jacobian[0][0] * jacobian[1][1] - jacobian[0][1] * jacobian[1][0],
+            jacobian[0][0] * jacobian[2][1] - jacobian[0][1] * jacobian[2][0],
+            jacobian[1][0] * jacobian[2][1] - jacobian[1][1] * jacobian[2][0],
+        )
+        return sum((value * value for value in minors), Fraction(0))
     gram = tuple(
         tuple(
             sum(

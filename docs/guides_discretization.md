@@ -371,6 +371,9 @@ certificates of the same policy explicitly: a cell whose exact coordinate map
 (cell kind and exact coefficients) has the digest of a map a parent proved
 reuses that proof, every other cell is proved, and the certificate equals the
 one a full proof produces.
+For affine two-dimensional maps into three-space, the exact Gram determinant
+is evaluated as the sum of squared exact 2-by-2 minors; the validity floor and
+outward-rounded bounds are unchanged.
 `CellValidityCertificate(geometry, mesh=..., policy=...)` computes the proof;
 its public constructor does not accept statuses or determinant bounds. Stored
 certificates are independently re-proved before reuse. Source fidelity follows
