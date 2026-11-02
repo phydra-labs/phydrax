@@ -6,6 +6,8 @@
 - CAD surface fidelity compares exact oriented triangle-chain boundaries,
   including collinear subdivisions, before falling back to pairwise clipping;
   independent overlap and material-orientation checks remain in force.
+- Curved-trim fidelity screens lens-to-chart candidates with outward-rounded
+  boxes before the unchanged exact closed-contact test.
 - Native torus source covers and fidelity now bind exact direct and
   affine-placed coefficients in outward point and derivative interval programs,
   including nonbinary rational radii, rather than relying on rounded shadows.

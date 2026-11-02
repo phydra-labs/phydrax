@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
+from itertools import product
 from typing import final, get_args, Protocol, runtime_checkable, TYPE_CHECKING
 
 import numpy as np
@@ -4769,17 +4770,35 @@ def _curved_trim_lens_caps(
 ) -> dict[int, Fraction]:
     """Bound the physical distance a curved-trim lens adds to each target cell."""
     caps: dict[int, Fraction] = {}
-    for lens in lenses:
-        cap, lower, upper = _curved_trim_lens_cap(surface, lens, preparation)
-        if cap == 0:
-            continue
-        for cell_id, chart in chart_rows:
-            if all(
-                min(point[axis] for point in chart) <= upper[axis]
-                and max(point[axis] for point in chart) >= lower[axis]
-                for axis in range(2)
-            ):
-                caps[cell_id] = max(caps.get(cell_id, Fraction(0)), cap)
+    active = tuple(
+        (cap, lower, upper)
+        for lens in lenses
+        for cap, lower, upper in (_curved_trim_lens_cap(surface, lens, preparation),)
+        if cap
+    )
+    if not active or not chart_rows:
+        return caps
+    charts = tuple(chart for _, chart in chart_rows)
+    lens_boxes = polygon_boxes(tuple((lower, upper) for _, lower, upper in active))
+    chart_boxes = polygon_boxes(charts)
+    if lens_boxes is None or chart_boxes is None:
+        pairs = product(range(len(active)), range(len(charts)))
+    else:
+        pairs = (
+            (int(lens_row), int(chart_row))
+            for lens_row, chart_row in box_overlap_pairs(
+                len(active), len(charts), lens_boxes, chart_boxes, self_pairs=False
+            )
+        )
+    for lens_row, chart_row in pairs:
+        cap, lower, upper = active[lens_row]
+        cell_id, chart = chart_rows[chart_row]
+        if all(
+            min(point[axis] for point in chart) <= upper[axis]
+            and max(point[axis] for point in chart) >= lower[axis]
+            for axis in range(2)
+        ):
+            caps[cell_id] = max(caps.get(cell_id, Fraction(0)), cap)
     return caps
 
 

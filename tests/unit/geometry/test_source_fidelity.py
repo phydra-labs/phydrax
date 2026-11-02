@@ -89,6 +89,31 @@ def test_triangle_chain_boundary_handles_subdivision_and_forgeries() -> None:
     assert not _same_triangle_chain_boundary(original, shifted)
 
 
+def test_trim_lens_box_screen_preserves_exact_closed_contacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _source_fidelity
+
+    q = Fraction
+    rows = [
+        (10, ((q(0), q(0)), (q(1), q(0)), (q(0), q(1)))),
+        (11, ((q(1), q(0)), (q(2), q(0)), (q(1), q(1)))),
+        (12, ((q(3), q(3)), (q(4), q(3)), (q(3), q(4)))),
+    ]
+    bounds = (
+        (q(1), (q(0), q(0)), (q(1), q(1))),
+        (q(2), (q(1), q(1)), (q(3), q(3))),
+        (q(0), (q(0), q(0)), (q(4), q(4))),
+    )
+    monkeypatch.setattr(
+        _source_fidelity,
+        "_curved_trim_lens_cap",
+        lambda surface, lens, preparation: lens,
+    )
+    actual = _source_fidelity._curved_trim_lens_caps(None, rows, bounds, None)
+    assert actual == {10: q(2), 11: q(2), 12: q(2)}
+
+
 class _PwlBoundaryOwner:
     domain: PiecewiseLinearDomain
     edges: np.ndarray
