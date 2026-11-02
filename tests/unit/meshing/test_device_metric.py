@@ -610,30 +610,122 @@ def test_host_optimal_collapse_batches_preserve_candidate_order(
         assert first.exact == second.exact
 
 
+def _overflow_metric_work() -> tuple[
+    device_metric.DeviceMetricLayout, device_metric._Work
+]:
+    center = -0.2 + 0.4 * (17.0 / 64.0)
+    points = np.asarray(
+        (
+            (-0.2, 0.0),
+            (center - 0.8, 0.6),
+            (0.2, 0.0),
+            (center + 0.8, -0.6),
+            (center, 0.65),
+            (center, -0.65),
+        ),
+        dtype=np.float64,
+    )
+    cells = np.asarray(
+        ((0, 4, 1), (0, 2, 4), (2, 3, 4), (0, 1, 5), (0, 5, 2), (2, 5, 3)),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_triangles(points, cells)
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    prepared = prepare_device_metric_adaptation(
+        source, MetricMeshAdaptation(_metric(source, 2.0 * np.eye(2))), policy=_policy()
+    )
+    work = _work(prepared.state)
+    # A finite, positively oriented working star can overflow squared spoke
+    # lengths while the short edge and orientation products remain representable.
+    work = work._replace(
+        coordinates=work.coordinates.at[0]
+        .set(jnp.asarray((-1.0e-155, 0.0)))
+        .at[2]
+        .set(jnp.asarray((1.0e-155, 0.0)))
+        .at[1]
+        .set(jnp.asarray((-2.0, 1.0))),
+        metric=jnp.broadcast_to(1.0e308 * jnp.eye(2), work.metric.shape)
+        .at[1]
+        .set(1.1e308 * jnp.eye(2)),
+    )
+    return prepared.layout, work
+
+
+def test_device_optimal_collapse_routes_nonfinite_seed_scores_to_resolution() -> None:
+    layout, work = _overflow_metric_work()
+    updated, _, status, count = eqx.filter_jit(device_metric._optimal_collapse_round)(
+        work, jnp.asarray(False), layout
+    )
+    assert int(count) == 0
+    assert int(status) & int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+    np.testing.assert_array_equal(updated.coordinates, work.coordinates)
+    np.testing.assert_array_equal(updated.cells, work.cells)
+
+
+def test_device_metric_epoch_refuses_nonfinite_lengths_atomically() -> None:
+    layout, work = _overflow_metric_work()
+    update = eqx.filter_jit(device_metric._adapted)(layout, work)
+    assert int(update.report.status) & int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+    assert not bool(update.report.converged)
+    restored = _work(update.state)
+    np.testing.assert_array_equal(restored.coordinates, work.coordinates)
+    np.testing.assert_array_equal(restored.cells, work.cells)
+    np.testing.assert_array_equal(restored.metric, work.metric)
+    np.testing.assert_array_equal(restored.counters, work.counters)
+
+
+def test_device_metric_orbit_transaction_refuses_nonfinite_lengths_atomically() -> None:
+    layout, work = _overflow_metric_work()
+    update = device_metric._compiled_periodic_round(layout, work, jnp.int32(3))
+    assert int(update.report.status) & int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+    assert not bool(update.report.converged)
+    np.testing.assert_array_equal(update.work.coordinates, work.coordinates)
+    np.testing.assert_array_equal(update.work.cells, work.cells)
+    np.testing.assert_array_equal(update.work.metric, work.metric)
+    np.testing.assert_array_equal(update.work.counters, work.counters)
+
+
 @pytest.mark.parametrize(
-    "scale, outcome", [
-        (0.999, "proposal"), (1.0, "unresolved"), (1.001, "excluded"),
+    "scale, outcome",
+    [
+        (0.999, "proposal"),
+        (1.0, "unresolved"),
+        (1.001, "excluded"),
         (0.999, "nonconstant"),
     ],
 )
 def test_device_optimal_remainder_searches_between_seed_parameters(
-    scale: float, outcome: str,
+    scale: float,
+    outcome: str,
 ) -> None:
     center = -0.2 + 0.4 * (17.0 / 64.0)
-    points = np.asarray((
-        (center - 0.8 * scale, 0.6 * scale), (-0.2, 0.0), (0.2, 0.0),
-        (center + 0.8 * scale, -0.6 * scale), (center, 0.65), (center, -0.65),
-    ))
+    points = np.asarray(
+        (
+            (center - 0.8 * scale, 0.6 * scale),
+            (-0.2, 0.0),
+            (0.2, 0.0),
+            (center + 0.8 * scale, -0.6 * scale),
+            (center, 0.65),
+            (center, -0.65),
+        )
+    )
     seeds = -0.2 + 0.4 * np.arange(1, local_metric._OPTIMAL_LATTICE) / (
         local_metric._OPTIMAL_LATTICE
     )
     left = np.sqrt(2.0 * ((seeds - points[0, 0]) ** 2 + points[0, 1] ** 2))
     right = np.sqrt(2.0 * ((seeds - points[3, 0]) ** 2 + points[3, 1] ** 2))
     assert np.all(np.maximum(left, right) > _UPPER)
-    cells = np.asarray((
-        (0, 1, 4), (1, 2, 4), (2, 3, 4),
-        (1, 0, 5), (2, 1, 5), (3, 2, 5),
-    ), dtype=np.int32)
+    cells = np.asarray(
+        (
+            (0, 1, 4),
+            (1, 2, 4),
+            (2, 3, 4),
+            (1, 0, 5),
+            (2, 1, 5),
+            (3, 2, 5),
+        ),
+        dtype=np.int32,
+    )
     mesh = CellMesh.from_triangles(points, cells)
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     prepared = prepare_device_metric_adaptation(
@@ -666,22 +758,31 @@ def test_device_optimal_remainder_searches_between_seed_parameters(
         host, prepared.anchor.source, order, PredicateMode.EXACT
     )
     target_row = int(np.flatnonzero(order == survivor)[0])
-    source_points = dict(zip(
-        prepared.anchor.source.vertex_ids.tolist(),
-        prepared.anchor.source.exact_points, strict=True,
-    ))
+    source_points = dict(
+        zip(
+            prepared.anchor.source.vertex_ids.tolist(),
+            prepared.anchor.source.exact_points,
+            strict=True,
+        )
+    )
     for axis in range(2):
-        image = sum((
-            exact[target_row][column] * source_points[int(sources[target_row, column])][axis]
-            for column in np.flatnonzero(valid[target_row])
-        ), Fraction(0))
+        image = sum(
+            (
+                exact[target_row][column]
+                * source_points[int(sources[target_row, column])][axis]
+                for column in np.flatnonzero(valid[target_row])
+            ),
+            Fraction(0),
+        )
         assert image == Fraction(float(point[axis]))
     topology = device_metric._topology(updated, prepared.layout)
     ring = np.asarray(topology.link[survivor])
     ring = ring[ring >= 0]
-    lengths = np.asarray(device_metric._lengths(
-        updated, jnp.asarray(np.stack((np.full(ring.shape, survivor), ring), axis=1))
-    ))
+    lengths = np.asarray(
+        device_metric._lengths(
+            updated, jnp.asarray(np.stack((np.full(ring.shape, survivor), ring), axis=1))
+        )
+    )
     assert np.all(lengths <= _UPPER)
 
 
@@ -891,8 +992,6 @@ def test_source_box_detects_single_and_crossing_cells() -> None:
     assert covered
     piece = next(piece for piece in shifted if piece.rows == (0, 1, 2))
     assert piece.weight_upper[1] == 1 / (Fraction(1) + Fraction(1, 2**54))
-
-
 
 
 def test_candidate_box_encloses_rounded_and_exact_affine_values() -> None:

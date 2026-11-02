@@ -35,8 +35,6 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from phydrax.ein import contract
-
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import (
     orient2d,
@@ -2466,8 +2464,9 @@ def _optimal_constant_remainder(
         upper = jnp.zeros(ring.shape, dtype=dtype)
         for i in range(2):
             for j in range(2):
-                a, b = multiply(delta_low[:, i], delta_high[:, i],
-                                delta_low[:, j], delta_high[:, j])
+                a, b = multiply(
+                    delta_low[:, i], delta_high[:, i], delta_low[:, j], delta_high[:, j]
+                )
                 a, b = multiply(a, b, tensor[i, j], tensor[i, j])
                 lower, upper = down(lower + a), up(upper + b)
         return lower, upper
@@ -2496,9 +2495,7 @@ def _optimal_constant_remainder(
         moved = jnp.where(hit[..., None], proposal, points[corners])
         orientation = _orientation(moved[:, 0], moved[:, 1], moved[:, 2])
         geometry = jnp.max(jnp.where(star, orientation, _OK))
-        pairs = jnp.stack(
-            (neighbor, jnp.full_like(neighbor, points.shape[0])), axis=1
-        )
+        pairs = jnp.stack((neighbor, jnp.full_like(neighbor, points.shape[0])), axis=1)
         measured = metric_edge_lengths(
             jnp.concatenate((work.metric, tensor[None])),
             jnp.concatenate((points, proposal[None])),
@@ -2506,10 +2503,13 @@ def _optimal_constant_remainder(
         )
         candidate_score = jnp.max(jnp.where(present, measured, 0.0))
         admitted = (
-            ~excluded & ~terminal & (geometry == _OK)
+            ~excluded
+            & ~terminal
+            & (geometry == _OK)
             & jnp.all(~present | (upper <= 2.0))
             & jnp.all(jnp.isfinite(upper))
-            & jnp.isfinite(candidate_score) & (candidate_score <= _UPPER)
+            & jnp.isfinite(candidate_score)
+            & (candidate_score <= _UPPER)
         )
         subdivide = ~excluded & ~terminal & ~admitted
         fits = size + 2 <= capacity
@@ -2518,23 +2518,34 @@ def _optimal_constant_remainder(
         lows = lows.at[low_slot].set(jnp.where(subdivide & fits, middle, lows[low_slot]))
         highs = highs.at[low_slot].set(jnp.where(subdivide & fits, hi, highs[low_slot]))
         lows = lows.at[high_slot].set(jnp.where(subdivide & fits, lo, lows[high_slot]))
-        highs = highs.at[high_slot].set(jnp.where(subdivide & fits, middle, highs[high_slot]))
+        highs = highs.at[high_slot].set(
+            jnp.where(subdivide & fits, middle, highs[high_slot])
+        )
         return (
-            size + jnp.where(subdivide & fits, 2, 0), lows, highs,
-            found | admitted, jnp.where(admitted, proposal, point),
+            size + jnp.where(subdivide & fits, 2, 0),
+            lows,
+            highs,
+            found | admitted,
+            jnp.where(admitted, proposal, point),
             jnp.where(admitted, candidate_score, score),
-            uncertain | (~excluded & terminal), overflow | (subdivide & ~fits),
+            uncertain | (~excluded & terminal),
+            overflow | (subdivide & ~fits),
         )
 
     initial = (
-        jnp.int32(1), jnp.zeros((capacity,), dtype=dtype),
+        jnp.int32(1),
+        jnp.zeros((capacity,), dtype=dtype),
         jnp.zeros((capacity,), dtype=dtype).at[0].set(1.0),
-        jnp.bool_(False), jnp.zeros((2,), dtype=dtype), jnp.asarray(jnp.inf, dtype=dtype),
-        ~constant, jnp.bool_(False),
+        jnp.bool_(False),
+        jnp.zeros((2,), dtype=dtype),
+        jnp.asarray(jnp.inf, dtype=dtype),
+        ~constant,
+        jnp.bool_(False),
     )
     result = jax.lax.while_loop(
         lambda state: (state[0] > 0) & ~state[3] & ~state[6] & ~state[7],
-        body, initial,
+        body,
+        initial,
     )
     return result[3], result[4], result[5], result[6], result[7]
 
@@ -2731,7 +2742,8 @@ def _optimal_collapse_round(
             status,
         )
         status = jnp.where(absent, _INVALID, status)
-        score = jnp.where(status == _OK, longest, jnp.inf)
+        finite = jnp.all(~ring_present[:, None, :] | jnp.isfinite(lengths), axis=2)
+        score = jnp.where((status == _OK) & finite, longest, jnp.inf)
         best = jnp.argmin(score, axis=1)
         chosen = jnp.arange(block)
         target = jnp.where(live, rows, edge_count)
@@ -2752,10 +2764,11 @@ def _optimal_collapse_round(
             jnp.zeros((edge_count, 2, 2), dtype=points.dtype),
         ),
     )
+
     def remainder(carry: Any) -> Any:
         index, longest_all, point_all, metric_all, unresolved, resource = carry
         row = order[index]
-        missing = longest_all[row] > _UPPER
+        missing = ~jnp.isfinite(longest_all[row]) | (longest_all[row] > _UPPER)
         supported = (
             (topology.kind[kept[row]] == _INTERIOR)
             & ~sliding[row]
@@ -2769,9 +2782,11 @@ def _optimal_collapse_round(
             missing & supported,
             attempt,
             lambda _: (
-                jnp.bool_(False), jnp.zeros((2,), dtype=points.dtype),
+                jnp.bool_(False),
+                jnp.zeros((2,), dtype=points.dtype),
                 jnp.asarray(jnp.inf, dtype=points.dtype),
-                missing & ~supported, jnp.bool_(False),
+                missing & ~supported,
+                jnp.bool_(False),
             ),
             operand=None,
         )
@@ -2792,7 +2807,7 @@ def _optimal_collapse_round(
         remainder,
         (jnp.int32(0), longest, point, metric, periodic_unresolved, jnp.bool_(False)),
     )
-    admitted = eligible & (longest <= _UPPER)
+    admitted = eligible & jnp.isfinite(longest) & (longest <= _UPPER)
     rank = _ranks(admitted, topology.lengths, longest, ids[removed], ids[kept])
     selected = _independent(
         rank,
@@ -3455,12 +3470,26 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
 # ------------------------------------------------------------------ passes
 
 
-def _unit(work: _Work, /) -> Array:
-    """Every measured (unprotected, else every) active edge in the unit range."""
+def _measured_lengths(work: _Work, /) -> tuple[Array, Array]:
+    """Share measured-edge semantics across numerical admission and band checks."""
     lengths = _lengths(work, _half_ends(work.cells))
     active = jnp.repeat(work.cell_active, 3)
     unprotected = active & ~work.edge_protected.reshape((-1,))
     measured = jnp.where(jnp.any(unprotected), unprotected, active)
+    return lengths, measured
+
+
+def _metric_failure(work: _Work, /) -> Array:
+    lengths, measured = _measured_lengths(work)
+    invalid = jnp.any(measured & (~jnp.isfinite(lengths) | (lengths <= 0.0)))
+    return jnp.where(invalid, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION), 0).astype(
+        jnp.int32
+    )
+
+
+def _unit(work: _Work, /) -> Array:
+    """Every measured (unprotected, else every) active edge in the unit range."""
+    lengths, measured = _measured_lengths(work)
     inside = (lengths >= _LOWER) & (lengths <= _UPPER)
     return jnp.all(~measured | inside)
 
@@ -3472,10 +3501,7 @@ def _stall_potential(work: _Work, /) -> Array:
     numbers, so their lexicographic order admits no infinite strictly
     decreasing sequence (see ``_adapted``).
     """
-    lengths = _lengths(work, _half_ends(work.cells))
-    active = jnp.repeat(work.cell_active, 3)
-    unprotected = active & ~work.edge_protected.reshape((-1,))
-    measured = jnp.where(jnp.any(unprotected), unprotected, active)
+    lengths, measured = _measured_lengths(work)
     outside = measured & ((lengths < _LOWER) | (lengths > _UPPER))
     excess = jnp.maximum(
         jnp.abs(jnp.log(jnp.where(measured, lengths, 1.0))) - np.log(_UPPER), 0.0
@@ -3510,20 +3536,35 @@ def _phase(
     """
 
     def proceed(carry: Any) -> Any:
-        _, _, bits, count, _ = carry
-        return (count > 0) & ((bits & _FAILURES) == 0)
+        _, _, bits, count, _, numerical_failure = carry
+        return (count > 0) & ((bits & _FAILURES) == 0) & ~numerical_failure
 
     def sub_round(carry: Any) -> Any:
-        work, done, bits, _, total = carry
+        work, done, bits, _, total, _ = carry
         work, done, round_bits, count = step(work, done, layout)
-        return work, done, bits | round_bits, count, total + count
+        numerical_status = _metric_failure(work)
+        return (
+            work,
+            done,
+            bits | round_bits | numerical_status,
+            count,
+            total + count,
+            numerical_status != 0,
+        )
 
-    work, done, bits, _, total = jax.lax.while_loop(
+    work, done, bits, _, total, numerical_failure = jax.lax.while_loop(
         proceed,
         sub_round,
-        (work, done, bits, jnp.where(enabled, 1, 0).astype(jnp.int32), jnp.int32(0)),
+        (
+            work,
+            done,
+            bits,
+            jnp.where(enabled, 1, 0).astype(jnp.int32),
+            jnp.int32(0),
+            jnp.bool_(False),
+        ),
     )
-    return work, done, bits, total
+    return work, done, bits, total, numerical_failure
 
 
 def _pass(
@@ -3540,7 +3581,7 @@ def _pass(
 
     def skipped(operand: Any) -> Any:
         work, bits = operand
-        return work, bits, jnp.int32(0)
+        return work, bits, jnp.int32(0), jnp.bool_(False)
 
     def collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
         return _collapse_round(work, done, layout, escaping)
@@ -3548,28 +3589,46 @@ def _pass(
     def topological(operand: Any) -> Any:
         work, bits = operand
         total = jnp.int32(0)
+        numerical_failure = jnp.bool_(False)
         for step, enabled in (
             (_split_round, regular),
             (collapse_round, True),
             (_flip_round, regular),
         ):
-            work, _, bits, count = _phase(step, work, done, bits, layout, enabled)
+            work, _, bits, count, phase_failure = _phase(
+                step,
+                work,
+                done,
+                bits,
+                layout,
+                enabled & ~numerical_failure,
+            )
             total = total + count
-        return work, bits, total
+            numerical_failure |= phase_failure
+        return work, bits, total, numerical_failure
 
     def relocating(operand: Any) -> Any:
         work, bits = operand
-        work, _, bits, count = _phase(_relocation_round, work, done, bits, layout)
-        return work, bits, count
+        work, _, bits, count, numerical_failure = _phase(
+            _relocation_round,
+            work,
+            done,
+            bits,
+            layout,
+        )
+        return work, bits, count, numerical_failure
 
-    work, bits, changed = jax.lax.cond(
+    work, bits, changed, numerical_failure = jax.lax.cond(
         work.controls[_TOPOLOGY] != 0, topological, skipped, (work, bits)
     )
-    work, bits, moved = jax.lax.cond(
-        (work.controls[_RELOCATION] != 0) & regular, relocating, skipped, (work, bits)
+    work, bits, moved, relocation_failure = jax.lax.cond(
+        (work.controls[_RELOCATION] != 0) & regular & ~numerical_failure,
+        relocating,
+        skipped,
+        (work, bits),
     )
     work = work._replace(counters=work.counters.at[_PASSES].add(jnp.where(regular, 1, 0)))
-    return work, bits, changed + moved
+    return work, bits, changed + moved, numerical_failure | relocation_failure
 
 
 def _geometry(work: _Work, /) -> tuple[Array, Array]:
@@ -3650,6 +3709,7 @@ def _periodic_round(
     collapses, which share the collapse branch through its traced mode.
     """
     done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
+    initial_failure = _metric_failure(source)
 
     def split(operand: Any) -> Any:
         work, done = operand
@@ -3671,21 +3731,33 @@ def _periodic_round(
 
     def relocate(operand: Any) -> Any:
         work, done = operand
-        work, _, bits, count = _phase(_relocation_round, work, done, jnp.int32(0), layout)
+        work, _, bits, count, _ = _phase(
+            _relocation_round,
+            work,
+            done,
+            jnp.int32(0),
+            layout,
+        )
         return work, bits, count
 
-    work, bits, _ = jax.lax.switch(
-        jnp.where(operation >= 4, 1, operation),
-        (split, collapse, flip, relocate),
-        (source, done),
+    work, bits, _ = jax.lax.cond(
+        initial_failure == 0,
+        lambda: jax.lax.switch(
+            jnp.where(operation >= 4, 1, operation),
+            (split, collapse, flip, relocate),
+            (source, done),
+        ),
+        lambda: (source, initial_failure, jnp.int32(0)),
     )
     uncertain, invalid = _geometry(work)
+    numerical_status = _metric_failure(work)
     bits = (
         bits
+        | numerical_status
         | jnp.where(invalid > 0, int(AdaptiveSimplexStatus.INVALID_GEOMETRY), 0)
         | jnp.where(uncertain > 0, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION), 0)
     ).astype(jnp.int32)
-    failed = (bits & _FAILURES) != 0
+    failed = ((bits & _FAILURES) != 0) | (numerical_status != 0)
     capacity = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
     rollback = failed | ((bits & capacity) != 0)
     result = _select(rollback, source, work)
@@ -3756,14 +3828,15 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
 
     def proceed(carry: Any) -> Any:
         work, bits, stalled = carry[:3]
-        return ~stalled & ((bits & _FAILURES) == 0) & ~_unit(work)
+        numerical_failure = carry[-1]
+        return ~stalled & ~numerical_failure & ((bits & _FAILURES) == 0) & ~_unit(work)
 
     def adaptation_pass(carry: Any) -> Any:
-        work, bits, _, escaping, escaped, bound, anchor, anchor_bits, attempt = carry
-        work, bits, applied = _pass(work, bits, layout, escaping)
+        work, bits, _, escaping, escaped, bound, anchor, anchor_bits, attempt, _ = carry
+        work, bits, applied, numerical_failure = _pass(work, bits, layout, escaping)
         quiet = applied == 0
-        potential = _stall_potential(work)
-        healthy = (bits & _FAILURES) == 0
+        healthy = ((bits & _FAILURES) == 0) & ~numerical_failure
+        potential = jax.lax.cond(healthy, lambda: _stall_potential(work), lambda: bound)
         stall = (
             quiet
             & (escaping == _REGULAR)
@@ -3794,14 +3867,18 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
             _select(start, work, anchor),
             jnp.where(start, bits, anchor_bits),
             jnp.where(start, _OPTIMAL, jnp.where(following, _ENDPOINT, attempt)),
+            numerical_failure,
         )
 
-    work, bits, stalled, *_ = jax.lax.while_loop(
+    # Host predicate resolution can accompany valid progress; invalid metric
+    # arithmetic instead stops this numerical epoch and rolls it back.
+    initial_numerical_status = _metric_failure(source)
+    work, bits, stalled, *_, numerical_failure = jax.lax.while_loop(
         proceed,
         adaptation_pass,
         (
             source,
-            jnp.int32(0),
+            initial_numerical_status,
             jnp.bool_(False),
             jnp.int32(_REGULAR),
             jnp.bool_(False),
@@ -3809,6 +3886,7 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
             source,
             jnp.int32(0),
             jnp.int32(_REGULAR),
+            initial_numerical_status != 0,
         ),
     )
     converged = _unit(work)
@@ -3819,7 +3897,7 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
         | jnp.where(invalid > 0, int(AdaptiveSimplexStatus.INVALID_GEOMETRY), 0)
         | jnp.where(uncertain > 0, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION), 0)
     ).astype(jnp.int32)
-    failed = (bits & _FAILURES) != 0
+    failed = ((bits & _FAILURES) != 0) | numerical_failure
     capacity = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
     rollback = failed | ((bits & capacity) != 0)
     work = work._replace(
