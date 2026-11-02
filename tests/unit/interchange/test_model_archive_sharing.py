@@ -210,6 +210,89 @@ def test_equal_subtrees_are_archived_once_independent_of_aliasing(
     )
 
 
+def test_static_sequence_sharing_is_deterministic_and_authenticated() -> None:
+    from phydrax._model._structure import (
+        expand_shared_model_archive_recipe,
+        model_structure_recipe,
+        share_model_archive_recipe,
+    )
+
+    sequence = ("source-occurrence-" + "a" * 80, "target-occurrence-" + "b" * 80)
+    aliased = model_structure_recipe((sequence, sequence))
+    distinct = model_structure_recipe((sequence, tuple(list(sequence))))
+    shared, members = share_model_archive_recipe(aliased, {}, prefix="leaves")
+    assert (shared, members) == share_model_archive_recipe(distinct, {}, prefix="leaves")
+    assert shared["items"][1]["kind"] == "shared"
+    expanded, arrays = expand_shared_model_archive_recipe(
+        shared, members, prefix="leaves"
+    )
+    assert expanded == aliased
+    assert arrays == {}
+
+    # Pre-existing writers emitted equal array-free sequences as definitions.
+    legacy = copy.deepcopy(aliased)
+    expanded, _ = expand_shared_model_archive_recipe(legacy, {}, prefix="leaves")
+    assert expanded == aliased
+
+    tampered = copy.deepcopy(shared)
+    tampered["items"][0]["items"][0]["value"] = "forged"
+    with pytest.raises(ValueError, match="no earlier equal definition"):
+        expand_shared_model_archive_recipe(tampered, {}, prefix="leaves")
+
+
+def test_cad_graph_columns_preserve_inventory_and_reject_tampering() -> None:
+    from phydrax._model._structure import (
+        model_archive_projection,
+        model_from_array_recipe,
+        model_structure_recipe,
+        pack_model_array_tree,
+        restore_row_record_recipes,
+    )
+    from phydrax.geometry._cad_revision import (
+        AssociationCoverageEvidence,
+        AssociationGraph,
+        CADOccurrence,
+        CADRevision,
+        OccurrenceCorrespondence,
+        OccurrenceCorrespondenceTransaction,
+    )
+    from phydrax.meshing._model_codec import _register_model_archive_types
+
+    _register_model_archive_types()
+    source = CADRevision(
+        "source",
+        "body",
+        (CADOccurrence("source", "s", "a", "face", ("s",)),),
+        "source-proof",
+    )
+    target = CADRevision(
+        "target",
+        "body",
+        (CADOccurrence("target", "t", "b", "face", ("t",)),),
+        "target-proof",
+    )
+    transaction = OccurrenceCorrespondenceTransaction(
+        "transaction",
+        "source",
+        "target",
+        (OccurrenceCorrespondence("s", "t", "proof", -1),),
+        frozenset(),
+        frozenset(),
+        AssociationCoverageEvidence(True, True, "certificate", "provider"),
+    )
+    graph = AssociationGraph(source, target, transaction)
+    projected = model_archive_projection(graph)
+    recipe = model_structure_recipe(projected)
+    arrays = pack_model_array_tree(projected, recipe, prefix="leaves")
+    assert arrays
+    raw = model_from_array_recipe(
+        recipe, arrays, prefix="leaves", validate=False, restore_rows=False
+    )
+    assert restore_row_record_recipes(raw) == graph
+    with pytest.raises(ValueError, match="identity changed"):
+        restore_row_record_recipes(raw._replace(graph_id="forged"))
+
+
 @pytest.mark.parametrize("tamper", ("definition", "duplicate", "unresolved"))
 def test_shared_archive_nodes_refuse_changed_or_noncanonical_definitions(
     tmp_path: Path, tamper: str

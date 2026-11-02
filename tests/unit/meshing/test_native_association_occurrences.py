@@ -350,6 +350,124 @@ def test_cad_selection_scope_authenticates_occurrences_and_revision() -> None:
         MeshingScope.from_geometry(model, selections[0], dimension=3)
 
 
+def test_shared_face_cad_sides_require_complete_representable_scope() -> None:
+    from OCP.BOPAlgo import BOPAlgo_Splitter
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    from phydrax.geometry.brep._partition import _entity_occurrence_id
+    from phydrax.interchange import import_occt_shape
+
+    splitter = BOPAlgo_Splitter()
+    for x in (0.0, 1.0):
+        splitter.AddArgument(
+            BRepPrimAPI_MakeBox(gp_Pnt(x, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
+        )
+    splitter.Perform()
+    assert not splitter.HasErrors()
+    model = import_occt_shape(
+        splitter.Shape(), coordinate_contract=SpatialCoordinateContract.si()
+    ).model
+    shared = tuple(
+        index
+        for index, owners in enumerate(model.topology.face_solids)
+        if len(owners) == 2
+    )
+    assert len(shared) == 1
+    revision = cad_revision_from_brep_model(model)
+    members = {
+        record.member
+        for record in model.geometry.qualified_entity_incidence(
+            model.source_id, model.source_revision
+        )
+        if record.member.kind == "face" and record.member.index == shared[0]
+    }
+    assert len(members) == 2
+    selectors = tuple(
+        revision.select(_entity_occurrence_id(member)) for member in members
+    )
+    assert len({selector.path for selector in selectors}) == 2
+    for selector in selectors:
+        with pytest.raises(ValueError, match="cannot represent only one occurrence side"):
+            MeshingScope.from_geometry(
+                model, CADSelectionSet(revision.revision_id, (selector,))
+            )
+
+    selection = CADSelectionSet(revision.revision_id, selectors)
+    scope = MeshingScope.from_geometry(model, selection)
+    domain = MeshingDomain.from_brep(model)
+    rows = tuple(
+        row for row, index in enumerate(domain.source_indices[2]) if index == shared[0]
+    )
+    assert len(rows) == 1
+    from phydrax.meshing.providers._native_cad_volume import _domain_scope_rows
+
+    np.testing.assert_array_equal(_domain_scope_rows(domain, scope, 2), rows)
+    assert domain.source_occurrences[2][rows[0]] in {
+        member.occurrence_path for member in members
+    }
+    assert (
+        PatchControl("interface", scope, ("left", "right")).scope.scope_id
+        == scope.scope_id
+    )
+
+    original = model.geometry
+    assembly = BRepAssemblyGraph(
+        roots=(
+            BRepAssemblyUse("first-0", solid_index=0),
+            BRepAssemblyUse("second-0", solid_index=0),
+            BRepAssemblyUse("second-1", solid_index=1),
+            BRepAssemblyUse("first-1", solid_index=1),
+        ),
+        definitions=(),
+        solid_count=2,
+    )
+    geometry = BRepGeometry(
+        vertex_points=original.vertex_points,
+        vertex_exact_points=original.vertex_exact_points,
+        vertex_roots=original.vertex_roots,
+        curves=original.curves,
+        edge_curves=original.edge_curves,
+        edge_ranges=original.edge_ranges,
+        edge_vertices=original.edge_vertices,
+        edge_endpoint_roots=original.edge_endpoint_roots,
+        pcurves=original.pcurves,
+        coedge_edges=original.coedge_edges,
+        coedge_senses=original.coedge_senses,
+        coedge_endpoint_roots=original.coedge_endpoint_roots,
+        face_loops=original.face_loops,
+        shell_faces=original.shell_faces,
+        shell_orientations=original.shell_orientations,
+        solid_shells=original.solid_shells,
+        assembly_graph=assembly,
+    )
+    repeated = BRepModel(
+        geometry=geometry,
+        patches=model.patches,
+        parameter_bounds=model.parameter_bounds,
+        orientation=model.orientation,
+        trim_domains=model.trim_domains,
+        physical_tags=model.physical_tags,
+        coordinate_contract=model.coordinate_contract,
+        report=model.report,
+    )
+    repeated_revision = cad_revision_from_brep_model(repeated)
+    repeated_members = {
+        record.member
+        for record in geometry.qualified_entity_incidence(
+            repeated.source_id, repeated.source_revision
+        )
+        if record.member.kind == "face" and record.member.index == shared[0]
+    }
+    assert len(repeated_members) == 4
+    repeated_selection = CADSelectionSet.from_revision(
+        repeated_revision,
+        tuple(_entity_occurrence_id(member) for member in repeated_members),
+    )
+    with pytest.raises(ValueError, match="ambiguous coincident assembly copies"):
+        MeshingScope.from_geometry(repeated, repeated_selection)
+
+
 def test_partition_descendants_bind_region_control_exactly() -> None:
     coordinates = SpatialCoordinateContract.si()
     region = brep_box((0.0, 0.0, 0.0), (3.0, 1.0, 1.0), coordinate_contract=coordinates)

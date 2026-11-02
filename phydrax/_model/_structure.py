@@ -31,7 +31,11 @@ if TYPE_CHECKING:
     from ..discretization._exact_algebraic_geometry import RadicalElement
     from ..meshing._association import GeometryAssociation
 
-from .._archive_columns import ExactTensorArchiveRecipe, IntegerRowsArchiveRecipe
+from .._archive_columns import (
+    ExactTensorArchiveRecipe,
+    IntegerRowsArchiveRecipe,
+    TextRowsArchiveRecipe,
+)
 from .._array_archive import (
     _read_npy_metadata,
     ArrayArchiveCorruptionError,
@@ -43,6 +47,119 @@ from .._frozendict import frozendict
 from .._strict import mark_strict_initialized, Strict
 from .._typing_plan import validate_tree
 from ._artifacts import artifact_value, artifact_value_id, register_artifact_value
+
+
+class CADRevisionArchiveRecipe(NamedTuple):
+    revision_id: str
+    source_id: str
+    provenance_id: str
+    occurrences: TextRowsArchiveRecipe
+
+    def restore(self) -> Any:
+        from ..geometry._cad_revision import CADOccurrence, CADRevision
+
+        rows = self.occurrences.decode()
+        if any(len(row) < 6 or row[4] not in ("-1", "1") for row in rows):
+            raise ValueError("Invalid column-encoded CAD occurrence.")
+        return CADRevision(
+            self.revision_id,
+            self.source_id,
+            tuple(
+                CADOccurrence(
+                    self.revision_id,
+                    row[0],
+                    row[1],
+                    row[2],
+                    tuple(row[5:]),
+                    row[3] or None,
+                    int(row[4]),
+                )
+                for row in rows
+            ),
+            self.provenance_id,
+        )
+
+
+class CADTransactionArchiveRecipe(NamedTuple):
+    transaction_id: str
+    source_revision_id: str
+    target_revision_id: str
+    correspondences: TextRowsArchiveRecipe
+    unresolved_source_ids: frozenset[str]
+    unresolved_target_ids: frozenset[str]
+    coverage: object
+
+    def restore(self) -> Any:
+        from ..geometry._cad_revision import (
+            AssociationCoverageEvidence,
+            OccurrenceCorrespondence,
+            OccurrenceCorrespondenceTransaction,
+        )
+
+        if not isinstance(self.coverage, AssociationCoverageEvidence):
+            raise TypeError("CAD transaction requires coverage evidence.")
+        rows = self.correspondences.decode()
+        if any(len(row) != 4 or row[3] not in ("", "-1", "0", "1") for row in rows):
+            raise ValueError("Invalid column-encoded CAD correspondence.")
+        return OccurrenceCorrespondenceTransaction(
+            self.transaction_id,
+            self.source_revision_id,
+            self.target_revision_id,
+            tuple(
+                OccurrenceCorrespondence(
+                    row[0], row[1], row[2], None if not row[3] else int(row[3])
+                )
+                for row in rows
+            ),
+            self.unresolved_source_ids,
+            self.unresolved_target_ids,
+            self.coverage,
+        )
+
+
+class CADGraphArchiveRecipe(NamedTuple):
+    source_revision: object
+    target_revision: object
+    transaction: object
+    graph_id: str
+
+    def restore(self) -> Any:
+        from ..geometry._cad_revision import (
+            AssociationGraph,
+            CADRevision,
+            OccurrenceCorrespondenceTransaction,
+        )
+
+        if (
+            not isinstance(self.source_revision, CADRevision)
+            or not isinstance(self.target_revision, CADRevision)
+            or not isinstance(self.transaction, OccurrenceCorrespondenceTransaction)
+        ):
+            raise TypeError("CAD graph requires revisions and a transaction.")
+
+        graph = AssociationGraph(
+            self.source_revision, self.target_revision, self.transaction
+        )
+        if graph.graph_id != self.graph_id:
+            raise ValueError("Stored CAD graph identity changed.")
+        return graph
+
+
+class PartitionOperandArchiveRecipe(NamedTuple):
+    operand_id: str
+    source: object
+    role: object
+    selection: object
+    target_region_ids: tuple[str, ...]
+
+
+class PartitionPlanArchiveRecipe(NamedTuple):
+    coordinate_contract: object
+    embedding: object
+    operands: tuple[PartitionOperandArchiveRecipe, ...]
+    precedence: tuple[str, ...]
+    plan_id: str
+    topological_dimension: int
 
 
 class AdaptiveImplicitBoundarySourceArchiveRecipe(NamedTuple):
@@ -1516,6 +1633,9 @@ def _row_record_recipe_types() -> frozenset[type]:
 
     return frozenset(
         {
+            CADRevisionArchiveRecipe,
+            CADTransactionArchiveRecipe,
+            CADGraphArchiveRecipe,
             GeometryAssociationArchiveRecipe,
             LayerRecordArchiveRecipe,
             MeshEmbeddingWitnessArchiveRecipe,
@@ -1611,6 +1731,89 @@ def restore_row_record_recipes(value: Any, /) -> Any:
 
 def model_archive_projection(value: Any, /) -> Any:
     """Return a structural archive view with query caches replaced by owner inputs."""
+    if type(value).__module__ == "phydrax.geometry._cad_revision":
+        from ..geometry._cad_revision import (
+            AssociationGraph,
+            CADRevision,
+            OccurrenceCorrespondenceTransaction,
+        )
+
+        if type(value) is AssociationGraph:
+            return CADGraphArchiveRecipe(
+                model_archive_projection(value.source_revision),
+                model_archive_projection(value.target_revision),
+                model_archive_projection(value.transaction),
+                value.graph_id,
+            )
+
+        if type(value) is CADRevision:
+            return CADRevisionArchiveRecipe(
+                value.revision_id,
+                value.source_id,
+                value.provenance_id,
+                TextRowsArchiveRecipe.encode(
+                    tuple(
+                        (
+                            row.occurrence_id,
+                            row.entity_id,
+                            row.kind,
+                            row.parent_occurrence_id or "",
+                            str(row.orientation),
+                            *row.path,
+                        )
+                        for row in value.occurrences
+                    )
+                ),
+            )
+        if type(value) is OccurrenceCorrespondenceTransaction:
+            return CADTransactionArchiveRecipe(
+                value.transaction_id,
+                value.source_revision_id,
+                value.target_revision_id,
+                TextRowsArchiveRecipe.encode(
+                    tuple(
+                        (
+                            row.source_occurrence_id,
+                            row.target_occurrence_id,
+                            row.evidence_id,
+                            ""
+                            if row.orientation_transform is None
+                            else str(row.orientation_transform),
+                        )
+                        for row in value.correspondences
+                    )
+                ),
+                value.unresolved_source_ids,
+                value.unresolved_target_ids,
+                value.coverage,
+            )
+    if (type(value).__module__, type(value).__name__) in {
+        ("phydrax.geometry.brep._partition", "BRepPartitionPlan"),
+        ("phydrax.geometry.brep._planar", "PlanarPartitionPlan"),
+    }:
+        from ..geometry.brep._partition import BRepPartitionPlan
+        from ..geometry.brep._planar import PlanarPartitionPlan
+
+        if type(value) not in (BRepPartitionPlan, PlanarPartitionPlan):
+            raise TypeError("Partition archive projection requires the canonical plan.")
+        planar = type(value) is PlanarPartitionPlan
+        return PartitionPlanArchiveRecipe(
+            value.coordinate_contract,
+            value.embedding if planar else None,
+            tuple(
+                PartitionOperandArchiveRecipe(
+                    operand.operand_id,
+                    model_archive_projection(operand.source if planar else operand.model),
+                    operand.role.value,
+                    operand.selection,
+                    operand.target_region_ids,
+                )
+                for operand in value.operands
+            ),
+            value.policy.region_precedence,
+            value.plan_id,
+            value.topological_dimension,
+        )
     if (
         type(value).__module__ == "phydrax.geometry.brep._partition"
         and type(value).__name__ == "BRepPartitionResult"
@@ -1624,13 +1827,15 @@ def model_archive_projection(value: Any, /) -> Any:
             raise TypeError("Partition archive projection requires the canonical type.")
         return BRepPartitionResultArchiveRecipe(
             model_archive_projection(value.model),
-            value.revision,
-            value.association_graph,
+            model_archive_projection(value.revision),
+            model_archive_projection(value.association_graph),
             value.regions,
             value.patches,
             value.report,
             value.topological_dimension,
-            value.operand_association_graphs,
+            model_archive_projection(value.operand_association_graphs),
+            model_archive_projection(value.plan),
+            value.tessellation_policy,
         )
     if (
         type(value).__module__ == "phydrax.geometry.implicit._source_charts"
@@ -3002,8 +3207,13 @@ class _RecipeContent:
         )
 
     def shareable(self, node: Mapping[str, Any], /) -> bool:
-        return node["kind"] in _SHARED_OBJECT_KINDS or (
-            node["kind"] not in _ARRAY_RECIPE_KINDS and id(node) in self.with_arrays
+        return (
+            node["kind"] in _SHARED_OBJECT_KINDS
+            or (
+                node["kind"] in ("tuple", "list", "set", "frozenset")
+                and len(node["items"]) >= 2
+            )
+            or (node["kind"] not in _ARRAY_RECIPE_KINDS and id(node) in self.with_arrays)
         )
 
 
@@ -3109,8 +3319,16 @@ def expand_shared_model_archive_recipe(
         if content.shareable(expanded):
             key = content.keys[id(expanded)]
             if key in definitions:
-                raise ValueError("Shared model recipe repeats an equal subtree.")
-            definitions[key] = expanded
+                # Earlier archive writers did not share array-free containers.
+                # Their repeated definitions remain admissible; references still
+                # resolve only to an earlier content-identical definition.
+                if (
+                    expanded["kind"] in _SHARED_OBJECT_KINDS
+                    or id(expanded) in content.with_arrays
+                ):
+                    raise ValueError("Shared model recipe repeats an equal subtree.")
+            else:
+                definitions[key] = expanded
         return expanded
 
     try:

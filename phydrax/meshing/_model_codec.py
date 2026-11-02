@@ -24,6 +24,9 @@ from .._model._structure import (
     _row_record_recipe_types,
     AdaptiveImplicitBoundarySourceArchiveRecipe,
     AnalyticImplicitProfileArchiveRecipe,
+    CADGraphArchiveRecipe,
+    CADRevisionArchiveRecipe,
+    CADTransactionArchiveRecipe,
     DistributedFiniteElementTransferArchiveRecipe,
     expand_shared_model_archive_recipe,
     FiniteElementAcceptedStateArchiveRecipe,
@@ -44,6 +47,8 @@ from .._model._structure import (
     NativePlcSourceArchiveRecipe,
     pack_model_array_tree,
     ParametricCurveBoundarySourceArchiveRecipe,
+    PartitionOperandArchiveRecipe,
+    PartitionPlanArchiveRecipe,
     PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS,
     PeriodicFiniteElementTransferArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
@@ -299,6 +304,7 @@ def _register_model_archive_types() -> None:
     )
     from ..geometry.analytic._extended import _TorusKernel
     from ..geometry.analytic._primitives import _BallKernel
+    from ..geometry.brep._constructors import BRepTessellationPolicy
     from ..geometry.brep._partition import (
         BRepPartitionPatch,
         BRepPartitionRegion,
@@ -348,7 +354,7 @@ def _register_model_archive_types() -> None:
         SamplingCoverageEvidence,
         ThinFeatureEvidence,
     )
-    from ..geometry.simplicial._regions import MeshRegion
+    from ..geometry.simplicial._regions import MeshRegion, PlanarMeshRegion
     from ..geometry.surface._contracts import (
         SurfaceInterface,
         SurfaceMetadata,
@@ -574,6 +580,13 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", MappedReferenceBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SparseCoordinateOperatorArchiveRecipe),
         ("phydrax.model.archive", PeriodicFiniteElementTransferArchiveRecipe),
+        ("phydrax.model.archive", PartitionOperandArchiveRecipe),
+        ("phydrax.model.archive", PartitionPlanArchiveRecipe),
+        ("phydrax.model.archive", CADGraphArchiveRecipe),
+        ("phydrax.model.archive", CADRevisionArchiveRecipe),
+        ("phydrax.model.archive", CADTransactionArchiveRecipe),
+        ("phydrax.geometry.brep", BRepTessellationPolicy),
+        ("phydrax.geometry.simplicial", PlanarMeshRegion),
         ("phydrax.model.archive", DistributedFiniteElementTransferArchiveRecipe),
         ("phydrax.geometry.reconstruction", NormalEstimationEvidence),
         ("phydrax.geometry.reconstruction", PoissonSolveEvidence),
@@ -966,21 +979,40 @@ def restore_model_archive_value(
     from ..geometry._cad_revision import (
         _restore_association_graph,
         _restore_cad_selection,
+        AssociationCoverageEvidence,
         AssociationGraph,
+        CADOccurrence,
+        CADRevision,
         CADSelectionSet,
+        CADSelector,
+        OccurrenceCorrespondence,
+        OccurrenceCorrespondenceTransaction,
     )
     from ..geometry._common_root_volume_overlap import (
         CurvedOverlapIntegrationPolicy,
     )
-    from ..geometry.brep._model import BRepEntityId
+    from ..geometry._planar_embedding import PlanarEmbedding
+    from ..geometry.brep._constructors import BRepTessellationPolicy
+    from ..geometry.brep._model import BRepEntityId, BRepModel
     from ..geometry.brep._partition import (
+        BRepPartitionOperand,
         BRepPartitionPatch,
+        BRepPartitionPlan,
+        BRepPartitionPolicy,
         BRepPartitionRegion,
         BRepPartitionReport,
         BRepPartitionResult,
         BRepPartitionResultArchiveRecipe,
+        BRepPartitionRole,
         cad_revision_from_brep_model,
+        partition_brep,
     )
+    from ..geometry.brep._planar import (
+        partition_planar,
+        PlanarPartitionOperand,
+        PlanarPartitionPlan,
+    )
+    from ..geometry.simplicial._regions import PlanarMeshRegion
     from ..interchange._cad_archive import _reconstruct_brep_graph
     from ..lifecycle._composition_rebind import (
         Composition,
@@ -1000,6 +1032,119 @@ def restore_model_archive_value(
     from ._distribution_migration import OwnerLocalMigrationState
 
     _register_model_archive_types()
+    in_composition = False
+    pending_graphs: list[Any] = []
+    pending_selections: list[Any] = []
+
+    def same_content(left: Any, right: Any) -> bool:
+        left = model_archive_root_projection(left)
+        right = model_archive_root_projection(right)
+        left_recipe = model_structure_recipe(left)
+        if left_recipe != model_structure_recipe(right):
+            return False
+        left_arrays = pack_model_array_tree(
+            left, left_recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
+        )
+        right_arrays = pack_model_array_tree(
+            right, left_recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
+        )
+        return left_arrays.keys() == right_arrays.keys() and all(
+            np.array_equal(left_arrays[key], right_arrays[key]) for key in left_arrays
+        )
+
+    def restore_partition_plan(stored: PartitionPlanArchiveRecipe) -> Any:
+        if type(stored) is not PartitionPlanArchiveRecipe:
+            raise TypeError("Partition archive requires its operation plan recipe.")
+        contract = _reconstruct_brep_graph(stored.coordinate_contract)
+        planar = stored.topological_dimension == 2
+        if not planar and stored.topological_dimension != 3:
+            raise ValueError("Unsupported partition plan dimension.")
+        solid_operands: list[BRepPartitionOperand] = []
+        planar_operands: list[PlanarPartitionOperand] = []
+        for operand in stored.operands:
+            if type(operand) is not PartitionOperandArchiveRecipe:
+                raise TypeError("Invalid partition operand recipe.")
+            source = operand.source
+            if type(source) is BRepModel:
+                source = _reconstruct_brep_graph(source)
+            elif planar and type(source) is PlanarMeshRegion:
+                edges = np.asarray(source.edges)
+                offsets = np.asarray(source.loop_offsets)
+                if (
+                    offsets.ndim != 1
+                    or len(offsets) < 2
+                    or offsets[0] != 0
+                    or offsets[-1] != len(edges)
+                    or np.any(np.diff(offsets) < 3)
+                    or edges.ndim != 2
+                    or edges.shape[1] != 2
+                ):
+                    raise ValueError("Invalid stored planar mesh loops.")
+                loops = tuple(
+                    [int(index) for index in edges[int(a) : int(b), 0]]
+                    for a, b in zip(offsets[:-1], offsets[1:], strict=True)
+                )
+                source = PlanarMeshRegion(
+                    source.vertices, loops, feature_id=source.feature_id
+                )
+                if not same_content(source, operand.source):
+                    raise ValueError("Stored planar mesh differs from its constructor.")
+            else:
+                raise TypeError("Unsupported partition operand source.")
+            if operand.selection is not None and not isinstance(
+                operand.selection, CADSelectionSet
+            ):
+                raise TypeError("Invalid stored partition selection.")
+            selection = (
+                None
+                if operand.selection is None
+                else _restore_cad_selection(operand.selection)
+            )
+            if not isinstance(operand.role, str):
+                raise TypeError("Invalid stored partition role.")
+            role = BRepPartitionRole(operand.role)
+            if planar:
+                if not isinstance(source, (BRepModel, PlanarMeshRegion)):
+                    raise TypeError("Invalid planar partition source.")
+                planar_operands.append(
+                    PlanarPartitionOperand(
+                        operand.operand_id,
+                        source,
+                        role,
+                        selection,
+                        operand.target_region_ids,
+                    )
+                )
+            else:
+                if not isinstance(source, BRepModel):
+                    raise TypeError("Invalid solid partition source.")
+                solid_operands.append(
+                    BRepPartitionOperand(
+                        operand.operand_id,
+                        source,
+                        role,
+                        selection,
+                        operand.target_region_ids,
+                    )
+                )
+        policy = BRepPartitionPolicy(stored.precedence)
+        if planar:
+            e = stored.embedding
+            if type(e) is not PlanarEmbedding:
+                raise TypeError("Planar plan requires its embedding.")
+            embedding = PlanarEmbedding(e.origin, e.x_axis, e.y_axis, e.normal)
+            if embedding != e:
+                raise ValueError("Stored planar embedding differs from its constructor.")
+            plan = PlanarPartitionPlan(
+                contract, embedding, tuple(planar_operands), policy
+            )
+        else:
+            if stored.embedding is not None:
+                raise ValueError("Solid partition cannot declare a planar embedding.")
+            plan = BRepPartitionPlan(contract, tuple(solid_operands), policy)
+        if plan.plan_id != stored.plan_id:
+            raise ValueError("Stored partition plan identity does not reproduce.")
+        return plan
 
     def rebuild_policy(policy: Any) -> Any:
         if policy is None or isinstance(policy, (bool, int, float, str, bytes, np.dtype)):
@@ -1062,11 +1207,62 @@ def restore_model_archive_value(
         return rebuilt
 
     def restore(item: Any, /) -> Any:
+        nonlocal in_composition
+        if type(item) in (
+            CADOccurrence,
+            CADRevision,
+            CADSelector,
+            OccurrenceCorrespondence,
+            OccurrenceCorrespondenceTransaction,
+            BRepPartitionPatch,
+            BRepPartitionRegion,
+            BRepPartitionReport,
+            BRepPartitionResult,
+            PartitionOperandArchiveRecipe,
+            PartitionPlanArchiveRecipe,
+            AssociationCoverageEvidence,
+        ):
+            raise ValueError(
+                "CAD partition components require an owning partition replay."
+            )
         if type(item) is AssociationGraph:
-            return _restore_association_graph(item)
+            if not in_composition:
+                raise ValueError(
+                    "CAD association graph requires an owning partition replay."
+                )
+            graph = _restore_association_graph(item)
+            pending_graphs.append(graph)
+            return graph
         if type(item) is CADSelectionSet:
-            return _restore_cad_selection(item)
+            if not in_composition:
+                raise ValueError("CAD selection requires an owning partition replay.")
+            selection = _restore_cad_selection(item)
+            pending_selections.append(selection)
+            return selection
         if type(item) is BRepPartitionResultArchiveRecipe:
+            from .._model._structure import model_archive_projection
+
+            plan = restore_partition_plan(item.plan)
+            if not same_content(model_archive_projection(plan), item.plan):
+                raise ValueError("Stored partition plan differs from its constructors.")
+            policy = item.tessellation_policy
+            if policy is not None:
+                if type(policy) is not BRepTessellationPolicy:
+                    raise TypeError("Invalid partition tessellation policy.")
+                policy = BRepTessellationPolicy(
+                    linear_deflection=policy.linear_deflection,
+                    angular_deflection=policy.angular_deflection,
+                    trim_samples_per_edge=policy.trim_samples_per_edge,
+                )
+                if not same_content(policy, item.tessellation_policy):
+                    raise ValueError(
+                        "Stored tessellation policy differs from its constructor."
+                    )
+            replay = (
+                partition_planar(plan, tessellation=policy)
+                if type(plan) is PlanarPartitionPlan
+                else partition_brep(plan, tessellation=policy)
+            )
             model = _reconstruct_brep_graph(item.model)
             graph = _restore_association_graph(item.association_graph)
             if (
@@ -1110,6 +1306,20 @@ def restore_model_archive_value(
                     if field.init
                 }
             )
+            operand_graphs = tuple(
+                (name, _restore_association_graph(value))
+                for name, value in item.operand_association_graphs
+            )
+            if (
+                not same_content(model, replay.model)
+                or not same_content(graph, replay.association_graph)
+                or not same_content(operand_graphs, replay.operand_association_graphs)
+                or not same_content(report, replay.report)
+                or item.revision != replay.revision
+            ):
+                raise ValueError(
+                    "Stored partition declarations differ from operation replay."
+                )
             rebuilt = BRepPartitionResult(
                 model,
                 graph.target_revision,
@@ -1117,11 +1327,10 @@ def restore_model_archive_value(
                 regions,
                 patches,
                 report,
+                plan,
                 item.topological_dimension,
-                tuple(
-                    (name, _restore_association_graph(value))
-                    for name, value in item.operand_association_graphs
-                ),
+                operand_association_graphs=operand_graphs,
+                tessellation_policy=policy,
             )
             if model_structure_recipe(rebuilt) != model_structure_recipe(item):
                 raise ValueError("Stored partition result changed during reconstruction.")
@@ -1576,11 +1785,15 @@ def restore_model_archive_value(
                 == PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS
             ):
                 return _restore_periodic_finite_element_transfer_root(item, restore)
-            entries = tuple(restore(entry) for entry in item.entries)
+            previous = in_composition
+            graph_start = len(pending_graphs)
+            selection_start = len(pending_selections)
+            in_composition = True
+            try:
+                entries = tuple(restore(entry) for entry in item.entries)
+            finally:
+                in_composition = previous
             graphs = tuple(
-                entry.value for entry in entries if type(entry.value) is AssociationGraph
-            )
-            graphs += tuple(
                 graph
                 for entry in entries
                 if type(entry.value) is BRepPartitionResult
@@ -1589,10 +1802,10 @@ def restore_model_archive_value(
                     *(value for _, value in entry.value.operand_association_graphs),
                 )
             )
-            for entry in entries:
-                selection = entry.value
-                if type(selection) is not CADSelectionSet:
-                    continue
+            for graph in pending_graphs[graph_start:]:
+                if not any(same_content(graph, owner) for owner in graphs):
+                    raise ValueError("CAD graph has no replayed owning partition.")
+            for selection in pending_selections[selection_start:]:
                 inventories = tuple(
                     revision
                     for graph in graphs

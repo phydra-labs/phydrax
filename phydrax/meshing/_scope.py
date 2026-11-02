@@ -174,6 +174,7 @@ def _cad_scope_ids(
     /,
 ) -> tuple[int, np.ndarray]:
     """Authenticate selectors against the model inventory before projecting them."""
+    from ..geometry._meshing_domain import _placed_copy_keys
     from ..geometry.brep._partition import (
         _entity_occurrence_id,
         cad_revision_from_brep_model,
@@ -185,11 +186,11 @@ def _cad_scope_ids(
         raise ValueError("CAD selection belongs to another source revision.")
     if not selection.selectors:
         raise ValueError("Meshing scopes must contain at least one entity.")
+    incidence = model.geometry.qualified_entity_incidence(
+        model.source_id, model.source_revision
+    )
     entities = {
-        _entity_occurrence_id(record.member): record.member
-        for record in model.geometry.qualified_entity_incidence(
-            model.source_id, model.source_revision
-        )
+        _entity_occurrence_id(record.member): record.member for record in incidence
     }
     selected = []
     for selector in selection.selectors:
@@ -203,7 +204,79 @@ def _cad_scope_ids(
         if selector != stored:
             raise ValueError("CAD selector does not match the source revision inventory.")
         selected.append(entity)
-    return _brep_scope_ids(owner, tuple(selected), dimension)
+    # A domain slot represents the entire shared entity, not one incident
+    # solid's side.  Its canonical path is only the first occurrence in the
+    # placed copy.  Project a complete set of uses to that slot, but never
+    # silently widen a single side to all of them.
+    occurrences = tuple(model.geometry.assembly_graph.iter_occurrences())
+    copies = _placed_copy_keys(occurrences)
+    occurrences_by_path = {occurrence.path: occurrence for occurrence in occurrences}
+    placed_members: dict[tuple, dict[int, set[tuple[str, ...]]]] = {}
+    for entity in entities.values():
+        occurrence = occurrences_by_path.get(entity.occurrence_path)
+        if occurrence is not None:
+            key = (entity.kind, entity.index, occurrence.placement.matrix)
+            placed_members.setdefault(key, {}).setdefault(
+                occurrence.solid_index, set()
+            ).add(occurrence.path)
+    for entity in selected:
+        occurrence = occurrences_by_path.get(entity.occurrence_path)
+        if occurrence is None:
+            continue
+        members = placed_members[(entity.kind, entity.index, occurrence.placement.matrix)]
+        if len(members) > 1 and any(len(paths) > 1 for paths in members.values()):
+            raise ValueError(
+                "CAD selection has ambiguous coincident assembly copies; source "
+                "slot pairing by occurrence order cannot preserve exact identity."
+            )
+
+    def group_key(entity: BRepEntityId) -> tuple:
+        return (
+            entity.kind,
+            entity.index,
+            copies.get(entity.occurrence_path, entity.occurrence_path),
+        )
+
+    groups: dict[tuple, set[BRepEntityId]] = {}
+    for entity in entities.values():
+        groups.setdefault(group_key(entity), set()).add(entity)
+    selected_set = set(selected)
+    for entity in selected:
+        if not groups[group_key(entity)] <= selected_set:
+            raise ValueError(
+                "A meshing scope cannot represent only one occurrence side of a "
+                "shared source entity; select all incident occurrences instead."
+            )
+
+    target = _brep_scope_dimension(selected[0].kind)
+    if dimension is not None and nonnegative_integer(dimension, "dimension") != target:
+        raise ValueError("The requested dimension disagrees with the BRep entity kind.")
+    if any(entity.kind != selected[0].kind for entity in selected):
+        raise ValueError("Geometry scopes require one entity kind.")
+    bank = {
+        owner.source_entity_key_for_scope(target, int(identifier)): int(identifier)
+        for identifier in owner.scope_entity_ids(target)
+    }
+    identifiers: set[int] = set()
+    for entity in selected:
+        matches = set()
+        for member in groups[group_key(entity)]:
+            path = member.occurrence_path
+            key = source_entity_id(
+                member.source_id,
+                member.source_revision,
+                member.kind,
+                member.index,
+                occurrence_path=path,
+            )
+            if (key, path) in bank:
+                matches.add(bank[(key, path)])
+        if len(matches) != 1:
+            raise ValueError(
+                "CAD selection must resolve to one declared source entity slot."
+            )
+        identifiers.update(matches)
+    return target, np.asarray(sorted(identifiers), dtype=np.int64)
 
 
 def _geometry_scope_ids(
@@ -354,6 +427,13 @@ class MeshingScope(StrictModule, NonTrainableState):
         CAD selections require their target BRep model or source and one nonempty
         entity dimension. Transport across revisions must be performed explicitly
         with an association graph before constructing the scope.
+
+        A source slot represents a whole shared entity, not an individual
+        incident-solid side. CAD selections must include every occurrence of
+        that entity in the same exact placed copy; incomplete side selections
+        are refused. Coincident repeated solids sharing an entity are also
+        refused when slot pairing depends on occurrence order. Independent
+        assembly copies otherwise remain separate.
         """
         from ..geometry._cad_revision import CADSelectionSet
 

@@ -868,8 +868,10 @@ def partition_native_planar_arrangement(
         regions,
         patches,
         report,
+        plan,
         2,
         operand_association_graphs=tuple(operand_graphs),
+        tessellation_policy=tessellation,
     )
 
 

@@ -517,8 +517,14 @@ it does not infer descendants or use geometric proximity. Selections must be
 nonempty and contain one supported entity kind. Graph transport defaults to
 same-kind descendants; use its `target_kind` argument for explicitly requested
 generated entities of another kind. Deleted or unresolved correspondence and
-partial merges cannot be transported as a selection. A geometry scope can then
-be supplied to `RegionControl` or `PatchControl`;
+partial merges cannot be transported as a selection.
+An orientation rebase must be certified by the correspondence; an
+ancestry-only edge with unresolved orientation cannot transport a selection.
+For a shared face, a mesh scope currently represents the complete shared facet,
+not one region side: selecting only one incident occurrence is refused. A
+complete set of incident uses can select the shared facet when assembly-copy
+pairing is exact; ambiguous coincident repeated copies are refused.
+A geometry scope can then be supplied to `RegionControl` or `PatchControl`;
 actual mesh boundary entities and boundary conditions still require the mesher's
 source association and resulting mesh organization, not the CAD IDs themselves.
 For FE, `resolve_mesh_scope(result.mesh, patch.scope)` yields an entity selection

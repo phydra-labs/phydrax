@@ -549,8 +549,10 @@ def _organized_partition(
         regions,
         tuple(patches),
         raw.report,
+        raw.plan,
         2,
         operand_association_graphs=raw.operand_association_graphs,
+        tessellation_policy=raw.tessellation_policy,
     )
 
 

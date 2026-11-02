@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -21,6 +21,11 @@ from .._cad_revision import (
 )
 from ._model import BRepEntityId, BRepModel
 from ._projection_contracts import brep_entity_id
+
+
+if TYPE_CHECKING:
+    from ._constructors import BRepTessellationPolicy
+    from ._planar import PlanarPartitionPlan
 
 
 def _text(value: str, name: str) -> str:
@@ -496,8 +501,12 @@ class BRepPartitionResult:
     regions: tuple[BRepPartitionRegion, ...]
     patches: tuple[BRepPartitionPatch, ...]
     report: BRepPartitionReport
+    plan: BRepPartitionPlan | PlanarPartitionPlan
     topological_dimension: int = 3
-    operand_association_graphs: tuple[tuple[str, AssociationGraph], ...] = ()
+    operand_association_graphs: tuple[tuple[str, AssociationGraph], ...] = field(
+        kw_only=True
+    )
+    tessellation_policy: BRepTessellationPolicy | None = field(kw_only=True)
     region_entity_kind: str = field(init=False)
     patch_entity_kind: str = field(init=False)
     named_region_entity_ids: tuple[tuple[str, tuple[BRepEntityId, ...]], ...] = field(
@@ -525,6 +534,20 @@ class BRepPartitionResult:
             raise TypeError("association_graph must be an AssociationGraph.")
         if not isinstance(self.report, BRepPartitionReport):
             raise TypeError("report must be a BRepPartitionReport.")
+        from ._constructors import BRepTessellationPolicy
+        from ._planar import PlanarPartitionPlan
+
+        if not isinstance(self.plan, (BRepPartitionPlan, PlanarPartitionPlan)):
+            raise TypeError("Partition result requires its authoritative operation plan.")
+        if self.tessellation_policy is not None and not isinstance(
+            self.tessellation_policy, BRepTessellationPolicy
+        ):
+            raise TypeError("Partition tessellation policy has the wrong type.")
+        if (
+            self.plan.plan_id != self.report.plan_id
+            or self.plan.topological_dimension != self.topological_dimension
+        ):
+            raise ValueError("Partition plan does not match the result report.")
         dimension = _partition_dimension(self.topological_dimension)
         if self.report.topological_dimension != dimension:
             raise ValueError("Partition result and report dimensions must match.")
@@ -553,10 +576,30 @@ class BRepPartitionResult:
         operand_graphs = tuple(self.operand_association_graphs)
         if len({name for name, _ in operand_graphs}) != len(operand_graphs):
             raise ValueError("Partition operand history names must be unique.")
+        if isinstance(self.plan, BRepPartitionPlan):
+            operand_models = {
+                operand.operand_id: operand.model for operand in self.plan.operands
+            }
+        else:
+            operand_models = {
+                operand.operand_id: operand.source
+                for operand in self.plan.operands
+                if isinstance(operand.source, BRepModel)
+            }
+        if {name for name, _ in operand_graphs} != set(operand_models):
+            raise ValueError(
+                "Partition operand histories must exactly cover B-Rep operands."
+            )
         for name, operand_graph in operand_graphs:
             _text(name, "operand history name")
             if not isinstance(operand_graph, AssociationGraph):
                 raise TypeError("Partition operand history must be an AssociationGraph.")
+            if operand_graph.source_revision != cad_revision_from_brep_model(
+                operand_models[name]
+            ):
+                raise ValueError(
+                    "Operand history source does not match its B-Rep operand."
+                )
             if operand_graph.target_revision != self.association_graph.source_revision:
                 raise ValueError(
                     "Operand history must terminate at the partition source revision."
@@ -709,6 +752,8 @@ class BRepPartitionResultArchiveRecipe(NamedTuple):
     report: BRepPartitionReport
     topological_dimension: int
     operand_association_graphs: tuple[tuple[str, AssociationGraph], ...]
+    plan: BRepPartitionPlan | PlanarPartitionPlan
+    tessellation_policy: BRepTessellationPolicy | None
 
 
 class BRepPartitionHistoryError(RuntimeError):
@@ -1155,7 +1200,9 @@ def _full_overlay_partition_result(
         regions,
         patches,
         report,
+        plan,
         operand_association_graphs=operand_graphs,
+        tessellation_policy=tessellation,
     )
 
 

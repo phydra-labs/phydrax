@@ -577,6 +577,159 @@ def test_exact_selection_composes_split_and_merge_without_partial_reattachment()
     assert merged.selectors == (third.select("merged"),)
 
 
+def test_selection_orientation_requires_certified_rebase_in_both_directions() -> None:
+    source = CADRevision(
+        "orientation-source",
+        "source",
+        (
+            CADOccurrence(
+                "orientation-source",
+                "face",
+                "entity",
+                "face",
+                ("face",),
+                orientation=-1,
+            ),
+        ),
+        "provenance",
+    )
+    target = CADRevision(
+        "orientation-target",
+        "target",
+        (
+            CADOccurrence(
+                "orientation-target",
+                "face",
+                "entity",
+                "face",
+                ("face",),
+                orientation=1,
+            ),
+        ),
+        "provenance",
+    )
+
+    def graph(transform: int | None) -> AssociationGraph:
+        return AssociationGraph(
+            source,
+            target,
+            OccurrenceCorrespondenceTransaction(
+                "orientation-transaction",
+                source.revision_id,
+                target.revision_id,
+                (OccurrenceCorrespondence("face", "face", "incidence-proof", transform),),
+                frozenset(),
+                frozenset(),
+                AssociationCoverageEvidence(True, True, "coverage", "test"),
+            ),
+        )
+
+    source_selection = CADSelectionSet.from_revision(source, ("face",))
+    target_selection = CADSelectionSet.from_revision(target, ("face",))
+    for transform in (None, 0, 1):
+        with pytest.raises(ValueError, match="orientation"):
+            graph(transform).resolve_target_selection(source_selection)
+        with pytest.raises(ValueError, match="orientation"):
+            graph(transform).resolve_preimage_selection(target_selection)
+        with pytest.raises(ValueError, match="orientation"):
+            graph(transform).resolve_target(source.select("face")).require_unique()
+        with pytest.raises(ValueError, match="orientation"):
+            graph(transform).resolve_preimage(target.select("face")).require_unique()
+    certified = graph(-1)
+    assert certified.graph_id != graph(None).graph_id
+    assert certified.resolve_target_selection(source_selection) == target_selection
+    assert certified.resolve_preimage_selection(target_selection) == source_selection
+    assert certified.resolve_target(
+        source.select("face")
+    ).require_unique() == target.select("face")
+    assert certified.resolve_preimage(
+        target.select("face")
+    ).require_unique() == source.select("face")
+    with pytest.raises(ValueError, match="orientation_transform"):
+        OccurrenceCorrespondence("face", "face", "proof", 2)
+
+
+def test_unresolved_orientation_refuses_even_equal_incidences() -> None:
+    source = CADRevision(
+        "uncertain-source",
+        "source",
+        (CADOccurrence("uncertain-source", "face", "face", "face", ("face",)),),
+        "provenance",
+    )
+    target = CADRevision(
+        "uncertain-target",
+        "target",
+        (CADOccurrence("uncertain-target", "face", "face", "face", ("face",)),),
+        "provenance",
+    )
+    graph = AssociationGraph(
+        source,
+        target,
+        OccurrenceCorrespondenceTransaction(
+            "uncertain",
+            source.revision_id,
+            target.revision_id,
+            (OccurrenceCorrespondence("face", "face", "ancestry-only", 0),),
+            frozenset(),
+            frozenset(),
+            AssociationCoverageEvidence(True, True, "coverage", "test"),
+        ),
+    )
+    with pytest.raises(ValueError, match="orientation"):
+        graph.resolve_target(source.select("face")).require_unique()
+    with pytest.raises(ValueError, match="orientation"):
+        graph.resolve_preimage(target.select("face")).require_unique()
+    with pytest.raises(ValueError, match="orientation"):
+        graph.resolve_target_selection(CADSelectionSet.from_revision(source, ("face",)))
+    with pytest.raises(ValueError, match="orientation"):
+        graph.resolve_preimage_selection(CADSelectionSet.from_revision(target, ("face",)))
+
+
+def test_selection_orientation_rejects_merge_with_opposite_target() -> None:
+    source = CADRevision(
+        "merge-source",
+        "source",
+        tuple(
+            CADOccurrence("merge-source", name, name, "face", (name,), orientation=-1)
+            for name in ("first", "second")
+        ),
+        "provenance",
+    )
+    target = CADRevision(
+        "merge-target",
+        "target",
+        (CADOccurrence("merge-target", "merged", "merged", "face", ("merged",)),),
+        "provenance",
+    )
+    selection = CADSelectionSet.from_revision(source, ("first", "second"))
+
+    def graph(second_transform: int | None) -> AssociationGraph:
+        return AssociationGraph(
+            source,
+            target,
+            OccurrenceCorrespondenceTransaction(
+                "merge-transaction",
+                source.revision_id,
+                target.revision_id,
+                (
+                    OccurrenceCorrespondence("first", "merged", "proof-first", -1),
+                    OccurrenceCorrespondence(
+                        "second", "merged", "proof-second", second_transform
+                    ),
+                ),
+                frozenset(),
+                frozenset(),
+                AssociationCoverageEvidence(True, True, "coverage", "test"),
+            ),
+        )
+
+    with pytest.raises(ValueError, match="orientation"):
+        graph(None).resolve_target_selection(selection)
+    assert graph(-1).resolve_target_selection(selection) == CADSelectionSet.from_revision(
+        target, ("merged",)
+    )
+
+
 def test_authored_name_binds_only_its_exact_qualified_source_occurrence() -> None:
     region = _box(0.0, 3.0)
     void = _box(1.0)
@@ -727,6 +880,53 @@ def test_partition_selection_cold_archive_and_tampered_history_refusal(
         text=True,
     )
     assert child.returncode == 0, child.stderr
+    # A graph's own recomputed fingerprint authenticates bytes, not CAD history.
+    # Keep inventories and coverage current while forging a correspondence.
+    edge = dataclasses.replace(
+        graph.transaction.correspondences[0], evidence_id="forged-evidence"
+    )
+    transaction = dataclasses.replace(
+        graph.transaction,
+        correspondences=(edge, *graph.transaction.correspondences[1:]),
+    )
+    rehashed_graph = AssociationGraph(
+        graph.source_revision, graph.target_revision, transaction
+    )
+    forged_result = dataclasses.replace(result, association_graph=rehashed_graph)
+    forged_composition = Composition(
+        tuple(
+            CompositionEntry(
+                forged_result
+                if entry.entry_id == "partition"
+                else rehashed_graph
+                if entry.entry_id == "history"
+                else entry.value,
+                entry_id=entry.entry_id,
+                role=entry.role,
+                owner_id=entry.owner_id,
+                structure_id=rehashed_graph.graph_id
+                if entry.entry_id == "history"
+                else entry.structure_id,
+                revision_id=rehashed_graph.graph_id
+                if entry.entry_id == "history"
+                else entry.revision_id,
+                semantics_id=entry.semantics_id,
+                dependencies=entry.dependencies,
+            )
+            for entry in composition(graph, selection).entries
+        ),
+        boundary_id="cad-selection",
+    )
+    forged_path = write_model_artifact(
+        tmp_path / "rehashed-history.phx", forged_composition, limits=MODEL_ARCHIVE_LIMITS
+    )
+    with pytest.raises((ArrayArchiveCorruptionError, ValueError)):
+        read_model_artifact(
+            forged_path,
+            expected_type=Composition,
+            restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
 
     altered = dataclasses.replace(
         graph.source_revision.occurrences[0],
@@ -752,6 +952,85 @@ def test_partition_selection_cold_archive_and_tampered_history_refusal(
             restore=restore_model_archive_value,
             limits=MODEL_ARCHIVE_LIMITS,
         )
+
+
+def test_planar_overlay_cold_partition_archive(tmp_path: Any) -> None:
+    import subprocess
+    import sys
+
+    from phydrax.geometry._planar_embedding import PlanarEmbedding
+    from phydrax.geometry.brep._planar import (
+        partition_planar,
+        PlanarPartitionOperand,
+        PlanarPartitionPlan,
+    )
+    from phydrax.geometry.simplicial import PlanarMeshRegion
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, write_model_artifact
+
+    def rectangle(x: float, name: str) -> PlanarMeshRegion:
+        return PlanarMeshRegion(
+            np.asarray(((x, 0), (x + 2, 0), (x + 2, 1), (x, 1))),
+            ((0, 1, 2, 3),),
+            feature_id=name,
+        )
+
+    embedding = PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
+    plan = PlanarPartitionPlan(
+        _COORDINATES,
+        embedding,
+        (
+            PlanarPartitionOperand(
+                "left", rectangle(0, "left"), BRepPartitionRole.REGION
+            ),
+            PlanarPartitionOperand(
+                "right", rectangle(1, "right"), BRepPartitionRole.REGION
+            ),
+        ),
+        BRepPartitionPolicy(("left", "right")),
+    )
+    result = partition_planar(plan)
+    composition = Composition(
+        (
+            CompositionEntry(
+                result,
+                entry_id="partition",
+                role="model-state",
+                owner_id="cad",
+                structure_id=result.model.model_id,
+                revision_id=result.revision.revision_id,
+                semantics_id="exact-partition",
+            ),
+        ),
+        boundary_id="planar-partition",
+    )
+    path = write_model_artifact(
+        tmp_path / "planar.phx", composition, limits=MODEL_ARCHIVE_LIMITS
+    )
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from phydrax.lifecycle import Composition; "
+            "from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, "
+            "read_model_artifact, restore_model_archive_value; "
+            "c=read_model_artifact(sys.argv[1], expected_type=Composition, "
+            "restore=restore_model_archive_value, limits=MODEL_ARCHIVE_LIMITS); "
+            "p=c.value('partition'); "
+            "assert p.plan.plan_id == sys.argv[2]; "
+            "assert p.model.model_id == sys.argv[3]; "
+            "assert p.association_graph.graph_id == sys.argv[4]; "
+            "assert p.plan.operands[0].source.feature_id == 'left'",
+            str(path),
+            plan.plan_id,
+            result.model.model_id,
+            result.association_graph.graph_id,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert child.returncode == 0, child.stderr
 
 
 def test_partition_operand_graph_composes_real_operations() -> None:
@@ -782,3 +1061,36 @@ def test_partition_operand_graph_composes_real_operations() -> None:
     selected = second.association_graph.resolve_target_selection(selected)
     assert len(selected.selectors) == 2
     assert len(MeshingScope.from_geometry(second.model, selected).entity_ids) == 2
+
+
+def test_box_operand_face_incidence_has_certified_orientation() -> None:
+    model = _box(0.0)
+    result = _execute(_plan((_operand("body", model),), ("body",)))
+    graph = result.operand_association_graph("body")
+    edge = next(
+        edge
+        for edge in graph.transaction.correspondences
+        if edge.orientation_transform == 1
+        and graph.source_revision.occurrence(edge.source_occurrence_id).kind == "face"
+    )
+    source = CADSelectionSet.from_revision(
+        graph.source_revision, (edge.source_occurrence_id,)
+    )
+    transported = graph.resolve_target_selection(source)
+    assert transported.selectors == (
+        graph.target_revision.select(edge.target_occurrence_id),
+    )
+    assert graph.source_revision.occurrence(edge.source_occurrence_id).orientation == 1
+    assert graph.target_revision.occurrence(edge.target_occurrence_id).orientation == 1
+
+
+def test_partition_rejects_missing_operand_history() -> None:
+    import dataclasses
+
+    result = _l_shaped_partition()
+    with pytest.raises(ValueError, match="exactly cover"):
+        dataclasses.replace(result, operand_association_graphs=())
+    with pytest.raises(ValueError, match="exactly cover"):
+        dataclasses.replace(
+            result, operand_association_graphs=result.operand_association_graphs[:1]
+        )
