@@ -837,6 +837,47 @@ def test_tetrahedral_marking_size_and_metric_proposals_use_native_volume_routes(
     assert transaction.commit(source).mesh.topology_id != source.mesh.topology_id
 
 
+@pytest.mark.parametrize("case", ("graded", "anisotropic-10"))
+def test_tetrahedral_metric_proposals_complete_graded_and_anisotropic_fields(
+    case: str,
+) -> None:
+    source = _tetrahedral_source()
+    scope = mesh_proposal_scope(source, 0)
+    order = np.argsort(np.asarray(source.mesh.vertex_global_ids))
+    points = np.asarray(source.mesh.coordinates)[order]
+    if case == "graded":
+        sizes = 0.12 + 0.3 * points[:, 0]
+        tensors = np.eye(3)[None, :, :] / sizes[:, None, None] ** 2
+    else:
+        tensors = np.broadcast_to(
+            np.diag(1.0 / np.asarray((0.04, 0.4, 0.4)) ** 2),
+            (points.shape[0], 3, 3),
+        ).copy()
+    policy = MeshProposalSafetyPolicy(
+        source,
+        minimum_size=0.04,
+        maximum_size=2.0,
+        maximum_displacement=0.1,
+        maximum_anisotropy=10.0,
+        maximum_gradation=4.0,
+    )
+    transaction = prepare_mesh_proposal(
+        source,
+        MeshMetricProposal(source, scope, tensors, proposer_id=f"tetra-{case}"),
+        policy,
+    )
+    assert transaction.projection.metric is not None
+    np.testing.assert_allclose(
+        np.asarray(transaction.projection.metric.values), tensors, rtol=1e-12, atol=0.0
+    )
+    adaptation = transaction.adaptation
+    assert adaptation is not None and adaptation.metric is not None
+    assert adaptation.route is phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D
+    assert adaptation.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    assert adaptation.evidence.out_of_range_edges == 0
+    assert transaction.commit(source).mesh.topology_id != source.mesh.topology_id
+
+
 def test_implicit_marking_proposals_preserve_region_boundary_and_field(
     _implicit_volume_source: tuple[Any, Any, Any],
 ) -> None:

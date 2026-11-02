@@ -1952,6 +1952,30 @@ batch discards provisional edits and returns the unchanged source with
 semantics. `DeviceTetraMetricEvidence` exposes candidate ordering, exact-predicate
 and host-barrier counts, the native metric evidence, and whether edits committed.
 
+Tetrahedral relocation rounds located source barycentric weights to dyadic
+weights, retaining their exact source image and binary64 carrier. Boundary
+vertices remain on their source facet or segment; source corners stay pinned.
+A collapse may relocate its survivor while replacing both endpoint stars.
+Its smallest-enclosing-ball goal uses a finite support search (at most four
+support points in three dimensions), not a capped iterative approximation.
+The native owner rechecks every affected cell and every retained or replaced
+facet and segment at the new carrier before committing atomically.
+Nonperiodic relocation reuses stage-specific local proposals only while their
+closed stars are unchanged; moved stars invalidate the affected entries.
+
+Each accepted tetrahedral edit strictly decreases a lexicographic potential:
+the descending multiset of long-edge band violations, the descending multiset
+of short-edge violations, then the worst-first cell qualities. Violations are
+rounded upward in log-length quanta of `2^-10`; an out-of-band edge always
+contributes at least one quantum. Local multiset comparisons are compatible
+with union with the unchanged mesh. Finite binary64 coordinates and strict
+decrease prevent edit cycles without a pass cap. Quality can decrease when
+the band potential improves, but every new cell must still clear the native
+relative determinant floor. COMPLETE requires the actual published edge
+lengths to lie in `[1/sqrt(2), sqrt(2)]`; STALLED retains typed source-boundary,
+unrepresentable-point, or unimproved-edge findings, not a claim that every
+possible remeshing of the domain is geometrically impossible.
+
 
 ### Stable-ID forest migration and restart
 

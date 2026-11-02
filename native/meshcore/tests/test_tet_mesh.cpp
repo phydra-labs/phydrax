@@ -2458,6 +2458,134 @@ void boundary_vertex_moves_and_collapses_within_its_source_facet() {
   PHX_CHECK(apply(uncovered) != TetEditStatus::kApplied);
 }
 
+// Boundary vertices V and W lie inside source facet ABC (z = 0), five cells
+// cone the facet's triangulation to apex E. Collapsing V into W may move W to
+// the edge midpoint M: the edit replaces star(V) and star(W), and the
+// replacement cells, the replacement facet CAW and the retained facets ABW and
+// BCW are checked at M. W may not leave the facet plane or the facet, and its
+// whole star must be replaced.
+void collapse_relocates_its_survivor_within_its_source_facet() {
+  using namespace phx::mc;
+  constexpr std::array<double, 18> points{
+      0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+      0.25, 0.25, 1.0, 0.25, 0.25, 0.0, 0.5, 0.25, 0.0};
+  // A = 0, B = 1, C = 2, E = 3, V = 4, W = 5.
+  constexpr std::array<std::int32_t, 20> tetrahedra{
+      0, 1, 5, 3, 1, 2, 5, 3, 2, 0, 4, 3, 0, 5, 4, 3, 5, 2, 4, 3};
+  constexpr std::array<std::int32_t, 5> regions{0, 0, 0, 0, 0};
+  constexpr std::array<std::int32_t, 24> faces{
+      0, 1, 5, 1, 2, 5, 2, 0, 4, 0, 5, 4, 5, 2, 4, 0, 1, 3, 1, 2, 3, 2, 0, 3};
+  constexpr std::array<std::int32_t, 8> face_sources{0, 0, 0, 0, 0, 1, 2, 3};
+  constexpr std::array<std::int8_t, 8> face_orientations{1, 1, 1, 1, 1, 1, 1, 1};
+  constexpr std::array<std::int32_t, 12> source_faces{0, 1, 2, 0, 1, 3, 1, 2, 3, 2, 0, 3};
+  constexpr std::array<std::int32_t, 4> source_face_groups{0, 1, 2, 3};
+  constexpr std::array<std::int64_t, 4> source_face_ids{300, 301, 302, 303};
+  constexpr std::array<double, 4> source_face_tolerances{};
+  constexpr std::array<std::int32_t, 0> no_segments{};
+  constexpr std::array<std::int64_t, 0> no_segment_ids{};
+  constexpr std::array<double, 0> no_segment_tolerances{};
+  constexpr std::array<SourceWitness, 0> no_witnesses{};
+  const SourceComplexView source{
+      std::span<const double>(points),
+      std::span<const std::int32_t>(source_faces),
+      std::span<const std::int32_t>(source_face_groups),
+      std::span<const std::int64_t>(source_face_ids),
+      std::span<const double>(source_face_tolerances),
+      std::span<const std::int32_t>(no_segments),
+      std::span<const std::int32_t>(no_segments),
+      std::span<const std::int64_t>(no_segment_ids),
+      std::span<const double>(no_segment_tolerances),
+      std::span<const SourceWitness>(no_witnesses)};
+
+  std::array<double, 3> survivor_point{};
+  const auto apply = [&](TetEdit operation) {
+    TetMesh mesh(BoundaryPolicy::kConforming);
+    const std::int32_t build_status = mesh.build(
+        points, tetrahedra, regions, faces, face_sources, face_orientations,
+        no_segments, no_segments, std::span<const double>{}, &source);
+    PHX_CHECK(build_status == PHX_MC_OK);
+    if (build_status != PHX_MC_OK) return TetEditStatus::kRejectedTopology;
+    constexpr std::array<std::uint64_t, 6> vertex_ids{0, 1, 2, 3, 4, 5};
+    constexpr std::array<std::uint64_t, 5> cell_ids{100, 101, 102, 103, 104};
+    constexpr std::array<std::uint64_t, 8> facet_ids{
+        200, 201, 202, 203, 204, 205, 206, 207};
+    PHX_CHECK(mesh.assign_initial_ids(vertex_ids, cell_ids, facet_ids,
+                                      std::span<const std::uint64_t>{}) == PHX_MC_OK);
+    TetEditBatch batch;
+    batch.expected_generation = mesh.generation();
+    batch.source_revision = mesh.source_revision();
+    batch.frame_id = mesh.frame_id();
+    batch.identity_bound = mesh.identity_bound();
+    batch.operations.push_back(std::move(operation));
+    batch.source_id = mesh.source_id();
+    batch.source_map_id = mesh.source_map_id();
+    batch.periodic_identity = mesh.periodic_identity();
+    std::vector<TetEditResult> results;
+    const TetEditStatus batch_status = mesh.apply_edit_batch(batch, results);
+    const double* survivor = mesh.point(mesh.vertex_slot(5));
+    std::copy_n(survivor, 3, survivor_point.begin());
+    if (batch_status != TetEditStatus::kApplied) return batch_status;
+    if (results.size() != 1) return TetEditStatus::kRejectedTopology;
+    return results.front().status;
+  };
+  const auto collapse = [](std::array<double, 3> carrier) {
+    TetEdit operation;
+    operation.kind = TetEditKind::kCollapse;
+    operation.collapse_pairs.push_back({4, 5});
+    operation.removed_vertex_ids = {4};
+    operation.removed_cell_ids = {100, 101, 102, 103, 104};
+    TetEditVertex moved;
+    moved.id = 5;
+    moved.carrier = carrier;
+    moved.edge_witness_supplied = true;
+    operation.changed_vertices.push_back(moved);
+    TetEditCell abw;
+    abw.id = 105;
+    abw.vertices = {0, 1, 5, 3};
+    abw.facet_sources = {kNoConstraint, kNoConstraint, 1, 0};
+    abw.region = 0;
+    abw.ancestor_cell_ids = {100};
+    TetEditCell bcw;
+    bcw.id = 106;
+    bcw.vertices = {1, 2, 5, 3};
+    bcw.facet_sources = {kNoConstraint, kNoConstraint, 2, 0};
+    bcw.region = 0;
+    bcw.ancestor_cell_ids = {101};
+    TetEditCell caw;
+    caw.id = 107;
+    caw.vertices = {2, 0, 5, 3};
+    caw.facet_sources = {kNoConstraint, kNoConstraint, 3, 0};
+    caw.region = 0;
+    caw.ancestor_cell_ids = {102, 103, 104};
+    operation.replacement_cells = {abw, bcw, caw};
+    operation.removed_facet_ids = {202, 203, 204};
+    operation.replacement_facets = {{208, {2, 0, 5}, 0, 1, false}};
+    return operation;
+  };
+  // The midpoint of VW keeps W in ABC: applied, and W is at M afterwards.
+  PHX_CHECK(apply(collapse({0.375, 0.25, 0.0})) == TetEditStatus::kApplied);
+  PHX_CHECK(survivor_point[0] == 0.375 && survivor_point[1] == 0.25 &&
+            survivor_point[2] == 0.0);
+  // The plain collapse (W stays) is still a collapse.
+  TetEdit plain = collapse({0.5, 0.25, 0.0});
+  plain.changed_vertices.clear();
+  PHX_CHECK(apply(plain) == TetEditStatus::kApplied);
+  PHX_CHECK(survivor_point[0] == 0.5);
+  // Off the facet plane: the retained facets ABW and BCW refuse it exactly.
+  PHX_CHECK(apply(collapse({0.375, 0.25, 0x1p-20})) == TetEditStatus::kInvalidGeometry);
+  // Out of the facet (below AB): the cell ABWE inverts.
+  PHX_CHECK(apply(collapse({0.375, -0.0625, 0.0})) == TetEditStatus::kInvalidGeometry);
+  // A survivor whose star is not wholly replaced cannot move.
+  TetEdit partial = collapse({0.375, 0.25, 0.0});
+  partial.removed_cell_ids = {100, 102, 103, 104};
+  partial.replacement_cells.erase(partial.replacement_cells.begin() + 1);
+  PHX_CHECK(apply(partial) == TetEditStatus::kRejectedTopology);
+  // Only survivors move: the removed vertex cannot be a changed vertex.
+  TetEdit removed_moves = collapse({0.375, 0.25, 0.0});
+  removed_moves.changed_vertices.front().id = 4;
+  PHX_CHECK(apply(removed_moves) != TetEditStatus::kApplied);
+}
+
 void relocation_checks_incident_source_facets_atomically() {
   using namespace phx::mc;
   constexpr std::array<double, 12> points{
@@ -3069,6 +3197,7 @@ int main() {
   split_edge_preserves_exact_ghost_boundary_coverage();
   split_on_shared_source_diagonal_needs_an_exact_edge_point();
   boundary_vertex_moves_and_collapses_within_its_source_facet();
+  collapse_relocates_its_survivor_within_its_source_facet();
   relocation_checks_incident_source_facets_atomically();
   exact_boundary_subface_coverage_rejects_gap_reversal_and_overlap();
   declared_plane_admission_refuses_and_records_vertices();

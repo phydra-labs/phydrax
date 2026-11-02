@@ -2090,9 +2090,13 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       }
     }
   }
+  // A collapse may relocate its survivors (e.g. to the collapsed edge's
+  // midpoint): each moved survivor is a changed vertex whose whole star is
+  // replaced, so every affected cell is rechecked at the new position below,
+  // as is every retained or replacement facet and segment through it.
+  std::unordered_set<std::uint64_t> paired_survivors;
   if (collapse) {
     std::unordered_set<std::uint64_t> paired_removed;
-    std::unordered_set<std::uint64_t> paired_survivors;
     for (const TetCollapsePair& pair : operation.collapse_pairs) {
       if (!removed_vertex_ids.contains(pair.removed_vertex_id) ||
           removed_vertex_ids.contains(pair.survivor_vertex_id) ||
@@ -2127,9 +2131,14 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       return TetEditStatus::kRejectedTopology;
     }
     const std::int32_t current_slot = mesh.vertex_slot(vertex.id);
+    const bool moved_survivor =
+        collapse && current_slot >= 0 && paired_survivors.contains(vertex.id);
+    if (moved_survivor && mesh.periodic_identity_.bound) {
+      return TetEditStatus::kRejectedTopology;
+    }
     if (current_slot >= 0) {
       if (!vertex.ancestry.empty()) return TetEditStatus::kRejectedTopology;
-      if (relocation == false && !split) return TetEditStatus::kRejectedTopology;
+      if (!relocation && !split && !moved_survivor) return TetEditStatus::kRejectedTopology;
       if (mesh.protected_vertex(current_slot) || mesh.protection_radius(current_slot) > 0.0) {
         return TetEditStatus::kRejectedProtected;
       }
@@ -2154,7 +2163,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       ++new_count;
     }
     TetEditVertex checked_vertex = vertex;
-    if (current_slot >= 0 && relocation && !checked_vertex.edge_witness_supplied &&
+    if (current_slot >= 0 && (relocation || moved_survivor) &&
+        !checked_vertex.edge_witness_supplied &&
         !checked_vertex.has_edge_parameter &&
         mesh.vertex_has_edge_parameter_[static_cast<std::size_t>(current_slot)] != 0) {
       checked_vertex.has_edge_parameter = true;
@@ -2171,7 +2181,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       return TetEditStatus::kRejectedProtected;
     }
     for (std::size_t other = 0; other < mesh.vertex_ids_.size(); ++other) {
-      if (!mesh.vertex_live_[other] || mesh.vertex_ids_[other] == vertex.id) continue;
+      if (!mesh.vertex_live_[other] || mesh.vertex_ids_[other] == vertex.id ||
+          removed_vertex_ids.contains(mesh.vertex_ids_[other])) continue;
       if (same_point(mesh.points_.data() + 3 * other, vertex.carrier.data())) {
         return TetEditStatus::kInvalidGeometry;
       }
@@ -2262,6 +2273,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
   }
   if (!relocation) {
     for (const TetEditVertex& vertex : operation.changed_vertices) {
+      if (collapse && paired_survivors.contains(vertex.id)) continue;
       if (mesh.vertex_slot(vertex.id) >= 0) return TetEditStatus::kRejectedTopology;
       const std::int32_t slot = static_cast<std::int32_t>(mesh.vertex_ids_.size());
       mesh.points_.insert(mesh.points_.end(), vertex.carrier.begin(), vertex.carrier.end());
@@ -2279,8 +2291,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     }
   }
 
-  if (relocation) {
-    if (operation.changed_vertices.empty() || removed_slots.empty()) {
+  if (relocation || collapse) {
+    if (relocation && (operation.changed_vertices.empty() || removed_slots.empty())) {
       return TetEditStatus::kRejectedTopology;
     }
     for (std::int32_t moved : moved_vertex_slots) {
@@ -2289,6 +2301,28 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
         if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell)) ||
             phx::mc::vertex_slot(mesh.tet(cell), moved) < 0) continue;
         if (!removed_slot_set.contains(cell)) return TetEditStatus::kRejectedTopology;
+      }
+    }
+  }
+  // Moved collapse survivors take their new carriers in the staged mesh before
+  // any geometric check: replacement cells, replacement facets and segments,
+  // and the retained boundary entities through them are all validated there.
+  if (collapse) {
+    for (const TetEditVertex& vertex : operation.changed_vertices) {
+      const std::int32_t slot = mesh.vertex_slot(vertex.id);
+      const std::size_t index = static_cast<std::size_t>(slot);
+      std::copy(vertex.carrier.begin(), vertex.carrier.end(),
+                mesh.points_.begin() + 3 * index);
+      mesh.witnesses_[index] = vertex.witness;
+      mesh.vertex_ancestry_.erase(vertex.id);
+      if (vertex.has_edge_parameter) {
+        mesh.vertex_has_edge_parameter_[index] = 1;
+        mesh.vertex_edge_endpoints_[index] = vertex.edge_endpoints;
+        mesh.vertex_edge_parameters_[index] = vertex.edge_parameter;
+      } else if (vertex.edge_witness_supplied) {
+        mesh.vertex_has_edge_parameter_[index] = 0;
+        mesh.vertex_edge_endpoints_[index] = {};
+        mesh.vertex_edge_parameters_[index] = 0.0;
       }
     }
   }
@@ -2398,6 +2432,29 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       if (future_segments[i - 1].id == future_segments[i].id) {
         return TetEditStatus::kRejectedTopology;
       }
+    }
+  }
+  if (collapse && !changed_vertex_ids.empty()) {
+    // Retained facets and segments through a moved survivor keep their source
+    // only if the new carrier still lies on it (exact predicates; a declared
+    // plane admits by its rounding box).
+    const auto moved = [&](std::uint64_t id) { return changed_vertex_ids.contains(id); };
+    for (const TetSnapshotFacet& facet : future_facets) {
+      if (std::none_of(facet.vertices.begin(), facet.vertices.end(), moved)) continue;
+      TetEditFacet check;
+      check.id = facet.id;
+      check.vertices = facet.vertices;
+      check.source = facet.source;
+      check.orientation = facet.orientation;
+      if (!mesh.source_face_valid(check)) return TetEditStatus::kInvalidGeometry;
+    }
+    for (const TetSnapshotSegment& segment : future_segments) {
+      if (std::none_of(segment.vertices.begin(), segment.vertices.end(), moved)) continue;
+      TetEditSegment check;
+      check.id = segment.id;
+      check.vertices = segment.vertices;
+      check.source = segment.source;
+      if (!mesh.source_segment_valid(check)) return TetEditStatus::kInvalidGeometry;
     }
   }
 
@@ -2619,9 +2676,9 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     return TetEditStatus::kRejectedTopology;
   }
 
-  // Non-relocation edits cannot move retained vertices. Their source geometry was
-  // admitted with the state; replacement records were checked above. Only the
-  // changed incidence remains to validate here. Relocation rechecks moved geometry.
+  // Other edits move no retained vertex except collapse survivors, whose stars,
+  // facets and segments were rechecked above. Retained source geometry was
+  // admitted with the state; only the changed incidence remains to validate.
 
   for (const TetSnapshotSegment& segment : future_segments) {
     const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
