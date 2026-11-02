@@ -1,3 +1,4 @@
+from fractions import Fraction
 from typing import Any
 
 import equinox as eqx
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.meshing._metric import _edge_length_enclosure, _PreparedMetricEnclosures
 
 
 meshing = phx.meshing
@@ -497,3 +499,64 @@ def test_metric_edge_lengths_match_constant_metric_lengths() -> None:
     np.testing.assert_allclose(
         lengths, np.sqrt(4.0 * delta[:, 0] ** 2 + 9.0 * delta[:, 1] ** 2)
     )
+
+
+def test_prepared_metric_segment_encloses_interpolated_values() -> None:
+    values = np.asarray((np.diag((1.0, 4.0)), np.diag((4.0, 1.0))))
+    owner = _PreparedMetricEnclosures(values)
+    enclosure = owner.segment_range(
+        (0, 1),
+        (Fraction(1, 4), Fraction(1, 4)),
+        (Fraction(3, 4), Fraction(3, 4)),
+    )
+    center = np.asarray(enclosure.matrix, dtype=np.float64)
+    radius = float(enclosure.error)
+    for weight in (0.25, 0.5, 0.75):
+        exact = np.diag((4.0**weight, 4.0 ** (1.0 - weight)))
+        assert np.linalg.norm(exact - center, ord=2) <= radius
+    assert owner.log(0) is owner.log(0)
+    midpoint = owner.segment_range(
+        (0, 1), (Fraction(1, 2), Fraction(1, 2)), (Fraction(1, 2), Fraction(1, 2))
+    )
+    for i in range(2):
+        for j in range(2):
+            exact = Fraction(2 if i == j else 0)
+            assert abs(midpoint.matrix[i][j] - exact) <= midpoint.error
+    values = np.asarray((((4.0, 1.0), (1.0, 2.0)), ((2.0, -0.5), (-0.5, 3.0))))
+    owner = _PreparedMetricEnclosures(values)
+    enclosure = owner.segment_range(
+        (0, 1), (Fraction(2, 5), Fraction(2, 5)), (Fraction(3, 5), Fraction(3, 5))
+    )
+    center = np.asarray(enclosure.matrix, dtype=np.float64)
+    radius = float(enclosure.error)
+    logarithms = []
+    for tensor in values:
+        spectrum, basis = np.linalg.eigh(tensor)
+        logarithms.append((basis * np.log(spectrum)) @ basis.T)
+    for weight in (0.4, 0.5, 0.6):
+        mean = (1.0 - weight) * logarithms[0] + weight * logarithms[1]
+        spectrum, basis = np.linalg.eigh(mean)
+        sample = (basis * np.exp(spectrum)) @ basis.T
+        assert np.linalg.norm(sample - center, ord=2) <= radius
+
+
+def test_edge_length_enclosure_bounds_logarithmic_mean() -> None:
+    displacement = np.asarray((1.0, 0.0))
+    first = np.diag((4.0, 1.0))
+    second = np.diag((9.0, 1.0))
+    lower, upper = _edge_length_enclosure(
+        (displacement, displacement), (first, first), (second, second)
+    )
+    expected = 1.0 / np.log(1.5)
+    assert lower <= expected <= upper
+    identity = np.eye(2)
+    within = _edge_length_enclosure(
+        (displacement, displacement), (identity, identity), (identity, identity)
+    )
+    long = _edge_length_enclosure(
+        (2.0 * displacement, 2.0 * displacement),
+        (identity, identity),
+        (identity, identity),
+    )
+    assert within[1] < np.sqrt(2.0)
+    assert long[0] > np.sqrt(2.0)

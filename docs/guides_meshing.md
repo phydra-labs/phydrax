@@ -1486,22 +1486,37 @@ bound to the source vertices). Routes:
   raises its star's minimum quality or keeps it and strictly improves the
   worst-first quantized deviations of its edges. Neither rule creates vertices,
   so each phase terminates. A full pass that applies nothing outside the unit
-  criterion is a stall; it runs one escape phase of the split/collapse
-  hysteresis that admits every collapse up to metric length 2, births included
-  (the next split phase splits the long edges). The escape stands when the run
-  then reaches the unit criterion or a stall whose potential
+  criterion is a stall. It first tries optimal-point collapse: both endpoints
+  merge along an edge (or slide on the survivor's straight source curve)
+  without creating an edge above `sqrt(2)`. The host tries a fixed seed lattice
+  first. For identical current vertex-ball tensors with no callback, it also
+  subdivides the remaining representable parameters using interval geometry
+  and metric bounds. Other seed misses remain unresolved: ideal P1 bounds do
+  not certify JAX execution, and callback ranges alone do not certify the
+  executed locator and metric or guarantee progress. An accepted point retains
+  its exact source stencil. The compiled device search also subdivides the
+  remainder for nonperiodic interior stars with identical current tensors;
+  curve, periodic, and nonconstant missed remainders remain unresolved.
+  All merged-star cells and source stencils are rechecked, including periodic
+  orphan retirement. If this does not improve
+  the stall, an endpoint escape admits every collapse up to metric length 2,
+  births included (the next split phase splits the long edges). An escape
+  stands when the run reaches the unit criterion or a stall whose potential
   `(out-of-band edges, sum of floor(band excess of |ln L| / 2^-20))` is
-  strictly lower (which may escape again); otherwise the run returns the
-  escaped stall's state. Escaped stall potentials strictly decrease in the
+  strictly lower; otherwise it rolls back to the escaped stall and tries the
+  next escape, returning that stall if neither improves it. Host and device
+  routes use this same ordering. Escaped stall potentials strictly decrease in the
   well-founded lexicographic order on pairs of natural numbers, so escapes are
   finitely many and no pass cap is needed. Orientation decisions use the
   policy's predicate mode; unresolved filtered signs reject the operation. The
   status is COMPLETE when the unit-mesh criterion holds, STALLED or
   NUMERICAL_STOP otherwise; a stalled `LocalMetricEvidence.stalled_edges`
   lists every remaining edge (one per quotient orbit) with its metric length
-  and refusal reasons, for example `collapse=hysteresis+inadmissible;flip=invalid`
-  (`hysteresis`: above the split threshold, and the escape did not lower the
-  stall potential; `long`: above 2). `RelocationMeshAdaptation` moves vertices
+  and refusal reasons, for example
+  `collapse=hysteresis+inadmissible;optimal=long;flip=invalid`
+  (`hysteresis`: endpoint collapse exceeds the split threshold and its escape
+  did not lower the stall potential; host `optimal=long`: the searched segments
+  were excluded by bounds). `RelocationMeshAdaptation` moves vertices
   only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
@@ -1550,8 +1565,19 @@ or implicit root cell without a witnessed transition is refused. Target geometry
 is reconstructed under the retained source-fidelity displacement bound and an
 endpoint continuity check; target charts and source associations are rebound
 before certification.
+Local UV carriers must canonically round their exact source stencils before
+publication. Where a B-Rep target vertex belongs to a shared source face, the
+published chart instead uses the explicit exact face-restricted stencil; source
+edge restrictions use exact orthogonal projection. Periodic chart copies are
+synchronized by their exact source weights. The final published physical tensor
+is pulled back at the published chart points and measured again on the final
+unprotected edges, using periodic quotient representatives. If publication
+changes an unmet local state, the local engine continues from that state with
+the original source bindings; repeated numerical states terminate without a
+success claim.
 `COMPLETE`, `STALLED`, and `NUMERICAL_STOP` remain distinct; an unresolved
-predicate or an unmet unit-mesh criterion is not reported as success.
+predicate or an unmet unit-mesh criterion is not reported as success, including
+when both topology operations and relocation are disabled.
 
 Protected scopes (including periodic boundaries) are never split, moved, or
 removed; marks whose closure would split them are rejected and reported, with
@@ -1856,10 +1882,14 @@ rejection counts, unit-mesh measurements); capacity overflow restores the
 exact accepted arrays, grows the required static workspace at a host barrier,
 and retries the same operation. Invalid geometry is terminal and refuses
 later calls on that state.
+Nonfinite or nonpositive measured metric lengths and nonfinite collapse scores
+pause for host numerical resolution; affected numerical-failure epochs or
+periodic orbit transactions roll back without mutating the caller's state.
+Filtered geometric uncertainty remains separately resolvable.
 `commit_device_metric_adaptation` applies the same acceptance as
-`commit_adaptive_simplex` (terminal flags raise, `NEEDS_HOST_RESOLUTION` is
-resolved by exact host orientation of the committed cells), performs one
-transfer, and returns the `MeshAdaptationResult` with `DeviceMetricEvidence`; a
+`commit_adaptive_simplex` (terminal flags raise; filtered geometric
+`NEEDS_HOST_RESOLUTION` is resolved by exact host orientation of committed
+cells), performs one transfer, and returns the `MeshAdaptationResult` with `DeviceMetricEvidence`; a
 run that applied nothing is UNCHANGED, with convergence or stall in the
 evidence (as for `NATIVE_METRIC_2D`).
 

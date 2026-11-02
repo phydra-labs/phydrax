@@ -26,6 +26,21 @@
   lineage, and exact measures from paired current geometry before field/history
   transfer, refusing consistently rehashed false claims without changing accepted
   state. Distributed partition provenance uses canonical unversioned selectors.
+- Host and compiled-device optimal-point metric collapse search between seed
+  parameters for supported constant current vertex-ball tensors, with exact
+  source geometry and metric bounds. Unsupported and nonconstant seed misses
+  remain unresolved.
+- Surface metric adaptation binds local UV edits to the authored exact chart
+  bank and checks their canonical carriers before explicit source-face projection
+  and chart-copy synchronization for publication.
+- Surface metric publication remeasures the final projected and synchronized
+  chart tensors on unprotected edges and continues the original local engine
+  when an unmet publication differs from its local state.
+- Surface relocation requests with edits disabled report an unmet unit-mesh
+  criterion as stalled rather than complete.
+- Compiled metric adaptation pauses on nonfinite or nonpositive measured
+  lengths or nonfinite collapse scores, rolling back numerical-failure epochs
+  and periodic orbit transactions without mutating the caller's state.
 - Finite-element and finite-volume field queries now bind compiled geometry
   through the same content identity; default finite-volume simplex location uses
   the supported block's cell count.

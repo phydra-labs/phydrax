@@ -6,16 +6,21 @@
 from fractions import Fraction
 from typing import Any
 
+import equinox as eqx
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._geometry_predicates import PredicateMode
 from phydrax.discretization import AdaptiveSimplexPolicy, AdaptiveSimplexStatus
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_topology import PeriodicMeshTopology
 from phydrax.meshing import (
+    _device_metric as device_metric,
+    _local_metric as local_metric,
     adapt_device_metric,
     commit_device_metric_adaptation,
     execute_mesh_adaptation,
@@ -39,6 +44,15 @@ from phydrax.meshing._device_metric import (
     DeviceMetricEvidence,
 )
 from phydrax.meshing._local_metric import LocalMetricEvidence
+from phydrax.meshing._metric import _constant_preserving_metric_mean
+
+
+def test_internal_metric_mean_preserves_identical_tensor_exactly() -> None:
+    tensor = jnp.asarray(((3.0, 0.4), (0.4, 2.0)), dtype=jnp.float64)
+    samples = jnp.broadcast_to(tensor, (3, 3, 2, 2))
+    weights = jnp.asarray(((0.1, 0.2, 0.7), (1.0, 0.0, 0.0), (0.3, 0.3, 0.4)))
+    actual = jax.jit(_constant_preserving_metric_mean)(samples, weights)
+    np.testing.assert_array_equal(np.asarray(actual), np.asarray(samples[:, 0]))
 
 
 _LOWER = 1.0 / np.sqrt(2.0)
@@ -419,9 +433,10 @@ def test_device_metric_scenario_1() -> None:
     assert not report.failed
     assert report.rejected_uncertain > 0
     result = commit_device_metric_adaptation(prepared, update.state)
-    # ty: ignore[unresolved-attribute]
-    assert result.evidence.status & AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION
-    # ty: ignore[unresolved-attribute]
+    assert isinstance(result.evidence, DeviceMetricEvidence)
+    status = result.evidence.status
+    assert isinstance(status, AdaptiveSimplexStatus)
+    assert status & AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION
     assert result.evidence.collapses > 0
     points = np.asarray(source.mesh.coordinates)
     identifiers = np.asarray(source.mesh.vertex_global_ids)
@@ -482,3 +497,522 @@ def test_device_metric_rejects_non_equivariant_periodic_spd_data() -> None:
 
     with pytest.raises(ValueError, match="equivariantly"):
         prepare_device_metric_adaptation(source, request, policy=_policy())
+
+
+def test_host_and_device_optimal_collapse_relocate_the_survivor() -> None:
+    # The short birth edge is 0.6 long. Either endpoint collapse produces a
+    # spoke of length 1.5, whereas merging at the origin leaves all edges in
+    # the unit band. Hull vertices and the six source triangles are unchanged.
+    points = np.asarray(
+        ((-1.2, 0.0), (-0.3, 0.0), (0.3, 0.0), (1.2, 0.0), (0.0, 0.72), (0.0, -0.72))
+    )
+    triangles = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)), dtype=np.int32
+    )
+    mesh = CellMesh.from_triangles(points, triangles)
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    tensors = np.broadcast_to(np.eye(2), (6, 2, 2))
+    edge_count = mesh.entity_set(1).count
+    host, host_source = local_metric._initial_state(
+        mesh,
+        tensors,
+        np.zeros(6, dtype=np.int64),
+        np.zeros(edge_count, dtype=np.int64),
+        np.zeros(edge_count, dtype=np.bool_),
+        np.zeros(6, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    births = host.source_rows.copy()
+    births[1:3] = -1
+    host = host._replace(source_rows=births)
+    topology = local_metric._topology(host, PredicateMode.EXACT)
+    candidates = local_metric._collapse_candidates(
+        host, topology, PredicateMode.EXACT, False
+    )
+    assert not np.any(candidates.status == local_metric._OK)
+    host, _, count = local_metric._optimal_collapse_round(
+        host, topology, local_metric._Counts(), PredicateMode.EXACT, None, host_source
+    )
+    assert count == 1
+    assert local_metric._unit(local_metric._topology(host, PredicateMode.EXACT))
+    np.testing.assert_allclose(host.points[1], (0.0, 0.0), rtol=0.0, atol=1e-15)
+
+    prepared = prepare_device_metric_adaptation(
+        source, MetricMeshAdaptation(_metric(source, np.eye(2))), policy=_policy()
+    )
+    work = _work(prepared.state)
+    work = work._replace(source_rows=work.source_rows.at[1:3].set(-1))
+    updated, _, overflow, count = eqx.filter_jit(device_metric._optimal_collapse_round)(
+        work, jnp.asarray(False), prepared.layout
+    )
+    assert int(count) == 1 and not int(overflow)
+    assert bool(device_metric._unit(updated))
+    np.testing.assert_allclose(
+        np.asarray(updated.coordinates[1]), (0.0, 0.0), rtol=0.0, atol=1e-15
+    )
+    np.testing.assert_array_equal(np.asarray(updated.vertex_active[:6]), host.alive)
+
+
+def test_host_optimal_collapse_batches_preserve_candidate_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    diamond = np.asarray(
+        ((-1.2, 0.0), (-0.3, 0.0), (0.3, 0.0), (1.2, 0.0), (0.0, 0.72), (0.0, -0.72))
+    )
+    cells = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)),
+        dtype=np.int32,
+    )
+    points = np.concatenate([diamond + (3.0 * index, 0.0) for index in range(5)])
+    mesh = CellMesh.from_triangles(
+        points, np.concatenate([cells + 6 * index for index in range(5)])
+    )
+    state, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(np.eye(2), (30, 2, 2)),
+        np.zeros(30, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(30, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    short = np.flatnonzero(topology.lengths < _LOWER)
+    assert short.size == 5
+    original = local_metric._optimal_collapse_batch
+    reference = original(state, topology, PredicateMode.EXACT, None, source, short)
+    sizes: list[int] = []
+
+    def observed(
+        state: local_metric._State,
+        topology: local_metric._Topology,
+        mode: PredicateMode,
+        context: local_metric._PeriodicContext | None,
+        source: local_metric._Source,
+        edges: np.ndarray,
+    ) -> local_metric._OptimalCollapses:
+        sizes.append(edges.size)
+        return original(state, topology, mode, context, source, edges)
+
+    monkeypatch.setattr(local_metric, "_OPTIMAL_BLOCK", 2)
+    monkeypatch.setattr(local_metric, "_optimal_collapse_batch", observed)
+    batched = local_metric._optimal_collapse_search(
+        state, topology, PredicateMode.EXACT, None, source, short
+    )
+    assert sizes == [2, 2, 1]
+    for name in ("edge", "removed", "kept", "point", "metric", "longest"):
+        np.testing.assert_array_equal(getattr(batched, name), getattr(reference, name))
+    assert batched.reason == reference.reason
+    for first, second in zip(batched.stencils, reference.stencils, strict=True):
+        assert first is not None and second is not None
+        for left, right in zip(first[:3], second[:3], strict=True):
+            np.testing.assert_array_equal(left, right)
+        assert first.exact == second.exact
+
+
+def _overflow_metric_work() -> tuple[
+    device_metric.DeviceMetricLayout, device_metric._Work
+]:
+    center = -0.2 + 0.4 * (17.0 / 64.0)
+    points = np.asarray(
+        (
+            (-0.2, 0.0),
+            (center - 0.8, 0.6),
+            (0.2, 0.0),
+            (center + 0.8, -0.6),
+            (center, 0.65),
+            (center, -0.65),
+        ),
+        dtype=np.float64,
+    )
+    cells = np.asarray(
+        ((0, 4, 1), (0, 2, 4), (2, 3, 4), (0, 1, 5), (0, 5, 2), (2, 5, 3)),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_triangles(points, cells)
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    prepared = prepare_device_metric_adaptation(
+        source, MetricMeshAdaptation(_metric(source, 2.0 * np.eye(2))), policy=_policy()
+    )
+    work = _work(prepared.state)
+    # A finite, positively oriented working star can overflow squared spoke
+    # lengths while the short edge and orientation products remain representable.
+    work = work._replace(
+        coordinates=work.coordinates.at[0]
+        .set(jnp.asarray((-1.0e-155, 0.0)))
+        .at[2]
+        .set(jnp.asarray((1.0e-155, 0.0)))
+        .at[1]
+        .set(jnp.asarray((-2.0, 1.0))),
+        metric=jnp.broadcast_to(1.0e308 * jnp.eye(2), work.metric.shape)
+        .at[1]
+        .set(1.1e308 * jnp.eye(2)),
+    )
+    return prepared.layout, work
+
+
+def test_device_optimal_collapse_routes_nonfinite_seed_scores_to_resolution() -> None:
+    layout, work = _overflow_metric_work()
+    updated, _, status, count = eqx.filter_jit(device_metric._optimal_collapse_round)(
+        work, jnp.asarray(False), layout
+    )
+    assert int(count) == 0
+    assert int(status) & int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+    np.testing.assert_array_equal(updated.coordinates, work.coordinates)
+    np.testing.assert_array_equal(updated.cells, work.cells)
+
+
+def test_device_metric_epoch_refuses_nonfinite_lengths_atomically() -> None:
+    layout, work = _overflow_metric_work()
+    update = eqx.filter_jit(device_metric._adapted)(layout, work)
+    assert int(update.report.status) & int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+    assert not bool(update.report.converged)
+    restored = _work(update.state)
+    np.testing.assert_array_equal(restored.coordinates, work.coordinates)
+    np.testing.assert_array_equal(restored.cells, work.cells)
+    np.testing.assert_array_equal(restored.metric, work.metric)
+    np.testing.assert_array_equal(restored.counters, work.counters)
+
+
+def test_device_metric_orbit_transaction_refuses_nonfinite_lengths_atomically() -> None:
+    layout, work = _overflow_metric_work()
+    update = device_metric._compiled_periodic_round(layout, work, jnp.int32(3))
+    assert int(update.report.status) & int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+    assert not bool(update.report.converged)
+    np.testing.assert_array_equal(update.work.coordinates, work.coordinates)
+    np.testing.assert_array_equal(update.work.cells, work.cells)
+    np.testing.assert_array_equal(update.work.metric, work.metric)
+    np.testing.assert_array_equal(update.work.counters, work.counters)
+
+
+@pytest.mark.parametrize(
+    "scale, outcome",
+    [
+        (0.999, "proposal"),
+        (1.0, "unresolved"),
+        (1.001, "excluded"),
+        (0.999, "nonconstant"),
+    ],
+)
+def test_device_optimal_remainder_searches_between_seed_parameters(
+    scale: float,
+    outcome: str,
+) -> None:
+    center = -0.2 + 0.4 * (17.0 / 64.0)
+    points = np.asarray(
+        (
+            (center - 0.8 * scale, 0.6 * scale),
+            (-0.2, 0.0),
+            (0.2, 0.0),
+            (center + 0.8 * scale, -0.6 * scale),
+            (center, 0.65),
+            (center, -0.65),
+        )
+    )
+    seeds = -0.2 + 0.4 * np.arange(1, local_metric._OPTIMAL_LATTICE) / (
+        local_metric._OPTIMAL_LATTICE
+    )
+    left = np.sqrt(2.0 * ((seeds - points[0, 0]) ** 2 + points[0, 1] ** 2))
+    right = np.sqrt(2.0 * ((seeds - points[3, 0]) ** 2 + points[3, 1] ** 2))
+    assert np.all(np.maximum(left, right) > _UPPER)
+    cells = np.asarray(
+        (
+            (0, 1, 4),
+            (1, 2, 4),
+            (2, 3, 4),
+            (1, 0, 5),
+            (2, 1, 5),
+            (3, 2, 5),
+        ),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_triangles(points, cells)
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    prepared = prepare_device_metric_adaptation(
+        source, MetricMeshAdaptation(_metric(source, 2.0 * np.eye(2))), policy=_policy()
+    )
+    work = _work(prepared.state)
+    if outcome == "nonconstant":
+        work = work._replace(metric=work.metric.at[0].set(2.1 * jnp.eye(2)))
+    updated, _, status, count = eqx.filter_jit(device_metric._optimal_collapse_round)(
+        work, jnp.asarray(False), prepared.layout
+    )
+    if outcome in ("unresolved", "nonconstant"):
+        assert int(count) == 0
+        assert int(status) & int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+        return
+    assert int(status) == 0
+    if outcome == "excluded":
+        assert int(count) == 0
+        return
+    assert int(count) == 1
+    survivor = int(np.flatnonzero(np.asarray(updated.vertex_moved))[0])
+    point = np.asarray(updated.coordinates[survivor])
+    width = np.sqrt(1.0 - (0.6 * scale) ** 2) - 0.8 * scale
+    assert abs(point[0] - center) < width
+    host = device_metric._host_state(
+        prepared, device_metric._state(updated, prepared.layout, False)
+    )
+    order, _, _ = local_metric._target_order(host)
+    sources, _, valid, exact = local_metric._stencil(
+        host, prepared.anchor.source, order, PredicateMode.EXACT
+    )
+    target_row = int(np.flatnonzero(order == survivor)[0])
+    source_points = dict(
+        zip(
+            prepared.anchor.source.vertex_ids.tolist(),
+            prepared.anchor.source.exact_points,
+            strict=True,
+        )
+    )
+    for axis in range(2):
+        image = sum(
+            (
+                exact[target_row][column]
+                * source_points[int(sources[target_row, column])][axis]
+                for column in np.flatnonzero(valid[target_row])
+            ),
+            Fraction(0),
+        )
+        assert image == Fraction(float(point[axis]))
+    topology = device_metric._topology(updated, prepared.layout)
+    ring = np.asarray(topology.link[survivor])
+    ring = ring[ring >= 0]
+    lengths = np.asarray(
+        device_metric._lengths(
+            updated, jnp.asarray(np.stack((np.full(ring.shape, survivor), ring), axis=1))
+        )
+    )
+    assert np.all(lengths <= _UPPER)
+
+
+@pytest.mark.parametrize("scale, feasible", [(0.999, True), (1.001, False)])
+def test_host_optimal_collapse_searches_between_seed_parameters(
+    scale: float,
+    feasible: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    center = -0.2 + 0.4 * (17.0 / 64.0)
+    points = np.asarray(
+        (
+            (center - 0.8 * scale, 0.6 * scale),
+            (-0.2, 0.0),
+            (0.2, 0.0),
+            (center + 0.8 * scale, -0.6 * scale),
+            (center, 0.65),
+            (center, -0.65),
+        )
+    )
+    cells = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_triangles(points, cells)
+    state, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(2.0 * np.eye(2), (6, 2, 2)),
+        np.zeros(6, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(6, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    exact_points = list(source.exact_points)
+    exact_points[1] = (exact_points[1][0] + Fraction(1, 2**60), exact_points[1][1])
+    assert float(exact_points[1][0]) == points[1, 0]
+    source = source._replace(exact_points=tuple(exact_points))
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    short = np.flatnonzero(topology.lengths < _LOWER)
+    assert short.size == 1
+    seeds = local_metric._optimal_collapse_batch(
+        state, topology, PredicateMode.EXACT, None, source, short
+    )
+    assert seeds.reason == ("unresolved",)
+    result = local_metric._optimal_collapse_search(
+        state, topology, PredicateMode.EXACT, None, source, short
+    )
+    if feasible:
+        width = np.sqrt(1.0 - (0.6 * scale) ** 2) - 0.8 * scale
+        assert 0.0 < width < 0.4 / 64.0
+        assert result.reason == ("",)
+        assert abs(result.point[0, 0] - center) < width
+        stencil = result.stencils[0]
+        assert stencil is not None
+        by_id = dict(zip(source.vertex_ids.tolist(), source.exact_points, strict=True))
+        exact_x = sum(
+            (weight * by_id[identifier][0] for identifier, weight in stencil.exact),
+            Fraction(0),
+        )
+        expected = exact_points[1][0] + Fraction(17, 64) * (
+            exact_points[2][0] - exact_points[1][0]
+        )
+        assert exact_x == expected
+        assert result.point[0, 0] == float(expected)
+        stale_points = state.points.copy()
+        stale_points[0, 0] += 0.001
+        stale = state._replace(points=stale_points)
+        stale_topology = local_metric._topology(stale, PredicateMode.EXACT)
+        refused = local_metric._optimal_collapse_search(
+            stale, stale_topology, PredicateMode.EXACT, None, source, short
+        )
+        assert refused.reason == ("unresolved",)
+
+        def exhausted(*_args: object) -> None:
+            raise MemoryError
+
+        monkeypatch.setattr(local_metric, "_optimal_remainder", exhausted)
+        resource = local_metric._optimal_collapse_search(
+            state, topology, PredicateMode.EXACT, None, source, short
+        )
+        assert resource.reason == ("resource",)
+    else:
+        assert result.reason == ("long",)
+
+
+def test_host_optimal_collapse_opaque_field_seed_miss_is_unresolved() -> None:
+    points = np.asarray(
+        ((-1.2, 0.0), (-0.3, 0.0), (0.3, 0.0), (1.2, 0.0), (0.0, 0.72), (0.0, -0.72))
+    )
+    cells = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_triangles(points, cells)
+
+    def opaque(query: np.ndarray, rows: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
+        del rows, weights
+        # A narrow dip halfway between adjacent lattice seeds.
+        scale = np.where(np.abs(query[:, 0] - 0.009375) < 0.001, 0.01, 100.0)
+        return scale[:, None, None] * np.eye(2)
+
+    state, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(np.eye(2), (6, 2, 2)),
+        np.zeros(6, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(6, dtype=np.bool_),
+        PredicateMode.EXACT,
+        metric_field=opaque,
+    )
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    short = np.flatnonzero(topology.lengths < _LOWER)
+    assert short.size == 1
+    result = local_metric._optimal_collapse_search(
+        state, topology, PredicateMode.EXACT, None, source, short
+    )
+    assert result.reason == ("missing-certification",)
+
+    class NoncontractingField:
+        def __call__(
+            self, query: np.ndarray, rows: np.ndarray, weights: np.ndarray, /
+        ) -> np.ndarray:
+            del rows, weights
+            return np.broadcast_to(100.0 * np.eye(2), (query.shape[0], 2, 2))
+
+        def segment_range(
+            self,
+            rows: tuple[int, ...],
+            lower: tuple[Fraction, ...],
+            upper: tuple[Fraction, ...],
+            chart_lower: np.ndarray,
+            chart_upper: np.ndarray,
+            /,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del rows, lower, upper, chart_lower, chart_upper
+            return np.zeros((2, 2)), 100.0 * np.eye(2)
+
+    wide = source._replace(metric_field=NoncontractingField())
+    result = local_metric._optimal_collapse_search(
+        state, topology, PredicateMode.EXACT, None, wide, short
+    )
+    assert result.reason == ("missing-certification",)
+
+
+def test_current_metric_segment_encloses_vertex_ball_interpolation() -> None:
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    mesh = CellMesh.from_triangles(points, np.asarray(((0, 1, 2), (0, 2, 3))))
+    tensors = np.asarray(
+        (
+            ((2.0, 0.0), (0.0, 1.0)),
+            ((3.0, 0.0), (0.0, 1.5)),
+            ((4.0, 0.0), (0.0, 2.0)),
+            ((1.0, 0.0), (0.0, 3.0)),
+        )
+    )
+    state, source = local_metric._initial_state(
+        mesh,
+        tensors,
+        np.zeros(4, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(4, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    topology = local_metric._topology(state, PredicateMode.EXACT)
+    prepared = local_metric._PreparedMetricEnclosures(state.metric)
+    bounds = local_metric._current_segment_metric(
+        state, topology, source, 0, 2, Fraction(1, 4), Fraction(3, 4), prepared
+    )
+    assert bounds is not None
+    queries = np.asarray(((0.25, 0.25), (0.5, 0.5), (0.75, 0.75)))
+    actual = local_metric._proposal_metric(
+        state, topology, np.zeros(3, dtype=np.int64), queries
+    )
+    assert np.all(actual >= bounds[0])
+    assert np.all(actual <= bounds[1])
+
+
+def test_source_box_detects_single_and_crossing_cells() -> None:
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    mesh = CellMesh.from_triangles(points, np.asarray(((0, 1, 2), (0, 2, 3))))
+    _, source = local_metric._initial_state(
+        mesh,
+        np.broadcast_to(np.eye(2), (4, 2, 2)),
+        np.zeros(4, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
+        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
+        np.zeros(4, dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    covered, inside = local_metric._source_box_pieces(
+        source, np.asarray((0.7, 0.2)), np.asarray((0.8, 0.3))
+    )
+    assert covered and len(inside) == 1
+    covered, crossing = local_metric._source_box_pieces(
+        source, np.asarray((0.2, 0.2)), np.asarray((0.3, 0.3))
+    )
+    assert not covered and len(crossing) == 2
+    exact = list(source.exact_points)
+    exact[1] = (Fraction(1) + Fraction(1, 2**54), Fraction(0))
+    source = source._replace(exact_points=tuple(exact))
+    covered, shifted = local_metric._source_box_pieces(
+        source, np.asarray((1.0, 0.0)), np.asarray((1.0, 0.0))
+    )
+    assert covered
+    piece = next(piece for piece in shifted if piece.rows == (0, 1, 2))
+    assert piece.weight_upper[1] == 1 / (Fraction(1) + Fraction(1, 2**54))
+
+
+def test_candidate_box_encloses_rounded_and_exact_affine_values() -> None:
+    origin = np.asarray((-0.3, 0.7))
+    target = np.asarray((0.8, -0.2))
+    lower, upper = local_metric._candidate_box(origin, target, 0.1, 0.2)
+    for t in (0.1, 0.125, 0.175, 0.2):
+        rounded = origin + t * (target - origin)
+        for axis in range(2):
+            exact = Fraction(float(origin[axis])) + Fraction(t) * (
+                Fraction(float(target[axis])) - Fraction(float(origin[axis]))
+            )
+            assert Fraction(float(lower[axis])) <= exact <= Fraction(float(upper[axis]))
+            assert lower[axis] <= rounded[axis] <= upper[axis]
+    exact_origin = (Fraction(1, 3), Fraction(-2, 7))
+    exact_target = (Fraction(5, 11), Fraction(4, 9))
+    lower, upper = local_metric._exact_candidate_box(
+        exact_origin, exact_target, Fraction(1, 4), Fraction(3, 4)
+    )
+    for t in (Fraction(1, 4), Fraction(1, 2), Fraction(3, 4)):
+        for axis in range(2):
+            exact = exact_origin[axis] + t * (exact_target[axis] - exact_origin[axis])
+            assert Fraction(float(lower[axis])) <= exact <= Fraction(float(upper[axis]))
+            assert lower[axis] <= float(exact) <= upper[axis]

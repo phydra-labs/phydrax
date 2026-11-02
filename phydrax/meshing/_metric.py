@@ -16,6 +16,7 @@ from __future__ import annotations
 import heapq
 import math
 from enum import StrEnum
+from fractions import Fraction
 from functools import partial
 from typing import Any, final, NamedTuple
 
@@ -40,6 +41,12 @@ from ..linalg import (
     HermitianSpectrum,
     verify_dense_properties,
 )
+from ..linalg._hermitian_spectral import (
+    hermitian_exp_enclosure,
+    hermitian_log_enclosure,
+    HermitianFunctionEnclosure,
+    matrix_norm_enclosure,
+)
 from ..nonlinear import Brent, NonlinearTermination, scalar_root, ScalarRootProblem
 from ..typing import checked, Dim, Float64, Identifier
 from ._scope import MeshingScope
@@ -56,6 +63,108 @@ _COMPLEXITY_TERMINATION = NonlinearTermination(
     relative_step=0.0,
     maximum_steps=200,
 )
+
+
+class _PreparedMetricEnclosures:
+    """Source-owned reusable rational log enclosures for SPD metric samples."""
+
+    def __init__(self, values: np.ndarray, /) -> None:
+        self.values = np.asarray(values, dtype=np.float64)
+        self._logs: dict[int, HermitianFunctionEnclosure] = {}
+
+    def log(self, row: int, /) -> HermitianFunctionEnclosure:
+        if row not in self._logs:
+            self._logs[row] = hermitian_log_enclosure(self.values[row])
+        return self._logs[row]
+
+    def segment_range(
+        self,
+        rows: tuple[int, ...],
+        lower: tuple[Fraction, ...],
+        upper: tuple[Fraction, ...],
+        /,
+    ) -> HermitianFunctionEnclosure:
+        """Enclose log-Euclidean interpolation for all supplied weight ranges."""
+        if not (len(rows) == len(lower) == len(upper)) or not rows:
+            raise ValueError("Metric rows and coefficient intervals must align.")
+        if any(a > b for a, b in zip(lower, upper, strict=True)):
+            raise ValueError("Metric coefficient intervals must be ordered.")
+        logs = tuple(self.log(row) for row in rows)
+        weights = tuple((a + b) / 2 for a, b in zip(lower, upper, strict=True))
+        dimension = len(logs[0].matrix)
+        center = tuple(
+            tuple(
+                sum(
+                    (
+                        weight * log.matrix[i][j]
+                        for weight, log in zip(weights, logs, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                for j in range(dimension)
+            )
+            for i in range(dimension)
+        )
+        radius = sum(
+            (
+                abs(weight) * log.error
+                + (b - a) / 2 * (matrix_norm_enclosure(log.matrix) + log.error)
+                for weight, log, a, b in zip(weights, logs, lower, upper, strict=True)
+            ),
+            Fraction(0),
+        )
+        matrix, error = hermitian_exp_enclosure(
+            HermitianFunctionEnclosure(center, radius)
+        )
+        return HermitianFunctionEnclosure(matrix, error)
+
+
+def _edge_length_enclosure(
+    displacement: tuple[np.ndarray, np.ndarray],
+    first_metric: tuple[np.ndarray, np.ndarray],
+    second_metric: tuple[np.ndarray, np.ndarray],
+    /,
+) -> tuple[float, float]:
+    """Enclose the logarithmic mean of endpoint metric lengths."""
+    from ..geometry._interval_enclosure import (
+        interval_add,
+        interval_divide,
+        interval_log,
+        interval_multiply,
+        interval_sqrt,
+        interval_square,
+        interval_subtract,
+    )
+
+    def directional(
+        metric: tuple[np.ndarray, np.ndarray],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        total = (np.asarray(0.0), np.asarray(0.0))
+        for i in range(displacement[0].size):
+            for j in range(displacement[0].size):
+                delta_i = (displacement[0][i], displacement[1][i])
+                delta_j = (displacement[0][j], displacement[1][j])
+                tensor = (metric[0][i, j], metric[1][i, j])
+                product = (
+                    interval_square(delta_i)
+                    if i == j
+                    else interval_multiply(delta_i, delta_j)
+                )
+                total = interval_add(total, interval_multiply(product, tensor))
+        result = interval_sqrt(total)
+        return np.asarray(np.maximum(result[0], 0.0)), np.asarray(result[1])
+
+    first, second = directional(first_metric), directional(second_metric)
+    lower = float(np.minimum(first[0], second[0]))
+    upper = float(np.maximum(first[1], second[1]))
+    if lower <= 0.0:
+        return lower, upper
+    log_difference = interval_subtract(interval_log(first), interval_log(second))
+    if float(log_difference[0]) > 0.0 or float(log_difference[1]) < 0.0:
+        quotient = interval_divide(interval_subtract(first, second), log_difference)
+        lower = max(lower, float(quotient[0]))
+        upper = min(upper, float(quotient[1]))
+    return lower, upper
 
 
 class _MetricEntityDim(Dim):
@@ -1529,6 +1638,15 @@ def _log_euclidean_mean(tensors: Array, weights: Array, /) -> Array:
         ~valid,
         "Log-Euclidean interpolation requires SPD metrics and convex weights.",
     )
+
+
+def _constant_preserving_metric_mean(tensors: Array, weights: Array, /) -> Array:
+    """Internal point value for prevalidated SPD samples and convex weights."""
+    logarithm = hermitian_log(tensors).value
+    mean = hermitian_exp(contract("...k,...kij->...ij", weights, logarithm)).value
+    first = tensors[..., 0, :, :]
+    identical = jnp.all(tensors == first[..., None, :, :], axis=(-3, -2, -1))
+    return jnp.where(identical[..., None, None], first, mean)
 
 
 def interpolate_mesh_metric(values: ArrayLike, weights: ArrayLike, /) -> Array:
