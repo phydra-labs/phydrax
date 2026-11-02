@@ -3231,8 +3231,16 @@ def brep_revolution(
         /,
     ) -> AbstractCurve:
         curve_index = builder.edge_curves[rotational_edge]
-        if root is None or curve_index < 0:
+        if root is None:
             return LineCurve((0.0, parameter), (1.0, 0.0))
+        if curve_index < 0:
+            # A pole latitude is the conic root itself, not the binary64
+            # realization of its generally irrational parameter.
+            return AffinePCurve(
+                ConicRootLinePCurve(root, 0, 1, parameter_range=None),
+                ((0, 1), (1, 0)),
+                (0, 0),
+            )
         ring_curve = builder.curves[curve_index]
         if not isinstance(ring_curve, CircleCurve):
             return LineCurve((0.0, parameter), (1.0, 0.0))
