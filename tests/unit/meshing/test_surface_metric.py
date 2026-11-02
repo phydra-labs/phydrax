@@ -42,6 +42,7 @@ from phydrax.meshing._adaptation import (
     MeshAdaptationStatus,
     MetricMeshAdaptation,
     prepare_mesh_adaptation,
+    RelocationMeshAdaptation,
 )
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
@@ -49,7 +50,6 @@ from phydrax.meshing._contracts import (
     SurfaceMeshingSpec,
 )
 from phydrax.meshing._implicit_association_transfer import ImplicitAssociationTransfer
-from phydrax.meshing._local_metric import _field_box, _initial_state
 from phydrax.meshing._metric import MeshMetricField, metric_edge_lengths
 from phydrax.meshing._periodic import periodic_entity_orbit_map
 from phydrax.meshing._result import CellMeshingResult
@@ -57,7 +57,6 @@ from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
 from phydrax.meshing._surface_association_transfer import SurfaceAssociationTransfer
 from phydrax.meshing._surface_metric import (
-    _pullback_field,
     execute_surface_metric_adaptation,
     prepare_implicit_surface_metric_source,
     prepare_surface_metric_source,
@@ -395,7 +394,80 @@ def test_open_trimmed_sheet_metric_statistics_match_independent_pullback(
     assert outcome.evidence.unit_fraction == pytest.approx(
         float(np.mean((measured >= lower) & (measured <= upper)))
     )
-    assert outcome.status is SurfaceMetricStatus.COMPLETE
+    assert outcome.out_of_range_edges == int(np.count_nonzero((measured < lower) | (measured > upper)))
+    assert outcome.status is (
+        SurfaceMetricStatus.COMPLETE if np.all((measured >= lower) & (measured <= upper))
+        else SurfaceMetricStatus.STALLED
+    )
+
+def test_surface_relocation_without_operations_does_not_claim_unit_mesh(
+    _trimmed_sheet: tuple[MeshingDomain, CellMeshingResult],
+) -> None:
+    domain, source = _trimmed_sheet
+    vertex_set = source.mesh.entity_set(0)
+    vertex_ids = np.asarray(vertex_set.entity_ids, dtype=np.int64)
+    metric = MeshMetricField(
+        MeshingScope(
+            source.mesh.mesh_id,
+            source.mesh.numeric_version,
+            MeshingEntityKind.MESH,
+            0,
+            vertex_set.entity_set_id,
+            vertex_ids,
+        ),
+        np.broadcast_to(np.eye(3), (vertex_ids.size, 3, 3)),
+        minimum_size=0.1,
+        maximum_size=2.0,
+    )
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            RelocationMeshAdaptation(metric),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_METRIC_SURFACE,
+                association_transfer=SurfaceAssociationTransfer(domain),
+                relocation=False,
+            ),
+        )
+    )
+    assert isinstance(result.evidence, SurfaceMetricOutcome)
+    assert result.evidence.out_of_range_edges > 0
+    assert not result.evidence.evidence.converged
+    assert result.status is MeshAdaptationStatus.STALLED
+
+
+def test_surface_publication_rechecks_final_metric_band(
+    _trimmed_sheet: tuple[MeshingDomain, CellMeshingResult],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, source = _trimmed_sheet
+    assert source.surface_source is not None
+    prepared = prepare_surface_metric_source(
+        source.mesh, source.surface_source, _anisotropic_metric(source.mesh)
+    )
+    local_execute = surface_metric.execute_local_metric_adaptation
+    pullback = surface_metric._pullback_metrics
+
+    def perturb_after_local(*args: Any, **kwargs: Any) -> Any:
+        local = local_execute(*args, **kwargs)
+        monkeypatch.setattr(
+            surface_metric, "_pullback_metrics", lambda *values: 1.0e6 * pullback(*values)
+        )
+        monkeypatch.setattr(
+            surface_metric, "_resume_local_metric_adaptation", lambda *values: local
+        )
+        return local
+
+    monkeypatch.setattr(surface_metric, "execute_local_metric_adaptation", perturb_after_local)
+    outcome = execute_surface_metric_adaptation(
+        prepared,
+        predicate_mode=PredicateMode.EXACT,
+        topology_operations=True,
+        relocation=True,
+    )
+    assert outcome.out_of_range_edges > 0
+    assert not outcome.evidence.converged
+    assert outcome.status is SurfaceMetricStatus.NUMERICAL_STOP
 
 
 def test_open_trimmed_sheet_adaptation_keeps_boundary_and_exact_source_points(
@@ -469,70 +541,6 @@ def _coarsening_metric(mesh: CellMesh, /) -> np.ndarray:
     # (median 0.15, shortest 0.016), so the extraction's short edges must collapse.
     tensor = np.diag(np.full((3,), 30.0, dtype=np.float64))
     return np.broadcast_to(tensor, (mesh.coordinates.shape[0], 3, 3)).copy()
-
-
-def test_sphere_metric_segment_enclosure_contains_chart_samples() -> None:
-    profile, result, contract = _implicit_sphere_source()
-    certification = result.certification
-    assert certification is not None
-    witness = certification.inputs.fidelity_witness
-    query = certification.inputs.source
-    assert isinstance(witness, SourceBoundaryChartWitness) and query is not None
-    prepared = prepare_implicit_surface_metric_source(
-        result.mesh,
-        result.geometry,
-        contract,
-        profile,
-        witness,
-        query,
-        _coarsening_metric(result.mesh),
-    )
-    rows = np.asarray(prepared.work_mesh.blocks[0].vertices[0], dtype=np.int64)
-    field = _pullback_field(prepared)
-    chart = np.asarray(prepared.work_mesh.coordinates[rows[0]], dtype=np.float64)
-    bounds = field.segment_range(
-        tuple(int(row) for row in rows),
-        (Fraction(1), Fraction(0), Fraction(0)),
-        (Fraction(1), Fraction(0), Fraction(0)),
-        chart - 1e-6,
-        chart + 1e-6,
-    )
-    assert bounds is not None
-    for offset in (-1e-6, 0.0, 1e-6):
-        point = chart + offset
-        value = field(point[None, :], rows[None, :], np.asarray(((1.0, 0.0, 0.0),)))[0]
-        assert np.all(value >= bounds[0]) and np.all(value <= bounds[1])
-    floor = float(np.finfo(np.float64).eps) ** 0.25
-    bounds = field.segment_range(
-        tuple(int(row) for row in rows),
-        (Fraction(1), Fraction(0), Fraction(0)),
-        (Fraction(1), Fraction(0), Fraction(0)),
-        np.asarray((-2 * floor, 0.3)),
-        np.asarray((2 * floor, 0.5)),
-    )
-    assert bounds is not None
-    for polar in (-2 * floor, -floor / 2, 0.0, floor / 2, 2 * floor):
-        for azimuth in (0.3, 0.4, 0.5):
-            point = np.asarray(((polar, azimuth),))
-            value = field(point, rows[None, :], np.asarray(((1.0, 0.0, 0.0),)))[0]
-            assert np.all(value >= bounds[0]) and np.all(value <= bounds[1])
-    mesh = prepared.work_mesh
-    _, local_source = _initial_state(
-        mesh,
-        prepared.pullback_metric,
-        np.zeros(mesh.entity_set(2).count, dtype=np.int64),
-        np.zeros(mesh.entity_set(1).count, dtype=np.int64),
-        np.zeros(mesh.entity_set(1).count, dtype=np.bool_),
-        np.zeros(mesh.entity_set(0).count, dtype=np.bool_),
-        PredicateMode.EXACT,
-        metric_field=field,
-    )
-    midpoint = np.asarray(mesh.coordinates[rows], dtype=np.float64).mean(axis=0)
-    bounds = _field_box(local_source, midpoint, midpoint)
-    assert bounds is not None
-    weights = np.full((1, 3), 1.0 / 3.0)
-    value = field(midpoint[None, :], rows[None, :], weights)[0]
-    assert np.all(value >= bounds[0]) and np.all(value <= bounds[1])
 
 
 def test_implicit_sphere_metric_edits_retain_projective_chart_and_orbits(
@@ -734,6 +742,10 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
     # collapses the extraction's short edges and completes.
     assert result.status is MeshAdaptationStatus.COMPLETE
     assert result.evidence.out_of_range_edges == 0
+    np.testing.assert_array_equal(
+        result.evidence.metric,
+        np.broadcast_to(values[0], result.evidence.metric.shape),
+    )
     assert result.evidence.collapses > 0
     assert result.transition is not None
     assert result.transition.geometry_transition is not None

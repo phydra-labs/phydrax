@@ -1452,8 +1452,9 @@ bound to the source vertices). Routes:
   and metric bounds. Other seed misses remain unresolved: ideal P1 bounds do
   not certify JAX execution, and callback ranges alone do not certify the
   executed locator and metric or guarantee progress. An accepted point retains
-  its exact source stencil. The compiled device search remains separate and
-  currently uses its fixed seed lattice.
+  its exact source stencil. The compiled device search also subdivides the
+  remainder for nonperiodic interior stars with identical current tensors;
+  curve, periodic, and nonconstant missed remainders remain unresolved.
   All merged-star cells and source stencils are rechecked, including periodic
   orphan retirement. If this does not improve
   the stall, an endpoint escape admits every collapse up to metric length 2,
@@ -1522,8 +1523,19 @@ or implicit root cell without a witnessed transition is refused. Target geometry
 is reconstructed under the retained source-fidelity displacement bound and an
 endpoint continuity check; target charts and source associations are rebound
 before certification.
+Local UV carriers must canonically round their exact source stencils before
+publication. Where a B-Rep target vertex belongs to a shared source face, the
+published chart instead uses the explicit exact face-restricted stencil; source
+edge restrictions use exact orthogonal projection. Periodic chart copies are
+synchronized by their exact source weights. The final published physical tensor
+is pulled back at the published chart points and measured again on the final
+unprotected edges, using periodic quotient representatives. If publication
+changes an unmet local state, the local engine continues from that state with
+the original source bindings; repeated numerical states terminate without a
+success claim.
 `COMPLETE`, `STALLED`, and `NUMERICAL_STOP` remain distinct; an unresolved
-predicate or an unmet unit-mesh criterion is not reported as success.
+predicate or an unmet unit-mesh criterion is not reported as success, including
+when both topology operations and relocation are disabled.
 
 Protected scopes (including periodic boundaries) are never split, moved, or
 removed; marks whose closure would split them are rejected and reported, with
@@ -1820,10 +1832,14 @@ rejection counts, unit-mesh measurements); capacity overflow restores the
 exact accepted arrays, grows the required static workspace at a host barrier,
 and retries the same operation. Invalid geometry is terminal and refuses
 later calls on that state.
+Nonfinite or nonpositive measured metric lengths and nonfinite collapse scores
+pause for host numerical resolution; affected numerical-failure epochs or
+periodic orbit transactions roll back without mutating the caller's state.
+Filtered geometric uncertainty remains separately resolvable.
 `commit_device_metric_adaptation` applies the same acceptance as
-`commit_adaptive_simplex` (terminal flags raise, `NEEDS_HOST_RESOLUTION` is
-resolved by exact host orientation of the committed cells), performs one
-transfer, and returns the `MeshAdaptationResult` with `DeviceMetricEvidence`; a
+`commit_adaptive_simplex` (terminal flags raise; filtered geometric
+`NEEDS_HOST_RESOLUTION` is resolved by exact host orientation of committed
+cells), performs one transfer, and returns the `MeshAdaptationResult` with `DeviceMetricEvidence`; a
 run that applied nothing is UNCHANGED, with convergence or stall in the
 evidence (as for `NATIVE_METRIC_2D`).
 

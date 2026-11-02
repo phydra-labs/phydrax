@@ -18,7 +18,7 @@ protected edges) is never crossed, so inherited organization stays unanimous.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Any, final, Literal, NamedTuple, Protocol, runtime_checkable
+from typing import Any, final, Literal, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -48,10 +48,10 @@ from ..geometry._interval_enclosure import (
 from ..linalg._exact import solve_exact
 from ._lineage import EntityLineageKind
 from ._metric import (
+    _constant_preserving_metric_mean,
     _edge_length_enclosure,
     _PreparedMetricEnclosures,
     _tensor_properties,
-    interpolate_mesh_metric,
     metric_edge_lengths,
 )
 from ._periodic import periodic_entity_orbit_map, stage_periodic_topology_edit
@@ -243,6 +243,9 @@ class LocalMetricOutcome(NamedTuple):
     edit: CellTopologyEdit
     metric: np.ndarray
     evidence: LocalMetricEvidence
+    protected_edge_keys: np.ndarray
+    state: _State
+    source: _Source
 
 
 type ExactSourceRow = tuple[tuple[int, Fraction], ...]
@@ -401,19 +404,6 @@ def _source_box_pieces(
     return covered, tuple(pieces)
 
 
-@runtime_checkable
-class _SegmentMetricField(Protocol):
-    def segment_range(
-        self,
-        rows: tuple[int, ...],
-        weight_lower: tuple[Fraction, ...],
-        weight_upper: tuple[Fraction, ...],
-        chart_lower: np.ndarray,
-        chart_upper: np.ndarray,
-        /,
-    ) -> tuple[np.ndarray, np.ndarray] | None: ...
-
-
 def _carrier_locator_pieces(
     source: _Source, lower: np.ndarray, upper: np.ndarray, /
 ) -> tuple[_SourceBoxPiece, ...] | None:
@@ -462,40 +452,6 @@ def _carrier_locator_pieces(
         hi = tuple(Fraction(float(weight[1])) for weight in normalized)
         pieces.append(_SourceBoxPiece(rows, (lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2])))
     return tuple(pieces)
-
-
-def _field_box(
-    source: _Source, lower: np.ndarray, upper: np.ndarray, /
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """Combine callback-declared ranges over all possible carrier locator cells.
-
-    This does not by itself certify the callback's floating execution and is
-    not used to exclude optimal-collapse intervals.
-    """
-    field = source.metric_field
-    if not isinstance(field, _SegmentMetricField):
-        return None
-    covered, _ = _source_box_pieces(source, lower, upper)
-    pieces = _carrier_locator_pieces(source, lower, upper)
-    if not covered or pieces is None:
-        return None
-    ranges: list[tuple[np.ndarray, np.ndarray]] = []
-    for piece in pieces:
-        try:
-            value = field.segment_range(
-                piece.rows, piece.weight_lower, piece.weight_upper, lower, upper
-            )
-        except (ValueError, OverflowError, FloatingPointError):
-            return None
-        if value is None or not all(np.all(np.isfinite(bound)) for bound in value):
-            return None
-        ranges.append(value)
-    if not ranges:
-        return None
-    return (
-        np.minimum.reduce([value[0] for value in ranges]),
-        np.maximum.reduce([value[1] for value in ranges]),
-    )
 
 
 def _field_metric(
@@ -772,11 +728,8 @@ def _interpolate_metrics(values: np.ndarray, weights: np.ndarray, /) -> np.ndarr
     coefficients = np.zeros((capacity, values.shape[1]), dtype=np.float64)
     coefficients[:, 0] = 1.0
     coefficients[:count] = weights
-    result = interpolate_mesh_metric(tensors, coefficients)
-    output = np.asarray(result, dtype=np.float64)[:count].copy()
-    constant = np.all(values == values[:, :1], axis=(1, 2, 3))
-    output[constant] = values[constant, 0]
-    return output
+    result = _constant_preserving_metric_mean(jnp.asarray(tensors), jnp.asarray(coefficients))
+    return np.asarray(result, dtype=np.float64)[:count].copy()
 
 
 def _quality(lengths: np.ndarray, /) -> np.ndarray:
@@ -6687,11 +6640,26 @@ def execute_local_metric_adaptation(
         metric_field,
         exact_source_points,
     )
+    return _resume_local_metric_adaptation(
+        mesh, source, state, predicate_mode, topology_operations, relocation, _Counts(), 0
+    )
+
+
+def _resume_local_metric_adaptation(
+    mesh: CellMesh,
+    source: _Source,
+    state: _State,
+    predicate_mode: PredicateMode,
+    topology_operations: bool,
+    relocation: bool,
+    counts: _Counts,
+    passes: int,
+    /,
+) -> LocalMetricOutcome:
+    """Continue the same local engine with its original source and controls."""
     topologies = _StateTopologies(mesh, source, predicate_mode)
     topology, periodic_context = topologies(state)
     _validate_classification(state, topology, periodic_context)
-    counts = _Counts()
-    passes = 0
     stalled = False
     # The last stall that escaped: its state, counts, passes, potential, and
     # the escape attempt that ran from it.
@@ -6761,7 +6729,49 @@ def execute_local_metric_adaptation(
         predicate_mode,
         stalled_edges,
     )
-    return LocalMetricOutcome(edit, target_metric, evidence)
+    _, _, final_ids = _target_order(state)
+    protected_edge_keys = np.sort(final_ids[topology.edges[topology.edge_protected]], axis=1)
+    return LocalMetricOutcome(edit, target_metric, evidence, protected_edge_keys, state, source)
+
+
+def _published_state(
+    outcome: LocalMetricOutcome,
+    points: np.ndarray,
+    metric: np.ndarray,
+    stencils: tuple[ExactSourceRow, ...],
+    /,
+) -> _State:
+    """Bind final chart carriers, tensors and source rows to the original state."""
+    state = outcome.state
+    order, _, _ = _target_order(state)
+    width = max(state.source_stencil_weights.shape[1], *(len(row) for row in stencils))
+    sources, weights, valid = _pad_stencil_columns(
+        state.source_stencil_sources, state.source_stencil_weights, state.source_stencil_valid, width
+    )
+    sources, weights, valid = sources.copy(), weights.copy(), valid.copy()
+    exact = list(state.source_stencil_exact)
+    for vertex, row in zip(order.tolist(), stencils, strict=True):
+        sources[vertex] = -1
+        weights[vertex] = 0.0
+        valid[vertex] = False
+        for column, (identifier, weight) in enumerate(row):
+            sources[vertex, column] = identifier
+            weights[vertex, column] = float(weight)
+            valid[vertex, column] = True
+        exact[vertex] = row
+    coordinates, tensors = state.points.copy(), state.metric.copy()
+    coordinates[order], tensors[order] = points, metric
+    moved = state.moved.copy()
+    moved[order] |= np.any(coordinates[order] != state.points[order], axis=1)
+    return state._replace(
+        points=coordinates,
+        metric=tensors,
+        moved=moved,
+        source_stencil_sources=sources,
+        source_stencil_weights=weights,
+        source_stencil_valid=valid,
+        source_stencil_exact=tuple(exact),
+    )
 
 
 __all__ = [

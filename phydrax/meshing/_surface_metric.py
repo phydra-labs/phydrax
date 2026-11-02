@@ -28,7 +28,6 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import PredicateMode
-from .._interpolation._bspline_extraction import _binary64_down, _binary64_up
 from .._physical import SpatialCoordinateContract
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import cell_geometry_id
@@ -39,18 +38,12 @@ from ..discretization._nested_reference_types import (
     validate_reference_cell_map_witnesses,
 )
 from ..discretization._periodic_cell import PeriodicCell
+from ..discretization._periodic_exact import exact_periodic_element
 from ..discretization._periodic_topology import PeriodicMeshTopology
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._surface_chart_records import (
     SurfaceChartWitness,
     SurfaceRootMeshCellBinding,
-)
-from ..geometry._interval_enclosure import (
-    _dot_general,
-    Interval,
-    interval_cos,
-    interval_multiply,
-    interval_sin,
 )
 from ..geometry._meshing_domain import _PlacedSurfacePatch, MeshingDomain
 from ..geometry._source_boundary_records import (
@@ -63,14 +56,24 @@ from ..geometry.brep._patches import RevolutionSurface, SpherePatch
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ._association import GeometryAssociation
 from ._local_metric import (
+    _Counts,
+    _edge_table,
+    _exact_periodic_metric,
+    _LOWER,
+    _metric_lengths,
+    _published_state,
+    _quality,
+    _resume_local_metric_adaptation,
+    _State,
+    _target_order,
+    _UPPER,
     execute_local_metric_adaptation,
     LocalMetricEvidence,
     LocalMetricOutcome,
 )
 from ._metric import (
-    _PreparedMetricEnclosures,
+    _constant_preserving_metric_mean,
     _tensor_properties,
-    interpolate_mesh_metric,
 )
 from ._periodic import periodic_entity_orbit_map, stage_periodic_topology_edit
 from ._topology_edit import (
@@ -1372,7 +1375,7 @@ def _parent_face_stencils(
     target_cells: np.ndarray,
     cell_parents: tuple[tuple[int, ...], ...],
     /,
-) -> tuple[list[_WorkStencil], np.ndarray]:
+) -> list[_WorkStencil]:
     """Restrict target stencils to the exact source face their vertex lies on.
 
     Local metric execution moves binary64 shadows of the exact UV chart, so a
@@ -1382,10 +1385,11 @@ def _parent_face_stencils(
     target carrier. An edge face takes the exact orthogonal projection of the
     shadow onto that edge: renormalizing dropped barycentric mass would move the
     point along the edge by that mass times the cell aspect ratio. Larger faces
-    are restricted and renormalized; the caller bounds either snap by binary64
-    shadow resolution. The implicit analytic chart is one global chart, so only
-    its carrier-boundary vertices are restricted: an interior vertex is any chart
-    point, realized by exact source projection.
+    are restricted and renormalized. These rows explicitly define the published
+    source charts; the original local carrier is checked before restriction. The
+    implicit analytic chart is global, so only its carrier-boundary vertices are
+    restricted: an interior vertex is any chart point, realized by exact source
+    projection.
     """
     global_chart = isinstance(source.source_charts, _ImplicitSurfaceChartBank)
     work_cells = np.concatenate(
@@ -1417,7 +1421,6 @@ def _parent_face_stencils(
         for vertex in cell:
             parents_by_vertex[int(vertex)].update(parents)
     restricted = list(stencils)
-    snapped = np.zeros((len(stencils),), dtype=np.bool_)
     for vertex, parents in sorted(parents_by_vertex.items()):
         boundary = vertex in target_boundary_vertices
         stencil = stencils[vertex]
@@ -1468,8 +1471,7 @@ def _parent_face_stencils(
                 for work_row, weight in stencil
                 if work_row in face and weight
             )
-        snapped[vertex] = True
-    return restricted, snapped
+    return restricted
 
 
 def _physical_stencil(
@@ -1523,18 +1525,13 @@ def _synchronized_copy_stencils(
 
 
 def _exact_target_chart(
-    local_edit: CellTopologyEdit,
     source: SurfaceMetricSource,
     stencils: list[_WorkStencil],
     /,
 ) -> tuple[_ExactPoint, ...]:
-    coordinates = np.asarray(local_edit.coordinates, dtype=np.float64)
-    if coordinates.shape != (len(stencils), 2):
-        raise ValueError(
-            "Local metric UV coordinates must align with exact source stencils."
-        )
+    """Realize source-chart stencils exactly, including explicit face projections."""
     charts: list[_ExactPoint] = []
-    for row, stencil in enumerate(stencils):
+    for stencil in stencils:
         first = Fraction(0)
         second = Fraction(0)
         for work_row, coefficient in stencil:
@@ -1542,11 +1539,6 @@ def _exact_target_chart(
             first += coefficient * point[0]
             second += coefficient * point[1]
         exact_point = (first, second)
-        exact_shadow = np.asarray(tuple(float(value) for value in exact_point))
-        if not np.array_equal(exact_shadow, coordinates[row]):
-            raise ValueError(
-                "A surface metric target carrier does not canonically round its exact source stencil."
-            )
         charts.append(exact_point)
     return tuple(charts)
 
@@ -1902,7 +1894,7 @@ def _physical_edit(
     prepared: SurfaceMetricSource,
     local_outcome: LocalMetricOutcome,
     /,
-) -> tuple[CellTopologyEdit, np.ndarray, SurfaceMetricGeometryWitness]:
+) -> tuple[CellTopologyEdit, np.ndarray, SurfaceMetricGeometryWitness, LocalMetricEvidence, _State]:
     local_edit = local_outcome.edit
     local_blocks = tuple(
         block for block in local_edit.blocks if isinstance(block, TopologyEditBlock)
@@ -2012,16 +2004,25 @@ def _physical_edit(
         _source_rows_for_cell(cell_relation, int(target_id), source_rows_by_cell)
         for target_id in local_cell_ids.tolist()
     )
-    work_stencils, snapped = _parent_face_stencils(
+    local_stencils = _work_stencils(local_edit, prepared)
+    local_uv = _exact_target_chart(prepared, local_stencils)
+    local_carriers = np.asarray(local_edit.coordinates, dtype=np.float64)
+    if local_carriers.shape != (len(local_uv), 2) or not np.array_equal(
+        local_carriers, np.asarray([[float(value) for value in point] for point in local_uv])
+    ):
+        raise ValueError(
+            "A surface metric target carrier does not canonically round its exact source stencil."
+        )
+    work_stencils = _parent_face_stencils(
         prepared,
-        _work_stencils(local_edit, prepared),
+        local_stencils,
         np.asarray(local_edit.coordinates, dtype=np.float64),
         local_cells,
         cell_parents,
     )
     if work_target.periodic_topology is not None:
         work_stencils = _synchronized_copy_stencils(prepared, work_stencils, group_rows)
-    target_uv = _exact_target_chart(local_edit, prepared, work_stencils)
+    target_uv = _exact_target_chart(prepared, work_stencils)
     global_chart = isinstance(prepared.source_charts, _ImplicitSurfaceChartBank)
     cell_meta: dict[
         int, tuple[int, int, tuple[int, ...], str, int, _ExactTriangle, tuple[int, ...]]
@@ -2148,8 +2149,102 @@ def _physical_edit(
             metric_rows[row, column] = source_row
             metric_weights[row, column] = float(weight)
     target_metric = np.asarray(
-        interpolate_mesh_metric(prepared.physical_metric[metric_rows], metric_weights),
+        _constant_preserving_metric_mean(
+            jnp.asarray(prepared.physical_metric[metric_rows]), jnp.asarray(metric_weights)
+        ),
         dtype=np.float64,
+    )
+    # Publication may project chart points or synchronize periodic stencils.
+    # Measure the published physical tensor pulled back at those final charts,
+    # rather than inheriting the local optimizer's pre-publication measurement.
+    chart_points = np.asarray([[float(value) for value in point] for point in target_uv])
+    chart_metric = _pullback_metrics(
+        prepared.domain, vertex_patches, chart_points, target_metric[work_to_physical_row]
+    )
+    if work_target.periodic_topology is not None:
+        vertex_map = periodic_entity_orbit_map(work_target, 0)
+        vertex_orbits = np.asarray(vertex_map.lifted_to_quotient, dtype=np.int64)
+        vertex_representatives = np.asarray(
+            vertex_map.representative_lifted_rows, dtype=np.int64
+        )
+        windings = np.asarray(vertex_map.winding_shifts, dtype=np.int64)
+        for row, orbit in enumerate(vertex_orbits):
+            representative = int(vertex_representatives[orbit])
+            if row != representative:
+                transform = exact_periodic_element(
+                    work_target.periodic_topology.cell,
+                    windings[row] - windings[representative],
+                )
+                chart_metric[row] = _exact_periodic_metric(transform, chart_metric[representative])
+    edges, _, _, _, cell_edges = _edge_table(local_cells)
+    protected = {
+        tuple(int(value) for value in key) for key in local_outcome.protected_edge_keys
+    }
+    measured = np.asarray(
+        [
+            tuple(sorted((int(target_ids[a]), int(target_ids[b])))) not in protected
+            for a, b in edges
+        ],
+        dtype=np.bool_,
+    )
+    lengths = _metric_lengths(chart_metric, chart_points, edges)
+    if work_target.periodic_topology is not None:
+        edge_map = periodic_entity_orbit_map(work_target, 1)
+        target_rows = key_rows(
+            entity_keys(work_target, 1), np.sort(target_ids[edges], axis=1)
+        )
+        if np.any(target_rows < 0):
+            raise ValueError("Published periodic chart lost a lifted edge.")
+        state_rows = np.empty((edges.shape[0],), dtype=np.int64)
+        state_rows[target_rows] = np.arange(edges.shape[0])
+        representatives = state_rows[
+            np.asarray(edge_map.representative_lifted_rows, dtype=np.int64)
+        ]
+        orbits = np.asarray(edge_map.lifted_to_quotient, dtype=np.int64)[target_rows]
+        lengths = lengths[representatives[orbits]]
+    selected = lengths[measured] if np.any(measured) else lengths
+    inside = (selected >= _LOWER) & (selected <= _UPPER)
+    previous = local_outcome.evidence
+    converged = bool(np.all(inside))
+    unchanged = (
+        work_stencils == local_stencils
+        and np.array_equal(chart_points, local_edit.coordinates)
+        and np.array_equal(chart_metric, local_outcome.metric)
+    )
+    evidence = LocalMetricEvidence(
+        passes=previous.passes,
+        splits=previous.splits,
+        collapses=previous.collapses,
+        flips=previous.flips,
+        relocations=previous.relocations,
+        rejected_uncertain=previous.rejected_uncertain,
+        rejected_invalid=previous.rejected_invalid,
+        converged=converged,
+        stalled=not converged and (
+            (previous.stalled and unchanged)
+            or (not previous.topology_operations and not previous.relocation)
+        ),
+        measured_edges=selected.size,
+        out_of_range_edges=int(np.count_nonzero(~inside)),
+        minimum_metric_length=float(np.min(selected)),
+        maximum_metric_length=float(np.max(selected)),
+        unit_fraction=float(np.count_nonzero(inside) / selected.size),
+        minimum_metric_quality=float(np.min(_quality(lengths[cell_edges]))),
+        topology_operations=previous.topology_operations,
+        relocation=previous.relocation,
+        predicate_mode=previous.predicate_mode,
+        stalled_edges=(
+            previous.stalled_edges if previous.stalled and not converged and unchanged else ()
+        ),
+    )
+
+    source_ids = np.asarray(prepared.work_mesh.vertex_global_ids, dtype=np.int64)
+    published_stencils = tuple(
+        tuple((int(source_ids[row]), weight) for row, weight in stencil)
+        for stencil in work_stencils
+    )
+    published_state = _published_state(
+        local_outcome, chart_points, chart_metric, published_stencils
     )
 
     vertex_order = np.argsort(physical_ids, kind="stable")
@@ -2402,7 +2497,7 @@ def _physical_edit(
         implicit_root_edge_keys,
         reference_maps,
     )
-    return edit, target_metric, geometry
+    return edit, target_metric, geometry, evidence, published_state
 
 
 class _PullbackField:
@@ -2410,7 +2505,6 @@ class _PullbackField:
 
     def __init__(self, source: SurfaceMetricSource, /) -> None:
         self.source = source
-        self.enclosures = _PreparedMetricEnclosures(source.physical_metric)
 
     def __call__(
         self, points: np.ndarray, rows: np.ndarray, weights: np.ndarray, /
@@ -2424,7 +2518,8 @@ class _PullbackField:
         coefficients[:, 0] = 1.0
         coefficients[:count] = weights
         physical = np.asarray(
-            interpolate_mesh_metric(samples, coefficients), dtype=np.float64
+            _constant_preserving_metric_mean(jnp.asarray(samples), jnp.asarray(coefficients)),
+            dtype=np.float64,
         )[:count]
         return _pullback_metrics(
             source.domain,
@@ -2432,72 +2527,6 @@ class _PullbackField:
             points,
             physical,
         )
-
-    def segment_range(
-        self,
-        rows: tuple[int, ...],
-        weight_lower: tuple[Fraction, ...],
-        weight_upper: tuple[Fraction, ...],
-        chart_lower: np.ndarray,
-        chart_upper: np.ndarray,
-        /,
-    ) -> tuple[np.ndarray, np.ndarray] | None:
-        """Enclose the sphere pullback on a chart box in one location cell."""
-        source = self.source
-        patch = source.domain.patches[int(source.work_vertex_patches[rows[0]])].surface
-        if (
-            not isinstance(patch, _ImplicitParameterSurface)
-            or patch.profile.family != "sphere"
-        ):
-            return None
-        physical = self.enclosures.segment_range(
-            tuple(int(source.work_to_source_rows[row]) for row in rows),
-            weight_lower,
-            weight_upper,
-        )
-        low = np.asarray(
-            [
-                [_binary64_down(value - physical.error) for value in row]
-                for row in physical.matrix
-            ]
-        )
-        high = np.asarray(
-            [
-                [_binary64_up(value + physical.error) for value in row]
-                for row in physical.matrix
-            ]
-        )
-        polar = (np.asarray(chart_lower[0]), np.asarray(chart_upper[0]))
-        azimuth = (np.asarray(chart_lower[1]), np.asarray(chart_upper[1]))
-        sp, cp = interval_sin(polar), interval_cos(polar)
-        sa, ca = interval_sin(azimuth), interval_cos(azimuth)
-        floor = _AZIMUTH_STRETCH_FLOOR
-        if sp[0] >= floor or sp[1] <= -floor:
-            stretch = sp
-        elif sp[0] > -floor and sp[1] < floor:
-            stretch = (np.asarray(floor), np.asarray(floor))
-        else:
-            stretch = (np.minimum(sp[0], floor), np.maximum(sp[1], floor))
-
-        def neg(value: Interval) -> tuple[np.ndarray, np.ndarray]:
-            return np.negative(np.asarray(value[1])), np.negative(np.asarray(value[0]))
-
-        zero = (np.asarray(0.0), np.asarray(0.0))
-        components = (
-            (interval_multiply(cp, ca), neg(interval_multiply(stretch, sa))),
-            (interval_multiply(cp, sa), interval_multiply(stretch, ca)),
-            (neg(sp), zero),
-        )
-        radius = np.asarray(float(patch.profile.radius))
-        frame = (
-            np.asarray([[value[0] for value in row] for row in components]),
-            np.asarray([[value[1] for value in row] for row in components]),
-        )
-        frame = interval_multiply(frame, (radius, radius))
-        transposed = (frame[0].T, frame[1].T)
-        product = _dot_general(transposed, (low, high), (((1,), (0,)), ((), ())))
-        result = _dot_general(product, frame, (((1,), (0,)), ((), ())))
-        return np.asarray(result[0]), np.asarray(result[1])
 
 
 def _pullback_field(source: SurfaceMetricSource, /) -> _PullbackField:
@@ -2541,18 +2570,38 @@ def execute_surface_metric_adaptation(
         metric_field=_pullback_field(source) if np.any(collapsed) else None,
         exact_source_points=source.work_vertex_charts,
     )
-    edit, target_metric, geometry = _physical_edit(source, local)
-    evidence = local.evidence
+    seen: set[tuple[bytes, bytes, bytes, bytes]] = set()
+    while True:
+        edit, target_metric, geometry, evidence, published = _physical_edit(source, local)
+        if evidence.converged or evidence.stalled or evidence.rejected_uncertain:
+            break
+        if not topology_operations and not relocation:
+            break
+        order, _, final_ids = _target_order(published)
+        signature = (
+            published.points[order].tobytes(),
+            published.metric[order].tobytes(),
+            final_ids[published.cells].tobytes(),
+            local.protected_edge_keys.tobytes(),
+        )
+        if signature in seen:
+            break
+        seen.add(signature)
+        old = local.evidence
+        counts = _Counts(
+            old.splits, old.collapses, old.flips, old.relocations,
+            old.rejected_uncertain, old.rejected_invalid,
+        )
+        local = _resume_local_metric_adaptation(
+            source.work_mesh, local.source, published, predicate_mode,
+            topology_operations, relocation, counts, old.passes,
+        )
     if evidence.converged:
         status = SurfaceMetricStatus.COMPLETE
     elif evidence.rejected_uncertain:
         status = SurfaceMetricStatus.NUMERICAL_STOP
     elif evidence.stalled:
-        status = (
-            SurfaceMetricStatus.STALLED
-            if topology_operations
-            else SurfaceMetricStatus.COMPLETE
-        )
+        status = SurfaceMetricStatus.STALLED
     else:
         status = SurfaceMetricStatus.NUMERICAL_STOP
     return SurfaceMetricOutcome(
