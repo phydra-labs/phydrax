@@ -233,8 +233,9 @@ class SourceEmbeddingProof:
 
     ``bounds`` contains exact chart coordinates, not numerical enclosures.
     ``deck_axes`` identifies precisely the opposing rectangle sides separated by
-    symbolic native τ. ``pole_roots`` identifies complete latitude fibers at
-    the listed exact sphere pole roots. Regularity holds away from those fibers.
+    symbolic native τ. ``pole_roots`` identifies complete collapsed fibers at
+    exact sphere poles or the radial profile's axis crossing. Regularity holds
+    away from those fibers.
     The caller must prove that the actual source/swept domain is contained in
     this box and that every declared identification is authorized by the same
     source topology; this record does not assert either fact.

@@ -563,8 +563,8 @@ class SourceShellAdmissibility:
 
 def _single_shell_topology(model: BRepModel, domain: object, /) -> bool:
     """Prove edge balance and cyclic vertex links after exact pole quotient."""
-    from .._domain_boundary import _rooted_patch_chart_junctions
-    from .._meshing_domain import MeshingDomain
+    from .._domain_boundary import _exact_line_junction_box
+    from .._meshing_domain import _same_brep_trim_endpoint, MeshingDomain
     from ._correspondence import _exact_brep_pole_collapse
 
     if not isinstance(domain, MeshingDomain) or domain.brep_authority is not model:
@@ -593,15 +593,24 @@ def _single_shell_topology(model: BRepModel, domain: object, /) -> bool:
         patch = patch_by_face.get(face)
         if patch is None:
             return False
-        _rooted_patch_chart_junctions(domain, patch)
-        for loop in geometry.face_loops[face]:
+        for loop_index, loop in enumerate(geometry.face_loops[face]):
             if not loop:
                 return False
-            for coedge, following in zip(loop, (*loop[1:], loop[0]), strict=True):
+            uses = domain.patches[patch].loops[loop_index]
+            for index, (coedge, following) in enumerate(
+                zip(loop, (*loop[1:], loop[0]), strict=True)
+            ):
                 edge, next_edge = geometry.coedge_edges[coedge], geometry.coedge_edges[following]
                 end_slot = 1 if geometry.coedge_senses[coedge] > 0 else 0
                 next_slot = 0 if geometry.coedge_senses[following] > 0 else 1
                 if geometry.edge_vertices[edge][end_slot] != geometry.edge_vertices[next_edge][next_slot]:
+                    return False
+                first_use, second_use = uses[index], uses[(index + 1) % len(uses)]
+                if not _same_brep_trim_endpoint(
+                    model, face, coedge, following, first_use, second_use
+                ) and _exact_line_junction_box(
+                    model, face, coedge, following, first_use, second_use
+                ) is None:
                     return False
             regular = []
             for coedge in loop:
@@ -683,6 +692,7 @@ def _reference_patch_partition(
         _possibly_overlapping_pairs,
         _triangle2,
     )
+    from .._meshing_domain import PatchPoleUse
 
     triangles = tuple(
         _triangle2(charts.root_parameter_chart(row))
@@ -691,10 +701,15 @@ def _reference_patch_partition(
     )
     if not triangles:
         return False
-    triangles = (
-        *triangles,
-        *(sliver for _, sliver in charts.boundary_source.collapsed_pole_slivers(patch, triangles)),
+    has_pole = any(
+        isinstance(use, PatchPoleUse)
+        for loop in charts.domain.patches[patch].loops for use in loop
     )
+    slivers = (
+        charts.boundary_source.collapsed_pole_slivers(patch, triangles)
+        if has_pole else ()
+    )
+    triangles = (*triangles, *(sliver for _, sliver in slivers))
     signs = tuple(1 if _area2(t) > 0 else -1 if _area2(t) < 0 else 0 for t in triangles)
     if 0 in signs or len(set(signs)) != 1:
         return False
@@ -705,15 +720,19 @@ def _reference_patch_partition(
     def edge(first: tuple, last: tuple) -> tuple[tuple, int]:
         return ((first, last), 1) if first < last else ((last, first), -1)
 
-    vertices = {
-        point for triangle in triangles for point in triangle
-    } | {point for loop in loops for segment in loop for point in (segment.start, segment.stop)}
+    vertices = (
+        {point for triangle in triangles for point in triangle}
+        | {point for loop in loops for segment in loop for point in (segment.start, segment.stop)}
+        if slivers else set()
+    )
 
     def parts(first: tuple, last: tuple) -> tuple[tuple[tuple, int], ...]:
         dx, dy = last[0] - first[0], last[1] - first[1]
         length = dx * dx + dy * dy
         if not length:
             return ()
+        if not slivers:
+            return (edge(first, last),)
         points = sorted(
             (
                 point for point in vertices
