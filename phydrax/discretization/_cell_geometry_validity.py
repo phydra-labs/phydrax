@@ -2101,6 +2101,75 @@ class ValidatedCellValidityParent:
     def __post_init__(self) -> None:
         self.certificate.revalidate(self.certificate.geometry, mesh=self.certificate.mesh)
 
+    def require(
+        self,
+        geometry: CellGeometrySpec,
+        mesh: CellMesh | None,
+        certificate: CellValidityCertificate,
+        /,
+    ) -> None:
+        if (
+            self.certificate is not certificate
+            or certificate.geometry is not geometry
+            or certificate.mesh is not mesh
+        ):
+            raise ValueError("Validated validity binds different exact operands.")
+        certificate.require_current(geometry, mesh=mesh)
+
+
+class ComputedCellValidity:
+    """Host-only validity proof computed for one operation's exact operands."""
+
+    __slots__ = ("geometry", "mesh", "certificate")
+
+    def __init__(
+        self,
+        geometry: CellGeometrySpec,
+        mesh: CellMesh | None,
+        policy: CellValidityPolicy,
+        parent: CellValidityCertificate
+        | ValidatedCellValidityParent
+        | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+        | None,
+        /,
+    ) -> None:
+        if type(policy) is not CellValidityPolicy:
+            raise TypeError("Computed validity requires an exact CellValidityPolicy.")
+        canonical_policy = CellValidityPolicy(
+            relative_determinant_floor=policy.relative_determinant_floor,
+            relative_planarity_tolerance=policy.relative_planarity_tolerance,
+        )
+        if canonical_policy.policy_id != policy.policy_id:
+            raise ValueError("Computed validity policy does not reproduce its controls.")
+        self.geometry = geometry
+        self.mesh = mesh
+        self.certificate = certify_cell_geometry_validity(
+            geometry, mesh=mesh, policy=policy, parent=parent
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if hasattr(self, name):
+            raise AttributeError("A computed validity artifact is immutable.")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("A computed validity artifact is immutable.")
+
+    def require(
+        self,
+        geometry: CellGeometrySpec,
+        mesh: CellMesh | None,
+        certificate: CellValidityCertificate,
+        /,
+    ) -> None:
+        if (
+            self.geometry is not geometry
+            or self.mesh is not mesh
+            or self.certificate is not certificate
+        ):
+            raise ValueError("Computed validity binds different exact operands.")
+        certificate.require_current(geometry, mesh=mesh)
+
 
 def _parent_proofs(
     parent: CellValidityCertificate

@@ -1249,6 +1249,8 @@ def test_stored_validity_refuses_policy_with_stale_identity() -> None:
     forged = reconstruct_strict(type(parent), values)
     with pytest.raises(ValueError, match="policy does not reproduce"):
         D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=forged)
+    with pytest.raises(ValueError, match="policy does not reproduce"):
+        validity_module.ComputedCellValidity(geometry, mesh, forged_policy, None)
 
 
 def test_parent_validity_requires_the_same_policy() -> None:

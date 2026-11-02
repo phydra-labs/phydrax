@@ -17,8 +17,8 @@ from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
-    certify_cell_geometry_validity,
     ValidatedCellValidityParent,
+    ComputedCellValidity,
 )
 from ..discretization._surface_chart_records import SurfaceChartWitness
 from ..geometry._domain_certification import (
@@ -384,7 +384,9 @@ def _acceptance_validity(
     | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
     | None,
     /,
-) -> CellValidityCertificate:
+) -> tuple[
+    CellValidityCertificate, ComputedCellValidity | ValidatedCellValidityParent | None
+]:
     """Reuse an in-hand proof of exactly these inputs or prove with parent records."""
     validity_policy = policy.validity_policy
     if validity is not None:
@@ -394,8 +396,11 @@ def _acceptance_validity(
             raise ValueError(
                 "An in-hand validity proof must use the acceptance validity policy."
             )
+        if validity.geometry is inputs.geometry and validity.mesh is inputs.mesh:
+            validated = ValidatedCellValidityParent(validity)
+            return validity, validated
         validity.revalidate(inputs.geometry, mesh=inputs.mesh)
-        return validity
+        return validity, None
     match parent:
         case None:
             parents: tuple[
@@ -415,11 +420,11 @@ def _acceptance_validity(
     ):
         raise TypeError("validity_parent must hold validity certificates or validations.")
     # Proofs under another validity policy answer no acceptance obligation.
-    return certify_cell_geometry_validity(
+    computed = ComputedCellValidity(
         inputs.geometry,
-        mesh=inputs.mesh,
-        policy=validity_policy,
-        parent=tuple(
+        inputs.mesh,
+        validity_policy,
+        tuple(
             value
             for value in parents
             if (
@@ -430,6 +435,7 @@ def _acceptance_validity(
             == validity_policy.policy_id
         ),
     )
+    return computed.certificate, computed
 
 
 @final
@@ -524,7 +530,9 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             source=inputs.source,
             validated=validated,
         )
-        validity = _acceptance_validity(inputs, policy, validity, validity_parent)
+        validity, validated_validity = _acceptance_validity(
+            inputs, policy, validity, validity_parent
+        )
         if embedding is None:
             embedding = certify_global_embedding(
                 inputs.mesh,
@@ -532,6 +540,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 validity,
                 junction_vertices=inputs.junction_vertices,
                 nested_restriction=embedding_premise,
+                validated_validity=validated_validity,
             )
         else:
             embedding.require_inputs(
