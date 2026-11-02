@@ -1962,6 +1962,12 @@ The native owner rechecks every affected cell and every retained or replaced
 facet and segment at the new carrier before committing atomically.
 Nonperiodic relocation reuses stage-specific local proposals only while their
 closed stars are unchanged; moved stars invalidate the affected entries.
+The relocation search compares admissible coarse and fine dyadic carriers by
+the same band-first objective; if the coarse search exhausts its moves, a
+finite finer-grid search can find a descent that coarse quantization missed.
+Source-cell location uses precomputed exact affine coefficients. Unchanged
+incidence and boundary controls are reused only after the corresponding native
+snapshot banks agree, and moved vertices invalidate their incident edge metrics.
 
 Each accepted tetrahedral edit strictly decreases a lexicographic potential:
 the descending multiset of long-edge band violations, the descending multiset

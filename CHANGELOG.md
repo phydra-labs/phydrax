@@ -11,6 +11,9 @@
 - Native torus source covers and fidelity now bind exact direct and
   affine-placed coefficients in outward point and derivative interval programs,
   including nonbinary rational radii, rather than relying on rounded shadows.
+- Tetrahedral metric relocation retains finer exact dyadic source carriers when
+  coarse quantization misses a descending move, and reuses unchanged local
+  geometry and exact source-location preparation across relocation batches.
 - Array-tree fingerprints stream keyed leaves without retaining a flattened leaf
   bank. Iterative traversal keeps ancestry storage linear in tree depth and
   preserves canonical fingerprint bytes for deeply nested trees.

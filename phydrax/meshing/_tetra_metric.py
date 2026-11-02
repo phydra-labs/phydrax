@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from fractions import Fraction
 from itertools import combinations
+from math import lcm
 from typing import Any, NamedTuple
 
 import equinox as eqx
@@ -290,6 +291,8 @@ type _SourceTetRecord = tuple[
     tuple[Fraction, ...],
     tuple[float, ...],
     tuple[float, ...],
+    tuple[tuple[int, int, int, int], ...],
+    int,
 ]
 
 
@@ -982,6 +985,17 @@ def _source_tetra_inverse(
             [Fraction(int(row == column)) for column in range(3)] for row in range(3)
         ]
         inverse = tuple(tuple(row) for row in solve_exact(matrix, identity))
+        affine = tuple(
+            (*inverse_row, -sum(
+                (inverse_row[axis] * origin[axis] for axis in range(3)), Fraction(0)
+            ))
+            for inverse_row in inverse
+        )
+        denominator = lcm(*(value.denominator for affine_row in affine for value in affine_row))
+        integer_affine = tuple(
+            tuple(value.numerator * (denominator // value.denominator) for value in affine_row)
+            for affine_row in affine
+        )
         records.append(
             (
                 int(cell_ids[row]),
@@ -990,6 +1004,8 @@ def _source_tetra_inverse(
                 origin,
                 tuple(float(min(corner[axis] for corner in coordinates)) for axis in range(3)),
                 tuple(float(max(corner[axis] for corner in coordinates)) for axis in range(3)),
+                integer_affine,
+                denominator,
             )
         )
     return tuple(sorted(records, key=lambda row: row[0]))
@@ -1008,24 +1024,37 @@ def _locate_source_weights(
         # Source vertices are finite binary64, so an overflowed coordinate
         # lies outside every source box.
         return None
-    for cell_id, vertices, inverse, origin, lower, upper in source_records:
+    scaled_point: tuple[int, int, int] | None = None
+    point_denominator = 1
+    for cell_id, vertices, _inverse, _origin, lower, upper, affine, denominator in source_records:
         # Correct rounding is monotone and the bounds are binary64 source
         # vertices: rounding a point within a closed box cannot leave it.
         if any(rounded[axis] < lower[axis] or rounded[axis] > upper[axis] for axis in range(3)):
             continue
-        delta = tuple(point[axis] - origin[axis] for axis in range(3))
+        if scaled_point is None:
+            point_denominator = lcm(*(value.denominator for value in point))
+            scaled_point = tuple(
+                value.numerator * (point_denominator // value.denominator)
+                for value in point
+            )
+        common = denominator * point_denominator
+        remaining = common
         tail = []
-        remaining = Fraction(1)
-        for inverse_row in inverse:
-            weight = sum(
-                (inverse_row[axis] * delta[axis] for axis in range(3)), Fraction(0)
+        for row in affine:
+            weight = (
+                row[0] * scaled_point[0]
+                + row[1] * scaled_point[1]
+                + row[2] * scaled_point[2]
+                + row[3] * point_denominator
             )
             if weight < 0 or weight > remaining:
                 break
             tail.append(weight)
             remaining -= weight
         else:
-            return cell_id, vertices, (remaining, *tail)
+            return cell_id, vertices, tuple(
+                Fraction(value, common) for value in (remaining, *tail)
+            )
     return None
 
 
@@ -4962,7 +4991,7 @@ def _replacement_phase(
             blocked.clear()
 
 
-def _quantized_relocation(
+def _quantized_relocation_candidates(
     state: _NativeState,
     simplices: tuple[tuple[int, ...], ...] | None,
     target: np.ndarray,
@@ -4970,19 +4999,18 @@ def _quantized_relocation(
     /,
     *,
     frames: dict[tuple[int, ...], _EntityFrame] | None = None,
-) -> tuple[dict[int, Fraction], np.ndarray] | None:
-    """Dyadic source stencil and binary64 carrier of one relocation target.
+    images: dict[
+        tuple[tuple[int, Fraction], ...],
+        tuple[tuple[Fraction, Fraction, Fraction], np.ndarray],
+    ] | None = None,
+    fine_first: bool = False,
+) -> Iterator[tuple[dict[int, Fraction], np.ndarray]]:
+    """Enumerate exact dyadic source carriers for one relocation target.
 
-    The target's exact weights (in the source cell containing it, or of its
-    orthogonal projection into the first of the vertex's carrier simplices,
-    source triangles or edges, containing it) are rounded to the coarsest
-    dyadic grid ``2**-bits`` that resolves the move and whose point is closer
-    to the exact goal than the current point is; the stencil weights are then
-    binary64 and the carrier is the rounded exact image. An interior carrier
-    may round; a carrier in a source triangle must be exact or lie on a
-    declared exact plane (the native rounding-box admission); a carrier on a
-    source edge must be exact. ``None``: the target leaves the carrier, or no
-    representable point makes progress.
+    Each carrier is closer to the target than the current point. Boundary
+    images retain the exact or declared-plane admission required by the
+    native source complex. The target is rounded at each dyadic resolution
+    through 53 bits, in fine-to-coarse or coarse-to-fine order.
     """
     coordinates = state.source_points
     rows = state.source_vertex_rows
@@ -5010,7 +5038,7 @@ def _quantized_relocation(
                 located = simplex, simplex_weights
                 break
     if located is None:
-        return None
+        return
     vertices, weights = located
     if simplices is None:
         # Exact barycentric inversion reproduces the target itself.
@@ -5023,13 +5051,20 @@ def _quantized_relocation(
     corners = coordinates[[rows[vertex] for vertex in vertices]]
     span = float(np.max(np.ptp(corners, axis=0)))
     if not distance > 0.0 or not span > 0.0:
-        return None
+        return
     # A grid coarser than the move cannot resolve it; start where it can.
     first = min(max(int(np.floor(np.log2(span / np.sqrt(distance)))), 1), 53)
-    for bits in range(first, 54):
+    for bits in (range(53, first - 1, -1) if fine_first else range(first, 54)):
         stencil = _fraction_stencil(vertices, _quantized_weights(weights, bits))
-        image = _stencil_image(state, stencil)
-        carrier = np.asarray([float(value) for value in image], dtype=np.float64)
+        key = tuple(stencil.items())
+        cached_image = images.get(key) if images is not None else None
+        if cached_image is None:
+            image = _stencil_image(state, stencil)
+            carrier = np.asarray([float(value) for value in image], dtype=np.float64)
+            if images is not None:
+                images[key] = image, carrier
+        else:
+            image, carrier = cached_image
         if not float(np.sum((carrier - goal) ** 2)) < distance:
             continue
         if simplices is not None and any(Fraction(float(v)) != v for v in image):
@@ -5038,8 +5073,29 @@ def _quantized_relocation(
                 or frozenset(vertices) not in state.declared_source_faces
             ):
                 continue
-        return stencil, carrier
-    return None
+        yield stencil, carrier
+
+
+def _quantized_relocation(
+    state: _NativeState,
+    simplices: tuple[tuple[int, ...], ...] | None,
+    target: np.ndarray,
+    current: np.ndarray,
+    /,
+    *,
+    frames: dict[tuple[int, ...], _EntityFrame] | None = None,
+    images: dict[
+        tuple[tuple[int, Fraction], ...],
+        tuple[tuple[Fraction, Fraction, Fraction], np.ndarray],
+    ] | None = None,
+) -> tuple[dict[int, Fraction], np.ndarray] | None:
+    """Return the coarsest admissible exact source carrier, if one exists."""
+    return next(
+        _quantized_relocation_candidates(
+            state, simplices, target, current, frames=frames, images=images
+        ),
+        None,
+    )
 
 
 def _relocation_goals(
@@ -5058,14 +5114,108 @@ def _relocation_goals(
                 break
 
 
+class _RelocationPreparation(NamedTuple):
+    topology: _TetTopology
+    points: np.ndarray
+    metrics: np.ndarray
+    lengths: np.ndarray
+    classes: dict[tuple[int, int], int]
+    protected: dict[tuple[int, int], bool]
+    records: _BoundaryRecords
+    edge_rows: np.ndarray
+    incident_edges: dict[int, tuple[int, ...]]
+
+
+def _prepare_relocation_geometry(
+    state: _NativeState,
+    /,
+    *,
+    previous: tuple[TetMeshArrays, _RelocationPreparation] | None = None,
+    moved_vertices: frozenset[int] | None = None,
+) -> _RelocationPreparation:
+    snapshot = state.snapshot
+    # Pure relocation normally preserves all incidence rows. Check the actual
+    # snapshot banks before reusing them; a changed native representation takes
+    # the ordinary complete rebuild, including for periodic edits.
+    same_incidence = previous is not None and all(
+        np.array_equal(getattr(snapshot, name), getattr(previous[0], name))
+        for name in ("vertex_ids", "cell_ids", "tetrahedra", "faces", "segments")
+    )
+    if same_incidence and previous is not None:
+        topology = previous[1].topology
+        edge_rows = previous[1].edge_rows
+        incident_edges = previous[1].incident_edges
+    else:
+        topology = _topology(snapshot)
+        incident_lists: dict[int, list[int]] = defaultdict(list)
+        rows = []
+        for index, (first, second) in enumerate(topology.edge_cells):
+            rows.append((topology.vertex_row[first], topology.vertex_row[second]))
+            incident_lists[first].append(index)
+            incident_lists[second].append(index)
+        edge_rows = np.asarray(rows, dtype=np.int64).reshape((-1, 2))
+        incident_edges = {vertex: tuple(indices) for vertex, indices in incident_lists.items()}
+    points = np.asarray(snapshot.points, dtype=np.float64)
+    can_update = (
+        same_incidence and previous is not None and moved_vertices is not None
+        and state.target_mesh.periodic_topology is None
+    )
+    if can_update and previous is not None and moved_vertices is not None:
+        moved_rows = np.asarray(
+            [topology.vertex_row[vertex] for vertex in moved_vertices], dtype=np.int64
+        )
+        unchanged_rows = np.ones(len(points), dtype=np.bool_)
+        unchanged_rows[moved_rows] = False
+        can_update = np.array_equal(points[unchanged_rows], previous[1].points[unchanged_rows])
+    if can_update and previous is not None and moved_vertices is not None:
+        metrics = previous[1].metrics.copy()
+        for vertex in moved_vertices:
+            metrics[topology.vertex_row[vertex]] = state.metric_by_vertex[vertex]
+        changed_edges = np.asarray(
+            sorted({index for vertex in moved_vertices for index in incident_edges[vertex]}),
+            dtype=np.int64,
+        )
+        lengths = previous[1].lengths.copy()
+        lengths[changed_edges] = _metric_lengths(points, metrics, edge_rows[changed_edges])
+    else:
+        vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
+        metrics = np.asarray(
+            [state.metric_by_vertex[int(identifier)] for identifier in vertex_ids],
+            dtype=np.float64,
+        )
+        lengths = _metric_lengths(points, metrics, edge_rows)
+    if same_incidence and previous is not None and all(
+        np.array_equal(getattr(snapshot, name), getattr(previous[0], name))
+        for name in ("segment_sources", "protected_segments")
+    ):
+        classes, protected = previous[1].classes, previous[1].protected
+    else:
+        classes, protected = _current_edge_controls(state, topology)
+    if same_incidence and previous is not None and all(
+        np.array_equal(getattr(snapshot, name), getattr(previous[0], name))
+        for name in (
+            "facet_ids", "face_sources", "facet_orientations", "protected_facets",
+            "segment_ids", "segment_sources", "protected_segments",
+        )
+    ):
+        records = previous[1].records
+    else:
+        records = _boundary_records(state)
+    return _RelocationPreparation(
+        topology, points, metrics, lengths, classes, protected, records, edge_rows, incident_edges
+    )
+
+
 def _relocation_proposals(
     state: _NativeState,
     cache: dict[int, dict[str, Any] | None],
     /,
     *,
     deep: bool = False,
+    refine: bool = False,
     active_only: bool = False,
     band_only: bool = False,
+    prepared: _RelocationPreparation | None = None,
 ) -> list[tuple[dict[str, Any], ...]]:
     """Objective-decreasing vertex moves to quantized source points.
 
@@ -5083,9 +5233,11 @@ def _relocation_proposals(
     closed stars of moved vertices.
     """
     snapshot = state.snapshot
-    topology = _topology(snapshot)
-    points, metrics, edge_lengths = _metric_edge_table(state, topology)
-    _, protected_edges = _current_edge_controls(state, topology)
+    if prepared is None:
+        prepared = _prepare_relocation_geometry(state)
+    topology = prepared.topology
+    points, metrics, edge_lengths = prepared.points, prepared.metrics, prepared.lengths
+    protected_edges, records = prepared.protected, prepared.records
     violating_vertices = (
         {
             vertex
@@ -5096,7 +5248,6 @@ def _relocation_proposals(
         if active_only
         else None
     )
-    records = _boundary_records(state)
     periodic = state.target_mesh.periodic_topology is not None
     vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
     dimensions = np.asarray(snapshot.vertex_dimensions, dtype=np.int8)
@@ -5111,8 +5262,6 @@ def _relocation_proposals(
     constant_metric = bool(np.all(state.source_metric == state.source_metric[0]))
 
     def propose(vertex: int) -> dict[str, Any] | None:
-        if violating_vertices is not None and vertex not in violating_vertices:
-            return None
         row = topology.vertex_row[vertex]
         if vertex in state.fixed_vertices or protected_vertices[row]:
             return None
@@ -5186,6 +5335,10 @@ def _relocation_proposals(
             span = (corners[1:] - corners[0]).T
             projection = span @ np.linalg.lstsq(span, np.eye(3), rcond=None)[0]
         frames: dict[tuple[int, ...], _EntityFrame] = {}
+        images: dict[
+            tuple[tuple[int, Fraction], ...],
+            tuple[tuple[Fraction, Fraction, Fraction], np.ndarray],
+        ] = {}
         if deep and np.any(outside) and not constant_metric:
             # A varying tensor changes with the vertex. Finite differences
             # propose directions only; exact ancestry and the full objective
@@ -5204,7 +5357,7 @@ def _relocation_proposals(
                 for sign in (1.0, -1.0):
                     trial = points[row] + sign * step * direction
                     located = _quantized_relocation(
-                        state, simplices, trial, points[row], frames=frames
+                        state, simplices, trial, points[row], frames=frames, images=images
                     )
                     if located is None:
                         continue
@@ -5315,79 +5468,141 @@ def _relocation_proposals(
 
 
         # Frames above are local to this vertex's source carrier.
+        # Distinct pulls and backtracking steps can round to the very same
+        # projected binary64 goal. The star, source carrier and metric field
+        # are fixed during this proposal, so retrying an identical goal cannot
+        # change its exact quantization or admission result.
+        seen_goals: set[bytes] = set()
+        rejected_stencils: set[tuple[tuple[int, Fraction], ...]] = set()
 
-        for goal in _relocation_goals(points[row], pulls, seed_only=not deep):
-            if corners is not None and projection is not None:
-                goal = corners[0] + projection @ (goal - corners[0])
-            # A constant source field has exactly the current metric at the
-            # goal. Graded fields cannot use that inexpensive objective screen:
-            # their target tensor must first be located and interpolated.
-            if constant_metric:
-                if evaluate(goal, local_metrics[0]) is None:
+        def candidate_goals() -> Iterator[tuple[np.ndarray, bool]]:
+            prepared: list[np.ndarray] = []
+            for goal in _relocation_goals(points[row], pulls, seed_only=not deep):
+                if corners is not None and projection is not None:
+                    goal = corners[0] + projection @ (goal - corners[0])
+                goal_key = goal.tobytes()
+                if goal_key in seen_goals:
                     continue
-            else:
-                screen_points = local_points.copy()
-                screen_points[0] = goal
-                if not _floor_oriented(screen_points[local_cells]):
-                    continue
-            quantized = _quantized_relocation(state, simplices, goal, points[row], frames=frames)
-            if quantized is None:
-                continue
-            stencil, carrier = quantized
-            if np.array_equal(carrier, points[row]) or np.any(
-                np.all(local_points[1:] == carrier, axis=1)
-            ):
-                continue
-            moved_metric = _source_metric_from_stencil(
-                state.source_metric, state.source_vertex_rows, stencil,
-                source_metric_log=state.source_metric_log,
-            )
-            evaluated = evaluate(carrier, moved_metric)
-            if evaluated is None:
-                continue
-            after, _ = evaluated
-            current_stencil = None
-            if periodic:
-                # A periodic lift also needs the binary64 stencil of the carrier
-                # in the current star, reproducing it exactly.
-                current_stencil = _current_star_stencil(
-                    points,
-                    cells[star_rows],
-                    vertex_ids,
-                    current_cell_ids[star_rows],
-                    current_vertex_rows,
-                    carrier,
+                seen_goals.add(goal_key)
+                # Constant fields can screen using the current tensor; graded
+                # fields must first locate the candidate's source tensor.
+                if constant_metric:
+                    if evaluate(goal, local_metrics[0]) is None:
+                        continue
+                else:
+                    screen_points = local_points.copy()
+                    screen_points[0] = goal
+                    if not _floor_oriented(screen_points[local_cells]):
+                        continue
+                if refine:
+                    prepared.append(goal)
+                yield goal, False
+            if refine:
+                # Only after every finest carrier has been considered, revisit
+                # the same prepared goals at all remaining dyadic resolutions.
+                for goal in prepared:
+                    yield goal, True
+
+        for goal, remaining in candidate_goals():
+            if refine:
+                choices = _quantized_relocation_candidates(
+                    state, simplices, goal, points[row], frames=frames,
+                    images=images, fine_first=True,
                 )
-                if current_stencil is None:
+                first = next(choices, None)
+                candidates = choices if remaining else (() if first is None else (first,))
+            else:
+                quantized = _quantized_relocation(
+                    state, simplices, goal, points[row], frames=frames, images=images
+                )
+                if deep:
+                    fine = next(
+                        _quantized_relocation_candidates(
+                            state, simplices, goal, points[row], frames=frames,
+                            images=images, fine_first=True,
+                        ),
+                        None,
+                    )
+                    candidates = tuple(
+                        value for value in (quantized, fine) if value is not None
+                    )
+                else:
+                    candidates = () if quantized is None else (quantized,)
+            best: tuple[Any, dict[str, Any]] | None = None
+            for stencil, carrier in candidates:
+                if np.array_equal(carrier, points[row]) or np.any(
+                    np.all(local_points[1:] == carrier, axis=1)
+                ):
                     continue
-            return {
-                "vertex": int(vertex),
-                "point": carrier,
-                "metric": moved_metric,
-                "stencil": stencil,
-                "current_stencil": current_stencil,
-                "star_cell_ids": star_ids,
-                "star_vertices": frozenset((vertex, *neighbors)),
-                "cavity": frozenset(star_ids),
-                "gain": float(np.min(after) - np.min(before)),
-                "badness": float(np.max(np.maximum(lengths, 1.0 / lengths))),
-                "block": next(iter(star_blocks)),
-                "region": next(iter(star_regions)),
-            }
+                # Distinct goals can quantize to the same exact source point.
+                # A rejected stencil has the same carrier, metric and star on
+                # every revisit, so its admission result cannot change here.
+                stencil_key = tuple(stencil.items())
+                if stencil_key in rejected_stencils:
+                    continue
+                if best is not None and stencil == best[1]["stencil"]:
+                    continue
+                moved_metric = _source_metric_from_stencil(
+                    state.source_metric, state.source_vertex_rows, stencil,
+                    source_metric_log=state.source_metric_log,
+                )
+                evaluated = evaluate(carrier, moved_metric)
+                if evaluated is None:
+                    rejected_stencils.add(stencil_key)
+                    continue
+                after, moved_lengths = evaluated
+                current_stencil = None
+                if periodic:
+                    # A periodic lift also needs the binary64 stencil of the
+                    # carrier in the current star, reproducing it exactly.
+                    current_stencil = _current_star_stencil(
+                        points,
+                        cells[star_rows],
+                        vertex_ids,
+                        current_cell_ids[star_rows],
+                        current_vertex_rows,
+                        carrier,
+                    )
+                    if current_stencil is None:
+                        rejected_stencils.add(stencil_key)
+                        continue
+                proposal = {
+                    "vertex": int(vertex),
+                    "point": carrier,
+                    "metric": moved_metric,
+                    "stencil": stencil,
+                    "current_stencil": current_stencil,
+                    "star_cell_ids": star_ids,
+                    "star_vertices": frozenset((vertex, *neighbors)),
+                    "cavity": frozenset(star_ids),
+                    "gain": float(np.min(after) - np.min(before)),
+                    "badness": float(np.max(np.maximum(lengths, 1.0 / lengths))),
+                    "block": next(iter(star_blocks)),
+                    "region": next(iter(star_regions)),
+                }
+                key = (_band_violations(moved_lengths[measured]), -float(np.min(after)))
+                if best is None or key < best[0]:
+                    best = key, proposal
+            if best is not None:
+                return best[1]
         return None
 
     candidates: list[dict[str, Any]] = []
     occupied_cells: set[int] = set()
-    order = sorted(topology.vertex_cells, key=lambda value: state.vertex_target_ids[value])
+    order = sorted(
+        topology.vertex_cells if violating_vertices is None else violating_vertices,
+        key=lambda value: state.vertex_target_ids[value],
+    )
     for vertex in order:
         # A deep search can be costly; don't construct another proposal whose
         # star cannot be batched with one already found. Deferred stars are
         # searched again after the accepted batch, not treated as refusals.
-        star_ids = {
-            int(current_cell_ids[row]) for row in topology.vertex_cells[vertex]
-        }
-        if deep and not periodic and not occupied_cells.isdisjoint(star_ids):
-            continue
+        if deep and not periodic:
+            star_ids = {
+                int(current_cell_ids[row]) for row in topology.vertex_cells[vertex]
+            }
+            if not occupied_cells.isdisjoint(star_ids):
+                continue
         if vertex not in cache:
             cache[vertex] = propose(vertex)
         proposal = cache[vertex]
@@ -5395,17 +5610,20 @@ def _relocation_proposals(
             candidates.append(proposal)
             if deep and not periodic:
                 occupied_cells.update(star_ids)
-    by_vertex = {int(candidate["vertex"]): candidate for candidate in candidates}
-    grouped = []
-    for vertices in _periodic_vertex_orbit_groups(state):
-        if not vertices or any(vertex not in by_vertex for vertex in vertices):
-            continue
-        members = tuple(by_vertex[vertex] for vertex in vertices)
-        cavities = [proposal["cavity"] for proposal in members]
-        cavity = frozenset().union(*cavities)
-        if sum(map(len, cavities)) != len(cavity):
-            continue
-        grouped.append(members)
+    if not periodic:
+        grouped = [(candidate,) for candidate in candidates]
+    else:
+        by_vertex = {int(candidate["vertex"]): candidate for candidate in candidates}
+        grouped = []
+        for vertices in _periodic_vertex_orbit_groups(state):
+            if not vertices or any(vertex not in by_vertex for vertex in vertices):
+                continue
+            members = tuple(by_vertex[vertex] for vertex in vertices)
+            cavities = [proposal["cavity"] for proposal in members]
+            cavity = frozenset().union(*cavities)
+            if sum(map(len, cavities)) != len(cavity):
+                continue
+            grouped.append(members)
     return sorted(
         grouped,
         key=lambda members: (
@@ -5560,18 +5778,17 @@ def _relocation_unblocks_collapse(
     state: _NativeState,
     moved: list[dict[str, Any]],
     cache: dict[tuple[int, int], tuple[dict[str, Any] | None, frozenset[int]]],
+    prepared: _RelocationPreparation,
     /,
 ) -> bool:
     """Return to topology when a moved star admits a short-edge collapse."""
     if not moved or state.target_mesh.periodic_topology is not None:
         return False
     affected = set().union(*(proposal["star_vertices"] for proposal in moved))
-    topology = _topology(state.snapshot)
-    _, _, lengths = _metric_edge_table(state, topology)
-    classes, protected = _current_edge_controls(state, topology)
+    topology, lengths = prepared.topology, prepared.lengths
+    classes, protected, records = prepared.classes, prepared.protected, prepared.records
     cell_ids = np.asarray(state.snapshot.cell_ids, dtype=np.int64)
     live = set(cell_ids.tolist())
-    records = None
     for edge, length in zip(topology.edge_cells, lengths, strict=True):
         if (
             length >= _LOWER
@@ -5582,8 +5799,6 @@ def _relocation_unblocks_collapse(
             continue
         cached = cache.get(edge)
         if cached is None or not cached[1] <= live:
-            if records is None:
-                records = _boundary_records(state)
             stars = set(topology.vertex_cells[edge[0]]) | set(topology.vertex_cells[edge[1]])
             cached = (
                 _collapse_proposal(state, topology, records, protected, edge),
@@ -5610,20 +5825,25 @@ def _relocation_phase(
     cached proposals of its closed star.
     """
     applied = 0
-    # The three search stages have different proposal sets. Preserve each
+    # The four search stages have different proposal sets. Preserve each
     # stage's results across a restart, invalidating only changed closed stars.
     # Periodic edits can change lifted representatives outside the local star,
     # so retain the conservative whole-cache invalidation for those meshes.
-    caches: list[dict[int, dict[str, Any] | None]] = [{}, {}, {}]
+    caches: list[dict[int, dict[str, Any] | None]] = [{}, {}, {}, {}]
     periodic = state.target_mesh.periodic_topology is not None
     stage = 0
+    prepared: _RelocationPreparation | None = None
     while True:
         cache = caches[stage]
+        if prepared is None:
+            prepared = _prepare_relocation_geometry(state)
         candidates = _relocation_proposals(
-            state, cache, deep=stage == 1, active_only=stage < 2, band_only=stage < 2
+            state, cache, deep=stage in (1, 2), refine=stage == 2,
+            active_only=stage < 3, band_only=stage < 3,
+            prepared=prepared,
         )
         if not candidates:
-            if stage == 2:
+            if stage == 3:
                 return applied
             stage += 1
             if periodic:
@@ -5646,6 +5866,7 @@ def _relocation_phase(
                 for orbit in candidates
             ]
         )
+        previous_snapshot = state.snapshot
         moved = _apply_relocation_partition(state, selected, counters, cache)
         applied += len(moved)
         if moved and collapse_cache is not None:
@@ -5653,8 +5874,13 @@ def _relocation_phase(
             for edge in tuple(collapse_cache):
                 if not collapse_cache[edge][1].isdisjoint(changed_cells):
                     del collapse_cache[edge]
+        if moved:
+            prepared = _prepare_relocation_geometry(
+                state, previous=(previous_snapshot, prepared),
+                moved_vertices=frozenset(int(proposal["vertex"]) for proposal in moved),
+            )
         if topology_operations and _relocation_unblocks_collapse(
-            state, moved, collapse_cache if collapse_cache is not None else {}
+            state, moved, collapse_cache if collapse_cache is not None else {}, prepared
         ):
             return applied
         if moved:

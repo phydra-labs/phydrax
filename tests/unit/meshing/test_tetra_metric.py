@@ -57,6 +57,7 @@ def test_relocation_stage_cache_preserves_only_unchanged_stars(
     state = SimpleNamespace(
         target_mesh=SimpleNamespace(periodic_topology=None),
         vertex_target_ids={1: 1},
+        snapshot=object(),
     )
     proposal = {
         "vertex": 1,
@@ -67,13 +68,22 @@ def test_relocation_stage_cache_preserves_only_unchanged_stars(
         "gain": 1.0,
     }
     deep_calls = 0
+    preparations: list[object] = []
+
+    def prepare(
+        _state: Any, /, *, previous: Any = None, moved_vertices: Any = None
+    ) -> object:
+        result = object()
+        preparations.append(result)
+        return result
 
     def candidates(
         _state: Any, cache: dict[int, Any], /, *, deep: bool,
-        active_only: bool, band_only: bool,
+        active_only: bool, band_only: bool, refine: bool, prepared: object,
     ) -> list[tuple[dict[str, Any], ...]]:
         nonlocal deep_calls
-        if not deep:
+        assert prepared is preparations[-1]
+        if not deep or refine:
             return []
         deep_calls += 1
         if deep_calls == 1:
@@ -82,6 +92,7 @@ def test_relocation_stage_cache_preserves_only_unchanged_stars(
         assert cache == {99: None}
         return []
 
+    monkeypatch.setattr(metric, "_prepare_relocation_geometry", prepare)
     monkeypatch.setattr(metric, "_relocation_proposals", candidates)
     monkeypatch.setattr(metric, "_disjoint_candidates", lambda rows: [rows[0][1]])
     monkeypatch.setattr(
@@ -90,6 +101,7 @@ def test_relocation_stage_cache_preserves_only_unchanged_stars(
     )
     assert metric._relocation_phase(state, {}, topology_operations=False) == 1
     assert deep_calls == 2
+    assert len(preparations) == 2
 
 
 def _source(
@@ -533,12 +545,194 @@ def test_relocation_backtracks_to_binary64_resolution() -> None:
     np.testing.assert_array_equal(point + (goals[-1] - point) / 2.0, point)
 
 
+def test_relocation_can_refine_coarse_source_carriers() -> None:
+    from phydrax.meshing._tetra_metric import _quantized_relocation_candidates
+
+    state = _state(_source(), np.eye(3))
+    current = np.asarray((0.05625916, 0.68115234, 0.2355957))
+    goal = current + np.asarray((5.03073591e-05, 0.00612579696, 0.00986193289))
+    coarse = _quantized_relocation(state, None, goal, current)
+    fine = next(
+        _quantized_relocation_candidates(state, None, goal, current, fine_first=True)
+    )
+    assert coarse is not None
+    assert np.linalg.norm(fine[1] - goal) < np.linalg.norm(coarse[1] - goal)
+    assert fine[0] != coarse[0]
+
+
 def test_deep_boundary_relocation_keeps_affine_projection() -> None:
     state = _state(_source(4, nonuniform=True), np.eye(3) * 4.0)
     proposals = _relocation_proposals(
         state, {}, deep=True, active_only=True, band_only=True
     )
     assert proposals
+
+
+def test_active_relocation_prepares_only_violating_vertex_stars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    state = _state(_source(4, nonuniform=True), np.eye(3) * 4.0)
+    prepared = metric._prepare_relocation_geometry(state)
+    active = {
+        vertex
+        for edge, length in zip(prepared.topology.edge_cells, prepared.lengths, strict=True)
+        if not prepared.protected[edge]
+        and (length < metric._LOWER or length > metric._UPPER)
+        for vertex in edge
+    }
+    cache: dict[int, Any] = {}
+
+    def unexpected_orbits(_state: Any) -> Any:
+        raise AssertionError("Nonperiodic proposals need no global orbit enumeration.")
+
+    monkeypatch.setattr(metric, "_periodic_vertex_orbit_groups", unexpected_orbits)
+    proposals = metric._relocation_proposals(
+        state, cache, active_only=True, band_only=True, prepared=prepared
+    )
+    assert proposals and cache.keys() <= active
+
+
+def test_relocation_preparation_reuses_only_identical_incidence() -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    state = _state(_source(), np.eye(3) * 4.0)
+    original = state.snapshot
+    prepared = metric._prepare_relocation_geometry(state)
+    state.snapshot = original._replace(points=original.points.copy())
+    unchanged = metric._prepare_relocation_geometry(state, previous=(original, prepared))
+    assert unchanged.topology is prepared.topology
+    assert unchanged.classes is prepared.classes
+    assert unchanged.protected is prepared.protected
+    assert unchanged.records is prepared.records
+    np.testing.assert_array_equal(unchanged.lengths, prepared.lengths)
+
+    vertex = int(original.vertex_ids[0])
+    points = original.points.copy()
+    points[0] += (0.01, 0.02, 0.03)
+    state.snapshot = original._replace(points=points)
+    old_metric = state.metric_by_vertex[vertex]
+    state.metric_by_vertex[vertex] = old_metric * 1.2
+    updated = metric._prepare_relocation_geometry(
+        state, previous=(original, prepared), moved_vertices=frozenset((vertex,))
+    )
+    expected_points, expected_metrics, expected_lengths = metric._metric_edge_table(
+        state, metric._topology(state.snapshot)
+    )
+    np.testing.assert_array_equal(updated.points, expected_points)
+    np.testing.assert_array_equal(updated.metrics, expected_metrics)
+    np.testing.assert_array_equal(updated.lengths, expected_lengths)
+    state.metric_by_vertex[vertex] = old_metric
+
+    state.snapshot = original._replace(
+        tetrahedra=original.tetrahedra[::-1].copy(),
+        cell_ids=original.cell_ids[::-1].copy(),
+        tetrahedron_regions=original.tetrahedron_regions[::-1].copy(),
+    )
+    changed = metric._prepare_relocation_geometry(state, previous=(original, prepared))
+    assert changed.topology is not prepared.topology
+    np.testing.assert_array_equal(
+        changed.topology.cell_vertex_ids,
+        metric._topology(state.snapshot).cell_vertex_ids,
+    )
+
+
+def test_relocation_reuses_identical_projected_goals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    source = _source(4, nonuniform=True)
+    coordinates = np.asarray(source.mesh.coordinates)
+    tensors = (4.0 + coordinates[:, 0])[:, None, None] * np.eye(3)
+    state = _state(source, tensors)
+    original_quantize = metric._quantized_relocation
+    original_candidates = metric._quantized_relocation_candidates
+    original_goals = metric._relocation_goals
+    calls = 0
+
+    def quantize(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original_quantize(*args, **kwargs)
+
+    def candidates(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original_candidates(*args, **kwargs)
+
+    monkeypatch.setattr(metric, "_quantized_relocation", quantize)
+    monkeypatch.setattr(metric, "_quantized_relocation_candidates", candidates)
+    baseline = metric._relocation_proposals(
+        state, {}, deep=True, refine=True, active_only=True, band_only=True
+    )
+    baseline_calls = calls
+    assert baseline and baseline_calls
+
+    def duplicated(*args: Any, **kwargs: Any) -> Any:
+        for goal in original_goals(*args, **kwargs):
+            yield goal
+            yield goal.copy()
+
+    monkeypatch.setattr(metric, "_relocation_goals", duplicated)
+    calls = 0
+    repeated = metric._relocation_proposals(
+        state, {}, deep=True, refine=True, active_only=True, band_only=True
+    )
+    assert calls == baseline_calls
+    assert len(repeated) == len(baseline)
+    for expected, actual in zip(baseline, repeated, strict=True):
+        assert len(expected) == len(actual)
+        for first, second in zip(expected, actual, strict=True):
+            assert first["vertex"] == second["vertex"]
+            assert first["stencil"] == second["stencil"]
+            np.testing.assert_array_equal(first["point"], second["point"])
+            np.testing.assert_array_equal(first["metric"], second["metric"])
+
+
+def test_relocation_reuses_rejected_exact_stencils(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    source = _source(4, nonuniform=True)
+    coordinates = np.asarray(source.mesh.coordinates)
+    tensors = (4.0 + coordinates[:, 0])[:, None, None] * np.eye(3)
+    state = _state(source, tensors)
+    original_quantize = metric._quantized_relocation
+    original_interpolate = metric._source_metric_from_stencil
+    first: dict[bytes, Any] = {}
+    current = b""
+    quantizations = 0
+    interpolations: dict[bytes, int] = {}
+
+    def quantize(
+        native: Any, simplices: Any, goal: np.ndarray, point: np.ndarray, **kwargs: Any
+    ) -> Any:
+        nonlocal current, quantizations
+        current = point.tobytes()
+        quantizations += 1
+        if current not in first:
+            result = original_quantize(native, simplices, goal, point, **kwargs)
+            if result is None:
+                return None
+            first[current] = result
+        return first[current]
+
+    def interpolate(*args: Any, **kwargs: Any) -> Any:
+        interpolations[current] = interpolations.get(current, 0) + 1
+        return original_interpolate(*args, **kwargs)
+
+    monkeypatch.setattr(metric, "_quantized_relocation", quantize)
+    monkeypatch.setattr(metric, "_source_metric_from_stencil", interpolate)
+    monkeypatch.setattr(metric, "_band_violations", lambda _lengths: ((), ()))
+    proposals = metric._relocation_proposals(
+        state, {}, deep=False, active_only=False, band_only=True
+    )
+    assert not proposals
+    assert interpolations and quantizations > len(interpolations)
+    assert all(count == 1 for count in interpolations.values())
 
 
 def test_relocation_moves_boundary_vertices_within_their_facet_and_edge() -> None:
@@ -605,14 +799,23 @@ def test_declared_plane_admits_a_rounded_relocation_on_a_slanted_facet() -> None
     assert quantized is not None
     stencil, carrier = quantized
     frames: dict[tuple[int, ...], _EntityFrame] = {}
+    images: dict[Any, Any] = {}
     for factor in (0.5, 0.25, 0.125):
         trial = current + factor * (centroid - current)
         uncached = _quantized_relocation(state, simplices, trial, current)
-        cached = _quantized_relocation(state, simplices, trial, current, frames=frames)
+        cached = _quantized_relocation(
+            state, simplices, trial, current, frames=frames, images=images
+        )
         assert uncached is not None and cached is not None
         assert cached[0] == uncached[0]
         np.testing.assert_array_equal(cached[1], uncached[1])
+        repeated = _quantized_relocation(
+            state, simplices, trial, current, frames=frames, images=images
+        )
+        assert repeated is not None and repeated[0] == cached[0]
+        np.testing.assert_array_equal(repeated[1], cached[1])
     assert frames
+    assert images
     assert np.linalg.norm(carrier - goal) < np.linalg.norm(current - goal)
     exact = [
         sum(
@@ -820,14 +1023,25 @@ def test_source_stencil_dyadic_image_matches_fraction_oracle() -> None:
         assert _stencil_image(state, stencil) == expected
 
 
-def test_source_locator_exact_boxes_match_exhaustive_barycentric_search() -> None:
-    state = _state(_source(), np.eye(3))
+@pytest.mark.parametrize("skewed", (False, True))
+def test_source_locator_exact_boxes_match_exhaustive_barycentric_search(
+    skewed: bool,
+) -> None:
+    source = (
+        _mesh_result(
+            np.asarray(((0., 0., 0.), (0.8, 0.1, 0.), (0.2, 0.9, 0.1), (0.1, 0.2, 0.9))),
+            [[0, 1, 2, 3]],
+        )
+        if skewed
+        else _source()
+    )
+    state = _state(source, np.eye(3))
     for x in (Fraction(-1, 10), Fraction(0), Fraction(1, 3), Fraction(1, 2), Fraction(1)):
         for y in (Fraction(0), Fraction(1, 2), Fraction(1)):
             for z in (Fraction(0), Fraction(1, 2), Fraction(1)):
                 point = (x, y, z)
                 expected = None
-                for cell_id, vertices, inverse, origin, _, _ in state.source_records:
+                for cell_id, vertices, inverse, origin, _, _, _, _ in state.source_records:
                     delta = tuple(point[k] - origin[k] for k in range(3))
                     tail = tuple(
                         sum((inverse[row][axis] * delta[axis] for axis in range(3)), Fraction(0))
