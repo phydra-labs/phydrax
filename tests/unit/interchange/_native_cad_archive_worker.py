@@ -6106,6 +6106,8 @@ def _rebuild_continuation_value(
             raise ValueError("Stored spline element differs from its exact extraction.")
         return rebuilt
     if isinstance(value, PerCellRestrictedCellGeometryElement):
+        from phydrax.discretization._cell_geometry import _require_stored_chart_term_types
+
         source_element = _rebuild_scalar_coordinate_element(value.source_element)
         # Retain one validated expression row per exact repeated chart template.
         # Re-expanding every row as dictionaries before the constructor defeats
@@ -6113,6 +6115,7 @@ def _rebuild_continuation_value(
         chart_templates = {}
         charts = []
         for row, terms in enumerate(value.chart_coefficients):
+            _require_stored_chart_term_types(terms)
             chart = chart_templates.get(terms)
             if chart is None:
                 chart = value.chart_arguments(row)

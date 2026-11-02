@@ -604,6 +604,42 @@ type _ExactPolynomialTerms = tuple[tuple[tuple[int, ...], ExactScalar], ...]
 type _ExactRationalChartTerms = tuple[_ExactPolynomialTerms, _ExactPolynomialTerms]
 
 
+def _require_stored_chart_term_types(row: object, /) -> None:
+    """Refuse noncanonical stored scalar/container kinds before any row reuse."""
+    if type(row) is not tuple:
+        raise TypeError("Stored chart row must be a canonical tuple.")
+    for expression in row:
+        if type(expression) is not tuple or len(expression) != 2:
+            raise TypeError("Stored chart expression must be a canonical term pair.")
+        for polynomial in expression:
+            if type(polynomial) is not tuple:
+                raise TypeError("Stored chart polynomial must be a canonical tuple.")
+            for term in polynomial:
+                if type(term) is not tuple or len(term) != 2:
+                    raise TypeError("Stored chart term must be a canonical pair.")
+                exponent, coefficient = term
+                if (
+                    type(exponent) is not tuple
+                    or any(type(power) is not int for power in exponent)
+                    or type(coefficient) not in (Fraction, RadicalElement)
+                ):
+                    raise TypeError(
+                        "Stored chart terms must use canonical exact scalar kinds."
+                    )
+
+
+def _same_exact_stored_field(stored: object, canonical: object, /) -> bool:
+    """Compare retained immutable field values without Python cross-type equality."""
+    if type(stored) is not type(canonical):
+        return False
+    if type(stored) is tuple and type(canonical) is tuple:
+        return len(stored) == len(canonical) and all(
+            _same_exact_stored_field(left, right)
+            for left, right in zip(stored, canonical, strict=True)
+        )
+    return bool(stored == canonical)
+
+
 def _coordinate_coefficient_identity(
     value: ExactScalar | int | float, /
 ) -> _CoordinateCoefficientIdentity:
@@ -1916,18 +1952,22 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
         /,
     ) -> PerCellRestrictedCellGeometryElement:
         """Validate every stored chart before structural reconstruction."""
-        from .._model._structure import model_archive_projection
+        from .._fingerprint import canonical_json
+        from .._model._structure import model_archive_projection, model_structure_recipe
         from ..geometry._mesh_certificates import _same_tree_content
 
         if type(value) is not cls:
             raise TypeError("Stored per-cell restriction has an unexpected type.")
-        if not _same_tree_content(
-            model_archive_projection(source_element),
-            model_archive_projection(value.source_element),
-        ):
+        stored_source = model_archive_projection(value.source_element)
+        rebuilt_source = model_archive_projection(source_element)
+        if canonical_json(model_structure_recipe(stored_source)) != canonical_json(
+            model_structure_recipe(rebuilt_source)
+        ) or not _same_tree_content(stored_source, rebuilt_source):
             raise ValueError(
                 "Stored per-cell restriction names a different source element."
             )
+        for row in value.chart_coefficients:
+            _require_stored_chart_term_types(row)
         fields = cls._canonical_fields(
             source_element,
             value.cell_kind,
@@ -1936,7 +1976,9 @@ class PerCellRestrictedCellGeometryElement(StrictModule, NonTrainableState):
             chart_arguments,
         )
         for name, rebuilt in fields.items():
-            if name != "source_element" and getattr(value, name) != rebuilt:
+            if name != "source_element" and not _same_exact_stored_field(
+                getattr(value, name), rebuilt
+            ):
                 raise ValueError(
                     "Stored per-cell restriction differs from its validated fields."
                 )
