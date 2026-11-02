@@ -132,6 +132,11 @@ def inward_wall_charts(
         source_root_cell_ids=np.asarray(charts.source_root_cell_ids, dtype=np.int64),
         source_piece_ids=charts.source_piece_ids,
         root_parameter_exact=exact,
+        boundary_occurrences=(
+            None
+            if charts.boundary_occurrences.size == 0
+            else np.asarray(charts.boundary_occurrences, dtype=np.int64)[:, (0, 2, 1)]
+        ),
     )
     return inward, vertices
 
