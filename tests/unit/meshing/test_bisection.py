@@ -96,13 +96,31 @@ def test_coarsening_defers_early_chart_replay_error_for_unchanged_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from phydrax.meshing import _adaptation
+    import weakref
 
     source = _certified(_triangle_grid(1, 1))
     refined = _adapt(source, _cell_ids(source.mesh))
 
-    def fail_replay(source: Any) -> None:
-        raise ValueError("chart replay refused")
+    class ProofFrame:
+        pass
 
+    retained: list[weakref.ReferenceType[ProofFrame]] = []
+
+    def fail_replay(source: Any) -> None:
+        proof = ProofFrame()
+        retained.append(weakref.ref(proof))
+        try:
+            raise RuntimeError("ancestor replay refused")
+        except RuntimeError as cause:
+            raise ValueError("chart replay refused") from cause
+
+    original_bisection = _adaptation.execute_bisection
+
+    def checked_bisection(*args: Any, **kwargs: Any) -> Any:
+        assert retained and all(reference() is None for reference in retained)
+        return original_bisection(*args, **kwargs)
+
+    monkeypatch.setattr(_adaptation, "execute_bisection", checked_bisection)
     monkeypatch.setattr(_adaptation, "_validated_source_chart_parent", fail_replay)
     unchanged = _adapt(
         refined.target, (), _cell_ids(refined.target.mesh)[:1],

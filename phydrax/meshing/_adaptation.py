@@ -6030,6 +6030,24 @@ def _finalize_native(
     )
 
 
+def _discard_exception_tracebacks(error: BaseException, /) -> None:
+    """Release proof frames while retaining the exception and its causal chain."""
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        current.__traceback__ = None
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+
+
 def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation):
@@ -6048,6 +6066,7 @@ def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutco
         try:
             validated_chart_parent = _validated_source_chart_parent(prepared.source)
         except Exception as error:
+            _discard_exception_tracebacks(error)
             chart_replay_error = error
     outcome = execute_bisection(
         prepared.source.mesh,
