@@ -39,10 +39,10 @@ from phydrax.geometry._certificate import (
 from phydrax.geometry._contracts import CompiledGeometry, GeometryKernel, GeometryKind
 from phydrax.geometry._sampling import RejectionSamplingPlan
 from phydrax.geometry._source_boundary_records import (
-    SourceBoundaryQuery,
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
     SourceBoundaryProjectionResult,
+    SourceBoundaryQuery,
     SourceBoundarySamples,
     SourceProjectionStatus,
 )
@@ -64,13 +64,13 @@ from phydrax.geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitSurface,
     discover_adaptive_implicit_surface,
 )
-from phydrax.geometry.implicit._policy import (
-    AdaptiveImplicitBoxIssue,
-    AdaptiveImplicitSurfacePolicy,
-)
 from phydrax.geometry.implicit._chart_restriction import (
     ImplicitChartPremise,
     ImplicitChartRows,
+)
+from phydrax.geometry.implicit._policy import (
+    AdaptiveImplicitBoxIssue,
+    AdaptiveImplicitSurfacePolicy,
 )
 from phydrax.geometry.implicit._source_charts import (
     _AdaptiveImplicitProjectionResult,
