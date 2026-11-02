@@ -1426,7 +1426,8 @@ def model_structure_matches_recipe(value: Any, recipe: Mapping[str, Any], /) -> 
     names = tuple(field.name for field in dataclasses.fields(value))
     fields = recipe.get("fields")
     if (
-        recipe.get("kind") != "dataclass"
+        set(recipe) != {"kind", "type", "fields"}
+        or recipe.get("kind") != "dataclass"
         or recipe.get("type") != artifact_value_id(type(value))
         or not isinstance(fields, dict)
         or set(fields) != set(names)

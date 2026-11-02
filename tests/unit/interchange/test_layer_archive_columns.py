@@ -124,6 +124,7 @@ def test_fidelity_root_and_nested_records_project_row_banks() -> None:
     )
     recipe = model_structure_recipe(certificate)
     assert model_structure_matches_recipe(certificate, recipe)
+    assert not model_structure_matches_recipe(certificate, {**recipe, "extra": True})
     for name in recipe["fields"]:
         changed = {
             **recipe,
