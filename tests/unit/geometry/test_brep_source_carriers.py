@@ -1310,6 +1310,52 @@ def test_authored_revolution_seam_coedges_have_exact_source_lifts(
     assert not exact_source_lift(curve, pcurve, region, first, last + 0.25)
 
 
+def test_extruded_mixed_profile_cap_classifies_and_gaps_remain_visible() -> None:
+    from math import pi
+
+    from phydrax.geometry.brep._constructors import (
+        brep_extrusion,
+        PlanarProfile,
+        ProfileCurveUse,
+        ProfileLine,
+        ProfileLoop,
+        ProfilePlane,
+    )
+    from phydrax.geometry.brep._patches import CircleCurve
+
+    circle = CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0)
+
+    def profile(end_y: float) -> PlanarProfile:
+        return PlanarProfile(
+            ProfilePlane(),
+            ProfileLoop(
+                ((1.0, 0.0), (0.0, end_y), (0.0, 0.0)),
+                (ProfileCurveUse(circle, 0.0, pi / 2), ProfileLine(), ProfileLine()),
+            ),
+        )
+
+    exact = profile(1.0)
+    assert exact.endpoint_gap_bounds is None
+    model = brep_extrusion(
+        exact, (0.0, 0.0, 2.0), coordinate_contract=SpatialCoordinateContract.si()
+    )
+    trim = model.trim_domains[model.physical_tags.index("cap:bottom")]
+    assert trim is not None
+    decision = trim.classify(np.asarray(((0.25, 0.25), (0.9, 0.9))))
+    np.testing.assert_array_equal(decision.resolved, (True, True))
+    np.testing.assert_array_equal(decision.inside, (True, False))
+
+    gapped = profile(1.000001)
+    assert gapped.endpoint_gap_bounds is not None
+    assert any(
+        bound > 0 for row in gapped.endpoint_gap_bounds for edge in row for bound in edge
+    )
+    with pytest.raises(ValueError, match="No exact source face-gap proof"):
+        brep_extrusion(
+            gapped, (0.0, 0.0, 2.0), coordinate_contract=SpatialCoordinateContract.si()
+        )
+
+
 def test_parallel_cylinder_generator_coedges_retain_exact_conic_sources() -> None:
     from phydrax.geometry.brep._constructors import (
         brep_extrusion,

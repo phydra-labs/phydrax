@@ -70,14 +70,11 @@ def _affine_interval_transform(
     *,
     include_translation: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
-    lower_, upper_ = np.asarray(lower, dtype=np.float64), np.asarray(
-        upper, dtype=np.float64
+    lower_, upper_ = (
+        np.asarray(lower, dtype=np.float64),
+        np.asarray(upper, dtype=np.float64),
     )
-    if (
-        lower_.shape != upper_.shape
-        or lower_.ndim < 1
-        or lower_.shape[0] != 3
-    ):
+    if lower_.shape != upper_.shape or lower_.ndim < 1 or lower_.shape[0] != 3:
         raise ValueError(
             "Placed source bounds require aligned coordinate-first intervals."
         )
@@ -112,7 +109,9 @@ def _exact_affine(
     matrix = np.asarray(rotation, dtype=np.float64)
     offset = np.asarray(translation, dtype=np.float64)
     if matrix.shape != (3, 3) or offset.shape != (3,):
-        raise ValueError("Placement affine realization requires a 3x3 linear map and 3-vector.")
+        raise ValueError(
+            "Placement affine realization requires a 3x3 linear map and 3-vector."
+        )
     if affine is None:
         return BRepAffinePlacement.from_matrix(
             (
@@ -294,6 +293,22 @@ class PlacedCurve(AbstractCurve):
 
     def is_c1_on(self, first: float, last: float, /) -> bool:
         return self.definition.is_c1_on(first, last)
+
+    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
+        box = self.definition.bounding_box(first, last)
+        lower, upper = _affine_interval_transform(
+            self.affine, box[0, :, None], box[1, :, None], include_translation=True
+        )
+        return np.stack((lower[:, 0], upper[:, 0]))
+
+    def derivative_bounds(
+        self, first: float, last: float, /, *, order: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        lower, upper = self.definition.derivative_bounds(first, last, order=order)
+        transformed = _affine_interval_transform(
+            self.affine, lower[:, None], upper[:, None], include_translation=False
+        )
+        return transformed[0][:, 0], transformed[1][:, 0]
 
     def identity_payload(self) -> dict[str, object]:
         from ._carrier_pieces import carrier_payload

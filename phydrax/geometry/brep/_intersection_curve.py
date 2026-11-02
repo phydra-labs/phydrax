@@ -37,6 +37,11 @@ IntersectionEndpointKind: TypeAlias = Literal[
     "boundary", "singular", "uncertified", "closed"
 ]
 
+
+class _UnresolvedChartEnclosure(ValueError):
+    """A rooted endpoint is not proved to remain on one selected source chart."""
+
+
 _FREE_AXES = jnp.asarray(((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2)), dtype=jnp.int32)
 
 
@@ -114,15 +119,64 @@ class _NodeSystem(StrictModule):
         )
 
 
+class _PreparedPairValue(StrictModule):
+    """Enclose the source maps, not merely their floating-point realizations."""
+
+    system: SurfacePairSystem
+    binary_value: PreparedIntervalFunction | None
+
+    def __init__(self, system: SurfacePairSystem) -> None:
+        from ._root_bindings import _source_coefficients_are_binary
+
+        self.system = system
+        self.binary_value = (
+            prepare_interval_function(system.residual, 4)
+            if _source_coefficients_are_binary(system.first)
+            and _source_coefficients_are_binary(system.second)
+            else None
+        )
+
+    def evaluate(
+        self, lower: ArrayLike, upper: ArrayLike, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        from .._interval_enclosure import interval_subtract
+        from ._root_bindings import _patch_box
+
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
+        if lower_.ndim != 2 or lower_.shape[1] != 4 or upper_.shape != lower_.shape:
+            raise ValueError(
+                "Surface-pair value boxes must have aligned shape (count, 4)."
+            )
+        if self.binary_value is not None:
+            return self.binary_value.evaluate(lower_, upper_)
+        result_lower = np.empty((lower_.shape[0], 3), dtype=np.float64)
+        result_upper = np.empty_like(result_lower)
+        for index in range(lower_.shape[0]):
+            first = _patch_box(self.system.first, lower_[index, :2], upper_[index, :2])
+            second = _patch_box(self.system.second, lower_[index, 2:], upper_[index, 2:])
+            result_lower[index], result_upper[index] = interval_subtract(
+                (first[0], first[1]), (second[0], second[1])
+            )
+        return result_lower, result_upper
+
+
 class _PreparedPairJacobian(StrictModule):
     """Outward pair Jacobian from source derivative enclosures when available."""
 
     system: SurfacePairSystem
-    fallback: PreparedIntervalFunction
+    fallback: PreparedIntervalFunction | None
 
     def __init__(self, system: SurfacePairSystem) -> None:
+        from ._root_bindings import _source_coefficients_are_binary
+
         self.system = system
-        self.fallback = prepare_interval_function(jax.jacfwd(system.residual), 4)
+        self.fallback = (
+            prepare_interval_function(jax.jacfwd(system.residual), 4)
+            if _source_coefficients_are_binary(system.first)
+            and _source_coefficients_are_binary(system.second)
+            else None
+        )
 
     def evaluate(
         self, lower: ArrayLike, upper: ArrayLike, /
@@ -157,18 +211,20 @@ class _PreparedPairJacobian(StrictModule):
                 result_lower[index, :, 2:] = -second_upper
                 result_upper[index, :, 2:] = -second_lower
         except NotImplementedError:
+            if self.fallback is None:
+                raise
             return self.fallback.evaluate(lower_, upper_)
         return result_lower, result_upper
 
 
 class _PreparedPair(StrictModule):
     system: SurfacePairSystem
-    value: PreparedIntervalFunction
+    value: _PreparedPairValue
     jacobian: _PreparedPairJacobian
 
     def __init__(self, system: SurfacePairSystem) -> None:
         self.system = system
-        self.value = prepare_interval_function(system.residual, 4)
+        self.value = _PreparedPairValue(system)
         self.jacobian = _PreparedPairJacobian(system)
 
     def point_jacobians(self, points: np.ndarray, /) -> np.ndarray:
@@ -249,20 +305,38 @@ def _revolution_cylinder_parameter_boxes(
     return proxy_lower, proxy_upper
 
 
+class _RevolutionCylinderPairValue:
+    """Pull source values back through the proved exact profile chart."""
+
+    def __init__(
+        self, proxy_value: IntervalEvaluator, slopes: tuple[Fraction, Fraction], /
+    ) -> None:
+        self.proxy_value = proxy_value
+        self.slopes = slopes
+
+    def evaluate(
+        self, lower: ArrayLike, upper: ArrayLike, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        proxy_lower, proxy_upper = _revolution_cylinder_parameter_boxes(
+            lower, upper, self.slopes
+        )
+        return self.proxy_value.evaluate(proxy_lower, proxy_upper)
+
+
 class _RevolutionCylinderPairPrepared(StrictModule):
     """Source-bound Krawczyk preparation for exact line-profile revolutions.
 
-    The residual stays in the source JAXPR. Its proxy cylinder uses the exact
-    chart ``(u, h) = (u, slope * v)`` only for Jacobian bounds; outward interval
-    transport preserves negative slopes. Chart and node inclusions still run
-    against the original source regions and source-coordinate boxes.
+    The proxy cylinder uses the exact chart ``(u, h) = (u, slope * v)`` for
+    source values and Jacobian bounds; outward interval transport preserves
+    negative slopes. Chart and node inclusions still bind the original source
+    regions and source-coordinate boxes.
     """
 
     system: SurfacePairSystem
     source_regions: tuple[SurfaceRegion, SurfaceRegion]
     source_slopes: tuple[Fraction, Fraction]
     proxy: _PreparedPair
-    value: PreparedIntervalFunction
+    value: _RevolutionCylinderPairValue
     jacobian: _RevolutionCylinderPairJacobian
 
     def __init__(
@@ -286,7 +360,7 @@ class _RevolutionCylinderPairPrepared(StrictModule):
         self.source_regions = source_regions
         self.source_slopes = source_slopes
         self.proxy = proxy
-        self.value = prepare_interval_function(system.residual, 4)
+        self.value = _RevolutionCylinderPairValue(proxy.value, source_slopes)
         self.jacobian = _RevolutionCylinderPairJacobian(proxy.jacobian, source_slopes)
 
     def point_jacobians(self, points: np.ndarray, /) -> np.ndarray:
@@ -1741,10 +1815,12 @@ class _PreparedNode(StrictModule):
                 )
         self.system = system
         self.pair_prepared = pair_prepared
-        self.value = (
-            prepare_interval_function(system.residual, 4)
+        self.value = _PreparedNodeValue(
+            _PreparedPairValue(system.pair)
             if pair_prepared is None
-            else _PreparedNodeValue(pair_prepared.value, system.axis, system.value)
+            else pair_prepared.value,
+            system.axis,
+            system.value,
         )
         self.jacobian = _PreparedNodeJacobian(
             system,
@@ -2492,7 +2568,9 @@ def _implicit_chart_derivative_bounds(
         np.asarray(fraction_down(rate_exact), dtype=np.float64),
         np.asarray(fraction_up(rate_exact), dtype=np.float64),
     )
-    boxes = np.asarray(curve.parameter_enclosures(first, last), dtype=np.float64)
+    boxes = np.asarray(
+        curve.parameter_enclosures(first, last, chart_index=chart), dtype=np.float64
+    )
     box_lower = np.min(boxes[:, 0, :], axis=0)
     box_upper = np.max(boxes[:, 1, :], axis=0)
     first_lower, first_upper = curve.first.patch.derivative_bounds(
@@ -3171,8 +3249,9 @@ class IntersectionCurve(AbstractCurve):
             shifts[axis] = turns[0]
         return shifts
 
-    def parameter_enclosures(self, first: float, last: float, /) -> np.ndarray:
-        """Enclose all four source-chart parameters over a certified branch interval."""
+    def _chart_indices_for_interval(
+        self, first: float, last: float, chart_index: int | None, /
+    ) -> tuple[int, int]:
         if first == last:
             if not math.isfinite(first) or not 0.0 <= first <= self.num_charts:
                 raise ValueError(
@@ -3185,6 +3264,17 @@ class IntersectionCurve(AbstractCurve):
                 "A branch parameter enclosure requires a fully certified source branch."
             )
         lower_parameter, upper_parameter = float(first), float(last)
+        if chart_index is not None:
+            if isinstance(chart_index, bool) or not isinstance(chart_index, int):
+                raise TypeError("chart_index must be an integer or None.")
+            if not (
+                0 <= chart_index < self.num_charts
+                and chart_index <= lower_parameter <= upper_parameter <= chart_index + 1
+            ):
+                raise ValueError(
+                    "The parameter interval must remain in its selected chart."
+                )
+            return chart_index, chart_index
         if upper_parameter == lower_parameter:
             first_chart = min(int(math.floor(lower_parameter)), self.num_charts - 1)
             last_chart = first_chart
@@ -3194,6 +3284,16 @@ class IntersectionCurve(AbstractCurve):
                 int(math.floor(math.nextafter(upper_parameter, -math.inf))),
                 self.num_charts - 1,
             )
+        return first_chart, last_chart
+
+    def parameter_enclosures(
+        self, first: float, last: float, /, *, chart_index: int | None = None
+    ) -> np.ndarray:
+        """Enclose source parameters, retaining an explicitly selected chart sheet."""
+        first_chart, last_chart = self._chart_indices_for_interval(
+            first, last, chart_index
+        )
+        lower_parameter, upper_parameter = float(first), float(last)
         family = orthogonal_cylinder_family(self.first, self.second)
         if family is not None:
             branch_sign = _orthogonal_cylinder_curve_branch_sign(self, family)
@@ -3743,41 +3843,47 @@ class IntersectionPCurve(AbstractCurve):
             result = jnp.where((carrier >= self.last)[..., None], terminal, result)
         return result
 
-    def is_c1_on(self, first: float, last: float, /) -> bool:
-        AbstractCurve.is_c1_on(self, first, last)
-        if self.reversed:
-            branch_first = self.first + self.last - last
-            branch_last = self.first + self.last - first
-        else:
-            branch_first, branch_last = first, last
-        return self.curve.is_c1_on(branch_first, branch_last)
+    def _branch_interval(self, first: float, last: float, /) -> tuple[float, float]:
+        from ._intersection import _affine_parameter_interval
 
-    def derivative_bounds(
-        self, first: float, last: float, /, *, order: int = 1
-    ) -> tuple[np.ndarray, np.ndarray]:
-        AbstractCurve.is_c1_on(self, first, last)
-        if isinstance(order, bool) or not isinstance(order, int) or order != 1:
-            raise ValueError("Curve derivative bounds support order=1 only.")
         if not (
             math.isfinite(first)
             and math.isfinite(last)
             and self.first <= first <= last <= self.last
         ):
             raise ValueError(
-                "IntersectionPCurve derivative bounds must lie inside its source interval."
+                "IntersectionPCurve bounds must lie inside its source interval."
             )
-        branch_first, branch_last = (
-            (self.first + self.last - last, self.first + self.last - first)
-            if self.reversed
-            else (first, last)
+        if self.reversed:
+            return _affine_parameter_interval(
+                first,
+                last,
+                Fraction(-1),
+                Fraction.from_float(self.first) + Fraction.from_float(self.last),
+            )
+        return first, last
+
+    def is_c1_on(self, first: float, last: float, /) -> bool:
+        AbstractCurve.is_c1_on(self, first, last)
+        branch_first, branch_last = self._branch_interval(first, last)
+        return self.curve.is_c1_on(branch_first, branch_last)
+
+    def derivative_bounds(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        order: int = 1,
+        chart_index: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        AbstractCurve.is_c1_on(self, first, last)
+        if isinstance(order, bool) or not isinstance(order, int) or order != 1:
+            raise ValueError("Curve derivative bounds support order=1 only.")
+        branch_first, branch_last = self._branch_interval(first, last)
+        first_chart, last_chart = self.curve._chart_indices_for_interval(
+            branch_first, branch_last, chart_index
         )
-        first_chart = min(int(math.floor(branch_first)), self.curve.num_charts - 1)
-        last_chart = min(
-            int(math.floor(math.nextafter(branch_last, -math.inf))),
-            self.curve.num_charts - 1,
-        )
-        if branch_first == branch_last:
-            last_chart = first_chart
         family = orthogonal_cylinder_family(self.curve.first, self.curve.second)
         branch_sign = (
             None
@@ -3860,29 +3966,22 @@ class IntersectionPCurve(AbstractCurve):
             raise ValueError("IntersectionPCurve derivative range has no source chart.")
         return derivative_lower, derivative_upper
 
-    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
-        if not (
-            math.isfinite(first)
-            and math.isfinite(last)
-            and self.first <= first <= last <= self.last
-        ):
-            raise ValueError(
-                "IntersectionPCurve bounds must lie inside its source interval."
-            )
-        if self.reversed:
-            branch_first = self.first + self.last - last
-            branch_last = self.first + self.last - first
-        else:
-            branch_first, branch_last = first, last
+    def bounding_box(
+        self, first: float, last: float, /, *, chart_index: int | None = None
+    ) -> np.ndarray:
+        branch_first, branch_last = self._branch_interval(first, last)
         if (
-            branch_first == branch_last == self.last
+            chart_index is None
+            and branch_first == branch_last == self.last
             and self.first < self.last
             and float(self.last).is_integer()
         ):
             # The span's terminal node lies on its own last chart's source
             # sheet; a point query there would select the next chart.
             branch_first = max(self.first, math.nextafter(branch_last, -math.inf))
-        boxes = self.curve.parameter_enclosures(branch_first, branch_last)
+        boxes = self.curve.parameter_enclosures(
+            branch_first, branch_last, chart_index=chart_index
+        )
         columns = slice(0, 2) if self.side == "first" else slice(2, 4)
         lower = np.min(boxes[:, 0, columns], axis=0)
         upper = np.max(boxes[:, 1, columns], axis=0)
@@ -4134,34 +4233,43 @@ class CurveTrimSegment(AbstractCurve):
 
     def is_c1_on(self, first: float, last: float, /) -> bool:
         AbstractCurve.is_c1_on(self, first, last)
-        a, b = float(self.source_parameters(first)), float(self.source_parameters(last))
-        return self.curve.is_c1_on(min(a, b), max(a, b))
+        lower, upper, _ = self._source_interval(first, last)
+        return self.curve.is_c1_on(lower, upper)
+
+    def _source_interval(
+        self, first: float, last: float, /
+    ) -> tuple[float, float, Fraction]:
+        from ._intersection import _affine_parameter_interval
+
+        if not (0.0 <= first <= last <= 1.0):
+            raise ValueError("CurveTrimSegment query must lie inside its unit interval.")
+        start, stop = Fraction.from_float(self.first), Fraction.from_float(self.last)
+        scale, offset = (start - stop, stop) if self.reversed else (stop - start, start)
+        lower, upper = _affine_parameter_interval(first, last, scale, offset)
+        return lower, upper, scale
 
     def derivative_bounds(
-        self, first: float, last: float, /, *, order: int = 1
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        order: int = 1,
+        chart_index: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Curve derivative bounds support order=1 only.")
-        if not (0.0 <= first <= last <= 1.0):
-            raise ValueError("CurveTrimSegment query must lie inside its unit interval.")
         from .._interval_enclosure import interval_multiply
         from .._rational import fraction_down, fraction_up
 
-        first_local, last_local = (
-            Fraction.from_float(float(first)),
-            Fraction.from_float(float(last)),
+        source_first, source_last, scale = self._source_interval(first, last)
+        lower, upper = _curve_source_bounds(
+            self.curve,
+            source_first,
+            source_last,
+            derivative=True,
+            chart_index=chart_index,
         )
-        if self.reversed:
-            first_local, last_local = 1 - last_local, 1 - first_local
-        scale = Fraction.from_float(float(self.last - self.first))
-        source_first = Fraction.from_float(float(self.first)) + first_local * scale
-        source_last = Fraction.from_float(float(self.first)) + last_local * scale
-        lower, upper = self.curve.derivative_bounds(
-            fraction_down(min(source_first, source_last)),
-            fraction_up(max(source_first, source_last)),
-        )
-        if self.reversed:
-            scale = -scale
         lower_result, upper_result = interval_multiply(
             (lower, upper),
             (
@@ -4174,12 +4282,13 @@ class CurveTrimSegment(AbstractCurve):
             np.asarray(upper_result, dtype=np.float64),
         )
 
-    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
-        if not (0.0 <= first <= last <= 1.0):
-            raise ValueError("CurveTrimSegment query must lie inside its unit interval.")
-        a, b = float(self.source_parameters(first)), float(self.source_parameters(last))
-        lower, upper = min(a, b), max(a, b)
-        box = np.asarray(self.curve.bounding_box(lower, upper), dtype=np.float64)
+    def bounding_box(
+        self, first: float, last: float, /, *, chart_index: int | None = None
+    ) -> np.ndarray:
+        lower, upper, _ = self._source_interval(first, last)
+        box = np.stack(
+            _curve_source_bounds(self.curve, lower, upper, chart_index=chart_index)
+        )
         # A trim end is a root whose representative parameter only lies in its
         # enclosure; a box reaching that end also encloses the root itself.
         domain = self.curve.parameter_domain
@@ -4195,8 +4304,27 @@ class CurveTrimSegment(AbstractCurve):
                 root_upper = min(root_upper, float(domain[1]))
             if root_lower > root_upper:
                 continue
-            root_box = np.asarray(
-                self.curve.bounding_box(root_lower, root_upper), dtype=np.float64
+            if chart_index is not None:
+                from ._intersection import _affine_parameter_interval, _curve_chart_affine
+
+                affine = _curve_chart_affine(self.curve)
+                if affine is None:
+                    raise ValueError(
+                        "A fixed chart requires a chart-bearing source curve."
+                    )
+                branch_lower, branch_upper = _affine_parameter_interval(
+                    root_lower, root_upper, affine[0], affine[1]
+                )
+                # Exact node aliases already collapse in parameter_enclosure.
+                # A remaining straddle is uncertainty, not permission to clip.
+                if not chart_index <= branch_lower <= branch_upper <= chart_index + 1:
+                    raise _UnresolvedChartEnclosure(
+                        "The rooted endpoint is not proved inside its selected chart."
+                    )
+            root_box = np.stack(
+                _curve_source_bounds(
+                    self.curve, root_lower, root_upper, chart_index=chart_index
+                )
             )
             box = np.stack(
                 (np.minimum(box[0], root_box[0]), np.maximum(box[1], root_box[1]))
@@ -4223,6 +4351,31 @@ class CurveTrimSegment(AbstractCurve):
             else endpoint_root_payload(first_root),
             "last_root": None if last_root is None else endpoint_root_payload(last_root),
         }
+
+
+def _curve_source_bounds(
+    curve: AbstractCurve,
+    first: float,
+    last: float,
+    /,
+    *,
+    derivative: bool = False,
+    chart_index: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Keep fixed-chart enclosures on the same source sheet as their evaluator."""
+    if chart_index is not None:
+        if not isinstance(curve, (IntersectionPCurve, CurveTrimSegment)):
+            raise ValueError("A fixed chart requires a chart-bearing source curve.")
+        if derivative:
+            return curve.derivative_bounds(first, last, chart_index=chart_index)
+        box = curve.bounding_box(first, last, chart_index=chart_index)
+    else:
+        if derivative:
+            return curve.derivative_bounds(first, last)
+        box = curve.bounding_box(first, last)
+    if box.shape != (2, curve.ambient_dimension):
+        raise ValueError("Source curve bounds have an incompatible shape.")
+    return box[0], box[1]
 
 
 __all__ = [

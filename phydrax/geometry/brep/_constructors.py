@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import atan2, ceil, cos, floor, isfinite, pi, sin
 from numbers import Integral, Real
@@ -2442,7 +2442,7 @@ def brep_extrusion(
         raise ValueError("An extrusion vector must leave the source profile plane.")
     from .._rational import rational_vector
     from ._correspondence import exact_source_lift
-    from ._intersection_curve import SurfaceRegion
+    from ._intersection_curve import exact_curve_parameter_point, SurfaceRegion
 
     builder = _Builder()
     loops = profile.loops
@@ -2646,6 +2646,97 @@ def brep_extrusion(
         edge_specs.append(specs)
         base_candidates.append(base_loop_candidates)
         top_candidates.append(top_loop_candidates)
+    # A conic endpoint can authorize an adjacent affine carrier only when
+    # both the carrier point and every surface lift are exact.  Resolve these
+    # witnesses before binding vertices, so a failed incident carrier still
+    # prevents the junction from acquiring authority.
+    for loop_index, specs in enumerate(edge_specs):
+        for edge_index, spec in enumerate(specs):
+            if not isinstance(spec.base_curve, LineCurve) or not isinstance(
+                spec.top_curve, LineCurve
+            ):
+                continue
+            next_index = (edge_index + 1) % len(specs)
+            wall_region = SurfaceRegion(spec.patch, spec.wall_box)
+            base_chart = LineCurve((0.0, 0.0), (1.0, 0.0))
+            top_chart = LineCurve((0.0, 1.0), (1.0, 0.0))
+            if not (
+                exact_source_lift(
+                    spec.base_curve, spec.curve2d, base_region, spec.first, spec.last
+                )
+                and exact_source_lift(
+                    spec.top_curve, spec.curve2d, top_region, spec.first, spec.last
+                )
+                and exact_source_lift(
+                    spec.base_curve, base_chart, wall_region, spec.first, spec.last
+                )
+                and exact_source_lift(
+                    spec.top_curve, top_chart, wall_region, spec.first, spec.last
+                )
+            ):
+                continue
+            for endpoint, (vertex_index, parameter, pcurve) in enumerate(
+                (
+                    (edge_index, spec.first, spec.start_pcurve),
+                    (next_index, spec.last, spec.end_pcurve),
+                )
+            ):
+                base_point = base_points_exact[loop_index][vertex_index]
+                top_point = top_points_exact[loop_index][vertex_index]
+                exact_parameter = Fraction.from_float(parameter)
+                line = LineCurve(
+                    base_points[loop_index][vertex_index],
+                    vector_,
+                    origin_exact=base_point,
+                    direction_exact=vector_exact,
+                )
+                if not (
+                    exact_curve_parameter_point(spec.base_curve, exact_parameter)
+                    == base_point
+                    and exact_curve_parameter_point(spec.top_curve, exact_parameter)
+                    == top_point
+                    and exact_source_lift(line, pcurve, wall_region, 0.0, 1.0)
+                ):
+                    continue
+                for candidates, point in (
+                    (base_candidates[loop_index][vertex_index], base_point),
+                    (top_candidates[loop_index][vertex_index], top_point),
+                ):
+                    root = next(
+                        (
+                            r
+                            for r in candidates
+                            if r is not None and r.exact_point() == point
+                        ),
+                        None,
+                    )
+                    if root is not None and None in candidates:
+                        # The candidate for this line is the only missing one
+                        # at an ordinary two-edge profile junction.
+                        candidates[candidates.index(None)] = root
+
+            # Copy admitted endpoint roots onto this edge; vertex_binding below
+            # still rejects any other unproved incident carrier.
+            def admitted(
+                candidates: list[ConicParameterRoot | None],
+            ) -> ConicParameterRoot | None:
+                return (
+                    candidates[0]
+                    if candidates and all(r is not None for r in candidates)
+                    else None
+                )
+
+            specs[edge_index] = replace(
+                spec,
+                base_roots=(
+                    admitted(base_candidates[loop_index][edge_index]),
+                    admitted(base_candidates[loop_index][next_index]),
+                ),
+                top_roots=(
+                    admitted(top_candidates[loop_index][edge_index]),
+                    admitted(top_candidates[loop_index][next_index]),
+                ),
+            )
 
     def vertex_binding(
         candidates: list[ConicParameterRoot | None],
@@ -2744,14 +2835,18 @@ def brep_extrusion(
                     endpoint_root(
                         base_roots[0],
                         curve3d,
-                        None,
+                        Fraction.from_float(first)
+                        if isinstance(curve3d, LineCurve)
+                        else None,
                         base_start_exact,
                         base_bindings[loop_index][edge_index][1],
                     ),
                     endpoint_root(
                         base_roots[1],
                         curve3d,
-                        None,
+                        Fraction.from_float(last)
+                        if isinstance(curve3d, LineCurve)
+                        else None,
                         base_end_exact,
                         base_bindings[loop_index][next_index][1],
                     ),
@@ -2767,14 +2862,18 @@ def brep_extrusion(
                     endpoint_root(
                         top_roots[0],
                         top_curve3d,
-                        None,
+                        Fraction.from_float(first)
+                        if isinstance(curve3d, LineCurve)
+                        else None,
                         top_start_exact,
                         top_bindings[loop_index][edge_index][1],
                     ),
                     endpoint_root(
                         top_roots[1],
                         top_curve3d,
-                        None,
+                        Fraction.from_float(last)
+                        if isinstance(curve3d, LineCurve)
+                        else None,
                         top_end_exact,
                         top_bindings[loop_index][next_index][1],
                     ),
@@ -2798,6 +2897,16 @@ def brep_extrusion(
                 and top_binding[1] is not None
                 else None
             )
+            top_root = None
+            if root is not None:
+                top_vertex_root = top_binding[1]
+                if top_vertex_root is None or not isinstance(
+                    top_vertex_root.primary, BRepConicVertex
+                ):
+                    raise ValueError(
+                        "Extruded conic junctions must retain both endpoint roots."
+                    )
+                top_root = top_vertex_root.primary.root
             line = LineCurve(
                 point,
                 vector_,
@@ -2816,7 +2925,11 @@ def brep_extrusion(
                             root, line, Fraction(0), base_binding[0], base_binding[1]
                         ),
                         endpoint_root(
-                            root, line, Fraction(1), top_binding[0], top_binding[1]
+                            top_root,
+                            line,
+                            Fraction(1),
+                            top_binding[0],
+                            top_binding[1],
                         ),
                     ),
                 )
@@ -2848,7 +2961,9 @@ def brep_extrusion(
                         endpoint_root(
                             base_roots[0],
                             curve2d,
-                            None,
+                            Fraction.from_float(base_spec.first)
+                            if isinstance(base_spec.base_curve, LineCurve)
+                            else None,
                             base_roots[0].exact_point()
                             if base_roots[0] is not None
                             else None,
@@ -2857,7 +2972,9 @@ def brep_extrusion(
                         endpoint_root(
                             base_roots[1],
                             curve2d,
-                            None,
+                            Fraction.from_float(base_spec.last)
+                            if isinstance(base_spec.base_curve, LineCurve)
+                            else None,
                             base_roots[1].exact_point()
                             if base_roots[1] is not None
                             else None,
@@ -2875,7 +2992,9 @@ def brep_extrusion(
                         endpoint_root(
                             top_roots[0],
                             curve2d,
-                            None,
+                            Fraction.from_float(top_spec.first)
+                            if isinstance(top_spec.base_curve, LineCurve)
+                            else None,
                             top_roots[0].exact_point()
                             if top_roots[0] is not None
                             else None,
@@ -2884,7 +3003,9 @@ def brep_extrusion(
                         endpoint_root(
                             top_roots[1],
                             curve2d,
-                            None,
+                            Fraction.from_float(top_spec.last)
+                            if isinstance(top_spec.base_curve, LineCurve)
+                            else None,
                             top_roots[1].exact_point()
                             if top_roots[1] is not None
                             else None,
@@ -2930,7 +3051,9 @@ def brep_extrusion(
                     base_bindings[loop_index][next_index][1],
                 ),
                 endpoint_root(
-                    end_root,
+                    end_root
+                    if isinstance(end_pcurve, ConicRootLinePCurve)
+                    else top_roots[1],
                     end_pcurve,
                     Fraction(1),
                     top_end_point,
@@ -2946,7 +3069,9 @@ def brep_extrusion(
                     base_bindings[loop_index][edge_index][1],
                 ),
                 endpoint_root(
-                    start_root,
+                    start_root
+                    if isinstance(start_pcurve, ConicRootLinePCurve)
+                    else top_roots[0],
                     start_pcurve,
                     Fraction(1),
                     top_start_point,
@@ -2962,7 +3087,9 @@ def brep_extrusion(
                         endpoint_root(
                             base_roots[0],
                             base_chart,
-                            None,
+                            Fraction.from_float(first)
+                            if isinstance(curve3d, LineCurve)
+                            else None,
                             base_roots[0].exact_point()
                             if base_roots[0] is not None
                             else None,
@@ -2971,7 +3098,9 @@ def brep_extrusion(
                         endpoint_root(
                             base_roots[1],
                             base_chart,
-                            None,
+                            Fraction.from_float(last)
+                            if isinstance(curve3d, LineCurve)
+                            else None,
                             base_roots[1].exact_point()
                             if base_roots[1] is not None
                             else None,
@@ -2988,7 +3117,9 @@ def brep_extrusion(
                         endpoint_root(
                             top_roots[0],
                             top_chart,
-                            None,
+                            Fraction.from_float(first)
+                            if isinstance(curve3d, LineCurve)
+                            else None,
                             top_roots[0].exact_point()
                             if top_roots[0] is not None
                             else None,
@@ -2997,7 +3128,9 @@ def brep_extrusion(
                         endpoint_root(
                             top_roots[1],
                             top_chart,
-                            None,
+                            Fraction.from_float(last)
+                            if isinstance(curve3d, LineCurve)
+                            else None,
                             top_roots[1].exact_point()
                             if top_roots[1] is not None
                             else None,

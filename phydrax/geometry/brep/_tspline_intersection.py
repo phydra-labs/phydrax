@@ -346,19 +346,31 @@ def _quotient_hull(
 
 class _AnalyticSource:
     def __init__(self, patch: AbstractSurfacePatch, /) -> None:
+        from ._root_bindings import _source_coefficients_are_binary
+
         self.patch = patch
-        self._values = prepare_interval_function(patch.evaluate, 2)
-        self._jacobians = prepare_interval_function(jax.jacfwd(patch.evaluate), 2)
+        binary = _source_coefficients_are_binary(patch)
+        self._values = prepare_interval_function(patch.evaluate, 2) if binary else None
+        self._jacobians = (
+            prepare_interval_function(jax.jacfwd(patch.evaluate), 2) if binary else None
+        )
 
     def values(
         self, lower: np.ndarray, upper: np.ndarray, /
     ) -> tuple[np.ndarray, np.ndarray]:
+        if self._values is None:
+            from ._root_bindings import _patch_box
+
+            bounds = _patch_box(self.patch, lower, upper)
+            return bounds[0], bounds[1]
         value_lower, value_upper = self._values.evaluate(lower[None], upper[None])
         return value_lower[0], value_upper[0]
 
     def jacobians(
         self, lower: np.ndarray, upper: np.ndarray, /
     ) -> tuple[np.ndarray, np.ndarray]:
+        if self._jacobians is None:
+            return self.patch.derivative_bounds(np.stack((lower, upper)))
         jacobian_lower, jacobian_upper = self._jacobians.evaluate(
             lower[None], upper[None]
         )
@@ -432,9 +444,15 @@ class _TSplinePairPrepared(StrictModule):
         self.jacobian = _PairJacobian(self)
 
     def point_jacobians(self, points: np.ndarray, /) -> np.ndarray:
-        values = np.asarray(points, dtype=np.float64)
-        lower, upper = self.jacobian.evaluate(values, values)
-        return 0.5 * lower + 0.5 * upper
+        from ._intersection_curve import _batched_curve_jacobians
+
+        # This is only a numerical preconditioner; the inclusion uses the
+        # source-authoritative interval Jacobian on the complete parameter box.
+        values = jnp.asarray(points, dtype=jnp.float64)
+        return np.asarray(
+            _batched_curve_jacobians(self.system.first, self.system.second, values),
+            dtype=np.float64,
+        )
 
 
 def _prepare_tspline_pair(
@@ -517,8 +535,12 @@ def _node_preparation(
         jacobian = _NodeJacobian(node)
 
         def point_jacobians(self, points: np.ndarray, /) -> np.ndarray:
-            lower, upper = node.jacobian_bounds(points, points)
-            return 0.5 * lower + 0.5 * upper
+            # Only the preconditioner is numerical. The Krawczyk inclusion
+            # still uses node.jacobian_bounds on the entire candidate box.
+            pair_jacobian = pair.point_jacobians(points)
+            row = np.zeros((points.shape[0], 1, 4), dtype=np.float64)
+            row[:, 0, axis] = 1.0
+            return np.concatenate((pair_jacobian, row), axis=1)
 
     return Prepared()
 
@@ -966,28 +988,21 @@ class _LevelSet:
                 return None
             other_tangent = _linear_map_interval(transform, physical_tangent)
         elif isinstance(other, CylinderPatch):
-            origin = np.asarray(other.origin, dtype=np.float64)
-            first_axis = np.asarray(other.first_axis, dtype=np.float64)
-            second_axis = np.asarray(other.second_axis, dtype=np.float64)
-            axis = np.asarray(other.axis, dtype=np.float64)
-            radial = interval_subtract(
-                (value_lower, value_upper), _constant_interval(origin)
-            )
-            radial_first = _interval_dot(radial, _constant_interval(first_axis))
-            radial_second = _interval_dot(radial, _constant_interval(second_axis))
-            tangent_first = _interval_dot(
-                physical_tangent, _constant_interval(first_axis)
-            )
-            tangent_second = _interval_dot(
-                physical_tangent, _constant_interval(second_axis)
-            )
+            origin = _exact_vector_interval(other.origin_exact)
+            first_axis = _exact_vector_interval(other.first_axis_exact)
+            second_axis = _exact_vector_interval(other.second_axis_exact)
+            axis = _exact_vector_interval(other.axis_exact)
+            radial = interval_subtract((value_lower, value_upper), origin)
+            radial_first = _interval_dot(radial, first_axis)
+            radial_second = _interval_dot(radial, second_axis)
+            tangent_first = _interval_dot(physical_tangent, first_axis)
+            tangent_second = _interval_dot(physical_tangent, second_axis)
             numerator = interval_subtract(
                 interval_multiply(radial_first, tangent_second),
                 interval_multiply(radial_second, tangent_first),
             )
-            radius = np.asarray(other.radius, dtype=np.float64)
-            angle_tangent = interval_divide(numerator, _radius_squared_interval(radius))
-            height_tangent = _interval_dot(physical_tangent, _constant_interval(axis))
+            angle_tangent = interval_divide(numerator, _radius_squared_interval(other))
+            height_tangent = _interval_dot(physical_tangent, axis)
             other_tangent = (
                 np.stack((angle_tangent[0], height_tangent[0])),
                 np.stack((angle_tangent[1], height_tangent[1])),
@@ -1023,10 +1038,10 @@ class _LevelSet:
             if float(horizontal_squared[0]) <= 0.0:
                 return None
             longitude_tangent = interval_divide(longitude_numerator, horizontal_squared)
-            radius = np.asarray(other.radius, dtype=np.float64)
+            radius_squared = _radius_squared_interval(other)
             axial_squared = interval_multiply(radial_axis, radial_axis)
             latitude_denominator = interval_sqrt(
-                interval_subtract(_radius_squared_interval(radius), axial_squared)
+                interval_subtract(radius_squared, axial_squared)
             )
             if float(latitude_denominator[0]) <= 0.0:
                 return None
@@ -1276,8 +1291,22 @@ def _constant_interval(values: np.ndarray, /) -> Interval:
     return values, values
 
 
-def _radius_squared_interval(radius: np.ndarray, /) -> Interval:
-    return interval_multiply((radius, radius), (radius, radius))
+def _exact_vector_interval(values: Sequence[ExactScalar], /) -> Interval:
+    bounds = tuple(_exact_scalar_interval(value) for value in values)
+    return (
+        np.asarray([fraction_down(bound[0]) for bound in bounds], dtype=np.float64),
+        np.asarray([fraction_up(bound[1]) for bound in bounds], dtype=np.float64),
+    )
+
+
+def _radius_squared_interval(other: CylinderPatch | SpherePatch, /) -> Interval:
+    radius = (
+        other.radius_exact
+        if isinstance(other, CylinderPatch)
+        else Fraction.from_float(float(np.asarray(other.radius)))
+    )
+    lower, upper = _exact_scalar_interval(radius * radius)
+    return np.asarray(fraction_down(lower)), np.asarray(fraction_up(upper))
 
 
 def _norm_squared_interval(values: Interval, /) -> Interval:
@@ -1303,16 +1332,14 @@ def _implicit_value_interval(
             values, _constant_interval(np.asarray(other.center, dtype=np.float64))
         )
         squared = _norm_squared_interval(delta)
-        radius = np.asarray(other.radius, dtype=np.float64)
-        return interval_subtract(squared, _radius_squared_interval(radius))
-    origin = np.asarray(other.origin, dtype=np.float64)
-    axis = np.asarray(other.axis, dtype=np.float64)
-    delta = interval_subtract(values, _constant_interval(origin))
-    axial = _interval_dot(delta, _constant_interval(axis))
-    radial = interval_subtract(delta, interval_multiply(axial, _constant_interval(axis)))
+        return interval_subtract(squared, _radius_squared_interval(other))
+    origin = _exact_vector_interval(other.origin_exact)
+    axis = _exact_vector_interval(other.axis_exact)
+    delta = interval_subtract(values, origin)
+    axial = _interval_dot(delta, axis)
+    radial = interval_subtract(delta, interval_multiply(axial, axis))
     squared = _norm_squared_interval(radial)
-    radius = np.asarray(other.radius, dtype=np.float64)
-    return interval_subtract(squared, _radius_squared_interval(radius))
+    return interval_subtract(squared, _radius_squared_interval(other))
 
 
 def _implicit_derivative_interval(
@@ -1332,23 +1359,13 @@ def _implicit_derivative_interval(
         )
         product = _interval_dot(delta, derivatives)
     else:
-        axis = np.asarray(other.axis, dtype=np.float64)
-        delta = interval_subtract(
-            values, _constant_interval(np.asarray(other.origin, dtype=np.float64))
-        )
+        axis = _exact_vector_interval(other.axis_exact)
+        delta = interval_subtract(values, _exact_vector_interval(other.origin_exact))
         radial = interval_subtract(
-            delta,
-            interval_multiply(
-                _interval_dot(delta, _constant_interval(axis)),
-                _constant_interval(axis),
-            ),
+            delta, interval_multiply(_interval_dot(delta, axis), axis)
         )
         radial_derivative = interval_subtract(
-            derivatives,
-            interval_multiply(
-                _interval_dot(derivatives, _constant_interval(axis)),
-                _constant_interval(axis),
-            ),
+            derivatives, interval_multiply(_interval_dot(derivatives, axis), axis)
         )
         product = _interval_dot(radial, radial_derivative)
     return interval_multiply((np.asarray(2.0), np.asarray(2.0)), product)

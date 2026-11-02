@@ -578,6 +578,12 @@ class AbstractCurve(StrictModule):
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
         """Enclose the represented source map, without substituting samples."""
         from .._interval_enclosure import prepare_interval_function
+        from ._root_bindings import _source_coefficients_are_binary
+
+        if not _source_coefficients_are_binary(self):
+            raise NotImplementedError(
+                "This curve has no source-authoritative interval realization."
+            )
 
         AbstractCurve.is_c1_on(self, first, last)
 
@@ -1214,6 +1220,21 @@ class EllipseCurve(AbstractCurve):
         cosine = tuple(self.first_radius_exact * value for value in self.first_axis_exact)
         sine = tuple(self.second_radius_exact * value for value in self.second_axis_exact)
         return _conic_curve_bounds(self.center_exact, cosine, sine, first, last)
+
+    def derivative_bounds(
+        self, first: float, last: float, /, *, order: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        self.is_c1_on(first, last)
+        if isinstance(order, bool) or not isinstance(order, int) or order != 1:
+            raise ValueError("EllipseCurve derivative bounds support order=1 only.")
+        cosine = tuple(
+            self.second_radius_exact * value for value in self.second_axis_exact
+        )
+        sine = tuple(-self.first_radius_exact * value for value in self.first_axis_exact)
+        bounds = _conic_curve_bounds(
+            (Fraction(0),) * self.ambient_dimension, cosine, sine, first, last
+        )
+        return bounds[0], bounds[1]
 
 
 class ParabolaCurve(AbstractCurve):
@@ -1962,11 +1983,34 @@ class RuledSurface(AbstractSurfacePatch):
                 )
         elif not self.is_c1_on(box):
             raise NotImplementedError("Ruled surface rail continuity is not established.")
-        from .._interval_enclosure import prepare_interval_function
+        first, last = float(box[0, 0]), float(box[1, 0])
+        try:
+            first_box = self.first.bounding_box(first, last)
+            second_box = self.second.bounding_box(first, last)
+            first_derivative = self.first.derivative_bounds(first, last)
+            second_derivative = self.second.derivative_bounds(first, last)
+        except NotImplementedError:
+            from ._root_bindings import _source_coefficients_are_binary
 
-        prepared = prepare_interval_function(jax.jacfwd(self.evaluate), 2)
-        lower, upper = prepared.evaluate(box[0:1], box[1:2])
-        return lower[0], upper[0]
+            if not _source_coefficients_are_binary(self):
+                raise
+            from .._interval_enclosure import prepare_interval_function
+
+            prepared = prepare_interval_function(jax.jacfwd(self.evaluate), 2)
+            lower, upper = prepared.evaluate(box[0:1], box[1:2])
+            return lower[0], upper[0]
+        v = (np.asarray(box[0, 1]), np.asarray(box[1, 1]))
+        complement = interval_subtract((np.asarray(1.0), np.asarray(1.0)), v)
+        along = interval_add(
+            interval_multiply(complement, first_derivative),
+            interval_multiply(v, second_derivative),
+        )
+        across = interval_subtract(
+            (second_box[0], second_box[1]), (first_box[0], first_box[1])
+        )
+        return np.stack((along[0], across[0]), axis=-1), np.stack(
+            (along[1], across[1]), axis=-1
+        )
 
     def identity_payload(self, /) -> dict[str, object]:
         from ._carrier_pieces import carrier_payload
@@ -3127,6 +3171,23 @@ def _exact_spherical_revolution_witness(
     return center, profile.radius_exact, axis, 1
 
 
+def _nondegenerate_surface_box(
+    surface: AbstractSurfacePatch, box: np.ndarray, /
+) -> np.ndarray:
+    """Widen singleton chart coordinates within the surface's native domain."""
+    result = np.array(box, dtype=np.float64, copy=True)
+    domain = surface.parameter_domain
+    for axis in range(2):
+        if result[0, axis] < result[1, axis]:
+            continue
+        upper = np.inf if domain is None else float(domain[1][axis])
+        if result[1, axis] < upper:
+            result[1, axis] = np.nextafter(result[1, axis], np.inf)
+        else:
+            result[0, axis] = np.nextafter(result[0, axis], -np.inf)
+    return result
+
+
 class SurfaceMappedCurve(AbstractCurve):
     """Exact parameterized curve obtained by evaluating a 2D source curve on a surface."""
 
@@ -3384,18 +3445,7 @@ class SurfaceMappedCurve(AbstractCurve):
                 return np.stack(box)
         # Isoline p-curves have a zero-width chart axis. A one-ulp widening inside
         # the patch domain is a superset box, so the enclosure stays sound.
-        surface_box = np.array(pcurve_box, dtype=np.float64)
-        surface_domain = surface.parameter_domain
-        for axis in range(2):
-            if surface_box[0, axis] < surface_box[1, axis]:
-                continue
-            upper_limit = (
-                np.inf if surface_domain is None else float(surface_domain[1][axis])
-            )
-            if surface_box[1, axis] < upper_limit:
-                surface_box[1, axis] = np.nextafter(surface_box[1, axis], np.inf)
-            else:
-                surface_box[0, axis] = np.nextafter(surface_box[0, axis], -np.inf)
+        surface_box = _nondegenerate_surface_box(surface, pcurve_box)
         source_box = np.asarray(surface.bounding_box(surface_box), dtype=np.float64)
         if (
             source_box.shape != (2, 3)
@@ -3426,6 +3476,7 @@ class SurfaceMappedCurve(AbstractCurve):
                 "Source-backed derivative bounds are unavailable for this mapped curve action."
             )
         chart_box = np.asarray(self.pcurve.bounding_box(first, last), dtype=np.float64)
+        chart_box = _nondegenerate_surface_box(self.surface, chart_box)
         surface_lower, surface_upper = self.surface.derivative_bounds(chart_box)
         from .._interval_enclosure import interval_add, interval_multiply
         from .._rational import fraction_down, fraction_up
@@ -3457,7 +3508,9 @@ class SurfaceMappedCurve(AbstractCurve):
             chart_box = np.asarray(
                 self.pcurve.bounding_box(first, last), dtype=np.float64
             )
-            return self.surface.is_c1_on(chart_box)
+            return self.surface.is_c1_on(
+                _nondegenerate_surface_box(self.surface, chart_box)
+            )
         if isinstance(self.pcurve, ExactLineCurve):
             origin = np.asarray(self.pcurve.first_exact, dtype=np.float64)
             direction = np.asarray(
@@ -3601,6 +3654,22 @@ class SurfaceIsoparametricCurve(AbstractCurve):
         if not np.isfinite(first) or not np.isfinite(last) or first > last:
             raise ValueError("Curve ranges must be finite and nondecreasing.")
         domain = self.parameter_domain
+        fixed = (
+            self.fixed_value_exact
+            if self.fixed_value_exact is not None
+            else Fraction.from_float(self.fixed_value)
+        )
+        origin = [Fraction(0), Fraction(0)]
+        direction = [Fraction(0), Fraction(0)]
+        origin[self.fixed_axis] = fixed
+        direction[1 - self.fixed_axis] = Fraction(1)
+        pcurve = LineCurve(
+            tuple(float(value) for value in origin),
+            tuple(float(value) for value in direction),
+            origin_exact=tuple(origin),
+            direction_exact=tuple(direction),
+        )
+        mapped = SurfaceMappedCurve(self.surface, pcurve)
         period = self.period
         if not (
             domain is not None
@@ -3609,9 +3678,10 @@ class SurfaceIsoparametricCurve(AbstractCurve):
             and domain[1] == period
             and domain[0] <= first <= domain[1] < last
         ):
-            return super().bounding_box(first, last)
+            if domain is not None and (first < domain[0] or last > domain[1]):
+                raise ValueError("Curve range must lie in its source parameter domain.")
+            return mapped.bounding_box(first, last)
 
-        from .._interval_enclosure import prepare_interval_function
         from .._rational import fraction_up
         from ._trim_helpers import period_scalar_bounds, PeriodOffset
 
@@ -3626,24 +3696,9 @@ class SurfaceIsoparametricCurve(AbstractCurve):
         if wrapped_upper > domain[1]:
             raise ValueError("Periodic source enclosure crosses more than one turn.")
 
-        def value(parameter: Array, /) -> Array:
-            return self.evaluate(parameter[0])
-
-        prepared = prepare_interval_function(value, 1)
-        left_lower, left_upper = prepared.evaluate(
-            np.asarray(((first,),), dtype=np.float64),
-            np.asarray(((float(period_upper),),), dtype=np.float64),
-        )
-        right_lower, right_upper = prepared.evaluate(
-            np.asarray(((0.0,),), dtype=np.float64),
-            np.asarray(((wrapped_upper,),), dtype=np.float64),
-        )
-        return np.stack(
-            (
-                np.minimum(left_lower[0], right_lower[0]),
-                np.maximum(left_upper[0], right_upper[0]),
-            )
-        )
+        left = mapped.bounding_box(first, float(period_upper))
+        right = mapped.bounding_box(0.0, wrapped_upper)
+        return np.stack((np.minimum(left[0], right[0]), np.maximum(left[1], right[1])))
 
     def is_c1_on(self, first: float, last: float, /) -> bool:
         self.validate_query_range(first, last)

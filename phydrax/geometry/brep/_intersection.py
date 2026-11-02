@@ -29,6 +29,7 @@ from ...discretization._exact_algebraic_geometry import (
 )
 from ...typing import checked, parse
 from .._interval_enclosure import (
+    IntervalExtensionError,
     prepare_interval_function,
 )
 from .._rational import (
@@ -42,6 +43,7 @@ from ._intersection_curve import (
     _DisjointOrthogonalCylinderFamily,
     _OrthogonalCylinderFamily,
     _SingularOrthogonalCylinderFamily,
+    _UnresolvedChartEnclosure,
     CurveTrimSegment,
     IntersectionCurve,
     IntersectionEndpointKind,
@@ -368,7 +370,7 @@ def _curve_chart_affine(curve: AbstractCurve, /) -> tuple[Fraction, Fraction, in
         if curve.reversed:
             return (
                 Fraction(-1),
-                Fraction.from_float(float(curve.first + curve.last)),
+                Fraction.from_float(curve.first) + Fraction.from_float(curve.last),
                 curve.curve.num_charts,
             )
         return Fraction(1), Fraction(0), curve.curve.num_charts
@@ -377,12 +379,11 @@ def _curve_chart_affine(curve: AbstractCurve, /) -> tuple[Fraction, Fraction, in
         if source is None:
             return None
         inner_scale, inner_offset, count = source
+        first, last = Fraction.from_float(curve.first), Fraction.from_float(curve.last)
         if curve.reversed:
-            scale = Fraction.from_float(float(curve.first - curve.last))
-            offset = Fraction.from_float(float(curve.last))
+            scale, offset = first - last, last
         else:
-            scale = Fraction.from_float(float(curve.last - curve.first))
-            offset = Fraction.from_float(float(curve.first))
+            scale, offset = last - first, first
         return inner_scale * scale, inner_scale * offset + inner_offset, count
     return None
 
@@ -536,7 +537,7 @@ def _trim_chart_boxes_disjoint(
         second_box = np.asarray(
             second.bounding_box(second_lower, second_upper), dtype=np.float64
         )
-    except NotImplementedError:
+    except (NotImplementedError, IntervalExtensionError):
         return False
     if (
         first_box.shape != (2, 2)
@@ -660,73 +661,131 @@ class _CurveSurfaceSourceBounds(StrictModule):
         return result_lower, result_upper
 
 
-class _LinearTrimSourceBounds(StrictModule):
-    """Enclose affine chart equations without treating root-angle shadows as exact."""
+class _TrimSourceBounds(StrictModule):
+    """Use native source enclosures, not the numerical solver inside a p-curve."""
 
     first: AbstractCurve
     second: AbstractCurve
     derivative: bool = eqx.field(static=True)
+    charts: tuple[int | None, int | None] = eqx.field(static=True)
+    constant_columns: tuple[bool, bool] = eqx.field(static=True)
     jacobian_lower: np.ndarray
     jacobian_upper: np.ndarray
 
     def __init__(
-        self, first: AbstractCurve, second: AbstractCurve, derivative: bool, /
+        self,
+        first: AbstractCurve,
+        second: AbstractCurve,
+        derivative: bool,
+        charts: tuple[int | None, int | None],
+        /,
     ) -> None:
         from ._patches import _linear_pcurve_velocity
 
-        first_velocity = _linear_pcurve_velocity(first)
-        second_velocity = _linear_pcurve_velocity(second)
-        if first_velocity is None or second_velocity is None:
-            raise ValueError("Exact affine trim bounds require linear chart actions.")
-        lower = np.empty((2, 2), dtype=np.float64)
-        upper = np.empty((2, 2), dtype=np.float64)
-        for axis in range(2):
-            for column, value in enumerate(
-                (first_velocity[axis], -second_velocity[axis])
-            ):
-                first_bound, last_bound = coefficient_interval(value, bits=160)
+        velocities = _linear_pcurve_velocity(first), _linear_pcurve_velocity(second)
+        lower = np.zeros((2, 2), dtype=np.float64)
+        upper = np.zeros((2, 2), dtype=np.float64)
+        for column, velocity in enumerate(velocities):
+            if velocity is None:
+                continue
+            for axis, value in enumerate(velocity):
+                first_bound, last_bound = coefficient_interval(
+                    value if column == 0 else -value, bits=160
+                )
                 lower[axis, column] = fraction_down(first_bound)
                 upper[axis, column] = fraction_up(last_bound)
         self.first, self.second, self.derivative = first, second, derivative
+        self.charts = charts
+        self.constant_columns = velocities[0] is not None, velocities[1] is not None
         self.jacobian_lower, self.jacobian_upper = lower, upper
 
     def evaluate(
         self, lower: np.ndarray, upper: np.ndarray, /
     ) -> tuple[np.ndarray, np.ndarray]:
         from .._interval_enclosure import interval_subtract
+        from ._intersection_curve import _curve_source_bounds
 
         lo, hi = np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
         if lo.ndim != 2 or lo.shape[1] != 2 or hi.shape != lo.shape:
-            raise ValueError("Affine trim boxes require aligned (count, 2) arrays.")
-        if self.derivative:
+            raise ValueError("Trim boxes require aligned (count, 2) arrays.")
+        if self.derivative and all(self.constant_columns):
             shape = (lo.shape[0], 2, 2)
             return (
                 np.broadcast_to(self.jacobian_lower, shape),
                 np.broadcast_to(self.jacobian_upper, shape),
             )
-        result_lower = np.empty((lo.shape[0], 2), dtype=np.float64)
-        result_upper = np.empty_like(result_lower)
+        shape = (lo.shape[0], 2, 2) if self.derivative else (lo.shape[0], 2)
+        result_lower = (
+            np.broadcast_to(self.jacobian_lower, shape).copy()
+            if self.derivative
+            else np.empty(shape, dtype=np.float64)
+        )
+        result_upper = (
+            np.broadcast_to(self.jacobian_upper, shape).copy()
+            if self.derivative
+            else np.empty_like(result_lower)
+        )
         for row in range(lo.shape[0]):
-            first = np.asarray(
-                self.first.bounding_box(float(lo[row, 0]), float(hi[row, 0])),
-                dtype=np.float64,
+            if self.derivative:
+                for column, curve in enumerate((self.first, self.second)):
+                    if self.constant_columns[column]:
+                        continue
+                    low, high = _curve_source_bounds(
+                        curve,
+                        float(lo[row, column]),
+                        float(hi[row, column]),
+                        derivative=True,
+                        chart_index=self.charts[column],
+                    )
+                    if np.shape(low) != (2,) or np.shape(high) != (2,):
+                        raise ValueError("Trim source derivatives must have shape (2,).")
+                    result_lower[row, :, column] = low if column == 0 else -high
+                    result_upper[row, :, column] = high if column == 0 else -low
+                continue
+            first = _curve_source_bounds(
+                self.first,
+                float(lo[row, 0]),
+                float(hi[row, 0]),
+                chart_index=self.charts[0],
             )
-            second = np.asarray(
-                self.second.bounding_box(float(lo[row, 1]), float(hi[row, 1])),
-                dtype=np.float64,
+            second = _curve_source_bounds(
+                self.second,
+                float(lo[row, 1]),
+                float(hi[row, 1]),
+                chart_index=self.charts[1],
             )
-            if first.shape != (2, 2) or second.shape != (2, 2):
-                raise ValueError("Affine trim source bounds must have shape (2, 2).")
-            result_lower[row], result_upper[row] = interval_subtract(
-                (first[0], first[1]), (second[0], second[1])
-            )
+            result_lower[row], result_upper[row] = interval_subtract(first, second)
         if (
             not np.all(np.isfinite(result_lower))
             or not np.all(np.isfinite(result_upper))
             or np.any(result_lower > result_upper)
         ):
-            raise ValueError("Affine trim source enclosures must be finite and ordered.")
+            raise ValueError("Trim source enclosures must be finite and ordered.")
         return result_lower, result_upper
+
+
+def _trim_source_enclosures(
+    first: AbstractCurve,
+    second: AbstractCurve,
+    first_chart: int | None,
+    second_chart: int | None,
+    /,
+) -> tuple[IntervalEvaluator | None, IntervalEvaluator | None]:
+    from ._patches import _linear_pcurve_velocity
+
+    if (
+        first_chart is not None
+        or second_chart is not None
+        or (
+            _linear_pcurve_velocity(first) is not None
+            and _linear_pcurve_velocity(second) is not None
+        )
+    ):
+        charts = first_chart, second_chart
+        return _TrimSourceBounds(first, second, False, charts), _TrimSourceBounds(
+            first, second, True, charts
+        )
+    return None, None
 
 
 def _curve_surface_residual(
@@ -863,21 +922,14 @@ class TrimIntersectionRoot(StrictModule):
                 first, values[0], first_chart
             ) - _curve_value_on_chart(second, values[1], second_chart)
 
-        from ._patches import _linear_pcurve_velocity
-
-        affine_sources = (
-            _linear_pcurve_velocity(first) is not None
-            and _linear_pcurve_velocity(second) is not None
+        source_value, source_jacobian = _trim_source_enclosures(
+            first, second, first_chart, second_chart
         )
         system = _RootEquation(
             residual,
             2,
-            source_value=(
-                _LinearTrimSourceBounds(first, second, False) if affine_sources else None
-            ),
-            source_jacobian=(
-                _LinearTrimSourceBounds(first, second, True) if affine_sources else None
-            ),
+            source_value=source_value,
+            source_jacobian=source_jacobian,
         )
         params, contracted_lower, contracted_upper, preconditioner, contraction = (
             _root_witness(system, lower_input, upper_input)
@@ -2515,6 +2567,26 @@ class TrimRootEndpoint(StrictModule):
         return lower, upper
 
 
+def _cardinal_conic_angle_bounds(
+    root: ConicParameterRoot, phase: Fraction = Fraction(0), turns: int = 0, /
+) -> tuple[Fraction, Fraction] | None:
+    """Directed rational bounds for a cardinal conic root in its source gauge."""
+    cardinal = {
+        (Fraction(1), Fraction(0)): Fraction(0),
+        (Fraction(0), Fraction(1)): Fraction(1, 2),
+        (Fraction(-1), Fraction(0)): Fraction(1),
+        (Fraction(0), Fraction(-1)): Fraction(3, 2),
+    }
+    angle = cardinal.get((root.cosine_exact, root.sine_exact))
+    if angle is None:
+        return None
+    coefficient = angle + 2 * (root.turns + turns)
+    pi_lower = Fraction.from_float(float(np.nextafter(math.pi, -np.inf)))
+    pi_upper = Fraction.from_float(float(np.nextafter(math.pi, np.inf)))
+    values = phase + coefficient * pi_lower, phase + coefficient * pi_upper
+    return min(values), max(values)
+
+
 class BranchRootEndpoint(StrictModule):
     root: CurveSurfaceIntersectionRoot | TripleSurfaceIntersectionRoot
     curve: IntersectionCurve
@@ -2568,6 +2640,26 @@ class BranchRootEndpoint(StrictModule):
 
     def _chart_parameter_enclosure(self) -> tuple[float, float]:
         image = self.source_image()
+        # Cardinal conic-root source lines have an exact angular coordinate in
+        # Q + Q*pi. Their ordinary bounding box deliberately includes several
+        # rounding ulps and may overlap an adjacent *distinct* fixed node.
+        # Tighten only that coordinate, using the source root and chart gauge,
+        # before mapping the chart axis to the branch scalar.
+        from ._patches import ConicRootLinePCurve
+
+        carrier, _ = self._source_pcurve_carrier()
+        if (
+            isinstance(carrier, ConicRootLinePCurve)
+            and self.source_side is not None
+            and isinstance(carrier.phase_shift_exact, Fraction)
+        ):
+            axis = 0 if self.source_side == "first" else 2
+            bounds = _cardinal_conic_angle_bounds(
+                carrier.root, carrier.phase_shift_exact, int(self.source_gauges()[axis])
+            )
+            if bounds is not None:
+                image[0, axis] = max(image[0, axis], fraction_down(bounds[0]))
+                image[1, axis] = min(image[1, axis], fraction_up(bounds[1]))
         chart_lower = np.asarray(self.curve.chart_lower[self.chart], dtype=np.float64)
         chart_upper = np.asarray(self.curve.chart_upper[self.chart], dtype=np.float64)
         if np.all(image[0] >= chart_lower) and np.all(image[1] <= chart_upper):
@@ -3739,17 +3831,38 @@ def intersect_trim_curves(
             def residual(parameters: Array) -> Array:
                 return first_value(parameters[0]) - second_value(parameters[1])
 
-            system = _RootEquation(residual, 2)
+            source_value, source_jacobian = _trim_source_enclosures(
+                a.curve, b.curve, first_chart, second_chart
+            )
             segment_lower = np.asarray((first_lower, second_lower), dtype=np.float64)
             segment_upper = np.asarray((first_upper, second_upper), dtype=np.float64)
-            isolated = _isolate_square_system(
-                system,
-                segment_lower,
-                segment_upper,
-                domain_lower,
-                domain_upper,
-                selected,
-            )
+
+            try:
+                system = _RootEquation(
+                    residual,
+                    2,
+                    source_value=source_value,
+                    source_jacobian=source_jacobian,
+                )
+                isolated = _isolate_square_system(
+                    system,
+                    segment_lower,
+                    segment_upper,
+                    domain_lower,
+                    domain_upper,
+                    selected,
+                )
+            except (
+                NotImplementedError,
+                IntervalExtensionError,
+                _UnresolvedChartEnclosure,
+            ):
+                unresolved.append(
+                    UnresolvedParameterRegion(
+                        segment_lower, segment_upper, "continuation"
+                    )
+                )
+                continue
             root_records.extend(isolated.roots)
             unresolved.extend(isolated.unresolved)
 
@@ -6530,11 +6643,20 @@ def _prepare_plane_cylinder_angular_data(
         return None
 
     frame = _exact_unit_frame_values(
-        cylinder.first_axis_exact, cylinder.second_axis_exact, cylinder.axis_exact
+        cylinder.first_axis_exact,
+        cylinder.second_axis_exact,
+        rational_cross(cylinder.first_axis_exact, cylinder.second_axis_exact),
     )
     if frame is None:
         return None
-    radial_first, radial_second, cylinder_axis = frame
+    radial_first, radial_second, _ = frame
+    # The cylinder axis is an authored parameter rate, not necessarily a unit
+    # direction. Keep that rate in the coupled height and spatial lift.
+    cylinder_axis = (
+        cylinder.axis_exact[0],
+        cylinder.axis_exact[1],
+        cylinder.axis_exact[2],
+    )
     plane_first_axis = rational_vector(np.asarray(plane.first_axis))
     plane_second_axis = rational_vector(np.asarray(plane.second_axis))
     plane_normal = (
@@ -6550,6 +6672,13 @@ def _prepare_plane_cylinder_angular_data(
         left: tuple[ExactScalar, ...], right: tuple[ExactScalar, ...], /
     ) -> ExactScalar:
         return sum((a * b for a, b in zip(left, right, strict=True)), Fraction(0))
+
+    if (
+        all(value == 0 for value in cylinder_axis)
+        or exact_dot(radial_first, cylinder_axis) != 0
+        or exact_dot(radial_second, cylinder_axis) != 0
+    ):
+        return None
 
     denominator = exact_dot(plane_normal, cylinder_axis)
     radius = cylinder.radius_exact
@@ -6751,7 +6880,9 @@ def exact_plane_cylinder_conic_section(
     second_radius_squared = exact_dot(principal_sine, principal_sine)
     if (
         exact_dot(principal_cosine, principal_sine) != 0
-        or first_radius_squared != radius_squared + height_squared
+        or first_radius_squared
+        != radius_squared
+        + height_squared * exact_dot(data.cylinder_axis, data.cylinder_axis)
         or second_radius_squared != radius_squared
     ):
         return None

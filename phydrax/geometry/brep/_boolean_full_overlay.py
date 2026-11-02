@@ -93,7 +93,10 @@ from ._boolean_material import (
 from ._carrier_pieces import carrier_payload
 from ._correspondence import exact_source_lift, native_edge_pcurve
 from ._intersection import (
+    _plane_uv_affine_exact,
     _straight_revolution,
+    BranchRootEndpoint,
+    ConicParameterEndpoint,
     exact_surface_point_parameters,
     intersect_surface_regions,
     SurfaceIntersectionResult,
@@ -105,7 +108,7 @@ from ._intersection_curve import (
     orthogonal_cylinder_branches_disjoint,
     SurfaceRegion,
 )
-from ._model import BRepCurve, BRepEntityId, BRepModel
+from ._model import BRepCurve, BRepEntityId, BRepGeometry, BRepModel
 from ._partition import cad_revision_from_brep_model
 from ._patches import AbstractCurve, AbstractSurfacePatch, PlanePatch
 from ._projection import prepare_brep_projection
@@ -896,7 +899,7 @@ def _joint_vertex(
                 f"lower={tuple(lower)}:upper={tuple(upper)}",
             ),
         )
-    vertex = f"joint-root:{joint.root_id}"
+    vertex = f"joint-root:{owners}:{joint.root_id}"
     record = _Joint(joint, vertex, [support])
     existing.append(record)
     closure.bind(owners, record)
@@ -1102,10 +1105,188 @@ def _coaxial_faces_meet_on_shared_circle(
     return True
 
 
+def _covered_affine_edge_range(
+    geometry: BRepGeometry, edge: int, curve: AbstractCurve, /
+) -> tuple[Fraction, Fraction] | None:
+    """A range inside both the exact edge and the cached nominal solve interval."""
+    nominal = tuple(Fraction(float(value)) for value in geometry.edge_ranges[edge])
+    exact = list(nominal)
+    for index, endpoint in enumerate(geometry.edge_endpoint_roots[edge]):
+        if endpoint is None:
+            continue
+        if (
+            not isinstance(endpoint, ConicParameterEndpoint)
+            or endpoint.parameter_exact is None
+            or carrier_payload(endpoint.carrier) != carrier_payload(curve)
+        ):
+            return None
+        exact[index] = endpoint.parameter_exact
+    first, last = max(nominal[0], exact[0]), min(nominal[1], exact[1])
+    return None if first > last else (first, last)
+
+
+def _plane_generator_range(
+    region: SurfaceRegion,
+    origin: tuple[Fraction, ...],
+    direction: tuple[Fraction, ...],
+    lower: Fraction,
+    upper: Fraction,
+    /,
+) -> tuple[Fraction, Fraction] | None:
+    from ...discretization._exact_algebraic_geometry import rational_coefficient
+
+    if not isinstance(region.patch, PlanePatch):
+        return None
+    mapping = _plane_uv_affine_exact(region.patch, origin, direction)
+    if mapping is None:
+        return None
+    box = np.asarray(region.parameter_box, dtype=np.float64)
+    for axis in range(2):
+        offset = rational_coefficient(mapping[0][axis], role="generator plane offset")
+        rate = rational_coefficient(mapping[1][axis], role="generator plane rate")
+        first, last = Fraction(float(box[0, axis])), Fraction(float(box[1, axis]))
+        if rate == 0:
+            if not first <= offset <= last:
+                return None
+            continue
+        ends = ((first - offset) / rate, (last - offset) / rate)
+        lower, upper = max(lower, min(ends)), min(upper, max(ends))
+        if lower > upper:
+            return None
+    return lower, upper
+
+
+def _tangent_generator(
+    regions: tuple[SurfaceRegion, SurfaceRegion], /
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...], Fraction, Fraction] | None:
+    """Enclose the entire common locus of a tangent plane and cylinder."""
+    from .._rational import rational_cross, rational_dot, rational_vector
+    from ._patches import CylinderPatch
+
+    if isinstance(regions[0].patch, CylinderPatch):
+        cylinder_region, plane_region = regions
+    else:
+        plane_region, cylinder_region = regions
+    cylinder, plane = cylinder_region.patch, plane_region.patch
+    if not isinstance(cylinder, CylinderPatch) or not isinstance(plane, PlanePatch):
+        return None
+    vectors = (
+        cylinder.origin_exact,
+        cylinder.first_axis_exact,
+        cylinder.second_axis_exact,
+        cylinder.axis_exact,
+    )
+    if not isinstance(cylinder.radius_exact, Fraction) or any(
+        not isinstance(value, Fraction) for vector in vectors for value in vector
+    ):
+        return None
+    origin, radial_first, radial_second, direction = cast(
+        tuple[tuple[Fraction, ...], ...], vectors
+    )
+    radius = cylinder.radius_exact
+    normal = rational_cross(
+        rational_vector(np.asarray(plane.first_axis, dtype=np.float64)),
+        rational_vector(np.asarray(plane.second_axis, dtype=np.float64)),
+    )
+    if radius <= 0 or not any(direction) or rational_dot(normal, direction) != 0:
+        return None
+    plane_origin = rational_vector(np.asarray(plane.origin, dtype=np.float64))
+    gap = rational_dot(
+        normal, tuple(a - b for a, b in zip(origin, plane_origin, strict=True))
+    )
+    cosine = radius * rational_dot(normal, radial_first)
+    sine = radius * rational_dot(normal, radial_second)
+    if gap == 0 or gap * gap != cosine * cosine + sine * sine:
+        return None
+    # Equality in the unit-circle support bound fixes one exact angular ray.
+    base = tuple(
+        origin[axis]
+        - radius * (cosine * radial_first[axis] + sine * radial_second[axis]) / gap
+        for axis in range(3)
+    )
+    box = np.asarray(cylinder_region.parameter_box, dtype=np.float64)
+    interval = _plane_generator_range(
+        plane_region,
+        base,
+        direction,
+        Fraction(float(box[0, 1])),
+        Fraction(float(box[1, 1])),
+    )
+    return None if interval is None else (base, direction, *interval)
+
+
+def _shared_generator_events(
+    state: Arrangement,
+    owner: FaceOwner,
+    others: tuple[FaceOwner, FaceOwner],
+    regions: tuple[SurfaceRegion, SurfaceRegion],
+    first: Arc,
+    second: Arc,
+    /,
+) -> bool:
+    """Require complete source-edge roots and their cuts on both branch uses."""
+    from .._rational import rational_cross, rational_dot
+
+    generator = _tangent_generator(regions)
+    if generator is None:
+        return False
+    base, direction, lower, upper = generator
+    offset, rate = rational_dot(direction, base), rational_dot(direction, direction)
+    required = offset + rate * lower, offset + rate * upper
+    geometry = state.models[others[0][0]].geometry
+    for edge, faces in enumerate(geometry.topology.edge_faces):
+        if set(faces) != {others[0][1], others[1][1]}:
+            continue
+        curve = geometry.curves[geometry.edge_curves[edge]]
+        coefficients = _affine_curve_coefficients(curve, (Fraction(0),) * 3)
+        if coefficients is None or any(
+            not isinstance(value, Fraction) for vector in coefficients for value in vector
+        ):
+            continue
+        origin, velocity = cast(tuple[tuple[Fraction, ...], ...], coefficients)
+        parameters = _covered_affine_edge_range(geometry, edge, curve)
+        if parameters is None:
+            continue
+        ends = tuple(
+            tuple(origin[axis] + parameter * velocity[axis] for axis in range(3))
+            for parameter in parameters
+        )
+        if any(
+            any(
+                rational_cross(
+                    tuple(a - b for a, b in zip(end, base, strict=True)), direction
+                )
+            )
+            for end in ends
+        ):
+            continue
+        projected = sorted(rational_dot(direction, end) for end in ends)
+        if not projected[0] <= required[0] <= required[1] <= projected[1]:
+            continue
+        roots = state.spatial_roots.get((others[0][0], edge, owner[0], owner[1]))
+        if roots is None:
+            continue
+        for root in roots:
+            vertices = tuple(
+                {
+                    cut.vertex
+                    for cut in state.cuts[arc.token]
+                    if isinstance(cut.endpoint, BranchRootEndpoint)
+                    and cut.endpoint.root is root
+                }
+                for arc in (first, second)
+            )
+            if not vertices[0].intersection(vertices[1]):
+                break
+        else:
+            return True
+    return False
+
+
 def _branches_meet_on_shared_edge(
     state: Arrangement, owner: FaceOwner, first: Arc, second: Arc, /
 ) -> bool:
-    """Prove two branches on one face meet only at roots of a shared plane edge.
+    """Prove common branch points belong to declared shared source edges.
 
     Branch points lie on this face and on their own opposite face region. With
     two plane regions of one model, a common point lies on both region boxes,
@@ -1113,9 +1294,12 @@ def _branches_meet_on_shared_edge(
     edge of both regions covers that segment, every common point is a root of
     that edge with this face, which spatial events already cut into each
     branch at one vertex; no further trim root can exist.
+
+    Tangent plane/cylinder faces use their unique exact generator, with a
+    covering source edge and complete spatial-root cuts on both branch uses.
     """
     from .._rational import rational_cross, rational_dot, rational_vector
-    from ._patches import ExactLineCurve, LineCurve
+    from ._patches import CylinderPatch, ExactLineCurve, LineCurve
 
     others = []
     for arc in (first, second):
@@ -1137,6 +1321,10 @@ def _branches_meet_on_shared_edge(
     ):
         return _coaxial_faces_meet_on_shared_circle(
             model, (other_a[1], other_b[1]), regions
+        )
+    if any(isinstance(region.patch, CylinderPatch) for region in regions):
+        return _shared_generator_events(
+            state, owner, (other_a, other_b), regions, first, second
         )
     normals = []
     offsets = []
@@ -1170,10 +1358,10 @@ def _branches_meet_on_shared_edge(
         if set(faces) != {other_a[1], other_b[1]}:
             continue
         curve = geometry.curves[geometry.edge_curves[edge]]
-        start, stop = (
-            Fraction.from_float(float(value))
-            for value in np.asarray(geometry.edge_ranges)[edge]
-        )
+        interval = _covered_affine_edge_range(geometry, edge, curve)
+        if interval is None:
+            continue
+        start, stop = interval
         if isinstance(curve, LineCurve):
             origin = cast(tuple[Fraction, ...], curve.origin_exact)
             rate = cast(tuple[Fraction, ...], curve.direction_exact)
@@ -1759,6 +1947,8 @@ def _material_overlay(
     source_arcs(state)
     discovery = _discover_all_source_pairs(state)
     boundary_spatial_events(state)
+    # Spatial roots already own source-edge junctions on both incident faces.
+    propagate_branch_cuts(state)
     _full_trim_events(state)
     propagate_branch_cuts(state)
     coverages = _complete_cells(state, discovery)

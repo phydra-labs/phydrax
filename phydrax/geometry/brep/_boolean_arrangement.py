@@ -553,9 +553,9 @@ def branch_arc(
     # A span between periodic transitions owns its source sheet; the whole
     # branch p-curve would evaluate a terminal node in the next span's sheet.
     pcurve = local
-    first_vertex = f"branch:{curve.branch_id}:node:{first}"
+    first_vertex = f"branch:{curve.branch_id}:owners:{owners}:node:{first}"
     final = 0 if curve.closed and last == curve.num_charts else last
-    last_vertex = f"branch:{curve.branch_id}:node:{final}"
+    last_vertex = f"branch:{curve.branch_id}:owners:{owners}:node:{final}"
     first_seam = periodic_transition(curve, (first - 1) % curve.num_charts, side)
     last_seam = periodic_transition(curve, (last - 1) % curve.num_charts, side)
     first_sheet = "after" if first_seam else "common"
@@ -775,6 +775,17 @@ def trim_box_status(
     if not decision.resolved[0] or decision.boundary[0]:
         return 0
     return 1 if decision.inside[0] else -1
+
+
+def _spatial_root_vertex(
+    source: FaceOwner,
+    edge: int,
+    opposite: FaceOwner,
+    root: CurveSurfaceIntersectionRoot,
+    /,
+) -> str:
+    """Qualify a geometric root by its authored edge and opposite face."""
+    return f"spatial-root:{source[0]}:{edge}:{opposite[0]}:{opposite[1]}:{root.root_id}"
 
 
 def _edge_spatial_roots(
@@ -1048,7 +1059,7 @@ def event_vertex(
                 (source_arc.token, branch_arc.token),
             )
         spatial = matches[0]
-        vertex = f"spatial-root:{spatial.root_id}"
+        vertex = _spatial_root_vertex(source_arc.owner, source_edge, opposite, spatial)
         state.vertex_spatial[vertex] = spatial
         prior_binding = state.vertex_bindings.get(vertex)
         aliases = {
@@ -1127,7 +1138,7 @@ def event_vertex(
                 "BRepBoolean.triple_junction.source_edge must have one source-lift certificate; got another root count"
             )
         edge, spatial, joint, lifts = certified[0]
-        vertex = f"spatial-root:{spatial.root_id}"
+        vertex = _spatial_root_vertex(other_a, edge, first.owner, spatial)
         state.vertex_spatial[vertex] = spatial
         state.vertex_joint[vertex] = joint
         state.vertex_lifts[vertex] = lifts
@@ -1158,7 +1169,7 @@ def add_root_cut(
     uv = np.asarray(root.first.evaluate(root.parameters[0]), dtype=np.float64)
     patch = state.models[arc.owner[0]].patches[arc.owner[1]]
     point = np.asarray(patch.evaluate(jnp.asarray(uv, jnp.float64)))
-    node = f"root:{root.root_id}:face:{arc.owner}"
+    node = f"root:{root.root_id}:vertex:{vertex}:face:{arc.owner}"
     first, last = _arc_parameter_interval(arc)
     if lower <= first <= upper:
         node = arc.first_node
@@ -1210,16 +1221,15 @@ def ordered_cuts(state: Arrangement, arc: Arc) -> tuple[Cut, ...]:
 
 
 def propagate_branch_cuts(state: Arrangement) -> None:
-    branch_cuts: dict[str, dict[str, tuple[Cut, Arc]]] = {}
+    branch_cuts: dict[tuple[str, tuple[FaceOwner, FaceOwner]], dict[str, Cut]] = {}
     for arcs in state.arcs.values():
         for arc in arcs:
             if arc.branch is None:
                 continue
             for cut in state.cuts[arc.token]:
                 if cut.endpoint is not None:
-                    branch_cuts.setdefault(arc.branch.branch_id, {}).setdefault(
-                        cut.vertex, (cut, arc)
-                    )
+                    key = arc.branch.branch_id, state.branch_owners[arc.token]
+                    branch_cuts.setdefault(key, {}).setdefault(cut.vertex, cut)
     for owner, arcs in state.arcs.items():
         for arc in arcs:
             if arc.branch is None:
@@ -1228,9 +1238,8 @@ def propagate_branch_cuts(state: Arrangement) -> None:
             local = {
                 cut.vertex for cut in state.cuts[arc.token] if cut.endpoint is not None
             }
-            for vertex, (cut, original) in branch_cuts.get(
-                arc.branch.branch_id, {}
-            ).items():
+            key = arc.branch.branch_id, state.branch_owners[arc.token]
+            for vertex, cut in branch_cuts.get(key, {}).items():
                 if vertex in local or not first < cut.parameter < last:
                     continue
                 state.cuts[arc.token].append(
@@ -2387,11 +2396,14 @@ def _append_spatial_root_cuts(
             (source_arc.token,),
         )
     source_parameter = source_lower + 0.5 * (source_upper - source_lower)
-    vertex = f"spatial-root:{spatial.root_id}"
+    first_owner, second_owner = state.branch_owners[branch_arc.token]
+    opposite = second_owner if owner == first_owner else first_owner
+    assert source_arc.source_edge is not None
+    vertex = _spatial_root_vertex(owner, source_arc.source_edge, opposite, spatial)
     binding = BRepVertexRoot(spatial)
     root_box = binding.point_enclosure()
     point = root_box[0] + 0.5 * (root_box[1] - root_box[0])
-    node = f"spatial:{spatial.root_id}:face:{owner}"
+    node = f"{vertex}:face:{owner}"
     alias = _bind_fixed_branch_alias(
         state,
         branch_arc,

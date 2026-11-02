@@ -96,12 +96,100 @@ def _same_source(first: object, second: object, /) -> bool:
 
 
 def _source_coefficients_are_binary(source: object, /) -> bool:
+    from ._boolean_core import AffinePCurve, PeriodicPCurve
+    from ._patches import (
+        BSplineCurve,
+        BSplineSurfacePatch,
+        CircleCurve,
+        ConePatch,
+        CylinderPatch,
+        EllipseCurve,
+        ExactLineCurve,
+        ExtrusionSurface,
+        HyperbolaCurve,
+        LineCurve,
+        OffsetCurve,
+        OffsetSurface,
+        ParabolaCurve,
+        PlanePatch,
+        RevolutionSurface,
+        RuledSurface,
+        SpherePatch,
+        SurfaceIsoparametricCurve,
+        SurfaceMappedCurve,
+        TorusPatch,
+    )
+    from ._placed import PlacedCurve
+    from ._tspline import TSplineSurfacePatch
+
+    admitted = (
+        BSplineCurve,
+        BSplineSurfacePatch,
+        CircleCurve,
+        ConePatch,
+        CylinderPatch,
+        EllipseCurve,
+        ExactLineCurve,
+        ExtrusionSurface,
+        HyperbolaCurve,
+        LineCurve,
+        OffsetCurve,
+        OffsetSurface,
+        ParabolaCurve,
+        PlanePatch,
+        RevolutionSurface,
+        RuledSurface,
+        SpherePatch,
+        SurfaceIsoparametricCurve,
+        SurfaceMappedCurve,
+        TorusPatch,
+        AffinePCurve,
+        PeriodicPCurve,
+        PlacedCurve,
+        PlacedSurface,
+        TSplineSurfacePatch,
+    )
+    if type(source) not in admitted:
+        return False
+    if isinstance(source, PeriodicPCurve) and any(source.period_shifts):
+        return False
+    if isinstance(source, (PlacedCurve, PlacedSurface)):
+        if not _binary_components(source.affine.matrix):
+            return False
+    if isinstance(source, AffinePCurve):
+        if not _binary_components((source.matrix, source.offset)):
+            return False
+    if isinstance(source, RuledSurface):
+        if not all(
+            _source_coefficients_are_binary(rail)
+            for rail in (source.first, source.second)
+        ):
+            return False
+    if isinstance(source, PeriodicPCurve):
+        if not _source_coefficients_are_binary(source.source_curve):
+            return False
+        if not _source_coefficients_are_binary(source.patch):
+            return False
+
     for name in (
         "origin_exact",
+        "direction_exact",
+        "fixed_value_exact",
+        "phase_shift_exact",
+        "height_origin_exact",
+        "height_direction_exact",
+        "offset_exact",
+        "linear_exact",
+        "cosine_exact",
+        "sine_exact",
+        "exact_source_control_points",
+        "exact_source_weights",
+        "exact_target_homogeneous",
         "center_exact",
         "first_axis_exact",
         "second_axis_exact",
         "axis_exact",
+        "radius_exact",
         "major_radius_exact",
         "minor_radius_exact",
         "first_radius_exact",
@@ -115,20 +203,8 @@ def _source_coefficients_are_binary(source: object, /) -> bool:
         "exact_u_knots",
         "exact_v_knots",
     ):
-        value = getattr(source, name, None)
-        if value is None:
-            continue
-        stack = list(value) if isinstance(value, (tuple, list)) else [value]
-        while stack:
-            component = stack.pop()
-            if isinstance(component, (tuple, list)):
-                stack.extend(component)
-            elif isinstance(component, (Fraction, RadicalElement)):
-                try:
-                    if Fraction.from_float(float(component)) != component:
-                        return False
-                except (OverflowError, ValueError):
-                    return False
+        if not _binary_components(getattr(source, name, None)):
+            return False
     return all(
         child is None or _source_coefficients_are_binary(child)
         for child in (
@@ -139,6 +215,21 @@ def _source_coefficients_are_binary(source: object, /) -> bool:
             getattr(source, "definition", None),
         )
     )
+
+
+def _binary_components(value: object, /) -> bool:
+    stack = [value]
+    while stack:
+        component = stack.pop()
+        if isinstance(component, (tuple, list)):
+            stack.extend(component)
+        elif isinstance(component, (Fraction, RadicalElement)):
+            try:
+                if Fraction.from_float(float(component)) != component:
+                    return False
+            except (OverflowError, ValueError):
+                return False
+    return True
 
 
 def _exact_cylinder_patch_box(
@@ -395,6 +486,17 @@ def _patch_box(
 
     if lower.shape != (2,) or upper.shape != (2,):
         raise ValueError("A patch source box requires two ordered UV coordinates.")
+    if isinstance(patch, PlacedSurface):
+        from ._placed import _affine_interval_transform
+
+        box = _patch_box(patch.definition, lower, upper)
+        lo, hi = _affine_interval_transform(
+            patch.affine,
+            box[0, :, None],
+            box[1, :, None],
+            include_translation=True,
+        )
+        return np.stack((lo[:, 0], hi[:, 0]))
     if isinstance(patch, TorusPatch):
         return _exact_torus_patch_box(patch, lower, upper)
     if isinstance(patch, RuledSurface) or (
@@ -2867,10 +2969,15 @@ def _exact_conic_uv_endpoint(
     elif isinstance(source, ConicRootLinePCurve):
         if (
             endpoint.parameter_exact is None
-            or endpoint.root.exact_point() != endpoint.point_exact
+            or (
+                endpoint.root.exact_point() != endpoint.point_exact
+                and not _same_parameter_source(endpoint.root, source.root)
+            )
             or source.phase_shift_exact != 0
         ):
             return None
+        # A source angular root fixes the angle, not the axial height. Its
+        # lifted spatial point is proved against the vertex below.
         angular_root = source.root
         circle = angular_root.conic
         if (

@@ -17,6 +17,7 @@ from phydrax.geometry.brep._intersection import (
     BranchRootEndpoint,
     CurveSurfaceIntersectionRoot,
     intersect_surface_regions,
+    intersect_trim_curves,
     IntersectionCurvePointRoot,
     SurfaceIntersectionResult,
     TrimIntersectionRoot,
@@ -48,7 +49,9 @@ def _cylinder(axis: tuple[float, float, float], radius: float, /) -> CylinderPat
 
 
 def _cylinder_region(patch: CylinderPatch, /) -> SurfaceRegion:
-    return SurfaceRegion(patch, np.asarray(((0.0, -2.0), (math.tau, 2.0)), dtype=np.float64))
+    return SurfaceRegion(
+        patch, np.asarray(((0.0, -2.0), (math.tau, 2.0)), dtype=np.float64)
+    )
 
 
 @pytest.mark.parametrize("radius", (1.0, math.nextafter(1.5, 0.0), 3.0))
@@ -146,8 +149,26 @@ def test_affine_edges_isolate_exact_analytic_cylinder_trim_roots(spline: bool) -
 def test_unequal_orthogonal_quadrics_have_complete_source_branch_atlas() -> None:
     first = _cylinder((0.0, 0.0, 1.0), 1.0)
     second = _cylinder((1.0, 0.0, 0.0), 0.5)
-    first_before = tuple(np.asarray(value).copy() for value in (first.origin, first.first_axis, first.second_axis, first.axis, first.radius))
-    second_before = tuple(np.asarray(value).copy() for value in (second.origin, second.first_axis, second.second_axis, second.axis, second.radius))
+    first_before = tuple(
+        np.asarray(value).copy()
+        for value in (
+            first.origin,
+            first.first_axis,
+            first.second_axis,
+            first.axis,
+            first.radius,
+        )
+    )
+    second_before = tuple(
+        np.asarray(value).copy()
+        for value in (
+            second.origin,
+            second.first_axis,
+            second.second_axis,
+            second.axis,
+            second.radius,
+        )
+    )
 
     result = intersect_surface_regions(_cylinder_region(first), _cylinder_region(second))
 
@@ -168,9 +189,23 @@ def test_unequal_orthogonal_quadrics_have_complete_source_branch_atlas() -> None
         np.testing.assert_allclose(second.evaluate(second_uv), coupled.point, atol=2e-9)
         np.testing.assert_allclose(coupled.gap, 0.0, atol=2e-9)
 
-    for before, after in zip(first_before, (first.origin, first.first_axis, first.second_axis, first.axis, first.radius), strict=True):
+    for before, after in zip(
+        first_before,
+        (first.origin, first.first_axis, first.second_axis, first.axis, first.radius),
+        strict=True,
+    ):
         np.testing.assert_array_equal(before, after)
-    for before, after in zip(second_before, (second.origin, second.first_axis, second.second_axis, second.axis, second.radius), strict=True):
+    for before, after in zip(
+        second_before,
+        (
+            second.origin,
+            second.first_axis,
+            second.second_axis,
+            second.axis,
+            second.radius,
+        ),
+        strict=True,
+    ):
         np.testing.assert_array_equal(before, after)
 
 
@@ -178,8 +213,14 @@ def test_exact_sphere_sphere_tangency_has_separate_rational_root() -> None:
     first_patch = SpherePatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
     second_patch = SpherePatch((0, 2, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
     result = intersect_surface_regions(
-        SurfaceRegion(first_patch, np.asarray(((0.0, -math.pi / 2), (math.tau, math.pi / 2)), dtype=np.float64)),
-        SurfaceRegion(second_patch, np.asarray(((0.0, -math.pi / 2), (math.tau, math.pi / 2)), dtype=np.float64)),
+        SurfaceRegion(
+            first_patch,
+            np.asarray(((0.0, -math.pi / 2), (math.tau, math.pi / 2)), dtype=np.float64),
+        ),
+        SurfaceRegion(
+            second_patch,
+            np.asarray(((0.0, -math.pi / 2), (math.tau, math.pi / 2)), dtype=np.float64),
+        ),
     )
 
     assert result.complete
@@ -190,8 +231,14 @@ def test_exact_sphere_sphere_tangency_has_separate_rational_root() -> None:
 
 
 def test_coincident_plane_overlap_is_source_scoped() -> None:
-    first = SurfaceRegion(PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)), np.asarray(((0, 0), (1, 1)), dtype=np.float64))
-    second = SurfaceRegion(PlanePatch((0.5, 0.25, 0), (0, 1, 0), (-1, 0, 0)), np.asarray(((0, 0), (1, 1)), dtype=np.float64))
+    first = SurfaceRegion(
+        PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+        np.asarray(((0, 0), (1, 1)), dtype=np.float64),
+    )
+    second = SurfaceRegion(
+        PlanePatch((0.5, 0.25, 0), (0, 1, 0), (-1, 0, 0)),
+        np.asarray(((0, 0), (1, 1)), dtype=np.float64),
+    )
 
     result = intersect_surface_regions(first, second)
 
@@ -210,13 +257,22 @@ def test_equal_orthogonal_cylinders_report_singular_junctions() -> None:
 
     result = intersect_surface_regions(first, second)
 
-    singular = sorted((point for point in result.points if point.kind == "singular_point"), key=lambda point: float(point.point[1]))
+    singular = sorted(
+        (point for point in result.points if point.kind == "singular_point"),
+        key=lambda point: float(point.point[1]),
+    )
     assert len(singular) == 2
     assert [point.branch_count for point in singular] == [4, 4]
-    np.testing.assert_array_equal(singular[0].point_exact, (Fraction(0), Fraction(-1), Fraction(0)))
-    np.testing.assert_array_equal(singular[1].point_exact, (Fraction(0), Fraction(1), Fraction(0)))
+    np.testing.assert_array_equal(
+        singular[0].point_exact, (Fraction(0), Fraction(-1), Fraction(0))
+    )
+    np.testing.assert_array_equal(
+        singular[1].point_exact, (Fraction(0), Fraction(1), Fraction(0))
+    )
     assert {region.reason for region in result.unresolved} == {"singular"}
     assert not result.complete
+
+
 def test_native_period_endpoint_keeps_exact_turns_and_support_authority() -> None:
     from phydrax.geometry.brep._intersection import NativePeriodEndpoint
     from phydrax.geometry.brep._patches import CircleCurve, LineCurve
@@ -231,9 +287,17 @@ def test_native_period_endpoint_keeps_exact_turns_and_support_authority() -> Non
     assert bound.turns == Fraction(1, 1)
     with pytest.raises(ValueError, match="source-declared mathematical 2pi period"):
         NativePeriodEndpoint(LineCurve((0.0, 0.0), (1.0, 1.0)))
+
+
 def test_transverse_plane_regions_share_exact_bounded_branch_and_endpoints() -> None:
-    first = SurfaceRegion(PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)), np.asarray(((0, 0), (1, 1)), dtype=np.float64))
-    second = SurfaceRegion(PlanePatch((0.5, 0, -1), (0, 1, 0), (0, 0, 1)), np.asarray(((0, 0), (1, 2)), dtype=np.float64))
+    first = SurfaceRegion(
+        PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+        np.asarray(((0, 0), (1, 1)), dtype=np.float64),
+    )
+    second = SurfaceRegion(
+        PlanePatch((0.5, 0, -1), (0, 1, 0), (0, 0, 1)),
+        np.asarray(((0, 0), (1, 2)), dtype=np.float64),
+    )
 
     result = intersect_surface_regions(first, second)
 
@@ -248,14 +312,23 @@ def test_transverse_plane_regions_share_exact_bounded_branch_and_endpoints() -> 
     ]
     parameter = jnp.linspace(0.0, curve.num_charts, 17)
     coupled = curve.evaluate_coupled(parameter)
-    np.testing.assert_allclose(first.patch.evaluate(coupled.first_parameters), coupled.point, atol=1e-12)
-    np.testing.assert_allclose(second.patch.evaluate(coupled.second_parameters), coupled.point, atol=1e-12)
+    np.testing.assert_allclose(
+        first.patch.evaluate(coupled.first_parameters), coupled.point, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        second.patch.evaluate(coupled.second_parameters), coupled.point, atol=1e-12
+    )
+
+
 def test_exact_bspline_endpoint_uses_homogeneous_source_arithmetic() -> None:
     from phydrax.geometry.brep._intersection_curve import exact_curve_parameter_point
     from phydrax.geometry.brep._patches import BSplineCurve
 
     curve = BSplineCurve(((0, 0), (1, 0)), (1, 1), (0, 0, 1, 1), 1)
-    assert exact_curve_parameter_point(curve, Fraction(1, 2)) == (Fraction(1, 2), Fraction(0))
+    assert exact_curve_parameter_point(curve, Fraction(1, 2)) == (
+        Fraction(1, 2),
+        Fraction(0),
+    )
 
 
 def test_exact_line_curve_evaluates_algebraic_source_parameters() -> None:
@@ -319,9 +392,13 @@ def test_radical_conic_root_accepts_exact_unit_direction() -> None:
     assert root is not None
     assert root.cosine_exact == cosine and root.sine_exact == sine
     assert root.exact_point() == point
-    assert ConicParameterRoot.from_exact_point(
-        conic, (Fraction(1), Fraction(1), Fraction(0)), math.atan2(1, 1)
-    ) is None
+    assert (
+        ConicParameterRoot.from_exact_point(
+            conic, (Fraction(1), Fraction(1), Fraction(0)), math.atan2(1, 1)
+        )
+        is None
+    )
+
 
 def test_surface_mapped_revolution_lift_requires_identical_source_composition() -> None:
     from phydrax.geometry.brep._correspondence import (
@@ -344,6 +421,7 @@ def test_surface_mapped_revolution_lift_requires_identical_source_composition() 
     assert exact_source_lift(mapped, pcurve, region, 0.0, 1.0)
     different = BSplineCurve(((0, 0.25), (0, 1)), (1, 1), (0, 0, 1, 1), 1)
     assert not exact_source_lift(mapped, different, region, 0.0, 1.0)
+
 
 def test_regular_plane_sphere_quadric_branch_has_coupled_certified_atlas() -> None:
     plane = SurfaceRegion(
@@ -371,14 +449,21 @@ def test_regular_plane_sphere_quadric_branch_has_coupled_certified_atlas() -> No
     )
     np.testing.assert_allclose(coupled.gap, 0.0, atol=2e-9)
 
-def test_plane_cylinder_cut_is_one_complete_closed_ellipse() -> None:
+
+@pytest.mark.parametrize(
+    "axis_scale", (1.0, 4.0, -2.0), ids=("unit", "scaled", "reversed-scaled")
+)
+def test_plane_cylinder_cut_is_one_complete_closed_ellipse(axis_scale: float) -> None:
     plane = SurfaceRegion(
         PlanePatch((-3, -3, -1.5), (6, 0, 3), (0, 6, 0)),
         np.asarray(((0, 0), (1, 1)), dtype=np.float64),
     )
     cylinder = SurfaceRegion(
-        CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0),
-        np.asarray(((0, -3), (math.tau, 3)), dtype=np.float64),
+        CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, axis_scale), 1.0),
+        np.asarray(
+            ((0, -3 / abs(axis_scale)), (math.tau, 3 / abs(axis_scale))),
+            dtype=np.float64,
+        ),
     )
 
     result = intersect_surface_regions(plane, cylinder)
@@ -398,8 +483,16 @@ def test_plane_cylinder_cut_is_one_complete_closed_ellipse() -> None:
     points = np.asarray(coupled.point)
     np.testing.assert_allclose(np.hypot(points[:, 0], points[:, 1]), 1.0, atol=2e-9)
     np.testing.assert_allclose(points[:, 2], 0.5 * points[:, 0], atol=2e-9)
+    np.testing.assert_allclose(
+        np.asarray(coupled.second_parameters)[:, 1],
+        points[:, 2] / axis_scale,
+        atol=2e-9,
+    )
 
-def test_nonrational_cylinder_frame_has_partial_plane_branch_and_disjoint_refusal() -> None:
+
+def test_nonrational_cylinder_frame_has_partial_plane_branch_and_disjoint_refusal() -> (
+    None
+):
     from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 
     inverse_root17 = RadicalElement.sqrt(Fraction(1, 17))
@@ -454,7 +547,11 @@ def test_nonrational_cylinder_frame_has_partial_plane_branch_and_disjoint_refusa
     assert disjoint.complete and disjoint.curves == () and disjoint.points == ()
     assert disjoint.unresolved == ()
 
-def test_plane_cylinder_conic_carriers_have_exact_coupled_source_lifts() -> None:
+
+@pytest.mark.parametrize("axis_scale", (1, 4), ids=("unit", "scaled"))
+def test_plane_cylinder_conic_carriers_have_exact_coupled_source_lifts(
+    axis_scale: int,
+) -> None:
     from phydrax.discretization._exact_algebraic_geometry import (
         ExactScalar,
         RadicalElement,
@@ -480,7 +577,7 @@ def test_plane_cylinder_conic_carriers_have_exact_coupled_source_lifts() -> None
         np.asarray(((-2, -2), (2, 2)), dtype=np.float64),
     )
     cylinder_patch = CylinderPatch(
-        (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0
+        (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, axis_scale), 1.0
     )
     cylinder = SurfaceRegion(
         cylinder_patch,
@@ -589,9 +686,7 @@ def test_plane_cylinder_conic_carriers_have_exact_coupled_source_lifts() -> None
         second_axis_exact=(Fraction(0), Fraction(1)),
         radius_exact=Fraction(1),
     )
-    circle_plane_endpoint = ConicParameterEndpoint(
-        root, circle_plane, None, point_exact
-    )
+    circle_plane_endpoint = ConicParameterEndpoint(root, circle_plane, None, point_exact)
     assert vertex_root.same_uv_endpoint(
         plane.patch,
         section.plane_pcurve,
@@ -617,7 +712,10 @@ def test_plane_cylinder_conic_carriers_have_exact_coupled_source_lifts() -> None
     )
 
     contact_pcurve = ConicRootLinePCurve(
-        angle_roots[0], Fraction(1, 2), Fraction(1), parameter_range=(0.0, 1.0)
+        angle_roots[0],
+        Fraction(1, 2 * axis_scale),
+        Fraction(1),
+        parameter_range=(0.0, 1.0),
     )
     section_cylinder_endpoint = ConicParameterEndpoint(
         root, section.cylinder_pcurve, None, point_exact
@@ -632,12 +730,22 @@ def test_plane_cylinder_conic_carriers_have_exact_coupled_source_lifts() -> None
         contact_pcurve,
         contact_cylinder_endpoint,
     )
+    unrelated_angle = ConicParameterEndpoint(
+        angle_roots[1], contact_pcurve, Fraction(0), point_exact
+    )
+    assert not vertex_root.same_uv_endpoint(
+        cylinder_patch,
+        section.cylinder_pcurve,
+        section_cylinder_endpoint,
+        contact_pcurve,
+        unrelated_angle,
+    )
     wrong_winding_root = ConicParameterRoot(
         angle_circle, Fraction(1), Fraction(0), turns=1
     )
     wrong_winding_pcurve = ConicRootLinePCurve(
         wrong_winding_root,
-        Fraction(1, 2),
+        Fraction(1, 2 * axis_scale),
         Fraction(1),
         parameter_range=(0.0, 1.0),
     )
@@ -655,7 +763,9 @@ def test_plane_cylinder_conic_carriers_have_exact_coupled_source_lifts() -> None
     parameters = jnp.linspace(*section.parameter_range, 17)
     points = section.edge_curve.evaluate(parameters)
     np.testing.assert_allclose(
-        plane.patch.evaluate(section.plane_pcurve.evaluate(parameters)), points, atol=3e-12
+        plane.patch.evaluate(section.plane_pcurve.evaluate(parameters)),
+        points,
+        atol=3e-12,
     )
     np.testing.assert_allclose(
         cylinder_patch.evaluate(section.cylinder_pcurve.evaluate(parameters)),
@@ -680,7 +790,9 @@ def test_plane_cylinder_conic_carriers_have_exact_coupled_source_lifts() -> None
 
 
 @pytest.mark.parametrize("height", (0.3, -0.3))
-def test_horizontal_torus_plane_has_two_complete_source_circle_branches(height: float) -> None:
+def test_horizontal_torus_plane_has_two_complete_source_circle_branches(
+    height: float,
+) -> None:
     from phydrax.geometry.brep._patches import TorusPatch
 
     torus = SurfaceRegion(
@@ -702,10 +814,14 @@ def test_horizontal_torus_plane_has_two_complete_source_circle_branches(height: 
         parameter = jnp.linspace(0.0, curve.num_charts, 49, endpoint=False)
         coupled = curve.evaluate_coupled(parameter)
         np.testing.assert_allclose(
-            curve.p_curve("first").evaluate(parameter), coupled.first_parameters, atol=1e-12
+            curve.p_curve("first").evaluate(parameter),
+            coupled.first_parameters,
+            atol=1e-12,
         )
         np.testing.assert_allclose(
-            curve.p_curve("second").evaluate(parameter), coupled.second_parameters, atol=1e-12
+            curve.p_curve("second").evaluate(parameter),
+            coupled.second_parameters,
+            atol=1e-12,
         )
         np.testing.assert_allclose(
             torus.patch.evaluate(coupled.first_parameters), coupled.point, atol=2e-9
@@ -718,6 +834,7 @@ def test_horizontal_torus_plane_has_two_complete_source_circle_branches(height: 
         np.testing.assert_allclose(radius, radius[0], atol=2e-9)
         radii.append(float(radius[0]))
     np.testing.assert_allclose(sorted(radii), (1.6, 2.4), atol=2e-9)
+
 
 def test_public_revolution_sphere_and_torus_sections_keep_source_faces() -> None:
     from phydrax._physical import SpatialCoordinateContract
@@ -733,7 +850,8 @@ def test_public_revolution_sphere_and_torus_sections_keep_source_faces() -> None
     )
     sphere_patch = sphere_model.patches[sphere_face]
     sphere = SurfaceRegion(
-        sphere_patch, np.asarray(sphere_model.parameter_bounds[sphere_face], dtype=np.float64)
+        sphere_patch,
+        np.asarray(sphere_model.parameter_bounds[sphere_face], dtype=np.float64),
     )
     sphere_plane = SurfaceRegion(
         PlanePatch((-2, -2, 0.5), (4, 0, 0), (0, 4, 0)),
@@ -746,7 +864,9 @@ def test_public_revolution_sphere_and_torus_sections_keep_source_faces() -> None
     sphere_parameters = jnp.linspace(0.0, sphere_curve.num_charts, 17, endpoint=False)
     sphere_points = sphere_curve.evaluate_coupled(sphere_parameters)
     np.testing.assert_allclose(
-        sphere_patch.evaluate(sphere_points.first_parameters), sphere_points.point, atol=2e-9
+        sphere_patch.evaluate(sphere_points.first_parameters),
+        sphere_points.point,
+        atol=2e-9,
     )
 
     torus_model = brep_torus(2.0, 0.5, coordinate_contract=contract)
@@ -757,7 +877,8 @@ def test_public_revolution_sphere_and_torus_sections_keep_source_faces() -> None
     )
     torus_patch = torus_model.patches[torus_face]
     torus = SurfaceRegion(
-        torus_patch, np.asarray(torus_model.parameter_bounds[torus_face], dtype=np.float64)
+        torus_patch,
+        np.asarray(torus_model.parameter_bounds[torus_face], dtype=np.float64),
     )
     torus_plane = SurfaceRegion(
         PlanePatch((-3, -3, 0.3), (6, 0, 0), (0, 6, 0)),
@@ -873,9 +994,7 @@ def _trim_uv_root() -> tuple[
         curve,
         root,
         BRepVertexRoot(BRepRootSupport(patch, root)),
-        SurfaceRegion(
-            patch, np.asarray(((0.0, 0.0), (math.tau, 1.0)), dtype=np.float64)
-        ),
+        SurfaceRegion(patch, np.asarray(((0.0, 0.0), (math.tau, 1.0)), dtype=np.float64)),
     )
 
 
@@ -1140,3 +1259,210 @@ def test_terminal_trim_subdivision_replaces_the_selected_piece(index: int) -> No
     query = np.asarray(((2.0, 2.0), (3.0, 3.0)))
     assert _split_terminal_piece(_SegmentEnclosures(segment), pieces, query, index)
     assert [(first, last) for first, last, _ in pieces] == [(0.0, 0.5), (0.5, 1.0)]
+
+
+def _planar_crossing_pcurves() -> tuple[
+    SurfaceRegion, IntersectionPCurve, IntersectionPCurve
+]:
+    domain = np.asarray(((-2.0, -2.0), (2.0, 2.0)), dtype=np.float64)
+    common = SurfaceRegion(PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)), domain)
+    first_cut = SurfaceRegion(PlanePatch((0, 0, 0), (0, 1, 0), (0, 0, 1)), domain)
+    second_cut = SurfaceRegion(PlanePatch((0, 0, 0), (1, 0, 0), (0, 0, 1)), domain)
+    first = intersect_surface_regions(common, first_cut)
+    second = intersect_surface_regions(common, second_cut)
+    assert first.complete and second.complete
+    assert len(first.curves) == len(second.curves) == 1
+    return common, first.curves[0].p_curve("first"), second.curves[0].p_curve("first")
+
+
+def test_implicit_pcurve_crossing_uses_certified_source_enclosures() -> None:
+    common, first, second = _planar_crossing_pcurves()
+
+    result = intersect_trim_curves(
+        first,
+        second,
+        source_patch=common.patch,
+    )
+
+    assert result.complete and len(result.points) == 1
+    assert result.coincident == ()
+    point = result.points[0]
+    assert point.kind == "crossing"
+    np.testing.assert_allclose(point.point, (0.0, 0.0), atol=1e-12)
+    assert point.gap_bound < 1e-12
+    assert np.all(np.asarray(point.parameter_lower) <= 0.5)
+    assert np.all(np.asarray(point.parameter_upper) >= 0.5)
+
+
+def test_implicit_pcurve_and_exact_ellipse_have_two_regular_intersections() -> None:
+    from phydrax.geometry.brep._intersection import CurveRange
+    from phydrax.geometry.brep._patches import EllipseCurve
+
+    common, first, _ = _planar_crossing_pcurves()
+    ellipse = EllipseCurve((0.25, 0.125), (1, 0), (0, 1), 1.0, 0.5)
+    result = intersect_trim_curves(
+        first, CurveRange(ellipse, 0.0, math.tau), source_patch=common.patch
+    )
+    assert result.complete and len(result.points) == 2
+    assert all(point.kind == "crossing" for point in result.points)
+    points = np.stack([np.asarray(point.point) for point in result.points])
+    np.testing.assert_allclose(points[:, 0], 0.0, atol=1e-10)
+    ordered = sorted(result.points, key=lambda point: float(point.point[1]))
+    for point, sign in zip(ordered, (-1, 1), strict=True):
+        reference = Fraction(1, 8) + sign * RadicalElement.sqrt(Fraction(15)) / 8
+        bounds = first.bounding_box(
+            float(point.parameter_lower[0]), float(point.parameter_upper[0])
+        )
+        assert Fraction(float(bounds[0, 1])) <= reference
+        assert reference <= Fraction(float(bounds[1, 1]))
+
+
+@pytest.mark.parametrize("reversed", (False, True), ids=("forward", "reversed"))
+def test_nonbinary_trim_interval_retains_exact_endpoint_transport(reversed: bool) -> None:
+    common, first, second = _planar_crossing_pcurves()
+    view = IntersectionPCurve(first.curve, "first", first=0.1, last=0.7)
+    wrapped = CurveTrimSegment(view, 0.1, 0.7, reversed=reversed)
+    result = intersect_trim_curves(wrapped, second, source_patch=common.patch)
+    assert result.complete and len(result.points) == 1
+    point = result.points[0]
+    np.testing.assert_allclose(point.point, (0.0, 0.0), atol=1e-12)
+    parameter = (Fraction(0.5) - Fraction(0.1)) / (Fraction(0.7) - Fraction(0.1))
+    if reversed:
+        parameter = 1 - parameter
+    assert Fraction(float(point.parameter_lower[0])) <= parameter
+    assert parameter <= Fraction(float(point.parameter_upper[0]))
+
+
+def test_fixed_chart_point_enclosures_keep_the_declared_periodic_sheet(
+    _orthogonal_branch_root: tuple[
+        IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
+    ],
+) -> None:
+    from phydrax.geometry._interval_enclosure import interval_add, interval_subtract
+
+    candidates = tuple(
+        (curve, node)
+        for curve in _orthogonal_branch_root[:2]
+        for node in range(1, curve.num_charts)
+        if np.any(
+            np.asarray(curve.node_period_shifts[node, 0, :2])
+            != np.asarray(curve.node_period_shifts[node, 1, :2])
+        )
+    )
+    assert candidates, (
+        "The source pair must contain a declared periodic chart transition."
+    )
+    curve, node = candidates[0]
+    pcurve = curve.p_curve("first")
+    boxes = tuple(
+        pcurve.bounding_box(float(node), float(node), chart_index=chart)
+        for chart in (node - 1, node)
+    )
+    gauges = np.asarray(curve.node_period_shifts[node], dtype=np.int64)
+    for side, box in enumerate(boxes):
+        shift = curve.shift_parameter_bounds(gauges[side])
+        node_box = np.stack(
+            interval_add(
+                (np.asarray(curve.node_lower[node]), np.asarray(curve.node_upper[node])),
+                shift,
+            )
+        )
+        assert np.all(box[0] <= node_box[1][:2])
+        assert np.all(node_box[0][:2] <= box[1])
+    delta = gauges[1] - gauges[0]
+    axis = int(np.flatnonzero(delta[:2])[0])
+    difference = np.stack(
+        interval_subtract((boxes[1][0], boxes[1][1]), (boxes[0][0], boxes[0][1]))
+    )
+    period = curve.shift_parameter_bounds(delta)
+    assert difference[0][axis] <= period[0][axis]
+    assert period[1][axis] <= difference[1][axis]
+    assert boxes[0][1, axis] < boxes[1][0, axis] or boxes[1][1, axis] < boxes[0][0, axis]
+
+
+def test_shared_edge_coverage_refuses_unproved_rooted_parameter_limits() -> None:
+    from phydrax.geometry.brep._boolean_full_overlay import _covered_affine_edge_range
+    from phydrax.geometry.brep._model import BRepGeometry
+
+    line = LineCurve((0, 0, 0), (3, 0, 0))
+    plane = SurfaceRegion(
+        PlanePatch((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        np.asarray(((-1.0, -1.0), (1.0, 1.0)), dtype=np.float64),
+    )
+    root = CurveSurfaceIntersectionRoot(
+        line,
+        plane,
+        parameter_lower=np.asarray((0.3, -0.1, -0.1), dtype=np.float64),
+        parameter_upper=np.asarray((0.4, 0.1, 0.1), dtype=np.float64),
+    )
+    geometry = BRepGeometry(
+        vertex_points=np.asarray(((1.0, 0.0, 0.0), (3.0, 0.0, 0.0)), dtype=np.float64),
+        vertex_exact_points=(None, (Fraction(3), Fraction(0), Fraction(0))),
+        vertex_roots=(BRepVertexRoot(root), None),
+        curves=(line,),
+        edge_curves=(0,),
+        edge_ranges=np.asarray(((float(Fraction(1, 3)), 1.0),), dtype=np.float64),
+        edge_vertices=((0, 1),),
+        edge_endpoint_roots=((TrimRootEndpoint(root, "first"), None),),
+        pcurves=(),
+        coedge_edges=(),
+        coedge_senses=(),
+        face_loops=(),
+        shell_faces=(),
+        shell_orientations=(),
+        solid_shells=(),
+    )
+    # The native root is at 1/3, strictly after its rounded representative.
+    assert Fraction(float(geometry.edge_ranges[0, 0])) < Fraction(1, 3)
+    assert _covered_affine_edge_range(geometry, 0, line) is None
+
+
+@pytest.mark.parametrize("node", (False, True), ids=("pair", "fixed-node"))
+@pytest.mark.parametrize("sign", (-1, 1), ids=("negative", "positive"))
+def test_source_residual_encloses_underflowed_exact_origin(node: bool, sign: int) -> None:
+    from phydrax.geometry.brep._intersection_curve import (
+        _NodeSystem,
+        _PreparedNode,
+        _PreparedPair,
+        SurfacePairSystem,
+    )
+
+    offset = Fraction(sign, 2**1076)
+    cylinder = CylinderPatch(
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        1,
+        origin_exact=(Fraction(0), Fraction(0), offset),
+    )
+    plane = PlanePatch((1, 0, 0), (0, 1, 0), (0, 0, 1))
+    system = SurfacePairSystem(cylinder, plane)
+    prepared = (
+        _PreparedNode(_NodeSystem(system, 0, 0.0)) if node else _PreparedPair(system)
+    )
+    point = np.zeros((1, 4), dtype=np.float64)
+    lower, upper = prepared.value.evaluate(point, point)
+
+    # The execution shadow loses this displacement; the source equation does not.
+    assert Fraction.from_float(float(lower[0, 2])) <= offset
+    assert offset <= Fraction.from_float(float(upper[0, 2]))
+
+
+def test_tspline_analytic_counterpart_retains_exact_source_origin() -> None:
+    from phydrax.geometry.brep._tspline_intersection import _AnalyticSource
+
+    offset = Fraction(1, 2**1076)
+    cylinder = CylinderPatch(
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        1,
+        origin_exact=(Fraction(0), Fraction(0), offset),
+    )
+    point = np.zeros((2,), dtype=np.float64)
+    lower, upper = _AnalyticSource(cylinder).values(point, point)
+
+    assert Fraction.from_float(float(lower[2])) <= offset
+    assert offset <= Fraction.from_float(float(upper[2]))

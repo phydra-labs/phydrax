@@ -10,6 +10,7 @@ import pytest
 from scipy.optimize import brentq
 
 from phydrax._interpolation import TMesh2D
+from phydrax.geometry._rational import fraction_down, fraction_up
 from phydrax.geometry.brep._intersection import (
     intersect_surface_regions,
     ParametricIntersectionPolicy,
@@ -25,6 +26,7 @@ from phydrax.geometry.brep._patches import (
     SpherePatch,
 )
 from phydrax.geometry.brep._tspline import TSplineSurfacePatch
+from phydrax.geometry.brep._tspline_intersection import _radius_squared_interval
 
 
 type _PointMap = Callable[[Fraction, Fraction], tuple[Fraction, Fraction, Fraction]]
@@ -148,7 +150,12 @@ def test_t_spline_plane_section_with_nonuniform_weights_matches_root_oracle() ->
         np.testing.assert_allclose(actual, expected, atol=2.0e-8, rtol=0.0)
 
 
-def test_t_spline_cylinder_intersection_matches_independent_root_oracle() -> None:
+@pytest.mark.parametrize(
+    "radius", (Fraction(1), Fraction(99, 100)), ids=("binary", "exact-nonbinary")
+)
+def test_t_spline_cylinder_intersection_matches_independent_root_oracle(
+    radius: Fraction,
+) -> None:
     patch = _tspline_patch(
         lambda u, v: (2 * u - 1, Fraction(1, 2) + Fraction(3, 4) * v, v),
         lambda _u, _v: Fraction(1),
@@ -158,7 +165,8 @@ def test_t_spline_cylinder_intersection_matches_independent_root_oracle() -> Non
         np.asarray((1.0, 0.0, 0.0)),
         np.asarray((0.0, 1.0, 0.0)),
         np.asarray((0.0, 0.0, 1.0)),
-        1.0,
+        float(radius),
+        radius_exact=radius,
     )
     spline_region = SurfaceRegion(
         patch, np.asarray(((0.25, 0.4), (0.75, 0.7)), dtype=np.float64)
@@ -178,6 +186,25 @@ def test_t_spline_cylinder_intersection_matches_independent_root_oracle() -> Non
     _assert_branch_certificates(curve)
     assert not curve.closed
     assert curve.start_kind == curve.end_kind == "boundary"
+    node_lower = np.asarray(curve.node_lower)
+    node_upper = np.asarray(curve.node_upper)
+    node_values = np.asarray(curve.node_values)
+    chart_lower = np.asarray(curve.chart_lower)
+    chart_upper = np.asarray(curve.chart_upper)
+    assert node_lower.shape == node_upper.shape == (curve.num_charts + 1, 4)
+    assert np.all(np.asarray(curve.node_axes) == 0)
+    assert np.all(node_lower < node_upper)
+    assert np.all(node_lower[:, 0] <= node_values)
+    assert np.all(node_values <= node_upper[:, 0])
+    assert np.array_equal(node_values[:-1], np.asarray(curve.chart_start)[:, 0])
+    assert np.array_equal(node_values[1:], np.asarray(curve.chart_end)[:, 0])
+    for chart in range(curve.num_charts):
+        assert np.all(node_lower[chart : chart + 2] <= chart_upper[chart])
+        assert np.all(node_upper[chart : chart + 2] >= chart_lower[chart])
+
+    radius_lower, radius_upper = _radius_squared_interval(cylinder)
+    assert float(radius_lower) == fraction_down(radius * radius)
+    assert float(radius_upper) == fraction_up(radius * radius)
 
     for u in np.linspace(0.27, 0.73, 19):
 
@@ -186,7 +213,7 @@ def test_t_spline_cylinder_intersection_matches_independent_root_oracle() -> Non
                 patch.evaluate(jnp.asarray((u, value), dtype=jnp.float64)),
                 dtype=np.float64,
             )
-            return float(point[0] ** 2 + point[1] ** 2 - 1.0)
+            return float(point[0] ** 2 + point[1] ** 2 - float(radius * radius))
 
         v = brentq(residual, 0.4, 0.7, xtol=1.0e-14)
         expected = np.asarray(

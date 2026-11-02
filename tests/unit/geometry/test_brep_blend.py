@@ -56,11 +56,7 @@ def _incident_faces(model: BRepModel, edge: int, /) -> tuple[int, ...]:
     return tuple(
         face
         for face, loops in enumerate(geometry.face_loops)
-        if any(
-            geometry.coedge_edges[coedge] == edge
-            for loop in loops
-            for coedge in loop
-        )
+        if any(geometry.coedge_edges[coedge] == edge for loop in loops for coedge in loop)
     )
 
 
@@ -69,9 +65,10 @@ def _vertical_edge(model: BRepModel, /) -> int:
     points = np.asarray(geometry.vertex_points)
     for edge, (first, last) in enumerate(geometry.edge_vertices):
         direction = points[last] - points[first]
-        if np.array_equal(direction[:2], np.zeros((2,), dtype=np.float64)) and abs(
-            direction[2]
-        ) == 4.0:
+        if (
+            np.array_equal(direction[:2], np.zeros((2,), dtype=np.float64))
+            and abs(direction[2]) == 4.0
+        ):
             return edge
     raise RuntimeError("The native box fixture has no vertical edge.")
 
@@ -81,9 +78,7 @@ def _oblique_prism() -> tuple[BRepModel, int]:
         ProfilePlane(),
         ProfileLoop.polygon(((0.0, 0.0), (2.0, 0.0), (2.0, 3.0), (0.0, 3.0))),
     )
-    model = brep_extrusion(
-        profile, (1.0, 0.0, 4.0), coordinate_contract=_CONTRACT
-    )
+    model = brep_extrusion(profile, (1.0, 0.0, 4.0), coordinate_contract=_CONTRACT)
     geometry = model.geometry
     points = np.asarray(geometry.vertex_points)
     for edge, (first, last) in enumerate(geometry.edge_vertices):
@@ -120,9 +115,7 @@ def _revolution_family(model: BRepModel, face: int, /) -> str | None:
     if not isinstance(patch, RevolutionSurface):
         return None
     bounds = np.asarray(model.parameter_bounds[face])
-    witness = patch.exact_quadric_witness(
-        (float(bounds[0, 1]), float(bounds[1, 1]))
-    )
+    witness = patch.exact_quadric_witness((float(bounds[0, 1]), float(bounds[1, 1])))
     return None if witness is None else witness.family
 
 
@@ -166,9 +159,7 @@ def _parallel_cylinder_lens() -> tuple[BRepModel, int]:
             (ProfileArc((-3.0, 0.0)), ProfileArc((3.0, 0.0))),
         ),
     )
-    model = brep_extrusion(
-        profile, (0.0, 0.0, 2.0), coordinate_contract=_CONTRACT
-    )
+    model = brep_extrusion(profile, (0.0, 0.0, 2.0), coordinate_contract=_CONTRACT)
     geometry = model.geometry
     points = np.asarray(geometry.vertex_points)
     for edge, (first, last) in enumerate(geometry.edge_vertices):
@@ -186,9 +177,7 @@ def _parallel_cylinder_lens() -> tuple[BRepModel, int]:
 
 def _fixture(family: _Family, /) -> tuple[BRepModel, int]:
     if family == "plane":
-        model = brep_box(
-            (0.0, 0.0, 0.0), (2.0, 3.0, 4.0), coordinate_contract=_CONTRACT
-        )
+        model = brep_box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0), coordinate_contract=_CONTRACT)
         return model, _vertical_edge(model)
     if family == "oblique":
         return _oblique_prism()
@@ -219,9 +208,7 @@ def _remote_cap_edge(model: BRepModel, edge: int, /) -> int:
     raise RuntimeError("The native box fixture has no cap edge away from the corner.")
 
 
-def _with_rational_spline_cap_pcurve(
-    source: BRepModel, edge: int, /
-) -> BRepModel:
+def _with_rational_spline_cap_pcurve(source: BRepModel, edge: int, /) -> BRepModel:
     geometry = source.geometry
     first, last = geometry.edge_vertices[edge]
     source_curve_index = geometry.edge_curves[edge]
@@ -361,10 +348,16 @@ def test_supported_blend_families_preserve_exact_source_and_report_lineage(
     )
     assert result.parameter_range.evidence
     assert result.model.source_revision != source.source_revision
-    assert result.model.report.curve_surface_tolerance == source.report.curve_surface_tolerance
+    assert (
+        result.model.report.curve_surface_tolerance
+        == source.report.curve_surface_tolerance
+    )
     endpoint_gaps = result.model.geometry.edge_vertex_gap_bounds
     if endpoint_gaps is not None:
-        assert np.asarray(endpoint_gaps).shape == (len(result.model.geometry.edge_curves), 2)
+        assert np.asarray(endpoint_gaps).shape == (
+            len(result.model.geometry.edge_curves),
+            2,
+        )
         assert np.all(np.isfinite(endpoint_gaps))
         assert np.all(np.asarray(endpoint_gaps) >= 0.0)
     face_gaps = result.model.geometry.edge_face_gap_bounds
@@ -386,7 +379,9 @@ def test_supported_blend_families_preserve_exact_source_and_report_lineage(
             assert result.source is not None
             compiled = result.source.compile()
             if not isinstance(compiled.kernel, _FixedTopologyBRepKernel):
-                raise AssertionError("A B-Rep source must compile to its fixed-topology kernel.")
+                raise AssertionError(
+                    "A B-Rep source must compile to its fixed-topology kernel."
+                )
             realized = compiled.kernel.realize(compiled.state)
             assert realized.vertices is None
             assert realized.faces is None
@@ -441,20 +436,46 @@ def test_planar_blends_preserve_rational_spline_profile_segments(kind: _Kind) ->
 
     assert result.status == "certified", result.reason
     assert result.model is not None
-    assert any(
-        isinstance(curve, BSplineCurve)
-        for curve in result.model.geometry.curves
-    )
+    assert any(isinstance(curve, BSplineCurve) for curve in result.model.geometry.curves)
     if kind == "fillet":
         assert result.sensitivity_status == "unsupported"
         assert result.source is None
     assert (source.source_revision, geometry.geometry_id) == identity
 
 
-def test_corner_network_refusal_rolls_back_without_mutating_source() -> None:
-    source = brep_box(
-        (0.0, 0.0, 0.0), (2.0, 3.0, 4.0), coordinate_contract=_CONTRACT
+def test_fillet_cap_classifies_across_mixed_arc_line_junctions() -> None:
+    source = brep_box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0), coordinate_contract=_CONTRACT)
+    points = np.asarray(source.geometry.vertex_points)
+    edge = next(
+        edge
+        for edge, vertices in enumerate(source.geometry.edge_vertices)
+        if all(np.array_equal(points[vertex][:2], (0.0, 0.0)) for vertex in vertices)
+        and points[vertices[0], 2] != points[vertices[1], 2]
     )
+    result = brep_fillet(source, (source.edge_ids[edge],), 0.25)
+    assert result.status == "certified", result.reason
+    assert result.model is not None
+    model = result.model
+    face = model.physical_tags.index("cap:bottom")
+    patch = model.patches[face]
+    assert isinstance(patch, PlanePatch)
+    world = np.asarray(((1.0, 1.0, 0.0), (3.0, 1.0, 0.0)))
+    relative = world - np.asarray(patch.origin)
+    chart = np.column_stack(
+        (
+            relative @ np.asarray(patch.first_axis),
+            relative @ np.asarray(patch.second_axis),
+        )
+    )
+    trim = model.trim_domains[face]
+    assert trim is not None
+    decision = trim.classify(chart)
+    np.testing.assert_array_equal(decision.resolved, (True, True))
+    np.testing.assert_array_equal(decision.inside, (True, False))
+
+
+def test_corner_network_refusal_rolls_back_without_mutating_source() -> None:
+    source = brep_box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0), coordinate_contract=_CONTRACT)
     geometry = source.geometry
     edge = _vertical_edge(source)
     endpoints = set(geometry.edge_vertices[edge])
@@ -465,20 +486,20 @@ def test_corner_network_refusal_rolls_back_without_mutating_source() -> None:
     )
     snapshot = (source.source_revision, geometry.geometry_id, geometry.edge_vertices)
 
-    result = brep_fillet(
-        source, (source.edge_ids[edge], source.edge_ids[neighbor]), 0.25
-    )
+    result = brep_fillet(source, (source.edge_ids[edge], source.edge_ids[neighbor]), 0.25)
 
     assert result.status == "unsupported"
     assert result.model is None
     assert result.source_edges == (source.edge_ids[edge], source.edge_ids[neighbor])
-    assert (source.source_revision, geometry.geometry_id, geometry.edge_vertices) == snapshot
+    assert (
+        source.source_revision,
+        geometry.geometry_id,
+        geometry.edge_vertices,
+    ) == snapshot
 
 
 def test_fillet_that_exhausts_physical_face_reach_refuses_without_mutation() -> None:
-    source = brep_box(
-        (0.0, 0.0, 0.0), (2.0, 3.0, 4.0), coordinate_contract=_CONTRACT
-    )
+    source = brep_box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0), coordinate_contract=_CONTRACT)
     geometry = source.geometry
     identity = (source.source_revision, geometry.geometry_id)
 

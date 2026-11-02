@@ -63,6 +63,7 @@ from ._boolean_core import (
 )
 from ._carrier_pieces import carrier_payload
 from ._intersection import (
+    _cardinal_conic_angle_bounds,
     BranchRootEndpoint,
     ConicParameterEndpoint,
     CurveIntersectionResult,
@@ -72,7 +73,7 @@ from ._intersection import (
     TrimRootEndpoint,
 )
 from ._intersection_curve import CurveTrimSegment, IntersectionCurve, IntersectionPCurve
-from ._patches import AbstractCurve, AbstractSurfacePatch
+from ._patches import AbstractCurve, AbstractSurfacePatch, ConicRootLinePCurve
 from ._root_bindings import BRepRootSupport
 from ._trim_helpers import PeriodOffset
 
@@ -428,8 +429,9 @@ def _alias_fixed_trim_node(
     cut: Cut,
     root: IntersectionCurvePointRoot,
     branch: IntersectionCurve,
+    owners: tuple[FaceOwner, FaceOwner],
     columns: slice,
-    points: dict[tuple[str, str, tuple[int, ...]], str],
+    points: dict[tuple[str, tuple[FaceOwner, FaceOwner], str, tuple[int, ...]], str],
     aliases: dict[str, str],
     /,
 ) -> None:
@@ -448,7 +450,7 @@ def _alias_fixed_trim_node(
         int(value) for value in branch.node_period_shifts[index, direction, columns]
     )
     node = resolve_node(cut.node, aliases)
-    key = branch.branch_id, root.point_id, tuple(shifts)
+    key = branch.branch_id, owners, root.point_id, tuple(shifts)
     previous = points.get(key)
     if previous is None:
         points[key] = node
@@ -468,8 +470,10 @@ def _fixed_point_nodes(
     not a test on floating continuation residuals. Interior seams stay split.
     """
     aliases = dict(workset.aliases)
-    points: dict[tuple[str, str, tuple[int, ...]], str] = {}
-    source_points: dict[tuple[str, str, tuple[int, ...]], tuple[Arc, Cut]] = {}
+    points: dict[tuple[str, tuple[FaceOwner, FaceOwner], str, tuple[int, ...]], str] = {}
+    source_points: dict[
+        tuple[str, tuple[FaceOwner, FaceOwner], str, tuple[int, ...]], tuple[Arc, Cut]
+    ] = {}
     for arc in workset.arcs:
         branch = arc.branch
         if branch is None:
@@ -503,7 +507,12 @@ def _fixed_point_nodes(
                         (arc.token,),
                     )
                 gauges = tuple(int(value) for value in endpoint.source_gauges()[columns])
-                source_key = branch.branch_id, root.root_id, gauges
+                source_key = (
+                    branch.branch_id,
+                    (first_owner, second_owner),
+                    root.root_id,
+                    gauges,
+                )
                 previous_source = source_points.get(source_key)
                 if previous_source is None:
                     source_points[source_key] = arc, cut
@@ -520,7 +529,16 @@ def _fixed_point_nodes(
                 continue
             if not isinstance(root, IntersectionCurvePointRoot):
                 continue
-            _alias_fixed_trim_node(arc, cut, root, branch, columns, points, aliases)
+            _alias_fixed_trim_node(
+                arc,
+                cut,
+                root,
+                branch,
+                (first_owner, second_owner),
+                columns,
+                points,
+                aliases,
+            )
     return {node: resolve_node(node, aliases) for node in aliases}
 
 
@@ -620,6 +638,80 @@ def _opposite_branch_trim(
     )
 
 
+def _outside_exact_source_bounds(
+    state: Arrangement, owner: FaceOwner, arc: Arc, parameter: float, /
+) -> bool:
+    """Exclude a branch probe strictly beyond every exact source boundary.
+
+    Only affine chart sides with proved endpoint parameters contribute; an
+    unsupported side refuses this proof. A bounded trim lies within the
+    coordinate extrema of its complete boundary, including holes.
+    """
+    branch = arc.branch
+    if (
+        branch is None
+        or not isinstance(arc.trim, IntersectionPCurve)
+        or arc.trim.reversed
+    ):
+        return False
+    owners = state.branch_owners[arc.parent_token or arc.token]
+    columns = 0 if owner == owners[0] else 2 if owner == owners[1] else -1
+    chart = min(int(parameter), branch.num_charts - 1)
+    axis = int(branch.chart_axes[chart])
+    if columns < 0 or axis not in (columns, columns + 1):
+        return False
+    local_axis = axis - columns
+    start = Fraction(float(branch.chart_start[chart, axis]))
+    end = Fraction(float(branch.chart_end[chart, axis]))
+    query = start + (Fraction(parameter) - chart) * (end - start)
+    bounds: list[tuple[Fraction, Fraction]] = []
+    for source in state.arcs[owner]:
+        if source.source_edge is None:
+            continue
+        trim = source.trim
+        if not isinstance(trim, CurveTrimSegment):
+            return False
+        carrier = trim.curve
+        if isinstance(carrier, ConicRootLinePCurve) and local_axis == 0:
+            if not isinstance(carrier.phase_shift_exact, Fraction):
+                return False
+            enclosure = _cardinal_conic_angle_bounds(
+                carrier.root, carrier.phase_shift_exact
+            )
+            if enclosure is None:
+                return False
+            bounds.append(enclosure)
+            continue
+        coefficients = line_chart_coefficients(carrier)
+        if coefficients is None:
+            return False
+        origin, rate = coefficients[0][local_axis], coefficients[1][local_axis]
+        if not isinstance(origin, Fraction):
+            return False
+        for value, root in (
+            (trim.first, trim.first_root),
+            (trim.last, trim.last_root),
+        ):
+            if root is None:
+                scalar = (Fraction(value), Fraction(value))
+            elif isinstance(root, ConicParameterEndpoint):
+                scalar = (
+                    (root.parameter_exact, root.parameter_exact)
+                    if root.parameter_exact is not None
+                    else _cardinal_conic_angle_bounds(root.root)
+                )
+                if scalar is None:
+                    return False
+            else:
+                return False
+            values = origin + rate * scalar[0], origin + rate * scalar[1]
+            bounds.append((min(values), max(values)))
+    return bool(bounds) and (
+        query < min(lower for lower, _ in bounds)
+        or query > max(upper for _, upper in bounds)
+    )
+
+
 def _full_pieces(
     state: Arrangement,
     owner: FaceOwner,
@@ -644,6 +736,10 @@ def _full_pieces(
                     source_pcurve_image(arc.trim, middle, middle),
                     owner_enclosures(state, owner),
                 )
+                if status == 0 and _outside_exact_source_bounds(
+                    state, owner, arc, middle
+                ):
+                    continue
                 if status == 0:
                     raise BRepBooleanFailure(
                         "face_cells.source_trim_membership must resolve the branch atom; got an unresolved classification",
@@ -658,6 +754,10 @@ def _full_pieces(
                     source_pcurve_image(opposite.pcurve, middle, middle),
                     owner_enclosures(state, opposite.owner),
                 )
+                if status == 0 and _outside_exact_source_bounds(
+                    state, opposite.owner, arc, middle
+                ):
+                    continue
                 if status == 0:
                     raise BRepBooleanFailure(
                         "face_cells.opposite_trim_membership must resolve the branch atom; got an unresolved classification",

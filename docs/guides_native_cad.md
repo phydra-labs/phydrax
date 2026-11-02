@@ -196,6 +196,33 @@ roots, and branches whose partner faces are coaxial straight revolutions (a
 cylinder and a cone sharing a circle edge) join at that edge's roots once the
 faces are proved to meet only on it.
 
+Cylinder axes retain their authored axial parameter rate; a scaled or reversed
+axis is not silently normalized. Plane sections keep the corresponding source
+height coordinate, and exact conic radii include the spatial axis norm.
+Implicit intersection p-curves supply their certified point and derivative
+enclosures to trim isolation and replay instead of interval-tracing the numerical
+root solver. A conic angular witness fixes a chart angle, not a spatial height;
+endpoint agreement still requires the exact lifted point and matching chart sheet.
+Fixed-chart interval queries retain the declared sheet at chart endpoints, and
+trim ranges use the exact affine difference of their stored endpoints. A rooted
+endpoint not proved inside that chart is refused rather than clipped. Missing
+native interval capabilities remain explicit unresolved intersections. Numerical
+root representatives are accompanied by isolating bounds; they are not substitutes
+for the exact root or a promise of machine-precision point coordinates.
+
+Surface-pair and fixed-node residuals enclose the authoritative source coefficients,
+including exact values that underflow in their binary64 realization. Tracing the
+numerical residual is used only after proving that its coefficients represent the
+source exactly. The analytic counterpart of a T-spline pair follows the same rule
+for values and derivatives; exact revolution charts transport both through their
+proved source-coordinate map.
+
+Extruded mixed conic/affine profiles retain exact junction roots on every
+incident spatial edge and coedge after source-incidence checks. Boolean cuts
+retain their owning face pair: equal carrier geometry does not identify a
+different source occurrence. Padded chart nodes and exact angular cuts remain
+distinct, and branch atoms are excluded only by strict source-trim separation.
+
 Supported trimmed intersections of curved faces from different operands can be
 traced as graphs over a straight revolution's angle. Qualified examples include
 cylinder-cylinder, cylinder-cone, cone-cone, and sphere against a cylinder or
