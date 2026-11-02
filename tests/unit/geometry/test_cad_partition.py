@@ -855,6 +855,80 @@ def test_partition_selection_cold_archive_and_tampered_history_refusal(
     assert restored.value("partition").operand_association_graph("region").graph_id == (
         result.operand_association_graph("region").graph_id
     )
+    inner = composition(graph, selection)
+    outer = Composition(
+        (
+            CompositionEntry(
+                inner,
+                entry_id="nested",
+                role="model-state",
+                owner_id="cad",
+                structure_id=inner.composition_id,
+                revision_id=inner.composition_id,
+                semantics_id="nested-cad",
+            ),
+        ),
+        boundary_id="outer",
+    )
+    nested_path = write_model_artifact(
+        tmp_path / "nested.phx", outer, limits=MODEL_ARCHIVE_LIMITS
+    )
+    nested = read_model_artifact(
+        nested_path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert nested.value("nested").value("history").graph_id == graph.graph_id
+    assert nested.value("nested").value("selection") == selection
+
+    renamed_regions = tuple(
+        dataclasses.replace(region, name="forged-region") for region in result.regions
+    )
+    renamed_adjacency = tuple(
+        dataclasses.replace(
+            patch,
+            adjacent_region_ids=tuple("forged-region" for _ in patch.adjacent_region_ids),
+        )
+        for patch in result.patches
+    )
+    forged_results = (
+        dataclasses.replace(result, regions=renamed_regions, patches=renamed_adjacency),
+        dataclasses.replace(
+            result,
+            patches=(
+                dataclasses.replace(result.patches[0], name="forged-patch"),
+                *result.patches[1:],
+            ),
+        ),
+    )
+    for index, forged_result in enumerate(forged_results):
+        forged_owner = Composition(
+            (
+                CompositionEntry(
+                    forged_result,
+                    entry_id="partition",
+                    role="model-state",
+                    owner_id="cad",
+                    structure_id=result.model.model_id,
+                    revision_id=result.revision.revision_id,
+                    semantics_id="exact-partition",
+                ),
+            ),
+            boundary_id="cad-owner-forgery",
+        )
+        forged_owner_path = write_model_artifact(
+            tmp_path / f"forged-owner-{index}.phx",
+            forged_owner,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+        with pytest.raises((ArrayArchiveCorruptionError, ValueError)):
+            read_model_artifact(
+                forged_owner_path,
+                expected_type=Composition,
+                restore=restore_model_archive_value,
+                limits=MODEL_ARCHIVE_LIMITS,
+            )
     child = subprocess.run(
         [
             sys.executable,
@@ -882,12 +956,28 @@ def test_partition_selection_cold_archive_and_tampered_history_refusal(
     assert child.returncode == 0, child.stderr
     # A graph's own recomputed fingerprint authenticates bytes, not CAD history.
     # Keep inventories and coverage current while forging a correspondence.
+    pairs = {
+        (item.source_occurrence_id, item.target_occurrence_id)
+        for item in graph.transaction.correspondences
+    }
+    original, unrelated = next(
+        (item, target)
+        for item in graph.transaction.correspondences
+        for target in graph.target_revision.occurrences
+        if target.kind == graph.source_revision.occurrence(item.source_occurrence_id).kind
+        and (item.source_occurrence_id, target.occurrence_id) not in pairs
+    )
     edge = dataclasses.replace(
-        graph.transaction.correspondences[0], evidence_id="forged-evidence"
+        original,
+        target_occurrence_id=unrelated.occurrence_id,
+        evidence_id="forged-evidence",
     )
     transaction = dataclasses.replace(
         graph.transaction,
-        correspondences=(edge, *graph.transaction.correspondences[1:]),
+        correspondences=tuple(
+            edge if item == original else item
+            for item in graph.transaction.correspondences
+        ),
     )
     rehashed_graph = AssociationGraph(
         graph.source_revision, graph.target_revision, transaction
@@ -1094,3 +1184,31 @@ def test_partition_rejects_missing_operand_history() -> None:
         dataclasses.replace(
             result, operand_association_graphs=result.operand_association_graphs[:1]
         )
+
+
+def test_void_face_lineage_carries_certified_cavity_orientation() -> None:
+    result = _execute(
+        _plan(
+            (
+                _operand("region", _box(0.0, 3.0)),
+                _operand("void", _box(1.0), BRepPartitionRole.VOID, targets=("region",)),
+            ),
+            ("region",),
+        )
+    )
+    graph = result.association_graph
+    edge = next(
+        item
+        for item in graph.transaction.correspondences
+        if item.source_occurrence_id.startswith("operand:void:")
+        and graph.source_revision.occurrence(item.source_occurrence_id).kind == "face"
+        and graph.target_revision.occurrence(item.target_occurrence_id).kind == "face"
+        and item.orientation_transform in (-1, 1)
+        and len(graph._reverse_ids(item.target_occurrence_id)) == 1
+    )
+    source = CADSelectionSet.from_revision(
+        graph.source_revision, (edge.source_occurrence_id,)
+    )
+    target = graph.resolve_target_selection(source)
+    assert graph.target_revision.select(edge.target_occurrence_id) in target.selectors
+    assert MeshingScope.from_geometry(result.model, target).entity_dimension == 2

@@ -524,6 +524,11 @@ For a shared face, a mesh scope currently represents the complete shared facet,
 not one region side: selecting only one incident occurrence is refused. A
 complete set of incident uses can select the shared facet when assembly-copy
 pairing is exact; ambiguous coincident repeated copies are refused.
+Cold partition restoration replays the retained operand plan and verifies the
+result geometry, correspondence graphs, regions, and patches against that
+operation. A standalone graph is not proof of its own provenance. Organized
+partition names whose organization inputs were not retained are refused during
+reconstruction rather than authenticated by a fingerprint alone.
 A geometry scope can then be supplied to `RegionControl` or `PatchControl`;
 actual mesh boundary entities and boundary conditions still require the mesher's
 source association and resulting mesh organization, not the CAD IDs themselves.

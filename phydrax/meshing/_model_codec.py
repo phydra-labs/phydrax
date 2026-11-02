@@ -1314,6 +1314,8 @@ def restore_model_archive_value(
                 not same_content(model, replay.model)
                 or not same_content(graph, replay.association_graph)
                 or not same_content(operand_graphs, replay.operand_association_graphs)
+                or not same_content(regions, replay.regions)
+                or not same_content(patches, replay.patches)
                 or not same_content(report, replay.report)
                 or item.revision != replay.revision
             ):
@@ -1823,6 +1825,8 @@ def restore_model_archive_value(
                         raise ValueError(
                             "CAD selection does not match its current inventory."
                         )
+            del pending_graphs[graph_start:]
+            del pending_selections[selection_start:]
             composition = Composition(entries, boundary_id=item.boundary_id)
             if model_structure_recipe(composition) != model_structure_recipe(item):
                 raise ValueError("Stored Composition content changed.")

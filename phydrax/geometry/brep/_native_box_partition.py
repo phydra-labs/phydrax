@@ -1390,11 +1390,6 @@ def partition_native_boxes(
                                 }
                             )
                         )
-                        transform = (
-                            1
-                            if source_axis * source_sign * target_axis * target_sign > 0
-                            else -1
-                        )
                         if (
                             source_axis != 0
                             and target_axis != 0
@@ -1415,6 +1410,7 @@ def partition_native_boxes(
                             target_occurrence_orientation = target_revision.occurrence(
                                 target_face_id
                             ).orientation
+                            transform = source_orientation * target_occurrence_orientation
                             evidence = canonical_fingerprint(
                                 {
                                     "kind": "native-box-face-incidence-rebase",
