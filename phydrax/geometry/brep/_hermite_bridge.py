@@ -16,26 +16,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from math import comb, factorial
-from typing import Literal, cast
+from typing import cast, Literal
 
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.core import Tracer
 
-from ...discretization._exact_algebraic_geometry import ExactScalar
-from ...linalg._exact import (
-    ExactLinearFactorization,
-    ExactLinearSolveEvidence,
-    factor_exact,
-)
 from ..._interpolation import bspline_jet_stencil
 from ..._interpolation._bspline_extraction import (
     _bernstein_derivative,
     _univariate_span_extraction,
 )
-
-from ._patches import BSplineSurfacePatch, _require_exact_numeric_shadow
+from ...discretization._exact_algebraic_geometry import ExactScalar
+from ...ein import contract
+from ...linalg._exact import (
+    ExactLinearFactorization,
+    ExactLinearSolveEvidence,
+    factor_exact,
+)
+from ._patches import _require_exact_numeric_shadow, BSplineSurfacePatch
 
 
 def _hermite_factor(continuity: int) -> ExactLinearFactorization[Fraction]:
@@ -171,11 +171,11 @@ def _source(
         numeric_knots[nt if high else td],
         degree=td,
         maximum_order=order,
-        spans=jnp.asarray(span),
+        spans=jnp.asarray(span, dtype=jnp.int64),
         bounds="clip",
     )
     numeric_jets = [
-        jnp.einsum("j,ijc->ic", stencil.jets[k], numeric_h[:, stencil.indices, :])
+        contract("j,ijc->ic", stencil.jets[k], numeric_h[:, stencil.indices, :])
         * float(inward) ** k
         for k in range(order + 1)
     ]

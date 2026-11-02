@@ -5,12 +5,13 @@ import json
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 
 from phydrax.meshing._model_codec import read_model_archive, write_model_archive
+
 
 _ROOT = Path(__file__).resolve().parents[3]
 _WORKER = Path(__file__).with_name("_bridge_archive_worker.py")

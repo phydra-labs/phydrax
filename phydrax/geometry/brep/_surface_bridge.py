@@ -16,10 +16,10 @@ from ...discretization._coordinate_enclosure import ExactScalar
 from .._cad_revision import AssociationGraph
 from ._bridge_ancestry import bridge_ancestry
 from ._bridge_embedding_proof import BridgeEmbeddingEvidence, BridgeSeparation
-from ._hermite_bridge import HermiteBridgeEvidence, Side, build_hermite_bridge_certified
+from ._bridge_publication import BridgePublicationRefusal, publish_bridge
+from ._hermite_bridge import build_hermite_bridge_certified, HermiteBridgeEvidence, Side
 from ._model import BRepEntityId, BRepModel
 from ._patches import BSplineSurfacePatch
-from ._bridge_publication import BridgePublicationRefusal, publish_bridge
 
 
 @dataclass(frozen=True, slots=True)

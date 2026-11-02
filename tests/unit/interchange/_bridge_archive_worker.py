@@ -5,6 +5,7 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
+
 _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -19,8 +20,11 @@ from phydrax.geometry.brep._intersection import ConicParameterEndpoint
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import AbstractSurfacePatch, BSplineSurfacePatch
 from phydrax.geometry.brep._surface_bridge import brep_surface_bridge
-from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
-from phydrax.interchange._cad_archive import _reconstruct_brep_graph
+from phydrax.interchange._cad_archive import (
+    _reconstruct_brep_graph,
+    load_brep_archive,
+    save_brep_archive,
+)
 from phydrax.meshing._model_codec import read_model_artifact, write_model_artifact
 from tests.unit.geometry.test_brep_hermite_bridge_acceptance import (
     _along_derivative,
@@ -29,8 +33,8 @@ from tests.unit.geometry.test_brep_hermite_bridge_acceptance import (
     _curved_sources,
     _embedding_args,
     _endpoint_jet,
-    _rooted_source_models,
     _homogeneous,
+    _rooted_source_models,
 )
 
 

@@ -3,9 +3,9 @@ from fractions import Fraction as F
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import Array
 import numpy as np
 import pytest
+from jax import Array
 
 from phydrax.geometry.brep._hermite_bridge import (
     build_hermite_bridge,

@@ -27,20 +27,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 
+from ..._interpolation._bspline_extraction import RationalBSplineSurfaceSpan
 from ...discretization._coordinate_enclosure import (
-    ExactScalar,
-    Polynomial,
     add,
     bernstein_coefficients,
     derivative,
+    ExactScalar,
     multiply,
+    Polynomial,
     scale,
     subtract,
 )
 from ...discretization._exact_algebraic_geometry import RadicalElement
-from ..._interpolation._bspline_extraction import RationalBSplineSurfaceSpan
+from ._patches import _validate_surface_source_shadows, BSplineSurfacePatch
 from ._spline_projection import _bernstein_power
-from ._patches import BSplineSurfacePatch, _validate_surface_source_shadows
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,24 +11,26 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax.geometry.brep._patches import BSplineSurfacePatch
-from phydrax.geometry.brep._hermite_bridge import build_hermite_bridge
+from phydrax._physical import SpatialCoordinateContract
+from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.geometry.brep._bridge_embedding_proof import (
     BridgeEmbeddingEvidence,
     BridgeEmbeddingRefusal,
     BridgeSeparation,
     certify_bridge_embedding,
 )
-
-
-from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.brep._constructors import _Builder, assemble_brep_model
-from phydrax.geometry.brep._patches import BSplineCurve, ExactLineCurve
-from phydrax.geometry.brep._model import BRepModel
-from phydrax.discretization._exact_algebraic_geometry import ExactScalar
+from phydrax.geometry.brep._hermite_bridge import build_hermite_bridge
 from phydrax.geometry.brep._intersection import ConicParameterEndpoint
 from phydrax.geometry.brep._intersection_curve import SurfaceRegion
-from phydrax.geometry.brep._patches import CircleCurve, ConicParameterRoot
+from phydrax.geometry.brep._model import BRepModel
+from phydrax.geometry.brep._patches import (
+    BSplineCurve,
+    BSplineSurfacePatch,
+    CircleCurve,
+    ConicParameterRoot,
+    ExactLineCurve,
+)
 from phydrax.geometry.brep._root_bindings import (
     BRepConicVertex,
     BRepCurveSurfaceLift,

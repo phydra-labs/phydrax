@@ -28,10 +28,11 @@ from ._correspondence import (
     exact_source_lift,
 )
 from ._intersection import ConicParameterEndpoint
-from ._intersection_curve import SurfaceRegion, exact_curve_parameter_point
+from ._intersection_curve import exact_curve_parameter_point, SurfaceRegion
 from ._model import BRepEntityId, BRepModel
 from ._patches import AbstractCurve, BSplineCurve, BSplineSurfacePatch, ExactLineCurve
 from ._root_bindings import BRepConicVertex, BRepCurveSurfaceLift, BRepVertexRoot
+
 
 type _Projection = tuple[
     tuple[ExactScalar, ExactScalar, ExactScalar],

@@ -10,8 +10,8 @@ from phydrax.discretization.iga._brep_surface_binding import BRepSplineManifoldB
 from phydrax.discretization.iga._manifold import ParametricBasisPayload
 from phydrax.geometry.brep import brep_surface_bridge
 from tests.unit.geometry.test_brep_hermite_bridge_acceptance import (
-    _embedding_args,
     _curved_source_models,
+    _embedding_args,
 )
 
 
