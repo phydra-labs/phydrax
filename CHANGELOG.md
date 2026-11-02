@@ -62,6 +62,9 @@
 - Sketches retain directed circular-arc incidence, support exact arc profile
   lowering when represented endpoint radii agree, and provide explicitly
   witnessed dimension-edit continuation with rollback.
+- Sketch root preparation propagates exact rational construction branches and
+  reduces supported grounded distance-rigid clusters to their remaining angle.
+  Accepted continuation exposes fixed-branch dimension JVP and VJP actions.
 - Whole-solid CAD layer sweeps now retain an exterior cap with no core region
   when authored slabs exactly cover the controlled solid. Periodic layer/core
   source preparation carries the accepted orbit identity and bound source charts.

@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
+from math import isqrt
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -25,6 +26,7 @@ from ...optim import (
 )
 
 if TYPE_CHECKING:
+    from ._reduced import _SketchGroundedRigidParameterization
     from ._schema import DesignState
     from ._sketch import Sketch
     from ._sketch_certificate import LineCircleConstruction, TwoCircleConstruction
@@ -427,6 +429,156 @@ def seed_sketch_circle_intersections(
                 if witness is not None:
                     constructions.append((int(point), witness))
                 placed_points.add(point)
+    return _propagate_rational_circle_constructions(
+        sketch, dimensions, reference, pinned_indices, pinned_values, seed, constructions
+    )
+
+
+def _rational_construction_point(
+    witness: TwoCircleConstruction | LineCircleConstruction, /
+) -> tuple[Fraction, Fraction] | None:
+    """Recover the exact point only when its radical is rational."""
+    from ._sketch_certificate import LineCircleConstruction
+
+    radicand = (
+        witness.discriminant
+        if isinstance(witness, LineCircleConstruction)
+        else witness.squared_height_numerator
+    )
+    numerator = isqrt(radicand.numerator)
+    denominator = isqrt(radicand.denominator)
+    if (
+        numerator * numerator != radicand.numerator
+        or denominator * denominator != radicand.denominator
+    ):
+        return None
+    root = Fraction(numerator, denominator) * witness.branch_sign
+    if isinstance(witness, LineCircleConstruction):
+        values = list(witness.center)
+        values[witness.fixed_axis] = witness.line_coordinate
+        values[1 - witness.fixed_axis] += root
+        return values[0], values[1]
+    a, b = witness.first, witness.second
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    q = dx * dx + dy * dy
+    k = (q + witness.first_radius**2 - witness.second_radius**2) / 2
+    return a[0] + (k * dx - root * dy) / q, a[1] + (k * dy + root * dx) / q
+
+
+def _propagate_rational_circle_constructions(
+    sketch: Sketch,
+    dimensions: DesignState,
+    reference: Array,
+    pinned_indices: tuple[int, ...],
+    pinned_values: Array,
+    seed: np.ndarray,
+    constructions: list[tuple[int, TwoCircleConstruction | LineCircleConstruction]],
+    /,
+) -> tuple[Array, tuple[tuple[int, TwoCircleConstruction | LineCircleConstruction], ...]]:
+    """Propagate exact rational constructed anchors without a rounded shadow."""
+    from ._sketch import PointDistance
+    from ._sketch_certificate import TwoCircleConstruction
+
+    fixed = {
+        index: Fraction.from_float(float(value))
+        for index, value in zip(pinned_indices, np.asarray(pinned_values), strict=True)
+    }
+    known = {point for point, _ in constructions}
+    for point, witness in constructions:
+        exact = _rational_construction_point(witness)
+        if exact is not None:
+            fixed[2 * point], fixed[2 * point + 1] = exact
+    bindings = {item.constraint_index: item for item in sketch.dimension_bindings}
+    reference_host = np.asarray(reference, dtype=np.float64)
+
+    while True:
+        loci: dict[int, list[tuple[int, tuple[Fraction, Fraction], Fraction]]] = {}
+        for index, constraint in enumerate(sketch.constraints):
+            if not isinstance(constraint, PointDistance):
+                continue
+            binding = bindings.get(index)
+            value = (
+                constraint.distance
+                if binding is None
+                else dimensions.values[binding.state_index]
+            )
+            radius_float = float(np.asarray(value))
+            if not np.isfinite(radius_float) or radius_float <= 0:
+                continue
+            radius = Fraction.from_float(radius_float)
+            for point, center in (
+                (constraint.first_point, constraint.second_point),
+                (constraint.second_point, constraint.first_point),
+            ):
+                if point in known or 2 * point in fixed or 2 * point + 1 in fixed:
+                    continue
+                if 2 * center in fixed and 2 * center + 1 in fixed:
+                    loci.setdefault(point, []).append(
+                        (center, (fixed[2 * center], fixed[2 * center + 1]), radius)
+                    )
+        admitted_rational = False
+        for point, circles in loci.items():
+            placed = False
+            for first_index, (first_id, first, first_radius) in enumerate(circles):
+                for second_id, second, second_radius in circles[first_index + 1 :]:
+                    dx, dy = second[0] - first[0], second[1] - first[1]
+                    q = dx * dx + dy * dy
+                    if q == 0:
+                        continue
+                    k = (q + first_radius**2 - second_radius**2) / 2
+                    height = first_radius**2 * q - k**2
+                    old_first = reference_host[2 * first_id : 2 * first_id + 2]
+                    old_second = reference_host[2 * second_id : 2 * second_id + 2]
+                    old_point = reference_host[2 * point : 2 * point + 2]
+                    if not np.all(
+                        np.isfinite(np.concatenate((old_first, old_second, old_point)))
+                    ):
+                        continue
+                    ax, ay = (Fraction.from_float(float(value)) for value in old_first)
+                    bx, by = (Fraction.from_float(float(value)) for value in old_second)
+                    px, py = (Fraction.from_float(float(value)) for value in old_point)
+                    side = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+                    if height <= 0 or side == 0:
+                        continue
+                    witness = TwoCircleConstruction(
+                        first,
+                        second,
+                        first_radius,
+                        second_radius,
+                        height,
+                        1 if side > 0 else -1,
+                    )
+                    exact = _rational_construction_point(witness)
+                    try:
+                        if exact is not None:
+                            candidate = np.asarray(
+                                [float(exact[0]), float(exact[1])], dtype=np.float64
+                            )
+                        else:
+                            root = np.sqrt(float(height)) * witness.branch_sign
+                            candidate = np.asarray(
+                                [
+                                    float(first[0] + k * dx / q) - root * float(dy / q),
+                                    float(first[1] + k * dy / q) + root * float(dx / q),
+                                ],
+                                dtype=np.float64,
+                            )
+                    except OverflowError:
+                        continue
+                    if not np.all(np.isfinite(candidate)):
+                        continue
+                    seed[2 * point : 2 * point + 2] = candidate
+                    constructions.append((int(point), witness))
+                    known.add(point)
+                    if exact is not None:
+                        fixed[2 * point], fixed[2 * point + 1] = exact
+                        admitted_rational = True
+                    placed = True
+                    break
+                if placed:
+                    break
+        if not admitted_rational:
+            break
     return jnp.asarray(seed, dtype=reference.dtype), tuple(constructions)
 
 
@@ -437,6 +589,7 @@ def solve_prepared_sketch_residual(
     pinned_indices: tuple[int, ...],
     pinned_values: Array,
     constructions: tuple[tuple[int, TwoCircleConstruction | LineCircleConstruction], ...],
+    rigid_reductions: tuple[_SketchGroundedRigidParameterization, ...],
     /,
     *,
     max_iterations: int,
@@ -454,7 +607,7 @@ def solve_prepared_sketch_residual(
     """
     from ._sketch_certificate import LineCircleConstruction
 
-    if not pinned_indices and not constructions:
+    if not pinned_indices and not constructions and not rigid_reductions:
         return solve_design_residual(
             residual,
             prepared_seed,
@@ -468,14 +621,17 @@ def solve_prepared_sketch_residual(
     mask[np.asarray(pinned_indices, dtype=np.int32)] = False
     for point, _ in constructions:
         mask[2 * point : 2 * point + 2] = False
-    all_fixed = not np.any(mask)
+    for cluster in rigid_reductions:
+        for point in cluster.point_indices:
+            mask[2 * point : 2 * point + 2] = False
+    all_fixed = not np.any(mask) and not rigid_reductions
     free = np.flatnonzero(mask)
     pinned = jnp.asarray(pinned_indices, dtype=jnp.int32)
     free_index = jnp.asarray(free, dtype=jnp.int32)
     seed = prepared_seed.at[pinned].set(pinned_values)
 
     def expand(coordinates: Array) -> Array:
-        result = seed.at[free_index].set(coordinates)
+        result = seed.at[free_index].set(coordinates[: free.size])
         for point, witness in constructions:
             if isinstance(witness, LineCircleConstruction):
                 center = jnp.asarray(
@@ -503,6 +659,8 @@ def solve_prepared_sketch_residual(
                 first + (k * delta + witness.branch_sign * jnp.sqrt(height) * normal) / q
             )
             result = result.at[2 * point : 2 * point + 2].set(value)
+        for index, cluster in enumerate(rigid_reductions):
+            result = cluster.expand(result, coordinates[free.size + index])
         return result
 
     if all_fixed:
@@ -544,14 +702,28 @@ def solve_prepared_sketch_residual(
             bounds=bounds,
         ), False
 
-    reduced_bounds = (
-        None
-        if bounds is None
-        else (jnp.asarray(bounds[0])[free_index], jnp.asarray(bounds[1])[free_index])
+    reduced_bounds = None
+    if bounds is not None:
+        reduced_bounds = (
+            jnp.concatenate(
+                (
+                    jnp.asarray(bounds[0])[free_index],
+                    jnp.full((len(rigid_reductions),), -jnp.inf, dtype=initial.dtype),
+                )
+            ),
+            jnp.concatenate(
+                (
+                    jnp.asarray(bounds[1])[free_index],
+                    jnp.full((len(rigid_reductions),), jnp.inf, dtype=initial.dtype),
+                )
+            ),
+        )
+    reduced_initial = jnp.concatenate(
+        (seed[free_index], jnp.zeros((len(rigid_reductions),), dtype=initial.dtype))
     )
     attempt = solve_design_residual(
         lambda coordinates: residual(expand(coordinates)),
-        seed[free_index],
+        reduced_initial,
         max_iterations=max_iterations,
         tolerance=tolerance,
         damping=damping,

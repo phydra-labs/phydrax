@@ -36,6 +36,9 @@ discriminant and nonzero reference orientation establish a transversal
 algebraic branch. Its floating realization is checked against the full
 residual. Tangent or unresolved constructions are seeds only; this local branch
 evidence does not establish global root uniqueness.
+When a constructed branch is exactly rational, its algebraic point, not its
+rounded numerical realization, may anchor a subsequent two-circle
+construction. Non-rational constructed points are not used as exact anchors.
 For an axis-aligned line through a fixed endpoint and a positive distance to a
 fixed center, an exact discriminant and nonzero reference-side witness
 similarly identify a transversal branch. Other line/circle relations remain in
@@ -48,11 +51,13 @@ establish global uniqueness.
 For distance-triangulated components, `preparation.rigid_clusters` records an
 exact positive-discriminant witness for every added point and a nonzero
 reference orientation. Rigidity is conditional on simultaneous satisfaction of
-the recorded distances; this is not a root-existence certificate. Separately,
-a component with pointwise numerical rigidity indicated at its reference layout
-and exactly one fixed-point relation may be translated to the fixed target as a
-seed. Cluster variables remain in the numerical problem and no gauge is added.
-Multiple anchors and unsupported components remain in the full problem.
+the recorded distances; this is not a root-existence certificate. A cluster
+with exactly one fixed anchor can be reduced to one orientation-preserving
+angle when every declared incident distance and every reference offset is
+exactly represented, its branch witness is valid, and it shares no other fixed
+or constructed coordinates. All original residuals remain, and a failed reduced
+root attempt falls back to the original full system. Other clusters remain
+numerical; no gauge is imposed.
 
 `SketchBranchWitness` identifies an ordered triple of points.
 `SketchContinuationReference` retains a converged layout and explicitly
@@ -60,10 +65,14 @@ declared witnesses; `continue_sketch` checks their exact represented-coordinate
 orientation signs and numerical rank after a dimension edit. A rejected edit
 retains the reference unchanged. Matching endpoint signs do not prove that the
 continuous edit path was event-free or that the root is globally unique.
-`SketchContinuationResult.dimension_sensitivity` requires an accepted
-transition; standalone `Sketch.dimension_sensitivity` instead describes the
-local derivative of its supplied regular root, even if that root was an
-unaccepted diagnostic attempt.
+`SketchContinuationResult.dimension_sensitivity`, `dimension_jvp`, and
+`dimension_vjp` require an accepted transition and replay endpoint evidence
+before applying the fixed-branch implicit derivative. Standalone
+`Sketch.dimension_sensitivity` instead describes the local derivative of its
+supplied regular root, even if that root was an unaccepted diagnostic attempt.
+Derivative actions refuse a represented line-angle branch cut, collapsed
+carrier, rank change, or rejected branch transition rather than reporting a
+smooth derivative there.
 Sketch problem identity includes constraint incidence and branch selectors,
 including arc topology. Previous identities are not reused for the changed
 representation; compiler keys likewise follow the current residual code and

@@ -19,8 +19,10 @@ from phydrax.geometry.design._sketch import FixedPoint, Horizontal, PointDistanc
 
 def scenario(count: int, family: str) -> dict[str, float | int | str]:
     x = np.arange(count + 1, dtype=np.float64)
-    points = np.column_stack(
-        (x, np.zeros(count + 1, dtype=np.float64) if family == "axis" else x % 2)
+    points = (
+        np.column_stack((x, np.zeros(count + 1, dtype=np.float64)))
+        if family == "axis"
+        else np.column_stack((3.0 * x, 4.0 * (x % 2)))
     )
     if family == "axis":
         lines = np.column_stack(
@@ -45,7 +47,8 @@ def scenario(count: int, family: str) -> dict[str, float | int | str]:
     tracemalloc.start()
     start = perf_counter()
     prepared = sketch._prepare_components(vector, sketch.dimensions, 1e-9)
-    jax.block_until_ready((prepared[1], prepared[2]))
+    arrays = (prepared[1], prepared[2], *(item.offsets for item in prepared[5]))
+    jax.block_until_ready(arrays)
     preparation_seconds = perf_counter() - start
     retained_host_bytes, _ = tracemalloc.get_traced_memory()
     tracemalloc.stop()
@@ -68,7 +71,7 @@ def scenario(count: int, family: str) -> dict[str, float | int | str]:
         "solve_seconds": solve_seconds,
         "retained_host_bytes": retained_host_bytes,
         "retained_array_bytes": sum(
-            value.size * value.dtype.itemsize for value in (prepared[1], prepared[2])
+            value.size * value.dtype.itemsize for value in arrays
         ),
         "residual_norm": float(solution.residual_norm),
         "converged": int(solution.converged),

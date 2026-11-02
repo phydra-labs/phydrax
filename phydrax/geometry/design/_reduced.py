@@ -635,6 +635,117 @@ def _prepare_sketch_rigid_clusters(
     )
 
 
+@dataclass(frozen=True)
+class _SketchGroundedRigidParameterization:
+    """An exact reference shape with one remaining orientation-preserving pose DOF."""
+
+    point_indices: tuple[int, ...]
+    anchor_point: int
+    anchor_target: Array
+    offsets: Array
+    witness: _SketchDistanceRigidityWitness
+
+    def expand(self, layout: Array, angle: ArrayLike, /) -> Array:
+        """Replace the component in a flattened layout, leaving other scalars alone."""
+        layout = jnp.asarray(layout)
+        angle_ = jnp.asarray(angle, dtype=layout.dtype).reshape(())
+        cosine, sine = jnp.cos(angle_), jnp.sin(angle_)
+        rotation = jnp.stack((jnp.stack((cosine, -sine)), jnp.stack((sine, cosine))))
+        points = self.offsets @ rotation.T + self.anchor_target
+        indices = jnp.asarray(
+            tuple(2 * point + axis for point in self.point_indices for axis in range(2)),
+            dtype=jnp.int32,
+        )
+        return layout.at[indices].set(points.reshape((-1,)))
+
+
+def _prepare_grounded_rigid_parameterizations(
+    sketch: Sketch,
+    preparation: _SketchRigidClusterPreparation,
+    pinned_indices: tuple[int, ...],
+    constructed_points: tuple[int, ...],
+    /,
+) -> tuple[_SketchGroundedRigidParameterization, ...]:
+    """Select grounded components whose represented reference is an exact shape.
+
+    The distance witness is conditional, so it is not by itself evidence that a
+    chosen floating layout realizes the distances. Check every incident distance
+    exactly, including redundant equations, before using that layout as a shape.
+    Other constraints remain in the residual and do not become proof claims.
+    """
+    reference = np.asarray(preparation.reference_points)
+    bindings = {item.constraint_index: item for item in sketch.dimension_bindings}
+    pinned = set(pinned_indices)
+    constructed = set(constructed_points)
+    result: list[_SketchGroundedRigidParameterization] = []
+
+    def exact(value: object) -> Fraction:
+        return Fraction.from_float(float(np.asarray(value)))
+
+    for cluster in preparation.clusters:
+        witness = cluster.exact_distance_witness
+        if witness is None or len(cluster.fixed_point_constraint_indices) != 1:
+            continue
+        anchor = sketch.constraints[cluster.fixed_point_constraint_indices[0]]
+        assert isinstance(anchor, FixedPoint)
+        points = set(cluster.point_indices)
+        if points & constructed or any(
+            2 * point + axis in pinned
+            for point in points - {anchor.point}
+            for axis in range(2)
+        ):
+            continue
+        if not np.all(np.isfinite(np.asarray(anchor.target))):
+            continue
+        valid = True
+        for index, constraint in enumerate(sketch.constraints):
+            if not isinstance(constraint, PointDistance):
+                continue
+            first, second = constraint.first_point, constraint.second_point
+            if first not in points and second not in points:
+                continue
+            if first not in points or second not in points:
+                valid = False
+                break
+            binding = bindings.get(index)
+            target = (
+                constraint.distance
+                if binding is None
+                else preparation.dimensions.values[binding.state_index]
+            )
+            target_host = float(np.asarray(target))
+            if not isfinite(target_host) or target_host <= 0:
+                valid = False
+                break
+            square = sum(
+                (exact(reference[first, axis]) - exact(reference[second, axis])) ** 2
+                for axis in range(2)
+            )
+            if square != exact(target) ** 2:
+                valid = False
+                break
+        if not valid:
+            continue
+        offsets = reference[np.asarray(cluster.point_indices)] - reference[anchor.point]
+        if not np.all(np.isfinite(offsets)) or any(
+            exact(offsets[index, axis])
+            != exact(reference[point, axis]) - exact(reference[anchor.point, axis])
+            for index, point in enumerate(cluster.point_indices)
+            for axis in range(2)
+        ):
+            continue
+        result.append(
+            _SketchGroundedRigidParameterization(
+                cluster.point_indices,
+                anchor.point,
+                anchor.target,
+                jnp.asarray(offsets, dtype=preparation.reference_points.dtype),
+                witness,
+            )
+        )
+    return tuple(result)
+
+
 __all__ = [
     "DesignBindingGraph",
     "DesignEvaluation",

@@ -68,6 +68,7 @@ def _solution(
             np.empty(0, dtype=np.float64),
             (),
             (),
+            (),
             False,
         ),
         dimensions=sketch.dimensions,
@@ -104,6 +105,10 @@ def test_mirrored_and_degenerate_witnesses_roll_back(
         assert result.attempt is attempt
         with pytest.raises(ValueError, match="accepted transition"):
             result.dimension_sensitivity(sketch, ParameterId("test", "distance"))
+        with pytest.raises(ValueError, match="accepted transition"):
+            result.dimension_jvp(sketch, {})
+        with pytest.raises(ValueError, match="accepted transition"):
+            result.dimension_vjp(sketch, np.zeros(6, dtype=np.float64), ())
 
 
 def test_rank_change_and_failed_root_roll_back(monkeypatch: pytest.MonkeyPatch) -> None:

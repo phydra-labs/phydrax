@@ -2,10 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from phydrax.geometry.design._reduced import _prepare_sketch_rigid_clusters
+from phydrax.geometry.design._reduced import (
+    _prepare_grounded_rigid_parameterizations,
+    _prepare_sketch_rigid_clusters,
+)
 from phydrax.geometry.design._schema import ParameterId
 from phydrax.geometry.design._sketch import FixedPoint, Horizontal, PointDistance, Sketch
 
@@ -218,3 +222,92 @@ def test_discriminant_uses_exact_represented_distances() -> None:
     assert witness is not None
     assert witness.triangles[0].discriminant > 0
     assert witness.triangles[0].discriminant.denominator > 1
+
+
+def test_grounded_exact_shape_reduces_to_rotation_and_preserves_branch() -> None:
+    points = np.array([[0.0, 0.0], [3.0, 0.0], [0.0, 4.0]], dtype=np.float64)
+    sketch = Sketch(
+        points,
+        constraints=(
+            PointDistance(0, 1, 3),
+            PointDistance(0, 2, 4),
+            PointDistance(1, 2, 5),
+            FixedPoint(0, np.array([2.0, 1.0])),
+        ),
+    )
+    prepared = _prepare_sketch_rigid_clusters(sketch, points)
+    (parameterization,) = _prepare_grounded_rigid_parameterizations(
+        sketch, prepared, (0, 1), ()
+    )
+    assert parameterization.witness.triangles[0].orientation_sign == 1
+    layout = jnp.asarray(np.concatenate((points.reshape(-1), [7.0])))
+    expanded = np.asarray(parameterization.expand(layout, np.pi / 2))
+    np.testing.assert_allclose(expanded, [2.0, 1.0, 2.0, 4.0, -2.0, 1.0, 7.0], atol=1e-6)
+    mirrored = points * np.array([1.0, -1.0])
+    mirrored_prepared = _prepare_sketch_rigid_clusters(sketch, mirrored)
+    (other,) = _prepare_grounded_rigid_parameterizations(
+        sketch, mirrored_prepared, (0, 1), ()
+    )
+    assert other.witness.triangles[0].orientation_sign == -1
+    mirrored_expanded = np.asarray(other.expand(layout, np.pi / 2)).reshape(-1)
+    np.testing.assert_allclose(mirrored_expanded[4:6], [6.0, 1.0], atol=1e-6)
+
+
+def test_grounded_shape_rejects_inconsistent_or_ambiguous_components() -> None:
+    points = np.array([[0.0, 0.0], [3.0, 0.0], [0.0, 4.0]], dtype=np.float64)
+    base = (
+        PointDistance(0, 1, 3),
+        PointDistance(0, 2, 4),
+        PointDistance(1, 2, 5),
+        FixedPoint(0, np.array([0.0, 0.0])),
+    )
+    sketch = Sketch(points, constraints=base)
+    prepared = _prepare_sketch_rigid_clusters(sketch, points)
+    assert not _prepare_grounded_rigid_parameterizations(sketch, prepared, (0, 1, 2), ())
+    assert not _prepare_grounded_rigid_parameterizations(sketch, prepared, (0, 1), (2,))
+    for extra in (PointDistance(1, 2, 4), FixedPoint(1, np.array([3.0, 0.0]))):
+        candidate = Sketch(points, constraints=(*base, extra))
+        candidate_prepared = _prepare_sketch_rigid_clusters(candidate, points)
+        assert not _prepare_grounded_rigid_parameterizations(
+            candidate, candidate_prepared, (0, 1), ()
+        )
+    perturbed = points.copy()
+    perturbed[2, 1] = np.nextafter(np.float32(4.0), np.float32(5.0))
+    perturbed_prepared = _prepare_sketch_rigid_clusters(sketch, perturbed)
+    assert not _prepare_grounded_rigid_parameterizations(
+        sketch, perturbed_prepared, (0, 1), ()
+    )
+
+
+def test_grounded_shape_rejects_tangent_and_floating_components() -> None:
+    points = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]], dtype=np.float64)
+    distances = (
+        PointDistance(0, 1, 1),
+        PointDistance(1, 2, 1),
+        PointDistance(0, 2, 2),
+    )
+    for constraints in (distances, (*distances, FixedPoint(0, np.array([0.0, 0.0])))):
+        sketch = Sketch(points, constraints=constraints)
+        prepared = _prepare_sketch_rigid_clusters(sketch, points)
+        assert not _prepare_grounded_rigid_parameterizations(sketch, prepared, (0, 1), ())
+
+
+def test_grounded_shape_uses_current_bound_dimension() -> None:
+    points = np.array([[0.0, 0.0], [3.0, 0.0]], dtype=np.float64)
+    dimension = ParameterId("part", "length")
+    sketch = Sketch(
+        points,
+        feature_id="part",
+        constraints=(
+            PointDistance(0, 1, 3, parameter_id=dimension),
+            FixedPoint(0, np.array([0.0, 0.0])),
+        ),
+    )
+    prepared = _prepare_sketch_rigid_clusters(sketch, points)
+    assert (
+        len(_prepare_grounded_rigid_parameterizations(sketch, prepared, (0, 1), ())) == 1
+    )
+    edited = _prepare_sketch_rigid_clusters(
+        sketch, points, dimensions=sketch.dimensions.updated({dimension: 4.0})
+    )
+    assert not _prepare_grounded_rigid_parameterizations(sketch, edited, (0, 1), ())

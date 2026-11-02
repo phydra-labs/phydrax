@@ -53,8 +53,8 @@ def _root_at_initial_points(sketch: Sketch) -> SketchSolution:
         jax.jacfwd(residual)(coordinates),
         residual_tolerance=1e-9,
     )
-    indices, fixed, seed, constructions, clusters = sketch._prepare_components(
-        coordinates, sketch.dimensions, 1e-9
+    indices, fixed, seed, constructions, clusters, reductions = (
+        sketch._prepare_components(coordinates, sketch.dimensions, 1e-9)
     )
     return SketchSolution(
         points=sketch.points,
@@ -73,6 +73,7 @@ def _root_at_initial_points(sketch: Sketch) -> SketchSolution:
             fixed,
             constructions,
             clusters,
+            tuple(item.point_indices for item in reductions),
             False,
         ),
         dimensions=sketch.dimensions,

@@ -46,7 +46,10 @@ if TYPE_CHECKING:
     from ...optim import DifferentialEvolutionSearch
     from ...typing import PRNGKey
     from ..analytic import Circle
-    from ._reduced import _SketchDistanceRigidityWitness
+    from ._reduced import (
+        _SketchDistanceRigidityWitness,
+        _SketchGroundedRigidParameterization,
+    )
     from ..brep._constructors import PlanarProfile, ProfilePlane
     from ..brep._model import BRepModel
     from ..simplicial import PlanarMeshRegion
@@ -530,6 +533,7 @@ class SketchPreparationEvidence(StrictModule):
         tuple[int, TwoCircleConstruction | LineCircleConstruction], ...
     ] = eqx.field(static=True)
     rigid_clusters: tuple[_SketchDistanceRigidityWitness, ...] = eqx.field(static=True)
+    rigid_reduction_points: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     reduced_root_accepted: bool = eqx.field(static=True)
 
     def __init__(
@@ -543,6 +547,7 @@ class SketchPreparationEvidence(StrictModule):
             tuple[int, TwoCircleConstruction | LineCircleConstruction], ...
         ],
         rigid_clusters: tuple[_SketchDistanceRigidityWitness, ...],
+        rigid_reduction_points: tuple[tuple[int, ...], ...],
         reduced_root_accepted: bool,
         /,
     ) -> None:
@@ -592,6 +597,9 @@ class SketchPreparationEvidence(StrictModule):
         self.pinned_values = values
         self.constructions = tuple(constructions)
         self.rigid_clusters = tuple(rigid_clusters)
+        self.rigid_reduction_points = tuple(
+            tuple(item) for item in rigid_reduction_points
+        )
         self.reduced_root_accepted = reduced_root_accepted
 
     def verify(
@@ -610,8 +618,8 @@ class SketchPreparationEvidence(StrictModule):
             != sketch.points.size + sketch.circle_radii.size
         ):
             raise ValueError("Preparation reference has the wrong coordinate extent.")
-        indices, values, seed, constructions, rigid_clusters = sketch._prepare_components(
-            self.reference_coordinates, dimensions, tolerance
+        indices, values, seed, constructions, rigid_clusters, rigid_reductions = (
+            sketch._prepare_components(self.reference_coordinates, dimensions, tolerance)
         )
         if (
             indices != self.pinned_indices
@@ -619,6 +627,8 @@ class SketchPreparationEvidence(StrictModule):
             or not np.array_equal(np.asarray(seed), np.asarray(self.seed_coordinates))
             or constructions != self.constructions
             or rigid_clusters != self.rigid_clusters
+            or tuple(item.point_indices for item in rigid_reductions)
+            != self.rigid_reduction_points
         ):
             raise ValueError("Preparation witnesses do not match the supplied sketch.")
 
@@ -1130,12 +1140,14 @@ class Sketch(StrictModule):
         Array,
         tuple[tuple[int, TwoCircleConstruction | LineCircleConstruction], ...],
         tuple[_SketchDistanceRigidityWitness, ...],
+        tuple[_SketchGroundedRigidParameterization, ...],
     ]:
         pinned_indices, pinned_values = prepare_sketch_fixed_coordinates(
             self, dimension_state
         )
         cluster_seed = initial
         rigid_clusters: tuple[_SketchDistanceRigidityWitness, ...] = ()
+        cluster = None
         if any(isinstance(item, PointDistance) for item in self.constraints):
             from ._reduced import _prepare_sketch_rigid_clusters
 
@@ -1160,7 +1172,21 @@ class Sketch(StrictModule):
             pinned_values,
             initial_seed=cluster_seed,
         )
-        return pinned_indices, pinned_values, prepared_seed, constructions, rigid_clusters
+        rigid_reductions: tuple[_SketchGroundedRigidParameterization, ...] = ()
+        if cluster is not None:
+            from ._reduced import _prepare_grounded_rigid_parameterizations
+
+            rigid_reductions = _prepare_grounded_rigid_parameterizations(
+                self, cluster, pinned_indices, tuple(point for point, _ in constructions)
+            )
+        return (
+            pinned_indices,
+            pinned_values,
+            prepared_seed,
+            constructions,
+            rigid_clusters,
+            rigid_reductions,
+        )
 
     def solve(
         self,
@@ -1211,9 +1237,14 @@ class Sketch(StrictModule):
             upper = jnp.full(initial.shape, jnp.inf, dtype=initial.dtype)
             bounds = (lower, upper)
         problem_id = self._problem_id()
-        pinned_indices, pinned_values, prepared_seed, constructions, rigid_clusters = (
-            self._prepare_components(initial, dimension_state, tolerance)
-        )
+        (
+            pinned_indices,
+            pinned_values,
+            prepared_seed,
+            constructions,
+            rigid_clusters,
+            rigid_reductions,
+        ) = self._prepare_components(initial, dimension_state, tolerance)
         solved, reduced_root_accepted = solve_prepared_sketch_residual(
             residual,
             initial,
@@ -1221,6 +1252,7 @@ class Sketch(StrictModule):
             pinned_indices,
             pinned_values,
             constructions,
+            rigid_reductions,
             max_iterations=max_iterations,
             tolerance=tolerance,
             damping=damping,
@@ -1244,6 +1276,7 @@ class Sketch(StrictModule):
             pinned_values,
             constructions,
             rigid_clusters,
+            tuple(item.point_indices for item in rigid_reductions),
             reduced_root_accepted,
         )
         return SketchSolution(
@@ -1361,8 +1394,8 @@ class Sketch(StrictModule):
             )
         points_host = np.asarray(solution.points, dtype=np.float64)
         lines_host = np.asarray(self.lines, dtype=np.int32)
+        vectors = points_host[lines_host[:, 1]] - points_host[lines_host[:, 0]]
         if lines_host.size:
-            vectors = points_host[lines_host[:, 1]] - points_host[lines_host[:, 0]]
             if np.any(np.linalg.norm(vectors, axis=1) == 0.0):
                 raise NotImplementedError(
                     "Dimension sensitivity is unsupported at a collapsed sketch line."
@@ -1378,7 +1411,29 @@ class Sketch(StrictModule):
                 )
         centers = points_host[np.asarray(self.circle_centers, dtype=np.int32)]
         radii_host = np.asarray(solution.circle_radii, dtype=np.float64)
-        for constraint in self.constraints:
+        bindings_by_constraint = {
+            item.constraint_index: item for item in self.dimension_bindings
+        }
+        for constraint_index, constraint in enumerate(self.constraints):
+            if isinstance(constraint, LineAngle):
+                first = vectors[constraint.first_line]
+                second = vectors[constraint.second_line]
+                relative = np.arctan2(
+                    first[0] * second[1] - first[1] * second[0],
+                    np.dot(first, second),
+                )
+                angle_binding = bindings_by_constraint.get(constraint_index)
+                target = (
+                    constraint.angle
+                    if angle_binding is None
+                    else solution.dimensions.values[angle_binding.state_index]
+                )
+                difference = relative - float(np.asarray(target))
+                wrapped = np.arctan2(np.sin(difference), np.cos(difference))
+                if abs(wrapped) == np.pi:
+                    raise NotImplementedError(
+                        "Dimension sensitivity is unsupported at an angle branch cut."
+                    )
             if (
                 isinstance(constraint, PointDistance)
                 and np.linalg.norm(

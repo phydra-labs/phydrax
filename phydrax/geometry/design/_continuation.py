@@ -461,6 +461,7 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
     preparation_pinned_values: Any
     preparation_constructions: tuple[Any, ...]
     preparation_rigid_clusters: tuple[Any, ...]
+    preparation_rigid_reduction_points: tuple[tuple[int, ...], ...]
     preparation_reduced_root_accepted: bool
     residual_tolerance: float
     evidence_id: str
@@ -525,6 +526,7 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
             np.asarray(solution.preparation.pinned_values),
             solution.preparation.constructions,
             solution.preparation.rigid_clusters,
+            solution.preparation.rigid_reduction_points,
             solution.preparation.reduced_root_accepted,
             solution.root_evidence.residual_tolerance,
             solution.root_evidence.evidence_id,
@@ -607,6 +609,7 @@ class SketchContinuationReferenceArchiveRecipe(NamedTuple):
             self.preparation_pinned_values,
             self.preparation_constructions,
             self.preparation_rigid_clusters,
+            self.preparation_rigid_reduction_points,
             self.preparation_reduced_root_accepted,
         )
         solution = SketchSolution(
@@ -640,10 +643,8 @@ class SketchContinuationResult(StrictModule):
     accepted: bool = eqx.field(static=True)
     reason: str = eqx.field(static=True)
 
-    def dimension_sensitivity(
-        self, sketch: Sketch, parameter_id: ParameterId, /
-    ) -> SketchDimensionSensitivity:
-        """Pointwise sensitivity after a replayed endpoint transition, not a path proof."""
+    def _validate_transition(self, sketch: Sketch, /) -> None:
+        """Replay accepted endpoints before any transition derivative."""
         if not self.accepted or self.reason != "accepted":
             raise ValueError("Continuation sensitivity requires an accepted transition.")
         prior = SketchContinuationReference(
@@ -695,7 +696,54 @@ class SketchContinuationResult(StrictModule):
             )
         ):
             raise ValueError("Accepted reference does not match the attempted root.")
+
+    def dimension_sensitivity(
+        self, sketch: Sketch, parameter_id: ParameterId, /
+    ) -> SketchDimensionSensitivity:
+        """Pointwise sensitivity after a replayed endpoint transition, not a path proof."""
+        self._validate_transition(sketch)
         return sketch.dimension_sensitivity(self.attempt, parameter_id)
+
+    def dimension_jvp(
+        self, sketch: Sketch, tangents: Mapping[ParameterId, ArrayLike], /
+    ) -> Array:
+        """Apply the accepted fixed-branch dimension-to-coordinate derivative."""
+        self._validate_transition(sketch)
+        result = jnp.zeros(
+            (self.attempt.points.size + self.attempt.circle_radii.size,),
+            dtype=self.attempt.points.dtype,
+        )
+        for parameter_id, tangent in tangents.items():
+            value = jnp.asarray(tangent, dtype=result.dtype)
+            if value.shape != ():
+                raise ValueError("Sketch dimension tangents must be scalar.")
+            derivative = sketch.dimension_sensitivity(self.attempt, parameter_id)
+            result = result + value * derivative.coordinates
+        return result
+
+    def dimension_vjp(
+        self,
+        sketch: Sketch,
+        cotangent: ArrayLike,
+        parameter_ids: Sequence[ParameterId],
+        /,
+    ) -> dict[ParameterId, Array]:
+        """Apply the transpose fixed-branch derivative to a coordinate cotangent."""
+        self._validate_transition(sketch)
+        vector = jnp.asarray(cotangent, dtype=self.attempt.points.dtype)
+        size = self.attempt.points.size + self.attempt.circle_radii.size
+        if vector.shape != (size,):
+            raise ValueError(f"Coordinate cotangent must have shape {(size,)}.")
+        identifiers = tuple(parameter_ids)
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("Dimension parameter IDs must be unique.")
+        return {
+            parameter_id: jnp.vdot(
+                sketch.dimension_sensitivity(self.attempt, parameter_id).coordinates,
+                vector,
+            )
+            for parameter_id in identifiers
+        }
 
 
 def continue_sketch(
