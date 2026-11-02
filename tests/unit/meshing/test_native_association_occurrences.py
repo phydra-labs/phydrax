@@ -588,6 +588,14 @@ def test_shared_face_cad_sides_retain_qualified_identity(
         patch_controls=(PatchControl("interface", scopes[0], ("region-0", "region-1")),),
         maximum_deviation=0.05,
     )
+    from phydrax.meshing.providers._gmsh_preflight import _semantic_region_issues
+
+    one_sided_issues: list[str] = []
+    _semantic_region_issues(one_sided, model, one_sided_issues)
+    assert any("individual incident side" in issue for issue in one_sided_issues)
+    complete_issues: list[str] = []
+    _semantic_region_issues(specification, model, complete_issues)
+    assert not complete_issues
     renewed_patch = PatchControl.from_stored_fields(
         one_sided.patch_controls[0], source_model=model
     )

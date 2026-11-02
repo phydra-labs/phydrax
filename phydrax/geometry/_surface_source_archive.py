@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import jax
 import numpy as np
 
 from .._model._structure import (
@@ -48,6 +49,12 @@ if TYPE_CHECKING:
     from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
     from ..meshing._hex_cut_generation import _CutCoordinateMap
     from ._mapped_reference_domain import MappedReferenceDomain
+
+
+def _archive_array(value: object, /) -> np.ndarray:
+    if not isinstance(value, (np.ndarray, jax.Array, np.generic)):
+        raise TypeError("Stored source archive data must be a numeric array.")
+    return np.asarray(value)
 
 
 def _domain(value: MeshingDomainArchiveRecipe, /) -> MeshingDomain:
@@ -126,7 +133,7 @@ def _domain(value: MeshingDomainArchiveRecipe, /) -> MeshingDomain:
         source_kinds=value.source_kinds,
         authority_id=value.authority_id,
         brep_authority=authority,
-        corner_points=value.corner_points if value.corner_points_authored else None,
+        corner_points=_archive_array(value.corner_points) if value.corner_points_authored else None,
     )
     if domain.domain_id != value.expected_domain_id or not np.array_equal(
         np.asarray(domain.corner_points), np.asarray(value.corner_points)
@@ -225,7 +232,10 @@ def _mapped_reference(value: object, /) -> MappedReferenceDomain:
         coordinate_contract=_reconstruct_brep_graph(value.coordinate_contract),
         root_vertex_occurrence_paths=value.root_vertex_occurrence_paths,
         root_cell_occurrence_paths=value.root_cell_occurrence_paths,
-        reference_domain_vertex_root_ids=value.reference_domain_vertex_root_ids,
+        reference_domain_vertex_root_ids=(
+            None if value.reference_domain_vertex_root_ids is None
+            else np.asarray(value.reference_domain_vertex_root_ids, dtype=np.int64)
+        ),
     )
     if result.domain_id != value.domain_id:
         raise ValueError("Stored mapped-reference domain differs from its source.")
@@ -257,7 +267,13 @@ def _power_map(
         domain = _mapped_reference(domain)
     elif domain is not None:
         raise TypeError("Exact power geometry lost its source domain owner.")
-    periodic = None if mesh.periodic_topology is None else mesh.periodic_topology.cell
+    from ..discretization._periodic_cell import PeriodicCell
+
+    periodic = None
+    if value.periodic_source_context is not None and mesh.periodic_topology is not None:
+        periodic = mesh.periodic_topology.cell
+        if not isinstance(periodic, PeriodicCell):
+            raise TypeError("Periodic power geometry requires a PeriodicCell owner.")
     return ExactPowerCellGeometrySource.from_stored_fields(
         value,
         domain_source=domain,
@@ -481,9 +497,18 @@ def restore_surface_source_charts(
         domain,
         source.patches,
         resolution=source.resolution,
-        boundary_occurrences=source.boundary_occurrences,
-        boundary_cell_ids=source.boundary_cell_ids,
-        boundary_patch_ids=source.boundary_patch_ids,
+        boundary_occurrences=(
+            None if source.boundary_occurrences is None
+            else _archive_array(source.boundary_occurrences)
+        ),
+        boundary_cell_ids=(
+            None if source.boundary_cell_ids is None
+            else _archive_array(source.boundary_cell_ids)
+        ),
+        boundary_patch_ids=(
+            None if source.boundary_patch_ids is None
+            else _archive_array(source.boundary_patch_ids)
+        ),
     )
     if boundary.source_scope_id != source.expected_source_scope_id:
         raise ValueError("Reconstructed boundary source differs from its exact scope.")
