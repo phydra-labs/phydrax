@@ -400,6 +400,29 @@ def test_exact_face_and_edge_histories_cover_split_and_deleted_sources() -> None
     )
 
 
+def test_descending_planar_edge_transports_with_certified_orientation() -> None:
+    result = partition_planar(
+        _plan(
+            (_operand("region", _rectangle(0.0, 1.0, feature_id="region")),), ("region",)
+        )
+    )
+    graph = result.association_graph
+    source = next(
+        occurrence
+        for occurrence in graph.source_revision.occurrences
+        if occurrence.kind == "edge" and occurrence.orientation == -1
+    )
+    selected = CADSelectionSet.from_revision(
+        graph.source_revision, (source.occurrence_id,)
+    )
+    descendants = graph.resolve_target_selection(selected)
+    assert len(descendants.selectors) == 1
+    target = graph.target_revision.occurrence(descendants.selectors[0].occurrence_id)
+    assert target.kind == "edge"
+    assert target.orientation == 1
+    assert _area(result, "region") == pytest.approx(1.0)
+
+
 def test_exact_planar_brep_face_is_a_source_operand() -> None:
     source_mesh = _rectangle(0.0, 1.0, feature_id="source-mesh")
     source_model = partition_planar(

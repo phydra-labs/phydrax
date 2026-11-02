@@ -718,15 +718,6 @@ def partition_native_planar_arrangement(
     role_by_id = {operand.operand_id: operand.role.value for operand in plan.operands}
     rank = {name: index for index, name in enumerate(plan.policy.region_precedence)}
     face_owner = tuple(owner for _, owner in cells)
-    source_edge_pairs = {
-        (
-            source_ids[(source.operand_id, f"edge:{edge_index}")],
-            segment,
-        )
-        for source in source_faces
-        for edge_index, segment in source.edge_segments
-    }
-    source_edges = tuple(sorted(source_edge_pairs))
     target_entities = {
         _entity_text(record.member): record.member
         for record in model.geometry.qualified_entity_incidence(
@@ -748,6 +739,7 @@ def partition_native_planar_arrangement(
         elif kind == "vertex":
             target_vertices.setdefault(index, []).append(occurrence_id)
     correspondence_pairs: set[tuple[str, str]] = set()
+    edge_rebases: dict[tuple[str, str], tuple[int, str]] = {}
     for face_index, (cell, _) in enumerate(cells):
         target_face_id = target_occurrences[("face", face_index, ())]
         for member in cell.members:
@@ -760,12 +752,45 @@ def partition_native_planar_arrangement(
                     )
                 )
     for edge_index, segment in enumerate(target_edge_keys):
-        for source_id, source_segment in source_edges:
-            if _contains_segment(segment, source_segment):
-                correspondence_pairs.update(
-                    (source_id, target_id)
-                    for target_id in target_edges.get(edge_index, ())
+        for source_index, source in enumerate(source_faces):
+            for source_edge_index, source_segment in source.edge_segments:
+                if not _contains_segment(segment, source_segment):
+                    continue
+                source_id = source_ids[(source.operand_id, f"edge:{source_edge_index}")]
+                adjacent_faces = tuple(
+                    face
+                    for face in model.topology.edge_faces[edge_index]
+                    if source_index in cells[face][0].members
                 )
+                for target_id in target_edges.get(edge_index, ()):
+                    correspondence_pairs.add((source_id, target_id))
+                    if role_by_id[source.operand_id] != "region" or not adjacent_faces:
+                        continue
+                    source_occurrence = source_revision.occurrence(source_id)
+                    target_occurrence = target_revision.occurrence(target_id)
+                    transform = (
+                        source_occurrence.orientation * target_occurrence.orientation
+                    )
+                    evidence = canonical_fingerprint(
+                        {
+                            "kind": "native-planar-edge-incidence-rebase",
+                            "plan": plan.plan_id,
+                            "operand": source.operand_id,
+                            "source": source_id,
+                            "target": target_id,
+                            "source_segment": _exact_payload(source_segment),
+                            "target_segment": _exact_payload(segment),
+                            "source_direction": 1
+                            if source_segment[0] < source_segment[1]
+                            else -1,
+                            "target_direction": 1 if segment[0] < segment[1] else -1,
+                            "source_orientation": source_occurrence.orientation,
+                            "target_orientation": target_occurrence.orientation,
+                            "adjacent_faces": adjacent_faces,
+                            "transform": transform,
+                        }
+                    )
+                    edge_rebases[(source_id, target_id)] = (transform, evidence)
     # A target vertex descends from every source vertex at its exact point;
     # arrangement intersection vertices have no source vertex and are created.
     source_vertices: dict[Point, set[str]] = {}
@@ -787,10 +812,26 @@ def partition_native_planar_arrangement(
             "source_revision": source_revision.revision_id,
             "target_revision": target_revision.revision_id,
             "correspondences": tuple(sorted(correspondence_pairs)),
+            "edge_rebases": tuple(sorted(edge_rebases.items())),
         }
     )
+
+    def correspondence(source_id: str, target_id: str, /) -> OccurrenceCorrespondence:
+        rebase = edge_rebases.get((source_id, target_id))
+        if rebase is not None:
+            return OccurrenceCorrespondence(source_id, target_id, rebase[1], rebase[0])
+        unresolved_orientation = (
+            0
+            if source_revision.occurrence(source_id).kind == "edge"
+            and target_revision.occurrence(target_id).kind == "edge"
+            else None
+        )
+        return OccurrenceCorrespondence(
+            source_id, target_id, certificate_id, unresolved_orientation
+        )
+
     correspondences = tuple(
-        OccurrenceCorrespondence(source_id, target_id, certificate_id)
+        correspondence(source_id, target_id)
         for source_id, target_id in sorted(correspondence_pairs)
     )
     transaction = OccurrenceCorrespondenceTransaction(
