@@ -971,6 +971,107 @@ def _cad_root_edges(
         raise ValueError("CAD root chart rows do not align with mesh cells.")
     return edge_vertices, {key: tuple(value) for key, value in adjacent.items()}
 
+def _cad_plane_seam_side(
+    plane: object,
+    root: tuple[tuple[Fraction, Fraction], ...],
+    slot: int,
+    root_edge: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+    target: tuple[tuple[Fraction, Fraction], ...],
+    target_edge: tuple[int, int],
+    root_parameters: tuple[Fraction, Fraction],
+    target_parameters: tuple[Fraction, Fraction],
+    /,
+) -> bool:
+    """Prove the same oriented side of a polar seam after plane transport."""
+    from ._domain_boundary import ExactPlaneChart, _TURN
+
+    if not isinstance(plane, ExactPlaneChart) or len(root) != 3 or len(target) != 3:
+        return False
+    if slot not in (0, 1, 2) or set(target_edge) not in ({0, 1}, {1, 2}, {0, 2}):
+        return False
+    first, last = root_edge
+    third = root[slot]
+    turn = Fraction.from_float(_TURN)
+    if first[0] != last[0] or first[0] not in (0, turn):
+        return False
+    if first[0] == 0:
+        if not 0 < third[0] < turn / 4:
+            return False
+    elif not turn * 3 / 4 < third[0] < turn:
+        return False
+    if any(plane.radius_sign * (plane.radius_offset + p[1]) < 0 for p in (first, last)):
+        return False
+    if plane.radius_sign * (plane.radius_offset + third[1]) <= 0:
+        return False
+    a, b = (target[index] for index in target_edge)
+    c = target[3 - target_edge[0] - target_edge[1]]
+    if (root_parameters[1] - root_parameters[0]) * (
+        target_parameters[1] - target_parameters[0]
+    ) < 0:
+        a, b = b, a
+
+    def cross(p: tuple[Fraction, Fraction], q: tuple[Fraction, Fraction],
+              r: tuple[Fraction, Fraction]) -> Fraction:
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    # On these quarter-turn neighborhoods the revolution-to-plane map is
+    # orientation preserving and stays on one side of the seam. The signs
+    # compare exact rational determinants, not rounded physical coordinates.
+    return cross(first, last, third) * cross(a, b, c) > 0
+
+
+def _cad_pole_lens_endpoint(
+    charts: SurfaceSourceCharts,
+    patch: int,
+    loop: int,
+    use_index: int,
+    point: tuple[Fraction, Fraction],
+    parameter: Fraction,
+    /,
+) -> tuple[Fraction, Fraction]:
+    """Represent an authenticated collapsed pole by its coedge junction.
+
+    Only an exact point on a declared straight pole side may be replaced, and
+    only at the matching end of the named coedge. Both UV representatives
+    denote the same source corner; no physical mesh point is changed.
+    """
+    from ._domain_boundary import _line_endpoints, _rooted_patch_chart_endpoints
+    from ._meshing_domain import PatchCurveUse, PatchPoleUse
+    from .brep._patches import ExactLineCurve, LineCurve
+
+    if parameter not in (0, 1):
+        return point
+    uses = charts.domain.patches[patch].loops[loop]
+    use = uses[use_index]
+    if not isinstance(use, PatchCurveUse):
+        return point
+    endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)[loop]
+    traversal_start = (parameter == 0) == (use.sense > 0)
+    junction = endpoints[use_index][0 if traversal_start else 1]
+    neighbor = (
+        (use_index - 1) % len(uses)
+        if traversal_start
+        else (use_index + 1) % len(uses)
+    )
+    pole = uses[neighbor]
+    if (
+        not isinstance(pole, PatchPoleUse)
+        or charts.domain.brep_authority is None
+        or not isinstance(pole.pcurve, (ExactLineCurve, LineCurve))
+    ):
+        return point
+    start, stop = endpoints[neighbor]
+    if (start, stop) != _line_endpoints(pole):
+        return point
+    if junction not in (start, stop):
+        return point
+    dx, dy = stop[0] - start[0], stop[1] - start[1]
+    px, py = point[0] - start[0], point[1] - start[1]
+    along = px * dx + py * dy
+    if px * dy == py * dx and 0 <= along <= dx * dx + dy * dy:
+        return junction
+    return point
+
 
 def _cad_curve_use_lens(
     charts: SurfaceSourceCharts,
@@ -1000,6 +1101,12 @@ def _cad_curve_use_lens(
         source_first, source_last = fraction_down(exact_first), fraction_up(exact_last)
     else:
         source_first, source_last = fraction_up(exact_first), fraction_down(exact_last)
+    first_uv = _cad_pole_lens_endpoint(
+        charts, patch, loop, use_index, first_uv, parameters[0]
+    )
+    last_uv = _cad_pole_lens_endpoint(
+        charts, patch, loop, use_index, last_uv, parameters[1]
+    )
     lens = _curved_trim_lens(
         use, first_uv, last_uv, source_first, source_last, preparation
     )
@@ -1097,6 +1204,10 @@ def _validate_cad_chart_edge_incidence(
     /,
 ) -> None:
     """Prove which root-chart edges are interior instead of trusting sentinels."""
+    from ._domain_boundary import _line_endpoints, _rooted_patch_chart_endpoints
+    from ._meshing_domain import PatchPoleUse
+    from .brep._patches import ExactLineCurve, LineCurve
+
     rows = {identifier: row for row, identifier in enumerate(charts.cell_global_ids)}
     counts: dict[tuple[int, frozenset[tuple[Fraction, Fraction]]], int] = {}
     for uses in adjacent.values():
@@ -1104,6 +1215,41 @@ def _validate_cad_chart_edge_incidence(
             patch = int(charts.root_patches[rows[cell_id]])
             key = (patch, frozenset((first, last)))
             counts[key] = counts.get(key, 0) + 1
+    pole_sides: dict[
+        int, tuple[tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...]
+    ] = {}
+
+    def same_pole_side(
+        patch: int, first: tuple[Fraction, Fraction], last: tuple[Fraction, Fraction]
+    ) -> bool:
+        if charts.domain.brep_authority is None:
+            return False
+        if patch not in pole_sides:
+            endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)
+            sides = []
+            for loop, loop_endpoints in zip(
+                charts.domain.patches[patch].loops, endpoints, strict=True
+            ):
+                for use, side in zip(loop, loop_endpoints, strict=True):
+                    if (
+                        isinstance(use, PatchPoleUse)
+                        and isinstance(use.pcurve, (ExactLineCurve, LineCurve))
+                        and side == _line_endpoints(use)
+                    ):
+                        sides.append(side)
+            pole_sides[patch] = tuple(sides)
+        for start, stop in pole_sides[patch]:
+            dx, dy = stop[0] - start[0], stop[1] - start[1]
+
+            def on_side(point: tuple[Fraction, Fraction]) -> bool:
+                px, py = point[0] - start[0], point[1] - start[1]
+                along = px * dx + py * dy
+                return px * dy == py * dx and 0 <= along <= dx * dx + dy * dy
+
+            if on_side(first) and on_side(last):
+                return True
+        return False
+
     for edge_id, uses in adjacent.items():
         for cell_id, slot, first, last in uses:
             row = rows[cell_id]
@@ -1121,10 +1267,42 @@ def _validate_cad_chart_edge_incidence(
                     raise ValueError(
                         "CAD source coedge is not a root-chart boundary edge."
                     )
-            elif count != 2 or explicit != (-1, -1, -1):
+            elif explicit != (-1, -1, -1):
                 raise ValueError(
                     "CAD root chart has an unbound or unproved boundary edge."
                 )
+            elif count != 2:
+                # A pole fan can use two distinct UV points on the same
+                # authenticated collapsed side for one physical vertex.
+                # The other endpoint and the physical edge must agree exactly.
+                others = tuple(
+                    other
+                    for other in uses
+                    if other[0] != cell_id
+                    and int(charts.root_patches[rows[other[0]]]) == patch
+                )
+                paired = False
+                if count == 1 and len(uses) == 2 and len(others) == 1:
+                    _, _, other_first, other_last = others[0]
+                    other_count = counts[
+                        (patch, frozenset((other_first, other_last)))
+                    ]
+                    paired = other_count == 1 and (
+                        (
+                            first == other_first
+                            and last != other_last
+                            and same_pole_side(patch, last, other_last)
+                        )
+                        or (
+                            last == other_last
+                            and first != other_first
+                            and same_pole_side(patch, first, other_first)
+                        )
+                    )
+                if not paired:
+                    raise ValueError(
+                        "CAD root chart has an unbound or unproved boundary edge."
+                    )
 
 
 def validate_cad_curve_ancestry(
@@ -1141,7 +1319,9 @@ def validate_cad_curve_ancestry(
         GeometryAssociationKind,
         GeometrySourceEntityRole,
     )
+    from ._domain_boundary import _line_endpoints
     from ._meshing_domain import PatchCurveUse, SourcePreparation
+    from .brep._patches import ExactLineCurve, LineCurve
 
     if not isinstance(charts, SurfaceSourceCharts):
         raise TypeError("CAD curve ancestry requires SurfaceSourceCharts.")
@@ -1267,6 +1447,38 @@ def validate_cad_curve_ancestry(
                     )
                 loop_index, use_index = explicit[1], explicit[2]
             parameters = interval if sense > 0 else (interval[1], interval[0])
+            selected = domain.patches[patch].loops[loop_index][use_index]
+            if len(candidates) > 1:
+                from .brep._source_embedding import _constant_chart_line, _same, _TAU
+
+                constants: list[tuple[int, Fraction]] = []
+                if isinstance(selected.pcurve, (ExactLineCurve, LineCurve)):
+                    start, stop = _line_endpoints(selected)
+                    constants.extend(
+                        (axis, start[axis])
+                        for axis in range(2) if start[axis] == stop[axis]
+                    )
+                else:
+                    line = _constant_chart_line(selected.pcurve, 0)
+                    surface = domain.patches[patch].surface
+                    if line is not None and surface.native_period_symbols()[0] == "two_pi":
+                        if _same(line[0], Fraction(0)):
+                            constants.append((0, Fraction(0)))
+                        elif _same(line[0], _TAU) and surface.periods[0] is not None:
+                            constants.append((0, Fraction.from_float(surface.periods[0])))
+                points = (
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, use_index, first_uv, parameters[0]
+                    ),
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, use_index, last_uv, parameters[1]
+                    ),
+                )
+                for axis, value in constants:
+                    if any(point[axis] != value for point in points):
+                        raise ValueError(
+                            "CAD root edge changes its authored coedge occurrence."
+                        )
             _cad_curve_use_lens(
                 charts,
                 patch,

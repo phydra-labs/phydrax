@@ -519,6 +519,19 @@ Boolean chart arrangements use the same exact affine-source recognizer as
 curve/surface correspondence. A clamped degree-one B-spline with equal
 weights is therefore an affine line, including its actual knot-parameter
 scale; unequal weights are not silently treated as affine parameterization.
+`repair_brep_source` is an explicit geometry- and interpretation-changing
+operation, separate from exact sewing and STEP import repair. It retains the
+input model and returns a separately identified source revision with entity
+correspondence and certified displacement evidence. Its completion policy
+identifies the bounded interpretation of gapped source trims, including the
+authored incidence, sheets, and winding; whole-region displacement is relative
+to that completed interpretation, not an asserted filled region of an
+otherwise undefined gapped loop. The tolerance is a caller-supplied upper
+bound in the model's length unit; use the original source's admitted tolerance,
+not a larger Boolean or meshing tolerance. Repair refuses unsupported,
+ambiguous, unproved, or out-of-budget constructions instead of welding nearby
+entities or silently fitting curves. The repaired result is not a lossless
+import of the original source.
 
 `repair_brep_source` is an explicit geometry- and interpretation-changing
 operation, separate from exact sewing and STEP import repair. It retains the

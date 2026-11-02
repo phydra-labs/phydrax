@@ -232,6 +232,7 @@ class ConstrainedMesher {
   bool angle_enabled_;
   double sin_min_angle_;
   std::vector<int32_t> segment_degree_;
+  std::vector<std::pair<int32_t, int32_t>> segment_neighbors_;
   // Per Steiner vertex (index - input_count_): the input vertices ending the
   // constrained chain it was inserted on, {-1, -1} for circumcenters.
   std::vector<std::pair<int32_t, int32_t>> chain_ends_;
@@ -493,23 +494,45 @@ class ConstrainedMesher {
   // ------------------------------------------------------------ refinement
 
   void count_segment_degrees() {
-    segment_degree_.assign(static_cast<std::size_t>(tri_.vertex_count()), 0);
-    for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
-      if (tri_.live[t] == 0) {
-        continue;
+    segment_degree_.assign(static_cast<std::size_t>(input_count_), 0);
+    segment_neighbors_.assign(static_cast<std::size_t>(input_count_), {-1, -1});
+    const auto record = [&](int32_t vertex, int32_t neighbor) {
+      if (vertex < 0 || vertex >= input_count_ || neighbor < 0) return;
+      auto& degree = segment_degree_[static_cast<std::size_t>(vertex)];
+      auto& neighbors = segment_neighbors_[static_cast<std::size_t>(vertex)];
+      if (neighbor == neighbors.first || neighbor == neighbors.second || degree >= 3) return;
+      if (degree == 0) {
+        neighbors.first = neighbor;
+      } else if (degree == 1) {
+        neighbors.second = neighbor;
       }
+      ++degree;
+    };
+    for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
+      if (tri_.live[t] == 0) continue;
       const Triangle2D& triangle = tri_.triangles[t];
       for (int k = 0; k < 3; ++k) {
+        if (tri_.constraints[3 * t + k] == kFree) continue;
         const int32_t u = triangle.v[next3(k)];
-        if (tri_.constraints[3 * t + k] != kFree && u != kInfiniteVertex) {
-          ++segment_degree_[static_cast<std::size_t>(u)];
-        }
+        const int32_t v = triangle.v[prev3(k)];
+        if (u == kInfiniteVertex || v == kInfiniteVertex) continue;
+        record(u, v);
+        record(v, u);
       }
     }
   }
 
   bool shared_input_vertex(int32_t v) const {
-    return v < input_count_ && segment_degree_[static_cast<std::size_t>(v)] >= 2;
+    if (v < 0 || v >= input_count_) return false;
+    const auto index = static_cast<std::size_t>(v);
+    const int32_t degree = segment_degree_[index];
+    if (degree > 2) return true;  // Preserve all multi-constraint junctions.
+    if (degree != 2) return false;
+    const auto [first, second] = segment_neighbors_[index];
+    if (first < 0 || second < 0) return true;  // Missing incidence refuses relaxation.
+    // Concentric shells protect genuinely acute source features. A sampled
+    // smooth or right-angle degree-two point is not an acute feature.
+    return dot_sign(tri_.point(first), tri_.point(second), tri_.point(v)) > 0;
   }
 
   Quality quality(int32_t t) const {
@@ -663,6 +686,13 @@ class ConstrainedMesher {
       join = eu.second;
     }
     if (join < 0) {
+      return false;
+    }
+    const int32_t first_ray = eu.first == join ? eu.second : eu.first;
+    const int32_t second_ray = ew.first == join ? ew.second : ew.first;
+    if (!shared_input_vertex(join) || first_ray < 0 || second_ray < 0 ||
+        first_ray >= input_count_ || second_ray >= input_count_ ||
+        dot_sign(tri_.point(first_ray), tri_.point(second_ray), tri_.point(join)) <= 0) {
       return false;
     }
     const double* pj = tri_.point(join);

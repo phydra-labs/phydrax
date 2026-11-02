@@ -38,6 +38,7 @@ from ...typing import checked, parse
 from .._association import (
     GeometryAssociation,
     GeometryAssociationKind,
+    GeometryAssociationProvenance,
     GeometrySourceEntityRole,
 )
 from .._certification_schedule import MeshCertificationSchedule
@@ -158,6 +159,22 @@ class _BRepRowResolver:
             )
             self._resolved[key] = resolved
         return resolved
+
+
+def _cad_curve_parameter_sense(domain: MeshingDomain, curve: int, /) -> int:
+    """Relate the owner's normalized chain gauge to the native B-Rep gauge."""
+    if not 0 <= curve < len(domain.curves):
+        raise ValueError("CAD curve ancestry names an absent source curve.")
+    patch, loop, position = (int(value) for value in domain.curve_owners[curve])
+    if min(patch, loop, position) < 0:
+        raise ValueError("CAD curve has no unique owner gauge.")
+    try:
+        use = domain.patches[patch].loops[loop][position]
+    except IndexError as error:
+        raise ValueError("CAD curve has no unique owner gauge.") from error
+    if not isinstance(use, PatchCurveUse) or use.curve != curve or use.first == use.last:
+        raise ValueError("CAD curve has no unique nondegenerate owner gauge.")
+    return 1 if use.last > use.first else -1
 
 
 def _association_for(
@@ -334,10 +351,27 @@ def _cad_plc_data(
     active_curve_rows = {
         row for row in range(len(domain.curves)) if domain.curve_uses(row)
     }
-    vertex_association = _association_for(surface, 0, required=True)
-    edge_association = _association_for(surface, 1, required=bool(active_curve_rows))
-    face_association = _association_for(surface, 2, required=True)
-    assert vertex_association is not None and face_association is not None
+    vertex_association = _association_for(surface_source, 0, required=True)
+    edge_association = _association_for(
+        surface_source, 1, required=bool(active_curve_rows)
+    )
+    face_association = _association_for(surface_source, 2, required=True)
+    if vertex_association is None or face_association is None:
+        raise ValueError("CAD source charts require vertex and face associations.")
+    for dimension, chart_association in enumerate(
+        (vertex_association, edge_association, face_association)
+    ):
+        accepted = _association_for(
+            surface, dimension, required=chart_association is not None
+        )
+        if (accepted is None) != (chart_association is None) or (
+            accepted is not None
+            and chart_association is not None
+            and accepted.association_id != chart_association.association_id
+        ):
+            raise ValueError(
+                "Accepted CAD surface associations differ from their bound source charts."
+            )
     for association in (vertex_association, edge_association, face_association):
         if association is None:
             continue
@@ -564,6 +598,7 @@ def _cad_plc_data(
     segment_curve_rows: list[int] = []
     segment_edge_ids: list[int] = []
     segment_brep_indices: list[int] = []
+    segment_intervals: list[tuple[Fraction, Fraction]] = []
     if edge_association is not None:
         edge_rows = _association_row_map(edge_association)
         edge_dimensions = np.asarray(edge_association.source_dimensions, dtype=np.int64)
@@ -579,7 +614,7 @@ def _cad_plc_data(
             raise ValueError(
                 "CAD boundary charts require canonical surface edge incidence."
             )
-        source_edge_keys: dict[tuple[int, int], tuple[str, tuple[str, ...]]] = {}
+        source_edge_keys: dict[tuple[int, int], int] = {}
         edge_global_ids = np.asarray(mesh.entity_set(1).entity_ids)
         resolve = _BRepRowResolver(domain)
         for edge_row, edge in enumerate(connectivity_edges.tolist()):
@@ -599,6 +634,7 @@ def _cad_plc_data(
                 raise ValueError(
                     "CAD source curve segments require a resolved orientation."
                 )
+            orientation *= _cad_curve_parameter_sense(domain, curve_row)
             first, second = (int(edge[0]), int(edge[1]))
             if orientation < 0:
                 first, second = second, first
@@ -615,18 +651,28 @@ def _cad_plc_data(
                     ),
                 }
             )
+            interval = edge_association.source_parameter_intervals[association_row]
+            if interval is None or not 0 <= interval[0] < interval[1] <= 1:
+                raise ValueError(
+                    "CAD source segment lacks an exact normalized curve interval."
+                )
             existing = source_edge_keys.get(key)
             if existing is not None:
-                if existing != (identity, path):
+                if (
+                    segment_ids[existing] != identity
+                    or segment_paths[existing] != path
+                    or segment_intervals[existing] != interval
+                ):
                     raise ValueError("One PLC edge has conflicting CAD curve ancestry.")
                 continue
-            source_edge_keys[key] = (identity, path)
+            source_edge_keys[key] = len(segments)
             segments.append((plc_first, plc_second))
             segment_ids.append(identity)
             segment_paths.append(path)
             segment_curve_rows.append(curve_row)
             segment_edge_ids.append(global_id)
             segment_brep_indices.append(source_index)
+            segment_intervals.append(interval)
     if set(segment_curve_rows) != active_curve_rows:
         raise ValueError(
             "Accepted surface mesh must retain every active source CAD curve stratum."
@@ -776,7 +822,8 @@ def _surface_source_authorities(
                 "Accepted surface source chart cell IDs and patch parameters must cover its mesh."
             )
         face_association = _association_for(surface, 2, required=True)
-        assert face_association is not None
+        if face_association is None:
+            raise ValueError("CAD surface requires a source-face association.")
         association_rows = _association_row_map(face_association)
         dimensions = np.asarray(face_association.source_dimensions, dtype=np.int64)
         indices = np.asarray(face_association.source_indices, dtype=np.int64)
@@ -1558,10 +1605,237 @@ def _cad_plane_witness_uv(
     )
 
 
+def _cad_curve_association(
+    source: NativeCadVolumeSource, construction: VolumeConstruction, /
+) -> GeometryAssociation | None:
+    """Restrict original exact curve intervals along proven PLC segment ancestry."""
+    source.domain.require_current(source.source_id, source.source_revision)
+    source.surface_source.require_root(source.surface.mesh, source.surface.geometry)
+    source.surface_source.require_bound(
+        source.surface.mesh, source.surface.geometry, source.fidelity_source
+    )
+    complex_ = PiecewiseLinearComplex.from_stored_fields(source.plc_source.complex)
+    if (
+        complex_.cad_source_charts is None
+        or complex_.cad_source_charts.source_chart_id
+        != source.surface_source.source_chart_id
+        or construction.complex_id != complex_.complex_id
+        or construction.source_id != source.source_id
+        or construction.source_revision != source.source_revision
+    ):
+        raise ValueError(
+            "CAD volume construction changed its source PLC or chart binding."
+        )
+    original = _association_for(complex_.cad_source_charts, 1, required=False)
+    if complex_.cad_segment_edge_ids is None:
+        raise ValueError("CAD PLC lost its original surface edge mapping.")
+    segment_ids = np.asarray(complex_.cad_segment_edge_ids, dtype=np.int64)
+    authored = np.asarray(complex_.segments, dtype=np.int64).reshape((-1, 2))
+    if segment_ids.shape != (authored.shape[0],):
+        raise ValueError("CAD source curve segment and surface edge rows are misaligned.")
+    if not segment_ids.size:
+        return None
+    if original is None:
+        raise ValueError("CAD source curve intervals are no longer available.")
+    original_rows = _association_row_map(original)
+    edge_key_to_authored = {
+        (identifier, tuple(path)): row
+        for row, (identifier, path) in enumerate(
+            zip(complex_.segment_ids, complex_.segment_occurrence_paths, strict=True)
+        )
+    }
+    if len(edge_key_to_authored) != segment_ids.size:
+        raise ValueError("CAD source curve segment identities are ambiguous.")
+    source_edges = np.asarray(construction.source_segment_vertices, dtype=np.int64)
+    complex_rows = np.asarray(construction.source_segment_complex_rows, dtype=np.int64)
+    if (
+        source_edges.shape != (complex_rows.size, 2)
+        or len(construction.segment_ids) != complex_rows.size
+        or len(construction.segment_occurrence_paths) != complex_rows.size
+    ):
+        raise ValueError("CAD source segment ancestry banks are misaligned.")
+    source_to_authored: dict[int, int] = {}
+    canonical_edges = np.asarray(complex_.plc_edge_vertices, dtype=np.int64)
+    for row, (identifier, path) in enumerate(
+        zip(construction.segment_ids, construction.segment_occurrence_paths, strict=True)
+    ):
+        authored_row = edge_key_to_authored.get((identifier, tuple(path)))
+        if authored_row is None:
+            continue
+        complex_row = int(complex_rows[row])
+        if (
+            not 0 <= complex_row < canonical_edges.shape[0]
+            or not np.array_equal(source_edges[row], authored[authored_row])
+            or not np.array_equal(canonical_edges[complex_row], authored[authored_row])
+            or complex_.plc_edge_ids[complex_row] != identifier
+            or tuple(complex_.plc_edge_occurrence_paths[complex_row]) != tuple(path)
+        ):
+            raise ValueError("CAD source curve segment changed its canonical endpoints.")
+        source_to_authored[row] = authored_row
+    if len(source_to_authored) != segment_ids.size or set(
+        source_to_authored.values()
+    ) != set(range(segment_ids.size)):
+        raise ValueError("CAD source curve segments lost their canonical PLC ancestry.")
+    mesh = construction.mesh
+    edges, _ = simplex_volume_entities(mesh)
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+    edge_rows = {tuple(sorted(map(int, edge))): row for row, edge in enumerate(edges)}
+    if len(edge_rows) != edge_ids.size:
+        raise ValueError("CAD volume mesh edge incidence is ambiguous.")
+    input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)
+    strata = np.asarray(construction.witness_strata, dtype=np.int64)
+    entities = np.asarray(construction.witness_entities, dtype=np.int64)
+    parameters = np.asarray(construction.witness_parameters, dtype=np.float64)
+    deviations = np.asarray(construction.witness_deviations, dtype=np.float64)
+    if (
+        input_vertices.shape != (mesh.coordinates.shape[0],)
+        or strata.shape != input_vertices.shape
+        or entities.shape != input_vertices.shape
+        or parameters.shape != (input_vertices.size, 2)
+        or deviations.shape != input_vertices.shape
+    ):
+        raise ValueError("CAD curve endpoint witness banks are misaligned.")
+    segments = np.asarray(construction.segments, dtype=np.int64).reshape((-1, 2))
+    segment_sources = np.asarray(construction.segment_source_edges, dtype=np.int64)
+    if (
+        segment_sources.shape != (segments.shape[0],)
+        or len(construction.segment_source_ids) != segments.shape[0]
+        or len(construction.segment_source_occurrence_paths) != segments.shape[0]
+    ):
+        raise ValueError("CAD target segment ancestry banks are misaligned.")
+    targets: list[int] = []
+    source_ids: list[str] = []
+    parent_ids: list[int] = []
+    source_indices: list[int] = []
+    paths: list[tuple[str, ...]] = []
+    intervals: list[tuple[Fraction, Fraction]] = []
+    orientations: list[int] = []
+    residuals: list[float] = []
+    parts: dict[int, list[tuple[Fraction, Fraction]]] = {}
+    seen: set[int] = set()
+    old_indices = np.asarray(original.source_indices, dtype=np.int64)
+    old_residuals = np.asarray(original.residuals, dtype=np.float64)
+    resolve = _BRepRowResolver(source.domain)
+    senses: list[int] = []
+    for surface_edge_id in segment_ids.tolist():
+        original_row = original_rows.get(int(surface_edge_id))
+        if original_row is None:
+            raise ValueError("CAD source segment lost its original curve association.")
+        path = tuple(original.source_occurrence_paths[original_row])
+        curve, _, expected_id = resolve(1, int(old_indices[original_row]), path)
+        if original.source_entity_ids[original_row] != expected_id:
+            raise ValueError("CAD source segment changed its B-Rep curve identity.")
+        senses.append(_cad_curve_parameter_sense(source.domain, curve))
+    for segment_row, (segment, raw_parent) in enumerate(
+        zip(segments, segment_sources, strict=True)
+    ):
+        parent = int(raw_parent)
+        if not 0 <= parent < source_edges.shape[0]:
+            raise ValueError("CAD target segment names an absent source edge.")
+        authored_row = source_to_authored.get(parent)
+        if authored_row is None:
+            continue
+        if construction.segment_source_ids[segment_row] != construction.segment_ids[
+            parent
+        ] or tuple(construction.segment_source_occurrence_paths[segment_row]) != tuple(
+            construction.segment_occurrence_paths[parent]
+        ):
+            raise ValueError("CAD target segment changed its source identity.")
+        edge_row = edge_rows.get(tuple(sorted(map(int, segment))))
+        if edge_row is None or edge_row in seen:
+            raise ValueError("CAD target segment does not identify one unique mesh edge.")
+        seen.add(edge_row)
+        original_row = original_rows.get(int(segment_ids[authored_row]))
+        if original_row is None:
+            raise ValueError("CAD source segment lost its original curve association.")
+        interval = original.source_parameter_intervals[original_row]
+        if interval is None:
+            raise ValueError("CAD source segment lacks an exact curve interval.")
+        fractions: list[Fraction] = []
+        for raw_vertex in edges[edge_row]:
+            vertex = int(raw_vertex)
+            if not 0 <= vertex < input_vertices.size:
+                raise ValueError("CAD target edge names an absent vertex.")
+            input_vertex = int(input_vertices[vertex])
+            if input_vertex == int(source_edges[parent, 0]):
+                fraction = Fraction(0)
+            elif input_vertex == int(source_edges[parent, 1]):
+                fraction = Fraction(1)
+            elif input_vertex < 0 and strata[vertex] == 1 and entities[vertex] == parent:
+                value = float(parameters[vertex, 0])
+                if not np.isfinite(value):
+                    raise ValueError("CAD edge witness has no finite source parameter.")
+                fraction = Fraction.from_float(value)
+            else:
+                raise ValueError("CAD curve endpoint lacks its source segment witness.")
+            if not 0 <= fraction <= 1:
+                raise ValueError("CAD curve endpoint lies outside its source segment.")
+            fractions.append(fraction)
+        if fractions[0] == fractions[1]:
+            raise ValueError("CAD target curve edge has a degenerate source interval.")
+        endpoints = tuple(
+            interval[0] + value * (interval[1] - interval[0]) for value in fractions
+        )
+        child = (min(endpoints), max(endpoints))
+        parts.setdefault(authored_row, []).append(child)
+        targets.append(int(edge_ids[edge_row]))
+        parent_ids.append(int(segment_ids[authored_row]))
+        source_ids.append(original.source_entity_ids[original_row])
+        source_indices.append(int(old_indices[original_row]))
+        paths.append(tuple(original.source_occurrence_paths[original_row]))
+        intervals.append(child)
+        orientations.append(
+            (1 if endpoints[1] > endpoints[0] else -1) * senses[authored_row]
+        )
+        # The output edge is bounded from its PLC parent and the parent from
+        # the source curve; use the triangle inequality, rounded outward.
+        bound = float(old_residuals[original_row]) + float(
+            np.max(deviations[edges[edge_row]])
+        )
+        if not np.isfinite(bound) or bound < 0:
+            raise ValueError("CAD curve edge has no finite source residual bound.")
+        residuals.append(0.0 if bound == 0.0 else float(np.nextafter(bound, np.inf)))
+    for authored_row, surface_edge_id in enumerate(segment_ids.tolist()):
+        original_row = original_rows[int(surface_edge_id)]
+        root = original.source_parameter_intervals[original_row]
+        children = sorted(parts.get(authored_row, ()))
+        if (
+            root is None
+            or not children
+            or children[0][0] != root[0]
+            or children[-1][1] != root[1]
+            or any(left[1] != right[0] for left, right in zip(children, children[1:]))
+        ):
+            raise ValueError(
+                "CAD target curve edges do not exactly partition their source interval."
+            )
+    return GeometryAssociation(
+        GeometryAssociationKind.CURVE,
+        source.source_id,
+        source.source_revision,
+        mesh.entity_set(1).entity_set_id,
+        np.asarray(targets, dtype=np.int64),
+        tuple(source_ids),
+        np.asarray(residuals, dtype=np.float64),
+        source_dimensions=np.ones(len(targets), dtype=np.int8),
+        source_indices=np.asarray(source_indices, dtype=np.int32),
+        source_roles=(GeometrySourceEntityRole.EDGE,) * len(targets),
+        source_occurrence_paths=tuple(paths),
+        source_parameter_intervals=tuple(intervals),
+        orientations=np.asarray(orientations, dtype=np.int8),
+        parent_dimensions=np.ones(len(targets), dtype=np.int8),
+        parent_ids=np.asarray(parent_ids, dtype=np.int64),
+        parent_association_id=original.association_id,
+        provenance=GeometryAssociationProvenance.LINEAGE,
+        exact=False,
+    )
+
+
 def _cad_volume_chart_witness(
     source: NativeCadVolumeSource,
     construction: VolumeConstruction,
     geometry: CellGeometrySpec,
+    curve_association: GeometryAssociation | None,
     /,
 ) -> SourceBoundaryChartWitness:
     from ._native_volume import _boundary_face_entities
@@ -1613,6 +1887,51 @@ def _cad_volume_chart_witness(
         raise ValueError(
             "CAD volume source roots omit an original surface triangle cell."
         )
+    complex_ = source.plc_source.complex
+    if (
+        complex_.cad_polygon_cell_ids is None
+        or not np.array_equal(
+            source_triangle_cell_ids,
+            np.asarray(complex_.cad_polygon_cell_ids, dtype=np.int64),
+        )
+        or not np.array_equal(
+            source_triangle_patches,
+            np.asarray(complex_.polygon_facets, dtype=np.int64),
+        )
+    ):
+        raise ValueError("CAD source triangles changed their canonical PLC row bindings.")
+    root_rows = {
+        int(cell_id): row for row, cell_id in enumerate(surface_source.cell_global_ids)
+    }
+    face_association = _association_for(surface_source, 2, required=True)
+    if face_association is None:
+        raise ValueError("CAD source charts require a source-face association.")
+    face_rows = _association_row_map(face_association)
+    face_orientations = np.asarray(face_association.orientations, dtype=np.int8)
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    vertices = np.asarray(complex_.polygon_vertices, dtype=np.int64)
+    for row, cell_id in enumerate(source_triangle_cell_ids.tolist()):
+        root_row = root_rows[int(cell_id)]
+        root = surface_source.root_parameter_chart(root_row)
+        if int(face_orientations[face_rows[int(cell_id)]]) < 0:
+            root = (root[0], root[2], root[1])
+        polygon = tuple(int(value) for value in vertices[offsets[row] : offsets[row + 1]])
+        if (
+            len(polygon) != 3
+            or source_triangle_parameter_exact[row] != root
+            or int(surface_source.root_patches[root_row])
+            != int(source_triangle_patches[row])
+            or source_triangle_ids[row]
+            != _plc_source_triangle_id(
+                polygon,
+                int(source_triangle_patches[row]),
+                complex_.vertex_ids,
+                complex_.vertex_occurrence_paths,
+                complex_.facet_ids,
+                complex_.facet_occurrence_paths,
+            )
+        ):
+            raise ValueError("CAD source triangle changed its exact root chart ancestry.")
     source_chart_by_face_id = {
         identifier: row for row, identifier in enumerate(source_triangle_ids)
     }
@@ -1792,6 +2111,7 @@ def _cad_volume_chart_witness(
     source_rows: list[np.ndarray] = []
     source_rational_rows: list[tuple[tuple[Fraction, ...], ...]] = []
     parent_cells: list[int] = []
+    root_cells: list[int] = []
     local_facets: list[int] = []
     source_chart_ids: list[str] = []
     source_entity_ids: list[str] = []
@@ -1850,7 +2170,7 @@ def _cad_volume_chart_witness(
             if not 0 <= edge_row < source_segment_vertices.shape[0]:
                 raise ValueError("CAD edge witness names an absent source segment.")
             first, second = (
-                patch_input_uv(int(input_vertices[int(value)]), patch, plane)
+                patch_input_uv(int(value), patch, plane)
                 for value in source_segment_vertices[edge_row]
             )
             parameter = Fraction.from_float(float(witness_parameters[vertex, 0]))
@@ -1988,7 +2308,7 @@ def _cad_volume_chart_witness(
                 edge_vertices = tuple(
                     int(value) for value in source_segment_vertices[edge_row]
                 )
-                edge_inputs = tuple(int(input_vertices[value]) for value in edge_vertices)
+                edge_inputs = edge_vertices
                 if min(edge_inputs) < 0 or edge_inputs[0] == edge_inputs[1]:
                     raise ValueError(
                         "CAD source edge lost its original endpoint ancestry."
@@ -2096,7 +2416,7 @@ def _cad_volume_chart_witness(
                 edge_vertices = tuple(
                     int(value) for value in source_segment_vertices[edge_row]
                 )
-                edge_inputs = tuple(int(input_vertices[value]) for value in edge_vertices)
+                edge_inputs = edge_vertices
                 first_corner = source_corner_by_vertex.get(edge_inputs[0])
                 second_corner = source_corner_by_vertex.get(edge_inputs[1])
                 parameter = Fraction.from_float(float(witness_parameters[vertex, 0]))
@@ -2154,6 +2474,15 @@ def _cad_volume_chart_witness(
         source_entity_ids.append(entity_id)
         occurrence_paths.append(occurrence)
         orientations.append(source_orientation * target_orientation)
+        root_cells.append(
+            int(
+                source_triangle_cell_ids[
+                    source_chart_by_face_id[source_face_ids[next(iter(candidates))]]
+                ]
+            )
+            if plane is None and len(candidates) == 1
+            else -1
+        )
 
     if not parent_cells:
         raise ValueError("CAD source chart witness cannot be empty.")
@@ -2177,6 +2506,9 @@ def _cad_volume_chart_witness(
         source_parameters=np.asarray(source_rows, dtype=np.float64),
         source_parameter_rational_tokens=rational_chart_tokens(source_rational_rows),
         orientations=np.asarray(orientations, dtype=np.int8),
+        cad_plc=source.plc_source.complex,
+        cad_curve_association=curve_association,
+        cad_root_cell_ids=np.asarray(root_cells, dtype=np.int64),
     )
 
 
@@ -2250,6 +2582,11 @@ def _cad_surface_feature_witness(
             full_witness.source_parameter_rational_tokens[int(row)] for row in rows
         ),
         orientations=np.asarray(full_witness.orientations, dtype=np.int8)[rows],
+        cad_plc=full_witness.cad_plc,
+        cad_curve_association=full_witness.cad_curve_association,
+        cad_root_cell_ids=np.asarray(full_witness.cad_root_cell_ids, dtype=np.int64)[
+            rows
+        ],
     )
     return query, witness
 
@@ -2504,7 +2841,16 @@ def _cad_curve_feature_witness(
             zip(query.curve_entity_ids, query.occurrence_paths, strict=True)
         )
     }
-    segment_parameters: dict[int, tuple[float, float]] = {}
+    if complex_.cad_source_charts is None or complex_.cad_segment_edge_ids is None:
+        raise ValueError("CAD curve witness lost its source chart and edge bindings.")
+    original_curves = _association_for(complex_.cad_source_charts, 1, required=True)
+    if original_curves is None:
+        raise ValueError("CAD source charts require a source-curve association.")
+    original_curve_rows = _association_row_map(original_curves)
+    source_edge_ids = np.asarray(complex_.cad_segment_edge_ids, dtype=np.int64)
+    if source_edge_ids.shape != segment_curve_rows.shape:
+        raise ValueError("CAD curve source edge and segment rows are misaligned.")
+    segment_parameters: dict[int, tuple[Fraction, Fraction]] = {}
     segment_rows_by_curve: dict[int, list[int]] = {}
     vertex_segments: dict[int, set[int]] = {}
     for segment_row, (curve_row, edge_index) in enumerate(
@@ -2525,33 +2871,18 @@ def _cad_curve_feature_witness(
         )
         if query_row is None:
             continue
-        first, last = edge_parameter_range(edge_index, source_occurrence)
-
-        def endpoint_parameter(plc_vertex: int, /) -> float:
-            dimension = int(source.vertex_brep_dimensions[plc_vertex])
-            source_index = int(source.vertex_brep_indices[plc_vertex])
-            occurrence = tuple(complex_.vertex_occurrence_paths[plc_vertex])
-            if occurrence != source_occurrence:
-                raise ValueError("CAD curve endpoint changed its source occurrence.")
-            if dimension == 1 and source_index == edge_index:
-                return float(source.vertex_parameters[plc_vertex, 0])
-            if dimension == 0:
-                endpoints = edge_vertices[edge_index]
-                if source_index == endpoints[0]:
-                    return first
-                if source_index == endpoints[1]:
-                    return last
-            raise ValueError(
-                "CAD PLC curve endpoint lacks exact source parameter ancestry."
-            )
-
-        first_parameter, last_parameter = (
-            endpoint_parameter(int(value)) for value in segment_vertices[segment_row]
-        )
-        if first_parameter == last_parameter:
-            raise ValueError(
-                "CAD PLC source segment collapses a positive curve interval."
-            )
+        association_row = original_curve_rows.get(int(source_edge_ids[segment_row]))
+        if association_row is None:
+            raise ValueError("CAD curve segment lost its original source interval.")
+        interval = original_curves.source_parameter_intervals[association_row]
+        if interval is None:
+            raise ValueError("CAD curve segment lacks an exact source interval.")
+        patch, loop, position = (int(value) for value in domain.curve_owners[curve_row])
+        _cad_curve_parameter_sense(domain, curve_row)
+        owner = domain.patches[patch].loops[loop][position]
+        first = Fraction.from_float(float(owner.first))
+        width = Fraction.from_float(float(owner.last)) - first
+        first_parameter, last_parameter = (first + value * width for value in interval)
         segment_parameters[segment_row] = (first_parameter, last_parameter)
         segment_rows_by_curve.setdefault(curve_row, []).append(segment_row)
         for plc_vertex in segment_vertices[segment_row].tolist():
@@ -2574,7 +2905,7 @@ def _cad_curve_feature_witness(
         else:
             vertex_segment_rows.append(set())
 
-    def vertex_parameter_on_segment(vertex_row: int, segment_row: int, /) -> float:
+    def vertex_parameter_on_segment(vertex_row: int, segment_row: int, /) -> Fraction:
         first_parameter, last_parameter = segment_parameters[segment_row]
         input_vertex = int(input_vertices[vertex_row])
         endpoints = tuple(int(value) for value in segment_vertices[segment_row])
@@ -2589,11 +2920,12 @@ def _cad_curve_feature_witness(
         source_segment_row = int(entities[vertex_row])
         if source_segment_row != int(segment_source_rows[segment_row]):
             raise ValueError("CAD generated curve vertex changed its source segment.")
-        fraction = float(parameters[vertex_row, 0])
-        if not 0.0 <= fraction <= 1.0:
+        value = float(parameters[vertex_row, 0])
+        if not np.isfinite(value) or not 0.0 <= value <= 1.0:
             raise ValueError(
                 "CAD generated curve vertex lies outside its source segment."
             )
+        fraction = Fraction.from_float(value)
         return first_parameter + fraction * (last_parameter - first_parameter)
 
     mesh = construction.mesh
@@ -2727,14 +3059,13 @@ def _cad_curve_feature_witness(
             query_first = Fraction.from_float(query_range[0])
             query_last = Fraction.from_float(query_range[1])
 
-            def chart_parameter(native_parameter: float, /) -> float:
+            def chart_parameter(native_parameter: Fraction, /) -> Fraction:
                 fraction = (
-                    Fraction.from_float(float(native_parameter))
-                    - Fraction.from_float(edge_range_low)
+                    native_parameter - Fraction.from_float(edge_range_low)
                 ) / edge_width
                 if use.sense < 0:
                     fraction = 1 - fraction
-                return float(query_first + fraction * (query_last - query_first))
+                return query_first + fraction * (query_last - query_first)
 
             edge_parameters = tuple(
                 chart_parameter(value)
@@ -2753,9 +3084,9 @@ def _cad_curve_feature_witness(
             source_chart_ids.append(chart_id)
             source_entity_ids.append(entity_id)
             occurrences.append(tuple(occurrence))
-            source_parameters.append(edge_parameters)
+            source_parameters.append(tuple(float(value) for value in edge_parameters))
             source_parameter_rational_rows.append(
-                tuple((Fraction.from_float(float(value)),) for value in edge_parameters)
+                tuple((value,) for value in edge_parameters)
             )
             target_reference_row = reference_vertices[
                 np.asarray(local_pair, dtype=np.int64)
@@ -2953,7 +3284,10 @@ def _brep_associations(
             if target_dimension == 2 and dimension == 2:
                 orientations[row] = int(source_orientations[row])
             elif target_dimension == 1 and dimension == 1:
-                orientations[row] = int(source_orientations[row])
+                curve_row, _, _ = resolve(1, source_index, entity_path)
+                orientations[row] = int(source_orientations[row]) * (
+                    _cad_curve_parameter_sense(source.domain, curve_row)
+                )
             else:
                 orientations[row] = 0
         for dimension, source_index, path in dict.fromkeys(
@@ -3142,6 +3476,9 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             region_controls=self.specification.region_controls,
         )
         associations = _brep_associations(self.source, construction, physical.points)
+        curve_association = _cad_curve_association(self.source, construction)
+        if curve_association is not None:
+            associations += (curve_association,)
         organization = NativeMeshOrganization(
             boundary=organization.boundary,
             patches=organization.patches,
@@ -3153,7 +3490,7 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             surface_source=self.source.surface_source,
         )
         fidelity_witness = _cad_volume_chart_witness(
-            self.source, construction, physical.geometry
+            self.source, construction, physical.geometry, curve_association
         )
         scoped_fidelity = []
         for feature in self.specification.protected_features:

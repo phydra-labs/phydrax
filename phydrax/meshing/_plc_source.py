@@ -31,6 +31,9 @@ from ..typing import (
     Scope,
 )
 
+if TYPE_CHECKING:
+    from ..geometry.brep._model import BRepGeometry
+
 
 if TYPE_CHECKING:
     from ..geometry.brep._model import BRepGeometry
@@ -334,12 +337,12 @@ def _cad_segment_incidence(
     segment_ids: tuple[str, ...],
     segment_paths: tuple[tuple[str, ...], ...],
     /,
-) -> frozenset[int]:
+) -> tuple[frozenset[int], GlobalEmbeddingCertificate, SourceFidelityCertificate]:
     """Replay exact CAD surface and source incidence before joining occurrences."""
-    from ..geometry._mesh_certificates import _same_tree_content
     from ..geometry._meshing_domain import PatchCurveUse
     from ..geometry._surface_source_support import validate_cad_curve_ancestry
     from ._association import _ordered_vertices
+    from ._model_codec import _register_model_archive_types, _same_model_content
     from .providers._native_cad_volume import (
         _association_for,
         _association_row_map,
@@ -376,17 +379,6 @@ def _cad_segment_incidence(
         raise TypeError(
             "CAD PLC incidence requires retained mathematical surface proofs."
         )
-    embedding.require_current(surface.mesh, surface.geometry)
-    GlobalEmbeddingCertificate.from_stored_fields(embedding)
-    fidelity.require_inputs(
-        surface.mesh,
-        surface.geometry,
-        surface.boundary_source,
-        tolerance=fidelity_tolerance,
-        maximum_normal_deviation=maximum_normal_deviation,
-        witness=surface.chart_witness,
-    )
-    fidelity.revalidate(surface.mesh, surface.geometry, surface.boundary_source)
     if embedding.status != "certified" or fidelity.status != "certified":
         raise ValueError(
             "CAD PLC surface embedding and source fidelity must be certified."
@@ -397,10 +389,23 @@ def _cad_segment_incidence(
         maximum_normal_deviation,
         np.asarray(embedding.binding.junction_vertices, dtype=np.int64),
     )
-    if not _same_tree_content(fresh_embedding, embedding) or not _same_tree_content(
+    _register_model_archive_types()
+    if not _same_model_content(fresh_embedding, embedding) or not _same_model_content(
         fresh_fidelity, fidelity
     ):
         raise ValueError("CAD PLC mathematical proofs differ from their source replay.")
+    # The retained archive graph may still contain column recipes.  Its exact
+    # projected content has just matched the freshly constructed proofs, whose
+    # own currentness checks operate on the restored scientific owners.
+    fresh_embedding.require_current(surface.mesh, surface.geometry)
+    fresh_fidelity.require_inputs(
+        surface.mesh,
+        surface.geometry,
+        surface.boundary_source,
+        tolerance=fidelity_tolerance,
+        maximum_normal_deviation=maximum_normal_deviation,
+        witness=surface.chart_witness,
+    )
     curve_ancestry = validate_cad_curve_ancestry(surface, fidelity_tolerance)
     if set(int(value) for value in segment_edge_ids) != set(curve_ancestry):
         raise ValueError(
@@ -556,7 +561,7 @@ def _cad_segment_incidence(
                 raise ValueError(
                     "CAD segment is not an authored use of each incident patch."
                 )
-    return frozenset(range(len(segments)))
+    return frozenset(range(len(segments))), fresh_embedding, fresh_fidelity
 
 
 type PlcBoundaryPolicy = Literal["fixed", "conforming"]
@@ -917,7 +922,7 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
                         "CAD PLC incidence maps must be non-negative integer vectors."
                     )
                 values.setflags(write=False)
-            verified_segments = _cad_segment_incidence(
+            verified_segments, cad_embedding, cad_fidelity = _cad_segment_incidence(
                 cad_source_charts,
                 cad_fidelity_tolerance,
                 cad_maximum_normal_deviation,

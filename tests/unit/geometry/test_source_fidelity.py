@@ -49,6 +49,7 @@ from phydrax.geometry._source_fidelity import (
     _normal_deviation_for_cell,
     _partition_findings,
     _require_reference_chart_partition,
+    _same_triangle_chain_boundary,
     _surface_target_chart_rows,
     _triangle_centroid_balls,
     _volume_boundary_facet_lookup,
@@ -67,6 +68,50 @@ from phydrax.geometry.brep._patches import (
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 from phydrax.units import METER, MILLIMETER
+
+
+def test_triangle_chain_boundary_handles_subdivision_and_forgeries() -> None:
+    def point(x: int, y: int) -> tuple[Fraction, Fraction]:
+        return Fraction(x), Fraction(y)
+
+    a, b, c, d = point(0, 0), point(2, 0), point(2, 2), point(0, 2)
+    m = point(1, 0)
+    original = ((a, b, c), (a, c, d))
+    subdivided = ((a, m, c), (m, b, c), (a, c, d))
+    reversed_rows = tuple(tuple(reversed(triangle)) for triangle in subdivided)
+    assert _same_triangle_chain_boundary(original, subdivided)
+    assert _same_triangle_chain_boundary(original, reversed_rows)
+    assert not _same_triangle_chain_boundary(original, subdivided[:-1])
+    assert not _same_triangle_chain_boundary(original, (*subdivided, subdivided[0]))
+    shifted = tuple(
+        tuple((x + 1, y) for x, y in triangle) for triangle in original
+    )
+    assert not _same_triangle_chain_boundary(original, shifted)
+
+
+def test_trim_lens_box_screen_preserves_exact_closed_contacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _source_fidelity
+
+    q = Fraction
+    rows = [
+        (10, ((q(0), q(0)), (q(1), q(0)), (q(0), q(1)))),
+        (11, ((q(1), q(0)), (q(2), q(0)), (q(1), q(1)))),
+        (12, ((q(3), q(3)), (q(4), q(3)), (q(3), q(4)))),
+    ]
+    bounds = (
+        (q(1), (q(0), q(0)), (q(1), q(1))),
+        (q(2), (q(1), q(1)), (q(3), q(3))),
+        (q(0), (q(0), q(0)), (q(4), q(4))),
+    )
+    monkeypatch.setattr(
+        _source_fidelity,
+        "_curved_trim_lens_cap",
+        lambda surface, lens, preparation: lens,
+    )
+    actual = _source_fidelity._curved_trim_lens_caps(None, rows, bounds, None)
+    assert actual == {10: q(2), 11: q(2), 12: q(2)}
 
 
 class _PwlBoundaryOwner:
@@ -1385,6 +1430,107 @@ def test_rooted_chart_endpoints_preserve_exact_unrooted_square() -> None:
         ),
     )
 
+
+def test_exact_trim_reference_homotopy_preserves_a_square() -> None:
+    from phydrax.geometry._domain_boundary import _line_endpoints
+    from phydrax.geometry._meshing_domain import SourcePreparation
+    from phydrax.geometry.brep._curve_approximation_topology import (
+        certify_trim_reference_homotopy,
+        TrimReferenceSegment,
+    )
+
+    domain = _domain()
+    segments = []
+    for use in domain.patches[0].loops[0]:
+        first, last = _line_endpoints(use)
+        first_parameter, last_parameter = (
+            (use.first, use.last) if use.sense > 0 else (use.last, use.first)
+        )
+        segments.append(
+            TrimReferenceSegment(
+                use.pcurve,
+                Fraction.from_float(first_parameter),
+                Fraction.from_float(last_parameter),
+                first,
+                last,
+                None,
+                None,
+                None,
+                None,
+            )
+        )
+    boxes = certify_trim_reference_homotopy((tuple(segments),), SourcePreparation(domain))
+    assert len(boxes) == 4
+
+
+def test_trim_homotopy_proves_unequal_obtuse_adjacency() -> None:
+    from phydrax.geometry.brep._curve_approximation_topology import (
+        _adjacent_trim_projection,
+        TrimReferenceSegment,
+    )
+
+    zero = Fraction(0)
+    one = Fraction(1)
+    first = TrimReferenceSegment(
+        LineCurve((-1.0, 0.0), (1.0, 0.0)),
+        zero,
+        one,
+        (-one, zero),
+        (zero, zero),
+        None,
+        None,
+        None,
+        None,
+    )
+    second = TrimReferenceSegment(
+        LineCurve((0.0, 0.0), (-100.0, 1.0)),
+        zero,
+        one,
+        (zero, zero),
+        (-100 * one, one),
+        None,
+        None,
+        None,
+        None,
+    )
+    assert _adjacent_trim_projection(first, second, SourcePreparation(_domain()))
+
+
+def test_trim_homotopy_rejects_crossing_source_loops() -> None:
+    from phydrax.geometry.brep._curve_approximation_topology import (
+        BranchTopologyCertificationError,
+        certify_trim_reference_homotopy,
+        TrimReferenceSegment,
+    )
+
+    def square(x: Fraction, y: Fraction) -> tuple[TrimReferenceSegment, ...]:
+        points = ((x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1))
+        segments = []
+        for index, first in enumerate(points):
+            last = points[(index + 1) % 4]
+            segments.append(
+                TrimReferenceSegment(
+                    LineCurve(
+                        tuple(float(value) for value in first),
+                        tuple(float(last[axis] - first[axis]) for axis in range(2)),
+                    ),
+                    Fraction(0),
+                    Fraction(1),
+                    first,
+                    last,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            )
+        return tuple(segments)
+
+    with pytest.raises(BranchTopologyCertificationError, match="representability"):
+        certify_trim_reference_homotopy(
+            (square(Fraction(0), Fraction(0)), square(Fraction(1, 2), Fraction(1, 2))),
+            SourcePreparation(_domain()),
+        )
 
 def test_rooted_chart_endpoints_refuse_unproved_nearby_join() -> None:
     import equinox as eqx

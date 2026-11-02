@@ -15,6 +15,8 @@ from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.geometry._approximate_source_coverage import (
     _area2,
     _cad_chart_partition,
+    _intersection_area,
+    _possibly_overlapping_pairs,
     _surface_point,
     approximate_source_coverage,
     cad_material_sides,
@@ -45,6 +47,20 @@ _ReferenceTriangle3 = tuple[
 ]
 _CadFaceRow = tuple[int, _Triangle2, _ReferenceTriangle3, int, int]
 _PhysicalTriangle3 = tuple[_Point3, _Point3, _Point3]
+
+
+def test_exact_chart_intersection_handles_clockwise_root_and_target() -> None:
+    zero, one, half = Fraction(0), Fraction(1), Fraction(1, 2)
+    root = ((zero, zero), (one, zero), (zero, one))
+    child = ((zero, zero), (half, zero), (zero, half))
+    for root_order in (root, tuple(reversed(root))):
+        for child_order in (child, tuple(reversed(child))):
+            assert _intersection_area(child_order, root_order) == Fraction(1, 8)
+            assert _intersection_area(root_order, child_order) == Fraction(1, 8)
+            assert _possibly_overlapping_pairs((child_order,), (root_order,), False) == [
+                (0, 0)
+            ]
+    assert _intersection_area(child, (root[0], root[0], root[1])) == 0
 
 
 def _cross(first: _Point3, second: _Point3, /) -> _Point3:

@@ -2494,7 +2494,6 @@ def _upper_half_profile_admitted(
         and lower.parameter_upper < upper.parameter_lower
     )
 
-
 def _analytic_revolution_profile(
     model: BRepModel, solid: int, /
 ) -> _RevolutionProfile | None:

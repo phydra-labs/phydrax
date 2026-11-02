@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from fractions import Fraction
+from typing import NamedTuple, TYPE_CHECKING
 
 import numpy as np
 
@@ -22,6 +24,24 @@ from ._curve_approximation_bounds import (
 )
 from ._intersection_curve import IntersectionCurve, IntersectionSide
 from ._patches import AbstractCurve, BSplineCurve
+
+
+if TYPE_CHECKING:
+    from .._meshing_domain import SourcePreparation
+
+
+class TrimReferenceSegment(NamedTuple):
+    """One source p-curve interval and its reference chord, in traversal order."""
+
+    curve: AbstractCurve
+    first: Fraction
+    last: Fraction
+    start: tuple[Fraction, Fraction]
+    stop: tuple[Fraction, Fraction]
+    start_root_box: np.ndarray | None
+    stop_root_box: np.ndarray | None
+    start_parameter_box: tuple[float, float] | None
+    stop_parameter_box: tuple[float, float] | None
 
 
 class BranchTopologyCertificationError(ValueError):
@@ -246,6 +266,290 @@ def _split(
 
 def _adjacent(first: tuple[float, float], second: tuple[float, float], /) -> bool:
     return first[1] == second[0] or second[1] == first[0]
+
+
+def _trim_reference_range(segment: TrimReferenceSegment, /) -> tuple[float, float]:
+    from .._rational import fraction_down, fraction_up
+
+    lower = fraction_down(min(segment.first, segment.last))
+    upper = fraction_up(max(segment.first, segment.last))
+    for bound in (segment.start_parameter_box, segment.stop_parameter_box):
+        if bound is not None:
+            if (
+                len(bound) != 2
+                or not math.isfinite(bound[0])
+                or not math.isfinite(bound[1])
+                or bound[0] > bound[1]
+            ):
+                raise ValueError("A trim endpoint has no finite parameter enclosure.")
+            lower, upper = min(lower, bound[0]), max(upper, bound[1])
+    return lower, upper
+
+
+def _trim_reference_box(
+    segment: TrimReferenceSegment, preparation: SourcePreparation, /
+) -> np.ndarray:
+    """Outward box of the complete source/chord straight homotopy."""
+    from .._rational import fraction_down, fraction_up
+
+    lower, upper = _trim_reference_range(segment)
+    source = np.asarray(
+        preparation.curve_box(segment.curve, lower, upper), dtype=np.float64
+    )
+    if (
+        source.shape != (2, 2)
+        or np.any(~np.isfinite(source))
+        or np.any(source[0] > source[1])
+    ):
+        raise ValueError("A source trim interval has no finite ordered chart enclosure.")
+    chord = np.asarray(
+        (
+            tuple(
+                fraction_down(min(segment.start[axis], segment.stop[axis]))
+                for axis in range(2)
+            ),
+            tuple(
+                fraction_up(max(segment.start[axis], segment.stop[axis]))
+                for axis in range(2)
+            ),
+        ),
+        dtype=np.float64,
+    )
+    box = _union(source, chord)
+    for root_box in (segment.start_root_box, segment.stop_root_box):
+        if root_box is not None:
+            bounds = np.asarray(root_box, dtype=np.float64)
+            if (
+                bounds.shape != (2, 2)
+                or np.any(~np.isfinite(bounds))
+                or np.any(bounds[0] > bounds[1])
+            ):
+                raise ValueError("A trim junction has no finite ordered root enclosure.")
+            box = _union(box, bounds)
+    return box
+
+
+def _trim_reference_vectors(
+    segment: TrimReferenceSegment,
+    preparation: SourcePreparation,
+    /,
+) -> tuple[tuple[Fraction, Fraction], ...] | None:
+    """Exact chord and corners of the oriented derivative interval."""
+    lower, upper = _trim_reference_range(segment)
+    try:
+        low, high = preparation.curve_derivative_bounds(segment.curve, lower, upper)
+    except (ArithmeticError, NotImplementedError, TypeError, ValueError):
+        return None
+    low_, high_ = np.asarray(low, dtype=np.float64), np.asarray(high, dtype=np.float64)
+    if (
+        low_.shape != (2,)
+        or high_.shape != (2,)
+        or np.any(~np.isfinite(low_))
+        or np.any(~np.isfinite(high_))
+        or np.any(low_ > high_)
+    ):
+        return None
+    sign = 1 if segment.last > segment.first else -1
+    x = tuple(sign * Fraction.from_float(float(value)) for value in (low_[0], high_[0]))
+    y = tuple(sign * Fraction.from_float(float(value)) for value in (low_[1], high_[1]))
+    return (
+        (segment.stop[0] - segment.start[0], segment.stop[1] - segment.start[1]),
+        (x[0], y[0]),
+        (x[0], y[1]),
+        (x[1], y[0]),
+        (x[1], y[1]),
+    )
+
+
+def _trim_reference_projection(
+    segment: TrimReferenceSegment,
+    direction: tuple[Fraction, Fraction],
+    preparation: SourcePreparation,
+    /,
+) -> bool:
+    """Prove source and reference traverse one common strictly increasing axis."""
+    vectors = _trim_reference_vectors(segment, preparation)
+    return vectors is not None and all(
+        direction[0] * vector[0] + direction[1] * vector[1] > 0 for vector in vectors
+    )
+
+
+def _split_trim_reference(
+    segment: TrimReferenceSegment, /
+) -> tuple[TrimReferenceSegment, TrimReferenceSegment]:
+    midpoint = (segment.first + segment.last) / 2
+    if midpoint in (segment.first, segment.last) or float(midpoint) in (
+        float(segment.first),
+        float(segment.last),
+    ):
+        raise BranchTopologyCertificationError(
+            "Trim homotopy remains unresolved at parameter representability.",
+            interval=(
+                float(min(segment.first, segment.last)),
+                float(max(segment.first, segment.last)),
+            ),
+        )
+    point = (
+        (segment.start[0] + segment.stop[0]) / 2,
+        (segment.start[1] + segment.stop[1]) / 2,
+    )
+    return (
+        TrimReferenceSegment(
+            segment.curve,
+            segment.first,
+            midpoint,
+            segment.start,
+            point,
+            segment.start_root_box,
+            None,
+            segment.start_parameter_box,
+            None,
+        ),
+        TrimReferenceSegment(
+            segment.curve,
+            midpoint,
+            segment.last,
+            point,
+            segment.stop,
+            None,
+            segment.stop_root_box,
+            None,
+            segment.stop_parameter_box,
+        ),
+    )
+
+
+def _adjacent_trim_projection(
+    first: TrimReferenceSegment,
+    second: TrimReferenceSegment,
+    preparation: SourcePreparation,
+    /,
+) -> bool:
+    """Prove two incident homotopy pieces meet only at their common endpoint."""
+    first_vectors = _trim_reference_vectors(first, preparation)
+    second_vectors = _trim_reference_vectors(second, preparation)
+    if first_vectors is None or second_vectors is None:
+        return False
+    vectors = first_vectors + second_vectors
+
+    def positive(direction: tuple[Fraction, Fraction], /) -> bool:
+        return all(direction[0] * x + direction[1] * y > 0 for x, y in vectors)
+
+    if any(positive(vector) for vector in vectors):
+        return True
+    # The closed feasible cone is bounded by perpendiculars of constraints.
+    # A normalized sum of its distinct boundary rays is strictly interior.
+    rays = tuple(
+        (sign * y, -sign * x)
+        for x, y in vectors
+        for sign in (-1, 1)
+        if (x != 0 or y != 0)
+        and all(sign * y * a - sign * x * b >= 0 for a, b in vectors)
+    )
+    for index, first_ray in enumerate(rays):
+        first_scale = abs(first_ray[0]) + abs(first_ray[1])
+        for second_ray in rays[index + 1 :]:
+            second_scale = abs(second_ray[0]) + abs(second_ray[1])
+            direction = (
+                first_ray[0] * second_scale + second_ray[0] * first_scale,
+                first_ray[1] * second_scale + second_ray[1] * first_scale,
+            )
+            if positive(direction):
+                return True
+    return False
+
+
+def certify_trim_reference_homotopy(
+    loops: tuple[tuple[TrimReferenceSegment, ...], ...],
+    preparation: SourcePreparation,
+    /,
+) -> tuple[np.ndarray, ...]:
+    """Prove endpoint-relative embedded trim-to-reference homotopies.
+
+    The caller must independently bind each interval and shared endpoint to its
+    source coedge/root, and prove the reference loops form the desired oriented
+    partition. This routine proves local graph injectivity and separation of all
+    nonadjacent swept cells; it never treats overlapping enclosures as proof.
+    """
+    from .._planar_primitives import box_overlap_pairs
+
+    if not loops or any(not loop for loop in loops):
+        raise ValueError("Trim homotopy requires nonempty authored loops.")
+    pieces = [list(loop) for loop in loops]
+    for loop in pieces:
+        for index, segment in enumerate(loop):
+            if (
+                not isinstance(segment.curve, AbstractCurve)
+                or segment.curve.ambient_dimension != 2
+                or segment.first == segment.last
+                or segment.start == segment.stop
+                or segment.stop != loop[(index + 1) % len(loop)].start
+            ):
+                raise ValueError(
+                    "Trim homotopy changes source or reference-loop incidence."
+                )
+
+    def split(loop: int, index: int, /) -> None:
+        first, second = _split_trim_reference(pieces[loop][index])
+        pieces[loop][index : index + 1] = (first, second)
+
+    while True:
+        changed = False
+        for loop_index, loop in enumerate(pieces):
+            for index, segment in enumerate(loop):
+                direction = (
+                    segment.stop[0] - segment.start[0],
+                    segment.stop[1] - segment.start[1],
+                )
+                if not _trim_reference_projection(segment, direction, preparation):
+                    split(loop_index, index)
+                    changed = True
+                    break
+                following = loop[(index + 1) % len(loop)]
+                if not _adjacent_trim_projection(segment, following, preparation):
+                    next_index = (index + 1) % len(loop)
+                    selected = (
+                        index
+                        if abs(segment.last - segment.first)
+                        >= abs(following.last - following.first)
+                        else next_index
+                    )
+                    split(loop_index, selected)
+                    changed = True
+                    break
+            if changed:
+                break
+        if changed:
+            continue
+        flattened = tuple(
+            (loop_index, index, segment)
+            for loop_index, loop in enumerate(pieces)
+            for index, segment in enumerate(loop)
+        )
+        boxes = tuple(
+            _trim_reference_box(segment, preparation) for _, _, segment in flattened
+        )
+        lower = np.stack(tuple(box[0] for box in boxes))
+        upper = np.stack(tuple(box[1] for box in boxes))
+        overlap = box_overlap_pairs(
+            len(boxes), len(boxes), (lower, upper), (lower, upper), self_pairs=True
+        )
+        for first_index, second_index in overlap.tolist():
+            first_loop, first_slot, first = flattened[first_index]
+            second_loop, second_slot, second = flattened[second_index]
+            if first_loop == second_loop and (
+                (first_slot + 1) % len(pieces[first_loop]) == second_slot
+                or (second_slot + 1) % len(pieces[first_loop]) == first_slot
+            ):
+                continue
+            if abs(first.last - first.first) >= abs(second.last - second.first):
+                split(first_loop, first_slot)
+            else:
+                split(second_loop, second_slot)
+            changed = True
+            break
+        if not changed:
+            return boxes
 
 
 def _approximation_identity(

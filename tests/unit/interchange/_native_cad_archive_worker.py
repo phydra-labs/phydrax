@@ -5370,8 +5370,6 @@ def _rebuild_continuation_value(
         "phydrax.discretization.fem._de_rham",
         "phydrax.geometry._common_root_volume_overlap",
     }:
-        from phydrax.meshing._model_codec import restore_model_archive_value
-
         return restore_model_archive_value(value)
     if isinstance(value, SurfaceMetadata):
         metadata = SurfaceMetadata(
@@ -5607,6 +5605,12 @@ def _rebuild_continuation_value(
             orientations=value.orientations,
             implicit_cell_keys=value.implicit_cell_keys,
             implicit_root_edge_keys=value.implicit_root_edge_keys,
+            cad_plc=(
+                None if value.cad_plc is None
+                else _rebuild_as(value.cad_plc, PiecewiseLinearComplex)
+            ),
+            cad_curve_association=value.cad_curve_association,
+            cad_root_cell_ids=value.cad_root_cell_ids,
         )
         if witness.witness_id != value.witness_id:
             raise ValueError("Source boundary chart witness identity changed.")
@@ -12953,6 +12957,29 @@ def _read_source_chart_rational_artifact(
     print("source-chart-rational-cold-restored")
 
 
+def _read_cad_chart_witness(path: Path, expected_id: str, /) -> None:
+    witness = read_model_artifact(
+        path,
+        expected_type=SourceBoundaryChartWitness,
+        restore=_rebuild_continuation_value,
+        limits=None,
+    )
+    if witness.witness_id != expected_id or witness.cad_plc is None:
+        raise ValueError("Cold CAD chart witness lost its source ancestry.")
+    charts = witness.cad_plc.cad_source_charts
+    if charts is None:
+        raise ValueError("Cold CAD PLC lost its source charts.")
+    occurrences = np.asarray(charts.boundary_occurrences)
+    if (
+        occurrences.dtype != np.int64
+        or occurrences.ndim != 3
+        or occurrences.shape[1:] != (charts.mesh.blocks[0].arity, 3)
+        or occurrences.shape[0] not in (0, len(charts.cell_global_ids))
+    ):
+        raise ValueError("Cold CAD source edge-occurrence rows are malformed.")
+    print("cad-chart-witness-cold-restored")
+
+
 def _surface_result_for_brep(model: BRepModel, /) -> CellMeshingResult:
     from phydrax.meshing.providers._native_surface import prepare_native_surface
     from tests.unit.meshing.test_native_surface_routes import _surface_specification
@@ -14824,6 +14851,8 @@ if __name__ == "__main__":
         _write_source_coverage_artifact(archive_directory)
     elif operation == "read-source-coverage":
         _read_source_coverage_artifact(archive_directory, json.loads(sys.argv[3]))
+    elif operation == "read-cad-chart-witness":
+        _read_cad_chart_witness(archive_directory, sys.argv[3])
     elif operation == "write-region-boundary-evidence":
         _write_region_boundary_archive(archive_directory)
     elif operation == "read-region-boundary-evidence":

@@ -2694,6 +2694,88 @@ def execute_surface_metric_adaptation(
     )
 
 
+def _target_boundary_occurrences(
+    source: SurfaceSourceCharts,
+    target_ids: np.ndarray,
+    target_patches: np.ndarray,
+    target_charts: tuple[tuple[tuple[Fraction, Fraction], ...], ...],
+    maps: tuple[ReferenceCellMapWitnesses, ...],
+    /,
+) -> np.ndarray | None:
+    """Transport authored source coedges only through exact root-cell restrictions."""
+    from ..discretization._nested_reference_types import exact_reference_cell_vertices
+
+    if source.boundary_occurrences.size == 0:
+        return None
+    source_rows = {
+        identifier: row for row, identifier in enumerate(source.cell_global_ids)
+    }
+    target_rows = {int(identifier): row for row, identifier in enumerate(target_ids)}
+    if len(target_rows) != target_ids.size:
+        raise ValueError("Target surface cells must have unique IDs.")
+    result = np.full((target_ids.size, 3, 3), -1, dtype=np.int64)
+    covered: set[int] = set()
+    for mapping in maps:
+        if (
+            mapping.target_cell_kind != "triangle"
+            or mapping.source_cell_kind != "triangle"
+        ):
+            raise ValueError(
+                "Surface incidence transfer requires exact triangle restrictions."
+            )
+        exact = exact_reference_cell_vertices(mapping)
+        for row, (target_id, source_id) in enumerate(
+            zip(mapping.target_cell_ids, mapping.source_cell_ids, strict=True)
+        ):
+            target_id_, source_id_ = int(target_id), int(source_id)
+            target_row = target_rows.get(target_id_)
+            source_row = source_rows.get(source_id_)
+            if target_row is None or source_row is None or target_id_ in covered:
+                raise ValueError(
+                    "Surface incidence transfer has invalid root-cell ancestry."
+                )
+            if int(target_patches[target_row]) != int(source.root_patches[source_row]):
+                raise ValueError("Surface incidence transfer changes its source patch.")
+            parent = source.root_parameter_chart(source_row)
+            reference = exact[row]
+            barycentric = tuple(
+                (Fraction(1) - point[0] - point[1], point[0], point[1])
+                for point in reference
+            )
+            if any(
+                tuple(
+                    sum(
+                        (weight[index] * parent[index][axis] for index in range(3)),
+                        Fraction(0),
+                    )
+                    for axis in range(2)
+                )
+                != target_charts[target_row][corner]
+                for corner, weight in enumerate(barycentric)
+            ):
+                raise ValueError(
+                    "Surface incidence reference map changes its exact chart."
+                )
+            for opposite in range(3):
+                first, last = (opposite + 1) % 3, (opposite + 2) % 3
+                source_edges = tuple(
+                    source_opposite
+                    for source_opposite in range(3)
+                    if barycentric[first][source_opposite] == 0
+                    and barycentric[last][source_opposite] == 0
+                )
+                if len(source_edges) > 1:
+                    raise ValueError("Surface incidence target edge is degenerate.")
+                if source_edges:
+                    result[target_row, opposite] = source.boundary_occurrences[
+                        source_row, source_edges[0]
+                    ]
+            covered.add(target_id_)
+    if covered != set(target_rows):
+        raise ValueError("Surface incidence transfer omits target cells.")
+    return result
+
+
 def target_surface_source(
     source_charts: SurfaceSourceCharts,
     target_mesh: CellMesh,
@@ -2752,13 +2834,17 @@ def target_surface_source(
     )
     exact_chart = witness.exact_chart
     exact_charts = tuple(exact_chart(int(row)) for row in rows.tolist())
+    target_patches = np.asarray(witness.patches, dtype=np.int64)[rows]
+    boundary_occurrences = _target_boundary_occurrences(
+        source_charts, target_ids, target_patches, exact_charts, geometry.reference_maps
+    )
     return SurfaceSourceCharts(
         source_charts.domain,
         target_mesh,
         target_geometry,
         source_charts.coordinate_contract,
         np.asarray(witness.charts, dtype=np.float64)[rows],
-        np.asarray(witness.patches, dtype=np.int64)[rows],
+        target_patches,
         tuple(associations),
         source_charts.boundary_source,
         source_root_cell_ids=np.asarray(witness.source_root_cell_ids, dtype=np.int64)[
@@ -2768,6 +2854,7 @@ def target_surface_source(
             witness.source_piece_ids[int(row)] for row in rows.tolist()
         ),
         root_parameter_exact=exact_charts,
+        boundary_occurrences=boundary_occurrences,
     )
 
 

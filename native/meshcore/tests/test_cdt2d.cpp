@@ -415,6 +415,56 @@ void test_constraint_source_witnesses() {
   PHX_CHECK(found_source_witness);
 }
 
+void test_refinement_preserves_smooth_samples_and_constraint_junctions() {
+  Input in;
+  // The first two bottom segments meet at a nonacute sampled boundary point;
+  // the interior constraint makes it a true three-ray junction in the second run.
+  in.points = {0, 0, 0.25, 0, 1, 0, 1, 1, 0, 1, 0.5, 0.5};
+  in.segments = {0, 1, 1, 2, 2, 3, 3, 4, 4, 0};
+  in.min_angle = 20.0;
+  in.max_area = 0.03;
+  for (bool junction : {false, true}) {
+    Input candidate = in;
+    if (junction) candidate.segments.insert(candidate.segments.end(), {1, 5});
+    const Result result = run(candidate);
+    PHX_CHECK(result.status == PHX_MC_OK);
+    check_mesh(result);
+    check_segments(result, candidate);
+    check_constrained_delaunay(result);
+    check_quality(result, 20.0, 0.03);
+    PHX_CHECK_NEAR(total_area(result), 1.0, 1e-12);
+  }
+}
+
+void test_distinct_nearby_constraint_vertices_remain_distinct() {
+  Input in;
+  const double next = std::nextafter(0.25, 1.0);
+  in.points = {0, 0, 0.25, 0, next, 0, 1, 0, 1, 1, 0, 1};
+  in.segments = {0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 0};
+  const Result result = run(in);
+  PHX_CHECK(result.status == PHX_MC_OK);
+  PHX_CHECK(result.vertex_map[1] != result.vertex_map[2]);
+  check_mesh(result);
+  check_segments(result, in);
+  check_constrained_delaunay(result);
+  PHX_CHECK_NEAR(total_area(result), 1.0, 1e-12);
+}
+
+void test_acute_input_corner_retains_its_constraints() {
+  Input in;
+  in.points = {0, 0, 2, 0, 2, 0.3};
+  in.segments = {0, 1, 1, 2, 2, 0};
+  in.min_angle = 20.0;
+  in.max_area = 0.05;
+  const Result result = run(in);
+  PHX_CHECK(result.status == PHX_MC_OK || result.status == PHX_MC_UNRESOLVED);
+  check_mesh(result);
+  check_segments(result, in);
+  check_constrained_delaunay(result);
+  PHX_CHECK_NEAR(total_area(result), 0.3, 1e-12);
+}
+
+
 void test_arguments() {
   Input in = square_with_hole();
   Input bad = in;
@@ -477,6 +527,9 @@ int main() {
   test_ruppert_l_shape();
   test_ruppert_slanted_polygon();
   test_constraint_source_witnesses();
+  test_refinement_preserves_smooth_samples_and_constraint_junctions();
+  test_distinct_nearby_constraint_vertices_remain_distinct();
+  test_acute_input_corner_retains_its_constraints();
   test_arguments();
   return phx::mc::test::finish("test_cdt2d");
 }

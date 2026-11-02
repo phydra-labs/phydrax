@@ -1773,6 +1773,9 @@ def _rebind_chart_witness_geometry(
             if witness.implicit_root_edge_keys.shape[0]
             else None
         ),
+        cad_plc=witness.cad_plc,
+        cad_curve_association=witness.cad_curve_association,
+        cad_root_cell_ids=witness.cad_root_cell_ids,
     )
 
 
