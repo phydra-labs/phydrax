@@ -352,38 +352,52 @@ def _constant_chart_line(
     return origin[axis], origin[other], direction[other]
 
 
-def certify_cad_trim_sheet(
-    charts: object, patch: int, tolerance: float, /
-) -> CadTrimSheetProof | None:
-    """Bind an exact cylinder sheet to CAD coedges and their reference sweep.
+@dataclass(frozen=True, slots=True, eq=False)
+class BRepTrimSheetProof:
+    """Exact carrier sheet and CAD quotient bound to a B-Rep domain occurrence."""
 
-    Reconstructs the coedge-bound reference chains through the coverage owner's
-    source ancestry. For a full native turn, the two constant chart sides must
-    be opposite uses of the same B-Rep edge. Curved sides whose interval boxes
-    overhang the sheet must have root-proved seam endpoints and a strictly
-    signed interval derivative on every reference piece. The chord endpoints
-    are checked exactly; convexity then contains their straight homotopy.
+    domain: object
+    domain_id: str
+    patch: int
+    embedding: SourceEmbeddingProof
 
-    This proves sheet containment and deck authority, not trim homotopy
-    embeddedness, polygon partition, or orientation. Those remain independent
-    consumer obligations. It deliberately admits only cylindrical sources.
+    def replay(self, domain: object, patch: int, /) -> bool:
+        if domain is not self.domain or patch != self.patch:
+            return False
+        proof = certify_brep_trim_sheet(domain, patch)
+        return (
+            proof is not None
+            and proof.domain_id == self.domain_id
+            and proof.embedding.source_id == self.embedding.source_id
+            and proof.embedding.bounds == self.embedding.bounds
+            and proof.embedding.deck_axes == self.embedding.deck_axes
+        )
+
+
+def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof | None:
+    """Prove a cylindrical CAD trim boundary lies on one exact source sheet.
+
+    The full-turn quotient requires opposite coedge uses of one source edge on
+    the exact constant lines 0 and τ. Root identity with those lines fixes an
+    overhanging curved use's endpoint coordinates; interval derivatives then
+    prove the entire use remains between them. The proof binds this actual
+    domain occurrence; it does not identify the trimmed interior, prove a
+    separate solver region has the same symbolic full-period domain, or
+    establish trim homotopy/partition.
     """
-    from .._approximate_source_coverage import _cad_trim_reference_loops
     from .._meshing_domain import (
         _same_brep_trim_endpoint,
+        MeshingDomain,
         PatchCurveUse,
         SourcePreparation,
     )
-    from .._surface_source_support import SurfaceSourceCharts, validate_cad_curve_ancestry
-    from ._curve_approximation_topology import _trim_reference_box, _trim_reference_range
 
-    if not isinstance(charts, SurfaceSourceCharts) or type(patch) is not int:
+    if not isinstance(domain, MeshingDomain) or type(patch) is not int:
         return None
-    domain = charts.domain
     if not 0 <= patch < len(domain.patches) or domain.brep_authority is None:
         return None
     try:
-        charts.require_current()
+        domain.require_current()
         authority = domain.brep_authority
         face = domain.source_indices[2][patch]
         surface = domain.patches[patch].surface
@@ -391,30 +405,51 @@ def certify_cad_trim_sheet(
             return None
         uses = domain.patches[patch].loops
         coedges = authority.geometry.face_loops[face]
-        if len(uses) != len(coedges) or any(
-            len(loop) != len(edges) for loop, edges in zip(uses, coedges, strict=True)
+        if (
+            not uses
+            or len(uses) != len(coedges)
+            or any(
+                not loop or len(loop) != len(edges)
+                for loop, edges in zip(uses, coedges, strict=True)
+            )
         ):
             return None
         preparation = SourcePreparation(domain)
-        bindings = validate_cad_curve_ancestry(charts, tolerance)
-        reference = _cad_trim_reference_loops(charts, bindings, patch)
-        pieces = tuple(segment for loop in reference for segment in loop)
-        if not pieces:
-            return None
-        boxes = tuple(_trim_reference_box(segment, preparation) for segment in pieces)
-        if any(box.shape != (2, 2) or np.any(~np.isfinite(box)) for box in boxes):
-            return None
-        v_low = min(Fraction.from_float(float(box[0, 1])) for box in boxes)
-        v_high = max(Fraction.from_float(float(box[1, 1])) for box in boxes)
-        if v_low == v_high:
-            return None
-
         lines = {}
+        ranges = {}
+        boxes = {}
         for li, loop in enumerate(uses):
             for ui, use in enumerate(loop):
                 line = _constant_chart_line(use.pcurve, 0)
                 if line is not None:
                     lines[(li, ui)] = line
+                first, last = min(use.first, use.last), max(use.first, use.last)
+                for root in authority.geometry.coedge_endpoint_roots[coedges[li][ui]]:
+                    if root is not None:
+                        low, high = root.parameter_enclosure()
+                        if not np.isfinite(low) or not np.isfinite(high) or low > high:
+                            return None
+                        first, last = min(first, low), max(last, high)
+                # A root on this carrier is necessarily in its authored domain.
+                carrier_domain = use.pcurve.parameter_domain
+                if carrier_domain is not None:
+                    first = max(first, carrier_domain[0])
+                    last = min(last, carrier_domain[1])
+                if not first < last:
+                    return None
+                box = np.asarray(preparation.curve_box(use.pcurve, first, last))
+                if (
+                    box.shape != (2, 2)
+                    or np.any(~np.isfinite(box))
+                    or np.any(box[0] > box[1])
+                ):
+                    return None
+                ranges[(li, ui)] = (first, last)
+                boxes[(li, ui)] = box
+        v_low = min(Fraction.from_float(float(box[0, 1])) for box in boxes.values())
+        v_high = max(Fraction.from_float(float(box[1, 1])) for box in boxes.values())
+        if v_low == v_high:
+            return None
         seam_pairs = []
         for first, line in lines.items():
             if not _same(line[0], Fraction(0)):
@@ -459,31 +494,15 @@ def certify_cad_trim_sheet(
         u_high: Fraction | None = None
         for li, loop in enumerate(uses):
             for ui, use in enumerate(loop):
-                selected = tuple(
-                    segment for segment in pieces if segment.curve is use.pcurve
-                )
-                if not selected:
-                    return None
                 line = lines.get((li, ui))
                 if (
-                    line is not None
-                    and full_turn
+                    full_turn
+                    and line is not None
                     and (_same(line[0], Fraction(0)) or _same(line[0], _TAU))
                 ):
                     continue
-                lows, highs = [], []
-                for segment in selected:
-                    first, last = _trim_reference_range(segment)
-                    box = np.asarray(preparation.curve_box(use.pcurve, first, last))
-                    if (
-                        box.shape != (2, 2)
-                        or np.any(~np.isfinite(box))
-                        or np.any(box[0] > box[1])
-                    ):
-                        return None
-                    lows.append(Fraction.from_float(float(box[0, 0])))
-                    highs.append(Fraction.from_float(float(box[1, 0])))
-                low, high = min(lows), max(highs)
+                box = boxes[(li, ui)]
+                low, high = (Fraction.from_float(float(box[row, 0])) for row in (0, 1))
                 if full_turn and (low < 0 or _sheet_sign(_difference(high, _TAU)) != -1):
                     start, stop = (
                         endpoint_seam(li, ui, True),
@@ -493,50 +512,116 @@ def certify_cad_trim_sheet(
                         return None
                     expected = 1 if _same(start, Fraction(0)) else -1
                     expected *= use.sense * (1 if use.last > use.first else -1)
-                    for segment in selected:
-                        first, last = _trim_reference_range(segment)
-                        lower, upper = preparation.curve_derivative_bounds(
-                            use.pcurve, first, last
-                        )
-                        lower, upper = np.asarray(lower), np.asarray(upper)
-                        if (
-                            lower.shape != (2,)
-                            or upper.shape != (2,)
-                            or np.any(~np.isfinite(lower))
-                            or np.any(~np.isfinite(upper))
-                            or np.any(lower > upper)
-                        ):
-                            return None
-                        if (
-                            expected > 0
-                            and not float(lower[0]) > 0
-                            or expected < 0
-                            and not float(upper[0]) < 0
-                        ):
-                            return None
-                else:
-                    u_low = low if u_low is None else min(u_low, low)
-                    u_high = high if u_high is None else max(u_high, high)
-        for segment in pieces:
-            for point in (segment.start, segment.stop):
-                if full_turn:
-                    if point[0] < 0 or _sheet_sign(_difference(point[0], _TAU)) not in (
-                        -1,
-                        0,
+                    first, last = ranges[(li, ui)]
+                    lower, upper = preparation.curve_derivative_bounds(
+                        use.pcurve, first, last
+                    )
+                    lower, upper = np.asarray(lower), np.asarray(upper)
+                    if (
+                        lower.shape != (2,)
+                        or upper.shape != (2,)
+                        or np.any(~np.isfinite(lower))
+                        or np.any(~np.isfinite(upper))
+                        or np.any(lower > upper)
+                        or (expected > 0 and not float(lower[0]) > 0)
+                        or (expected < 0 and not float(upper[0]) < 0)
                     ):
                         return None
                 else:
-                    u_low = point[0] if u_low is None else min(u_low, point[0])
-                    u_high = point[0] if u_high is None else max(u_high, point[0])
+                    u_low = low if u_low is None else min(u_low, low)
+                    u_high = high if u_high is None else max(u_high, high)
         if full_turn:
-            bounds = ((Fraction(0), v_low), (_TAU, v_high))
-            embedding = certify_source_embedding(surface, bounds, deck_axes=(0,))
+            embedding = certify_source_embedding(
+                surface, ((Fraction(0), v_low), (_TAU, v_high)), deck_axes=(0,)
+            )
         else:
             if u_low is None or u_high is None:
                 return None
             embedding = certify_source_embedding(
                 surface, ((u_low, v_low), (u_high, v_high))
             )
+        if embedding is None:
+            return None
+        return BRepTrimSheetProof(domain, domain.domain_id, patch, embedding)
+    except (
+        ArithmeticError,
+        IndexError,
+        KeyError,
+        NotImplementedError,
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+
+def certify_cad_trim_sheet(
+    charts: object, patch: int, tolerance: float, /
+) -> CadTrimSheetProof | None:
+    """Compose source-only sheet authority with a bound reference homotopy.
+
+    Homotopy embeddedness, the reference partition, and orientation are
+    independent obligations. Only cylindrical source carriers are admitted.
+    """
+    from .._approximate_source_coverage import _cad_trim_reference_loops
+    from .._meshing_domain import SourcePreparation
+    from .._surface_source_support import SurfaceSourceCharts, validate_cad_curve_ancestry
+    from ._curve_approximation_topology import _trim_reference_box
+
+    if not isinstance(charts, SurfaceSourceCharts) or type(patch) is not int:
+        return None
+    try:
+        charts.require_current()
+        native = certify_brep_trim_sheet(charts.domain, patch)
+        if native is None:
+            return None
+        preparation = SourcePreparation(charts.domain)
+        bindings = validate_cad_curve_ancestry(charts, tolerance)
+        reference = _cad_trim_reference_loops(charts, bindings, patch)
+        pieces = tuple(segment for loop in reference for segment in loop)
+        if not pieces:
+            return None
+        boxes = tuple(_trim_reference_box(segment, preparation) for segment in pieces)
+        if any(
+            box.shape != (2, 2) or np.any(~np.isfinite(box)) or np.any(box[0] > box[1])
+            for box in boxes
+        ):
+            return None
+        native_bounds = native.embedding.bounds
+        native_v_low, native_v_high = native_bounds[0][1], native_bounds[1][1]
+        if not isinstance(native_v_low, Fraction) or not isinstance(
+            native_v_high, Fraction
+        ):
+            return None
+        v_low = min(
+            (native_v_low, *(Fraction.from_float(float(box[0, 1])) for box in boxes))
+        )
+        v_high = max(
+            (native_v_high, *(Fraction.from_float(float(box[1, 1])) for box in boxes))
+        )
+        full_turn = native.embedding.deck_axes == (0,)
+        if full_turn:
+            for segment in pieces:
+                for point in (segment.start, segment.stop):
+                    if point[0] < 0 or _sheet_sign(_difference(point[0], _TAU)) not in (
+                        -1,
+                        0,
+                    ):
+                        return None
+            bounds = ((Fraction(0), v_low), (_TAU, v_high))
+        else:
+            u_low, u_high = native_bounds[0][0], native_bounds[1][0]
+            for segment in pieces:
+                for point in (segment.start, segment.stop):
+                    if _sheet_sign(_difference(point[0], u_low)) == -1:
+                        u_low = point[0]
+                    if _sheet_sign(_difference(point[0], u_high)) == 1:
+                        u_high = point[0]
+            bounds = ((u_low, v_low), (u_high, v_high))
+        embedding = certify_source_embedding(
+            charts.domain.patches[patch].surface,
+            bounds,
+            deck_axes=native.embedding.deck_axes,
+        )
         if embedding is None:
             return None
 
@@ -581,9 +666,11 @@ def certify_cad_trim_sheet(
 
 
 __all__ = [
+    "BRepTrimSheetProof",
     "CadTrimSheetProof",
     "ExactChartBox",
     "SourceEmbeddingProof",
+    "certify_brep_trim_sheet",
     "certify_cad_trim_sheet",
     "certify_source_embedding",
 ]

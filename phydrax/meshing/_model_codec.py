@@ -46,6 +46,7 @@ from .._model._structure import (
     PERIODIC_FINITE_ELEMENT_TRANSFER_ROOT_ENTRY_IDS,
     PeriodicFiniteElementTransferArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
+    PiecewiseLinearComplexArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
     PreparedSurfaceSourceSupportArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
@@ -533,6 +534,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", AnalyticImplicitProfileArchiveRecipe),
         ("phydrax.model.archive", ParametricCurveBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", ReconstructedTriangleBoundarySourceArchiveRecipe),
+        ("phydrax.model.archive", PiecewiseLinearComplexArchiveRecipe),
         ("phydrax.model.archive", SurfaceSourceChartsArchiveRecipe),
         ("phydrax.model.archive", PreparedSurfaceSourceSupportArchiveRecipe),
         ("phydrax.model.archive", SurfaceNativeRestrictionBoundarySourceArchiveRecipe),
@@ -921,6 +923,8 @@ def restore_model_archive_value(
     from ..geometry._common_root_volume_overlap import (
         CurvedOverlapIntegrationPolicy,
     )
+    from ..geometry._surface_source_archive import restore_surface_source_charts
+    from ..geometry._surface_source_support import SurfaceSourceCharts
     from ..lifecycle._composition_rebind import (
         Composition,
         CompositionDependency,
@@ -937,8 +941,25 @@ def restore_model_archive_value(
     from ..sparse._relation import EdgeRelation
     from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
     from ._distribution_migration import OwnerLocalMigrationState
+    from ._plc_source import _certify_cad_surface, PiecewiseLinearComplex
 
     _register_model_archive_types()
+
+    def same_content(left: Any, right: Any) -> bool:
+        left = model_archive_root_projection(left)
+        right = model_archive_root_projection(right)
+        left_recipe = model_structure_recipe(left)
+        if left_recipe != model_structure_recipe(right):
+            return False
+        left_arrays = pack_model_array_tree(
+            left, left_recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
+        )
+        right_arrays = pack_model_array_tree(
+            right, left_recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
+        )
+        return left_arrays.keys() == right_arrays.keys() and all(
+            np.array_equal(left_arrays[key], right_arrays[key]) for key in left_arrays
+        )
 
     def rebuild_policy(policy: Any) -> Any:
         if policy is None or isinstance(policy, (bool, int, float, str, bytes, np.dtype)):
@@ -1001,6 +1022,43 @@ def restore_model_archive_value(
         return rebuilt
 
     def restore(item: Any, /) -> Any:
+        if type(item) is SurfaceSourceChartsArchiveRecipe:
+            return restore_surface_source_charts(item)
+        if type(item) is PiecewiseLinearComplexArchiveRecipe:
+            item = item.decode()
+        if type(item) is PiecewiseLinearComplex:
+            stored_charts = item.cad_source_charts
+            if stored_charts is None:
+                return PiecewiseLinearComplex.from_stored_fields(item)
+            if type(stored_charts) is SurfaceSourceChartsArchiveRecipe:
+                charts = restore_surface_source_charts(stored_charts)
+            elif type(stored_charts) is SurfaceSourceCharts:
+                stored_charts.require_current()
+                charts = stored_charts
+            else:
+                raise TypeError("Stored CAD PLC requires canonical source charts.")
+            if (
+                item.cad_embedding is None
+                or item.cad_fidelity is None
+                or item.cad_fidelity_tolerance is None
+            ):
+                raise ValueError("Stored CAD PLC is missing independent surface proofs.")
+            embedding, fidelity = _certify_cad_surface(
+                charts,
+                item.cad_fidelity_tolerance,
+                item.cad_maximum_normal_deviation,
+                np.asarray(item.cad_embedding.binding.junction_vertices, dtype=np.int64),
+            )
+            if not same_content(embedding, item.cad_embedding) or not same_content(
+                fidelity, item.cad_fidelity
+            ):
+                raise ValueError("Stored CAD PLC proofs differ from mathematical replay.")
+            return PiecewiseLinearComplex.from_stored_fields(
+                item,
+                cad_source_charts=charts,
+                cad_embedding=embedding,
+                cad_fidelity=fidelity,
+            )
         if type(item) is SimplexForestRecords:
             forest = SimplexForestRecords(
                 item.cell_ids,

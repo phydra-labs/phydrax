@@ -19,6 +19,7 @@ from phydrax.geometry.brep._placed import PlacedSurface
 from phydrax.geometry.brep._source_embedding import (
     _constant_chart_line,
     _sheet_sign,
+    certify_brep_trim_sheet,
     certify_source_embedding,
 )
 from phydrax.geometry.brep._trim_helpers import PeriodOffset
@@ -167,6 +168,14 @@ def test_iges_seam_roots_and_curved_source_monotonicity(tmp_path: Path) -> None:
 
     model, _, _, _ = _quadric_case("iges", tmp_path)
     domain = MeshingDomain.from_brep(model)
+    assert certify_brep_trim_sheet(None, 0) is None
+    assert certify_brep_trim_sheet(domain, -1) is None
+    for source_patch in range(3):
+        proof = certify_brep_trim_sheet(domain, source_patch)
+        assert proof is not None
+        assert proof.replay(domain, source_patch)
+        assert proof.embedding.deck_axes == ((0,) if source_patch == 2 else ())
+        assert not proof.replay(domain, (source_patch + 1) % 3)
     patch = 2
     face = domain.source_indices[2][patch]
     uses = domain.patches[patch].loops[0]

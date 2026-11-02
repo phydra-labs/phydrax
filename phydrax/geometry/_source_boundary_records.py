@@ -26,6 +26,8 @@ from ._embedding_state import MeshCertificateFinding
 if TYPE_CHECKING:
     from ..discretization._cell_geometry import CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh
+    from ..meshing._association import GeometryAssociation
+    from ..meshing._plc_source import PiecewiseLinearComplex
     from .reconstruction._envelope import SurfaceEnvelopeReproduction
 
 
@@ -375,14 +377,18 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
     volume-reference coordinates. Exact rational chart-token banks are the
     topology authority; float arrays are checked rounded realizations and never
     substitute for exact partition or ancestry validation.
+
+    CAD rows retain the source PLC and final target curve association. Each
+    root ID names an original source-surface cell; -1 is reserved for an
+    independently exact planar chart with no unique original cell.
     """
 
     mesh_id: str
     geometry_id: str
     topology_id: str
-    source_id: str
-    source_revision: str
-    source_query_id: str
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    source_query_id: str = eqx.field(static=True)
     chart_dimension: int
     reference_dimension: int
     cell_global_ids: np.ndarray
@@ -403,6 +409,9 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
     orientations: np.ndarray
     implicit_cell_keys: np.ndarray
     implicit_root_edge_keys: np.ndarray
+    cad_plc: PiecewiseLinearComplex | None
+    cad_curve_association: GeometryAssociation | None
+    cad_root_cell_ids: np.ndarray
     witness_id: str
 
     def __init__(
@@ -430,6 +439,9 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
         implicit_cell_keys: ConvertibleToArray | None = None,
         implicit_root_edge_keys: ConvertibleToArray | None = None,
         target_face_vertex_global_ids: ConvertibleToArray | None = None,
+        cad_plc: PiecewiseLinearComplex | None = None,
+        cad_curve_association: GeometryAssociation | None = None,
+        cad_root_cell_ids: ConvertibleToArray | None = None,
     ) -> None:
         identity_values = tuple(
             canonical_identifier(value, name)
@@ -550,6 +562,96 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 )
             root_cells = np.asarray(cell_values, dtype=np.int64)
             root_edges = np.asarray(edge_values, dtype=np.int64)
+        from ..meshing._association import (
+            GeometryAssociation,
+            GeometryAssociationArchiveRecipe,
+            GeometryAssociationKind,
+            GeometrySourceEntityRole,
+        )
+        from ..meshing._plc_source import PiecewiseLinearComplex
+
+        if cad_plc is None:
+            if cad_curve_association is not None or (
+                cad_root_cell_ids is not None and np.asarray(cad_root_cell_ids).size
+            ):
+                raise ValueError("CAD ancestry requires its source charts.")
+            cad_roots = np.empty((0,), dtype=np.int64)
+        else:
+            if not isinstance(cad_plc, PiecewiseLinearComplex):
+                raise TypeError("cad_plc must be PiecewiseLinearComplex.")
+            cad_source_charts = cad_plc.cad_source_charts
+            if cad_source_charts is None:
+                raise ValueError("CAD PLC must retain its source charts.")
+            PiecewiseLinearComplex.from_stored_fields(cad_plc)
+            cad_source_charts.require_current()
+            if (
+                chart_dimension != 2
+                or cad_source_charts.source_id != identity_values[3]
+                or cad_source_charts.source_revision != identity_values[4]
+            ):
+                raise ValueError(
+                    "CAD source charts must bind this surface source revision."
+                )
+            raw_cad_roots = np.asarray(cad_root_cell_ids)
+            if raw_cad_roots.shape != (count,) or raw_cad_roots.dtype.kind not in "iu":
+                raise TypeError(
+                    "CAD root cell IDs must be an integer vector aligned with rows."
+                )
+            if raw_cad_roots.dtype.kind == "u" and np.any(
+                raw_cad_roots > np.iinfo(np.int64).max
+            ):
+                raise ValueError("CAD root cell IDs must fit int64.")
+            cad_roots = np.asarray(raw_cad_roots, dtype=np.int64)
+            if np.any(cad_roots < -1) or not set(cad_roots[cad_roots >= 0]).issubset(
+                set(cad_source_charts.cell_global_ids)
+            ):
+                raise ValueError(
+                    "CAD root cell IDs must name retained source cells or -1."
+                )
+            if (
+                cad_curve_association is None
+                and cad_plc.cad_segment_edge_ids is not None
+                and np.asarray(cad_plc.cad_segment_edge_ids).size
+            ):
+                raise ValueError("CAD PLC curve segments require target curve ancestry.")
+            if cad_curve_association is not None:
+                if not isinstance(cad_curve_association, GeometryAssociation):
+                    raise TypeError("cad_curve_association must be GeometryAssociation.")
+                GeometryAssociationArchiveRecipe.from_association(
+                    cad_curve_association
+                ).restore()
+                if (
+                    cad_curve_association.association_kind
+                    is not GeometryAssociationKind.CURVE
+                    or cad_curve_association.source_id != identity_values[3]
+                    or cad_curve_association.source_revision != identity_values[4]
+                    or not cad_curve_association.complete
+                    or any(
+                        value is None
+                        for value in cad_curve_association.source_parameter_intervals
+                    )
+                    or np.any(
+                        ~np.isin(np.asarray(cad_curve_association.orientations), (-1, 1))
+                    )
+                    or np.any(~np.isfinite(np.asarray(cad_curve_association.residuals)))
+                ):
+                    raise ValueError(
+                        "CAD curve ancestry must be resolved and source-bound with exact intervals."
+                    )
+                if (
+                    np.any(np.asarray(cad_curve_association.source_dimensions) != 1)
+                    or any(
+                        role is not GeometrySourceEntityRole.EDGE
+                        for role in cad_curve_association.source_roles
+                    )
+                    or any(
+                        value is not None
+                        for value in cad_curve_association.source_parameter_points
+                    )
+                ):
+                    raise ValueError(
+                        "CAD curve ancestry must identify source edges and intervals."
+                    )
         charts = tuple(
             canonical_identifier(value, "source_chart_id") for value in source_chart_ids
         )
@@ -607,6 +709,50 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
             raise ValueError(
                 "SourceBoundaryChartWitness rows and source identities must align."
             )
+        if cad_plc is not None:
+            from ..meshing.providers._native_cad_volume import _exact_patch_chart
+            from ._domain_boundary import exact_plane_chart
+            from .brep._patches import _exact_cross3
+
+            domain = cad_source_charts.domain
+            patch_keys = domain.stratum_entity_ids(2)
+            patch_by_key = {
+                (entity, domain.source_occurrences[2][patch]): patch
+                for patch, entity in enumerate(patch_keys)
+            }
+            if len(patch_by_key) != len(patch_keys):
+                raise ValueError("CAD source face occurrences must be unique.")
+            roots_by_patch = {
+                (int(root), int(patch))
+                for root, patch in zip(
+                    cad_source_charts.cell_global_ids,
+                    cad_source_charts.root_patches,
+                    strict=True,
+                )
+            }
+            for row, (entity, path) in enumerate(zip(entities, paths, strict=True)):
+                patch = patch_by_key.get((entity, path))
+                if patch is None:
+                    raise ValueError(
+                        "CAD row does not name a unique source face occurrence."
+                    )
+                root = int(cad_roots[row])
+                if root < 0:
+                    plane = exact_plane_chart(domain, patch)
+                    affine = _exact_patch_chart(domain, patch)
+                    affine_valid = (
+                        affine is not None
+                        and charts[row] == entity
+                        and any(_exact_cross3(affine[1], affine[2]))
+                    )
+                    if (
+                        plane is None or charts[row] != plane.chart_id
+                    ) and not affine_valid:
+                        raise ValueError(
+                            "CAD rows without a root require an exact plane chart."
+                        )
+                elif (root, patch) not in roots_by_patch:
+                    raise ValueError("CAD row root does not belong to its source face.")
         target_rational_tokens = _validated_rational_chart_tokens(
             target_reference_rational_tokens,
             target,
@@ -693,6 +839,14 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                         source_rational_tokens[row],
                         entities[row],
                         paths[row],
+                        int(cad_roots[row]) if cad_roots.size else -1,
+                        int(orientation[row]),
+                        tuple(int(value) for value in root_cells[row])
+                        if root_cells.size
+                        else (),
+                        tuple(int(value) for value in root_edges[row].reshape(-1))
+                        if root_edges.size
+                        else (),
                     )
                 )
             order.extend(rows)
@@ -706,6 +860,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
             orientation[order],
             root_cells if root_cells.shape[0] == 0 else root_cells[order],
             root_edges if root_edges.shape[0] == 0 else root_edges[order],
+            cad_roots if cad_roots.size == 0 else cad_roots[order],
         )
         immutable: list[np.ndarray] = []
         for value in arrays:
@@ -726,6 +881,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
             self.orientations,
             self.implicit_cell_keys,
             self.implicit_root_edge_keys,
+            self.cad_root_cell_ids,
         ) = immutable
         self.source_chart_ids = tuple(charts[row] for row in order)
         self.source_entity_ids = tuple(entities[row] for row in order)
@@ -736,6 +892,8 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
         self.source_parameter_rational_tokens = tuple(
             source_rational_tokens[row] for row in order
         )
+        self.cad_plc = cad_plc
+        self.cad_curve_association = cad_curve_association
         self.witness_id = canonical_fingerprint(
             {
                 "kind": "source-boundary-chart-witness",
@@ -752,6 +910,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                         self.orientations,
                         self.implicit_cell_keys,
                         self.implicit_root_edge_keys,
+                        self.cad_root_cell_ids,
                     )
                 ),
                 "charts": self.source_chart_ids,
@@ -760,6 +919,45 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 "exact_rational_charts": (
                     self.target_reference_rational_tokens,
                     self.source_parameter_rational_tokens,
+                ),
+                "cad_ancestry": (
+                    None
+                    if cad_plc is None
+                    else (
+                        cad_plc.complex_id,
+                        cad_source_charts.source_chart_id,
+                        array_tree_fingerprint(cad_plc),
+                    ),
+                    None
+                    if cad_curve_association is None
+                    else (
+                        cad_curve_association.association_id,
+                        cad_curve_association.association_kind.value,
+                        cad_curve_association.source_id,
+                        cad_curve_association.source_revision,
+                        cad_curve_association.target_entity_set_id,
+                        cad_curve_association.source_entity_ids,
+                        tuple(
+                            None if role is None else role.value
+                            for role in cad_curve_association.source_roles
+                        ),
+                        cad_curve_association.source_occurrence_paths,
+                        cad_curve_association.source_region_sides,
+                        tuple(
+                            None
+                            if interval is None
+                            else tuple(str(value) for value in interval)
+                            for interval in cad_curve_association.source_parameter_intervals
+                        ),
+                        tuple(
+                            None if value is None else str(value)
+                            for value in cad_curve_association.source_parameter_points
+                        ),
+                        cad_curve_association.exact,
+                        cad_curve_association.provenance.value,
+                        cad_curve_association.parent_association_id,
+                        array_tree_fingerprint(cad_curve_association),
+                    ),
                 ),
             }
         )

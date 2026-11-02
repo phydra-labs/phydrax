@@ -3817,6 +3817,8 @@ def _retarget_polyhedral_chart_by_identity(
         raise ValueError("Polyhedral chart faces lack exact identity lineage.")
     if not witnessed_vertices <= retained_ids(0):
         raise ValueError("Polyhedral chart vertices lack exact identity lineage.")
+    if witness.cad_curve_association is not None:
+        witness.cad_curve_association.validate_target(target.entity_set(1))
     return SourceBoundaryChartWitness(
         mesh_id=target.mesh_id,
         geometry_id=cell_geometry_id(geometry),
@@ -3840,6 +3842,9 @@ def _retarget_polyhedral_chart_by_identity(
         orientations=np.asarray(witness.orientations),
         implicit_cell_keys=np.asarray(witness.implicit_cell_keys),
         implicit_root_edge_keys=np.asarray(witness.implicit_root_edge_keys),
+        cad_plc=witness.cad_plc,
+        cad_curve_association=witness.cad_curve_association,
+        cad_root_cell_ids=witness.cad_root_cell_ids,
     )
 
 
@@ -3855,6 +3860,17 @@ def _retarget_source_boundary_chart_witness(
     coarsening: NestedReferenceWitnesses | None = None,
     mixed_coarsening_maps: tuple[MixedCoarseningMap, ...] = (),
 ) -> SourceBoundaryChartWitness:
+    if witness.cad_plc is not None:
+        if any(
+            block.cell_kind == "polyhedron" for block in (*source.mesh.blocks, *target.blocks)
+        ):
+            return _retarget_polyhedral_chart_by_identity(
+                source, target, geometry, lineage, witness
+            )
+        if target.topology_id != witness.topology_id:
+            raise ValueError("CAD chart transfer requires exact target edge ancestry replay.")
+        if witness.cad_curve_association is not None:
+            witness.cad_curve_association.validate_target(target.entity_set(1))
     if any(
         block.cell_kind == "polyhedron" for block in (*source.mesh.blocks, *target.blocks)
     ):
@@ -4590,6 +4606,12 @@ def _retarget_source_boundary_chart_witness(
         ),
         implicit_cell_keys=implicit_cells_out,
         implicit_root_edge_keys=implicit_edges_out,
+        cad_plc=witness.cad_plc,
+        cad_curve_association=witness.cad_curve_association,
+        cad_root_cell_ids=(
+            witness.cad_root_cell_ids[source_rows]
+            if witness.cad_plc is not None else None
+        ),
     )
 
 
@@ -5442,6 +5464,8 @@ def _rebind_surface_metric_witness(
             ),
         )
     if isinstance(witness, SourceBoundaryChartWitness):
+        if witness.cad_curve_association is not None:
+            witness.cad_curve_association.validate_target(target.entity_set(1))
         return SourceBoundaryChartWitness(
             mesh_id=target.mesh_id,
             geometry_id=geometry_id,
@@ -5473,6 +5497,9 @@ def _rebind_surface_metric_witness(
                 if witness.implicit_root_edge_keys.shape[0]
                 else None
             ),
+            cad_plc=witness.cad_plc,
+            cad_curve_association=witness.cad_curve_association,
+            cad_root_cell_ids=witness.cad_root_cell_ids,
         )
     raise TypeError("Unsupported surface metric chart witness.")
 

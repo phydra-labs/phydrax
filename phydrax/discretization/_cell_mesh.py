@@ -55,7 +55,6 @@ from ._topology import (
 
 
 if TYPE_CHECKING:
-    from ..geometry.multiregion_surface import MultiRegionSurfaceTopology
     from ._periodic_topology import PeriodicMeshTopology
 
 
@@ -1388,6 +1387,7 @@ class CellMesh(StrictModule, NonTrainableState):
         /,
         *,
         actual_geometry: object | None = None,
+        multiregion_surface: MultiRegionSurfaceTopology | None = None,
     ) -> CellMesh:
         if type(value) is not cls:
             raise TypeError("value must be CellMesh.")
@@ -1442,6 +1442,13 @@ class CellMesh(StrictModule, NonTrainableState):
         ):
             raise TypeError("Polyhedral CellMesh lost its exact connectivity owner.")
         if value.periodic_topology is None:
+            if (
+                multiregion_surface is not None
+                and value.empty_local_authority is not None
+            ):
+                raise ValueError(
+                    "Empty-local meshes cannot bind multiregion surface topology."
+                )
             if actual_geometry is not None:
                 raise ValueError(
                     "A nonperiodic CellMesh cannot bind periodic actual_geometry."
@@ -1454,8 +1461,13 @@ class CellMesh(StrictModule, NonTrainableState):
                 numeric_version=value.numeric_version,
                 empty_local_authority=value.empty_local_authority,
                 polyhedral_connectivity=polyhedral,
+                multiregion_surface=multiregion_surface,
             )
         else:
+            if multiregion_surface is not None:
+                raise ValueError(
+                    "Periodic mesh restoration cannot bind a multiregion surface premise."
+                )
             from ._periodic_topology import PeriodicMeshTopology
 
             if type(value.periodic_topology) is not PeriodicMeshTopology:
@@ -1993,6 +2005,9 @@ class CellMesh(StrictModule, NonTrainableState):
                 self.topological_dimension,
             ),
         )
+
+
+from ..geometry.multiregion_surface._topology import MultiRegionSurfaceTopology
 
 
 __all__ = [

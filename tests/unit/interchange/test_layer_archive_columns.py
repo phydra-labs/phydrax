@@ -135,6 +135,45 @@ def test_nested_reference_exact_bank_uses_column_recipe() -> None:
     )
     assert recipe.restore().fine_reference_exact_vertices == exact
 
+def test_source_chart_witness_codec_sorts_rows_and_requires_ancestry_fields() -> None:
+    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+
+    def witness(order: np.ndarray) -> SourceBoundaryChartWitness:
+        return SourceBoundaryChartWitness(
+            mesh_id="mesh", geometry_id="geometry", topology_id="topology",
+            source_id="source", source_revision="revision", source_query_id="query",
+            chart_dimension=2, reference_dimension=2,
+            cell_global_ids=np.array([9, 3], dtype=np.int64)[order],
+            entity_global_ids=np.array([9, 3], dtype=np.int64)[order],
+            local_entity_indices=np.array([-1, -1], dtype=np.int32)[order],
+            target_reference_vertices=np.tile(
+                np.array([[[0., 0.], [1., 0.], [0., 1.]]]), (2, 1, 1)
+            )[order],
+            source_chart_ids=tuple(("chart-a", "chart-b")[i] for i in order),
+            source_entity_ids=tuple(("face-a", "face-b")[i] for i in order),
+            occurrence_paths=((), ()),
+            source_parameters=np.tile(
+                np.array([[[0., 0.], [1., 0.], [0., 1.]]]), (2, 1, 1)
+            )[order],
+            orientations=np.array([1, -1], dtype=np.int8)[order],
+        )
+
+    first = witness(np.array([0, 1]))
+    reordered = witness(np.array([1, 0]))
+    assert first.witness_id == reordered.witness_id
+    recipe = layer_record_archive_recipe(first)
+    assert recipe is not None
+    assert isinstance(recipe.fields["cad_root_cell_ids"], np.ndarray)
+    assert recipe.restore().witness_id == first.witness_id
+    missing = dict(recipe.fields)
+    del missing["cad_plc"]
+    with pytest.raises(ValueError, match="exact field set"):
+        recipe._replace(fields=missing).restore()
+    changed = dict(recipe.fields)
+    changed["cad_root_cell_ids"] = np.array([0, 1], dtype=np.int64)
+    with pytest.raises(ValueError, match="CAD ancestry"):
+        recipe._replace(fields=changed).restore()
+
 
 def test_column_identity_archive_preserves_constructor_identity(tmp_path: Path) -> None:
     value = _identity(4096)

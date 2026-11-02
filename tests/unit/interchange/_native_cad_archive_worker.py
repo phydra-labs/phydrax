@@ -110,6 +110,7 @@ from phydrax._model._structure import (
     NativePlcSourceArchiveRecipe,
     ParametricCurveBoundarySourceArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
+    PiecewiseLinearComplexArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
     PreparedSurfaceSourceSupportArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
@@ -359,6 +360,7 @@ from phydrax.meshing._lineage import CellMeshTransition, VertexInterpolationSten
 from phydrax.meshing._model_codec import (
     MODEL_ARCHIVE_LIMITS,
     read_model_artifact,
+    restore_model_archive_value,
     write_model_artifact,
 )
 from phydrax.meshing._native_construction import NativeMeshOrganization
@@ -2824,7 +2826,9 @@ def _rebuild_cut_coordinate_map(
 ) -> _CutCoordinateMap:
     if type(value) is not _CutCoordinateMap:
         raise TypeError("Stored cut-coordinate map has an unexpected concrete type.")
-    source = PiecewiseLinearComplex.from_stored_fields(value.source_complex)
+    source = restore_model_archive_value(value.source_complex)
+    if type(source) is not PiecewiseLinearComplex:
+        raise TypeError("Cut-coordinate replay did not renew its PLC source.")
     source_mesh = _rebuild_continuation_value(value.source_mesh)
     if not isinstance(source_mesh, CellMesh):
         raise TypeError("Cut-coordinate replay did not renew its source mesh.")
@@ -5295,8 +5299,6 @@ def _rebuild_continuation_value(
         "phydrax.discretization.fem._de_rham",
         "phydrax.geometry._common_root_volume_overlap",
     }:
-        from phydrax.meshing._model_codec import restore_model_archive_value
-
         return restore_model_archive_value(value)
     if isinstance(value, SurfaceMetadata):
         metadata = SurfaceMetadata(
@@ -5362,8 +5364,8 @@ def _rebuild_continuation_value(
                 "Surface model identity differs from its reconstructed owners."
             )
         return model
-    if type(value) is PiecewiseLinearComplex:
-        return PiecewiseLinearComplex.from_stored_fields(value)
+    if type(value) in (PiecewiseLinearComplex, PiecewiseLinearComplexArchiveRecipe):
+        return restore_model_archive_value(value)
     if type(value) is NativeHexGridSchedule:
         schedule = NativeHexGridSchedule(
             value.route,
@@ -5532,6 +5534,12 @@ def _rebuild_continuation_value(
             orientations=value.orientations,
             implicit_cell_keys=value.implicit_cell_keys,
             implicit_root_edge_keys=value.implicit_root_edge_keys,
+            cad_plc=(
+                None if value.cad_plc is None
+                else _rebuild_as(value.cad_plc, PiecewiseLinearComplex)
+            ),
+            cad_curve_association=value.cad_curve_association,
+            cad_root_cell_ids=value.cad_root_cell_ids,
         )
         if witness.witness_id != value.witness_id:
             raise ValueError("Source boundary chart witness identity changed.")
@@ -5799,32 +5807,9 @@ def _rebuild_continuation_value(
         query.require_current()
         return query
     if isinstance(value, SurfaceSourceChartsArchiveRecipe):
-        domain = _rebuild_as(value.domain, MeshingDomain)
-        mesh = _rebuild_as(value.mesh, CellMesh)
-        geometry = _rebuild_geometry_for_mesh(value.geometry, mesh)
-        contract = _rebuild_as(value.coordinate_contract, SpatialCoordinateContract)
-        boundary_source = _rebuild_as(value.boundary_source, MeshingDomainBoundarySource)
-        associations = _rebuild_tuple_as(value.associations, GeometryAssociation)
-        source = SurfaceSourceCharts(
-            domain,
-            mesh,
-            geometry,
-            contract,
-            value.root_parameters,
-            value.root_patches,
-            associations,
-            boundary_source,
-            source_root_cell_ids=value.source_root_cell_ids,
-            source_piece_ids=value.source_piece_ids.decode(),
-            root_parameter_exact=value.root_parameter_exact.decode(),
-        )
-        if source.source_chart_id != value.expected_source_chart_id:
-            raise ValueError(
-                "SurfaceSourceCharts identity changed from its source recipe."
-            )
-        source.require_root(mesh, geometry)
-        source.require_current()
-        return source
+        from phydrax.geometry._surface_source_archive import restore_surface_source_charts
+
+        return restore_surface_source_charts(value)
     if isinstance(value, NativeImplicitBoundaryQueryArchiveRecipe):
         query = _rebuild_continuation_value(value.query)
         if not isinstance(query, AdaptiveImplicitBoundarySource):
@@ -6523,8 +6508,8 @@ def _rebuild_continuation_value(
         return _rebuild_cell_geometry_restriction_source(value)
     if type(value) is ExactPowerCellGeometrySource:
         domain_source = value.domain_source
-        if type(domain_source) is PiecewiseLinearComplex:
-            domain_source = PiecewiseLinearComplex.from_stored_fields(domain_source)
+        if type(domain_source) in (PiecewiseLinearComplex, PiecewiseLinearComplexArchiveRecipe):
+            domain_source = restore_model_archive_value(domain_source)
         elif type(domain_source) is MappedReferenceDomain:
             domain_source = _rebuild_as(domain_source, MappedReferenceDomain)
         elif domain_source is not None:
@@ -11062,9 +11047,7 @@ def _rebuild_coordinate_map_composition(value: object, /) -> Composition:
             "Coordinate-map Composition entries differ from its explicit restart schema."
         )
     rebuilt_values: dict[str, object] = {
-        "power/domain": PiecewiseLinearComplex.from_stored_fields(
-            entries["power/domain"].value
-        ),
+        "power/domain": restore_model_archive_value(entries["power/domain"].value),
         "power/carrier-mesh": _rebuild_continuation_value(
             entries["power/carrier-mesh"].value
         ),
@@ -11077,9 +11060,7 @@ def _rebuild_coordinate_map_composition(value: object, /) -> Composition:
         "power/refined-mesh": _rebuild_continuation_value(
             entries["power/refined-mesh"].value
         ),
-        "cut/domain": PiecewiseLinearComplex.from_stored_fields(
-            entries["cut/domain"].value
-        ),
+        "cut/domain": restore_model_archive_value(entries["cut/domain"].value),
         "cut/fill-mesh": _rebuild_continuation_value(entries["cut/fill-mesh"].value),
         "cut/output-mesh": _rebuild_continuation_value(entries["cut/output-mesh"].value),
     }
@@ -12896,6 +12877,29 @@ def _read_source_chart_rational_artifact(
     ):
         raise ValueError("Cold source chart witness lost exact rational chart banks.")
     print("source-chart-rational-cold-restored")
+
+
+def _read_cad_chart_witness(path: Path, expected_id: str, /) -> None:
+    witness = read_model_artifact(
+        path,
+        expected_type=SourceBoundaryChartWitness,
+        restore=_rebuild_continuation_value,
+        limits=None,
+    )
+    if witness.witness_id != expected_id or witness.cad_plc is None:
+        raise ValueError("Cold CAD chart witness lost its source ancestry.")
+    charts = witness.cad_plc.cad_source_charts
+    if charts is None:
+        raise ValueError("Cold CAD PLC lost its source charts.")
+    occurrences = np.asarray(charts.boundary_occurrences)
+    if (
+        occurrences.dtype != np.int64
+        or occurrences.ndim != 3
+        or occurrences.shape[1:] != (charts.mesh.blocks[0].arity, 3)
+        or occurrences.shape[0] not in (0, len(charts.cell_global_ids))
+    ):
+        raise ValueError("Cold CAD source edge-occurrence rows are malformed.")
+    print("cad-chart-witness-cold-restored")
 
 
 def _surface_result_for_brep(model: BRepModel, /) -> CellMeshingResult:
@@ -14769,6 +14773,8 @@ if __name__ == "__main__":
         _write_source_coverage_artifact(archive_directory)
     elif operation == "read-source-coverage":
         _read_source_coverage_artifact(archive_directory, json.loads(sys.argv[3]))
+    elif operation == "read-cad-chart-witness":
+        _read_cad_chart_witness(archive_directory, sys.argv[3])
     elif operation == "write-region-boundary-evidence":
         _write_region_boundary_archive(archive_directory)
     elif operation == "read-region-boundary-evidence":

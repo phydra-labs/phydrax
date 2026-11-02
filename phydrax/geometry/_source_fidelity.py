@@ -1160,11 +1160,27 @@ def _validate_source_fidelity_witness(
         orientations=np.asarray(witness.orientations),
         implicit_cell_keys=np.asarray(witness.implicit_cell_keys),
         implicit_root_edge_keys=np.asarray(witness.implicit_root_edge_keys),
+        cad_plc=witness.cad_plc,
+        cad_curve_association=witness.cad_curve_association,
+        cad_root_cell_ids=witness.cad_root_cell_ids,
     )
     if renewed.witness_id != witness.witness_id:
         raise ValueError(
             "Source chart witness identity does not reproduce its current arrays."
         )
+    if witness.cad_plc is not None:
+        from ._surface_source_support import _same_tree_content
+
+        charts = witness.cad_plc.cad_source_charts
+        if (
+            not isinstance(source, MeshingDomainBoundarySource)
+            or not _same_tree_content(source.domain, charts.domain)
+            or not set(source.patches).issubset(charts.boundary_source.patches)
+        ):
+            raise ValueError("CAD witness source query must retain its PLC domain and scope.")
+        source.require_current()
+        if witness.cad_curve_association is not None:
+            witness.cad_curve_association.validate_target(mesh.entity_set(1))
 
     if isinstance(source, MappedReferenceBoundarySource):
         if witness.source_query_id != source.query_id:
