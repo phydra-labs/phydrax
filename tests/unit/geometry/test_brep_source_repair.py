@@ -20,14 +20,19 @@ from phydrax.discretization._exact_algebraic_geometry import (
 from phydrax.geometry._interval_enclosure import prepare_interval_function
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry._rational import fraction_down, fraction_up
+from phydrax.geometry.brep._boolean_core import AffinePCurve, PeriodicPCurve
 from phydrax.geometry.brep._constructors import (
     assemble_brep_model,
+    brep_cone,
     brep_planar_face,
+    brep_sphere,
     PlanarProfile,
     ProfileLoop,
     ProfilePlane,
 )
 from phydrax.geometry.brep._correspondence import (
+    _exact_brep_pole_collapse,
+    _exact_vertex_root_source,
     exact_source_lift,
     torus_rooted_circle_pcurve,
 )
@@ -54,6 +59,7 @@ from phydrax.geometry.brep._model import (
 from phydrax.geometry.brep._patches import (
     CircleCurve,
     ConicParameterRoot,
+    ConicRootLinePCurve,
     CylinderPatch,
     LineCurve,
     PlaneCylinderSectionPCurve,
@@ -67,8 +73,18 @@ from phydrax.geometry.brep._projection_contracts import (
     BRepEntityDimension,
     BRepProjectionStatus,
 )
-from phydrax.geometry.brep._root_bindings import BRepCurveSurfaceLift
+from phydrax.geometry.brep._root_bindings import (
+    BRepConicVertex,
+    BRepCurveSurfaceLift,
+    BRepVertexRoot,
+)
 from phydrax.geometry.brep._source_repair import repair_brep_source
+from phydrax.geometry.brep._source_repair_carriers import (
+    _cylinder_circle_chart,
+    _cylinder_line_chart,
+    build_target_carriers,
+)
+from phydrax.geometry.brep._source_repair_topology import target_topology
 from phydrax.geometry.brep._trim_helpers import period_offset, period_scalar_bounds
 from phydrax.interchange import CadImportPolicy, CadImportResult, read_step
 from phydrax.interchange._cad_archive import _register_brep_types, save_brep_archive
@@ -420,6 +436,362 @@ def test_repair_refuses_ambiguous_coincident_face_candidates() -> None:
         repair_brep_source(ambiguous, tolerance=1e-6)
     assert ambiguous.source_revision == revision
     ambiguous.require_current()
+
+
+@pytest.mark.parametrize("phase_quarter", (0, 1), ids=("zero-phase", "quarter-turn"))
+def test_cylinder_native_period_endpoint_keeps_physical_phase_and_sheet(
+    phase_quarter: int,
+) -> None:
+    cylinder = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
+    unit = CircleCurve((0, 0), (1, 0), (0, 1), 1.0)
+    phase = ConicParameterRoot(unit, Fraction(0), Fraction(1)) if phase_quarter else None
+    first_axis = (0, 1, 0) if phase_quarter else (1, 0, 0)
+    second_axis = (-1, 0, 0) if phase_quarter else (0, 1, 0)
+    edge = CircleCurve((0, 0, 0), first_axis, second_axis, 1.0)
+    edge_root = ConicParameterRoot(edge, Fraction(1), Fraction(0))
+    coordinates = edge_root.exact_point()
+    assert len(coordinates) == 3
+    point = (coordinates[0], coordinates[1], coordinates[2])
+    vertex = BRepVertexRoot(BRepConicVertex(edge_root))
+    pcurve = PlaneCylinderSectionPCurve(
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(0)),
+        parameter_range=(0.0, float(2 * np.pi)),
+        angle_offset_root=phase,
+    )
+    native_zero = NativePeriodEndpoint(pcurve, cylinder, 0, turns=0)
+    native_full = NativePeriodEndpoint(pcurve, cylinder, 0, turns=1)
+    conic = ConicParameterEndpoint(edge_root, pcurve, None, point)
+    assert vertex.same_uv_endpoint(cylinder, pcurve, native_zero, pcurve, conic)
+    assert not vertex.same_uv_endpoint(cylinder, pcurve, native_zero, pcurve, native_full)
+    for endpoint, turns in ((native_zero, 0), (native_full, 1)):
+        box = vertex.source_endpoint_uv_box(cylinder, pcurve, endpoint)
+        assert box is not None
+        angle = ConicParameterRoot(
+            unit,
+            Fraction(0 if phase_quarter else 1),
+            Fraction(1 if phase_quarter else 0),
+            turns=turns,
+        )
+        lower, upper = angle.parameter_enclosure()
+        assert box[0, 0] <= lower <= upper <= box[1, 0]
+        assert box[0, 1] <= 0 <= box[1, 1]
+
+
+def test_repair_topology_preserves_nonzero_cylinder_circle_phase(
+    donor: BRepModel,
+) -> None:
+    carriers = build_target_carriers(donor)
+    geometry = donor.geometry
+    original = target_topology(donor, carriers.curves, carriers.patches, carriers.pcurves)
+    coedge_faces = {
+        coedge: face
+        for face, loops in enumerate(geometry.face_loops)
+        for loop in loops
+        for coedge in loop
+    }
+    coedge = next(
+        coedge
+        for coedge, edge in enumerate(geometry.coedge_edges)
+        if isinstance(carriers.patches[coedge_faces[coedge]], CylinderPatch)
+        and isinstance(carriers.curves[edge], CircleCurve)
+        and not isinstance(carriers.pcurves[coedge], PeriodicPCurve)
+        and geometry.edge_vertices[edge][0] == geometry.edge_vertices[edge][1]
+        and all(
+            isinstance(value, NativePeriodEndpoint)
+            for value in original.coedge_endpoint_roots[coedge]
+        )
+    )
+    face = coedge_faces[coedge]
+    old = carriers.patches[face]
+    assert isinstance(old, CylinderPatch)
+    rotated = CylinderPatch(
+        np.asarray(old.origin),
+        np.asarray(old.second_axis),
+        -np.asarray(old.first_axis),
+        np.asarray(old.axis),
+        np.asarray(old.radius),
+        origin_exact=old.origin_exact,
+        first_axis_exact=old.second_axis_exact,
+        second_axis_exact=tuple(-x for x in old.first_axis_exact),
+        axis_exact=old.axis_exact,
+        radius_exact=old.radius_exact,
+    )
+    ring = carriers.curves[geometry.coedge_edges[coedge]]
+    assert isinstance(ring, CircleCurve)
+    if _cylinder_circle_chart(ring, rotated, (-10.0, 10.0)).angle_offset_root is None:
+        rotated = CylinderPatch(
+            np.asarray(old.origin),
+            -np.asarray(old.second_axis),
+            np.asarray(old.first_axis),
+            np.asarray(old.axis),
+            np.asarray(old.radius),
+            origin_exact=old.origin_exact,
+            first_axis_exact=tuple(-x for x in old.second_axis_exact),
+            second_axis_exact=old.first_axis_exact,
+            axis_exact=old.axis_exact,
+            radius_exact=old.radius_exact,
+        )
+    patches = list(carriers.patches)
+    patches[face] = rotated
+    pcurves = list(carriers.pcurves)
+    for use, owner in coedge_faces.items():
+        if owner != face:
+            continue
+        source = carriers.pcurves[use]
+        shifts = (0, 0)
+        if isinstance(source, PeriodicPCurve):
+            shifts = source.period_shifts
+        edge_curve = carriers.curves[geometry.coedge_edges[use]]
+        if isinstance(edge_curve, CircleCurve):
+            chart = _cylinder_circle_chart(edge_curve, rotated, (-10.0, 10.0))
+        else:
+            assert isinstance(edge_curve, LineCurve)
+            chart = _cylinder_line_chart(edge_curve, rotated, (-10.0, 10.0))
+        pcurves[use] = PeriodicPCurve(chart, rotated, shifts) if any(shifts) else chart
+    chart = pcurves[coedge]
+    assert isinstance(chart, PlaneCylinderSectionPCurve)
+    assert chart.angle_offset_root is not None
+    topology = target_topology(donor, carriers.curves, tuple(patches), tuple(pcurves))
+    vertex = geometry.edge_vertices[geometry.coedge_edges[coedge]][0]
+    binding = topology.vertex_roots[vertex]
+    assert binding is not None
+    for turns, endpoint in enumerate(topology.coedge_endpoint_roots[coedge]):
+        assert isinstance(endpoint, NativePeriodEndpoint)
+        assert endpoint.rational == 0 and endpoint.turns == turns
+        box = binding.source_endpoint_uv_box(rotated, chart, endpoint)
+        assert box is not None
+        phase = chart.angle_offset_root
+        angle = ConicParameterRoot(
+            phase.conic, phase.cosine_exact, phase.sine_exact, turns=turns
+        )
+        lower, upper = angle.parameter_enclosure()
+        assert box[0, 0] <= lower <= upper <= box[1, 0]
+    seam_matches = []
+    for use, owner in coedge_faces.items():
+        edge = geometry.coedge_edges[use]
+        if owner != face or not isinstance(carriers.curves[edge], LineCurve):
+            continue
+        for slot, endpoint_vertex in enumerate(geometry.edge_vertices[edge]):
+            if endpoint_vertex != vertex:
+                continue
+            seam_endpoint = topology.coedge_endpoint_roots[use][slot]
+            for ring_endpoint in topology.coedge_endpoint_roots[coedge]:
+                seam_matches.append(
+                    binding.same_uv_endpoint(
+                        rotated, chart, ring_endpoint, pcurves[use], seam_endpoint
+                    )
+                )
+    assert any(seam_matches)
+
+
+def _assert_zero_phase_cylinder_trim_seam(model: BRepModel) -> None:
+    geometry = model.geometry
+    count = 0
+    for face, loops in enumerate(geometry.face_loops):
+        patch = model.patches[face]
+        if not isinstance(patch, CylinderPatch):
+            continue
+        for loop in loops:
+            for position, current in enumerate(loop):
+                following = loop[(position + 1) % len(loop)]
+                edge, next_edge = (
+                    geometry.coedge_edges[current],
+                    geometry.coedge_edges[following],
+                )
+                end = 1 if geometry.coedge_senses[current] > 0 else 0
+                start = 0 if geometry.coedge_senses[following] > 0 else 1
+                vertex = geometry.edge_vertices[edge][end]
+                assert vertex == geometry.edge_vertices[next_edge][start]
+                root = geometry.vertex_roots[vertex]
+                endpoints = (
+                    geometry.coedge_endpoint_roots[current][end],
+                    geometry.coedge_endpoint_roots[following][start],
+                )
+                curves = (geometry.pcurves[current], geometry.pcurves[following])
+                for index in (0, 1):
+                    ring, native = curves[index], endpoints[index]
+                    other, opposite = curves[1 - index], endpoints[1 - index]
+                    if not (
+                        isinstance(ring, PlaneCylinderSectionPCurve)
+                        and ring.angle_offset_root is None
+                        and isinstance(native, NativePeriodEndpoint)
+                        and isinstance(opposite, ConicParameterEndpoint)
+                    ):
+                        continue
+                    assert root is not None
+                    assert root.same_uv_endpoint(patch, ring, native, other, opposite)
+                    first_box = root.source_endpoint_uv_box(patch, ring, native)
+                    second_box = root.source_endpoint_uv_box(patch, other, opposite)
+                    assert first_box is not None and second_box is not None
+                    assert np.all(first_box[0] <= second_box[1])
+                    assert np.all(second_box[0] <= first_box[1])
+                    count += 1
+    assert count > 0
+
+
+def test_zero_phase_cylinder_trim_seam_survives_cold_restore(
+    donor: BRepModel, repair_tolerance: float, tmp_path: Path
+) -> None:
+    target = repair_brep_source(donor, tolerance=repair_tolerance).model
+    _assert_zero_phase_cylinder_trim_seam(target)
+    path = tmp_path / "zero-phase-cylinder.phx"
+    save_brep_archive(target, path, ingress_limits=None)
+    code = """
+import sys
+from phydrax.interchange._cad_archive import load_brep_archive
+from tests.unit.geometry.test_brep_source_repair import _assert_zero_phase_cylinder_trim_seam
+model = load_brep_archive(sys.argv[1], ingress_limits=None)
+model.require_current()
+_assert_zero_phase_cylinder_trim_seam(model)
+"""
+    subprocess.run(
+        [sys.executable, "-c", code, str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize("kind", ("sphere", "cone"))
+def test_native_revolution_poles_publish_source_owned_carriers(kind: str) -> None:
+    contract = SpatialCoordinateContract.si()
+    model = (
+        brep_sphere(1.0, coordinate_contract=contract)
+        if kind == "sphere"
+        else brep_cone(1.0, 0.0, 2.0, coordinate_contract=contract)
+    )
+    model.require_current()
+    geometry = model.geometry
+    poles = [
+        (face, coedge)
+        for face, loops in enumerate(geometry.face_loops)
+        for loop in loops
+        for coedge in loop
+        if geometry.edge_curves[geometry.coedge_edges[coedge]] < 0
+    ]
+    assert len(poles) == 2
+    for face, coedge in poles:
+        edge = geometry.coedge_edges[coedge]
+        vertex = geometry.edge_vertices[edge][0]
+        assert geometry.edge_vertices[edge][1] == vertex
+        patch = model.patches[face]
+        pcurve = geometry.pcurves[coedge]
+        root = geometry.vertex_roots[vertex]
+        first, last = (float(value) for value in np.asarray(geometry.edge_ranges[edge]))
+        endpoints = geometry.coedge_endpoint_roots[coedge]
+        assert _exact_brep_pole_collapse(
+            None,
+            patch,
+            pcurve,
+            first,
+            last,
+            geometry.vertex_exact_points[vertex],
+            root,
+            endpoints,
+        )
+        if kind == "sphere":
+            assert isinstance(pcurve, AffinePCurve)
+            assert isinstance(pcurve.curve, ConicRootLinePCurve)
+            assert root is not None
+            point, profile_root = _exact_vertex_root_source(root)
+            assert point is not None and profile_root is not None
+            assert pcurve.curve.root.root_id == profile_root.root_id
+            assert all(
+                isinstance(endpoint, NativePeriodEndpoint) for endpoint in endpoints
+            )
+            assert all(
+                root.source_endpoint_uv_box(patch, pcurve, endpoint) is not None
+                for endpoint in endpoints
+            )
+            shadow = LineCurve((0.0, profile_root.parameter), (1.0, 0.0))
+            assert not _exact_brep_pole_collapse(
+                None,
+                patch,
+                shadow,
+                first,
+                last,
+                geometry.vertex_exact_points[vertex],
+                root,
+                endpoints,
+            )
+        else:
+            assert isinstance(pcurve, LineCurve)
+            exact_point = geometry.vertex_exact_points[vertex]
+            assert exact_point is not None
+            wrong = (exact_point[0] + 1, exact_point[1], exact_point[2])
+            assert not _exact_brep_pole_collapse(
+                None, patch, pcurve, first, last, wrong, root, endpoints
+            )
+    MeshingDomain.from_brep(model).require_current()
+
+
+def test_revolution_pole_uv_requires_exact_rooted_carrier() -> None:
+    model = brep_sphere(1.0, coordinate_contract=SpatialCoordinateContract.si())
+    patch = model.patches[0]
+    assert isinstance(patch, RevolutionSurface)
+    poles = tuple(root for root in model.geometry.vertex_roots if root is not None)
+    assert len(poles) == 2
+    for vertex in poles:
+        point, profile_root = _exact_vertex_root_source(vertex)
+        assert point is not None and profile_root is not None
+        meridian = LineCurve((0.0, 0.0), (0.0, 1.0))
+        meridian_endpoint = ConicParameterEndpoint(profile_root, meridian, None, point)
+        rooted_line = ConicRootLinePCurve(
+            profile_root, 0, 1, parameter_range=(0.0, float(2 * np.pi))
+        )
+        pole_curve = AffinePCurve(rooted_line, ((0, 1), (1, 0)), (0, 0))
+        native_zero = NativePeriodEndpoint(pole_curve, patch, 0, turns=0)
+        native_full = NativePeriodEndpoint(pole_curve, patch, 0, turns=1)
+        assert vertex.same_uv_endpoint(
+            patch, pole_curve, native_zero, meridian, meridian_endpoint
+        )
+        for endpoint, turns in ((native_zero, 0), (native_full, 1)):
+            box = vertex.source_endpoint_uv_box(patch, pole_curve, endpoint)
+            assert box is not None
+            longitude = period_scalar_bounds(period_offset(Fraction(0), Fraction(turns)))
+            latitude = profile_root.parameter_enclosure()
+            assert box[0, 0] <= longitude[0] <= longitude[1] <= box[1, 0]
+            assert box[0, 1] <= latitude[0] <= latitude[1] <= box[1, 1]
+        assert not vertex.same_uv_endpoint(
+            patch, pole_curve, native_full, meridian, meridian_endpoint
+        )
+        shifted = PeriodicPCurve(meridian, patch, (1, 0))
+        shifted_endpoint = ConicParameterEndpoint(profile_root, shifted, None, point)
+        assert vertex.same_uv_endpoint(
+            patch, pole_curve, native_full, shifted, shifted_endpoint
+        )
+
+        # A binary shadow of an irrational latitude is not the exact root.
+        shadow = LineCurve((0.0, profile_root.parameter), (1.0, 0.0))
+        shadow_endpoint = NativePeriodEndpoint(shadow, patch, 0, turns=0)
+        assert vertex.source_endpoint_uv_box(patch, shadow, shadow_endpoint) is None
+        assert not vertex.same_uv_endpoint(
+            patch, shadow, shadow_endpoint, meridian, meridian_endpoint
+        )
+        wrong_shadow = LineCurve((0.0, profile_root.parameter + 0.125), (1.0, 0.0))
+        wrong_endpoint = NativePeriodEndpoint(wrong_shadow, patch, 0, turns=0)
+        assert vertex.source_endpoint_uv_box(patch, wrong_shadow, wrong_endpoint) is None
+        unrelated_patch = RevolutionSurface(patch.curve, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+        assert not vertex.same_uv_endpoint(
+            unrelated_patch, pole_curve, native_zero, meridian, meridian_endpoint
+        )
+
+        assert isinstance(patch.curve, CircleCurve)
+        off_axis = ConicParameterRoot(patch.curve, Fraction(1), Fraction(0))
+        if off_axis.exact_point()[0] == 0 and off_axis.exact_point()[1] == 0:
+            off_axis = ConicParameterRoot(patch.curve, Fraction(0), Fraction(1))
+        coordinates = off_axis.exact_point()
+        assert len(coordinates) == 3
+        off_point = (coordinates[0], coordinates[1], coordinates[2])
+        assert off_point[0] != 0 or off_point[1] != 0
+        off_vertex = BRepVertexRoot(BRepConicVertex(off_axis))
+        off_meridian = ConicParameterEndpoint(off_axis, meridian, None, off_point)
+        assert not off_vertex.same_uv_endpoint(
+            patch, pole_curve, native_zero, meridian, off_meridian
+        )
 
 
 @pytest.mark.parametrize("orientation", (1, -1), ids=("forward", "reverse"))
