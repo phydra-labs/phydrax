@@ -309,7 +309,6 @@ def _register_model_archive_types() -> None:
     from ..geometry.design._reduced import (
         _SketchDistanceRigidityWitness,
         _SketchDistanceTriangleWitness,
-
     )
     from ..geometry.design._schema import (
         DesignState,
