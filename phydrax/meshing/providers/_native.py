@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import math
+from fractions import Fraction
 from typing import final, NoReturn, overload, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
@@ -35,6 +37,7 @@ from .._contracts import (
     CurveMeshingSpec,
     MeshingFailure,
     MeshingFailureCategory,
+    MeshQualityTarget,
     SurfaceMeshingSpec,
     VolumeFillStrategy,
     VolumeMeshingSpec,
@@ -529,9 +532,26 @@ def _layer_target_support(specification: VolumeMeshingSpec, /) -> list[str]:
     return issues
 
 
+def _boundary_angle_for_radius_edge(bound: float, /) -> float:
+    """Return an angle whose outward sine bound enforces the face ratio."""
+    from ...geometry._interval_enclosure import interval_sin
+
+    required = Fraction(1, 2) / Fraction.from_float(bound)
+    angle = math.asin(0.5 / bound)
+    while True:
+        _, upper = interval_sin((np.asarray(angle), np.asarray(angle)))
+        if Fraction.from_float(float(upper)) >= required:
+            return angle
+        next_angle = math.nextafter(angle, math.inf)
+        if next_angle == angle:
+            raise ValueError("A volume radius-edge bound has no representable angle.")
+        angle = next_angle
+
+
 def _cad_boundary_specification(
     domain: MeshingDomain,
     specification: VolumeMeshingSpec,
+    radius_edge_bound: float | None,
     /,
 ) -> SurfaceMeshingSpec:
     from ._native_volume import _target_support
@@ -617,6 +637,13 @@ def _cad_boundary_specification(
         size_compliance=specification.size_compliance,
         maximum_deviation=specification.maximum_deviation,
         periodic_constraints=specification.periodic_constraints,
+        quality_target=(
+            None
+            if radius_edge_bound is None
+            else MeshQualityTarget(
+                minimum_angle=_boundary_angle_for_radius_edge(radius_edge_bound)
+            )
+        ),
         deterministic=specification.deterministic,
     )
 
@@ -731,7 +758,16 @@ def _prepare_brep_volume(
             specification,
             "the volume route requires a BRep-authoritative MeshingDomain",
         )
-    boundary_specification = _cad_boundary_specification(domain, specification)
+    schedule = options.volume_schedule
+    if schedule is None:
+        raise ValueError(
+            "Native CAD volume route requires its numerical volume schedule."
+        )
+    boundary_specification = _cad_boundary_specification(
+        domain,
+        specification,
+        None if specification.layer_controls else schedule.radius_edge_bound,
+    )
     boundary_options = _options_for_route(
         requested_options, "parametric_surface", force=True
     )

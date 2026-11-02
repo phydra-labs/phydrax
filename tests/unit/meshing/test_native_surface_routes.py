@@ -757,9 +757,7 @@ def test_public_parametric_surface_protected_feature() -> None:
 
     domain = _square_domain()
     base = _surface_specification(domain)
-    feature = ProtectedFeature(
-        base.scope, FeatureKind.SURFACE, maximum_deviation=0.003
-    )
+    feature = ProtectedFeature(base.scope, FeatureKind.SURFACE, maximum_deviation=0.003)
     specification = SurfaceMeshingSpec(
         base.target,
         base.scope,
@@ -1221,6 +1219,30 @@ def test_parametric_surface_route_grades_planar_disk_poles_without_thin_bands() 
         )
         angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
     assert float(np.min(angles)) >= 10.0
+
+
+def test_hard_surface_angle_decides_represented_face_ratio_at_threshold() -> None:
+    from phydrax.meshing._quality import _triangle_minimum_sine_violations
+
+    threshold = np.sqrt(15.0)
+    lower = float(np.nextafter(threshold, -np.inf))
+    upper = float(np.nextafter(threshold, np.inf))
+    assert Fraction.from_float(lower) ** 2 < 15 < Fraction.from_float(upper) ** 2
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, lower, 0.0), (0.0, upper, 0.0)),
+        dtype=np.float64,
+    )
+    triangles = np.asarray(((0, 1, 2), (0, 1, 3)), dtype=np.int64)
+    np.testing.assert_array_equal(
+        _triangle_minimum_sine_violations(points, triangles, Fraction(1, 4)),
+        np.asarray((False, True), dtype=np.bool_),
+    )
+    np.testing.assert_array_equal(
+        _triangle_minimum_sine_violations(
+            points, np.asarray(((0, 1, 1),), dtype=np.int64), Fraction(1, 4)
+        ),
+        np.asarray((True,), dtype=np.bool_),
+    )
 
 
 def test_parametric_surface_route_flips_anisotropic_chart_cells_to_physical_shape() -> (

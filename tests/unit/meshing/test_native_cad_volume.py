@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from itertools import combinations
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -409,6 +410,56 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
         surface_source=surface_source,
     )
     return domain, surface
+
+
+def test_quadric_boundary_meets_fixed_tetrahedral_face_quality(tmp_path: Path) -> None:
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _quadric_case
+
+    model, _, _, _ = _quadric_case("iges", tmp_path)
+    domain = MeshingDomain.from_brep(model)
+    scope = MeshingScope.whole(model, 2)
+    deviation = 0.125**2 / (4.0 * 0.6)
+    specification = phx.meshing.SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(
+                scope, 0.125, strength=phx.meshing.SizeControlStrength.SOFT
+            ),
+        ),
+        protected_features=(
+            ProtectedFeature(scope, FeatureKind.SURFACE, maximum_deviation=deviation),
+        ),
+        maximum_deviation=deviation,
+        quality_target=phx.meshing.MeshQualityTarget(
+            minimum_angle=float(np.nextafter(np.arcsin(0.25), np.inf))
+        ),
+    )
+    result = (
+        phx.meshing.NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
+        .plan(domain, specification, coordinate_contract=model.coordinate_contract)
+        .execute()
+    )
+    assert result.compliance.passed
+    coordinates = np.asarray(result.mesh.coordinates, dtype=np.float64)
+    triangles = np.concatenate(
+        tuple(np.asarray(block.vertices, dtype=np.int64) for block in result.mesh.blocks)
+    )
+    corners = coordinates[triangles]
+    lengths = np.stack(
+        tuple(
+            np.linalg.norm(corners[:, (axis + 1) % 3] - corners[:, axis], axis=1)
+            for axis in range(3)
+        ),
+        axis=1,
+    )
+    areas = 0.5 * np.linalg.norm(
+        np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1
+    )
+    assert np.all(areas > 0.0)
+    assert (
+        np.max(np.prod(lengths, axis=1) / (4.0 * areas * np.min(lengths, axis=1))) <= 2.0
+    )
 
 
 def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance() -> None:

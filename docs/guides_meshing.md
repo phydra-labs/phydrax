@@ -386,8 +386,12 @@ map a well-shaped chart triangle to a physical sliver (a sphere chart away from
 its equator). Before each refinement round, an interior chart edge flips to the
 other diagonal of its convex chart quad when that raises the smaller physical
 minimum angle of the two cells. Trim edges, source-piece root-cell boundaries
-and pole fans never flip. This keeps boundary faces within the radius-edge bound
-that a tetrahedral fill must meet on them.
+and pole fans never flip. A hard physical angle target also marks violating
+triangles for conforming refinement. For a direct CAD tetrahedral fill, the
+surface target is derived from the volume radius-edge bound $B$: every fixed
+boundary triangle must have minimum angle at least $\arcsin(1/(2B))$, a
+necessary condition for any incident tetrahedron to meet that bound. Source
+fidelity and protected-feature checks remain independent of this quality gate.
 
 A surface of revolution whose profile is an exact line perpendicular to the
 axis, with its radial offset along that line (a cylinder or cone cap, a flat
