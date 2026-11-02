@@ -557,20 +557,36 @@ def _section_point(parameter: Array, coefficients: Array, /) -> Array:
 
 def _parameter_area_program(pcurve: AbstractCurve, /) -> _IntervalProgram:
     """Green density ``(u v' - v u') / 2`` of one p-curve and its derivatives."""
-    if isinstance(pcurve, PlaneCylinderSectionPCurve):
-        lower, upper = _section_source_bounds(pcurve)
+    section = pcurve
+    shifts = (0, 0)
+    while isinstance(section, PeriodicPCurve):
+        shifts = tuple(a + b for a, b in zip(shifts, section.period_shifts, strict=True))
+        section = section.source_curve
+    if isinstance(section, PlaneCylinderSectionPCurve):
+        lower, upper = _section_source_bounds(section)
+        if any(shifts):
+            bounds = [
+                period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(shift)))
+                for shift in shifts
+            ]
+            lower = np.concatenate((lower, [float(bound[0]) for bound in bounds]))
+            upper = np.concatenate((upper, [float(bound[1]) for bound in bounds]))
 
         def jet(parameters: Array, /) -> Array:
-            coefficients = parameters[1:]
+            coefficients = parameters[1:10]
+            shift = parameters[10:12] if any(shifts) else jnp.zeros((2,))
+
+            def point(value: Array, /) -> Array:
+                return _section_point(value, coefficients) + shift
 
             def density(value: Array, /) -> Array:
-                point = _section_point(value[0], coefficients)
-                tangent = jax.jacfwd(lambda t: _section_point(t, coefficients))(value[0])
-                return 0.5 * (point[0] * tangent[1] - point[1] * tangent[0])
+                position = point(value[0])
+                tangent = jax.jacfwd(point)(value[0])
+                return 0.5 * (position[0] * tangent[1] - position[1] * tangent[0])
 
             return _with_hessian(density, fourth=True)(parameters[:1])
 
-        return _BoundProgram(_cell_program(jet, 10), lower, upper)
+        return _BoundProgram(_cell_program(jet, 1 + lower.size), lower, upper)
 
     def density(parameters: Array, /) -> Array:
         point = _pcurve_point(pcurve, parameters[0])
@@ -656,18 +672,19 @@ def _green_strip_program(
             upper.append(fraction_up(hi))
         return slice(start, len(lower))
 
+    shifts = (0, 0)
+    line = pcurve
+    while isinstance(line, PeriodicPCurve):
+        shifts = tuple(a + b for a, b in zip(shifts, line.period_shifts, strict=True))
+        line = line.source_curve
     section_slice = None
-    if isinstance(pcurve, PlaneCylinderSectionPCurve):
+    if isinstance(line, PlaneCylinderSectionPCurve):
         section_slice = slice(len(lower), len(lower) + 9)
-        section_low, section_high = _section_source_bounds(pcurve)
+        section_low, section_high = _section_source_bounds(line)
         lower.extend(section_low.tolist())
         upper.extend(section_high.tolist())
     line_slice = None
     root_slice = None
-    shifts = (0, 0)
-    line = pcurve
-    if isinstance(pcurve, PeriodicPCurve):
-        line, shifts = pcurve.source_curve, pcurve.period_shifts
     if isinstance(line, LineCurve):
         line_slice = bind((*line.origin_exact, *line.direction_exact))
     elif isinstance(line, ExactLineCurve):
@@ -688,16 +705,23 @@ def _green_strip_program(
         lower.append(float(box[0, 0]))
         upper.append(float(box[1, 0]))
         bind((line.height_origin_exact, line.height_direction_exact))
-    else:
+    elif section_slice is None:
         shifts = (0, 0)
     period_index = None
-    if chart_evaluator is not None or any(shifts):
+    if chart_evaluator is not None:
         period_index = len(lower)
         period_low, period_high = period_scalar_bounds(
             PeriodOffset(Fraction(0), Fraction(1))
         )
         lower.append(float(period_low))
         upper.append(float(period_high))
+    shift_slice = None
+    if any(shifts):
+        shift_slice = slice(len(lower), len(lower) + 2)
+        for shift in shifts:
+            lo, hi = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(shift)))
+            lower.append(float(lo))
+            upper.append(float(hi))
     cylinder_slice = None
     if cylinder and isinstance(patch, CylinderPatch):
         cylinder_slice = bind(
@@ -732,20 +756,19 @@ def _green_strip_program(
                 parameter, bound[period_index], bound[chart_slice]
             )
         if section_slice is not None:
-            return lambda parameter: _section_point(parameter, bound[section_slice])
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
+            return lambda parameter: (
+                _section_point(parameter, bound[section_slice]) + shift
+            )
         if root_slice is not None:
             root = bound[root_slice]
-            shift = jnp.asarray(shifts, dtype=jnp.float64)
-            if period_index is not None:
-                shift = shift * bound[period_index]
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
             return lambda parameter: (
                 jnp.stack((root[0], root[1] + parameter * root[2])) + shift
             )
         if line_slice is not None:
             line = bound[line_slice]
-            shift = jnp.asarray(shifts, dtype=jnp.float64)
-            if period_index is not None:
-                shift = shift * bound[period_index]
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
             return lambda parameter: line[:2] + parameter * line[2:4] + shift
         return lambda parameter: _pcurve_point(pcurve, parameter)
 
@@ -842,6 +865,7 @@ def _green_strip_program(
             (IntersectionPCurve, PlaneCylinderSectionPCurve, LineCurve, ExactLineCurve),
         )
         or line_slice is not None
+        or section_slice is not None
     )
     if not lower:
         return _cell_program(
@@ -1741,23 +1765,83 @@ def _torus_periodic_face(
     geometry, patch = source.geometry, source.patches[face]
     if not isinstance(patch, TorusPatch):
         return None
+    loops = geometry.face_loops[face]
+    if not any(
+        isinstance(geometry.pcurves[coedge], TorusRootedCirclePCurve)
+        for loop in loops
+        for coedge in loop
+    ):
+        return None
+
+    def refuse() -> None:
+        raise _MeasureFailure(
+            "unsupported", f"source face {face} torus trim is not proved once-wound"
+        )
+
+    if len(loops) != 1:
+        refuse()
+    loop = loops[0]
     seams: list[tuple[int, int]] = []
-    for loop in geometry.face_loops[face]:
-        for coedge in loop:
-            pcurve = geometry.pcurves[coedge]
-            if isinstance(pcurve, TorusRootedCirclePCurve):
-                continue
-            shifts = (0, 0)
-            if isinstance(pcurve, PeriodicPCurve):
-                shifts, pcurve = pcurve.period_shifts, pcurve.source_curve
+    positions: list[int] = []
+    for position, coedge in enumerate(loop):
+        pcurve = geometry.pcurves[coedge]
+        if isinstance(pcurve, TorusRootedCirclePCurve):
+            continue
+        shifts = (0, 0)
+        if isinstance(pcurve, PeriodicPCurve):
+            shifts, pcurve = pcurve.period_shifts, pcurve.source_curve
+        if (
+            not isinstance(pcurve, LineCurve)
+            or pcurve.origin_exact != (Fraction(0), Fraction(0))
+            or pcurve.direction_exact != (Fraction(0), Fraction(1))
+            or shifts[1] != 0
+        ):
+            refuse()
+        seams.append((coedge, shifts[0]))
+        positions.append(position)
+    if len(seams) != 2:
+        refuse()
+    first_seam, second_seam = seams
+    if (
+        geometry.coedge_edges[first_seam[0]] != geometry.coedge_edges[second_seam[0]]
+        or geometry.coedge_senses[first_seam[0]]
+        != -geometry.coedge_senses[second_seam[0]]
+        or abs(first_seam[1] - second_seam[1]) != 1
+    ):
+        refuse()
+
+    # Between the two uses of the same seam each chain must traverse a
+    # single rooted latitude monotonically. This rules out repeated or
+    # backtracking windings even when the seam gauges differ by one turn.
+    first_position, second_position = positions
+    chains = (
+        loop[first_position + 1 : second_position],
+        (*loop[second_position + 1 :], *loop[:first_position]),
+    )
+    directions: list[int] = []
+    for chain in chains:
+        if not chain:
+            refuse()
+        first_curve = geometry.pcurves[chain[0]]
+        assert isinstance(first_curve, TorusRootedCirclePCurve)
+        first_root = first_curve.root_line.root
+        root_key = (first_root.cosine_exact, first_root.sine_exact, first_root.turns)
+        direction = first_curve.orientation * geometry.coedge_senses[chain[0]]
+        for coedge in chain:
+            curve = geometry.pcurves[coedge]
+            assert isinstance(curve, TorusRootedCirclePCurve)
+            root = curve.root_line.root
             if (
-                not isinstance(pcurve, LineCurve)
-                or pcurve.origin_exact != (Fraction(0), Fraction(0))
-                or pcurve.direction_exact != (Fraction(0), Fraction(1))
-                or shifts[1] != 0
-            ):
-                return None
-            seams.append((coedge, shifts[0]))
+                root.cosine_exact,
+                root.sine_exact,
+                root.turns,
+            ) != root_key or curve.orientation * geometry.coedge_senses[
+                coedge
+            ] != direction:
+                refuse()
+        directions.append(direction)
+    if directions[0] != -directions[1]:
+        refuse()
 
     coefficients = (
         *patch.center_exact,

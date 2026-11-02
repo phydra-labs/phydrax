@@ -380,6 +380,7 @@ def test_rooted_torus_quarter_meridian_green_enclosure(orientation: int) -> None
     from phydrax.geometry.brep._boolean_core import PeriodicPCurve
     from phydrax.geometry.brep._measure import (
         _loop_ends,
+        _MeasureFailure,
         _torus_periodic_face,
         _VolumeSource,
     )
@@ -404,7 +405,7 @@ def test_rooted_torus_quarter_meridian_green_enclosure(orientation: int) -> None
         pcurves=(bottom, PeriodicPCurve(seam, patch, (1, 0)), top, seam),
         face_loops=(((0, 1, 2, 3),),),
         edge_ranges=np.asarray(((0, 2 * pi), (0, pi / 2), (0, 2 * pi), (0, pi / 2))),
-        coedge_edges=(0, 1, 2, 3),
+        coedge_edges=(0, 1, 2, 1),
         coedge_senses=(1, 1, -1, -1),
     )
     source = cast(
@@ -423,23 +424,30 @@ def test_rooted_torus_quarter_meridian_green_enclosure(orientation: int) -> None
         assert mpmath.mpf(plan.fixed[0]) <= reference <= mpmath.mpf(plan.fixed[1])
     assert plan.fixed[1] - plan.fixed[0] < 1e-10
 
+    # Multiple loops are not silently treated as a simple once-wound face.
     geometry.pcurves += (seam, top, geometry.pcurves[1], bottom)
-    geometry.coedge_edges = (0, 1, 2, 3, 3, 2, 1, 0)
+    geometry.coedge_edges = (0, 1, 2, 1, 1, 2, 1, 0)
     geometry.coedge_senses = (1, 1, -1, -1, 1, 1, -1, -1)
     geometry.face_loops = (((0, 1, 2, 3), (4, 5, 6, 7)),)
-    hole_plan = _torus_periodic_face(source, 0, orientation, _loop_ends(source, 0))
-    assert hole_plan is not None
-    assert hole_plan.fixed[0] <= 0 <= hole_plan.fixed[1]
-    assert hole_plan.fixed[1] - hole_plan.fixed[0] < 2e-10
+    with pytest.raises(_MeasureFailure, match="not proved once-wound"):
+        _torus_periodic_face(source, 0, orientation, _loop_ends(source, 0))
 
     geometry.face_loops = (((0, 1, 2, 3),),)
+    geometry.pcurves = (bottom, PeriodicPCurve(seam, patch, (2, 0)), top, seam)
+    geometry.edge_ranges = np.asarray(
+        ((0, 4 * pi), (0, pi / 2), (0, 4 * pi), (0, pi / 2))
+    )
+    with pytest.raises(_MeasureFailure, match="not proved once-wound"):
+        _torus_periodic_face(source, 0, orientation, _loop_ends(source, 0))
+
     geometry.pcurves = (
         bottom,
         PeriodicPCurve(LineCurve((0, 0), (1, 1)), patch, (1, 0)),
         top,
         seam,
     )
-    assert _torus_periodic_face(source, 0, orientation, ends) is None
+    with pytest.raises(_MeasureFailure, match="not proved once-wound"):
+        _torus_periodic_face(source, 0, orientation, ends)
 
 
 def test_cylinder_green_strip_encloses_exact_primitive() -> None:
@@ -485,6 +493,50 @@ def test_cylinder_green_uses_exact_section_and_radius_sources() -> None:
         angle = mpmath.mpf(0.3) + mpmath.mpf(1) / 10
         expected = (angle / 10 + mpmath.sin(angle) / 3) / 30
         assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
+
+
+@pytest.mark.parametrize("turns", (1, -1, 2**53 + 1))
+def test_wrapped_section_green_uses_exact_period_and_coefficients(turns: int) -> None:
+    from fractions import Fraction
+
+    import mpmath
+
+    from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.geometry.brep._measure import (
+        _green_strip_program,
+        _parameter_area_program,
+    )
+    from phydrax.geometry.brep._patches import CylinderPatch, PlaneCylinderSectionPCurve
+
+    cylinder = CylinderPatch(
+        (1 / 3, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        0.1,
+        origin_exact=(Fraction(1, 3), Fraction(0), Fraction(0)),
+        radius_exact=Fraction(1, 10),
+    )
+    section = PlaneCylinderSectionPCurve(
+        (Fraction(1, 10), Fraction(0)),
+        (Fraction(1), Fraction(1)),
+        (Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(0)),
+        parameter_range=(0.0, 1.0),
+    )
+    wrapped = PeriodicPCurve(section, cylinder, (turns, 0))
+    green = _green_strip_program(cylinder, wrapped, 0.0, cylinder=True)
+    area = _parameter_area_program(wrapped)
+    lower, upper = green.evaluate(np.asarray([[0.3]]), np.asarray([[0.3]]))
+    area_lower, area_upper = area.evaluate(np.asarray([[0.3]]), np.asarray([[0.3]]))
+    with mpmath.workdps(70):
+        angle = mpmath.mpf(0.3) + mpmath.mpf(1) / 10 + turns * 2 * mpmath.pi
+        expected = (angle / 10 + mpmath.sin(angle) / 3) / 30
+        expected_area = (mpmath.mpf(1) / 10 + turns * 2 * mpmath.pi) / 2
+        assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
+        assert (
+            mpmath.mpf(area_lower[0, 0]) <= expected_area <= mpmath.mpf(area_upper[0, 0])
+        )
 
 
 def test_cylinder_green_binds_root_phase_and_native_period() -> None:
