@@ -95,8 +95,9 @@ def _adapt(
 def test_coarsening_defers_early_chart_replay_error_for_unchanged_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from phydrax.meshing import _adaptation
     import weakref
+
+    from phydrax.meshing import _adaptation
 
     source = _certified(_triangle_grid(1, 1))
     refined = _adapt(source, _cell_ids(source.mesh))

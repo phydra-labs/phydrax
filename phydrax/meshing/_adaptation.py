@@ -71,8 +71,8 @@ from ..discretization._nested_reference_types import (
     exact_reference_vertices,
     freeze_reference_chart_arguments,
     NestedReferenceWitnesses,
-    ReferenceCellMapWitnesses,
     reference_chart_arguments_identity,
+    ReferenceCellMapWitnesses,
     validate_nested_reference_witnesses,
 )
 from ..discretization._reference_cell import reference_cell_topology
@@ -101,9 +101,9 @@ from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
-    SourceBoundaryRationalChartBank,
     SourceBoundaryDistanceWitness,
     SourceBoundaryPointWitness,
+    SourceBoundaryRationalChartBank,
     SurfaceEnvelopeDistanceWitness,
 )
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness

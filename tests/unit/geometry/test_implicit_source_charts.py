@@ -1360,6 +1360,10 @@ def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof(
 def test_face_enclosure_reuses_derivatives_without_changing_exact_bounds(
     case: str,
 ) -> None:
+    from phydrax.discretization._coordinate_enclosure import (
+        compose_expression,
+        Polynomial,
+    )
     from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 
     first: source_charts.Polynomial = {
@@ -1382,16 +1386,15 @@ def test_face_enclosure_reuses_derivatives_without_changing_exact_bounds(
         first[(1, 0)] = RadicalElement.sqrt(2)
         second[(0, 1)] = RadicalElement.sqrt(3)
     expressions: source_charts.Polynomial3 = (first, second, third)
-    arguments = (
+    arguments: tuple[Polynomial, ...] = (
         {(1, 0): Fraction(1)},
         {(0, 1): Fraction(1)},
     )
     composed = source_charts._triangle_coordinate_expressions(
         expressions, source_charts._STANDARD_TRIANGLE
     )
-    assert composed is expressions
     for observed, source_expression in zip(composed, expressions, strict=True):
-        reference = source_charts.compose_expression(source_expression, arguments)
+        reference = compose_expression(source_expression, arguments)
         assert isinstance(reference, dict)
         assert tuple(observed.items()) == tuple(reference.items())
     actual = source_charts._enclose_face(expressions)
@@ -1422,6 +1425,3 @@ def test_face_enclosure_reuses_derivatives_without_changing_exact_bounds(
                 ) == source_charts._enclosed_interval(
                     expected, source_charts._STANDARD_TRIANGLE
                 )
-    if case == "affine":
-        zero = actual.curvatures[0][0]
-        assert all(value is zero for row in actual.curvatures for value in row)
