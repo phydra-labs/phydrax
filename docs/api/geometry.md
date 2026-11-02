@@ -200,6 +200,14 @@ Piecewise-linear curve charts compose the exact retained source segment with the
 actual target parent-reference edge map and bound the complete parameter
 interval; nonzero deviation requires the caller's explicit tolerance.
 
+For a source-authorized shared trim root, a chart junction may use a
+deterministic representable reference point even when the two endpoint shadows
+are different. Root identity and periodic-sheet agreement, not proximity,
+authorize that join. Exact polygon area checks apply to the constructed reference
+partition; they do not turn the representative into an exact source root.
+Continuous coverage and physical fidelity include the root and endpoint
+enclosures, so nonzero junction uncertainty cannot certify zero deviation.
+
 
 On standard volume targets, target-reference chart corners retain all three
 parent-cell coordinates and `local_entity_indices` names the actual local face;

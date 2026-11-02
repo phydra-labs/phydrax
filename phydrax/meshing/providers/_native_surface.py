@@ -719,7 +719,7 @@ def _chart_inputs(
     float,
     tuple[tuple[int, int, int, int], ...],
 ]:
-    """Create source-curve and singular-pole constraints in the exact chart.
+    """Create source-curve and singular-pole constraints in the reference chart.
 
     The last result lists each pole band cell as chart rows ``(inner_first,
     inner_last, outer_first, outer_last)`` over one inner sample interval: the
@@ -740,6 +740,7 @@ def _chart_inputs(
     segment_pole_corners: list[int | None] = []
     loop_rows: list[tuple[int, ...]] = []
     chart = domain.patches[patch]
+    rooted_endpoints = domain_boundary_owner._rooted_patch_chart_endpoints(domain, patch)
     internal_segments: list[tuple[int, int, tuple[int, int, int]]] = []
     pole_deviation_bound = 0.0
     pole_bands: list[tuple[int, int, int, int]] = []
@@ -763,6 +764,7 @@ def _chart_inputs(
     for loop_index, loop in enumerate(chart.loops):
         traversed: list[int] = []
         for use_index, use in enumerate(loop):
+            first_endpoint, last_endpoint = rooted_endpoints[loop_index][use_index]
             if isinstance(use, domain_owner.PatchCurveUse):
                 parameter_values = curves.get(use.curve)
                 if parameter_values is None:
@@ -779,7 +781,12 @@ def _chart_inputs(
                 rows: list[int] = []
                 uv_values: list[tuple[Fraction, Fraction]] = []
                 for parameter in traversal_parameters:
-                    uv = _use_chart_point(use, parameter)
+                    if parameter == 0:
+                        uv = first_endpoint if use.sense > 0 else last_endpoint
+                    elif parameter == 1:
+                        uv = last_endpoint if use.sense > 0 else first_endpoint
+                    else:
+                        uv = _use_chart_point(use, parameter)
                     row = point_row(uv)
                     rows.append(row)
                     uv_values.append(uv)
@@ -860,7 +867,13 @@ def _chart_inputs(
             rows = []
             ring_rows = []
             for sample in samples:
-                row = point_row(sample.chart_point)
+                if sample.parameter == 0:
+                    uv = first_endpoint
+                elif sample.parameter == 1:
+                    uv = last_endpoint
+                else:
+                    uv = sample.chart_point
+                row = point_row(uv)
                 ring_row = point_row(sample.ring_point)
                 rows.append(row)
                 ring_rows.append(ring_row)
@@ -884,9 +897,7 @@ def _chart_inputs(
                 segment_curves.append(-1)
                 segment_parameters.append((first_sample.parameter, last_sample.parameter))
                 segment_occurrences.append(occurrence)
-                segment_chart_endpoints.append(
-                    (first_sample.chart_point, last_sample.chart_point)
-                )
+                segment_chart_endpoints.append((points[first_row], points[last_row]))
                 segment_pole_corners.append(use.corner)
                 add_internal_segment(first_row, first_ring, occurrence)
                 add_internal_segment(last_row, last_ring, occurrence)
@@ -1459,7 +1470,7 @@ def _make_chart_mesh(
     )
     if signed_area != trim_area:
         raise _failure(
-            "native CDT did not reproduce the complete exact source trim measure",
+            "native CDT did not reproduce the complete reference trim measure",
             category=MeshingFailureCategory.INVALID_SOURCE,
             entity_ids=(int(patch),),
         )
@@ -2777,6 +2788,31 @@ class _CurveChordBounds:
         return deviation, length
 
 
+def _trim_lens_bound(
+    domain: domain_owner.MeshingDomain,
+    patch: int,
+    use: domain_owner.PatchCurveUse,
+    endpoints: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+    first: Fraction,
+    last: Fraction,
+    preparation: domain_owner.SourcePreparation,
+    /,
+) -> Fraction:
+    """Use the fidelity owner's continuous lens bound to schedule trim chords."""
+    from phydrax.geometry._source_fidelity import _curved_trim_lens_cap
+
+    if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
+        return Fraction(0)
+    first_uv = endpoints[0] if first == 0 else _use_chart_point(use, first)
+    last_uv = endpoints[1] if last == 1 else _use_chart_point(use, last)
+    first_parameter = float(_use_source_parameter(use, first))
+    last_parameter = float(_use_source_parameter(use, last))
+    lens = domain_boundary_owner._curved_trim_lens(
+        use, first_uv, last_uv, first_parameter, last_parameter, preparation
+    )
+    return _curved_trim_lens_cap(domain.patches[patch].surface, lens, preparation)[0]
+
+
 def _curve_parameters(
     domain: domain_owner.MeshingDomain,
     curve_ids: tuple[int, ...],
@@ -2797,6 +2833,17 @@ def _curve_parameters(
         domain, specification, FeatureKind.SURFACE
     )
     chords = _CurveChordBounds(preparation)
+    use_endpoints: dict[
+        int, tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
+    ] = {}
+    for patch in selected_patches:
+        rooted = domain_boundary_owner._rooted_patch_chart_endpoints(domain, patch)
+        for loop, endpoint_loop in zip(domain.patches[patch].loops, rooted, strict=True):
+            for use, endpoints in zip(loop, endpoint_loop, strict=True):
+                if isinstance(use, domain_owner.PatchCurveUse):
+                    use_endpoints[id(use)] = (
+                        endpoints if use.sense > 0 else (endpoints[1], endpoints[0])
+                    )
     for curve in curve_ids:
         selected_uses = tuple(
             (patch, use) for patch, use in domain.curve_uses(curve) if patch in sizes
@@ -2836,7 +2883,23 @@ def _curve_parameters(
             while intervals:
                 lower, upper = intervals.pop()
                 deviation, length = chords.interval(curve, lower, upper)
-                if deviation <= fidelity_limit and length <= edge_limit:
+                # Reserve half of the requested tolerance for the surface
+                # interpolation and endpoint errors checked at publication.
+                lens_limit = Fraction.from_float(fidelity_limit) / 2
+                lens_ok = all(
+                    _trim_lens_bound(
+                        domain,
+                        patch,
+                        use,
+                        use_endpoints[id(use)],
+                        lower,
+                        upper,
+                        preparation,
+                    )
+                    <= lens_limit
+                    for patch, use in selected_uses
+                )
+                if deviation <= fidelity_limit and length <= edge_limit and lens_ok:
                     continue
                 midpoint = (lower + upper) / 2
                 if midpoint in (lower, upper) or float(midpoint) in (
