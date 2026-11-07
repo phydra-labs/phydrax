@@ -216,11 +216,35 @@ def cleanup_harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
     include = Path(__file__).resolve().parents[2] / "native/cuda/src/common"
     # Only external CUDA/XLA types are stubbed; registry and C ABI behavior
     # comes from the production implementation.
+    # capi.cpp exports the address of each runtime entry point, so every one
+    # needs a definition with its CUDA runtime API signature.
     (directory / "cuda_runtime_api.h").write_text(
         "#pragma once\n"
-        "using cudaError_t = int;\n"
-        "constexpr cudaError_t cudaSuccess = 0;\n"
-        "inline cudaError_t cudaGetDevice(int* value) { *value = 0; return 0; }\n"
+        "#include <cstddef>\n"
+        "enum cudaError { cudaSuccess = 0 };\n"
+        "typedef enum cudaError cudaError_t;\n"
+        "enum cudaMemcpyKind { cudaMemcpyHostToHost = 0, cudaMemcpyHostToDevice = 1,\n"
+        "  cudaMemcpyDeviceToHost = 2, cudaMemcpyDeviceToDevice = 3, cudaMemcpyDefault = 4 };\n"
+        "enum cudaDeviceAttr { cudaDevAttrMaxThreadsPerBlock = 1 };\n"
+        "enum cudaDriverEntryPointQueryResult { cudaDriverEntryPointSuccess = 0 };\n"
+        "inline cudaError_t cudaGetDevice(int* device) { *device = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaSetDevice(int) { return cudaSuccess; }\n"
+        "inline cudaError_t cudaGetDeviceCount(int* count) { *count = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaDeviceSynchronize() { return cudaSuccess; }\n"
+        "inline cudaError_t cudaDriverGetVersion(int* version) { *version = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaRuntimeGetVersion(int* version) { *version = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaMemGetInfo(std::size_t* free, std::size_t* total) {\n"
+        "  *free = 0; *total = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaDeviceGetAttribute(int* value, cudaDeviceAttr, int) {\n"
+        "  *value = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaDeviceCanAccessPeer(int* can, int, int) { *can = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaMalloc(void** pointer, std::size_t) { *pointer = nullptr; return cudaSuccess; }\n"
+        "inline cudaError_t cudaFree(void*) { return cudaSuccess; }\n"
+        "inline cudaError_t cudaMemcpy(void*, const void*, std::size_t, cudaMemcpyKind) { return cudaSuccess; }\n"
+        "inline cudaError_t cudaMemcpyPeer(void*, int, const void*, int, std::size_t) { return cudaSuccess; }\n"
+        "inline cudaError_t cudaGetDriverEntryPointByVersion(const char*, void** function,\n"
+        "  unsigned int, unsigned long long, cudaDriverEntryPointQueryResult* status = nullptr) {\n"
+        "  *function = nullptr; if (status) *status = cudaDriverEntryPointSuccess; return cudaSuccess; }\n"
         'inline const char* cudaGetErrorString(cudaError_t) { return "test"; }\n'
     )
     ffi = directory / "xla/ffi/api"
