@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Sequence
 from fractions import Fraction
+from functools import reduce
 from typing import final, NamedTuple
 
 import equinox as eqx
@@ -32,6 +33,23 @@ from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._coordinate_enclosure import CoordinateSourceBank
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
+from ..geometry._interval_enclosure import (
+    Interval,
+    interval_absolute,
+    interval_add,
+    interval_multiply,
+    interval_sqrt,
+    interval_square,
+    interval_subtract,
+)
+from ..geometry._rational import (
+    fraction_down,
+    fraction_up,
+    rational_cross,
+    rational_dot,
+    rational_vector,
+    RationalVector,
+)
 from ..typing import ConvertibleToArray
 
 
@@ -63,21 +81,24 @@ class QuadLayoutObstruction(ValueError):
         super().__init__(str(message))
 
 
-type _Interval = tuple[Fraction, Fraction]
-type _IntervalPair = tuple[_Interval, _Interval]
-type _IntervalVector = tuple[_Interval, ...]
-type _ExactVector = tuple[Fraction, ...]
+type _IntervalPair = tuple[Interval, Interval]
+type _IntervalVector = tuple[Interval, ...]
 
-# Rational enclosures keep this many significant bits; their widths stay far
-# below every certified margin while bounding rational bit growth.
-_ENCLOSURE_BITS = 160
-# Archived float evidence (edge angles, feature residuals, field energy) is one
-# platform's binary64 evaluation of a declared formula from stored inputs. The
-# correctly rounded arithmetic and libm transcendentals in those formulas err by
-# less than 2**-44 per evaluated quantity on every supported platform, so a
-# certified 2**-36 band separates cross-platform rounding from altered evidence.
-# No integer decision depends on this band.
-_FLOAT_EVIDENCE_BOUND = Fraction(1, 1 << 36)
+# Declared consistency tolerance of archived float evidence. Edge angles,
+# feature residuals, and field energy are each a fixed formula of other stored
+# arrays (frames, source coordinates, angles, guidance), never of the solve's
+# residual. Restore accepts the evidence only if every enclosed exact value of
+# that formula lies within this tolerance; the verdict is decided by exact
+# rational and outward-rounded interval predicates, so identical bytes give an
+# identical verdict on every platform. Its magnitude is chosen far above the
+# binary64 evaluation differences of legitimate generation on any platform and
+# far below any material change of the evidence.
+_EVIDENCE_TOLERANCE = Fraction(1, 1 << 36)
+# Taylor tail of the rational cosine/sine enclosures, below binary64 rounding.
+_TAYLOR_TAIL = Fraction(1, 1 << 80)
+# Exact bracket math.pi < pi < nextafter(math.pi, inf).
+_PI_LOWER = Fraction(math.pi)
+_PI_UPPER = Fraction(float(np.nextafter(math.pi, math.inf)))
 # Reference rays for winding counts; the count is independent of the ray, so
 # the first ray whose crossings are all certified decides it exactly.
 _WINDING_RAYS = (
@@ -96,147 +117,63 @@ _WINDING_RAYS = (
 )
 
 
-def _point(value: Fraction, /) -> _Interval:
-    return (value, value)
+def _enclose(lower: Fraction, upper: Fraction, /) -> Interval:
+    return (np.float64(fraction_down(lower)), np.float64(fraction_up(upper)))
 
 
-def _rounded(value: _Interval, /) -> _Interval:
-    def bound(endpoint: Fraction, upward: bool, /) -> Fraction:
-        if endpoint == 0:
-            return endpoint
-        shift = _ENCLOSURE_BITS - (
-            endpoint.numerator.bit_length() - endpoint.denominator.bit_length()
-        )
-        if shift >= 0:
-            scaled = endpoint * (1 << shift)
-            whole = math.ceil(scaled) if upward else math.floor(scaled)
-            return Fraction(whole, 1 << shift)
-        scaled = endpoint / (1 << -shift)
-        whole = math.ceil(scaled) if upward else math.floor(scaled)
-        return Fraction(whole * (1 << -shift))
-
-    return (bound(value[0], False), bound(value[1], True))
+def _enclose_vector(vector: RationalVector, /) -> _IntervalVector:
+    return tuple(_enclose(value, value) for value in vector)
 
 
-def _add(first: _Interval, second: _Interval, /) -> _Interval:
-    return (first[0] + second[0], first[1] + second[1])
+def _scaled(value: Interval, factor: int, /) -> Interval:
+    return interval_multiply(value, (np.float64(factor), np.float64(factor)))
 
 
-def _subtract(first: _Interval, second: _Interval, /) -> _Interval:
-    return (first[0] - second[1], first[1] - second[0])
-
-
-def _multiply(first: _Interval, second: _Interval, /) -> _Interval:
-    products = (
-        first[0] * second[0],
-        first[0] * second[1],
-        first[1] * second[0],
-        first[1] * second[1],
-    )
-    return (min(products), max(products))
-
-
-def _scale(value: _Interval, factor: int | Fraction, /) -> _Interval:
-    return _multiply(value, _point(Fraction(factor)))
-
-
-def _square(value: _Interval, /) -> _Interval:
-    lower, upper = value
-    if lower >= 0:
-        return (lower * lower, upper * upper)
-    if upper <= 0:
-        return (upper * upper, lower * lower)
-    return (Fraction(0), max(lower * lower, upper * upper))
-
-
-def _absolute(value: _Interval, /) -> _Interval:
-    lower, upper = value
-    if lower >= 0:
-        return value
-    if upper <= 0:
-        return (-upper, -lower)
-    return (Fraction(0), max(-lower, upper))
-
-
-def _interval_sum(values: Iterable[_Interval], /) -> _Interval:
-    lower = upper = Fraction(0)
-    for value in values:
-        lower += value[0]
-        upper += value[1]
-    return (lower, upper)
-
-
-def _sign(value: _Interval, /) -> int | None:
-    """Return the certified sign of every enclosed value, or None if undecided."""
-    if value[0] > 0:
+def _certified_sign(value: Interval, /) -> int | None:
+    """Return the sign of every enclosed value, or None if undecided."""
+    if float(value[0]) > 0.0:
         return 1
-    if value[1] < 0:
+    if float(value[1]) < 0.0:
         return -1
     return None
 
 
-def _dot(first: _IntervalVector, second: _IntervalVector, /) -> _Interval:
-    return _interval_sum(
-        _multiply(left, right) for left, right in zip(first, second, strict=True)
-    )
+def _interval_dot(first: _IntervalVector, second: _IntervalVector, /) -> Interval:
+    products = [
+        interval_multiply(left, right) for left, right in zip(first, second, strict=True)
+    ]
+    return reduce(interval_add, products)
 
 
-def _cross(first: _IntervalVector, second: _IntervalVector, /) -> _IntervalVector:
+def _interval_cross(
+    first: _IntervalVector, second: _IntervalVector, /
+) -> _IntervalVector:
     return (
-        _subtract(_multiply(first[1], second[2]), _multiply(first[2], second[1])),
-        _subtract(_multiply(first[2], second[0]), _multiply(first[0], second[2])),
-        _subtract(_multiply(first[0], second[1]), _multiply(first[1], second[0])),
+        interval_subtract(
+            interval_multiply(first[1], second[2]), interval_multiply(first[2], second[1])
+        ),
+        interval_subtract(
+            interval_multiply(first[2], second[0]), interval_multiply(first[0], second[2])
+        ),
+        interval_subtract(
+            interval_multiply(first[0], second[1]), interval_multiply(first[1], second[0])
+        ),
     )
-
-
-def _exact_dot(first: _ExactVector, second: _ExactVector, /) -> Fraction:
-    return sum(
-        (left * right for left, right in zip(first, second, strict=True)), Fraction(0)
-    )
-
-
-def _exact_cross(first: _ExactVector, second: _ExactVector, /) -> _ExactVector:
-    return (
-        first[1] * second[2] - first[2] * second[1],
-        first[2] * second[0] - first[0] * second[2],
-        first[0] * second[1] - first[1] * second[0],
-    )
-
-
-def _exact_interval(vector: _ExactVector, /) -> _IntervalVector:
-    return tuple(_point(value) for value in vector)
-
-
-def _square_root(value: Fraction, /) -> _Interval:
-    """Enclose the square root of a non-negative rational."""
-    if value < 0:
-        raise ValueError("A certified square root requires a non-negative rational.")
-    if value == 0:
-        return _point(value)
-    magnitude = value.numerator.bit_length() - value.denominator.bit_length()
-    shift = max(0, _ENCLOSURE_BITS - magnitude // 2 + 2)
-    scaled = value * (1 << (2 * shift))
-    lower = math.isqrt(math.floor(scaled))
-    ceiling = math.ceil(scaled)
-    upper = math.isqrt(ceiling)
-    if upper * upper < ceiling:
-        upper += 1
-    return (Fraction(lower, 1 << shift), Fraction(upper, 1 << shift))
 
 
 def _cosine_sine(angle: Fraction, /) -> _IntervalPair:
-    """Enclose the cosine and sine of an exact rational angle.
+    """Rigorously enclose the cosine and sine of an exact rational angle.
 
-    The Taylor terms are summed exactly. Once the term index exceeds the
-    argument magnitude both alternating tails decrease monotonically, so each is
-    bounded by the first omitted term.
+    The Taylor terms are summed exactly in rationals. Once the term index
+    exceeds the argument magnitude both alternating tails decrease
+    monotonically, so each is bounded by the first omitted term; the rational
+    bounds are then rounded outward to binary64. No libm call is involved.
     """
     cosine = sine = Fraction(0)
     term = Fraction(1)
-    tail = Fraction(1, 1 << (_ENCLOSURE_BITS + 8))
     magnitude = abs(angle)
     index = 0
-    while index <= magnitude or abs(term) > tail:
+    while index <= magnitude or abs(term) > _TAYLOR_TAIL:
         match index % 4:
             case 0:
                 cosine += term
@@ -250,16 +187,20 @@ def _cosine_sine(angle: Fraction, /) -> _IntervalPair:
         term = term * angle / index
     remainder = abs(term)
     return (
-        _rounded((cosine - remainder, cosine + remainder)),
-        _rounded((sine - remainder, sine + remainder)),
+        _enclose(cosine - remainder, cosine + remainder),
+        _enclose(sine - remainder, sine + remainder),
     )
 
 
 def _angle_difference(first: _IntervalPair, second: _IntervalPair, /) -> _IntervalPair:
     """Cosine and sine of ``first - second`` from their enclosures."""
     return (
-        _add(_multiply(first[0], second[0]), _multiply(first[1], second[1])),
-        _subtract(_multiply(first[1], second[0]), _multiply(first[0], second[1])),
+        interval_add(
+            interval_multiply(first[0], second[0]), interval_multiply(first[1], second[1])
+        ),
+        interval_subtract(
+            interval_multiply(first[1], second[0]), interval_multiply(first[0], second[1])
+        ),
     )
 
 
@@ -267,12 +208,12 @@ def _fourfold(value: _IntervalPair, /) -> _IntervalPair:
     """Cosine and sine of four times an enclosed angle."""
     cosine, sine = value
     double = (
-        _subtract(_square(cosine), _square(sine)),
-        _scale(_multiply(cosine, sine), 2),
+        interval_subtract(interval_square(cosine), interval_square(sine)),
+        _scaled(interval_multiply(cosine, sine), 2),
     )
     return (
-        _rounded(_subtract(_square(double[0]), _square(double[1]))),
-        _rounded(_scale(_multiply(double[0], double[1]), 2)),
+        interval_subtract(interval_square(double[0]), interval_square(double[1])),
+        _scaled(interval_multiply(double[0], double[1]), 2),
     )
 
 
@@ -280,32 +221,40 @@ def _directions_agree(
     rotation: _IntervalPair,
     first: _IntervalPair,
     second: _IntervalPair,
-    bound: Fraction,
+    tolerance: Fraction,
     /,
 ) -> bool:
-    """Certify that ``first`` rotated by ``rotation`` lies within ``bound`` of ``second``.
+    """Decide that ``first`` rotated by ``rotation`` lies within ``tolerance`` of ``second``.
 
     Accepts only if every enclosed configuration has a positive dot product and
-    an angular sine of at most ``bound``.
+    an angular sine of at most ``tolerance``.
     """
     cosine, sine = rotation
     rotated = (
-        _subtract(_multiply(cosine, first[0]), _multiply(sine, first[1])),
-        _add(_multiply(sine, first[0]), _multiply(cosine, first[1])),
+        interval_subtract(
+            interval_multiply(cosine, first[0]), interval_multiply(sine, first[1])
+        ),
+        interval_add(
+            interval_multiply(sine, first[0]), interval_multiply(cosine, first[1])
+        ),
     )
-    dot = _add(_multiply(rotated[0], second[0]), _multiply(rotated[1], second[1]))
-    cross = _subtract(_multiply(rotated[0], second[1]), _multiply(rotated[1], second[0]))
-    norms = _multiply(
-        _add(_square(first[0]), _square(first[1])),
-        _add(_square(second[0]), _square(second[1])),
+    dot = _interval_dot(rotated, second)
+    cross = interval_subtract(
+        interval_multiply(rotated[0], second[1]), interval_multiply(rotated[1], second[0])
     )
-    return _sign(dot) == 1 and _square(cross)[1] <= bound * bound * norms[0]
+    norms = interval_multiply(
+        interval_add(interval_square(first[0]), interval_square(first[1])),
+        interval_add(interval_square(second[0]), interval_square(second[1])),
+    )
+    return _certified_sign(dot) == 1 and Fraction(
+        float(interval_square(cross)[1])
+    ) <= tolerance * tolerance * Fraction(float(norms[0]))
 
 
 def _rotate_between_normals(
     direction: _IntervalVector,
-    face_normal: _ExactVector,
-    vertex_normal: _ExactVector,
+    face_normal: RationalVector,
+    vertex_normal: RationalVector,
     vertex_normal_square: Fraction,
     vertex: int,
     /,
@@ -316,8 +265,8 @@ def _rotate_between_normals(
     ``K = a x b`` and ``m = |a||b|``, ``m (m + q) R d`` equals
     ``(m + q)(q d + K x d) + K (K.d)``, which avoids normalization.
     """
-    axis = _exact_cross(face_normal, vertex_normal)
-    alignment = _exact_dot(face_normal, vertex_normal)
+    axis = rational_cross(face_normal, vertex_normal)
+    alignment = rational_dot(face_normal, vertex_normal)
     if not any(axis):
         if alignment < 0:
             raise QuadLayoutObstruction(
@@ -326,27 +275,33 @@ def _rotate_between_normals(
                 source_vertex_rows=(vertex,),
             )
         return direction
-    length = _square_root(_exact_dot(face_normal, face_normal) * vertex_normal_square)
-    shifted = _add(length, _point(alignment))
-    if _sign(shifted) != 1:
+    length_square = rational_dot(face_normal, face_normal) * vertex_normal_square
+    shifted = interval_add(
+        interval_sqrt(_enclose(length_square, length_square)),
+        _enclose(alignment, alignment),
+    )
+    if _certified_sign(shifted) != 1:
         raise QuadLayoutObstruction(
             "singularity_transport",
             "Cross-field index transport across nearly opposed source normals is not certified.",
             source_vertex_rows=(vertex,),
         )
-    exact_axis = _exact_interval(axis)
-    swept = _cross(exact_axis, direction)
-    along = _dot(exact_axis, direction)
+    enclosed_axis = _enclose_vector(axis)
+    enclosed_alignment = _enclose(alignment, alignment)
+    swept = _interval_cross(enclosed_axis, direction)
+    along = _interval_dot(enclosed_axis, direction)
     return tuple(
-        _add(
-            _multiply(
+        interval_add(
+            interval_multiply(
                 shifted,
-                _add(_scale(component, alignment), swept_component),
+                interval_add(
+                    interval_multiply(component, enclosed_alignment), swept_component
+                ),
             ),
-            _multiply(axis_component, along),
+            interval_multiply(axis_component, along),
         )
         for component, swept_component, axis_component in zip(
-            direction, swept, exact_axis, strict=True
+            direction, swept, enclosed_axis, strict=True
         )
     )
 
@@ -362,12 +317,12 @@ def _certified_winding(points: Sequence[_IntervalPair], vertex: int, /) -> int:
     for first, second in _WINDING_RAYS:
         rotated = [
             (
-                _add(_scale(real, first), _scale(imaginary, second)),
-                _subtract(_scale(imaginary, first), _scale(real, second)),
+                interval_add(_scaled(real, first), _scaled(imaginary, second)),
+                interval_subtract(_scaled(imaginary, first), _scaled(real, second)),
             )
             for real, imaginary in points
         ]
-        sides = [_sign(imaginary) for _, imaginary in rotated]
+        sides = [_certified_sign(imaginary) for _, imaginary in rotated]
         if any(side is None for side in sides):
             continue
         winding = 0
@@ -377,10 +332,10 @@ def _certified_winding(points: Sequence[_IntervalPair], vertex: int, /) -> int:
             start, end = sides[index], sides[(index + 1) % count]
             if start == end:
                 continue
-            turn = _sign(
-                _subtract(
-                    _multiply(current[0], following[1]),
-                    _multiply(current[1], following[0]),
+            turn = _certified_sign(
+                interval_subtract(
+                    interval_multiply(current[0], following[1]),
+                    interval_multiply(current[1], following[0]),
                 )
             )
             if turn is None:
@@ -637,8 +592,22 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
         return rebuilt
 
 
+def _within_quarter_turn(value: float, /) -> bool:
+    """Decide ``|value| <= pi/4`` exactly against the bracket of pi.
+
+    ``4 |value|`` is a binary64 number and no binary64 number lies strictly
+    between the bracket endpoints, so one of the two comparisons decides.
+    """
+    scaled = 4 * abs(Fraction(value))
+    if scaled <= _PI_LOWER:
+        return True
+    if scaled >= _PI_UPPER:
+        return False
+    raise ValueError("A binary64 angle cannot lie strictly inside the pi bracket.")
+
+
 def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
-    """Refuse stored field evidence that its source does not certify."""
+    """Refuse stored field evidence that its source does not reproduce."""
     from ._quad_generation import (
         _edge_key,
         _surface_patch_ids,
@@ -657,22 +626,18 @@ def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
             "Stored source-bound cross field does not reproduce its source frames."
         )
     angles = np.asarray(field.angles, dtype=np.float64)
-    quarter_turn = np.pi / 4.0
-    if np.any(np.abs(angles) > quarter_turn) or np.any(
-        np.abs(np.asarray(field.guide_angles, dtype=np.float64)) > quarter_turn
+    guidance = np.asarray(field.guide_angles, dtype=np.float64)
+    if not all(
+        _within_quarter_turn(value) for value in (*angles.tolist(), *guidance.tolist())
     ):
         raise ValueError(
             "Stored source-bound cross field does not reproduce its canonical quarter-turn angles."
         )
     points = np.asarray(source.coordinates, dtype=np.float64)
     padded = np.pad(points, ((0, 0), (0, 3 - points.shape[1])))
-    exact_points = [tuple(Fraction(value) for value in row) for row in padded.tolist()]
+    exact_points = [rational_vector(row) for row in padded.tolist()]
     exact_frames = [
-        (
-            tuple(Fraction(value) for value in face[0]),
-            tuple(Fraction(value) for value in face[1]),
-        )
-        for face in frames.tolist()
+        (rational_vector(face[0]), rational_vector(face[1])) for face in frames.tolist()
     ]
     features = {int(row) for row in np.asarray(field.feature_edges).tolist()}
     links: list[tuple[int, int]] = []
@@ -686,13 +651,11 @@ def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
             end - start
             for start, end in zip(exact_points[key[0]], exact_points[key[1]], strict=True)
         )
-        local = [
-            (
-                _point(_exact_dot(exact_frames[face][0], direction)),
-                _point(_exact_dot(exact_frames[face][1], direction)),
-            )
-            for face in faces
-        ]
+        local: list[_IntervalPair] = []
+        for face in faces:
+            first = rational_dot(exact_frames[face][0], direction)
+            second = rational_dot(exact_frames[face][1], direction)
+            local.append((_enclose(first, first), _enclose(second, second)))
         if edge_row in features:
             feature_rows.extend(faces)
             feature_directions.extend(local)
@@ -716,7 +679,11 @@ def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
         raise ValueError(
             "Stored source-bound cross field does not reproduce its source edge graph."
         )
-    unit = (_point(Fraction(1)), _point(Fraction(0)))
+    one = (np.float64(1.0), np.float64(1.0))
+    zero = (np.float64(0.0), np.float64(0.0))
+    unit = (one, zero)
+    # Feature and transport angles are fixed source geometry (edge angles in
+    # the stored frames), never solver unknowns.
     feature_angles = [
         _cosine_sine(Fraction(value))
         for value in np.asarray(field.feature_angles, dtype=np.float64).tolist()
@@ -726,29 +693,29 @@ def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
         for value in np.asarray(field.transport_angles, dtype=np.float64).tolist()
     ]
     if not all(
-        _directions_agree(rotation, unit, direction, _FLOAT_EVIDENCE_BOUND)
+        _directions_agree(rotation, unit, direction, _EVIDENCE_TOLERANCE)
         for rotation, direction in zip(feature_angles, feature_directions, strict=True)
     ) or not all(
-        _directions_agree(rotation, first, second, _FLOAT_EVIDENCE_BOUND)
+        _directions_agree(rotation, first, second, _EVIDENCE_TOLERANCE)
         for rotation, (first, second) in zip(
             transport_angles, link_directions, strict=True
         )
     ):
         raise ValueError(
-            "Stored source-bound cross field does not reproduce its source edge directions."
+            "Stored source-bound cross field does not reproduce its source edge "
+            "directions within the declared evidence tolerance."
         )
     field_angles = [_cosine_sine(Fraction(value)) for value in angles.tolist()]
     feature_mismatch = [
         _fourfold(_angle_difference(field_angles[row], feature_angle))
         for row, feature_angle in zip(feature_rows, feature_angles, strict=True)
     ]
-    residual_bound = 4 * _FLOAT_EVIDENCE_BOUND
     if not all(
         _directions_agree(
             _cosine_sine(4 * Fraction(residual)),
             unit,
-            (cosine, _absolute(sine)),
-            residual_bound,
+            (cosine, interval_absolute(sine)),
+            4 * _EVIDENCE_TOLERANCE,
         )
         for residual, (cosine, sine) in zip(
             np.asarray(field.feature_residuals, dtype=np.float64).tolist(),
@@ -757,7 +724,8 @@ def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
         )
     ):
         raise ValueError(
-            "Stored source-bound cross field does not reproduce its feature-alignment residuals."
+            "Stored source-bound cross field does not reproduce its feature-alignment "
+            "residuals within the declared evidence tolerance."
         )
     link_mismatch = [
         _fourfold(
@@ -770,37 +738,31 @@ def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
     # The solve weights guidance like feature constraints, one row per face.
     guidance_mismatch = [
         _fourfold(_angle_difference(field_angles[face], _cosine_sine(Fraction(value))))
-        for face, value in enumerate(
-            np.asarray(field.guide_angles, dtype=np.float64).tolist()
-        )
+        for face, value in enumerate(guidance.tolist())
     ]
-    one = _point(Fraction(1))
-    energy = _add(
-        _interval_sum(_subtract(one, cosine) for cosine, _ in link_mismatch),
-        _scale(
-            _interval_sum(
-                _subtract(one, cosine)
-                for cosine, _ in (*feature_mismatch, *guidance_mismatch)
-            ),
-            4,
-        ),
-    )
-    # Each weighted term carries at most the evidence bound; pairwise
-    # summation adds a logarithmic factor in the term count.
+    defects = [interval_subtract(one, cosine) for cosine, _ in link_mismatch]
+    weighted = [
+        _scaled(interval_subtract(one, cosine), 4)
+        for cosine, _ in (*feature_mismatch, *guidance_mismatch)
+    ]
+    energy = reduce(interval_add, (*defects, *weighted), zero)
+    # The tolerance applies per weighted term, with a logarithmic factor for
+    # the summation order of the stored evaluation.
     constrained = len(feature_rows) + len(guidance_mismatch)
     terms = len(links) + constrained
-    energy_bound = (
-        _FLOAT_EVIDENCE_BOUND
+    energy_tolerance = (
+        _EVIDENCE_TOLERANCE
         * (1 + len(links) + 4 * constrained)
         * (1 + terms.bit_length())
     )
     stored_energy = Fraction(float(field.field_energy))
     if not (
-        stored_energy - energy_bound <= energy[0]
-        and energy[1] <= stored_energy + energy_bound
+        stored_energy - energy_tolerance <= Fraction(float(energy[0]))
+        and Fraction(float(energy[1])) <= stored_energy + energy_tolerance
     ):
         raise ValueError(
-            "Stored source-bound cross field does not reproduce its certified field energy."
+            "Stored source-bound cross field does not reproduce its field energy "
+            "within the declared evidence tolerance."
         )
     singular_vertices, singularity_indices = _certified_singularity_indices(
         data.cells.tolist(),
@@ -826,8 +788,8 @@ def _certified_singularity_indices(
     cells: Sequence[Sequence[int]],
     edges: np.ndarray,
     edge_owners: dict[tuple[int, int], tuple[int, ...]],
-    points: Sequence[_ExactVector],
-    frames: Sequence[tuple[_ExactVector, _ExactVector]],
+    points: Sequence[RationalVector],
+    frames: Sequence[tuple[RationalVector, RationalVector]],
     angles: Sequence[_IntervalPair],
     feature_edges: set[int],
     /,
@@ -839,12 +801,12 @@ def _certified_singularity_indices(
     vertex normal. The index is the exact winding number of the fourth powers
     of those directions around the vertex star.
     """
-    normals: list[_ExactVector] = []
+    normals: list[RationalVector] = []
     for triangle in cells:
         origin = points[triangle[0]]
         first = tuple(b - a for a, b in zip(origin, points[triangle[1]], strict=True))
         second = tuple(b - a for a, b in zip(origin, points[triangle[2]], strict=True))
-        normal = _exact_cross(first, second)
+        normal = rational_cross(first, second)
         if not any(normal):
             raise QuadLayoutObstruction(
                 "singularity_transport",
@@ -898,14 +860,14 @@ def _certified_singularity_indices(
         vertex_normal = tuple(
             sum((normals[face][axis] for face in star), Fraction(0)) for axis in range(3)
         )
-        normal_square = _exact_dot(vertex_normal, vertex_normal)
+        normal_square = rational_dot(vertex_normal, vertex_normal)
         if normal_square == 0:
             raise QuadLayoutObstruction(
                 "singularity_transport",
                 "A source vertex has no stable tangent plane for cross-field index transport.",
                 source_vertex_rows=(vertex,),
             )
-        tangent: _ExactVector | None = None
+        tangent: RationalVector | None = None
         for face in order:
             for other in cells[face]:
                 if other == vertex:
@@ -913,7 +875,7 @@ def _certified_singularity_indices(
                 edge = tuple(
                     b - a for a, b in zip(points[vertex], points[other], strict=True)
                 )
-                height = _exact_dot(edge, vertex_normal)
+                height = rational_dot(edge, vertex_normal)
                 projected = tuple(
                     normal_square * component - height * normal_component
                     for component, normal_component in zip(
@@ -933,36 +895,41 @@ def _certified_singularity_indices(
             )
         # The second axis has length |n| |t|; scaling the first coordinate by
         # |n| keeps both coordinates proportional to the unit-frame phase.
-        exact_tangent = _exact_interval(tangent)
-        exact_second = _exact_interval(_exact_cross(vertex_normal, tangent))
-        normal_length = _square_root(normal_square)
+        enclosed_tangent = _enclose_vector(tangent)
+        enclosed_second = _enclose_vector(rational_cross(vertex_normal, tangent))
+        normal_length = interval_sqrt(_enclose(normal_square, normal_square))
         fourth_powers: list[_IntervalPair] = []
         for face in order:
             cosine, sine = angles[face]
             direction = tuple(
-                _add(_scale(cosine, first), _scale(sine, second))
+                interval_add(
+                    interval_multiply(cosine, _enclose(first, first)),
+                    interval_multiply(sine, _enclose(second, second)),
+                )
                 for first, second in zip(frames[face][0], frames[face][1], strict=True)
             )
             transported = _rotate_between_normals(
                 direction, normals[face], vertex_normal, normal_square, vertex
             )
-            real = _rounded(_multiply(normal_length, _dot(transported, exact_tangent)))
-            imaginary = _rounded(_dot(transported, exact_second))
-            real_square = _square(real)
-            imaginary_square = _square(imaginary)
+            real = interval_multiply(
+                normal_length, _interval_dot(transported, enclosed_tangent)
+            )
+            imaginary = _interval_dot(transported, enclosed_second)
+            real_square = interval_square(real)
+            imaginary_square = interval_square(imaginary)
             fourth_powers.append(
                 (
-                    _add(
-                        _subtract(
-                            _square(real_square),
-                            _scale(_multiply(real_square, imaginary_square), 6),
+                    interval_add(
+                        interval_subtract(
+                            interval_square(real_square),
+                            _scaled(interval_multiply(real_square, imaginary_square), 6),
                         ),
-                        _square(imaginary_square),
+                        interval_square(imaginary_square),
                     ),
-                    _scale(
-                        _multiply(
-                            _multiply(real, imaginary),
-                            _subtract(real_square, imaginary_square),
+                    _scaled(
+                        interval_multiply(
+                            interval_multiply(real, imaginary),
+                            interval_subtract(real_square, imaginary_square),
                         ),
                         4,
                     ),

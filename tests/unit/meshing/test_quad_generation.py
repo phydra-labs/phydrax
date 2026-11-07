@@ -796,7 +796,7 @@ def test_stored_cross_field_restore_refuses_altered_constraints(
         (
             lambda value: value.field_energy,
             np.asarray(field.field_energy) + 1.0e-6,
-            "certified field energy",
+            "field energy within the declared evidence tolerance",
         ),
     )
     for where, replacement, message in alterations:
