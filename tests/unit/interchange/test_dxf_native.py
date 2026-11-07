@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import mpmath
 import pytest
 
 from phydrax.interchange._dxf import (
@@ -179,3 +180,36 @@ SPLINE
 """
     with pytest.raises(DxfImportError, match="declared counts disagree"):
         decode_dxf_bytes(_drawing(malformed), DxfImportPolicy())
+
+
+def _quarter_ellipse(corner: tuple[float, float]) -> bytes:
+    # ELLIPSE 0 -> fl(pi/2) with semi-axes 2 and 1, closed by two lines.
+    return _drawing(
+        "0\nELLIPSE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+        "40\n0.5\n41\n0.0\n42\n1.5707963267948966\n"
+        f"0\nLINE\n10\n{corner[0]!r}\n20\n{corner[1]!r}\n30\n0.0\n"
+        "11\n0.0\n21\n0.0\n31\n0.0\n"
+        "0\nLINE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+    )
+
+
+def test_float_quarter_angle_keeps_its_literal_ellipse_endpoint() -> None:
+    gap = 1e-15
+    with mpmath.workprec(200):
+        parameter = mpmath.mpf(1.5707963267948966)
+        exact = (2 * mpmath.cos(parameter), mpmath.sin(parameter))
+        literal = (float(exact[0]), float(exact[1]))
+        displacement = mpmath.hypot(exact[0] - literal[0], exact[1] - literal[1])
+        assert 0 < displacement <= gap
+    imported = decode_dxf_bytes(
+        _quarter_ellipse(literal), DxfImportPolicy(maximum_junction_gap=gap)
+    )
+    assert [loss.category for loss in imported.report.losses] == ["transformed"]
+    # fl(pi/2) is not an exact quarter turn: the exact axis point (0, 1) lies
+    # 1.2e-16 from the authored endpoint and needs a declared gap.
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(_quarter_ellipse((0.0, 1.0)), DxfImportPolicy())
+    axis_corner = decode_dxf_bytes(
+        _quarter_ellipse((0.0, 1.0)), DxfImportPolicy(maximum_junction_gap=gap)
+    )
+    assert [loss.category for loss in axis_corner.report.losses] == ["transformed"]

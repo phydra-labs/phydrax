@@ -571,51 +571,20 @@ def _spline(groups: _Groups, label: str) -> list[_Edge]:
     return [(points[0], points[-1], curve, label)]
 
 
-def _quadrant(angle: float, *, degrees: bool) -> tuple[float, float] | None:
-    step = 90.0 if degrees else math.pi / 2
-    quotient = angle / step
-    if quotient != int(quotient):
+def _quadrant(degrees: float) -> tuple[float, float] | None:
+    """Exact axis direction when ``degrees`` is exactly a multiple of 90.
+
+    The decision is exact in rationals. Radian multiples ``k pi / 2`` are
+    irrational for ``k != 0``, so no nonzero binary64 radian denotes an axis
+    direction; radian conics keep their analytic carriers instead.
+    """
+    quotient = Fraction(degrees) / 90
+    if quotient.denominator != 1:
         return None
-    return ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0))[int(quotient) % 4]
+    return ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0))[quotient.numerator % 4]
 
 
-def _ellipse_quarters(
-    center: _Point, major: _Point, ratio: float, first: int, quarters: int
-) -> BSplineCurve:
-    cx, cy = map(Fraction, center)
-    ux, uy = map(Fraction, major)
-    vx, vy = -uy * Fraction(ratio), ux * Fraction(ratio)
-    axes = (
-        (Fraction(1), Fraction(0)),
-        (Fraction(0), Fraction(1)),
-        (Fraction(-1), Fraction(0)),
-        (Fraction(0), Fraction(-1)),
-    )
-    controls: list[_Point] = []
-    weights: list[float] = []
-    for i in range(quarters):
-        a, b = axes[(first + i) % 4], axes[(first + i + 1) % 4]
-        raw = (a, (a[0] + b[0], a[1] + b[1]), b)
-        mapped = [
-            (_binary(cx + x * ux + y * vx), _binary(cy + x * uy + y * vy)) for x, y in raw
-        ]
-        factor = float(2**i)
-        if not controls:
-            controls.append(mapped[0])
-            weights.append(factor)
-        controls.extend(mapped[1:])
-        weights.extend((factor, 2 * factor))
-    knots = (
-        [0.0] * 3
-        + [float(i) for i in range(1, quarters) for _ in range(2)]
-        + [float(quarters)] * 3
-    )
-    return BSplineCurve(controls, weights, knots, 2)
-
-
-def _conic_angles(
-    groups: _Groups, degrees: bool
-) -> tuple[float, float, _Point | None, _Point | None]:
+def _conic_angles(groups: _Groups, degrees: bool) -> tuple[float, float]:
     first = _number(groups, 50 if degrees else 41)
     last = _number(groups, 51 if degrees else 42)
     period = 360.0 if degrees else 2 * math.pi
@@ -625,8 +594,7 @@ def _conic_angles(
         )
     if last <= first:
         last += period
-    a, b = _quadrant(first, degrees=degrees), _quadrant(last, degrees=degrees)
-    return first, last, a, b
+    return first, last
 
 
 def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
@@ -641,7 +609,7 @@ def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
         start = (_binary(Fraction(center[0]) + Fraction(radius)), center[1])
         return [(start, start, ProfileArc(center), label)]
     degrees = name == "ARC"
-    first, last, a, b = _conic_angles(groups, degrees)
+    first, last = _conic_angles(groups, degrees)
     if degrees:
         radius = _number(groups, 40)
         if radius <= 0.0:
@@ -649,6 +617,7 @@ def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
                 "DxfSource.geometry must satisfy its declared planar source contract; got "
                 + "DXF arc radius must be positive."
             )
+        a, b = _quadrant(first), _quadrant(last)
         if a is not None and b is not None:
             points = [
                 (
@@ -669,16 +638,6 @@ def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
                 "DxfSource.geometry must satisfy its declared planar source contract; got "
                 + "DXF ellipse requires nonzero major axis and 0 < ratio <= 1."
             )
-        if a is not None and b is not None:
-            spline = _ellipse_quarters(
-                center,
-                major,
-                ratio,
-                int(first / (math.pi / 2)),
-                int((last - first) / (math.pi / 2)),
-            )
-            points = np.asarray(spline.control_points)
-            return [(tuple(points[0]), tuple(points[-1]), spline, label)]
         axis = (major[0] / length, major[1] / length)
         curve = EllipseCurve(center, axis, (-axis[1], axis[0]), length, ratio * length)
     points = np.asarray(curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64)))
