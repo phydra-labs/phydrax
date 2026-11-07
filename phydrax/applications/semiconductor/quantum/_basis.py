@@ -9,6 +9,7 @@ energies, including reservoir chemical potentials, share ``energy_reference``.
 
 from __future__ import annotations
 
+from enum import IntEnum
 from fractions import Fraction
 from functools import partial
 from typing import Self, TYPE_CHECKING
@@ -18,7 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jax import Array
+from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from .... import linalg as la
@@ -294,7 +295,9 @@ class SchrodingerResult(StrictModule):
     energy_density is the reference-dependent expectation of H (J/m3).
     If H includes -q*psi, do not add this unchanged to Poisson field energy.
     Material thermodynamic internal energy requires a separate consistent
-    free-energy/entropy closure.
+    free-energy/entropy closure. ``omitted_bound_status`` is an
+    `OmittedBoundStatus` code; anything but ``CERTIFIED`` makes the solve
+    unsuccessful.
     """
 
     energies: Array
@@ -304,6 +307,7 @@ class SchrodingerResult(StrictModule):
     charge_density: Array
     energy_density: Array
     omitted_particle_bound: Array
+    omitted_bound_status: Array
     eigen_result: eigen.EigenSolveResult
     successful: Array
 
@@ -363,6 +367,38 @@ _UNIT_ROUNDOFF = Fraction(1, 2**53)
 _STURM_MAXIMUM_SCALE = 2.0**500
 
 
+class OmittedBoundStatus(IntEnum):
+    """Outcome of the omitted-population certificate of `solve_schrodinger`.
+
+    ``OUT_OF_RANGE`` marks a chain with non-finite entries or entries beyond the
+    certified 2^500 eV scale; its bound is infinite and the solve unsuccessful.
+    """
+
+    CERTIFIED = 0
+    OUT_OF_RANGE = 1
+
+
+def _sturm_scale(
+    hamiltonian_diagonal: npt.ArrayLike, hamiltonian_off_diagonal: npt.ArrayLike
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Chain entries and Gershgorin radii in eV, and their scale (NaN propagates)."""
+    diagonal = np.asarray(hamiltonian_diagonal, dtype=np.float64) / Q
+    off_diagonal = np.asarray(hamiltonian_off_diagonal, dtype=np.float64) / Q
+    radius = np.zeros_like(diagonal)
+    radius[:-1] += np.abs(off_diagonal)
+    radius[1:] += np.abs(off_diagonal)
+    scale = float(np.max(np.maximum(np.abs(diagonal), radius), initial=1.0))
+    return diagonal, off_diagonal, radius, scale
+
+
+def _sturm_admitted(
+    hamiltonian_diagonal: npt.ArrayLike, hamiltonian_off_diagonal: npt.ArrayLike
+) -> bool:
+    """Whether the chain lies in the certified finite scale of the Sturm bound."""
+    scale = _sturm_scale(hamiltonian_diagonal, hamiltonian_off_diagonal)[3]
+    return scale <= _STURM_MAXIMUM_SCALE
+
+
 def _sturm_count_below(
     diagonal: list[float], couplings: list[float], shift: float, pivot_floor: float
 ) -> int:
@@ -395,19 +431,13 @@ def _sturm_eigenvalue_lower_bound(
     scaling ``A - H / Q`` adds ``3u scale``; the unverified Gershgorin start
     errs by at most ``4u scale``. ``128 u (|shift| + scale) + 2^-1000``
     dominates both cases, and the conversion to J rounds downward exactly.
+    Callers admit the chain first with `_sturm_admitted`.
     """
     from ....geometry._rational import fraction_down
 
-    diagonal = np.asarray(hamiltonian_diagonal, dtype=np.float64) / Q
-    off_diagonal = np.asarray(hamiltonian_off_diagonal, dtype=np.float64) / Q
-    radius = np.zeros_like(diagonal)
-    radius[:-1] += np.abs(off_diagonal)
-    radius[1:] += np.abs(off_diagonal)
-    scale = max(1.0, float(np.max(np.abs(diagonal))), float(np.max(radius)))
-    if not scale <= _STURM_MAXIMUM_SCALE:
-        raise ValueError(
-            "Sturm certification requires finite Hamiltonian entries below 2^500 eV."
-        )
+    diagonal, off_diagonal, radius, scale = _sturm_scale(
+        hamiltonian_diagonal, hamiltonian_off_diagonal
+    )
     pivot_floor = 32 * float(np.finfo(np.float64).eps) * scale
     rows = diagonal.tolist()
     couplings = (off_diagonal * off_diagonal).tolist()
@@ -459,8 +489,17 @@ def _omitted_population_host(
     temperature: np.ndarray,
     *,
     retained: int,
-) -> np.ndarray:
-    """Host certificate of the omitted population for one concrete chain."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Host certificate of the omitted population and its status for one chain.
+
+    A chain outside the certified scale returns an infinite bound with
+    ``OUT_OF_RANGE`` instead of raising across the callback boundary.
+    """
+    if not _sturm_admitted(diagonal, off_diagonal):
+        return (
+            np.asarray(np.inf, dtype=np.float64),
+            np.asarray(OmittedBoundStatus.OUT_OF_RANGE, dtype=np.int32),
+        )
     energy = _sturm_eigenvalue_lower_bound(diagonal, off_diagonal, retained)
     bound = _omitted_population_upper_bound(
         offsets,
@@ -470,7 +509,10 @@ def _omitted_population_host(
         float(mu),
         float(temperature),
     )
-    return np.asarray(bound, dtype=np.float64)
+    return (
+        np.asarray(bound, dtype=np.float64),
+        np.asarray(OmittedBoundStatus.CERTIFIED, dtype=np.int32),
+    )
 
 
 def solve_schrodinger(
@@ -507,13 +549,23 @@ def solve_schrodinger(
     if modes.offsets.size > hamiltonian.resources.max_modes:
         raise ValueError("Transverse mode count exceeds the declared resource bound.")
     retained = int(count)
+    chain = isinstance(hamiltonian, ChainHamiltonian)
+    if chain and retained < hamiltonian.size:
+        # Concrete chains refuse here; traced ones report OUT_OF_RANGE instead.
+        entries = (hamiltonian.diagonal, hamiltonian.off_diagonal)
+        concrete = not any(isinstance(entry, jax_core.Tracer) for entry in entries)
+        if concrete and not _sturm_admitted(*entries):
+            raise ValueError(
+                "Sturm certification requires finite Hamiltonian entries below 2^500 eV."
+            )
     result = selected_eigenpairs(hamiltonian, retained)
     energies = result.eigenvalues * Q
     vectors = result.eigenvectors
     occupations = modes.occupation(energies, chemical_potential_, temperature_)
     if retained == hamiltonian.size:
         omitted = jnp.asarray(0.0, dtype=energies.dtype)
-    elif isinstance(hamiltonian, ChainHamiltonian):
+        status = jnp.asarray(OmittedBoundStatus.CERTIFIED, dtype=jnp.int32)
+    elif chain:
         # The certificate runs on the host in binary64 even under tracing; it
         # gates success and carries no derivative.
         host_inputs = tuple(
@@ -527,14 +579,18 @@ def solve_schrodinger(
                 temperature_,
             )
         )
-        omitted = jax.lax.stop_gradient(
+        bound, status = jax.lax.stop_gradient(
             jax.pure_callback(
                 partial(_omitted_population_host, retained=retained),
-                jax.ShapeDtypeStruct((), jnp.float64),
+                (
+                    jax.ShapeDtypeStruct((), jnp.float64),
+                    jax.ShapeDtypeStruct((), jnp.int32),
+                ),
                 *host_inputs,
                 vmap_method="sequential",
             )
-        ).astype(energies.dtype)
+        )
+        omitted = bound.astype(energies.dtype)
     else:
         raise ValueError(
             "DenseHamiltonianND confinement requires the complete declared finite "
@@ -553,6 +609,9 @@ def solve_schrodinger(
         charge_density=-Q * density,
         energy_density=energy_density,
         omitted_particle_bound=omitted,
+        omitted_bound_status=status,
         eigen_result=result,
-        successful=result.successful & (omitted <= omitted_particle_tolerance),
+        successful=result.successful
+        & (status == OmittedBoundStatus.CERTIFIED)
+        & (omitted <= omitted_particle_tolerance),
     )

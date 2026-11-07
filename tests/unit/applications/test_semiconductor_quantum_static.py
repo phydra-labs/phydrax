@@ -25,6 +25,7 @@ from phydrax.applications.semiconductor.quantum import (
     EffectiveMass1D,
     EffectiveMassND,
     integrate_coherent,
+    OmittedBoundStatus,
     QuantumPoisson1D,
     QuantumPoissonND,
     QuantumResources,
@@ -514,8 +515,36 @@ def test_omitted_population_certificate_is_traceable_and_matches_eager() -> None
     assert bool(eager.successful)
     assert jnp.array_equal(jitted.omitted_particle_bound, eager.omitted_particle_bound)
     assert jnp.array_equal(jitted.successful, eager.successful)
+    assert jnp.array_equal(jitted.omitted_bound_status, eager.omitted_bound_status)
+    assert int(eager.omitted_bound_status) == OmittedBoundStatus.CERTIFIED
     mapped = jax.vmap(solve)(jnp.stack((zero, jnp.full(n, 0.01))))
     assert jnp.array_equal(mapped.omitted_particle_bound[0], eager.omitted_particle_bound)
     assert jnp.all(mapped.successful)
     gradient = jax.grad(lambda potential: jnp.sum(solve(potential).energy_density))(zero)
     assert jnp.all(jnp.isfinite(gradient))
+
+
+def test_out_of_range_chain_refuses_eagerly_and_reports_status_when_traced() -> None:
+    n = 11
+    basis = EffectiveMass1D(
+        np.arange(1, n + 1) * 1e-9, 0.0, 0.19 * ME, area=1e-14, energy_reference=REFERENCE
+    )
+
+    def solve(potential: Any) -> Any:
+        return solve_schrodinger(basis.hamiltonian(potential), 0.03 * Q, 100.0, count=5)
+
+    # A potential of -2^501 V puts every onsite energy beyond the certified
+    # 2^500 eV Sturm scale.
+    beyond = jnp.full(n, -(2.0**501))
+    with pytest.raises(ValueError, match="2\\^500 eV"):
+        solve(beyond)
+    traced = jax.jit(solve)(beyond)
+    assert int(traced.omitted_bound_status) == OmittedBoundStatus.OUT_OF_RANGE
+    assert not bool(traced.successful)
+    assert float(traced.omitted_particle_bound) == np.inf
+    mapped = jax.vmap(solve)(jnp.stack((jnp.zeros(n), beyond)))
+    np.testing.assert_array_equal(
+        mapped.omitted_bound_status,
+        [OmittedBoundStatus.CERTIFIED, OmittedBoundStatus.OUT_OF_RANGE],
+    )
+    np.testing.assert_array_equal(mapped.successful, [True, False])
