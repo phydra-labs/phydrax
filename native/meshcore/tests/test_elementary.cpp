@@ -394,6 +394,17 @@ void independent_of_caller_mode() {
         PHX_CHECK(same(result[item], nearest[function][item]));
       }
     }
+    // Validation runs inside the established scope and still restores the caller's mode.
+    std::vector<double> untouched(2, 7.0);
+    PHX_CHECK(phx_mc_interval_elementary(99, 1, lower.data(), upper.data(), untouched.data(),
+                                         untouched.data() + 1, 2) == PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(phx_mc_interval_elementary(PHX_MC_ELEMENTARY_SIN, 1, nullptr, upper.data(),
+                                         untouched.data(), untouched.data() + 1,
+                                         2) == PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(phx_mc_interval_elementary(PHX_MC_ELEMENTARY_SIN, -1, lower.data(), upper.data(),
+                                         untouched.data(), untouched.data() + 1,
+                                         2) == PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(untouched[0] == 7.0 && untouched[1] == 7.0);
     PHX_CHECK(phx::mc::floating_point_mode() == installed);
     PHX_CHECK(std::fegetround() == hazard.rounding);
   }

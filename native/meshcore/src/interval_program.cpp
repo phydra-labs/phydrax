@@ -500,6 +500,8 @@ int32_t phx_mc_interval_program_execute(const int64_t* instructions, int64_t ins
 
 int32_t phx_mc_interval_program_capabilities(uint64_t* opcodes) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (opcodes == nullptr) return PHX_MC_INVALID_ARGUMENT;
     *opcodes = kIntervalOpcodeCapabilities;
     return PHX_MC_OK;
