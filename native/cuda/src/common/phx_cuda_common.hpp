@@ -50,6 +50,10 @@ template <class Entry> class Registry final : public RegistryBase {
   using Key = std::pair<int32_t, int64_t>;
   std::mutex mutex_;
   std::map<Key, Partition> partitions_;
+  // Pre-constructed so release_all never allocates (MSVC maps allocate a head
+  // node on construction); entries are destroyed outside mutex_.
+  std::mutex retire_mutex_;
+  std::map<Key, Partition> retired_;
   std::unordered_set<int32_t> live_ids_;
   std::atomic<uint32_t> next_id_{1};
 
@@ -151,14 +155,15 @@ template <class Entry> class Registry final : public RegistryBase {
     return static_cast<int64_t>(retired.size());
   }
   int64_t release_all() override {
-    std::map<Key, Partition> retired;
+    std::lock_guard<std::mutex> retiring(retire_mutex_);
     int64_t count;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       count = static_cast<int64_t>(live_ids_.size());
-      retired.swap(partitions_);
+      retired_.swap(partitions_);
       live_ids_.clear();
     }
+    retired_.clear();
     return count;
   }
   std::vector<PartitionStats> stats() override {
