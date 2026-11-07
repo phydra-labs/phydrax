@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -859,3 +861,87 @@ def test_periodic_transfer_rejects_rehashed_false_claims(
     )
     with pytest.raises(ValueError):
         _require_owner_local_periodic_transfer(changed, source, altered)
+
+
+def test_algebraic_periodic_delaunay_result_restores_from_archive(
+    tmp_path: Path,
+) -> None:
+    from phydrax.discretization._exact_algebraic_geometry import (
+        ExactPeriodicAlgebraicSource,
+    )
+    from phydrax.geometry._surface_source_archive import _geometry
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._result import CellMeshingResult
+
+    # Four seeds exhausting one coset of the half-unit lattice with a hard,
+    # zero-tolerance target admit the exact equilateral orbit-band carrier.
+    cell = PeriodicCell(np.eye(2, dtype=np.float64))
+    points = np.asarray(
+        ((0.125, 0.125), (0.625, 0.125), (0.125, 0.625), (0.625, 0.625)),
+        dtype=np.float64,
+    )
+    orbits = PeriodicPointOrbits(cell, points, np.asarray((7, 3, 11, 5), dtype=np.int64))
+    source_id, revision = "algebraic-sites", "algebraic-sites-revision-1"
+    source = NativePeriodicSource(orbits, source_id, revision)
+    vertex_scope = MeshingScope(
+        source_id,
+        revision,
+        MeshingEntityKind.GEOMETRY,
+        0,
+        source.scope_entity_set_id(0),
+        source.scope_entity_ids(0),
+    )
+    domain_scope = MeshingScope(
+        source_id,
+        revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        source.scope_entity_ids(2),
+    )
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 2, CellFamilyPolicy(required=("triangle",))),
+        domain_scope,
+        size_controls=(UniformSizeControl(vertex_scope, 0.5),),
+        size_compliance=SizeCompliancePolicy(),
+    )
+    result = (
+        phx.meshing.NativeMeshingProvider(NativeMeshingOptions("periodic_delaunay"))
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
+    witness = result.geometry.source_map
+    assert type(witness) is ExactPeriodicAlgebraicSource
+
+    path = tmp_path / "algebraic-periodic-result.phx"
+    write_model_artifact(path, result, limits=None)
+    restored = read_model_artifact(
+        path,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.result_id == result.result_id
+    assert restored.mesh.mesh_id == result.mesh.mesh_id
+    assert restored.geometry.source_mesh_id == result.geometry.source_mesh_id
+    restored_witness = restored.geometry.source_map
+    assert type(restored_witness) is ExactPeriodicAlgebraicSource
+    assert restored_witness.source_map_id == witness.source_map_id
+    assert restored_witness.coefficients == witness.coefficients
+
+    # The stored witness is rebuilt from its exact leaves, never trusted as stored.
+    forged = copy.copy(witness)
+    object.__setattr__(forged, "source_map_id", "forged")
+    with pytest.raises(ValueError, match="does not reproduce its source leaves"):
+        _geometry(
+            eqx.tree_at(lambda value: value.source_map, result.geometry, forged),
+            result.mesh,
+        )

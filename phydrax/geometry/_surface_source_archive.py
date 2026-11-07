@@ -439,6 +439,9 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
             AffinePlcGeometrySourceArchiveRecipe,
             model_archive_projection,
         )
+        from ..discretization._exact_algebraic_geometry import (
+            ExactPeriodicAlgebraicSource,
+        )
         from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
         from ..discretization._exact_power_geometry import ExactPowerCellGeometrySource
         from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
@@ -466,6 +469,8 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
             source_map = _ExactCoordinateBankMap.from_stored_fields(source_map, mesh=mesh)
         elif type(source_map) is ExactPlcCellGeometrySource:
             source_map = ExactPlcCellGeometrySource.from_stored_fields(source_map)
+        elif type(source_map) is ExactPeriodicAlgebraicSource:
+            source_map = ExactPeriodicAlgebraicSource.from_stored_fields(source_map)
         elif type(source_map) is _RetainedCoordinateBank:
             source_map = _RetainedCoordinateBank.from_stored_fields(
                 source_map, coordinates=value.coordinates
