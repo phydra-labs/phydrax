@@ -244,6 +244,10 @@
   leaving its compiled program to their concrete topology, keeping relation,
   coefficients, properties and operator IDs, so sparse cost estimation and
   `linalg.solve` accept them instead of refusing traced topology.
+- MACE sources with residual-nonlinear interactions
+  (`RealAgnosticResidualNonLinearInteractionBlock`) reconstruct natively: their
+  scalar density normalization `alpha`/`beta` keeps its rank instead of becoming
+  a one-element vector that the interaction refused.
 - Certified distance, chord, norm, frame and quality bounds round outward in
   directed binary64 arithmetic instead of padding round-to-nearest estimates:
   source distance sums, curve and surface chord, point and box bounds,
