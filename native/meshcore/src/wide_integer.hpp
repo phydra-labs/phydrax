@@ -2,8 +2,9 @@
 // Fixed-width two's-complement integers of N 64-bit limbs with checked
 // arithmetic. Every operation reports overflow instead of wrapping, so a kernel
 // can refuse an item whose exact value leaves the representable range. Limb
-// arithmetic uses only standard C++ integer operations, so every compiler
-// computes the same exact values.
+// arithmetic is exact on every compiler: the 64 x 64 -> 128-bit product uses
+// the compiler's exact wide multiply where one exists and a portable
+// 32-bit partial-product split otherwise; all routes give identical bits.
 #pragma once
 
 #include <array>
@@ -11,6 +12,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+
+#if defined(_MSC_VER) && !defined(__SIZEOF_INT128__) && \
+    (defined(_M_X64) || defined(_M_ARM64))
+#include <intrin.h>
+#endif
 
 namespace phx::mc {
 
@@ -29,6 +35,17 @@ inline std::uint64_t add_with_carry(std::uint64_t a, std::uint64_t b,
 // Exact 128-bit product a * b: returns the low limb and stores the high limb.
 inline std::uint64_t multiply_wide(std::uint64_t a, std::uint64_t b,
                                    std::uint64_t& high) noexcept {
+#if defined(__SIZEOF_INT128__)
+  __extension__ using Product = unsigned __int128;
+  const Product product = static_cast<Product>(a) * b;
+  high = static_cast<std::uint64_t>(product >> 64);
+  return static_cast<std::uint64_t>(product);
+#elif defined(_MSC_VER) && defined(_M_X64)
+  return _umul128(a, b, &high);
+#elif defined(_MSC_VER) && defined(_M_ARM64)
+  high = __umulh(a, b);
+  return a * b;
+#else
   constexpr std::uint64_t kLow32 = 0xFFFFFFFFu;
   const std::uint64_t low_low = (a & kLow32) * (b & kLow32);
   const std::uint64_t high_low = (a >> 32) * (b & kLow32);
@@ -38,6 +55,7 @@ inline std::uint64_t multiply_wide(std::uint64_t a, std::uint64_t b,
   const std::uint64_t middle = (low_low >> 32) + (high_low & kLow32) + low_high;
   high = high_high + (high_low >> 32) + (middle >> 32);
   return (middle << 32) | (low_low & kLow32);
+#endif
 }
 
 // out = a * b; false when the exact product is not representable.

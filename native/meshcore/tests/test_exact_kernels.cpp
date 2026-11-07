@@ -155,6 +155,48 @@ void test_wide_integer_carries() {
                                        unsigned_product));
 }
 
+// Reference 64 x 64 -> 128-bit product from 16-bit schoolbook digits, a
+// decomposition shared by none of multiply_wide's compiled routes.
+std::array<std::uint64_t, 2> schoolbook_product(std::uint64_t a, std::uint64_t b) {
+  std::array<std::uint64_t, 8> digits{};
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      digits[static_cast<std::size_t>(i + j)] +=
+          ((a >> (16 * i)) & 0xFFFFu) * ((b >> (16 * j)) & 0xFFFFu);
+    }
+  }
+  for (std::size_t k = 0; k + 1 < digits.size(); ++k) {
+    digits[k + 1] += digits[k] >> 16;
+    digits[k] &= 0xFFFFu;
+  }
+  std::array<std::uint64_t, 2> out{};
+  for (std::size_t k = 0; k < digits.size(); ++k) out[k / 4] |= digits[k] << (16 * (k % 4));
+  return out;
+}
+
+// The compiled multiply_wide route (compiler wide multiply or portable split)
+// equals the reference on boundary and random operands.
+void test_multiply_wide_matches_schoolbook() {
+  std::vector<std::uint64_t> operands = {0, 1, 2, 0xFFFFFFFFu, 0x100000000u, 0xFFFFFFFF00000000u,
+                                         0x8000000000000000u, 0x7FFFFFFFFFFFFFFFu,
+                                         ~std::uint64_t{0}, ~std::uint64_t{0} - 1};
+  for (const std::uint64_t a : operands) {
+    for (const std::uint64_t b : operands) {
+      std::uint64_t high = 0;
+      const std::uint64_t low = phx::mc::multiply_wide(a, b, high);
+      PHX_CHECK((std::array<std::uint64_t, 2>{low, high} == schoolbook_product(a, b)));
+    }
+  }
+  std::mt19937_64 random(41);
+  for (int trial = 0; trial < 100000; ++trial) {
+    const std::uint64_t a = random();
+    const std::uint64_t b = random() >> (trial % 64);
+    std::uint64_t high = 0;
+    const std::uint64_t low = phx::mc::multiply_wide(a, b, high);
+    PHX_CHECK((std::array<std::uint64_t, 2>{low, high} == schoolbook_product(a, b)));
+  }
+}
+
 // Reference step of the host interval de Casteljau formula for one entry.
 void test_interval_restrict() {
   std::mt19937_64 random(7);
@@ -895,6 +937,7 @@ void test_multichunk_exact() {
 int main() {
   test_wide_integer();
   test_wide_integer_carries();
+  test_multiply_wide_matches_schoolbook();
   test_interval_restrict();
   test_bernstein_controls();
   test_wide_box_controls();
