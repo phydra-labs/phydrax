@@ -389,12 +389,15 @@ class UMASystemEmbedding(StrictModule, ParameterOwner):
 def case_reduce(
     values: Array, mask: Array, case_count: int, atom_capacity: int, /
 ) -> Array:
-    """Per-case sums of masked flat case-major atom rows ``(N, ...) -> (B, ...)``."""
+    """Per-case sums of masked flat case-major atom rows ``(N, ...) -> (B, ...)``.
+
+    Sums in ``values.dtype``: integer counts stay int32 under 64-bit JAX.
+    """
     zero = jnp.zeros((), dtype=values.dtype)
     shaped = jnp.where(
         mask.reshape(mask.shape + (1,) * (values.ndim - 1)), values, zero
     ).reshape((case_count, atom_capacity) + values.shape[1:])
-    return jnp.sum(shaped, axis=1)
+    return jnp.sum(shaped, axis=1, dtype=values.dtype)
 
 
 def case_atom_counts(mask: Array, case_count: int, atom_capacity: int, /) -> Array:

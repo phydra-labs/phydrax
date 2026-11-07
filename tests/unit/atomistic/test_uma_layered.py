@@ -901,3 +901,15 @@ def test_indexed_case_sums_and_balance_decomposition_match_case_major_rows() -> 
     np.testing.assert_allclose(
         split, balance_channels(values, target, mask, 2, 3, (0, 2), 0.0), atol=1e-14
     )
+
+
+def test_slab_species_counts_stay_int32_under_x64() -> None:
+    species = jnp.asarray([1, 8, 1, 6, 6, 0], dtype=jnp.int32)
+    mask = jnp.asarray([True, True, True, True, True, False])
+    assert jax.config.jax_enable_x64
+    counts = species_counts(species, mask, 2, 3, 9)
+    assert counts.dtype == jnp.int32
+    expected = np.zeros((2, 9), dtype=np.int32)
+    expected[0, [1, 8]] = [2, 1]
+    expected[1, 6] = 2
+    np.testing.assert_array_equal(np.asarray(counts), expected)
