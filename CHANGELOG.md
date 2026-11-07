@@ -756,6 +756,11 @@
 - `convert_uma_checkpoint` no longer fails while forming its conversion
   identity: `UMASourceProvenance.to_record` serializes the read-only admitted
   declaration mapping as a plain object, so provenance records round-trip.
+- `AIMNet2SourceProvenance.from_record` restores provenance whose `model_yaml`
+  is the exact source text, including its trailing newline. It held the YAML to
+  the stripped form of identifiers and refused records whose YAML ends in
+  whitespace, as YAML documents do; it now applies the source admission rule
+  (text that is not blank).
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile

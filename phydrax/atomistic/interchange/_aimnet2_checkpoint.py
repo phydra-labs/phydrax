@@ -449,6 +449,11 @@ class AIMNet2SourceProvenance:
         size = record["source_byte_size"]
         if type(size) is not int or size < 0:
             raise ValueError("source_byte_size must be a nonnegative integer.")
+        # model_yaml is the exact source text (YAML ends in a newline): it is held
+        # to the source admission rule, not to the stripped form of identifiers.
+        model_yaml = record["model_yaml"]
+        if not isinstance(model_yaml, str) or not model_yaml.strip():
+            raise ValueError("model_yaml must be nonempty source text.")
         parsed = cls(
             source_sha256=_record_digest(record["source_sha256"], "source_sha256"),
             source_byte_size=size,
@@ -474,7 +479,7 @@ class AIMNet2SourceProvenance:
             if record["provider"] is None
             else MappingProxyType(_record_mapping(record["provider"], "provider")),
             metadata=MappingProxyType(_record_mapping(record["metadata"], "metadata")),
-            model_yaml=_record_text(record["model_yaml"], "model_yaml"),
+            model_yaml=model_yaml,
             legacy_attributes=None
             if record["legacy_attributes"] is None
             else MappingProxyType(
