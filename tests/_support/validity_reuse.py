@@ -1,6 +1,5 @@
 """Count cell-validity proofs and compare incremental certificates with full ones."""
 
-from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -18,16 +17,20 @@ from phydrax.geometry._mesh_certificates import _same_tree_content
 
 
 def count_cell_proofs(monkeypatch: pytest.MonkeyPatch, /) -> list[int]:
-    """Count proofs of individual cell maps (nonlinear and exact affine)."""
+    """Count fresh proofs of individual digest-bearing cell maps.
+
+    Every map proved in the operation (interval, nonlinear or exact affine
+    route) is recorded once in the operation's proof index; reused parent or
+    local proofs are not.
+    """
     calls = [0]
-    for name in ("_certify_nonlinear_source_map", "_affine_quality"):
-        original = getattr(validity_module, name)
+    original = validity_module._CellProofs.add
 
-        def counted(*args: Any, _original: Callable[..., Any] = original) -> Any:
-            calls[0] += 1
-            return _original(*args)
+    def counted(self: validity_module._CellProofs, *args: Any) -> None:
+        calls[0] += 1
+        original(self, *args)
 
-        monkeypatch.setattr(validity_module, name, counted)
+    monkeypatch.setattr(validity_module._CellProofs, "add", counted)
     return calls
 
 

@@ -104,16 +104,18 @@ def test_polymer_foundations_scenario_1() -> None:
         key=jax.random.key(0),
     )
     # Only the LJ term is zero at its cutoff; FENE bonds still contribute.
+    lj_term = dynamics.potential.terms[1]
     context = dynamics.potential.context(
         state.kinematics.positions,
         state.neighborhoods,
+        term=lj_term,
         unwrapped_positions=dynamics._unwrapped(state.kinematics),
         species=state.species,
         cell=dynamics.system.cell,
         fractional_positions=dynamics.system.cell.fractional(state.kinematics.positions),
         cell_vectors=state.cell_vectors,
     )
-    lj = dynamics.potential.terms[1].energy(context)
+    lj = lj_term.energy(context)
     np.testing.assert_allclose(lj.energy, 0.0, atol=1.0e-12)
 
     with pytest.raises(ValueError, match="mutually exclusive"):
@@ -193,6 +195,7 @@ def test_fene_domain_and_kremer_grest_profile_evidence() -> None:
         context = dynamics.potential.context(
             coordinates,
             state.neighborhoods,
+            term=fene,
             unwrapped_positions=coordinates,
             species=state.species,
             cell=dynamics.system.cell,

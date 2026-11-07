@@ -30,7 +30,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._validation import finite_real_scalar
+from .._validation import finite_real_scalar, positive_finite_float
 from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
 from ..linalg import (
@@ -250,10 +250,21 @@ class _FreeCoordinateArguments(StrictModule):
     energy: Callable[[Array], Array]
     base: Array
     free_rows: Array
+    origin: Array | None
+    scale: Array | None
+
+
+def _free_values(arguments: _FreeCoordinateArguments, free: Array, /) -> Array:
+    """Free-row coordinates of absolute or scaled-displacement parameters."""
+    if arguments.origin is None or arguments.scale is None:
+        return free
+    return arguments.origin + arguments.scale * free
 
 
 def _free_objective(free: Array, arguments: _FreeCoordinateArguments, /) -> Array:
-    coordinates = arguments.base.at[arguments.free_rows].set(free)
+    coordinates = arguments.base.at[arguments.free_rows].set(
+        _free_values(arguments, free)
+    )
     return arguments.energy(coordinates)
 
 
@@ -266,10 +277,17 @@ def _minimize_free_coordinates(
     free_rows: Array,
     lower: Array,
     upper: Array,
+    origin: Array | None = None,
+    scale: Array | None = None,
     /,
 ) -> tuple[Array, MinimizationResult]:
-    arguments = _FreeCoordinateArguments(energy, base, free_rows)
-    initial = base[free_rows]
+    """Minimize an energy over the free rows of ``base``.
+
+    The parameters are absolute coordinates, or displacements from ``origin`` in
+    units of ``scale`` when both are given; bounds use the same parameters.
+    """
+    arguments = _FreeCoordinateArguments(energy, base, free_rows, origin, scale)
+    initial = base[free_rows] if origin is None else jnp.zeros_like(origin)
     match method:
         case ProjectedLBFGS():
             # Bounds are built from dynamic leaves so bound values never enter
@@ -292,7 +310,7 @@ def _minimize_free_coordinates(
             )
         case _:
             raise TypeError("method must be ProjectedLBFGS or NewtonTrustRegion.")
-    return base.at[free_rows].set(result.parameters), result
+    return base.at[free_rows].set(_free_values(arguments, result.parameters)), result
 
 
 @eqx.filter_jit
@@ -1050,12 +1068,17 @@ def optimize_cell_geometry_coordinates(
     coordinate_bounds: tuple[ArrayLike, ArrayLike] | None = None,
     method: ProjectedLBFGS | NewtonTrustRegion | None = None,
     termination: OptimizationTermination | None = None,
+    length_scale: float | None = None,
 ) -> CellGeometryOptimizationResult:
     """Optimize arbitrary (high-order) geometry coordinates under fixed topology.
 
     ``objective`` maps the full coordinate array to a scalar and must encode the
     required curved-element validity (return ``inf`` for inadmissible states).
-    Fixed rows are eliminated and stay bit-identical.
+    Fixed rows are eliminated and stay bit-identical. With ``length_scale`` the
+    native minimization runs on free-row displacements from the input in units of
+    that length, so its unit trial step, trust radius, and step tolerances measure
+    the declared length rather than the coordinate unit, and
+    ``minimization.parameters`` holds those scaled displacements.
     """
     if not isinstance(geometry, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec.")
@@ -1072,14 +1095,24 @@ def optimize_cell_geometry_coordinates(
     ):
         raise ValueError("NewtonTrustRegion cannot enforce coordinate bounds.")
     free = np.flatnonzero(~fixed)
+    lower, upper = lower[free], upper[free]
+    origin = scale = None
+    if length_scale is not None:
+        scale_ = positive_finite_float(length_scale, "length_scale")
+        origin_ = np.asarray(coordinates[free], dtype=np.float64)
+        lower, upper = (lower - origin_) / scale_, (upper - origin_) / scale_
+        origin = coordinates[free]
+        scale = jnp.asarray(scale_, dtype=coordinates.dtype)
     optimized, minimization = _minimize_free_coordinates(
         objective,
         method_,
         _termination(termination),
         coordinates,
         jnp.asarray(free, dtype=jnp.int32),
-        jnp.asarray(lower[free], dtype=coordinates.dtype),
-        jnp.asarray(upper[free], dtype=coordinates.dtype),
+        jnp.asarray(lower, dtype=coordinates.dtype),
+        jnp.asarray(upper, dtype=coordinates.dtype),
+        origin,
+        scale,
     )
     return CellGeometryOptimizationResult(optimized, minimization)
 

@@ -16,7 +16,18 @@ from jax.core import ShapedArray
 from jax.extend import core as jax_core
 from numpy.typing import NDArray
 
-from ._interval_enclosure import IntervalExtensionError, IntervalOperandIdentity
+from .._interpolation._bspline import bspline_jet_rule_alignment
+from .._jax_program import custom_jvp_rule_owner
+from ._interval_enclosure import (
+    _as_interval,
+    _CUSTOM_EXTENSIONS,
+    _ieee_maximum,
+    _ieee_minimum,
+    _UNATTRIBUTED_AXIS,
+    _ValueIdentity,
+    IntervalExtensionError,
+    IntervalOperandIdentity,
+)
 
 
 if TYPE_CHECKING:
@@ -45,6 +56,24 @@ _MAXIMUM = 15
 _MINIMUM = 16
 _EXP = 17
 _LOG = 18
+_EQUAL = 19
+_ABSOLUTE = 20
+_EXTREMUM_PAIR = 21
+_EXTREMUM_REDUCE = 22
+_DECIDE = 23
+_ATTAIN = 24
+
+# Branch-evidence event kinds and tests (phx_mc_interval_program_branches).
+_KINK = 0
+_JUMP = 1
+_MEETS_ZERO = 0
+_NOT_POSITIVE = 1
+_NOT_NONNEGATIVE = 2
+_UNDECIDED = 3
+_NONFINITE = 4
+_ALWAYS = 5
+
+type _Event = tuple[int, int, int, int, int, int]
 
 
 def _size(shape: _Shape, /) -> int:
@@ -86,6 +115,23 @@ class _Seed:
 
 
 @dataclass(frozen=True, slots=True)
+class _NativeExtremum:
+    """Workspace winner flags of a min/max equation, as the host's ``_Extremum``.
+
+    ``infos[i]`` holds operand ``i``'s flag pairs (lower = decided, upper =
+    winner) in the host's winners shape; ``decided`` holds the decisions in
+    the equation's result shape, or is None where every element is decided.
+    """
+
+    operands: tuple[int, ...]
+    infos: tuple[_Tensor, ...]
+    decided: _Tensor | None
+    axes: tuple[int, ...]
+    operand_shape: _Shape
+    keepdims: _Shape
+
+
+@dataclass(frozen=True, slots=True)
 class NativeIntervalProgram:
     """Immutable native program and its fixed-shape interval workspace contract."""
 
@@ -100,10 +146,12 @@ class NativeIntervalProgram:
     output: _Tensor
     domain_guards: NDArray[np.int64]
     """Workspace entries (real-power bases) that must be nonnegative."""
+    events: NDArray[np.int64] | None = None
+    """Branch-evidence event rows ``(rows, 6)``, present when lowered with box axes."""
 
-    def evaluate(
+    def _workspaces(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
-    ) -> _Interval:
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         expected_shape = (self.batch_capacity, self.input_dimension)
         if lower.shape != expected_shape or upper.shape != expected_shape:
             raise ValueError(
@@ -118,15 +166,14 @@ class NativeIntervalProgram:
             size = seed.lower.size
             lower_workspace[seed.offset : seed.offset + size] = seed.lower
             upper_workspace[seed.offset : seed.offset + size] = seed.upper
-        from .._meshcore import interval_program_execute
+        return lower_workspace, upper_workspace
 
-        interval_program_execute(
-            self.instructions,
-            self.indices,
-            self.parameters,
-            lower_workspace,
-            upper_workspace,
-        )
+    def _output(
+        self,
+        lower_workspace: NDArray[np.float64],
+        upper_workspace: NDArray[np.float64],
+        /,
+    ) -> _Interval:
         if np.any(lower_workspace[self.domain_guards] < 0.0):
             raise IntervalExtensionError(
                 "noninteger power requires a nonnegative base interval."
@@ -143,6 +190,49 @@ class NativeIntervalProgram:
             output_lower.reshape(self.output.shape),
             output_upper.reshape(self.output.shape),
         )
+
+    def evaluate(
+        self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
+    ) -> _Interval:
+        lower_workspace, upper_workspace = self._workspaces(lower, upper)
+        from .._meshcore import interval_program_execute
+
+        interval_program_execute(
+            self.instructions,
+            self.indices,
+            self.parameters,
+            lower_workspace,
+            upper_workspace,
+        )
+        return self._output(lower_workspace, upper_workspace)
+
+    def evaluate_branches(
+        self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
+    ) -> tuple[
+        np.ndarray | np.generic,
+        np.ndarray | np.generic,
+        NDArray[np.bool_],
+        NDArray[np.bool_],
+    ]:
+        """Enclosures and per-box ``(smooth, continuous)`` flags of one batch."""
+        if self.events is None:
+            raise IntervalExtensionError(
+                "native branch evidence requires a program lowered with box axes."
+            )
+        lower_workspace, upper_workspace = self._workspaces(lower, upper)
+        from .._meshcore import interval_program_branches
+
+        _, _, smooth, continuous = interval_program_branches(
+            self.instructions,
+            self.indices,
+            self.parameters,
+            lower_workspace,
+            upper_workspace,
+            self.events,
+            self.batch_capacity,
+        )
+        output_lower, output_upper = self._output(lower_workspace, upper_workspace)
+        return output_lower, output_upper, smooth, continuous
 
     def require_supported_opcodes(self, supported_opcodes: frozenset[int], /) -> None:
         missing_opcodes = self.opcodes.difference(supported_opcodes)
@@ -186,7 +276,13 @@ class NativeIntervalProgram:
 
 
 class _Builder:
-    def __init__(self, batch_capacity: int, input_dimension: int, /) -> None:
+    def __init__(
+        self,
+        batch_capacity: int,
+        input_dimension: int,
+        branch_axes: Mapping[jax_core.Var, int | None] | None = None,
+        /,
+    ) -> None:
         self.batch_capacity = batch_capacity
         self.input_dimension = input_dimension
         self.next_offset = batch_capacity * input_dimension
@@ -195,6 +291,15 @@ class _Builder:
         self.parameters: list[float] = []
         self.seeds: list[_Seed] = []
         self.domain_guards: list[int] = []
+        # Value identities and decided selections, as the host's _ValueIdentity.
+        self.values = _ValueIdentity()
+        self.stacks: dict[jax_core.Var, tuple[int, tuple[int, ...]]] = {}
+        self.extrema: dict[jax_core.Var, _NativeExtremum] = {}
+        self.reductions: dict[jax_core.Var, _NativeExtremum] = {}
+        self.attainments: dict[jax_core.Var, _NativeExtremum] = {}
+        # Box axis of every traced variable; events are recorded only with it.
+        self.branch_axes = branch_axes
+        self.events: list[_Event] = []
 
     def _reserve(self, shape: _Shape, /) -> int:
         offset = self.next_offset
@@ -316,6 +421,8 @@ class _Builder:
         second: _Tensor,
         output_shape: _Shape,
         /,
+        *,
+        aux: int = 0,
     ) -> _Tensor:
         left = self._mapped(first, output_shape)
         right = self._mapped(second, output_shape)
@@ -323,7 +430,7 @@ class _Builder:
         a, a_index = self._operand(left, output_shape)
         b, b_index = self._operand(right, output_shape)
         self.rows.append(
-            (opcode, output.offset, _size(output_shape), a, a_index, b, b_index, 0)
+            (opcode, output.offset, _size(output_shape), a, a_index, b, b_index, aux)
         )
         return output
 
@@ -525,38 +632,26 @@ class _Builder:
         output_shape: _Shape,
         /,
     ) -> _Tensor:
-        """Three-valued order comparison as a [0, 1] indicator interval."""
+        """Three-valued comparison as a [0, 1] indicator interval, as the host's."""
+        opcode = _COMPARE
         match name:
             case "gt":
-                left, right, strictness = first, second, 0
+                left, right, aux = first, second, 0
             case "ge":
-                left, right, strictness = first, second, 1
+                left, right, aux = first, second, 1
             case "lt":
-                left, right, strictness = second, first, 0
+                left, right, aux = second, first, 0
             case "le":
-                left, right, strictness = second, first, 1
+                left, right, aux = second, first, 1
+            case "eq":
+                left, right, aux, opcode = first, second, 0, _EQUAL
+            case "ne":
+                left, right, aux, opcode = first, second, 1, _EQUAL
             case _:
                 raise IntervalExtensionError(
-                    f"native interval primitive {name!r} requires constant operands."
+                    f"unsupported native comparison primitive {name!r}."
                 )
-        mapped_left = self._mapped(left, output_shape)
-        mapped_right = self._mapped(right, output_shape)
-        output = self._allocate(output_shape)
-        a, a_index = self._operand(mapped_left, output_shape)
-        b, b_index = self._operand(mapped_right, output_shape)
-        self.rows.append(
-            (
-                _COMPARE,
-                output.offset,
-                _size(output_shape),
-                a,
-                a_index,
-                b,
-                b_index,
-                strictness,
-            )
-        )
-        return output
+        return self._emit_binary(opcode, left, right, output_shape, aux=aux)
 
     def _select(
         self,
@@ -678,13 +773,14 @@ class _Builder:
             denominator = self._mapped(values[1], output_shape)
             reciprocal = self._emit_unary(_RECIPROCAL, denominator, output_shape)
             return (self._emit_binary(_MULTIPLY, values[0], reciprocal, output_shape),)
-        if name in ("neg", "square", "sqrt", "sin", "cos"):
+        if name in ("neg", "abs", "square", "sqrt", "sin", "cos"):
             opcode = {
                 "neg": _NEGATE,
                 "square": _SQUARE,
                 "sqrt": _SQRT,
                 "sin": _SINE,
                 "cos": _COSINE,
+                "abs": _ABSOLUTE,
             }[name]
             return (self._emit_unary(opcode, values[0], output_shape),)
         if name == "rsqrt":
@@ -715,7 +811,8 @@ class _Builder:
         if name in ("max", "min"):
             first, second = values
             if first.exact is not None and second.exact is not None:
-                select = np.maximum if name == "max" else np.minimum
+                # IEEE 754-2019 ordering, as the _MAXIMUM/_MINIMUM opcodes.
+                select = _ieee_maximum if name == "max" else _ieee_minimum
                 exact = np.asarray(
                     select(
                         np.broadcast_to(first.exact, output_shape),
@@ -1006,6 +1103,7 @@ class _Builder:
             "square",
             "sqrt",
             "rsqrt",
+            "abs",
             "sin",
             "cos",
             "integer_pow",
@@ -1100,10 +1198,284 @@ class _Builder:
             f"no native interval lowering for JAX primitive {name!r}."
         )
 
+    def _indexed(self, locations: NDArray[np.int64], /) -> tuple[int, int]:
+        """Operand fields of a flat location list: contiguous, else an index range."""
+        flat = locations.reshape((-1,))
+        if flat.size == 0:
+            return 0, -1
+        if flat.size == 1 or np.all(np.diff(flat) == 1):
+            return int(flat[0]), -1
+        index = len(self.indices)
+        self.indices.extend(int(location) for location in flat)
+        return 0, index
+
+    def _extremum(
+        self, equation: jax_core.JaxprEqn, arguments: tuple[_Tensor, ...], /
+    ) -> _NativeExtremum | None:
+        """Winner flags of a min/max equation, as ``_ValueIdentity.extremum``."""
+        name = equation.primitive.name
+        if name in ("min", "max", "minimum", "maximum"):
+            first, second = (self.values.atom(atom) for atom in equation.invars)
+            shape = _shape(np.broadcast_shapes(arguments[0].shape, arguments[1].shape))
+            if first == second:
+                ones = np.ones(shape, dtype=np.float64)
+                same = self._seed(ones, ones, exact=ones)
+                return _NativeExtremum(
+                    (first, second), (same, same), None, (), shape, shape
+                )
+            size = _size(shape)
+            block = self._reserve((2 * size,))
+            a, a_index = self._operand(self._mapped(arguments[0], shape), shape)
+            b, b_index = self._operand(self._mapped(arguments[1], shape), shape)
+            aux = 0 if name in ("min", "minimum") else 1
+            self.rows.append((_EXTREMUM_PAIR, block, size, a, a_index, b, b_index, aux))
+            infos = (_Tensor(shape, block), _Tensor(shape, block + size))
+            return _NativeExtremum((first, second), infos, infos[0], (), shape, shape)
+        if name not in ("reduce_min", "reduce_max"):
+            return None
+        axes = tuple(int(axis) for axis in equation.params["axes"])
+        source = equation.invars[0]
+        stacked = self.stacks.get(source) if isinstance(source, jax_core.Var) else None
+        groups = stacked[1] if stacked is not None and axes == (stacked[0],) else None
+        value = arguments[0]
+        rank = len(value.shape)
+        reduced = tuple(sorted(axis % rank for axis in axes))
+        kept = tuple(axis for axis in range(rank) if axis not in reduced)
+        kept_shape = tuple(value.shape[axis] for axis in kept)
+        reduced_shape = tuple(value.shape[axis] for axis in reduced)
+        count, lanes = _size(kept_shape), _size(reduced_shape)
+        a, a_index = self._indexed(self._locations(value).transpose(kept + reduced))
+        representatives = -1
+        if groups is not None:
+            representatives = len(self.indices)
+            self.indices.extend(groups.index(group) for group in groups)
+        block = self._reserve((count * lanes,))
+        aux = 0 if name == "reduce_min" else 1
+        self.rows.append(
+            (_EXTREMUM_REDUCE, block, count, a, a_index, lanes, representatives, aux)
+        )
+        flags = np.arange(block, block + count * lanes, dtype=np.int64)
+        order = tuple(int(axis) for axis in np.argsort(np.asarray(kept + reduced)))
+        info = flags.reshape(kept_shape + reduced_shape).transpose(order)
+        decided = flags[::lanes] if lanes else flags
+        keepdims = tuple(
+            1 if axis in reduced else extent for axis, extent in enumerate(value.shape)
+        )
+        return _NativeExtremum(
+            (self.values.atom(source),),
+            (_Tensor(value.shape, block, info.reshape((-1,))),),
+            _Tensor(kept_shape, block, decided.reshape((-1,))),
+            axes,
+            value.shape,
+            keepdims,
+        )
+
+    def _record(
+        self,
+        equation: jax_core.JaxprEqn,
+        arguments: tuple[_Tensor, ...],
+        outputs: tuple[_Tensor, ...],
+        operands: tuple[int, ...],
+        /,
+    ) -> _NativeExtremum | None:
+        """Track stacks, extrema and attainments, as ``_ValueIdentity.record``."""
+        name = equation.primitive.name
+        extremum = self._extremum(equation, arguments)
+        if not equation.outvars:
+            return extremum
+        result = equation.outvars[0]
+        source = equation.invars[0] if equation.invars else None
+        if name == "stack" and len(equation.outvars) == 1:
+            rank = len(outputs[0].shape)
+            self.stacks[result] = (int(equation.params["axis"]) % rank, operands)
+        elif extremum is not None and name in ("min", "max", "minimum", "maximum"):
+            self.extrema[result] = extremum
+        elif extremum is not None and name in ("reduce_min", "reduce_max"):
+            self.reductions[result] = extremum
+        elif (
+            name == "convert_element_type"
+            and isinstance(source, jax_core.Var)
+            and source in self.attainments
+        ):
+            self.attainments[result] = self.attainments[source]
+        elif name in ("reshape", "broadcast_in_dim") and isinstance(source, jax_core.Var):
+            reduced = self.reductions.get(source)
+            if reduced is not None:
+                operand_shape, keepdims = reduced.operand_shape, reduced.keepdims
+                kept = tuple(
+                    axis for axis in range(len(operand_shape)) if axis not in reduced.axes
+                )
+                shape = outputs[0].shape
+                if (
+                    name == "reshape"
+                    and equation.params.get("dimensions") is None
+                    and shape == keepdims
+                ) or (
+                    name == "broadcast_in_dim"
+                    and tuple(
+                        int(axis) for axis in equation.params["broadcast_dimensions"]
+                    )
+                    == kept
+                    and len(shape) == len(operand_shape)
+                    and all(
+                        extent in (keepdims[axis], operand_shape[axis])
+                        for axis, extent in enumerate(shape)
+                    )
+                ):
+                    self.extrema[result] = reduced
+        return extremum
+
+    def _decide_comparison(
+        self, equation: jax_core.JaxprEqn, result: _Tensor, /
+    ) -> _Tensor:
+        """Decide ``eq``/``ne`` of a min/max operand against its result, as the host."""
+        name = equation.primitive.name
+        if len(equation.invars) != 2:
+            return result
+        for operand, selected in (equation.invars, tuple(reversed(equation.invars))):
+            extremum = (
+                self.extrema.get(selected) if isinstance(selected, jax_core.Var) else None
+            )
+            if extremum is None:
+                continue
+            identity = self.values.atom(operand)
+            if identity not in extremum.operands:
+                continue
+            info = extremum.infos[extremum.operands.index(identity)]
+            if info.shape != result.shape:
+                continue
+            if name == "eq" and extremum.axes and equation.outvars:
+                self.attainments[equation.outvars[0]] = extremum
+            result = self._emit_binary(
+                _DECIDE, result, info, result.shape, aux=0 if name == "eq" else 1
+            )
+        return result
+
+    def _bound_attainment(
+        self, equation: jax_core.JaxprEqn, result: _Tensor, /
+    ) -> _Tensor:
+        """A sum of extremum indicators over the reduced axes is at least one."""
+        source = equation.invars[0] if equation.invars else None
+        extremum = (
+            self.attainments.get(source) if isinstance(source, jax_core.Var) else None
+        )
+        if (
+            extremum is None
+            or tuple(int(axis) for axis in equation.params["axes"]) != extremum.axes
+        ):
+            return result
+        return self._emit_unary(_ATTAIN, result, result.shape)
+
+    def _event(self, kind: int, test: int, variable: object, value: _Tensor, /) -> None:
+        """Record a ledger event of ``variable`` tested on ``value``, as ``_BranchLedger``."""
+        if self.branch_axes is None:
+            return
+        axis: int | None = _UNATTRIBUTED_AXIS
+        if isinstance(variable, jax_core.Var):
+            axis = self.branch_axes.get(variable, _UNATTRIBUTED_AXIS)
+        if axis is None:
+            return
+        size = _size(value.shape)
+        if size == 0:
+            return
+        aval = variable.aval if isinstance(variable, jax_core.Var) else None
+        boxes: NDArray[np.int64] | None = None
+        if (
+            axis != _UNATTRIBUTED_AXIS
+            and isinstance(aval, ShapedArray)
+            and axis < aval.ndim
+            and aval.shape[axis] == self.batch_capacity
+        ):
+            target = _shape(aval.shape)
+            try:
+                aligned = np.broadcast_shapes(value.shape, target) == target
+            except ValueError:
+                aligned = False
+            position = axis - (len(target) - len(value.shape))
+            if aligned and position >= 0 and value.shape[position] == self.batch_capacity:
+                reshape = tuple(
+                    extent if dimension == position else 1
+                    for dimension, extent in enumerate(value.shape)
+                )
+                boxes = np.broadcast_to(
+                    np.arange(self.batch_capacity, dtype=np.int64).reshape(reshape),
+                    value.shape,
+                ).reshape((-1,))
+        a, a_index = self._operand(value, value.shape)
+        box_index = -1
+        if boxes is not None:
+            box_index = len(self.indices)
+            self.indices.extend(int(box) for box in boxes)
+        self.events.append((kind, test, size, a, a_index, box_index))
+
+    def _inspect(
+        self,
+        equation: jax_core.JaxprEqn,
+        arguments: tuple[_Tensor, ...],
+        outputs: tuple[_Tensor, ...],
+        operands: tuple[int, ...],
+        extremum: _NativeExtremum | None,
+        /,
+    ) -> None:
+        """Ledger events of one equation, as ``_BranchLedger.inspect``."""
+        name = equation.primitive.name
+        result = equation.outvars[0] if equation.outvars else None
+        match name:
+            case "max" | "maximum" | "min" | "minimum" if extremum is not None:
+                if extremum.decided is not None:
+                    self._event(_KINK, _NOT_POSITIVE, result, extremum.decided)
+            case "abs":
+                self._event(_KINK, _MEETS_ZERO, result, arguments[0])
+            case "sqrt":
+                self._event(_KINK, _NOT_POSITIVE, result, arguments[0])
+                self._event(_JUMP, _NOT_NONNEGATIVE, result, arguments[0])
+            case "rsqrt" | "log":
+                self._event(_JUMP, _NOT_POSITIVE, result, arguments[0])
+            case "div":
+                self._event(_JUMP, _MEETS_ZERO, result, arguments[1])
+            case "integer_pow":
+                if int(equation.params["y"]) < 0:
+                    self._event(_JUMP, _MEETS_ZERO, result, arguments[0])
+            case "pow":
+                exponent = arguments[1].exact
+                if exponent is None:
+                    raise IntervalExtensionError(
+                        "native branch evidence requires a constant real-power exponent."
+                    )
+                integral = (
+                    exponent.size > 0
+                    and bool(np.all(np.isfinite(exponent)))
+                    and bool(np.all(exponent == np.round(exponent)))
+                )
+                if not integral:
+                    self._event(_KINK, _NOT_POSITIVE, result, arguments[0])
+                    self._event(_JUMP, _NOT_NONNEGATIVE, result, arguments[0])
+                elif np.any(exponent < 0.0):
+                    self._event(_JUMP, _MEETS_ZERO, result, arguments[0])
+            case "reduce_max" | "reduce_min" if extremum is not None:
+                if extremum.decided is not None:
+                    self._event(_KINK, _NOT_POSITIVE, result, extremum.decided)
+            case "select_n":
+                if len(set(operands[1:])) > 1:
+                    self._event(_JUMP, _UNDECIDED, equation.invars[0], arguments[0])
+            case "stop_gradient":
+                self._event(_KINK, _UNDECIDED, result, arguments[0])
+            case _:
+                pass
+        for variable, value in zip(equation.outvars, outputs, strict=True):
+            aval = variable.aval
+            kind = np.dtype(aval.dtype).kind if isinstance(aval, ShapedArray) else ""
+            if kind in "biu":
+                # A selection, index or comparison that the box leaves open.
+                self._event(_JUMP, _UNDECIDED, variable, value)
+            elif kind == "f":
+                self._event(_JUMP, _NONFINITE, variable, value)
+
     def compile_jaxpr(
         self,
         jaxpr: jax_core.Jaxpr,
         constants: tuple[_Tensor, ...],
+        constant_intervals: tuple[_Interval, ...],
         inputs: tuple[_Tensor, ...],
         /,
     ) -> tuple[_Tensor, ...]:
@@ -1122,6 +1494,7 @@ class _Builder:
         environment: dict[jax_core.Var, _Tensor] = {}
         environment.update(zip(jaxpr.constvars, constants, strict=True))
         environment.update(zip(jaxpr.invars, inputs, strict=True))
+        self.values.bind_constants(jaxpr.constvars, constant_intervals)
         identity = IntervalOperandIdentity()
         for equation in jaxpr.eqns:
             identity.record(equation)
@@ -1132,22 +1505,34 @@ class _Builder:
                 else self._literal(atom)
                 for atom in equation.invars
             )
+            nested_outputs: Sequence[object] | None = None
+            declared = False
             if name in ("pjit", "jit", "custom_jvp_call"):
                 key = "call_jaxpr" if name == "custom_jvp_call" else "jaxpr"
                 nested = equation.params.get(key)
                 if isinstance(nested, jax_core.ClosedJaxpr):
-                    nested_constants = tuple(
-                        self._constant(value, value) for value in nested.consts
-                    )
-                    outputs = self.compile_jaxpr(
-                        nested.jaxpr, nested_constants, arguments
+                    inner = nested.jaxpr
+                    inner_intervals = tuple(
+                        _as_interval(value) for value in nested.consts
                     )
                 elif isinstance(nested, jax_core.Jaxpr):
-                    outputs = self.compile_jaxpr(nested, (), arguments)
+                    inner, inner_intervals = nested, ()
                 else:
                     raise IntervalExtensionError(
                         f"native interval lowering cannot inline primitive {name!r}."
                     )
+                # The host evaluates a declared extension instead of the call,
+                # so its output is a fresh value with no declared regularity.
+                declared = name == "custom_jvp_call" and _declares_extension(equation)
+                if not declared:
+                    self.values.descend(inner.invars, equation.invars)
+                    nested_outputs = inner.outvars
+                outputs = self.compile_jaxpr(
+                    inner,
+                    tuple(self._constant(*interval) for interval in inner_intervals),
+                    inner_intervals,
+                    arguments,
+                )
             else:
                 output_shapes = tuple(
                     _real_shape(variable) for variable in equation.outvars
@@ -1160,6 +1545,10 @@ class _Builder:
                     output_shapes,
                     same_input,
                 )
+                if name in ("eq", "ne"):
+                    outputs = (self._decide_comparison(equation, outputs[0]),)
+                elif name == "reduce_sum":
+                    outputs = (self._bound_attainment(equation, outputs[0]),)
             if len(outputs) != len(equation.outvars):
                 raise IntervalExtensionError(
                     f"native primitive {name!r} returned the wrong interval arity."
@@ -1171,6 +1560,12 @@ class _Builder:
                             f"native primitive {name!r} returned an inconsistent shape."
                         )
                     environment[variable] = value
+            operands = self.values.identify(equation, nested_outputs)
+            extremum = self._record(equation, arguments, outputs, operands)
+            if declared and _size(outputs[0].shape):
+                entry = int(self._locations(outputs[0]).reshape((-1,))[0])
+                self._event(_JUMP, _ALWAYS, equation.outvars[0], _Tensor((), entry))
+            self._inspect(equation, arguments, outputs, operands, extremum)
         return tuple(
             environment[atom] if isinstance(atom, jax_core.Var) else self._literal(atom)
             for atom in jaxpr.outvars
@@ -1196,6 +1591,17 @@ class _Builder:
         return self._seed(lower_, upper_, exact=exact)
 
 
+def _declares_extension(equation: jax_core.JaxprEqn, /) -> bool:
+    """Whether the host evaluates this custom-JVP call by a declared extension."""
+    owner = custom_jvp_rule_owner(equation.params.get("jvp_jaxpr_fun"))
+    if owner is None or len(equation.outvars) != 1:
+        return False
+    if owner.f in _CUSTOM_EXTENSIONS:
+        return True
+    operands = len(equation.invars) - int(equation.params.get("num_consts", 0))
+    return bspline_jet_rule_alignment(owner.f) is not None and operands == 3
+
+
 def _immutable_indices(values: Sequence[int], /) -> NDArray[np.int64]:
     result = np.asarray(values, dtype=np.int64).reshape((-1,))
     result.setflags(write=False)
@@ -1208,11 +1614,16 @@ def lower_interval_jaxpr(
     batch_capacity: int,
     input_dimension: int,
     /,
+    branch_axes: Mapping[jax_core.Var, int | None] | None = None,
 ) -> NativeIntervalProgram:
-    """Compile a one-input real jaxpr or refuse its unsupported primitives."""
+    """Compile a one-input real jaxpr or refuse its unsupported primitives.
+
+    With ``branch_axes`` (the box axis of every traced variable) the program
+    also carries the branch-evidence events of ``_BranchLedger``.
+    """
     if len(closed_jaxpr.jaxpr.invars) != 1:
         raise IntervalExtensionError("native interval programs require one array input.")
-    builder = _Builder(batch_capacity, input_dimension)
+    builder = _Builder(batch_capacity, input_dimension, branch_axes)
     input_variable = closed_jaxpr.jaxpr.invars[0]
     input_shape = _real_shape(input_variable)
     expected_input_shape = (batch_capacity, input_dimension)
@@ -1225,9 +1636,11 @@ def lower_interval_jaxpr(
     constants = tuple(
         builder._constant(lower, upper) for lower, upper in constant_intervals
     )
+    builder.values.bind_inputs(closed_jaxpr.jaxpr.invars)
     (output,) = builder.compile_jaxpr(
         closed_jaxpr.jaxpr,
         constants,
+        tuple(constant_intervals),
         (_Tensor(expected_input_shape, 0),),
     )
     if output.locations is not None:
@@ -1241,6 +1654,10 @@ def lower_interval_jaxpr(
     indices.setflags(write=False)
     parameters.setflags(write=False)
     opcodes = frozenset(int(opcode) for opcode in instructions[:, 0])
+    events = None
+    if branch_axes is not None:
+        events = np.asarray(builder.events, dtype=np.int64).reshape((-1, 6))
+        events.setflags(write=False)
     return NativeIntervalProgram(
         instructions=instructions,
         indices=indices,
@@ -1252,6 +1669,7 @@ def lower_interval_jaxpr(
         output=output,
         domain_guards=_immutable_indices(builder.domain_guards),
         opcodes=opcodes,
+        events=events,
     )
 
 

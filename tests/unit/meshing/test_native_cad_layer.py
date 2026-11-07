@@ -381,16 +381,16 @@ def test_box_bottom_wall_layers_slide_along_fixed_sides_with_exact_charts() -> N
     assert _enclosed_volume(result.mesh) == pytest.approx(1.0, abs=1.0e-12)
 
 
-def test_box_bottom_wall_refuses_a_schedule_that_meets_the_adjacent_sides() -> None:
+def test_box_bottom_wall_refuses_a_schedule_that_meets_the_opposite_wall() -> None:
     model = _box()
     wall = _faces(model, lambda point: point[2] == 0.0)
-    schedule = (0.1, 0.15)
-    # A column at rim distance d crosses the 45-degree medial plane of its wall
-    # corner at height d; fronts are probed up to the total over the default
-    # proximity fraction (0.8). The reach exceeds the rim distance of the first
-    # interior wall ring at this size, so the refusal does not hinge on where the
-    # surface mesher places a single interior vertex.
-    reach = sum(schedule) / 0.8
+    # Every bottom-wall column translates along +z, so the adjacent side planes
+    # are parallel to the front and provably never crossed; they no longer limit
+    # its height (396c7e272). The opposite top face does: fronts are probed up to
+    # the total over the default proximity fraction (0.8), which here exceeds the
+    # medial plane z = 0.5 between the bottom and top faces.
+    schedule = (0.25, 0.35)
+    assert sum(schedule) / 0.8 > 0.5
 
     with pytest.raises(MeshingFailure, match="collide") as failure:
         _execute(
@@ -401,10 +401,8 @@ def test_box_bottom_wall_refuses_a_schedule_that_meets_the_adjacent_sides() -> N
     assert failure.value.stage == MeshingStageKind.LAYER_GENERATION.value
     locations = np.asarray(failure.value.locations, dtype=np.float64)
     assert locations.shape[0] > 0
-    # The colliding columns stand on the wall, inside the rim, within reach of a side.
+    # The colliding columns stand on the wall.
     np.testing.assert_array_equal(locations[:, 2], 0.0)
-    rim = np.min(np.minimum(locations[:, :2], 1.0 - locations[:, :2]), axis=1)
-    assert np.all((rim > 0.0) & (rim < reach))
 
 
 def test_sphere_whole_wall_grows_smooth_layers_without_ridges() -> None:

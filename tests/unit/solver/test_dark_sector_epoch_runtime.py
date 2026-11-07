@@ -5,6 +5,7 @@
 
 import base64
 import hashlib
+import os
 from typing import Any
 
 import jax
@@ -69,6 +70,8 @@ def _plan(
 
 
 def _repository(path: Any, *, fail: Any = None) -> Any:
+    if os.name != "posix":
+        pytest.skip("These bindings require the explicit POSIX artifact provider.")
     profile = HPCFilesystemProfile(
         "dark-sector-runtime-posix",
         "local-posix",

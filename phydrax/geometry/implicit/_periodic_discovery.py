@@ -57,12 +57,15 @@ from ._policy import (
 
 # Issues that a finer quotient lattice resolves for a level separated from
 # every critical value: the zero set is a regular surface, so a cell meeting it
-# without a resolved contour holds a piece smaller than the cell.
+# without a resolved contour holds a piece smaller than the cell. A tangency
+# box hugs a face no deeper than ``2**-8`` of the cell; every anchor is tried
+# first at each resolution, and a finer lattice halves that slab.
 _REFINABLE = int(
     AdaptiveImplicitBoxIssue.EDGE
     | AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
     | AdaptiveImplicitBoxIssue.SINGULAR
     | AdaptiveImplicitBoxIssue.FACE
+    | AdaptiveImplicitBoxIssue.TANGENCY
 )
 _ANCHOR_BITS = 30
 

@@ -127,30 +127,30 @@ def test_curving_evidence_reuses_only_matching_embedding_inputs() -> None:
         )
 
 
-def _bound(shape: Any, embedding: Any = None) -> Any:
+def _bound(shape: Any, embedding: Any = None, scale: Any = 1.0) -> Any:
     model = import_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         tessellation=BRepTessellationPolicy(
-            linear_deflection=0.05,
+            linear_deflection=0.05 * scale,
             angular_deflection=0.2,
         ),
     ).model
     return phx.geometry.prepare_brep_projection(model, embedding=embedding)
 
 
-def _plate_projection() -> Any:
+def _plate_projection(scale: Any = 1.0) -> Any:
     polygon = BRepBuilderAPI_MakePolygon()
     for x, y in ((-2, -2), (2, -2), (2, 2), (-2, 2)):
-        polygon.Add(gp_Pnt(x, y, 0))
+        polygon.Add(gp_Pnt(x * scale, y * scale, 0))
     polygon.Close()
     square = BRepBuilderAPI_MakeFace(polygon.Wire()).Face()
     circle = BRepBuilderAPI_MakeEdge(
-        gp_Circ(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 1.0)
+        gp_Circ(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), scale)
     ).Edge()
     disk = BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(circle).Wire()).Face()
     embedding = phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
-    return _bound(BRepAlgoAPI_Cut(square, disk).Shape(), embedding)
+    return _bound(BRepAlgoAPI_Cut(square, disk).Shape(), embedding, scale)
 
 
 def test_plate_tessellation_retains_native_periodic_edge_parameters() -> None:
@@ -213,7 +213,7 @@ def test_plate_tessellation_retains_native_periodic_edge_parameters() -> None:
         )
 
 
-def _plate_mesh(apex: Any) -> Any:
+def _plate_mesh(apex: Any, scale: Any = 1.0) -> Any:
     """Square plate with a unit hole: the hole is meshed by four chords."""
     ring = np.asarray([[1, 0], [0, 1], [-1, 0], [0, -1]], dtype=np.float64)
     outer = np.asarray(
@@ -227,7 +227,7 @@ def _plate_mesh(apex: Any) -> Any:
     second = points[triangles[:, 2]] - points[triangles[:, 0]]
     area = first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0]
     triangles[area < 0] = triangles[area < 0][:, [0, 2, 1]]
-    return phx.discretization.CellMesh.from_triangles(points, triangles)
+    return phx.discretization.CellMesh.from_triangles(points * scale, triangles)
 
 
 def _icosphere(level: Any) -> Any:
@@ -691,22 +691,27 @@ def test_unresolved_projection_rolls_back_with_infinite_residual_evidence(
     )
 
 
-def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> None:
+def _curve_plate(
+    rounds: Any, steps: Any, *, accept: Any = False, scale: Any = 1.0
+) -> Any:
+    projection = _plate_projection(scale)
+    mesh = _plate_mesh((0.8, 0.8), scale)
+    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+    policy = phx.meshing.HighOrderCurvingPolicy(
+        degree=2,
+        relaxation_rounds=rounds,
+        termination=phx.optim.OptimizationTermination(maximum_steps=steps),
+        accept_valid_nonconverged_relaxation=accept,
+    )
+    return phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+
+
+def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_its_star() -> None:
     projection = _plate_projection()
     mesh = _plate_mesh((0.8, 0.8))
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
-
-    def curve(rounds: Any, steps: Any) -> Any:
-        policy = phx.meshing.HighOrderCurvingPolicy(
-            degree=2,
-            relaxation_rounds=rounds,
-            termination=phx.optim.OptimizationTermination(maximum_steps=steps),
-        )
-        return phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
-
-    projected = curve(0, 64)
-    capped = curve(2, 64)
-    relaxed = curve(2, 512)
+    projected = _curve_plate(0, 64)
+    relaxed = _curve_plate(2, 64)
 
     # Snapping the hole chord onto the arc folds the element at a hole vertex.
     assert projected.status is _STATUS.ROLLED_BACK_INVALID
@@ -726,56 +731,82 @@ def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> N
         ),
     )
     assert replayed.evidence_id == projected.evidence.evidence_id
-    # Relaxations cut off by the step budget never replace the straight geometry,
-    # even when their candidate would pass the certificate.
-    assert capped.status is _STATUS.ROLLED_BACK_NONCONVERGED
-    assert capped.accepted_round is None and capped.candidate.accepted
-    assert phx.optim.OptimizationStatus.SUCCESS not in capped.relaxation_statuses
-    np.testing.assert_array_equal(
-        capped.geometry.coordinates, capped.straight.coordinates
-    )
-    assert relaxed.status is _STATUS.CURVED
-    assert relaxed.relaxation_statuses[relaxed.accepted_round - 1] is (
-        phx.optim.OptimizationStatus.SUCCESS
-    )
+    assert relaxed.status is _STATUS.CURVED and relaxed.accepted_round == 1
+    assert relaxed.relaxation_statuses == (phx.optim.OptimizationStatus.SUCCESS,)
     assert relaxed.evidence.certificate.all_certified
     assert relaxed.evidence.minimum_scaled_jacobian > 0.0
+    # The first round relaxes the folded cells and their node-sharing neighbors
+    # only: every other unconstrained node keeps its straight position.
+    routes = np.asarray(relaxed.geometry.geometry_dofs[0])
+    folded = np.asarray(projected.candidate.certificate.status) != (
+        phx.discretization.CellValidityStatus.CERTIFIED_VALID
+    )
+    star = np.unique(routes[np.any(np.isin(routes, routes[folded]), axis=1)])
+    moved = np.flatnonzero(
+        np.any(
+            np.asarray(relaxed.geometry.coordinates)
+            != np.asarray(relaxed.straight.coordinates),
+            axis=1,
+        )
+        & ~np.asarray(relaxed.evidence.constrained)
+    )
+    assert moved.size and np.all(np.isin(moved, star))
+    assert star.size < routes.max() + 1
 
 
-def test_nonconverged_relaxation_replaces_a_valid_projection_only_when_permitted() -> (
+def test_nonconverged_relaxation_repairs_an_invalid_projection_only_when_permitted() -> (
     None
 ):
+    refused = _curve_plate(2, 3)
+    admitted = _curve_plate(2, 3, accept=True)
+
+    # Relaxations cut off by the step budget never replace the straight geometry,
+    # even when their candidate would pass the certificate.
+    assert refused.status is _STATUS.ROLLED_BACK_NONCONVERGED
+    assert refused.accepted_round is None and refused.candidate.accepted
+    assert phx.optim.OptimizationStatus.SUCCESS not in refused.relaxation_statuses
+    np.testing.assert_array_equal(
+        refused.geometry.coordinates, refused.straight.coordinates
+    )
+    assert admitted.status is _STATUS.CURVED and admitted.accepted_round == 1
+    assert admitted.relaxation_statuses == (
+        phx.optim.OptimizationStatus.MAXIMUM_STEPS_REACHED,
+    )
+    assert admitted.evidence.accepted
+
+
+def test_star_relaxation_is_independent_of_the_length_unit() -> None:
+    meters = _curve_plate(2, 64)
+    millimeters = _curve_plate(2, 64, scale=1.0e-3)
+
+    assert millimeters.status is meters.status is _STATUS.CURVED
+    assert millimeters.accepted_round == meters.accepted_round == 1
+    assert millimeters.relaxation_statuses == meters.relaxation_statuses
+    np.testing.assert_allclose(
+        np.asarray(millimeters.geometry.coordinates) / 1.0e-3,
+        meters.geometry.coordinates,
+        rtol=0.0,
+        atol=1.0e-9,
+    )
+
+
+def test_valid_projection_is_accepted_without_relaxation() -> None:
     projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
     mesh = _icosphere(1)
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
 
-    def curve(rounds: Any, accept: Any) -> Any:
-        policy = phx.meshing.HighOrderCurvingPolicy(
-            degree=2,
-            relaxation_rounds=rounds,
-            termination=phx.optim.OptimizationTermination(maximum_steps=1),
-            accept_valid_nonconverged_relaxation=accept,
-        )
+    def curve(rounds: Any) -> Any:
+        policy = phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=rounds)
         return phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
 
-    projected = curve(0, False)
-    retained = curve(1, False)
-    replaced = curve(1, True)
+    projected = curve(0)
+    relaxed = curve(3)
 
-    budget = (phx.optim.OptimizationStatus.MAXIMUM_STEPS_REACHED,)
-    assert projected.status is _STATUS.CURVED and projected.accepted_round == 0
-    # The relaxed candidate is not converged: the projection stays, and it is the
-    # last fully certified candidate.
-    assert retained.status is _STATUS.CURVED and retained.accepted_round == 0
-    assert retained.candidate is retained.evidence
-    assert retained.relaxation_statuses == budget
+    assert projected.status is relaxed.status is _STATUS.CURVED
+    assert projected.accepted_round == relaxed.accepted_round == 0
+    assert relaxed.relaxation_statuses == ()
     np.testing.assert_array_equal(
-        retained.geometry.coordinates, projected.geometry.coordinates
-    )
-    assert replaced.status is _STATUS.CURVED and replaced.accepted_round == 1
-    assert replaced.relaxation_statuses == budget and replaced.evidence.accepted
-    assert not np.array_equal(
-        replaced.geometry.coordinates, projected.geometry.coordinates
+        relaxed.geometry.coordinates, projected.geometry.coordinates
     )
 
 

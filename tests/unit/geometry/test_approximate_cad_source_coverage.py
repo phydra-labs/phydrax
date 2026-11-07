@@ -1,4 +1,5 @@
 import dataclasses
+import math
 from collections.abc import Sequence
 from fractions import Fraction
 from pathlib import Path
@@ -19,6 +20,7 @@ from phydrax.geometry._approximate_source_coverage import (
     _area2,
     _cad_chart_partition,
     _covered_by_declared_triangles,
+    _face_distance_lower,
     _intersection_area,
     _overlapping_self_pairs,
     _possibly_overlapping_pairs,
@@ -575,3 +577,40 @@ def test_cad_chart_degree_requires_authored_seam_correspondence() -> None:
     assert attempt.failures and attempt.failures[0].status == "violated"
     assert attempt.failures[0].check == "source_boundary_homotopy"
     assert "correspondence" in attempt.failures[0].detail
+
+
+# A sliver triangle (third vertex offset about 2**-33 from the first edge) whose
+# binary64 normal direction is off by about u / sin(angle).
+SLIVER_FACE = np.asarray(
+    [
+        [float.fromhex(value) for value in row]
+        for row in (
+            ("-0x1.68ca5e0d58b24p-2", "-0x1.6587cb4d766c8p-1", "0x1.351d220c5c7fcp-2"),
+            ("-0x1.351c390ec66a9p+0", "-0x1.40c98ac169f88p-1", "0x1.105b8d0c70c00p-5"),
+            ("-0x1.1b3242e5e2253p-1", "-0x1.5ce73653e2c2dp-1", "0x1.e90e35c57c66ap-3"),
+        )
+    ],
+    dtype=np.float64,
+)
+UNIT_FACE = np.asarray(
+    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64
+)
+
+
+@pytest.mark.parametrize(
+    ("point", "triangle", "squared"),
+    (
+        (SLIVER_FACE[0], SLIVER_FACE, Fraction(0)),
+        (SLIVER_FACE[1], SLIVER_FACE, Fraction(0)),
+        (SLIVER_FACE[2], SLIVER_FACE, Fraction(0)),
+        (np.asarray([0.25, 0.25, 3.0]), UNIT_FACE, Fraction(9)),
+        (np.asarray([1.0, 1.0, 1.0]), UNIT_FACE, Fraction(3, 2)),
+    ),
+)
+def test_face_distance_lower_is_the_downward_rounded_exact_distance(
+    point: np.ndarray, triangle: np.ndarray, squared: Fraction
+) -> None:
+    lower = _face_distance_lower(point, triangle)
+
+    assert Fraction(lower) ** 2 <= squared
+    assert Fraction(math.nextafter(lower, math.inf)) ** 2 > squared

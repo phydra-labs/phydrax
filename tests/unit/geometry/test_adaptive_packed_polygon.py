@@ -5,6 +5,7 @@
 import hashlib
 import weakref
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -515,7 +516,10 @@ def test_native_sphere_polygon_matches_legacy_identity_and_replay() -> None:
     )
     assert candidate.mesh is not None
     assert candidate.status == 0
-    # Captured before the packed cutover from the original scalar implementation.
+    # Captured before the packed cutover from the original scalar implementation,
+    # then with every triangle (and its root-edge row) cyclically rotated to
+    # start at its corner opposite the longest edge; all other arrays and the
+    # cyclic faces are bit-identical to the original capture.
     arrays = dict(candidate.scaffold_arrays)
     arrays.update(
         mesh_faces=np.asarray(candidate.mesh.faces),
@@ -535,7 +539,7 @@ def test_native_sphere_polygon_matches_legacy_identity_and_replay() -> None:
         digest.update(np.ascontiguousarray(array).tobytes())
     assert (
         digest.hexdigest()
-        == "1b62bc44858571f296afc6fd8263e886afd1b576b3c3a78fd7d565c7a8736c69"
+        == "d6f248998ad51b46bbe59c3951714015aa8cea1491be22e64fa53ef06114c529"
     )
     scaffold = SimpleNamespace(**candidate.scaffold_arrays, domain=domain)
     surface = SimpleNamespace(
@@ -752,3 +756,130 @@ def test_lattice_near_coincident_corner_cut_is_decided_by_root_errors(
     if handled[0]:
         assert certified
         np.testing.assert_array_equal(triangles[0, : counts[0]], faces)
+
+
+def _rounded_norm(monkeypatch: pytest.MonkeyPatch, call: int, direction: float) -> None:
+    """Round the ``call``-th NumPy norm one unit toward ``direction``.
+
+    Another platform's BLAS reduction may round one area this way; with the
+    former float-norm areas, each perturbation below flips an exact tie.
+    """
+    exact_norm = np.linalg.norm
+    calls = [0]
+
+    def norm(*args: Any, **kwargs: Any) -> Any:
+        value = exact_norm(*args, **kwargs)
+        calls[0] += 1
+        return np.nextafter(value, direction) if calls[0] - 1 == call else value
+
+    monkeypatch.setattr(np.linalg, "norm", norm)
+
+
+# The former kernel took two projection norms, then one area norm per ear.
+@pytest.mark.parametrize("call,direction", ((None, 0.0), (3, np.inf), (4, -np.inf)))
+def test_equal_area_ears_are_decided_exactly(
+    monkeypatch: pytest.MonkeyPatch, call: int | None, direction: float
+) -> None:
+    """Every ear of this convex hexagon has the same exact area, so the largest
+    middle vertex ID clips first; a rounded norm changes nothing."""
+    from phydrax.geometry.implicit._adaptive_discovery import _triangulate_polygon
+
+    if call is not None:
+        _rounded_norm(monkeypatch, call, direction)
+    planar = ((0, 0), (2, 0), (3, 1), (2, 2), (0, 2), (-1, 1))
+    # A tilted plane through exactly representable binary64 points.
+    points = [
+        np.asarray((x / 32.0, y / 32.0, (x + 3 * y) / 64.0), dtype=np.float64)
+        for x, y in planar
+    ]
+    identifiers = (13, 11, 17, 12, 16, 14)
+    vertices: list[np.ndarray] = [np.zeros(3)] * 18
+    for identifier, point in zip(identifiers, points, strict=True):
+        vertices[identifier] = point
+    triangles = _triangulate_polygon(vertices, list(identifiers))
+    # Ties at every step: 17 (all ears equal), then 12 over 11 and 16 over 11.
+    assert triangles == ((11, 17, 12), (11, 12, 16), (11, 16, 14), (13, 11, 14))
+
+
+@pytest.mark.parametrize("call,direction", ((None, 0.0), (0, -np.inf), (2, -np.inf)))
+def test_tied_quad_diagonal_is_decided_exactly(
+    monkeypatch: pytest.MonkeyPatch, call: int | None, direction: float
+) -> None:
+    from phydrax.geometry.implicit._adaptive_discovery import _triangulate_polygon
+
+    if call is not None:
+        _rounded_norm(monkeypatch, call, direction)
+    # A dyadic square: both diagonals leave triangles of equal exact area, so
+    # the first diagonal is kept.
+    vertices = [
+        np.asarray(point, dtype=np.float64)
+        for point in (
+            (0.125, 0.25, 0.5),
+            (0.625, 0.25, 0.5),
+            (0.625, 0.75, 0.5),
+            (0.125, 0.75, 0.5),
+        )
+    ]
+    assert _triangulate_polygon(vertices, [0, 1, 2, 3]) == ((0, 1, 2), (0, 2, 3))
+
+
+def test_needle_triangle_starts_at_its_widest_corner() -> None:
+    """A zero set passing 4e-8 from a lattice corner leaves two roots that close.
+
+    Their contour triangle's corner opposite that short edge has an angle near
+    4e-6 rad; as corner 0 it fails cell validity (and finite-element geometry),
+    whose corner-0 measure is that angle's squared sine. The corner opposite
+    the longest edge has the largest sine, so starting there certifies it.
+    """
+    from phydrax.discretization._cell_geometry_validity import (
+        CellValidityStatus,
+        certify_cell_geometry_validity,
+    )
+    from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+    from phydrax.geometry.implicit._adaptive_discovery import _widest_corner_offsets
+
+    corners = np.asarray(
+        (
+            (0.1375, -0.1875, 0.13630595819558944),
+            (0.125, -0.18749995983671397, 0.140625),
+            (0.125, -0.1875, 0.1406249657040462),
+        ),
+        dtype=np.float64,
+    )
+
+    def status(order: tuple[int, ...]) -> int:
+        mesh = CellMesh(
+            corners[list(order)],
+            (CellBlock("triangles", "triangle", np.asarray(((0, 1, 2),))),),
+        )
+        return int(np.asarray(certify_cell_geometry_validity(mesh).status)[0])
+
+    assert status((0, 1, 2)) == CellValidityStatus.INVALID
+    offset = int(_widest_corner_offsets(corners[None])[0])
+    assert offset != 0
+    assert status(tuple((offset + step) % 3 for step in range(3))) == (
+        CellValidityStatus.CERTIFIED_VALID
+    )
+
+
+def test_widest_corner_ties_are_decided_exactly() -> None:
+    from phydrax.geometry.implicit._adaptive_discovery import _widest_corner_offsets
+
+    tiny = 2.0**-1060
+    corners = np.asarray(
+        (
+            # Isosceles with two exactly equal longest edges: earliest corner.
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.5, 3.0, 0.0)),
+            # The apex one unit in the last place right: the edge from corner
+            # 0 to it is the longer, so corner 1 is opposite the longest edge.
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (np.nextafter(0.5, 1.0), 3.0, 0.0)),
+            # Subnormal edges, decided exactly.
+            ((0.0, 0.0, 0.0), (2.0 * tiny, 0.0, 0.0), (0.0, 3.0 * tiny, 0.0)),
+        ),
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(_widest_corner_offsets(corners), (0, 1, 0))
+    # Rotating every row by one moves each chosen corner one position on.
+    np.testing.assert_array_equal(
+        _widest_corner_offsets(np.roll(corners, 1, axis=1)), (1, 2, 1)
+    )

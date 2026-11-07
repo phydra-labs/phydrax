@@ -67,12 +67,15 @@ polygonized. ``unresolved``: volume band cells stay unresolved at
 ``root_tolerance`` or with a lattice vertex on the zero set.
 """
 
-# Volume issues a finer lattice resolves for a regular zero set.
+# Volume issues a finer lattice resolves for a regular zero set. A tangency
+# box hugs a lattice face no deeper than ``2**-8`` of the cell, and a finer
+# lattice halves that slab.
 _REFINABLE = int(
     AdaptiveImplicitBoxIssue.EDGE
     | AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
     | AdaptiveImplicitBoxIssue.SINGULAR
     | AdaptiveImplicitBoxIssue.FACE
+    | AdaptiveImplicitBoxIssue.TANGENCY
 )
 _FACES = tuple((axis, side) for axis in range(3) for side in range(2))
 

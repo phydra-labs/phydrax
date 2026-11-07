@@ -111,15 +111,18 @@ def test_decided_selections_keep_derivative_enclosures_finite() -> None:
     gradient = prepare_interval_function(jax.grad(union), 3)
     gradient_lower, gradient_upper = gradient.evaluate(lower, upper)
     # Near the right sphere its distance wins strictly, so the gradient is
-    # that sphere's unit normal plus e_z; every corner's exact gradient lies
-    # inside the finite enclosure.
-    assert np.all(np.isfinite(gradient_lower[0])) and np.all(
-        np.isfinite(gradient_upper[0])
-    )
-    for corner in product(*zip(lower[0], upper[0], strict=True)):
-        point = np.asarray(corner)
-        offset = point - np.asarray((0.6, 0.0, 0.0))
-        exact = offset / np.linalg.norm(offset) + np.asarray((0.0, 0.0, 1.0))
-        assert np.all(gradient_lower[0] <= exact) and np.all(exact <= gradient_upper[0])
-    # Between the spheres both distances tie on the box: no claim is made.
-    assert not np.all(np.isfinite(gradient_lower[1]))
+    # that sphere's unit normal plus e_z. On the bisector box both distances
+    # tie; the enclosure stays finite (the attaining count is at least one)
+    # and holds both branch gradients. Every corner's exact gradient lies
+    # inside each finite enclosure.
+    assert np.all(np.isfinite(gradient_lower)) and np.all(np.isfinite(gradient_upper))
+    for row, branches in (
+        (0, ((0.6, 0.0, 0.0),)),
+        (1, ((-0.6, 0.0, 0.0), (0.6, 0.0, 0.0))),
+    ):
+        for corner in product(*zip(lower[row], upper[row], strict=True)):
+            for center in branches:
+                offset = np.asarray(corner) - np.asarray(center)
+                exact = offset / np.linalg.norm(offset) + np.asarray((0.0, 0.0, 1.0))
+                assert np.all(gradient_lower[row] <= exact)
+                assert np.all(exact <= gradient_upper[row])

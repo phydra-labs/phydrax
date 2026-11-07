@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import final
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -59,23 +60,23 @@ def test_partial_pairing_maximizes_cardinality_before_alignment() -> None:
         )
         for i in range(2 * pairs - 1)
     ]
-    assert _maximum_partial_pairing(candidates, 2 * pairs) == list(
-        range(0, 2 * pairs, 2)
-    )
+    assert _maximum_partial_pairing(candidates, 2 * pairs) == list(range(0, 2 * pairs, 2))
 
 
 def test_partial_pairing_rejects_rounded_degenerate_split_templates() -> None:
     # Actual rejected holed-plate pair: the represented parent is nearly
     # collinear at one corner; its rounded subdivision cannot meet the same
     # determinant floor required of every published cell.
-    points = np.asarray((
-        (0.8, 0.8),
-        (0.7250000000000001, 0.6000000000000001),
-        (0.775, 0.4),
-        (0.7875000000000001, 0.6000000000000001),
-    ))
+    points = np.asarray(
+        (
+            (0.8, 0.8),
+            (0.7250000000000001, 0.6000000000000001),
+            (0.775, 0.4),
+            (0.7875000000000001, 0.6000000000000001),
+        )
+    )
     assert not _split_quad_templates_valid((0, 1, 2, 3), points)
-    square = np.asarray(((0., 0.), (1., 0.), (1., 1.), (0., 1.)))
+    square = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     assert _split_quad_templates_valid((0, 1, 2, 3), square)
 
 
@@ -321,7 +322,9 @@ def test_simplex2_lowering_keeps_source_family_during_quad_extraction() -> None:
     assert _area(result.mesh) == pytest.approx(2.0)
 
 
-def test_independent_singular_fields_select_distinct_quad_topologies(tmp_path: Path) -> None:
+def test_independent_singular_fields_select_distinct_quad_topologies(
+    tmp_path: Path,
+) -> None:
     from copy import copy
 
     from phydrax.discretization._cell_geometry_validity import cell_geometry_id
@@ -554,8 +557,10 @@ def test_independent_singular_fields_select_distinct_quad_topologies(tmp_path: P
     with pytest.raises(ValueError, match="target mesh and geometry"):
         events[0].require_target(results[0].mesh, same_id_geometry)
     shifted = CellMesh.from_triangles(points + (0.1, 0.0), triangles)
-    forged_recipe = events[0].archive_recipe()._replace(
-        source=shifted, source_geometry=CellGeometrySpec.affine(shifted)
+    forged_recipe = (
+        events[0]
+        .archive_recipe()
+        ._replace(source=shifted, source_geometry=CellGeometrySpec.affine(shifted))
     )
     forged = Composition(
         (
@@ -635,6 +640,211 @@ def test_independent_singular_fields_select_distinct_quad_topologies(tmp_path: P
         prepare_surface_cross_field(source, guide_angles=[float("nan")] * 6)
 
 
+def _guided_singular_fan(apex_height: float) -> tuple[CellMesh, SurfaceCrossField]:
+    # Six triangles around one interior vertex; a quarter-polar guide gives it
+    # fourfold index one. A raised apex makes every face normal distinct.
+    ring_angles = 2.0 * np.pi * np.arange(6) / 6
+    points = np.vstack(
+        (
+            np.asarray(((0.0, 0.0, apex_height),)),
+            np.column_stack((np.cos(ring_angles), np.sin(ring_angles), np.zeros(6))),
+        )
+    )
+    triangles = np.asarray([(0, i + 1, (i + 1) % 6 + 1) for i in range(6)])
+    source = CellMesh.from_triangles(points, triangles)
+    frames = np.asarray(prepare_surface_cross_field(source).frames)
+    centers = points[triangles].mean(axis=1)
+    direction = np.arctan2(centers[:, 1], centers[:, 0]) / 4
+    physical = np.column_stack((np.cos(direction), np.sin(direction), np.zeros(6)))
+    local = np.einsum("fij,fj->fi", frames, physical)
+    field = prepare_surface_cross_field(
+        source, guide_angles=np.arctan2(local[:, 1], local[:, 0])
+    )
+    np.testing.assert_array_equal(field.singular_vertices, [0])
+    np.testing.assert_array_equal(field.singularity_indices, [1])
+    return source, field
+
+
+def _restored_field_content(field: SurfaceCrossField) -> SurfaceCrossField:
+    """Rebind edited stored arrays to their own content identity."""
+    return SurfaceCrossField(
+        field.frames,
+        field.angles,
+        field.transport_edges,
+        field.patch_ids,
+        field.feature_edges,
+        field.transport_angles,
+        field.feature_rows,
+        field.feature_angles,
+        field.guide_angles,
+        field.feature_residuals,
+        field.field_solve_residual,
+        field.field_solve_relative_residual,
+        field.field_energy,
+        field.singular_vertices,
+        field.singularity_indices,
+        field.source,
+    )
+
+
+@pytest.mark.parametrize("apex_height", [0.0, 0.4])
+def test_stored_cross_field_restores_another_platforms_rounding(
+    apex_height: float,
+) -> None:
+    # Another platform's solve differs from this one by a few ulps in the
+    # angles and arbitrarily in the tiny solve residuals. Restore must accept
+    # that archive and decide the same singularities and quad pairing.
+    source, field = _guided_singular_fan(apex_height)
+    geometry = CellGeometrySpec.affine(source)
+    layout = prepare_surface_quad_layout(source, field)
+    angles = np.asarray(field.angles)
+    foreign = _restored_field_content(
+        eqx.tree_at(
+            lambda value: (
+                value.angles,
+                value.feature_residuals,
+                value.field_solve_residual,
+                value.field_solve_relative_residual,
+                value.field_energy,
+            ),
+            field,
+            (
+                np.nextafter(angles, np.zeros_like(angles)),
+                np.nextafter(np.asarray(field.feature_residuals), np.inf),
+                np.asarray(field.field_solve_residual) * 3.0 + 1.0e-15,
+                np.asarray(field.field_solve_relative_residual) * 0.5,
+                np.nextafter(np.asarray(field.field_energy), np.inf),
+            ),
+        )
+    )
+    assert foreign.field_id != field.field_id
+    foreign_layout = prepare_surface_quad_layout(source, foreign)
+    event = SurfaceQuadFieldEvent(
+        source,
+        geometry,
+        foreign,
+        foreign_layout,
+        maximum_field_error=2.0,
+        complete=True,
+    )
+
+    restored = restore_surface_quad_field_event(event.archive_recipe(), source, geometry)
+
+    assert restored.event_id == event.event_id
+    assert restored.field.field_id == foreign.field_id
+    np.testing.assert_array_equal(restored.field.angles, foreign.angles)
+    np.testing.assert_array_equal(
+        restored.field.field_solve_residual, foreign.field_solve_residual
+    )
+    np.testing.assert_array_equal(restored.field.singular_vertices, [0])
+    np.testing.assert_array_equal(restored.field.singularity_indices, [1])
+    np.testing.assert_array_equal(
+        restored.layout.paired_edge_rows, layout.paired_edge_rows
+    )
+
+
+@pytest.mark.parametrize("apex_height", [0.0, 0.4])
+def test_stored_cross_field_restore_refuses_altered_constraints(
+    apex_height: float,
+) -> None:
+    source, field = _guided_singular_fan(apex_height)
+    assert SurfaceCrossField.from_stored_fields(field).field_id == field.field_id
+    frames = np.asarray(field.frames)
+    angles = np.asarray(field.angles)
+    patches = np.asarray(field.patch_ids)
+    alterations = (
+        (
+            lambda value: value.singularity_indices,
+            np.asarray([2], dtype=np.int32),
+            "certified singularity indices",
+        ),
+        (
+            lambda value: value.singular_vertices,
+            np.asarray([1], dtype=np.int64),
+            "certified singularity indices",
+        ),
+        (
+            lambda value: value.frames,
+            frames + 1.0e-9,
+            "source frames",
+        ),
+        (
+            lambda value: value.feature_angles,
+            np.asarray(field.feature_angles) + 1.0e-6,
+            "source edge directions",
+        ),
+        (
+            lambda value: value.transport_angles,
+            np.asarray(field.transport_angles) - 1.0e-6,
+            "source edge directions",
+        ),
+        (
+            lambda value: value.patch_ids,
+            np.where(np.arange(patches.size) == 0, patches + 1, patches),
+            "source edge graph",
+        ),
+        (
+            lambda value: value.angles,
+            np.where(np.arange(angles.size) == 0, angles + 1.0e-7, angles),
+            "feature-alignment residuals",
+        ),
+        (
+            lambda value: value.feature_residuals,
+            np.asarray(field.feature_residuals) + 1.0e-6,
+            "feature-alignment residuals",
+        ),
+        (
+            lambda value: value.field_energy,
+            np.asarray(field.field_energy) + 1.0e-6,
+            "its field energy",
+        ),
+    )
+    for where, replacement, message in alterations:
+        altered = _restored_field_content(eqx.tree_at(where, field, replacement))
+        with pytest.raises(ValueError, match=message):
+            SurfaceCrossField.from_stored_fields(altered)
+    with pytest.raises(ValueError, match="its identity"):
+        SurfaceCrossField.from_stored_fields(
+            eqx.tree_at(lambda value: value.angles, field, np.nextafter(angles, 1.0))
+        )
+
+
+def test_stored_quad_layout_restore_decides_the_stored_pairing() -> None:
+    source, field = _guided_singular_fan(0.0)
+    geometry = CellGeometrySpec.affine(source)
+    layout = prepare_surface_quad_layout(source, field)
+    event = SurfaceQuadFieldEvent(
+        source, geometry, field, layout, maximum_field_error=2.0, complete=True
+    )
+    recipe = event.archive_recipe()
+    restored = restore_surface_quad_field_event(recipe, source, geometry)
+    assert restored.layout.layout_id == layout.layout_id
+    rows = np.asarray(layout.paired_edge_rows)
+    with pytest.raises(QuadLayoutObstruction, match="do not cover") as uncovered:
+        restore_surface_quad_field_event(
+            recipe._replace(paired_edge_rows=jnp.asarray(rows[:-1])), source, geometry
+        )
+    assert uncovered.value.category == "layout_evidence"
+    boundary_row = next(
+        row
+        for row in np.asarray(field.feature_edges).tolist()
+        if row not in rows.tolist()
+    )
+    with pytest.raises(QuadLayoutObstruction, match="not an accepted") as rejected:
+        restore_surface_quad_field_event(
+            recipe._replace(
+                paired_edge_rows=jnp.asarray(np.sort(np.append(rows[:-1], boundary_row)))
+            ),
+            source,
+            geometry,
+        )
+    assert rejected.value.category == "layout_evidence"
+    with pytest.raises(ValueError, match="layout does not reproduce"):
+        restore_surface_quad_field_event(
+            recipe._replace(layout_id="altered"), source, geometry
+        )
+
+
 def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path) -> None:
     from phydrax._array_archive import ArrayArchiveCorruptionError
     from phydrax._physical import SpatialCoordinateContract
@@ -684,9 +894,11 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
         size_controls=controls,
         quality_target=quality,
     )
-    triangle = NativeMeshingProvider(
-        NativeMeshingOptions("planar_constrained_delaunay")
-    ).plan(source, triangle_spec, coordinate_contract=coordinates).execute()
+    triangle = (
+        NativeMeshingProvider(NativeMeshingOptions("planar_constrained_delaunay"))
+        .plan(source, triangle_spec, coordinate_contract=coordinates)
+        .execute()
+    )
     assert triangle.surface_quad_field_event is None
     default_result_path = tmp_path / "default-surface-result.phx"
     write_model_artifact(default_result_path, triangle, limits=None)
@@ -723,9 +935,11 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
             quality_target=quality,
             cross_field=field,
         )
-        result = NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad")).plan(
-            source, specification, coordinate_contract=coordinates
-        ).execute()
+        result = (
+            NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad"))
+            .plan(source, specification, coordinate_contract=coordinates)
+            .execute()
+        )
         requests.append(specification)
         results.append(result)
         assert result.certification is not None and result.certification.passed
@@ -773,8 +987,9 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
                 start = vertices[side]
                 axis = vertices[(side + 1) % 6] - start
                 denominator = float(axis @ axis)
-                ta, tb = float((a - start) @ axis / denominator), float(
-                    (b - start) @ axis / denominator
+                ta, tb = (
+                    float((a - start) @ axis / denominator),
+                    float((b - start) @ axis / denominator),
                 )
                 if (
                     np.linalg.norm(a - (start + ta * axis)) < 1.0e-10
@@ -902,7 +1117,9 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
         quality_target=quality,
         cross_field=wrong_field,
     )
-    with pytest.raises(QuadLayoutObstruction, match="actual triangle scaffold") as mismatch:
+    with pytest.raises(
+        QuadLayoutObstruction, match="actual triangle scaffold"
+    ) as mismatch:
         NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad")).plan(
             source, wrong_request, coordinate_contract=coordinates
         ).execute()
@@ -955,7 +1172,9 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
         lambda value: value.surface_quad_field_event, results[0], forged_event
     )
     with pytest.raises((ValueError, QuadLayoutObstruction)):
-        write_model_artifact(tmp_path / "forged-event-result.phx", forged_result, limits=None)
+        write_model_artifact(
+            tmp_path / "forged-event-result.phx", forged_result, limits=None
+        )
     default_path = tmp_path / "default-surface-request.phx"
     write_model_artifact(default_path, triangle_spec, limits=None)
     restored_default = read_model_artifact(
@@ -1013,9 +1232,12 @@ def test_distinct_feature_driven_fields_change_admissible_annulus_layout() -> No
     guide = int(np.flatnonzero(np.all(edges == (0, 4), axis=1))[0])
     baseline = prepare_surface_cross_field(source)
     guided = prepare_surface_cross_field(source, feature_edges=[guide])
-    assert np.max(
-        np.abs(np.sin(4 * (np.asarray(baseline.angles) - np.asarray(guided.angles))))
-    ) > 0.5
+    assert (
+        np.max(
+            np.abs(np.sin(4 * (np.asarray(baseline.angles) - np.asarray(guided.angles))))
+        )
+        > 0.5
+    )
     assert guided.source_topology_id == source.topology_id
     assert guided.source_geometry_id == source.geometry_id
     baseline_layout = prepare_surface_quad_layout(source, baseline)
@@ -1493,16 +1715,24 @@ def test_curved_cross_field_layout_preserves_one_exact_shared_patch_map() -> Non
     assert geometry is not None
     assert result.field_event is not None
     result.field_event.require_target(result.mesh, geometry)
-    reference = np.asarray(reference_cell_topology("quadrilateral").vertices)
+    # The composed map interpolates every quad corner exactly. Only the exact
+    # map (CellGeometrySpec.evaluate_exact) carries that contract; binary64
+    # ``evaluate`` rounds the degree-four expansion with no stated error bound.
+    reference = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology("quadrilateral").vertices
+    )
     block = result.mesh.blocks[0]
-    mapped = geometry.evaluate(
-        result.mesh,
-        block.global_ids,
-        np.broadcast_to(reference, (block.cell_count, *reference.shape)),
+    mapped = geometry.evaluate_exact(
+        result.mesh, np.asarray(block.global_ids), (reference,) * block.cell_count
     )
-    np.testing.assert_allclose(
-        mapped,
-        coordinates[np.asarray(block.vertices)],
-        rtol=0.0,
-        atol=1.0e-14,
-    )
+    for corners, vertices in zip(
+        mapped, np.asarray(block.vertices).tolist(), strict=True
+    ):
+        for corner, vertex in zip(corners, vertices, strict=True):
+            assert all(
+                value == Fraction(coordinate)
+                for value, coordinate in zip(
+                    corner, coordinates[vertex].tolist(), strict=True
+                )
+            )

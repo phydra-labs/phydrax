@@ -121,6 +121,14 @@ class AdaptiveImplicitBoxIssue(IntFlag):
 
     ``FACE`` marks a contour triangle whose nondegenerate orientation is not
     certified by the error bounds of its roots; no absolute area floor applies.
+
+    ``TANGENCY`` marks a box whose corners share one strict sign, whose
+    gradient enclosure excludes zero in some component, and whose possible
+    zeros are proved to lie in the slab of one face no wider than
+    ``2**-8`` of the box: the zero set touches or hugs a lattice face there.
+    Every finer lattice keeps that face, so discovery re-anchors the lattice
+    instead of refining it; a box that remains on the final lattice is an
+    unresolved tangency event.
     """
 
     NONE = 0
@@ -131,6 +139,7 @@ class AdaptiveImplicitBoxIssue(IntFlag):
     DOMAIN_BOUNDARY = 16
     PHYSICAL_RESOLUTION = 32
     REPRESENTABILITY = 64
+    TANGENCY = 128
 
 
 @dataclass(frozen=True, slots=True)

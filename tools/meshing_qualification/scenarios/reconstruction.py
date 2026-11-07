@@ -5,15 +5,17 @@ import math
 import os
 import resource
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from time import perf_counter
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.reconstruction import (
@@ -71,6 +73,79 @@ def _directions(count: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     )
 
 
+class CorrectRoundingUndecided(ArithmeticError):
+    """Ziv's strategy did not decide a correctly rounded value by its cap."""
+
+
+# Ziv precisions (bits). mpmath's interval sin/cos of the exact argument at
+# precision p is outward-rounded, so its enclosure is at most two p-bit ulps
+# wide. Round to nearest is decided once that width falls below the result's
+# distance to the nearest binary64 midpoint.
+# Proven binary64 bounds on that distance (the Table Maker's Dilemma for
+# sin/cos is solved):
+# - |x| >= 2**10: V. Lefevre, T. Ly, P. Zimmermann, "Computing hard-to-round
+#   cases of sin, cos, tan in double precision", ARITH 2026, Tables V-VI. The
+#   hardest cases have m <= 68 (sin) and m <= 66 (cos) identical bits after
+#   the round bit, so a midpoint is at least 2**-69 ulp away.
+# - |x| < 2**11: CORE-MATH src/binary64/{sin,cos}/{sin,cos}.wc (complete sets
+#   with >= 43 identical bits; sin.wc includes the three Koizumi cases;
+#   sha256 8fb40c3d... / 40660955...). Measured over every listed argument,
+#   the closest midpoint is 2**-60.06 ulp (sin 0x1.598bae9e632f6p-7) and
+#   2**-59.78 ulp (cos 0x1.34ec2f9fc9c00p+1).
+# So 53 + 1 + 68 + 2 (width) = 124 bits always decide. The 128-bit ceiling
+# adds a 4-bit guard, and the typed refusal is unreachable for binary64 input.
+_ZIV_PRECISIONS = (64, 96, 128)
+
+
+def _correctly_rounded_sin_cos(
+    function: Literal["sin", "cos"], values: np.ndarray, /
+) -> np.ndarray:
+    """Correctly rounded binary64 ``sin``/``cos`` (round to nearest, ties to even).
+
+    The exact binary64 arguments first go through the host enclosure entry
+    points ``phydrax.geometry._interval_enclosure.interval_sin`` /
+    ``interval_cos``. They decide only the exact cases: under round to
+    nearest only a width-0 enclosure decides directly,
+    while a 1-ulp enclosure decides directed rounding but not RN. So there is
+    no enclosure fast path. Every other argument is converted exactly to an
+    mpmath float and evaluated in mpmath interval arithmetic at increasing
+    precision (Ziv's strategy) until both endpoints round to the same binary64,
+    independent of the platform libm.
+    """
+    from mpmath.libmp import from_float, round_nearest, to_float
+    from mpmath.libmp.libmpi import mpi_cos, mpi_sin
+
+    from phydrax.geometry._interval_enclosure import interval_cos, interval_sin
+
+    arguments = np.asarray(values, dtype=np.float64)
+    enclose = interval_sin if function == "sin" else interval_cos
+    lower, upper = (
+        np.asarray(endpoint, dtype=np.float64).ravel()
+        for endpoint in enclose((arguments, arguments))
+    )
+    rounded = np.where(lower == upper, lower, np.nan)
+    evaluate = mpi_sin if function == "sin" else mpi_cos
+    flat = arguments.ravel()
+    for index in np.flatnonzero(lower != upper).tolist():
+        value = float(flat[index])
+        if value == 0.0:
+            # Exact: sin(+-0) = +-0 keeps its sign, cos(+-0) = 1.
+            rounded[index] = value if function == "sin" else 1.0
+            continue
+        exact = from_float(value)
+        for precision in _ZIV_PRECISIONS:
+            low, high = evaluate((exact, exact), precision)
+            candidate = to_float(low, rnd=round_nearest)
+            if candidate == to_float(high, rnd=round_nearest):
+                rounded[index] = candidate
+                break
+        else:
+            raise CorrectRoundingUndecided(
+                f"{function}({value!r}) is undecided at {_ZIV_PRECISIONS[-1]} bits."
+            )
+    return rounded.reshape(arguments.shape)
+
+
 def _surface_samples(kind: str, resolution: int, rng: np.random.Generator) -> np.ndarray:
     samples_per_area = 16.0 / (4.0 * np.pi * 0.2**2)
     if kind == "lobed-sphere":
@@ -101,10 +176,18 @@ def _surface_samples(kind: str, resolution: int, rng: np.random.Generator) -> np
         while total < count:
             u, v, keep = rng.random(size=(3, 4 * count))
             u, v = 2.0 * np.pi * u, 2.0 * np.pi * v
-            ring = major + minor * np.cos(v)
+            # Platform libm sin/cos differ in the last ulp across OSes; the
+            # sample points use the correctly rounded values instead.
+            cos_v = _correctly_rounded_sin_cos("cos", v)
+            ring = major + minor * cos_v
             selected = keep < ring / (major + minor)
             block = np.stack(
-                (ring * np.cos(u), ring * np.sin(u), minor * np.sin(v)), axis=1
+                (
+                    ring * _correctly_rounded_sin_cos("cos", u),
+                    ring * _correctly_rounded_sin_cos("sin", u),
+                    minor * _correctly_rounded_sin_cos("sin", v),
+                ),
+                axis=1,
             )[selected]
             accepted.append(block)
             total += block.shape[0]
@@ -383,6 +466,11 @@ _INVENTORY_TOLERANCE = 1.0e-10
 _RESTORED_FIELD_TOLERANCE = 1.0e-12
 _PROCESS_STARTED = perf_counter()
 _STAGE_LOG = "PHYDRAX_RECONSTRUCTION_STAGE_LOG"
+# Declared symbolic work (ordering, elimination tree, counts) of every
+# manufactured Cholesky analysis: the largest measured reconstruction
+# operator (refined lobed-sphere-2, 18,665 DOFs) needs 4,607,569 under minimum
+# degree; 2**27 leaves ~29x for the larger unmeasured rows.
+_SYMBOLIC_WORK_BUDGET = 1 << 27
 
 
 def _stage(profile: str, stage: str, /) -> None:
@@ -526,6 +614,12 @@ def _manufactured_problem(
             phx.equations.DiffusionAction("u", 1.0),
             phx.equations.SourceAction("u", -6.0),
         ),
+        # The Dirichlet-constrained P1 Laplacian is symmetric positive definite.
+        properties=phx.linalg.OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={"positive_definite": "asserted"},
+        ),
     )
     problem = phx.equations.compile_finite_element_problem(
         form,
@@ -551,15 +645,54 @@ class _ManufacturedSolve:
     record: dict[str, object]
 
 
+def _manufactured_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
+    """PCG on the exact supernodal Cholesky factor under one declared byte budget.
+
+    Every solve and factorization budget is the profile's declared execution
+    budget: all fields are static, so they enter plan_id, and the writer and
+    the cold reader prepare under the same declaration. The factor's
+    structural nonzeros are bounded by the same bytes (one float64 each).
+    Minimum degree is the ordering: on the refined lobed-sphere-2 operator
+    (18,665 DOFs) it needs 2,346,552 factor nonzeros and 0.95 GFLOP, nested
+    dissection 6,647,037 and 8.9 GFLOP.
+    """
+    return phx.linalg.LinearSolvePolicy(
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-14, absolute=0.0),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.SparseFactorizationPreconditionerBuilder(
+                phx.linalg.SparseFactorizationPolicy(
+                    "cholesky",
+                    ordering="approximate-minimum-degree",
+                    max_factor_nnz=budget // np.dtype(np.float64).itemsize,
+                    max_factor_bytes=budget,
+                    max_symbolic_work=_SYMBOLIC_WORK_BUDGET,
+                )
+            )
+        ),
+        resources=phx.linalg.SolveResourcePolicy(
+            factorization_bytes=budget,
+            workspace_bytes=budget,
+            krylov_basis_bytes=budget,
+            preconditioner_bytes=budget,
+            recycling_state_bytes=budget,
+        ),
+    )
+
+
 def _manufactured_solve(
-    result: phx.meshing.CellMeshingResult, form_id: str, /
+    result: phx.meshing.CellMeshingResult, form_id: str, budget: int, /
 ) -> _ManufacturedSolve:
     """Fresh P1 solve with an independent exact L2 error against |x|^2."""
     space, problem, form = _manufactured_problem(result, form_id)
     operator, rhs = problem.linear_system(storage="sparse")
-    prepared = phx.linalg.prepare(
-        operator, phx.linalg.LinearSolvePolicy(phx.linalg.SparseLU(provider="jax-cpu"))
-    )
+    prepared = phx.linalg.prepare(operator, _manufactured_policy(budget))
+    state = prepared.preconditioning_state
+    if state is None or not isinstance(
+        state.action, phx.linalg.SparseFactorizationPreconditioner
+    ):
+        raise RuntimeError("The SPD solve did not retain its Cholesky factorization.")
+    factor = state.action.factorization.plan
     solved, check = phx.linalg.solve_checked(prepared, rhs)
     values = _vertex_values(space, result.mesh, np.asarray(problem.expand(solved.value)))
     residual = float(jnp.linalg.norm(operator.operator.mv(solved.value) - rhs))
@@ -590,6 +723,13 @@ def _manufactured_solve(
                 "backend": str(prepared.plan.backend),
                 "method": str(prepared.plan.method),
                 "status": int(np.asarray(solved.status)),
+                "iterations": int(np.asarray(solved.diagnostics.iterations)),
+                "plan_id": prepared.plan.plan_id,
+                "memory_budget_bytes": budget,
+                "factorization": "supernodal-cholesky",
+                "factor_nnz": factor.factor_nnz,
+                "factor_bytes": factor.factor_bytes,
+                "symbolic_work": factor.symbolic_work,
             },
         },
     )
@@ -723,6 +863,7 @@ def _transfer_accepted_state(
     source_solve: _ManufacturedSolve,
     adaptation: phx.meshing.MeshAdaptationResult,
     label: str,
+    budget: int,
     /,
 ) -> tuple[dict[str, object], phx.solver.FiniteElementTopologyResult, _ManufacturedSolve]:
     """Carry u/density/history atomically, then refresh u by physical reanalysis."""
@@ -772,7 +913,7 @@ def _transfer_accepted_state(
             candidate_mesh, np.asarray(fields[1], dtype=np.float64)
         )
         carried.transferred_l2_error = _quadratic_l2_error(candidate_mesh, u)
-        fresh = _manufactured_solve(target, f"{label}-reanalysis")
+        fresh = _manufactured_solve(target, f"{label}-reanalysis", budget)
         carried.fresh = fresh
         return phx.solver.FiniteElementReanalysisResult(
             fresh.problem,
@@ -1126,7 +1267,8 @@ def _volume_lifecycle(
     _stage(profile, "volume-acceptance")
     initial_acceptance = _volume_acceptance(plc, result)
     _stage(profile, "manufactured-solve-epoch-0")
-    initial = _manufactured_solve(result, f"{label}-epoch-0")
+    budget = _SOLVE_MEMORY_BUDGET_BYTES[profile]
+    initial = _manufactured_solve(result, f"{label}-epoch-0", budget)
     _stage(profile, "marked-refinement")
     adaptation = _refine_every_cell(plc, result)
     target = adaptation.target
@@ -1134,7 +1276,7 @@ def _volume_lifecycle(
     target_acceptance = _volume_acceptance(plc, target)
     _stage(profile, "all-field-transfer-reanalysis")
     transfer, staged, refreshed = _transfer_accepted_state(
-        result, initial, adaptation, label
+        result, initial, adaptation, label, budget
     )
     path = archive_directory / f"{label}.phx"
     _stage(profile, "archive-write")
@@ -1197,7 +1339,6 @@ def _capture_accepted_volume(
     from phydrax.lifecycle import Composition, CompositionEntry
     from phydrax.meshing._model_codec import (
         model_archive_content_id,
-        MODEL_ARCHIVE_LIMITS,
         write_model_artifact,
     )
 
@@ -1223,16 +1364,17 @@ def _capture_accepted_volume(
         dependencies=(source_entry.binding("revision"),),
     )
     path = Path(directory) / f"{label}-pre-refinement.phx"
+    limits = _archive_limits(profile)
     write_model_artifact(
         path,
         Composition((source_entry, result_entry), boundary_id=f"{label}-pre-refinement"),
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=limits,
     )
     path.with_suffix(".json").write_text(
         json.dumps(
             {
                 "path": str(path),
-                "content_id": model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS),
+                "content_id": model_archive_content_id(path, limits=limits),
                 "profile": profile,
                 "label": label,
                 "source_type": type(archived_source).__name__,
@@ -1275,7 +1417,6 @@ def _write_accepted_archive(
     from phydrax.meshing._model_codec import (
         finite_element_field_banks_recipe,
         model_archive_content_id,
-        MODEL_ARCHIVE_LIMITS,
         write_model_artifact,
     )
 
@@ -1329,15 +1470,16 @@ def _write_accepted_archive(
         dependencies=(result_entry.binding("revision"),),
     )
     path.parent.mkdir(parents=True, exist_ok=True)
+    limits = _archive_limits(profile)
     write_model_artifact(
         path,
         Composition(
             (source_entry, specification_entry, result_entry, fields_entry),
             boundary_id=f"{label}-accepted-state",
         ),
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=limits,
     )
-    return model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS), {
+    return model_archive_content_id(path, limits=limits), {
         "source_type": type(source).__name__,
         "source_revision_id": source_revision_id,
         "source_binding_id": plc.binding_id,
@@ -1346,6 +1488,8 @@ def _write_accepted_archive(
         "fields_fingerprint": fingerprint,
         "profile": profile,
         "label": label,
+        "solve_memory_budget_bytes": _SOLVE_MEMORY_BUDGET_BYTES[profile],
+        "archive_budget_bytes": _ARCHIVE_BUDGET_BYTES[profile],
     }
 
 
@@ -1355,17 +1499,23 @@ def _resume_accepted_archive(
     """Independent fresh-process restore and continued physics of all fields."""
     from phydrax.lifecycle import Composition
     from phydrax.meshing._model_codec import (
-        MODEL_ARCHIVE_LIMITS,
         read_model_artifact,
         restore_finite_element_field_banks,
         restore_model_archive_value,
     )
 
+    # The cold reader admits the archive under its profile's own declaration,
+    # which must be the archive budget the writer declared.
+    profile = str(expected["profile"])
+    if _ARCHIVE_BUDGET_BYTES[profile] != expected["archive_budget_bytes"]:
+        raise RuntimeError(
+            "Cold reader's declared archive budget differs from the writer's."
+        )
     archive = read_model_artifact(
         path,
         expected_type=Composition,
         restore=restore_model_archive_value,
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=_archive_limits(profile),
         expected_content_id=content_id,
     )
     _stage(str(expected["profile"]), "cold-archive-restore")
@@ -1397,7 +1547,14 @@ def _resume_accepted_archive(
     u, density, history = (np.asarray(value, dtype=np.float64) for value in fields)
     density_defect, history_defect = _auxiliary_defects(result.mesh, density, history)
     _stage(str(expected["profile"]), "cold-continued-solve")
-    continued = _manufactured_solve(result, f"{expected['label']}-cold")
+    # The cold reader prepares under the profile's own declaration, which must
+    # be the budget the writer solved under (it is part of plan identity).
+    budget = _SOLVE_MEMORY_BUDGET_BYTES[str(expected["profile"])]
+    if budget != expected["solve_memory_budget_bytes"]:
+        raise RuntimeError(
+            "Cold reader's declared solve budget differs from the writer's."
+        )
+    continued = _manufactured_solve(result, f"{expected['label']}-cold", budget)
     continued_error = continued.l2_error
     if (
         continued_error > _TARGET_L2_ERROR
@@ -1752,6 +1909,71 @@ def _actual_target_triangles(
 
 
 _ENVELOPE_PROFILE = "native-envelope-lifecycle"
+
+# MAC-20261107T1649Z: every profile declares the execution-memory budget of
+# all its manufactured solves and factorizations (epoch 0, reanalysis, cold).
+# Run envelope: 16 GiB per row. The largest measured process-tree peak is
+# 10.78 GB (lobed-sphere-2 through all-field transfer, reanalysis and archive
+# packing; the 6.1 rows that reached no reanalysis peaked at 5.24 GB under an
+# 8 GiB guard, which the larger row exceeds). A Cholesky solve holds its factor
+# and its preparation workspace, each within the budget, so 1.5 GiB keeps the
+# worst case (10.78 GB + 2 x 1.61 GB = 14.0 GB) inside the 17.18 GB envelope.
+# Measured need: the refined lobed-sphere-2 factor is 40,886,178 bytes.
+_SOLVE_MEMORY_BUDGET_BYTES = {
+    **{
+        _profile_id(kind, scale): 3 << 29
+        for kind in ("lobed-sphere", "torus", "rotated-ellipsoid")
+        for scale in (1, 2)
+    },
+    _ENVELOPE_PROFILE: 3 << 29,
+}
+
+# MAC-20261107T1759Z: every profile declares the byte budget of its model
+# archives (pre-refinement capture, accepted state), shared by the writer and
+# the cold reader and recorded in the receipt. Measured on 6.1 for the largest
+# row, the lobed-sphere-2 accepted state: a 256,132,493-byte container,
+# 238,085,115 stored array bytes, a 17,660,054-byte manifest and 3,521
+# members. The admission check charges the recipe's logical expansion, and
+# that expansion exceeded the 1 GiB default. 4 GiB keeps 16x headroom over
+# the stored bytes. It also stays within the 16 GiB run envelope, whose
+# measured process peak is 10.78 GB. Re-measure on wave-7, where array
+# deduplication changes the logical/stored ratio.
+_ARCHIVE_BUDGET_BYTES = {
+    **{
+        _profile_id(kind, scale): 4 << 30
+        for kind in ("lobed-sphere", "torus", "rotated-ellipsoid")
+        for scale in (1, 2)
+    },
+    _ENVELOPE_PROFILE: 4 << 30,
+}
+# Member count: 3,521 measured, against the model codec's 4,097.
+_ARCHIVE_MEMBERS = 8193
+
+
+def _archive_limits(profile: str, /) -> ArrayArchiveLimits:
+    """Model-archive admission limits of one profile from its declared budget.
+
+    Container, aggregate and member bytes are the budget. Element and axis
+    counts use the same number, since each element takes at least one byte.
+    Manifest bytes are budget / 64: 64 MiB, 3.8x the measured 17.7 MB.
+    Central-directory bytes are budget / 1024: 4 MiB, 19x the measured
+    0.22 MB. Nesting stays at the codec's model limit.
+    """
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS
+
+    budget = _ARCHIVE_BUDGET_BYTES[profile]
+    return replace(
+        MODEL_ARCHIVE_LIMITS,
+        max_container_bytes=budget,
+        max_aggregate_bytes=budget,
+        max_member_bytes=budget,
+        max_manifest_bytes=budget // 64,
+        max_members=_ARCHIVE_MEMBERS,
+        max_central_directory_bytes=budget // 1024,
+        max_axis_length=budget,
+        max_array_elements=budget,
+        max_total_array_elements=budget,
+    )
 
 
 def _envelope_case(directory: str, /) -> dict[str, object]:

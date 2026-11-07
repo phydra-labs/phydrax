@@ -25,7 +25,11 @@ def contours(
     """
     from phydrax._meshcore import _raise_for_call, load_meshcore
 
-    from ._adaptive_discovery import _certified_triangle_orientations, _CORNER_OFFSETS
+    from ._adaptive_discovery import (
+        _certified_triangle_orientations,
+        _CORNER_OFFSETS,
+        _widest_corner_offsets,
+    )
 
     function = load_meshcore()["phx_mc_implicit_contours"]
     signs = np.ascontiguousarray(corner_signs, dtype=np.int8)
@@ -99,6 +103,12 @@ def contours(
         root_bounds[selected],
         np.broadcast_to(gradients[:, None, :], (*slots.shape, 3))[slots],
     )
+    # Kept triangles start at their corner opposite the longest edge, as the
+    # scalar path's do.
+    rotation = (_widest_corner_offsets(points[selected])[:, None] + np.arange(3)) % 3
+    row_triangles = triangles[rows]
+    row_triangles[slots] = np.take_along_axis(row_triangles[slots], rotation, axis=1)
+    triangles[rows] = row_triangles
     rejected = rows[~np.all(certified, axis=1)]
     handled[rejected] = False
     counts[rejected] = 0

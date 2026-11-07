@@ -38,6 +38,7 @@ from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._exact_algebraic_geometry import coefficient_interval, ExactScalar
+from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import as_array, Bool, checked, Dim, Float64, parse, Scope, Size
 from .._atlas import TrimDomain, TrimEnclosures
 from .._interval_enclosure import (
@@ -103,8 +104,8 @@ type _Vector = tuple[Fraction, Fraction, Fraction]
 _NATIVE_BATCH = 64
 _HOST_BATCH = 512
 _NO_BREAKS = np.empty((0,), dtype=np.float64)
-# Relative headroom for the few binary64 operations of the closure bounds,
-# each rounded at most once to nearest.
+# Relative headroom for the few binary64 operations of the fixed face-term
+# bounds, each rounded at most once to nearest.
 _BOUND_HEADROOM = 1.0 + 64.0 * float(np.finfo(np.float64).eps)
 
 
@@ -1025,9 +1026,14 @@ def _green_strip_program(
             second = jnp.dot(center, jnp.cross(second_axis, axis))
 
             def primitive(angle: Array, /) -> Array:
-                return minor * ring / 3 * (
-                    constant * angle
-                    + cosine * (first * jnp.cos(angle) + second * jnp.sin(angle))
+                return (
+                    minor
+                    * ring
+                    / 3
+                    * (
+                        constant * angle
+                        + cosine * (first * jnp.cos(angle) + second * jnp.sin(angle))
+                    )
                 )
 
             return (primitive(point[0]) - primitive(jnp.asarray(origin))) * tangent[1]
@@ -1837,8 +1843,14 @@ def _factor(value: Fraction, /) -> _Interval:
 
 
 def _norm_bound(lower: np.ndarray, upper: np.ndarray, /) -> float:
+    """Upper bound of the Euclidean norm of every vector in the box, by exact squares."""
     magnitude = np.maximum(np.abs(np.asarray(lower)), np.abs(np.asarray(upper)))
-    return float(np.sqrt(np.sum(magnitude * magnitude))) * _BOUND_HEADROOM
+    if not np.all(np.isfinite(magnitude)):
+        return float("inf")
+    squared = sum(
+        (Fraction(float(value)) ** 2 for value in magnitude.ravel()), Fraction(0)
+    )
+    return fraction_up(fraction_sqrt_interval(squared)[1])
 
 
 @dataclass(frozen=True, slots=True)
@@ -1976,13 +1988,12 @@ def _chord_distance(end: _End, start: _End, /) -> float:
 def _green_curve_breaks(curve: AbstractCurve, /) -> np.ndarray | None:
     """Admit analytic intersection p-curves only one certified chart at a time."""
     if isinstance(curve, IntersectionPCurve):
-        if (
-            orthogonal_cylinder_family(curve.curve.first, curve.curve.second) is None
-            and any(
-                _plane_plane_chart_evaluator(curve, chart) is None
-                and _plane_cylinder_chart_evaluator(curve, chart) is None
-                for chart in range(curve.curve.num_charts)
-            )
+        if orthogonal_cylinder_family(
+            curve.curve.first, curve.curve.second
+        ) is None and any(
+            _plane_plane_chart_evaluator(curve, chart) is None
+            and _plane_cylinder_chart_evaluator(curve, chart) is None
+            for chart in range(curve.curve.num_charts)
         ):
             return None
         breaks = np.arange(curve.curve.num_charts + 1, dtype=np.float64)
@@ -2225,7 +2236,9 @@ def _plan_face(
                                 coedge_label,
                                 _prepare(
                                     coedge_label,
-                                    lambda: _intersection_area_program(intersection, chart),
+                                    lambda: _intersection_area_program(
+                                        intersection, chart
+                                    ),
                                 ),
                                 _factor(flux * geometry.coedge_senses[coedge]),
                                 _break_grid(
@@ -2239,7 +2252,9 @@ def _plan_face(
                     families.append(
                         _new_family(
                             coedge_label,
-                            _prepare(coedge_label, lambda: _parameter_area_program(pcurve)),
+                            _prepare(
+                                coedge_label, lambda: _parameter_area_program(pcurve)
+                            ),
                             _factor(flux * geometry.coedge_senses[coedge]),
                             _break_grid(
                                 np.asarray((first,)), np.asarray((last,)), (breaks,)
@@ -2421,14 +2436,26 @@ def _closure_bound(
     vertex_gaps = geometry.edge_vertex_gap_bounds
     ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
     points = np.asarray(geometry.vertex_points, dtype=np.float64)
-    total = 0.0
-    radii: dict[int, list[float]] = {}
+
+    def exact(value: float, /) -> Fraction:
+        if not isfinite(value):
+            raise _MeasureFailure(
+                "unresolved", "source gap closure has no finite flux bound"
+            )
+        return Fraction(value)
+
+    # Every term and the running sum are exact rationals, so no rounding
+    # absorbs or underflows a term; one upward rounding finishes the bound.
+    total = Fraction(0)
+    radii: dict[int, list[Fraction]] = {}
     for face in faces:
         jacobian = jacobians[face]
         for loop, loop_ends in zip(geometry.face_loops[face], ends[face], strict=True):
             for position, coedge in enumerate(loop):
                 edge = geometry.coedge_edges[coedge]
-                delta = 0.0 if face_gaps is None else float(face_gaps[coedge])
+                delta = (
+                    Fraction(0) if face_gaps is None else exact(float(face_gaps[coedge]))
+                )
                 curve_index = geometry.edge_curves[edge]
                 if delta > 0.0 and curve_index >= 0:
                     curve = geometry.curves[curve_index]
@@ -2444,45 +2471,58 @@ def _closure_bound(
                             f"source coedge {coedge} gap strip has no derivative bound: {error}",
                         ) from error
                     speed = max(
-                        _norm_bound(*tangent),
-                        jacobian[0] * _norm_bound(chart[0][:1], chart[1][:1])
-                        + jacobian[1] * _norm_bound(chart[0][1:], chart[1][1:]),
+                        exact(_norm_bound(*tangent)),
+                        exact(jacobian[0])
+                        * exact(_norm_bound(chart[0][:1], chart[1][:1]))
+                        + exact(jacobian[1])
+                        * exact(_norm_bound(chart[0][1:], chart[1][1:])),
                     )
-                    radius = _norm_bound(box[0], box[1])
+                    radius = exact(_norm_bound(box[0], box[1]))
                     total += (
-                        (radius + delta) / 3.0 * delta * (last - first) * speed
-                    ) * _BOUND_HEADROOM
+                        (radius + delta)
+                        / 3
+                        * delta
+                        * (exact(last) - exact(first))
+                        * speed
+                    )
                 following = loop[(position + 1) % len(loop)]
                 chord = _chord_distance(
                     loop_ends[position][1], loop_ends[(position + 1) % len(loop)][0]
                 )
-                next_delta = 0.0 if face_gaps is None else float(face_gaps[following])
+                next_delta = (
+                    Fraction(0)
+                    if face_gaps is None
+                    else exact(float(face_gaps[following]))
+                )
                 senses = geometry.coedge_senses
                 end_vertex = geometry.edge_vertices[edge][1 if senses[coedge] > 0 else 0]
                 next_edge = geometry.coedge_edges[following]
-                end_gap = 0.0
-                start_gap = 0.0
+                end_gap = Fraction(0)
+                start_gap = Fraction(0)
                 if vertex_gaps is not None:
-                    end_gap = float(vertex_gaps[edge][1 if senses[coedge] > 0 else 0])
-                    start_gap = float(
-                        vertex_gaps[next_edge][0 if senses[following] > 0 else 1]
+                    end_gap = exact(
+                        float(vertex_gaps[edge][1 if senses[coedge] > 0 else 0])
                     )
-                rho = (
-                    end_gap
-                    + start_gap
-                    + delta
-                    + next_delta
-                    + (jacobian[0] + jacobian[1]) * chord
-                ) * _BOUND_HEADROOM
-                if rho > 0.0:
+                    start_gap = exact(
+                        float(vertex_gaps[next_edge][0 if senses[following] > 0 else 1])
+                    )
+                # A zero parameter chord closes nothing, whatever the chart scale.
+                chord_reach = (
+                    Fraction(0)
+                    if chord == 0.0
+                    else (exact(jacobian[0]) + exact(jacobian[1])) * exact(chord)
+                )
+                rho = end_gap + start_gap + delta + next_delta + chord_reach
+                if rho > 0:
                     radii.setdefault(int(end_vertex), []).append(rho)
     for vertex, values in radii.items():
         rho = max(values)
-        reach = float(np.linalg.norm(points[vertex])) + rho
-        total += reach / 3.0 * 2.0 * len(values) * rho * rho * _BOUND_HEADROOM
-    if not isfinite(total):
+        reach = exact(_norm_bound(points[vertex], points[vertex])) + rho
+        total += reach / 3 * 2 * len(values) * rho * rho
+    bound = fraction_up(total)
+    if not isfinite(bound):
         raise _MeasureFailure("unresolved", "source gap closure has no finite flux bound")
-    return float(np.nextafter(total, np.inf)) if total else 0.0
+    return bound
 
 
 def _volume_integral(

@@ -37,6 +37,7 @@ from ..geometry._global_embedding import (
 from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
+from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..geometry.implicit._chart_restriction import (
     ImplicitChartPremise,
@@ -300,8 +301,13 @@ def _certify_cell_mesh_acceptance(
     manifold_scope: CellMeshManifoldScope | None = None,
     validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
     validity: CellValidityCertificate | None = None,
-    validity_parent: CellValidityCertificate | ValidatedCellValidityParent
+    validity_parent: CellValidityCertificate
+    | ValidatedCellValidityParent
     | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+    | None = None,
+    stored_fidelity: tuple[
+        SourceFidelityCertificate | None, tuple[SourceFidelityCertificate, ...]
+    ]
     | None = None,
 ) -> _CellMeshAcceptance:
     """Compute canonical acceptance without publishing a meshing result."""
@@ -317,10 +323,7 @@ def _certify_cell_mesh_acceptance(
     geometry_ = CellGeometrySpec.affine(canonical) if geometry is None else geometry
     if not isinstance(geometry_, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec or None.")
-    if (
-        layer_core_root_geometry is not None
-        and certification_inputs is None
-    ) or (
+    if (layer_core_root_geometry is not None and certification_inputs is None) or (
         certification_inputs is not None
         and certification_inputs.layer_core_root_geometry is not layer_core_root_geometry
     ):
@@ -347,6 +350,10 @@ def _certify_cell_mesh_acceptance(
         validity is not None or validity_parent is not None
     ) and certification_inputs is None:
         raise ValueError("Validity proofs are reused only by certified acceptance.")
+    if stored_fidelity is not None and certification_inputs is None:
+        raise ValueError(
+            "Stored fidelity proofs are adopted only by certified acceptance."
+        )
     if manifold_scope is not None and certification_inputs is not None:
         raise ValueError("A manifold scope applies only to the direct cell-mesh audit.")
     certification = None
@@ -395,6 +402,7 @@ def _certify_cell_mesh_acceptance(
             computed_root=computed_root,
             validated_embedding=_validated_embedding,
             _validated_chart_parent_embedding=_validated_chart_parent_embedding,
+            stored_fidelity=stored_fidelity,
         )
         certification.require_passed()
         audit = certification.audit
@@ -416,11 +424,26 @@ def _certify_cell_mesh_acceptance(
             ),
         )
     return _CellMeshAcceptance(
-        canonical, geometry_, coordinate_contract, audit, certification, boundary,
-        patches, zones, labels, attributes, associations, surface_source,
-        region_boundary_evidence, planar_embedding, layer_curving_evidence,
-        layer_core_carrier_witness, layer_core_overlap_stencils,
-        layer_core_column_certification, layer_core_root_geometry, validated,
+        canonical,
+        geometry_,
+        coordinate_contract,
+        audit,
+        certification,
+        boundary,
+        patches,
+        zones,
+        labels,
+        attributes,
+        associations,
+        surface_source,
+        region_boundary_evidence,
+        planar_embedding,
+        layer_curving_evidence,
+        layer_core_carrier_witness,
+        layer_core_overlap_stencils,
+        layer_core_column_certification,
+        layer_core_root_geometry,
+        validated,
     )
 
 
@@ -456,7 +479,8 @@ def certify_cell_mesh(
     manifold_scope: CellMeshManifoldScope | None = None,
     validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
     validity: CellValidityCertificate | None = None,
-    validity_parent: CellValidityCertificate | ValidatedCellValidityParent
+    validity_parent: CellValidityCertificate
+    | ValidatedCellValidityParent
     | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
     | None = None,
 ) -> CellMeshingResult:
@@ -484,25 +508,43 @@ def certify_cell_mesh(
     """
 
     accepted = _certify_cell_mesh_acceptance(
-        mesh, coordinate_contract, geometry=geometry, audit_policy=audit_policy,
-        boundary=boundary, certification_inputs=certification_inputs, patches=patches,
-        zones=zones, labels=labels, attributes=attributes, associations=associations,
-        surface_source=surface_source, region_boundary_evidence=region_boundary_evidence,
-        planar_embedding=planar_embedding, layer_curving_evidence=layer_curving_evidence,
+        mesh,
+        coordinate_contract,
+        geometry=geometry,
+        audit_policy=audit_policy,
+        boundary=boundary,
+        certification_inputs=certification_inputs,
+        patches=patches,
+        zones=zones,
+        labels=labels,
+        attributes=attributes,
+        associations=associations,
+        surface_source=surface_source,
+        region_boundary_evidence=region_boundary_evidence,
+        planar_embedding=planar_embedding,
+        layer_curving_evidence=layer_curving_evidence,
         layer_core_carrier_witness=layer_core_carrier_witness,
         layer_core_overlap_stencils=layer_core_overlap_stencils,
         layer_core_column_certification=layer_core_column_certification,
-        layer_core_root_geometry=layer_core_root_geometry, computed_root=computed_root,
+        layer_core_root_geometry=layer_core_root_geometry,
+        computed_root=computed_root,
         _validated_embedding=_validated_embedding,
         _validated_chart_parent_embedding=_validated_chart_parent_embedding,
-        embedding=embedding, embedding_premise=embedding_premise,
-        fidelity_premise=fidelity_premise, validated_chart_parent=validated_chart_parent,
-        manifold_scope=manifold_scope, validated_witnesses=validated_witnesses,
-        validity=validity, validity_parent=validity_parent,
+        embedding=embedding,
+        embedding_premise=embedding_premise,
+        fidelity_premise=fidelity_premise,
+        validated_chart_parent=validated_chart_parent,
+        manifold_scope=manifold_scope,
+        validated_witnesses=validated_witnesses,
+        validity=validity,
+        validity_parent=validity_parent,
     )
     canonical, geometry_, audit, certification, validated = (
-        accepted.mesh, accepted.geometry, accepted.audit,
-        accepted.certification, accepted.validated_witnesses,
+        accepted.mesh,
+        accepted.geometry,
+        accepted.audit,
+        accepted.certification,
+        accepted.validated_witnesses,
     )
     findings = audit.recorded
     audit_status = MeshingStageStatus.WARNING if findings else MeshingStageStatus.PASSED
@@ -703,7 +745,9 @@ def _accept_native_construction(
     _require_native_target(construction, specification)
     event = construction.surface_quad_field_event
     requested_field = (
-        specification.cross_field if isinstance(specification, SurfaceMeshingSpec) else None
+        specification.cross_field
+        if isinstance(specification, SurfaceMeshingSpec)
+        else None
     )
     if event is not None:
         from ..geometry._mesh_certificates import _same_tree_content
@@ -715,14 +759,18 @@ def _accept_native_construction(
             or not _same_tree_content(event.source, construction.source_mesh)
             or not _same_tree_content(event.source_geometry, construction.source_geometry)
         ):
-            raise ValueError("Quad field event requires its actual supported source route.")
+            raise ValueError(
+                "Quad field event requires its actual supported source route."
+            )
         if requested_field is not None and (
             event.field.field_id != requested_field.field_id
             or not _same_tree_content(event.field, requested_field)
         ):
             raise ValueError("Quad field event differs from the requested source field.")
     elif requested_field is not None:
-        raise ValueError("A requested cross field requires its realized quad field event.")
+        raise ValueError(
+            "A requested cross field requires its realized quad field event."
+        )
     if (
         construction.layer_core_carrier_witness is not None
         and construction.layer_core_carrier_witness.specification_id
@@ -737,7 +785,9 @@ def _accept_native_construction(
             or construction.layer_core_overlap_stencils.target_mesh_id
             != construction.mesh.mesh_id
         ):
-            raise ValueError("Overlap source stencils do not bind the accepted layer/core construction.")
+            raise ValueError(
+                "Overlap source stencils do not bind the accepted layer/core construction."
+            )
     if construction.layer_core_column_certification is not None and (
         construction.layer_core_carrier_witness is None
         or construction.layer_core_column_certification.source_binding_id
@@ -745,31 +795,43 @@ def _accept_native_construction(
         or construction.layer_core_column_certification.specification_id
         != specification.specification_id
     ):
-        raise ValueError("Layer column certification does not bind the accepted source and request.")
+        raise ValueError(
+            "Layer column certification does not bind the accepted source and request."
+        )
     if construction.layer_core_root_geometry is not None:
         root = construction.layer_core_root_geometry
         mapped = root.reference_mesh is not None
         if (
             construction.layer_core_carrier_witness is None
-            or root.source_binding_id != construction.layer_core_carrier_witness.source_binding_id
+            or root.source_binding_id
+            != construction.layer_core_carrier_witness.source_binding_id
             or root.specification_id != specification.specification_id
             or root.mesh.mesh_id != construction.mesh.mesh_id
-            or root.geometry.geometry_layout_id != construction.geometry.geometry_layout_id
+            or root.geometry.geometry_layout_id
+            != construction.geometry.geometry_layout_id
         ):
-            raise ValueError("Layer root geometry does not bind the accepted construction.")
+            raise ValueError(
+                "Layer root geometry does not bind the accepted construction."
+            )
         if mapped:
             if (
                 construction.layer_core_overlap_stencils is not None
                 or construction.layer_core_column_certification is not None
             ):
-                raise ValueError("Mapped physical results cannot relabel reference layer evidence.")
+                raise ValueError(
+                    "Mapped physical results cannot relabel reference layer evidence."
+                )
         elif (
             construction.layer_core_overlap_stencils is None
             or construction.layer_core_column_certification is None
-            or root.overlap_stencils.witness_id != construction.layer_core_overlap_stencils.witness_id
-            or root.column_certification.certification_id != construction.layer_core_column_certification.certification_id
+            or root.overlap_stencils.witness_id
+            != construction.layer_core_overlap_stencils.witness_id
+            or root.column_certification.certification_id
+            != construction.layer_core_column_certification.certification_id
         ):
-            raise ValueError("Layer root geometry does not bind the accepted construction.")
+            raise ValueError(
+                "Layer root geometry does not bind the accepted construction."
+            )
     mesh, geometry = construction.mesh, construction.geometry
     if canonicalize_cell_mesh(mesh) is not mesh:
         raise MeshingFailure(

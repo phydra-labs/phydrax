@@ -1152,6 +1152,168 @@ def certify_retained_branch_pair(
 
 
 @dataclass(frozen=True, slots=True)
+class SourceRevolutionRimPair:
+    """Coaxial straight revolutions that meet only on shared full-turn rims."""
+
+    source_id: str
+    model_id: str
+    source_revision: str
+    faces: tuple[int, int]
+    shared_edges: tuple[int, ...]
+    certificate_id: str
+
+    def replay(self, model: BRepModel, /) -> bool:
+        return certify_revolution_rim_pair(model, *self.faces) == self
+
+
+def certify_revolution_rim_pair(
+    model: BRepModel, first: int, second: int, /
+) -> SourceRevolutionRimPair | None:
+    """Prove two coaxial straight revolution faces meet exactly on shared rims.
+
+    The meridian algebra of the two exact coaxial carriers proves that every
+    common height inside both profile ranges is the height and squared radius
+    of a shared circle edge. Each shared edge must be that exact circle: an
+    orthonormal circle frame normal to the axis, its center on the axis, one
+    native turn closed at one vertex, lifted exactly on both faces with
+    opposed shell uses. The pair intersection is then the declared edges.
+    """
+    from .._rational import rational_cross, rational_dot
+    from ._boolean_full_overlay import _coaxial_faces_meet_on_shared_circle
+    from ._intersection import _straight_revolution, NativePeriodEndpoint
+    from ._patches import CircleCurve
+
+    if (
+        not isinstance(model, BRepModel)
+        or type(first) is not int
+        or type(second) is not int
+        or not 0 <= first < second < len(model.patches)
+    ):
+        return None
+    try:
+        model.require_current()
+        geometry = model.geometry
+        faces = (first, second)
+        common = sorted(
+            set(geometry.topology.face_edges[first])
+            & set(geometry.topology.face_edges[second])
+        )
+        if not common:
+            return None
+        regions = (
+            SurfaceRegion(model.patches[first], boolean_face_chart_box(model, first)),
+            SurfaceRegion(model.patches[second], boolean_face_chart_box(model, second)),
+        )
+        frame = _straight_revolution(regions[0].patch, allow_disk=True)
+        if frame is None or not _coaxial_faces_meet_on_shared_circle(
+            model, faces, regions
+        ):
+            return None
+        uses: list[tuple[int, int, int, int, int]] = []
+        circles: list[tuple[str, ...]] = []
+        for edge in common:
+            index = geometry.edge_curves[edge]
+            if index < 0:
+                return None
+            curve = geometry.curves[index]
+            if not isinstance(curve, CircleCurve):
+                return None
+            values = (
+                *curve.center_exact,
+                *curve.first_axis_exact,
+                *curve.second_axis_exact,
+                curve.radius_exact,
+            )
+            if not _rational_components(values):
+                return None
+            center, first_axis, second_axis = values[:3], values[3:6], values[6:9]
+            radius = values[9]
+            relative = tuple(center[i] - frame.origin[i] for i in range(3))
+            if (
+                radius <= 0
+                or any(rational_cross(relative, frame.axis))
+                or rational_dot(first_axis, first_axis) != 1
+                or rational_dot(second_axis, second_axis) != 1
+                or rational_dot(first_axis, second_axis) != 0
+                or rational_dot(first_axis, frame.axis) != 0
+                or rational_dot(second_axis, frame.axis) != 0
+            ):
+                return None
+            vertices = geometry.edge_vertices[edge]
+            start_root, end_root = geometry.edge_endpoint_roots[edge]
+            start, end = (
+                float(value) for value in np.asarray(geometry.edge_ranges[edge])
+            )
+            # The exact parameters q and q + 2 pi of the circle's own 2 pi period
+            # bound one closed edge, so it traverses the whole circle once.
+            if (
+                vertices[0] != vertices[1]
+                or curve.native_period_symbol() != "two_pi"
+                or not isinstance(start_root, NativePeriodEndpoint)
+                or not isinstance(end_root, NativePeriodEndpoint)
+                or start_root.rational != end_root.rational
+                or end_root.turns - start_root.turns != 1
+                or not _same_tree_content(start_root.curve, curve)
+                or not _same_tree_content(end_root.curve, curve)
+                or not start_root.parameter_enclosure()[0]
+                <= start
+                <= start_root.parameter_enclosure()[1]
+                or not end_root.parameter_enclosure()[0]
+                <= end
+                <= end_root.parameter_enclosure()[1]
+            ):
+                return None
+            coedges: list[int] = []
+            for face, region in zip(faces, regions, strict=True):
+                found = [
+                    coedge
+                    for loop in geometry.face_loops[face]
+                    for coedge in loop
+                    if geometry.coedge_edges[coedge] == edge
+                ]
+                if len(found) != 1:
+                    return None
+                coedge = found[0]
+                pcurve = geometry.pcurves[coedge]
+                if not exact_source_lift(curve, pcurve, region, start, end):
+                    return None
+                coedges.append(coedge)
+            if not _opposed_source_uses(model, faces, (coedges[0], coedges[1])):
+                return None
+            uses.append(
+                (
+                    edge,
+                    coedges[0],
+                    coedges[1],
+                    geometry.coedge_senses[coedges[0]],
+                    geometry.coedge_senses[coedges[1]],
+                )
+            )
+            circles.append(tuple(str(value) for value in (*center, radius)))
+        identity = canonical_fingerprint(
+            {
+                "kind": "cad-source-revolution-rim-pair",
+                "source": model.source_id,
+                "model": model.model_id,
+                "revision": model.source_revision,
+                "faces": faces,
+                "uses": tuple(uses),
+                "circles": tuple(circles),
+            }
+        )
+        return SourceRevolutionRimPair(
+            model.source_id,
+            model.model_id,
+            model.source_revision,
+            faces,
+            tuple(common),
+            identity,
+        )
+    except (ArithmeticError, TypeError, ValueError, OverflowError, NotImplementedError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
 class SourceShellAdmissibility:
     """Source-bound proof of one embedded, outward, closed material shell."""
 
@@ -1570,9 +1732,15 @@ def certify_single_source_shell(
                 )
                 continue
             pair = certify_retained_branch_pair(model, first, second)
-            if pair is None or set(pair.shared_edges) != common:
+            if pair is not None and set(pair.shared_edges) == common:
+                pair_certificates.append(pair.certificate_id)
+                continue
+            # Rims stored as exact circles, not intersection branches, bind
+            # only through the coaxial meridian proof.
+            rim = certify_revolution_rim_pair(model, first, second)
+            if rim is None:
                 return None
-            pair_certificates.append(pair.certificate_id)
+            pair_certificates.append(rim.certificate_id)
         shell = model.geometry.solid_shells[0][0]
         if brep_shell_volume_sign(model, shell) != 1:
             return None

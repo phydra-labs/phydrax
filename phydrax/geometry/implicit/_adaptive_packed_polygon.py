@@ -383,6 +383,7 @@ def polygonize(
         _norm_upper_rows,
         _prove_constant_signs,
         _root_on_edges,
+        _tangency_faces,
         _TETRAHEDRA,
         _triangulate_cell_band,
         AdaptiveImplicitBoxIssue as Issue,
@@ -505,6 +506,20 @@ def polygonize(
             )
             empty[start + candidates[proved]] = True
             cell_issue[start + candidates[proved]] = 0
+            edge = ~proved & gradient[candidates]
+            if np.any(edge):
+                tangent = np.any(
+                    _tangency_faces(
+                        bounds,
+                        cell_boxes[start + candidates[edge], 0],
+                        cell_boxes[start + candidates[edge], 1],
+                        signs[candidates[edge], 0],
+                        leaves.gradient_lower[leaf_rows[edge]],
+                        leaves.gradient_upper[leaf_rows[edge]],
+                    ),
+                    axis=1,
+                )
+                cell_issue[start + candidates[edge][tangent]] = int(Issue.TANGENCY)
     unresolved_faces = None if clipped is None else clipped.unresolved_face_keys()
     for row in range(count):
         if periodic or cell_issue[row] or empty[row]:

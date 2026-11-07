@@ -50,10 +50,35 @@ from ..discretization._coordinate_enclosure import (
 )
 from ..discretization._exact_algebraic_geometry import RadicalElement
 from ..discretization._reference_cell import reference_cell_topology
+from ..geometry._interval_enclosure import (
+    Interval,
+    interval_add,
+    interval_cos,
+    interval_divide,
+    interval_maximum,
+    interval_minimum,
+    interval_multiply,
+    interval_sin,
+    interval_sqrt,
+    interval_square,
+    interval_subtract,
+)
+from ..geometry._rational import (
+    rational_cross,
+    rational_cross_2d,
+    rational_dot,
+    rational_vector,
+    RationalVector,
+)
 from ..typing import checked, ConvertibleToArray
 from ._dual_extraction import (
     _affine_geometry_matches,
+    _certified_at_most,
+    _enclose_point,
     _RestrictedCoordinateMap,
+    CROSS_FIELD_ENERGY_RTOL,
+    CROSS_FIELD_EVIDENCE_ATOL,
+    CROSS_FIELD_RELATIVE_RESIDUAL_LIMIT,
     DualExtraction,
     fresh_vertex_global_ids,
     QuadLayoutObstruction,
@@ -471,7 +496,7 @@ def _sparse_cross_field_solution(
         not np.all(np.isfinite(solution))
         or not math.isfinite(residual_norm)
         or not math.isfinite(relative_residual)
-        or relative_residual > 1.0e-10
+        or relative_residual > CROSS_FIELD_RELATIVE_RESIDUAL_LIMIT
     ):
         raise QuadLayoutObstruction(
             "cross_field_solve",
@@ -698,7 +723,9 @@ def prepare_surface_cross_field(
     if guidance.shape not in ((0,), (data.cells.shape[0],)) or not np.all(
         np.isfinite(guidance)
     ):
-        raise ValueError("guide_angles must contain one finite angle per source triangle.")
+        raise ValueError(
+            "guide_angles must contain one finite angle per source triangle."
+        )
     guidance = np.remainder(guidance + np.pi / 4.0, np.pi / 2.0) - np.pi / 4.0
     explicit = _feature_inputs(feature_edges, data.edges.shape[0])
     features = _dihedral_feature_rows(
@@ -1021,23 +1048,193 @@ def _quad_shape_quality(
     )
 
 
-def _split_quad_templates_valid(cycle: tuple[int, int, int, int], points: np.ndarray, /) -> bool:
-    """Check represented midpoint templates against the existing validity floor."""
+_SPLIT_QUAD_CHILDREN = (
+    (0, 4, 8, 7),
+    (1, 5, 8, 4),
+    (2, 6, 8, 5),
+    (3, 7, 8, 6),
+    (0, 4, 6, 3),
+    (4, 1, 2, 6),
+    (1, 5, 7, 0),
+    (5, 2, 3, 7),
+)
+
+
+def _split_quad_points(
+    cycle: tuple[int, int, int, int], points: np.ndarray, /
+) -> np.ndarray:
+    """Represented corners, edge midpoints, and center of a split quad pair."""
     corners = points[np.asarray(cycle, dtype=np.int64)]
-    mids = np.asarray(
-        [0.5 * (corners[i] + corners[(i + 1) % 4]) for i in range(4)]
-    )
+    mids = np.asarray([0.5 * (corners[i] + corners[(i + 1) % 4]) for i in range(4)])
     center = np.mean(corners, axis=0)
-    split_points = np.concatenate((corners, mids, center[None, :]), axis=0)
-    children = (
-        (0, 4, 8, 7), (1, 5, 8, 4), (2, 6, 8, 5), (3, 7, 8, 6),
-        (0, 4, 6, 3), (4, 1, 2, 6), (1, 5, 7, 0), (5, 2, 3, 7),
-    )
-    for child in children:
+    return np.concatenate((corners, mids, center[None, :]), axis=0)
+
+
+def _split_quad_templates_valid(
+    cycle: tuple[int, int, int, int], points: np.ndarray, /
+) -> bool:
+    """Check represented midpoint templates against the existing validity floor."""
+    split_points = _split_quad_points(cycle, points)
+    for child in _SPLIT_QUAD_CHILDREN:
         value = _quad_shape_quality(child, split_points)
-        if value is None or not math.isfinite(value) or value <= CELL_VALIDITY_DETERMINANT_FLOOR:
+        if (
+            value is None
+            or not math.isfinite(value)
+            or value <= CELL_VALIDITY_DETERMINANT_FLOOR
+        ):
             return False
     return True
+
+
+def _rational_difference(
+    first: RationalVector, second: RationalVector, /
+) -> RationalVector:
+    return tuple(left - right for left, right in zip(first, second, strict=True))
+
+
+def _exact_quad_admissible(
+    cycle: tuple[int, int, int, int], points: np.ndarray, /
+) -> bool:
+    """Decide exactly that ``_quad_shape_quality`` accepts a quad cycle.
+
+    Planar cycles need one consistent nonzero exact orientation. Coplanar
+    cycles in space need it after projection; nonplanar cycles need nonzero
+    sides and corner turns that all agree with their sum.
+    """
+    padded = np.pad(points, ((0, 0), (0, 3 - points.shape[1])))
+    corners = [rational_vector(padded[vertex].tolist()) for vertex in cycle]
+    projected: list[tuple[Fraction, Fraction]] = []
+    coplanar = True
+    if points.shape[1] == 2:
+        projected = [(corner[0], corner[1]) for corner in corners]
+    else:
+        normal = rational_cross(
+            _rational_difference(corners[1], corners[0]),
+            _rational_difference(corners[2], corners[0]),
+        )
+        coplanar = rational_dot(normal, _rational_difference(corners[3], corners[0])) == 0
+        if any(normal) and coplanar:
+            dropped = max(range(3), key=lambda axis: abs(normal[axis]))
+            kept = tuple(axis for axis in range(3) if axis != dropped)
+            projected = [(corner[kept[0]], corner[kept[1]]) for corner in corners]
+    oriented = False
+    if projected:
+        signs = set()
+        for index in range(4):
+            origin = projected[index]
+            first = projected[(index + 1) % 4]
+            second = projected[(index + 2) % 4]
+            turn = rational_cross_2d(
+                (first[0] - origin[0], first[1] - origin[1]),
+                (second[0] - origin[0], second[1] - origin[1]),
+            )
+            signs.add((turn > 0) - (turn < 0))
+        oriented = len(signs) == 1 and 0 not in signs
+    if coplanar:
+        return oriented
+    turns = []
+    for index in range(4):
+        previous = _rational_difference(corners[index - 1], corners[index])
+        following = _rational_difference(corners[(index + 1) % 4], corners[index])
+        turn = rational_cross(following, previous)
+        if not any(previous) or not any(following) or not any(turn):
+            return False
+        turns.append(turn)
+    reference = tuple(sum(values, Fraction(0)) for values in zip(*turns, strict=True))
+    return any(reference) and all(rational_dot(turn, reference) > 0 for turn in turns)
+
+
+def _exact_split_templates_admissible(
+    cycle: tuple[int, int, int, int], points: np.ndarray, /
+) -> bool:
+    """Decide ``_split_quad_templates_valid`` exactly on the represented points."""
+    split_points = _split_quad_points(cycle, points)
+    floor = Fraction(CELL_VALIDITY_DETERMINANT_FLOOR)
+    for child in _SPLIT_QUAD_CHILDREN:
+        if not _exact_quad_admissible(child, split_points):
+            return False
+        corners = [rational_vector(split_points[vertex].tolist()) for vertex in child]
+        for index in range(4):
+            previous = _rational_difference(corners[index - 1], corners[index])
+            following = _rational_difference(corners[(index + 1) % 4], corners[index])
+            turn = rational_cross_2d(
+                (following[0], following[1]), (previous[0], previous[1])
+            )
+            scale = rational_dot(previous, previous) * rational_dot(following, following)
+            if turn * turn <= floor * floor * scale:
+                return False
+    return True
+
+
+def _certified_pair_alignment(
+    cycle: tuple[int, int, int, int],
+    faces: tuple[int, int],
+    data: _TriangleData,
+    field: SurfaceCrossField,
+    points: np.ndarray,
+    tolerance: float,
+    /,
+) -> bool:
+    """Decide ``_pair_candidate``'s alignment error is at most ``tolerance``.
+
+    The length-weighted mean of ``1 - cos 4(phi - theta)`` is at most the
+    tolerance exactly when ``sum |e| (1 - tolerance - cos 4(phi - theta)) <= 0``.
+    With ``u`` the frame-local edge vector, ``cos 4(phi - theta)`` is
+    ``Re((u e^{-i theta})^4) / |u|^4``; every term is enclosed with outward
+    binary64 intervals and the rigorous native cosine and sine.
+    """
+    padded = np.pad(points, ((0, 0), (0, 3 - points.shape[1])))
+    frames = np.asarray(field.frames, dtype=np.float64)
+    angles = np.asarray(field.angles, dtype=np.float64)
+    members = set(faces)
+    offset = _enclose_point(1 - Fraction(tolerance))
+    total: Interval = (np.float64(0.0), np.float64(0.0))
+    for index in range(4):
+        key = _edge_key(cycle[index], cycle[(index + 1) % 4])
+        incident = [face for face in data.edge_owners[key] if face in members]
+        if len(incident) != 1:
+            return False
+        face = incident[0]
+        direction = _rational_difference(
+            rational_vector(padded[key[1]].tolist()),
+            rational_vector(padded[key[0]].tolist()),
+        )
+        first = rational_dot(rational_vector(frames[face, 0].tolist()), direction)
+        second = rational_dot(rational_vector(frames[face, 1].tolist()), direction)
+        local_square = first * first + second * second
+        if local_square == 0:
+            return False
+        angle = (angles[face], angles[face])
+        cosine, sine = interval_cos(angle), interval_sin(angle)
+        first_value, second_value = _enclose_point(first), _enclose_point(second)
+        real = interval_add(
+            interval_multiply(first_value, cosine), interval_multiply(second_value, sine)
+        )
+        imaginary = interval_subtract(
+            interval_multiply(second_value, cosine), interval_multiply(first_value, sine)
+        )
+        real_square, imaginary_square = interval_square(real), interval_square(imaginary)
+        fourth = interval_add(
+            interval_subtract(
+                interval_square(real_square),
+                interval_multiply(
+                    (np.float64(6.0), np.float64(6.0)),
+                    interval_multiply(real_square, imaginary_square),
+                ),
+            ),
+            interval_square(imaginary_square),
+        )
+        alignment = interval_divide(fourth, _enclose_point(local_square * local_square))
+        # The exact cosine lies in [-1, 1]; intersecting keeps the enclosure sound.
+        alignment = interval_minimum(
+            interval_maximum(alignment, (np.float64(-1.0), np.float64(-1.0))),
+            (np.float64(1.0), np.float64(1.0)),
+        )
+        length = interval_sqrt(_enclose_point(rational_dot(direction, direction)))
+        total = interval_add(
+            total, interval_multiply(length, interval_subtract(offset, alignment))
+        )
+    return _certified_at_most(total, 0.0)
 
 
 def _pair_candidate(
@@ -1135,6 +1332,93 @@ def _patch_boundary_obstruction(
             )
 
 
+def _layout_inputs(
+    mesh: CellMesh,
+    cross_field: SurfaceCrossField,
+    maximum_field_error: float,
+    source_geometry: CellGeometrySpec | None,
+    /,
+) -> tuple[_TriangleData, float, CellGeometrySpec, bool, set[int]]:
+    """Bind a field to its source and validate the shared layout inputs."""
+    from ..geometry._mesh_certificates import _same_tree_content
+
+    data = _triangle_data(mesh)
+    if (
+        cross_field.source_topology_id != mesh.topology_id
+        or cross_field.source_geometry_id != mesh.geometry_id
+        or cross_field.source.mesh_id != mesh.mesh_id
+        or not _same_tree_content(cross_field.source, mesh)
+    ):
+        raise ValueError("cross_field must bind the source mesh topology and geometry.")
+    if cross_field.field_id != cross_field._scientific_id():
+        raise QuadLayoutObstruction(
+            "field_evidence",
+            "Cross-field content does not match its scientific identity.",
+        )
+    tolerance = float(maximum_field_error)
+    if not math.isfinite(tolerance) or not 0.0 <= tolerance <= 2.0:
+        raise ValueError("maximum_field_error must lie in [0, 2].")
+    if source_geometry is None:
+        source_geometry = CellGeometrySpec.affine(mesh)
+    elif not isinstance(source_geometry, CellGeometrySpec):
+        raise TypeError("source_geometry must be CellGeometrySpec or None.")
+    affine_source = _affine_geometry_matches(mesh, source_geometry)
+    feature_edges = set(np.asarray(cross_field.feature_edges, dtype=np.int64).tolist())
+    if any(row >= data.edges.shape[0] for row in feature_edges):
+        raise ValueError("cross_field contains an undeclared source feature edge.")
+    return data, tolerance, source_geometry, affine_source, feature_edges
+
+
+def _require_patch_parity(data: _TriangleData, patches: np.ndarray, /) -> None:
+    """Refuse feature-cut patches that no complete pairing can decompose."""
+    edge_row = {
+        _edge_key(int(edge[0]), int(edge[1])): row
+        for row, edge in enumerate(data.edges.tolist())
+    }
+    patch_faces = {
+        int(patch): np.flatnonzero(patches == patch).astype(np.int64).tolist()
+        for patch in np.unique(patches).tolist()
+    }
+    for patch, faces in patch_faces.items():
+        if len(faces) % 2:
+            raise QuadLayoutObstruction(
+                "patch_parity",
+                "A feature-constrained patch has odd triangle parity.",
+                source_cell_rows=faces,
+                source_edge_rows=(
+                    edge_row[key]
+                    for key, owners in data.edge_owners.items()
+                    if sum(int(patches[face]) == patch for face in owners) == 1
+                ),
+            )
+        _patch_boundary_obstruction(faces, patch, data, patches, edge_row)
+
+
+def _source_chart_inputs(
+    mesh: CellMesh, source_geometry: CellGeometrySpec, affine_source: bool, /
+) -> tuple[tuple[ScalarCoordinateElement, ...], tuple[Array, ...], CoordinateSourceBank]:
+    """Resolve the one exact scalar source element a curved recombination needs."""
+    if affine_source:
+        return (), (), ()
+    resolved_elements, routes, _ = source_geometry.resolve(mesh)
+    if len(resolved_elements) != 1:
+        raise QuadLayoutObstruction(
+            "source_map",
+            "Quad patch recombination requires one exact scalar source coordinate element.",
+        )
+    source_element = resolved_elements[0]
+    if not isinstance(source_element, ScalarCoordinateElement):
+        raise QuadLayoutObstruction(
+            "source_map",
+            "Quad patch recombination requires one exact scalar source coordinate element.",
+        )
+    return (
+        (source_element,),
+        routes,
+        _exact_source_coordinate_bank(source_geometry.source_coordinates()),
+    )
+
+
 @checked
 def prepare_surface_quad_layout(
     mesh: CellMesh,
@@ -1150,35 +1434,16 @@ def prepare_surface_quad_layout(
     ``complete=False`` instead returns the maximal positive pairing; triangles
     it leaves unpaired are subdivided by the quad mesh builder.
     """
-    from ..geometry._mesh_certificates import _same_tree_content
-
-    data = _triangle_data(mesh)
-    if (
-        cross_field.source_topology_id != mesh.topology_id
-        or cross_field.source_geometry_id != mesh.geometry_id
-        or cross_field.source.mesh_id != mesh.mesh_id
-        or not _same_tree_content(cross_field.source, mesh)
-    ):
-        raise ValueError("cross_field must bind the source mesh topology and geometry.")
-    if cross_field.field_id != cross_field._scientific_id():
-        raise QuadLayoutObstruction(
-            "field_evidence", "Cross-field content does not match its scientific identity."
-        )
-    tolerance = float(maximum_field_error)
-    if not math.isfinite(tolerance) or not 0.0 <= tolerance <= 2.0:
-        raise ValueError("maximum_field_error must lie in [0, 2].")
-    if source_geometry is None:
-        source_geometry = CellGeometrySpec.affine(mesh)
-    elif not isinstance(source_geometry, CellGeometrySpec):
-        raise TypeError("source_geometry must be CellGeometrySpec or None.")
-    affine_source = _affine_geometry_matches(mesh, source_geometry)
-    feature_edges = set(np.asarray(cross_field.feature_edges, dtype=np.int64).tolist())
-    if any(row >= data.edges.shape[0] for row in feature_edges):
-        raise ValueError("cross_field contains an undeclared source feature edge.")
+    data, tolerance, source_geometry, affine_source, feature_edges = _layout_inputs(
+        mesh, cross_field, maximum_field_error, source_geometry
+    )
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     expected_frames = _triangle_frames(mesh, data.cells)
     if not np.allclose(
-        np.asarray(cross_field.frames), expected_frames, rtol=0.0, atol=1.0e-12
+        np.asarray(cross_field.frames),
+        expected_frames,
+        rtol=0.0,
+        atol=CROSS_FIELD_EVIDENCE_ATOL,
     ):
         raise QuadLayoutObstruction(
             "field_evidence",
@@ -1223,7 +1488,7 @@ def prepare_surface_quad_layout(
         np.asarray(cross_field.transport_angles),
         transports,
         rtol=0.0,
-        atol=1.0e-12,
+        atol=CROSS_FIELD_EVIDENCE_ATOL,
     ):
         raise QuadLayoutObstruction(
             "field_evidence",
@@ -1235,7 +1500,7 @@ def prepare_surface_quad_layout(
         np.asarray(cross_field.feature_angles),
         feature_angles,
         rtol=0.0,
-        atol=1.0e-12,
+        atol=CROSS_FIELD_EVIDENCE_ATOL,
     ):
         raise QuadLayoutObstruction(
             "field_evidence",
@@ -1281,25 +1546,25 @@ def prepare_surface_quad_layout(
             np.asarray(cross_field.feature_residuals),
             expected_feature_residuals,
             rtol=0.0,
-            atol=1.0e-12,
+            atol=CROSS_FIELD_EVIDENCE_ATOL,
         )
         or not math.isclose(
             float(cross_field.field_solve_residual),
             solve_residual,
             rel_tol=1.0e-8,
-            abs_tol=1.0e-12,
+            abs_tol=CROSS_FIELD_EVIDENCE_ATOL,
         )
         or not math.isclose(
             float(cross_field.field_solve_relative_residual),
             relative_residual,
             rel_tol=1.0e-8,
-            abs_tol=1.0e-12,
+            abs_tol=CROSS_FIELD_EVIDENCE_ATOL,
         )
         or not math.isclose(
             float(cross_field.field_energy),
             field_energy,
-            rel_tol=1.0e-10,
-            abs_tol=1.0e-12,
+            rel_tol=CROSS_FIELD_ENERGY_RTOL,
+            abs_tol=CROSS_FIELD_EVIDENCE_ATOL,
         )
     ):
         raise QuadLayoutObstruction(
@@ -1318,48 +1583,11 @@ def prepare_surface_quad_layout(
             "field_evidence",
             "Cross-field vertex-index evidence does not match the solved field.",
         )
-    edge_row = {
-        _edge_key(int(edge[0]), int(edge[1])): row
-        for row, edge in enumerate(data.edges.tolist())
-    }
-    patch_faces = {
-        int(patch): np.flatnonzero(patches == patch).astype(np.int64).tolist()
-        for patch in np.unique(patches).tolist()
-    }
     if complete:
-        for patch, faces in patch_faces.items():
-            if len(faces) % 2:
-                raise QuadLayoutObstruction(
-                    "patch_parity",
-                    "A feature-constrained patch has odd triangle parity.",
-                    source_cell_rows=faces,
-                    source_edge_rows=(
-                        edge_row[key]
-                        for key, owners in data.edge_owners.items()
-                        if sum(int(patches[face]) == patch for face in owners) == 1
-                    ),
-                )
-            _patch_boundary_obstruction(faces, patch, data, patches, edge_row)
-    elements: tuple[ScalarCoordinateElement, ...] = ()
-    routes: tuple[Array, ...] = ()
-    source_coordinate_bank: CoordinateSourceBank = ()
-    if not affine_source:
-        resolved_elements, routes, _ = source_geometry.resolve(mesh)
-        if len(resolved_elements) != 1:
-            raise QuadLayoutObstruction(
-                "source_map",
-                "Quad patch recombination requires one exact scalar source coordinate element.",
-            )
-        source_element = resolved_elements[0]
-        if not isinstance(source_element, ScalarCoordinateElement):
-            raise QuadLayoutObstruction(
-                "source_map",
-                "Quad patch recombination requires one exact scalar source coordinate element.",
-            )
-        elements = (source_element,)
-        source_coordinate_bank = _exact_source_coordinate_bank(
-            source_geometry.source_coordinates()
-        )
+        _require_patch_parity(data, patches)
+    elements, routes, source_coordinate_bank = _source_chart_inputs(
+        mesh, source_geometry, affine_source
+    )
     reference_triangles = _reference_points_2d(mesh.blocks[0].cell_kind)
     reference_quads = _reference_points_2d("quadrilateral")
     candidates: list[_PairCandidate] = []
@@ -1583,6 +1811,177 @@ def prepare_surface_quad_layout(
     )
 
 
+def verify_surface_quad_layout(
+    mesh: CellMesh,
+    cross_field: SurfaceCrossField,
+    paired_edge_rows: ConvertibleToArray,
+    /,
+    *,
+    maximum_field_error: float,
+    source_geometry: CellGeometrySpec,
+    complete: bool,
+) -> SurfaceQuadLayout:
+    """Decide a stored pairing exactly against the layout acceptance; never solve.
+
+    Generation accepts a pair when its edge is an interior, non-feature,
+    same-patch edge whose two triangles bound a positive quad, whose field
+    alignment error is at most ``maximum_field_error``, whose two source charts
+    agree exactly, and (partial layouts) whose split templates clear the
+    validity floor. A complete pairing covers every triangle once and meets the
+    interior valence ``4 - index`` of every unconstrained vertex; a partial one
+    covers each triangle at most once. Each predicate is decided exactly or
+    with certified enclosures. Which accepted pairing generation's integer
+    program preferred is not an acceptance and is not re-derived.
+    """
+    data, tolerance, source_geometry, affine_source, feature_edges = _layout_inputs(
+        mesh, cross_field, maximum_field_error, source_geometry
+    )
+    face_count = data.cells.shape[0]
+    links: list[tuple[int, int]] = []
+    for edge_row_value, edge_values in enumerate(data.edges.tolist()):
+        faces = data.edge_owners[_edge_key(int(edge_values[0]), int(edge_values[1]))]
+        if edge_row_value in feature_edges:
+            continue
+        if len(faces) != 2:
+            raise QuadLayoutObstruction(
+                "field_feature_integrity",
+                "Every source boundary edge must be retained as a cross-field feature.",
+                source_edge_rows=(edge_row_value,),
+            )
+        links.append((faces[0], faces[1]))
+    patches = _surface_patch_ids(
+        face_count, np.asarray(links, dtype=np.int32).reshape((-1, 2))
+    )
+    if not np.array_equal(np.asarray(cross_field.patch_ids), patches):
+        raise QuadLayoutObstruction(
+            "field_evidence",
+            "Cross-field patch labels do not match its cut transport graph.",
+        )
+    selected = np.asarray(paired_edge_rows)
+    if (
+        selected.ndim != 1
+        or selected.dtype.kind not in "iu"
+        or np.any(selected < 0)
+        or np.any(selected >= data.edges.shape[0])
+        or np.any(selected[1:] <= selected[:-1])
+    ):
+        raise QuadLayoutObstruction(
+            "layout_evidence",
+            "Stored paired edge rows must be sorted unique source edge rows.",
+        )
+    if complete:
+        _require_patch_parity(data, patches)
+    elements, routes, source_coordinate_bank = _source_chart_inputs(
+        mesh, source_geometry, affine_source
+    )
+    reference_triangles = _reference_points_2d(mesh.blocks[0].cell_kind)
+    reference_quads = _reference_points_2d("quadrilateral")
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    coverage = np.zeros((face_count,), dtype=np.int64)
+    cycles: list[tuple[int, int, int, int]] = []
+    for row in selected.tolist():
+        edge_values = data.edges[row].tolist()
+        edge = _edge_key(int(edge_values[0]), int(edge_values[1]))
+        faces = data.edge_owners[edge]
+        accepted = (
+            len(faces) == 2
+            and row not in feature_edges
+            and patches[faces[0]] == patches[faces[1]]
+        )
+        cycle = (
+            _oriented_pair_cycle((faces[0], faces[1]), edge, data.cells)
+            if accepted
+            else None
+        )
+        accepted = (
+            cycle is not None
+            and _exact_quad_admissible(cycle, points)
+            and (
+                complete
+                or not affine_source
+                or points.shape[1] != 2
+                or _exact_split_templates_admissible(cycle, points)
+            )
+            and _certified_pair_alignment(
+                cycle, (faces[0], faces[1]), data, cross_field, points, tolerance
+            )
+        )
+        if accepted and cycle is not None and not affine_source:
+            expressions = _pair_source_chart_expressions(
+                mesh,
+                source_geometry,
+                (faces[0], faces[1]),
+                cycle,
+                elements,
+                routes,
+                source_coordinate_bank,
+                reference_triangles,
+                reference_quads,
+            )
+            accepted = expression_sequence_equal(expressions[0], expressions[1])
+        if not accepted or cycle is None:
+            raise QuadLayoutObstruction(
+                "layout_evidence",
+                "A stored quad pair is not an accepted field-aligned source patch pair.",
+                source_edge_rows=(row,),
+            )
+        coverage[list(faces)] += 1
+        cycles.append(cycle)
+    if np.any(coverage > 1) or (complete and np.any(coverage != 1)):
+        raise QuadLayoutObstruction(
+            "layout_evidence",
+            "Stored quad pairs do not cover the source triangles as declared.",
+            source_cell_rows=np.flatnonzero(coverage != 1).tolist(),
+        )
+    singular_vertices = np.asarray(cross_field.singular_vertices, dtype=np.int64)
+    singularity_indices = np.asarray(cross_field.singularity_indices, dtype=np.int32)
+    if complete:
+        charges = dict(
+            zip(singular_vertices.tolist(), singularity_indices.tolist(), strict=True)
+        )
+        excluded = {
+            endpoint
+            for key, owners in data.edge_owners.items()
+            if len(owners) == 1
+            for endpoint in key
+        } | {
+            int(endpoint)
+            for feature in feature_edges
+            for endpoint in data.edges[feature].tolist()
+        }
+        realized = {
+            vertex: 0
+            for vertex in range(mesh.coordinates.shape[0])
+            if vertex not in excluded
+        }
+        for cycle in cycles:
+            for vertex in cycle:
+                if vertex in realized:
+                    realized[vertex] += 1
+        unmet = [
+            vertex
+            for vertex, count in realized.items()
+            if count != 4 - charges.get(vertex, 0)
+        ]
+        if unmet:
+            raise QuadLayoutObstruction(
+                "layout_evidence",
+                "Stored quad pairs do not meet the cross-field interior valences.",
+                source_vertex_rows=unmet,
+            )
+    return _surface_quad_layout(
+        mesh,
+        source_geometry,
+        cross_field,
+        patches,
+        singular_vertices,
+        singularity_indices,
+        selected.tolist(),
+        tolerance,
+        complete=complete,
+    )
+
+
 def _maximum_partial_pairing(
     candidates: Sequence[_PairCandidate], face_count: int, /
 ) -> list[int]:
@@ -1623,9 +2022,7 @@ def _maximum_partial_pairing(
             source_cell_rows=range(face_count),
         )
     maximum = int(np.rint(np.sum(cardinality.x)))
-    if not np.allclose(
-        cardinality.x, np.rint(cardinality.x), rtol=0.0, atol=1.0e-8
-    ):
+    if not np.allclose(cardinality.x, np.rint(cardinality.x), rtol=0.0, atol=1.0e-8):
         raise QuadLayoutObstruction(
             "patch_solver",
             "The sparse integer pair solver returned a nonintegral matching.",

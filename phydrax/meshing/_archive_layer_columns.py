@@ -13,7 +13,10 @@ from typing import Any, NamedTuple
 import numpy as np
 
 from .._archive_columns import (
+    byte_rows_column,
+    byte_rows_column_values,
     ExactTensorArchiveRecipe,
+    integer_column,
     integer_column_values,
     IntegerRowsArchiveRecipe,
     StaticColumnArchiveRecipe,
@@ -22,6 +25,10 @@ from .._archive_columns import (
 )
 from .._array_archive import array_payload_digest
 from .._fingerprint import canonical_fingerprint
+
+
+# One execution and one source map digest (16 bytes each) per validated cell.
+_MAP_DIGEST_ROW_BYTES = 32
 
 
 # Only these record fields are projected. All other fields, including scientific
@@ -96,6 +103,10 @@ _COLUMNS = {
         "source_cell_ids": "integer_tensor",
         "chart_coefficients": "rational_terms",
     },
+    # Both scale with the mesh: one ID per scoped entity and one 32-byte
+    # execution/source map digest pair per cell.
+    "MeshingScope": {"unqualified_entity_ids": "integer"},
+    "CellValidityCertificate": {"cell_map_digests": "map_digest_rows"},
 }
 
 
@@ -104,6 +115,7 @@ def _record_types() -> dict[str, type]:
         CellGeometrySpec,
         PerCellRestrictedCellGeometryElement,
     )
+    from ..discretization._cell_geometry_validity import CellValidityCertificate
     from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
     from ..discretization._nested_reference_types import (
         NestedReferenceWitnesses,
@@ -113,8 +125,8 @@ def _record_types() -> dict[str, type]:
     from ..geometry._source_boundary_records import SourceBoundaryChartWitness
     from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
     from ._curving import _ExactCoordinateBankMap
-    from ._mixed_adaptation import _RetainedCoordinateBank
     from ._distribution_forest import PeriodicSimplexForest
+    from ._layer_core_subdivision import OverlapSourceStencils, RefinedColumnCertification
     from ._layer_curving_records import (
         LayerColumnProjectionIdentity,
         LayerCurvingImplicitRootTrace,
@@ -122,12 +134,15 @@ def _record_types() -> dict[str, type]:
         LayerCurvingProjectionTrace,
         LayerCurvingSourceEvidence,
     )
-    from ._layer_core_subdivision import OverlapSourceStencils, RefinedColumnCertification
+    from ._mixed_adaptation import _RetainedCoordinateBank
+    from ._scope import MeshingScope
 
     return {
         owner.__name__: owner
         for owner in (
             CellGeometrySpec,
+            CellValidityCertificate,
+            MeshingScope,
             PerCellRestrictedCellGeometryElement,
             NestedReferenceWitnesses,
             ReferenceCellMapWitnesses,
@@ -172,16 +187,30 @@ def _exact_fraction(numerator: str, denominator: str, /) -> Fraction:
 
 
 def _encode_overlap_row(row: Any, /) -> tuple[str, ...]:
-    if type(row) is not tuple or len(row) != 2 or type(row[0]) is not int or type(row[1]) is not tuple:
-        raise TypeError("Overlap stencil rows require exact immutable target and term data.")
+    if (
+        type(row) is not tuple
+        or len(row) != 2
+        or type(row[0]) is not int
+        or type(row[1]) is not tuple
+    ):
+        raise TypeError(
+            "Overlap stencil rows require exact immutable target and term data."
+        )
     values = [str(row[0])]
     for term in row[1]:
         if (
-            type(term) is not tuple or len(term) != 3 or term[0] not in ("layer", "plc")
-            or type(term[1]) is not int or type(term[2]) is not Fraction
+            type(term) is not tuple
+            or len(term) != 3
+            or term[0] not in ("layer", "plc")
+            or type(term[1]) is not int
+            or type(term[2]) is not Fraction
         ):
-            raise TypeError("Overlap stencil terms require exact bank, integer and Fraction values.")
-        values.extend((term[0], str(term[1]), str(term[2].numerator), str(term[2].denominator)))
+            raise TypeError(
+                "Overlap stencil terms require exact bank, integer and Fraction values."
+            )
+        values.extend(
+            (term[0], str(term[1]), str(term[2].numerator), str(term[2].denominator))
+        )
     return tuple(values)
 
 
@@ -201,22 +230,33 @@ def _encode_facet_overlap(value: Any, /) -> tuple[str, ...]:
     ):
         raise TypeError("Facet overlap rows require their exact canonical fields.")
     return (
-        str(value.source_facet_id), str(value.target_facet_id),
-        str(value.region_pair[0]), str(value.region_pair[1]),
-        str(value.measure.numerator), str(value.measure.denominator),
-        value.semantics, value.coordinate_space,
+        str(value.source_facet_id),
+        str(value.target_facet_id),
+        str(value.region_pair[0]),
+        str(value.region_pair[1]),
+        str(value.measure.numerator),
+        str(value.measure.denominator),
+        value.semantics,
+        value.coordinate_space,
     )
 
 
 def _decode_facet_overlap(row: tuple[str, ...], /) -> Any:
     from ..geometry._planar_coverage import FacetOverlap
 
-    if len(row) != 8 or row[6] not in ("exact", "candidate") or row[7] not in ("physical", "reference"):
+    if (
+        len(row) != 8
+        or row[6] not in ("exact", "candidate")
+        or row[7] not in ("physical", "reference")
+    ):
         raise ValueError("Facet overlap column has an invalid field set.")
     return FacetOverlap(
-        _canonical_integer(row[0]), _canonical_integer(row[1]),
+        _canonical_integer(row[0]),
+        _canonical_integer(row[1]),
         (_canonical_integer(row[2]), _canonical_integer(row[3])),
-        _exact_fraction(row[4], row[5]), row[6], row[7],
+        _exact_fraction(row[4], row[5]),
+        row[6],
+        row[7],
     )
 
 
@@ -225,8 +265,11 @@ def _decode_overlap_row(row: tuple[str, ...], /) -> tuple[Any, ...]:
         raise ValueError("Overlap stencil column row has an invalid extent.")
     target = _canonical_integer(row[0])
     terms = tuple(
-        (row[index], _canonical_integer(row[index + 1]),
-         _exact_fraction(row[index + 2], row[index + 3]))
+        (
+            row[index],
+            _canonical_integer(row[index + 1]),
+            _exact_fraction(row[index + 2], row[index + 3]),
+        )
         for index in range(1, len(row), 4)
     )
     return target, terms
@@ -240,7 +283,9 @@ def _encode_refined_column(column: Any, /) -> tuple[str, ...]:
     values: list[str] = [str(len(column.source_columns))]
     for identifier, weight in column.source_columns:
         if type(identifier) is not int or type(weight) is not Fraction:
-            raise TypeError("Refined-column ancestry requires exact integer and Fraction terms.")
+            raise TypeError(
+                "Refined-column ancestry requires exact integer and Fraction terms."
+            )
         values.extend((str(identifier), str(weight.numerator), str(weight.denominator)))
     values.append(str(len(column.target_vertices)))
     for identifier in column.target_vertices:
@@ -251,11 +296,22 @@ def _encode_refined_column(column: Any, /) -> tuple[str, ...]:
     for distance in column.wall_distances:
         if type(distance.squared_distance) is not Fraction:
             raise TypeError("Wall distances must retain exact Fractions.")
-        values.extend((str(distance.squared_distance.numerator),
-                       str(distance.squared_distance.denominator), str(len(distance.supports))))
+        values.extend(
+            (
+                str(distance.squared_distance.numerator),
+                str(distance.squared_distance.denominator),
+                str(len(distance.supports)),
+            )
+        )
         for face, barycentric, signed in distance.supports:
-            if type(face) is not int or len(barycentric) != 3 or type(signed) is not Fraction:
-                raise TypeError("Wall support must retain its exact face and barycentric data.")
+            if (
+                type(face) is not int
+                or len(barycentric) != 3
+                or type(signed) is not Fraction
+            ):
+                raise TypeError(
+                    "Wall support must retain its exact face and barycentric data."
+                )
             values.append(str(face))
             for scalar in (*barycentric, signed):
                 if type(scalar) is not Fraction:
@@ -263,8 +319,12 @@ def _encode_refined_column(column: Any, /) -> tuple[str, ...]:
                 values.extend((str(scalar.numerator), str(scalar.denominator)))
     if type(column.maximum_stretch_squared) is not Fraction:
         raise TypeError("Refined-column stretch must retain its exact Fraction.")
-    values.extend((str(column.maximum_stretch_squared.numerator),
-                   str(column.maximum_stretch_squared.denominator)))
+    values.extend(
+        (
+            str(column.maximum_stretch_squared.numerator),
+            str(column.maximum_stretch_squared.denominator),
+        )
+    )
     return tuple(values)
 
 
@@ -331,13 +391,23 @@ def _encode_column(value: Any, kind: str) -> Any:
     if kind == "text_rows":
         return TextRowsArchiveRecipe.encode(value)
     if kind == "overlap_rows":
-        return TextRowsArchiveRecipe.encode(tuple(_encode_overlap_row(row) for row in value))
+        return TextRowsArchiveRecipe.encode(
+            tuple(_encode_overlap_row(row) for row in value)
+        )
     if kind == "refined_columns":
-        return TextRowsArchiveRecipe.encode(tuple(_encode_refined_column(column) for column in value))
+        return TextRowsArchiveRecipe.encode(
+            tuple(_encode_refined_column(column) for column in value)
+        )
     if kind == "facet_overlaps":
-        return TextRowsArchiveRecipe.encode(tuple(_encode_facet_overlap(row) for row in value))
+        return TextRowsArchiveRecipe.encode(
+            tuple(_encode_facet_overlap(row) for row in value)
+        )
     if kind == "integer_rows":
         return IntegerRowsArchiveRecipe.encode(value)
+    if kind == "integer":
+        return integer_column(value)
+    if kind == "map_digest_rows":
+        return byte_rows_column(value, _MAP_DIGEST_ROW_BYTES)
     if kind == "integer_tensor":
         return ExactTensorArchiveRecipe.encode(value, rational=False)
     if kind == "exact":
@@ -374,6 +444,8 @@ def _decode_column(value: Any, kind: str) -> Any:
         "refined_columns": (TextRowsArchiveRecipe,),
         "facet_overlaps": (TextRowsArchiveRecipe,),
         "integer_rows": (IntegerRowsArchiveRecipe,),
+        "integer": (np.ndarray,),
+        "map_digest_rows": (np.ndarray,),
         "integer_tensor": (ExactTensorArchiveRecipe,),
         "exact": (ExactTensorArchiveRecipe, StaticColumnArchiveRecipe),
         "implicit": (ImplicitChartRowsArchiveRecipe,),
@@ -386,6 +458,10 @@ def _decode_column(value: Any, kind: str) -> Any:
         kind == "exact"
     ):
         raise ValueError("Layer record column has an unexpected exact scalar type.")
+    if kind == "integer":
+        return integer_column_values(value)
+    if kind == "map_digest_rows":
+        return byte_rows_column_values(value, _MAP_DIGEST_ROW_BYTES)
     decoded = value.decode()
     if kind == "overlap_rows":
         return tuple(_decode_overlap_row(row) for row in decoded)
@@ -684,12 +760,17 @@ def _restore_local_record(
     name = owner.__name__
     if name == "OverlapSourceStencils":
         identity = "witness_id"
-        rebuilt = owner(fields["source_binding_id"], fields["target_mesh_id"], fields["rows"])
+        rebuilt = owner(
+            fields["source_binding_id"], fields["target_mesh_id"], fields["rows"]
+        )
     elif name == "RefinedColumnCertification":
         identity = "certification_id"
         rebuilt = owner(
-            fields["source_binding_id"], fields["specification_id"],
-            fields["control_id"], fields["policy_id"], fields["columns"],
+            fields["source_binding_id"],
+            fields["specification_id"],
+            fields["control_id"],
+            fields["policy_id"],
+            fields["columns"],
         )
     elif name == "LayerColumnProjectionIdentity":
         identity = "identity_id"

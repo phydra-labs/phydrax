@@ -15,12 +15,15 @@ import hashlib
 import math
 from dataclasses import dataclass
 from enum import Enum
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._geometry_predicates import orient2d, PredicateMode, resolve_host_predicate_mode
+from ._planar_primitives import signed_area2
+from ._rational import rational_vector
 
 
 class IntersectionStatus(str, Enum):
@@ -177,39 +180,29 @@ def _as_points(points: Any) -> tuple[np.ndarray | None, IntersectionStatus | Non
     return array, None
 
 
-def _exact_products(first: np.ndarray, second: np.ndarray) -> np.ndarray:
-    """Error-free transformation: ``first * second`` as (rounded, error) pairs.
-
-    Dekker's split is exact for binary64 inputs without overflow or underflow.
-    """
-
-    splitter = 134217729.0  # 2**27 + 1
-    scaled_first = splitter * first
-    first_high = scaled_first - (scaled_first - first)
-    first_low = first - first_high
-    scaled_second = splitter * second
-    second_high = scaled_second - (scaled_second - second)
-    second_low = second - second_high
-    product = first * second
-    error = (
-        (first_high * second_high - product)
-        + first_high * second_low
-        + first_low * second_high
-    ) + first_low * second_low
-    return np.concatenate((product, error))
+# Rationals at or beyond the midpoint of the binary64 maximum and 2**1024 round
+# to infinity under round-to-nearest-even.
+_BINARY64_OVERFLOW_MIDPOINT = (
+    Fraction(float(np.finfo(np.float64).max)) + Fraction(2) ** 970
+)
 
 
-def _signed_area2(points: np.ndarray) -> float:
-    """Twice the signed area, correctly rounded from the exact shoelace sum."""
+def _nearest_float(value: Fraction, /) -> float:
+    """Round a rational to the nearest binary64 value, ties to even."""
 
-    following = np.roll(points, -1, axis=0)
-    terms = np.concatenate(
-        (
-            _exact_products(points[:, 0], following[:, 1]),
-            -_exact_products(points[:, 1], following[:, 0]),
-        )
+    if value >= _BINARY64_OVERFLOW_MIDPOINT:
+        return math.inf
+    if value <= -_BINARY64_OVERFLOW_MIDPOINT:
+        return -math.inf
+    return float(value)
+
+
+def _exact_area2(points: np.ndarray) -> Fraction:
+    """Exact twice signed shoelace area over the binary64 vertex coordinates."""
+
+    return signed_area2(
+        tuple(rational_vector((float(row[0]), float(row[1]))) for row in points)
     )
-    return math.fsum(terms.tolist())
 
 
 def _turns(points: np.ndarray, tracker: _PredicateTracker) -> np.ndarray:
@@ -459,8 +452,7 @@ def _stable_polygon_id(points: Any) -> str:
             # A sorted fallback is deterministic even for rejected input.  A
             # valid polygon gets a stronger cyclic canonical ID below.
             if array.shape[0] >= 3 and np.all(np.isfinite(array)):
-                area2 = _signed_area2(array)
-                if area2 < 0:
+                if _exact_area2(array) < 0:
                     array = array[::-1]
                 index = np.lexsort((array[:, 1], array[:, 0]))[0]
                 array = np.concatenate((array[index:], array[:index]), axis=0)
@@ -574,8 +566,15 @@ def intersect_convex_polygons(
     vertices, status = _clean_intersection_vertices(clipped, tracker)
     if status is None:
         status = IntersectionStatus.EMPTY
-    area2 = _signed_area2(vertices) if vertices.shape[0] >= 3 else 0.0
-    area = abs(area2 * 0.5)
+    if vertices.shape[0] < 3:
+        area2 = area = 0.0
+    elif np.all(np.isfinite(vertices)):
+        exact_area2 = _exact_area2(vertices)
+        area2 = _nearest_float(exact_area2)
+        area = _nearest_float(abs(exact_area2) / 2)
+    else:
+        # A constructed vertex that overflowed has no exact shoelace area.
+        area2 = area = math.nan
     if status is IntersectionStatus.SUCCESS:
         centroid = _compensated_centroid(vertices, area2)
     elif vertices.shape[0] == 0:

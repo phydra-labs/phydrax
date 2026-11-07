@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
-from types import MappingProxyType
 from math import prod
-from typing import final, Literal, NamedTuple, NoReturn, Protocol, runtime_checkable, SupportsIndex, TYPE_CHECKING
+from types import MappingProxyType
+from typing import (
+    final,
+    Literal,
+    NamedTuple,
+    NoReturn,
+    Protocol,
+    runtime_checkable,
+    SupportsIndex,
+    TYPE_CHECKING,
+)
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -30,6 +39,7 @@ from ...linalg import (
     HilbertComplex,
     LinearSolvePolicy,
     OperatorProperties,
+    SolveResourcePolicy,
 )
 from ...linalg._algebra_operators import apply_real_map_componentwise
 from ...linalg._complexes import (
@@ -46,6 +56,7 @@ from .._cell_geometry_transition_types import CellGeometryTransition
 from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
 from .._cochain_hodge import SparseHodge
 from .._distributed_field import DistributedSparseTransfer
+from .._gram import gram_solve_policy
 from .._nested_reference import (
     nested_cell_reference_maps,
     nested_simplex_maps,
@@ -76,6 +87,7 @@ from ._generic import (
     _form_cell_orientation_sign,
     _linear_reference_element,
     _local_mass_tensor,
+    _MappedBasisTable,
     _prism_canonical_form_coordinates,
     _prism_form_entity_chart_vertices,
     FiniteElementBlockGeometry,
@@ -912,6 +924,21 @@ def _maximum_row_terms(matrix: csr_matrix, /) -> int:
     return int(np.max(np.diff(matrix.indptr), initial=0))
 
 
+_SMALLEST_SUBNORMAL = float(np.ldexp(1.0, -1074))
+
+
+def _nonzero_pattern(matrix: csr_matrix, /) -> csr_matrix:
+    pattern = matrix.copy()
+    pattern.data = (pattern.data != 0.0).astype(np.float64)
+    pattern.eliminate_zeros()
+    return pattern
+
+
+def _product_counts(first: csr_matrix, second: csr_matrix, /) -> csr_matrix:
+    """Per-entry count of nonzero scalar products formed by ``first @ second``."""
+    return (_nonzero_pattern(first) @ _nonzero_pattern(second)).tocsr()
+
+
 def _require_complex_map_commutes(
     map: ComplexMap,
     entry_evidence: Sequence[SparseTransferEntryEvidence],
@@ -936,6 +963,14 @@ def _require_complex_map_commutes(
         observed = abs(difference)
         current_error = _matrix_entry_error(entry_evidence[degree])
         next_error = _matrix_entry_error(entry_evidence[degree + 1])
+        # Gradual underflow adds an absolute error of at most 2^-1075 to every
+        # rounded product and none to additions; relative gamma terms miss it.
+        product_counts = (
+            _product_counts(target_differential, target_map)
+            + _product_counts(next_map, source_differential)
+            + _product_counts(target_differential, current_error)
+            + _product_counts(next_error, source_differential)
+        ).tocsr()
         left_integral_error = abs(target_differential) @ current_error
         right_integral_error = next_error @ abs(source_differential)
         integration_error = (left_integral_error + right_integral_error).tocsr()
@@ -972,6 +1007,12 @@ def _require_complex_map_commutes(
             * integration_error
         )
         roundoff = (roundoff + integration_roundoff).tocsr()
+        # Each counted product is charged 2^-1074 (twice its underflow loss, which
+        # also covers the gamma terms evaluated on underflowed magnitudes); two
+        # more units cover the four rounded scalar products assembling roundoff.
+        product_counts.data += 2.0
+        roundoff = (roundoff + product_counts.multiply(_SMALLEST_SUBNORMAL)).tocsr()
+        del product_counts
         del (
             integration_roundoff,
             target_differential,
@@ -1068,7 +1109,8 @@ def _periodic_quotient_transfer_action(
     target_abs = abs(target_collapse_matrix)
     lifted_abs = abs(lifted_matrix)
     error_matrix = _matrix_entry_error(evidence)
-    integral_error = target_abs @ error_matrix @ source_abs
+    left_integral_error = target_abs @ error_matrix
+    integral_error = left_integral_error @ source_abs
     magnitude = target_abs @ lifted_abs @ source_abs
     left_stage_magnitude = target_abs @ lifted_abs
     left_terms = _maximum_row_terms(target_abs) * _maximum_row_terms(lifted_abs)
@@ -1091,6 +1133,25 @@ def _periodic_quotient_transfer_action(
         )
         * integral_error
     )
+    # Gradual underflow adds an absolute error of at most 2^-1075 to every rounded
+    # product and none to additions; relative gamma terms miss it. Losses of the
+    # first stage reach the result through the source lift, whose entries are
+    # bounded by their integer ceilings. Each counted product is charged 2^-1074
+    # (twice its loss, which also covers the gamma terms evaluated on underflowed
+    # magnitudes); two more units cover the four rounded scalar products that
+    # assemble roundoff and integral_roundoff.
+    source_ceiling = source_abs.copy()
+    source_ceiling.data = np.ceil(source_ceiling.data)
+    product_counts = (
+        _product_counts(target_collapse_matrix, lifted_matrix) @ source_ceiling
+        + _product_counts(left_stage_magnitude, source_abs)
+        + _product_counts(target_abs, error_matrix) @ source_ceiling
+        + _product_counts(left_integral_error, source_abs)
+    ).tocsr()
+    del source_ceiling, left_integral_error
+    product_counts.data += 2.0
+    roundoff = (roundoff + product_counts.multiply(_SMALLEST_SUBNORMAL)).tocsr()
+    del product_counts
     error_matrix = (integral_error + roundoff + integral_roundoff).tocsr()
     error_matrix.eliminate_zeros()
     if error_matrix.nnz:
@@ -1186,7 +1247,14 @@ class _PeriodicFormTopology:
     each consumer, and are not inferred from this preparation.
     """
 
-    __slots__ = ("mesh", "dimension", "ordered_vertices", "vertex_sets", "lookups", "orbit_maps")
+    __slots__ = (
+        "mesh",
+        "dimension",
+        "ordered_vertices",
+        "vertex_sets",
+        "lookups",
+        "orbit_maps",
+    )
 
     def __init__(self, mesh: CellMesh, dimension: int, /) -> None:
         from ...meshing._periodic import periodic_entity_orbit_map
@@ -1202,7 +1270,9 @@ class _PeriodicFormTopology:
         if len(self.ordered_vertices) != dimension + 1 or len(self.vertex_sets) != len(
             self.ordered_vertices
         ):
-            raise ValueError("Periodic entity corner tables do not span the cell complex.")
+            raise ValueError(
+                "Periodic entity corner tables do not span the cell complex."
+            )
         self.lookups = tuple(
             MappingProxyType(
                 {tuple(sorted(vertices)): row for row, vertices in enumerate(level)}
@@ -1247,7 +1317,10 @@ def _vertex_id_orientation(vertices: tuple[int, ...], vertex_ids: np.ndarray, /)
 
 
 def _periodic_entity_coordinate_maps(
-    complex: FiniteElementDeRhamComplex, degree: int, /, *,
+    complex: FiniteElementDeRhamComplex,
+    degree: int,
+    /,
+    *,
     _topology: _PeriodicFormTopology | None = None,
 ) -> tuple[
     SparseCoordinateOperator,
@@ -1257,7 +1330,6 @@ def _periodic_entity_coordinate_maps(
 ]:
     """Build exact-form DOF lifts and representative collapses for every orbit."""
     from scipy import sparse as scipy_sparse
-
 
     mesh = complex.mesh
     periodic = mesh.periodic_topology
@@ -1270,7 +1342,9 @@ def _periodic_entity_coordinate_maps(
     elements = complex.discretization.elements[degree]
     if len(elements) != len(mesh.blocks):
         raise ValueError("Periodic form elements do not align with cell blocks.")
-    topology = _PeriodicFormTopology(mesh, complex.dimension) if _topology is None else _topology
+    topology = (
+        _PeriodicFormTopology(mesh, complex.dimension) if _topology is None else _topology
+    )
     if type(topology) is not _PeriodicFormTopology:
         raise TypeError("Periodic form topology must be an operation-local preparation.")
     topology.require(mesh, complex.dimension)
@@ -1608,7 +1682,10 @@ def _periodic_entity_coordinate_maps(
                         raise ValueError(
                             "Periodic representative and member moment spaces disagree."
                         )
-                    if cell_basis.twist == "twisted" and entity_degree < complex.dimension:
+                    if (
+                        cell_basis.twist == "twisted"
+                        and entity_degree < complex.dimension
+                    ):
                         # The entity chart action is untwisted, while local
                         # coefficients carry each ambient cell's coorientation.
                         local_sign = cell_coorientation(block_index, cell_row)
@@ -1692,7 +1769,12 @@ def _periodic_entity_coordinate_maps(
 
     del exact_cell_transform, cell_coorientation
     del entity_charts, entity_chart_owners, cell_transform_cache, cell_sign_cache
-    del basis_cache, prism_normalizations, orientation_transform_cache, reference_gradient_cache
+    del (
+        basis_cache,
+        prism_normalizations,
+        orientation_transform_cache,
+        reference_gradient_cache,
+    )
 
     rows_by_entity: list[list[np.ndarray | None]] = []
     actions_by_entity: list[list[np.ndarray | None]] = []
@@ -2892,6 +2974,7 @@ def _metric_hodge(
     discretization: FiniteElementDiscretization,
     degree: int,
     policy: LinearSolvePolicy | None,
+    resources: SolveResourcePolicy | None,
     /,
 ) -> SparseHodge:
     dofs = discretization.dof_maps[degree]
@@ -2917,7 +3000,17 @@ def _metric_hodge(
         jnp.concatenate(values),
         dofs.global_dof_count,
     )
-    return SparseHodge(row, column, data, dofs.global_dof_count, policy=policy)
+    if resources is None:
+        return SparseHodge(row, column, data, dofs.global_dof_count, policy=policy)
+    # Declared budgets bind the metric's Riesz solves and its SPD admission.
+    return SparseHodge(
+        row,
+        column,
+        data,
+        dofs.global_dof_count,
+        policy=gram_solve_policy(dofs.global_dof_count, resources=resources),
+        admission_bytes=resources.factorization_bytes,
+    )
 
 
 def _local_derivatives(
@@ -3301,24 +3394,51 @@ def _weighted_local_mass(
     offset: int,
     /,
 ) -> Array:
-    basis = geometry.basis_values
+    table = geometry.basis_table
+    if isinstance(table, _MappedBasisTable):
+        # One-pass assembly of a deferred table in bounded cell blocks; the
+        # weighted and tensor-applied rows are the row-sized intermediates.
+        return jnp.concatenate(
+            tuple(
+                _weighted_mass_rows(
+                    geometry.physical_weights[start:stop],
+                    table.rows(start, stop),
+                    data,
+                    stop - start,
+                    components,
+                    offset + start,
+                )
+                for start, stop in table.row_blocks(2)
+            ),
+            axis=0,
+        )
+    return _weighted_mass_rows(
+        geometry.physical_weights, table(), data, cells, components, offset
+    )
+
+
+def _weighted_mass_rows(
+    physical_weights: Array,
+    basis: Array,
+    data: Array,
+    cells: int,
+    components: int,
+    offset: int,
+    /,
+) -> Array:
     if basis.ndim == 2:
         basis = jnp.broadcast_to(basis[None, :, :, None], (cells, *basis.shape, 1))
     elif basis.ndim == 3:
         basis = basis[..., None]
     if data.ndim in (0, 1):
         weight = data if data.ndim == 0 else data[offset : offset + cells, None]
-        return contract(
-            "cq,cqiv,cqjv->cij", geometry.physical_weights * weight, basis, basis
-        )
+        return contract("cq,cqiv,cqjv->cij", physical_weights * weight, basis, basis)
     tensor = (
         jnp.broadcast_to(data, (cells, components, components))
         if data.ndim == 2
         else data[offset : offset + cells]
     )
-    return contract(
-        "cq,cqiv,cvw,cqjw->cij", geometry.physical_weights, basis, tensor, basis
-    )
+    return contract("cq,cqiv,cvw,cqjw->cij", physical_weights, basis, tensor, basis)
 
 
 def _constitutive_entries(
@@ -3358,6 +3478,14 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
     ``order`` specifies the top-form polynomial order.
     ``coordinate_spec`` binds the exact source/reference map used for Piola
     actions; nonlinear nested transfers require a bound CellGeometryTransition.
+    ``hodge_resources`` declares the complex's byte budgets: its
+    ``factorization_bytes`` bound each Hodge's SPD admission factorization, its
+    ``workspace_bytes`` the per-chunk block-geometry and Hodge-assembly working
+    set, and it budgets the default metric Riesz solves. ``None`` keeps the
+    documented library defaults. A caller-owned ``hodge_solve`` carries its own
+    solve budgets, so the two are exclusive.
+    Mapped basis tables are deferred (per-point Jacobians retained): the metric
+    Hodges and constitutive Grams form them once, in bounded cell blocks.
     """
 
     mesh: CellMesh
@@ -3387,6 +3515,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         coordinate_spec: CellGeometrySpec | None = None,
         coordinate_measure: CoordinateMeasurePlan | None = None,
         hodge_solve: LinearSolvePolicy | None = None,
+        hodge_resources: SolveResourcePolicy | None = None,
         coefficient_dtype: DTypeLike = jnp.float64,
     ) -> None:
         selected = parse(family, FormElementFamily, "family")
@@ -3398,6 +3527,15 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             )
         if hodge_solve is not None and not isinstance(hodge_solve, LinearSolvePolicy):
             raise TypeError("hodge_solve must be an owning LinearSolvePolicy or None.")
+        if hodge_resources is not None and not isinstance(
+            hodge_resources, SolveResourcePolicy
+        ):
+            raise TypeError("hodge_resources must be a SolveResourcePolicy or None.")
+        if hodge_solve is not None and hodge_resources is not None:
+            raise ValueError(
+                "hodge_resources budgets the default Hodge solve; a supplied "
+                "hodge_solve declares its own resources."
+            )
         dimension = mesh.topological_dimension
         fields = _complex_fields(mesh, selected, order, twist_)
         discretization = FiniteElementDiscretization(
@@ -3407,10 +3545,14 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 coordinate_spec=coordinate_spec,
                 coordinate_measure=coordinate_measure,
                 coefficient_dtype=coefficient_dtype,
-            )
+            ),
+            basis_tables="deferred",
+            geometry_workset_bytes=(
+                None if hodge_resources is None else hodge_resources.workspace_bytes
+            ),
         )
         hodges = tuple(
-            _metric_hodge(discretization, degree, hodge_solve)
+            _metric_hodge(discretization, degree, hodge_solve, hodge_resources)
             for degree in range(dimension + 1)
         )
         identifier = canonical_fingerprint(
@@ -4757,8 +4899,8 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         int,
     ]:
         from ._exact_form_moments import (
-            exact_reference_form_moments,
             _reference_arguments,
+            exact_reference_form_moments,
             MomentIntegralMatrix,
         )
 
@@ -4988,7 +5130,10 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                         prepared_orientation=prepared_orientation,
                     )
                     moment_cache[moment_key] = (
-                        source_element, element, integration_policy, moments
+                        source_element,
+                        element,
+                        integration_policy,
+                        moments,
                     )
                 else:
                     cached_source, cached_target, cached_policy, moments = cached
@@ -4997,7 +5142,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                         or cached_target is not element
                         or cached_policy is not integration_policy
                     ):
-                        raise RuntimeError("Exact form moment owners changed during transfer.")
+                        raise RuntimeError(
+                            "Exact form moment owners changed during transfer."
+                        )
                 source_columns = np.asarray(
                     source_dofs.cell_dofs[source_block][source_cell], dtype=np.int64
                 )
@@ -5035,9 +5182,16 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             )
         )
         return self._finish_transfer_degree(
-            target, degree, raw_rows, raw_columns, raw_values,
-            error_values, exact_counts, enclosed_counts,
-            exact_integral_count, enclosed_integral_count,
+            target,
+            degree,
+            raw_rows,
+            raw_columns,
+            raw_values,
+            error_values,
+            exact_counts,
+            enclosed_counts,
+            exact_integral_count,
+            enclosed_integral_count,
         )
 
     def _finish_transfer_degree(

@@ -55,13 +55,21 @@ def _attach_normal_gauge_jvp(
     primals: tuple[GeometryKernel, DesignState, Array, float],
     tangents: tuple[GeometryKernel | None, DesignState | None, object, object],
 ) -> tuple[Array, Array]:
+    """Normal-gauge flow ``dx/dtheta = -F_theta grad F / |grad F|^2``.
+
+    The primal output re-enters ``_attach_normal_gauge``, so an enclosing
+    derivative moves it along the same flow, and the tangent is traced in
+    differentiable operations of that moving point and the parameters. Every
+    higher derivative is therefore the total derivative along the flow.
+    """
     kernel, state, points, minimum_gradient_norm = primals
     kernel_tangent, state_tangent, _, _ = tangents
+    moving = _attach_normal_gauge(kernel, state, points, minimum_gradient_norm)
 
     def parameter_field(
         current_kernel: GeometryKernel, current_state: DesignState
     ) -> Array:
-        return current_kernel.boundary_field(current_state, points)
+        return current_kernel.boundary_field(current_state, moving)
 
     _, field_tangent = eqx.filter_jvp(
         parameter_field,
@@ -69,8 +77,8 @@ def _attach_normal_gauge_jvp(
         (kernel_tangent, state_tangent),
     )
     if field_tangent is None:
-        field_tangent = jnp.zeros(points.shape[:-1], dtype=points.dtype)
-    _, gradient = _field_and_gradient(kernel, state, points)
+        field_tangent = jnp.zeros(moving.shape[:-1], dtype=moving.dtype)
+    _, gradient = _field_and_gradient(kernel, state, moving)
     squared_norm = jnp.sum(gradient * gradient, axis=-1)
     usable = squared_norm >= float(minimum_gradient_norm) ** 2
     tangent = (
@@ -78,7 +86,7 @@ def _attach_normal_gauge_jvp(
         * gradient
         / jnp.maximum(
             squared_norm[..., None],
-            jnp.finfo(points.dtype).tiny,
+            jnp.finfo(moving.dtype).tiny,
         )
     )
     tangent_scale = jnp.where(
@@ -87,7 +95,7 @@ def _attach_normal_gauge_jvp(
         jnp.asarray(jnp.nan, dtype=tangent.dtype),
     )
     tangent = tangent_scale * tangent
-    return points, tangent
+    return moving, tangent
 
 
 class ImplicitPointProjectionEvidence(StrictModule):

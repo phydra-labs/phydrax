@@ -37,32 +37,61 @@ from phydrax.meshing._model_codec import (
 
 def test_association_bank_preserves_exact_parameters_and_rejects_malformed_rows() -> None:
     from phydrax.meshing._association import (
-        GeometryAssociation, GeometryAssociationBankArchiveRecipe, GeometryAssociationKind,
+        GeometryAssociation,
+        GeometryAssociationBankArchiveRecipe,
+        GeometryAssociationKind,
         GeometrySourceEntityRole,
     )
 
     first = GeometryAssociation(
-        GeometryAssociationKind.CURVE, "source", "revision", "edges",
-        np.asarray((7, 9)), ("curve-a", "curve-b"), np.asarray((-0.0, 0.0)),
-        exact=True, source_roles=(GeometrySourceEntityRole.EDGE,) * 2,
+        GeometryAssociationKind.CURVE,
+        "source",
+        "revision",
+        "edges",
+        np.asarray((7, 9)),
+        ("curve-a", "curve-b"),
+        np.asarray((-0.0, 0.0)),
+        exact=True,
+        source_roles=(GeometrySourceEntityRole.EDGE,) * 2,
         source_occurrence_paths=(("assembly", "a"), ("assembly", "b")),
         source_parameter_intervals=((Fraction(1, 3), Fraction(5, 3)), None),
         source_parameter_points=(None, Fraction(7, 11)),
         target_parameter_intervals=((Fraction(1, 4), Fraction(3, 4)), None),
     )
     second = GeometryAssociation(
-        GeometryAssociationKind.PIECEWISE_LINEAR, "source", "revision", "faces",
-        np.asarray((3,)), ("face",), np.asarray((0.0,)), exact=True,
+        GeometryAssociationKind.PIECEWISE_LINEAR,
+        "source",
+        "revision",
+        "faces",
+        np.asarray((3,)),
+        ("face",),
+        np.asarray((0.0,)),
+        exact=True,
         source_roles=(GeometrySourceEntityRole.FACET,),
-        source_occurrence_paths=(("part",),), source_region_sides=(("material", None),),
-        target_reference_pieces=(((21, 0, (), (
-            ((0, 1), (0, 1)), ((1, 1), (0, 1)), ((0, 1), (1, 1)),
-        )),),),
+        source_occurrence_paths=(("part",),),
+        source_region_sides=(("material", None),),
+        target_reference_pieces=(
+            (
+                (
+                    21,
+                    0,
+                    (),
+                    (
+                        ((0, 1), (0, 1)),
+                        ((1, 1), (0, 1)),
+                        ((0, 1), (1, 1)),
+                    ),
+                ),
+            ),
+        ),
         source_boundary_witness_id="reference-witness",
     )
     bank = GeometryAssociationBankArchiveRecipe.from_associations((first, second))
     restored = bank.restore()
-    assert tuple(value.association_id for value in restored) == (first.association_id, second.association_id)
+    assert tuple(value.association_id for value in restored) == (
+        first.association_id,
+        second.association_id,
+    )
     assert np.signbit(np.asarray(restored[0].residuals)[0])
     rows = list(bank.rows.decode())
     rows[0] = (*rows[0], "forged")
@@ -77,28 +106,45 @@ def test_association_bank_preserves_exact_parameters_and_rejects_malformed_rows(
 def test_layer_exact_carrier_columns_roundtrip_and_reject_malformed_rows() -> None:
     from phydrax.meshing._archive_layer_columns import _decode_column
     from phydrax.meshing._layer_core_subdivision import (
-        NearestWallPointEvidence, OverlapSourceStencils,
-        RefinedColumnCertification, RefinedColumnEvidence,
+        NearestWallPointEvidence,
+        OverlapSourceStencils,
+        RefinedColumnCertification,
+        RefinedColumnEvidence,
     )
 
     overlap = OverlapSourceStencils(
-        "source", "target",
+        "source",
+        "target",
         ((7, (("layer", 2, Fraction(1, 3)), ("plc", 4, Fraction(2, 3)))),),
     )
     column = RefinedColumnEvidence(
-        ((2, Fraction(1, 3)), (5, Fraction(2, 3))), (7, 8),
-        (NearestWallPointEvidence(
-            Fraction(5, 7), ((11, (Fraction(1, 2), Fraction(1, 3), Fraction(1, 6)), Fraction(-3, 5)),),
-        ),),
+        ((2, Fraction(1, 3)), (5, Fraction(2, 3))),
+        (7, 8),
+        (
+            NearestWallPointEvidence(
+                Fraction(5, 7),
+                (
+                    (
+                        11,
+                        (Fraction(1, 2), Fraction(1, 3), Fraction(1, 6)),
+                        Fraction(-3, 5),
+                    ),
+                ),
+            ),
+        ),
         Fraction(17, 9),
     )
-    certification = RefinedColumnCertification("source", "spec", "control", "policy", (column,))
+    certification = RefinedColumnCertification(
+        "source", "spec", "control", "policy", (column,)
+    )
     for value in (overlap, certification):
         recipe = layer_record_archive_recipe(value)
         assert recipe is not None
         assert recipe.restore() == value
     with pytest.raises(ValueError, match="not reduced"):
-        _decode_column(TextRowsArchiveRecipe.encode((("7", "layer", "2", "2", "4"),)), "overlap_rows")
+        _decode_column(
+            TextRowsArchiveRecipe.encode((("7", "layer", "2", "2", "4"),)), "overlap_rows"
+        )
     with pytest.raises(ValueError):
         _decode_column(TextRowsArchiveRecipe.encode((("1", "2"),)), "refined_columns")
 
@@ -115,12 +161,16 @@ def test_facet_overlap_columns_preserve_exact_fields_and_reject_forgery() -> Non
     assert _decode_column(encoded, "facet_overlaps") == rows
     with pytest.raises(ValueError, match="not reduced"):
         _decode_column(
-            TextRowsArchiveRecipe.encode((("3", "9", "0", "-1", "2", "4", "exact", "physical"),)),
+            TextRowsArchiveRecipe.encode(
+                (("3", "9", "0", "-1", "2", "4", "exact", "physical"),)
+            ),
             "facet_overlaps",
         )
     with pytest.raises(ValueError, match="invalid field set"):
         _decode_column(
-            TextRowsArchiveRecipe.encode((("3", "9", "0", "-1", "1", "2", "invented", "physical"),)),
+            TextRowsArchiveRecipe.encode(
+                (("3", "9", "0", "-1", "1", "2", "invented", "physical"),)
+            ),
             "facet_overlaps",
         )
 
@@ -173,30 +223,43 @@ def _restore(value: Composition) -> Composition:
 def test_model_content_id_ignores_manifest_whitespace(tmp_path: Path) -> None:
     import json
     import zipfile
+
     from phydrax.meshing._model_codec import model_archive_content_id
 
     compact = write_model_artifact(
-        tmp_path / "compact.phx", _composition(_identity()), limits=MODEL_ARCHIVE_LIMITS,
+        tmp_path / "compact.phx",
+        _composition(_identity()),
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     legacy = tmp_path / "indented.phx"
-    with zipfile.ZipFile(compact) as source, zipfile.ZipFile(
-        legacy, "w", compression=zipfile.ZIP_STORED
-    ) as destination:
+    with (
+        zipfile.ZipFile(compact) as source,
+        zipfile.ZipFile(legacy, "w", compression=zipfile.ZIP_STORED) as destination,
+    ):
         for name in source.namelist():
             payload = source.read(name)
             if name == "manifest.json":
-                payload = json.dumps(json.loads(payload), indent=2, sort_keys=True).encode()
+                payload = json.dumps(
+                    json.loads(payload), indent=2, sort_keys=True
+                ).encode()
             destination.writestr(name, payload)
-    assert model_archive_content_id(compact, limits=MODEL_ARCHIVE_LIMITS) == model_archive_content_id(
-        legacy, limits=MODEL_ARCHIVE_LIMITS
-    )
+    assert model_archive_content_id(
+        compact, limits=MODEL_ARCHIVE_LIMITS
+    ) == model_archive_content_id(legacy, limits=MODEL_ARCHIVE_LIMITS)
 
 
-def test_mapped_core_unbound_rows_roundtrip_without_fabricated_columns(tmp_path: Path) -> None:
+def test_mapped_core_unbound_rows_roundtrip_without_fabricated_columns(
+    tmp_path: Path,
+) -> None:
     value = LayerColumnProjectionIdentity(
-        np.asarray((0, -1)), np.asarray((10, -1)), np.asarray((0, -1)),
-        ("front/0", ""), ((0, 1, 2), ()), (("a", "b", "c"), ()),
-        ((10, 11, 12), ()), allow_unbound=True,
+        np.asarray((0, -1)),
+        np.asarray((10, -1)),
+        np.asarray((0, -1)),
+        ("front/0", ""),
+        ((0, 1, 2), ()),
+        (("a", "b", "c"), ()),
+        ((10, 11, 12), ()),
+        allow_unbound=True,
     )
     path = write_model_artifact(
         tmp_path / "mixed-columns.phx", _composition(value), limits=MODEL_ARCHIVE_LIMITS
@@ -208,8 +271,13 @@ def test_mapped_core_unbound_rows_roundtrip_without_fabricated_columns(tmp_path:
     assert restored.identity_id == value.identity_id
     with pytest.raises(ValueError, match="incomplete or misaligned"):
         LayerColumnProjectionIdentity(
-            np.asarray((0, -1)), np.asarray((10, -1)), np.asarray((0, -1)), ("front/0", ""),
-            ((0, 1, 2), ()), (("a", "b", "c"), ()), ((10, 11, 12), ()),
+            np.asarray((0, -1)),
+            np.asarray((10, -1)),
+            np.asarray((0, -1)),
+            ("front/0", ""),
+            ((0, 1, 2), ()),
+            (("a", "b", "c"), ()),
+            ((10, 11, 12), ()),
         )
 
 
@@ -283,25 +351,31 @@ def test_nested_reference_exact_bank_uses_column_recipe() -> None:
     )
     assert recipe.restore().fine_reference_exact_vertices == exact
 
+
 def test_source_chart_witness_codec_sorts_rows_and_requires_ancestry_fields() -> None:
     from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 
     def witness(order: np.ndarray) -> SourceBoundaryChartWitness:
         return SourceBoundaryChartWitness(
-            mesh_id="mesh", geometry_id="geometry", topology_id="topology",
-            source_id="source", source_revision="revision", source_query_id="query",
-            chart_dimension=2, reference_dimension=2,
+            mesh_id="mesh",
+            geometry_id="geometry",
+            topology_id="topology",
+            source_id="source",
+            source_revision="revision",
+            source_query_id="query",
+            chart_dimension=2,
+            reference_dimension=2,
             cell_global_ids=np.array([9, 3], dtype=np.int64)[order],
             entity_global_ids=np.array([9, 3], dtype=np.int64)[order],
             local_entity_indices=np.array([-1, -1], dtype=np.int32)[order],
             target_reference_vertices=np.tile(
-                np.array([[[0., 0.], [1., 0.], [0., 1.]]]), (2, 1, 1)
+                np.array([[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]]), (2, 1, 1)
             )[order],
             source_chart_ids=tuple(("chart-a", "chart-b")[i] for i in order),
             source_entity_ids=tuple(("face-a", "face-b")[i] for i in order),
             occurrence_paths=((), ()),
             source_parameters=np.tile(
-                np.array([[[0., 0.], [1., 0.], [0., 1.]]]), (2, 1, 1)
+                np.array([[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]]), (2, 1, 1)
             )[order],
             orientations=np.array([1, -1], dtype=np.int8)[order],
         )
@@ -327,10 +401,10 @@ def test_face_image_archive_retains_exact_support_and_refuses_tampering(
     tmp_path: Path,
 ) -> None:
     from phydrax._model._structure import (
-        SourceBoundaryFaceImageWitnessArchiveRecipe,
-        SourceBoundaryImagePullbackArchiveRecipe,
         model_archive_projection,
         restore_row_record_recipes,
+        SourceBoundaryFaceImageWitnessArchiveRecipe,
+        SourceBoundaryImagePullbackArchiveRecipe,
     )
     from phydrax.geometry._source_boundary_records import (
         SourceBoundaryFaceImageWitness,
@@ -344,13 +418,19 @@ def test_face_image_archive_retains_exact_support_and_refuses_tampering(
         ((0, 1), (1, 2), (0, 1)),
     )
     witness = SourceBoundaryFaceImageWitness(
-        mesh_id="mesh", geometry_id="geometry", topology_id="topology",
-        source_id="source", source_revision="revision", source_query_id="query",
+        mesh_id="mesh",
+        geometry_id="geometry",
+        topology_id="topology",
+        source_id="source",
+        source_revision="revision",
+        source_query_id="query",
         cell_global_ids=np.array([3], dtype=np.int64),
         entity_global_ids=np.array([5], dtype=np.int64),
         local_entity_indices=np.array([2], dtype=np.int64),
-        source_chart_ids=("chart",), source_entity_ids=("face",),
-        occurrence_paths=(("occurrence",),), source_region_sides=(("material", None),),
+        source_chart_ids=("chart",),
+        source_entity_ids=("face",),
+        occurrence_paths=(("occurrence",),),
+        source_region_sides=(("material", None),),
         orientations=np.array([1], dtype=np.int64),
         image_triangle_rational_tokens=(triangle,),
     )
@@ -364,17 +444,23 @@ def test_face_image_archive_retains_exact_support_and_refuses_tampering(
     assert restored_witness.witness_id == witness.witness_id
     assert restored_pullback == pullback
 
-    changed_triangle = (((Fraction(0), Fraction(0), Fraction(0)),
-                         (Fraction(2, 3), Fraction(0), Fraction(0)),
-                         (Fraction(0), Fraction(1, 2), Fraction(0))),)
+    changed_triangle = (
+        (
+            (Fraction(0), Fraction(0), Fraction(0)),
+            (Fraction(2, 3), Fraction(0), Fraction(0)),
+            (Fraction(0), Fraction(1, 2), Fraction(0)),
+        ),
+    )
     for changed in (
         image_recipe._replace(source_id="other-source"),
-        image_recipe._replace(source_region_sides=StaticColumnArchiveRecipe.encode(
-            ((None, "material"),)
-        )),
-        image_recipe._replace(image_triangles=ExactTensorArchiveRecipe.encode(
-            changed_triangle, rational=True
-        )),
+        image_recipe._replace(
+            source_region_sides=StaticColumnArchiveRecipe.encode(((None, "material"),))
+        ),
+        image_recipe._replace(
+            image_triangles=ExactTensorArchiveRecipe.encode(
+                changed_triangle, rational=True
+            )
+        ),
     ):
         with pytest.raises(ValueError, match="canonical owner"):
             changed.restore()
@@ -386,27 +472,39 @@ def test_face_image_archive_retains_exact_support_and_refuses_tampering(
 
     def composition(values: tuple[Any, ...]) -> Composition:
         entry = CompositionEntry(
-            values, entry_id="image", role="model-state", owner_id="phydrax.geometry",
-            structure_id=witness.witness_id, revision_id=witness.witness_id,
+            values,
+            entry_id="image",
+            role="model-state",
+            owner_id="phydrax.geometry",
+            structure_id=witness.witness_id,
+            revision_id=witness.witness_id,
             semantics_id="exact-image-support",
         )
         return Composition((entry,), boundary_id="image-archive")
 
     path = write_model_artifact(
-        tmp_path / "image.phx", composition((witness, pullback)), limits=MODEL_ARCHIVE_LIMITS
+        tmp_path / "image.phx",
+        composition((witness, pullback)),
+        limits=MODEL_ARCHIVE_LIMITS,
     )
     receipt = model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
     restored = read_model_artifact(
-        path, expected_type=Composition, restore=lambda raw: composition(raw.value("image")),
-        limits=MODEL_ARCHIVE_LIMITS, expected_content_id=receipt,
+        path,
+        expected_type=Composition,
+        restore=lambda raw: composition(raw.value("image")),
+        limits=MODEL_ARCHIVE_LIMITS,
+        expected_content_id=receipt,
     )
     reloaded_witness, reloaded_pullback = restored.value("image")
     assert reloaded_witness.witness_id == witness.witness_id
     assert reloaded_pullback == pullback
     with pytest.raises(ArrayArchiveCorruptionError, match="content ID"):
         read_model_artifact(
-            path, expected_type=Composition, restore=lambda raw: raw,
-            limits=MODEL_ARCHIVE_LIMITS, expected_content_id="0" * 64,
+            path,
+            expected_type=Composition,
+            restore=lambda raw: raw,
+            limits=MODEL_ARCHIVE_LIMITS,
+            expected_content_id="0" * 64,
         )
 
 
@@ -712,3 +810,187 @@ def test_rational_term_rows_share_only_within_one_decode() -> None:
     assert restored[1] is restored[3]
     assert restored[0] is not restored[1]
     assert _decode_column(recipe, "rational_terms")[0] is not restored[0]
+
+
+def _record_column(recipe: dict[str, Any], record_type: str, field: str, /) -> str:
+    """Member name of one record's array column in an expanded model recipe."""
+    from phydrax._model._structure import _recipe_array_nodes
+
+    pending: list[Any] = [recipe]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+            continue
+        if not isinstance(node, dict):
+            continue
+        if (
+            node.get("kind") == "namedtuple"
+            and str(node.get("type", "")).endswith("LayerRecordArchiveRecipe")
+            and node["items"][0]["value"] == record_type
+        ):
+            (column,) = (
+                value for key, value in node["items"][1]["items"] if key["value"] == field
+            )
+            assert column["kind"] == "array"
+            index = next(
+                index
+                for index, item in enumerate(_recipe_array_nodes(recipe))
+                if item is column
+            )
+            return f"model/leaves/{index:06d}"
+        pending.extend(node.values())
+    raise AssertionError(f"No {record_type}.{field} column in the recipe.")
+
+
+def _refuses_column(
+    path: Path,
+    expected_type: type,
+    record_type: str,
+    field: str,
+    change: Any,
+    /,
+) -> None:
+    manifest, arrays = read_model_archive(path, limits=MODEL_ARCHIVE_LIMITS)
+    name = _record_column(manifest["model_recipe"], record_type, field)
+    changed = dict(arrays)
+    changed[name] = change(np.array(arrays[name]))
+    count = len(tuple(path.parent.iterdir()))
+    tampered = write_model_archive(
+        path.with_name(f"tampered-{record_type}-{count}.phx"),
+        manifest=manifest,
+        arrays=changed,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    from phydrax.meshing._model_codec import restore_model_archive_value
+
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_artifact(
+            tampered,
+            expected_type=expected_type,
+            restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+
+
+def test_cell_map_digests_archive_as_fixed_width_byte_rows(tmp_path: Path) -> None:
+    import phydrax as phx
+    from phydrax.discretization._cell_mesh import CellMesh
+    from phydrax.meshing._model_codec import restore_model_archive_value
+
+    axis = np.linspace(0.0, 1.0, 4)
+    points = np.stack(np.meshgrid(axis, axis), axis=-1).reshape((-1, 2))
+    cells = [
+        cell
+        for j in range(3)
+        for i in range(3)
+        for cell in (
+            (j * 4 + i, j * 4 + i + 1, j * 4 + i + 5),
+            (j * 4 + i, j * 4 + i + 5, j * 4 + i + 4),
+        )
+    ]
+    result = phx.meshing.certify_cell_mesh(
+        CellMesh.from_triangles(points, np.asarray(cells, dtype=np.int32)),
+        phx.SpatialCoordinateContract.si(),
+    )
+    digests = result.audit.validity.cell_map_digests
+    path = write_model_artifact(
+        tmp_path / "validity.phx", result, limits=MODEL_ARCHIVE_LIMITS
+    )
+    manifest, arrays = read_model_archive(path, limits=MODEL_ARCHIVE_LIMITS)
+    column = np.asarray(
+        arrays[
+            _record_column(
+                manifest["model_recipe"], "CellValidityCertificate", "cell_map_digests"
+            )
+        ]
+    )
+    assert column.dtype == np.uint8 and column.shape == (len(cells), 32)
+    assert column.tobytes() == digests
+    restored = read_model_artifact(
+        path,
+        expected_type=type(result),
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.result_id == result.result_id
+    assert restored.audit.validity.cell_map_digests == digests
+
+    def flipped(rows: np.ndarray) -> np.ndarray:
+        rows[0, 0] ^= 1
+        return rows
+
+    _refuses_column(
+        path, type(result), "CellValidityCertificate", "cell_map_digests", flipped
+    )
+    _refuses_column(
+        path,
+        type(result),
+        "CellValidityCertificate",
+        "cell_map_digests",
+        lambda rows: rows.reshape((-1, 16)),
+    )
+
+
+def test_scope_unqualified_ids_archive_as_integer_column(tmp_path: Path) -> None:
+    from phydrax.meshing._model_codec import restore_model_archive_value
+    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+
+    scope = MeshingScope(
+        "column-source",
+        "column-revision",
+        MeshingEntityKind.MESH,
+        0,
+        "column-vertices",
+        np.arange(0, 40, 2, dtype=np.int64),
+    )
+    # Archive roots keep their registered dataclass; nested scopes use columns.
+    value = Composition(
+        (
+            CompositionEntry(
+                scope,
+                entry_id="scope",
+                role="model-state",
+                owner_id="phydrax.meshing",
+                structure_id=scope.scope_id,
+                revision_id=scope.source_revision,
+                semantics_id="meshing-scope",
+            ),
+        ),
+        boundary_id="scope-column-archive",
+    )
+    path = write_model_artifact(
+        tmp_path / "scope.phx", value, limits=MODEL_ARCHIVE_LIMITS
+    )
+    manifest, arrays = read_model_archive(path, limits=MODEL_ARCHIVE_LIMITS)
+    column = np.asarray(
+        arrays[
+            _record_column(
+                manifest["model_recipe"], "MeshingScope", "unqualified_entity_ids"
+            )
+        ]
+    )
+    assert column.dtype == np.int64
+    assert tuple(column.tolist()) == scope.unqualified_entity_ids
+    restored = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    ).value("scope")
+    assert type(restored) is MeshingScope
+    assert restored.scope_id == scope.scope_id
+    assert restored.unqualified_entity_ids == scope.unqualified_entity_ids
+
+    def changed(ids: np.ndarray) -> np.ndarray:
+        ids[-1] += 1
+        return ids
+
+    _refuses_column(path, Composition, "MeshingScope", "unqualified_entity_ids", changed)
+    _refuses_column(
+        path,
+        Composition,
+        "MeshingScope",
+        "unqualified_entity_ids",
+        lambda ids: ids.astype(np.int32),
+    )

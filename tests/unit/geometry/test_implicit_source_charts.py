@@ -796,16 +796,19 @@ def test_adaptive_implicit_on_surface_p2_sphere_charts_certify_in_bounded_rounds
     rounds = 0
     run_piece_steps = source_charts._run_piece_steps
 
+    # `_run_piece_steps` gained the branch-mode flag with the non-smooth
+    # root charts (ImplicitNonSmoothSources); the counter forwards it.
     def counted_rounds(
         bounds: source_charts._FieldEnclosures,
         hessian_program: source_charts.PreparedIntervalFunction,
         steps: Sequence[source_charts._PieceSteps],
         queries: Sequence[source_charts._BoxRequests] = (),
         /,
-    ) -> tuple[list[source_charts._PieceOutcome], list[source_charts._BoxResults]]:
+        branches: bool = False,
+    ) -> tuple[list[source_charts._PieceOutcome], list[source_charts._BoxResults | None]]:
         nonlocal rounds
         rounds += 1
-        return run_piece_steps(bounds, hessian_program, steps, queries)
+        return run_piece_steps(bounds, hessian_program, steps, queries, branches)
 
     monkeypatch.setattr(source_charts, "_run_piece_steps", counted_rounds)
     # Without fidelity controls every face's endpoint signs and differential
@@ -1044,15 +1047,18 @@ def _near_band_face_proof(
     rounds: list[int] = []
     run_piece_steps = source_charts._run_piece_steps
 
+    # `_run_piece_steps` gained the branch-mode flag with the non-smooth
+    # root charts (ImplicitNonSmoothSources); the counter forwards it.
     def counted_rounds(
         bounds: source_charts._FieldEnclosures,
         hessian_program: source_charts.PreparedIntervalFunction,
         steps: Sequence[source_charts._PieceSteps],
         queries: Sequence[source_charts._BoxRequests] = (),
         /,
-    ) -> tuple[list[source_charts._PieceOutcome], list[source_charts._BoxResults]]:
+        branches: bool = False,
+    ) -> tuple[list[source_charts._PieceOutcome], list[source_charts._BoxResults | None]]:
         rounds.append(len(steps))
-        return run_piece_steps(bounds, hessian_program, steps, queries)
+        return run_piece_steps(bounds, hessian_program, steps, queries, branches)
 
     monkeypatch.setattr(source_charts, "_run_piece_steps", counted_rounds)
 
@@ -1507,16 +1513,15 @@ def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
             maximum_normal_deviation=np.pi,
             chart_parent=premise,
         )
-    # A forged supplemental row identity must also fail independent replay,
-    # even though these acceleration records are not in the full-proof ID.
-    object.__setattr__(
-        tampered_rows,
-        "rows_id",
-        tampered_rows._identity(
-            tampered_rows.keys, tampered_rows.reusable, tampered_rows.values
-        ),
-    )
-    with pytest.raises(ValueError, match="does not reproduce"):
+    # A forged supplemental row identity must also fail independent replay:
+    # row values are stored evidence, so the forgery moves a certified
+    # target-to-root enclosure wholly away from its reproof.
+    row = int(np.flatnonzero(rows.reusable)[0])
+    forged_values = np.array(rows.values, copy=True)
+    forged_values[row, 1:3] = 2.0 * rows.values[row, 2] + 1.0
+    forged_rows = ImplicitChartRows(rows.keys, rows.reusable, forged_values)
+    object.__setattr__(parent, "chart_rows", forged_rows)
+    with pytest.raises(ValueError, match="disjoint"):
         parent.revalidate(mesh, geometry, source)
 
 
@@ -1536,8 +1541,16 @@ def test_adaptive_implicit_root_chart_requires_smooth_or_profile_regular_source(
     unprofiled_sphere = _BoundAdaptiveSourceQuery(
         sphere_source.query, contract.spatial_id
     )
-    with pytest.raises(ValueError, match="smooth field"):
-        prepare_adaptive_implicit_root_charts(mesh, geometry, unprofiled_sphere, witness)
+    # Since the non-smooth root charts (ImplicitNonSmoothSources) a field that
+    # is neither smooth nor exactly profiled is no longer refused: each face
+    # proves smoothness box by box from its interval program's branch
+    # decisions. This sphere is smooth on every face's boxes, so every face
+    # keeps its root chart.
+    unprofiled = prepare_adaptive_implicit_root_charts(
+        mesh, geometry, unprofiled_sphere, witness
+    )
+    assert unprofiled.status == "certified"
+    assert {evidence.bound for evidence in unprofiled.chart_evidence} == {"root_chart"}
 
     cube_geometry = phx.geometry.Box(
         (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), feature_id="cube-kink"
@@ -1566,7 +1579,9 @@ def test_adaptive_implicit_root_chart_requires_smooth_or_profile_regular_source(
     cube_source = AdaptiveImplicitBoundarySource(
         cube_surface, frame_id=contract.spatial_id
     )
-    with pytest.raises(ValueError, match="smooth field"):
+    # A cube's possible-zero boxes meet its kinked edges; the root-chart route
+    # admits it in branch mode, and a witness of another source is refused.
+    with pytest.raises(ValueError):
         prepare_adaptive_implicit_root_charts(mesh, geometry, cube_source, witness)
 
 

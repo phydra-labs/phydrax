@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from fractions import Fraction
 from pathlib import Path
 
 import equinox as eqx
 import numpy as np
 import pytest
+from jax.typing import ArrayLike
 
 import phydrax as phx
 from phydrax._meshcore import meshcore_available
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep import brep_box
 from phydrax.geometry.brep._projection import NativeBRepProjection
-from phydrax.meshing._association import GeometryAssociationKind
+from phydrax.geometry.brep._projection_contracts import brep_entity_id
+from phydrax.meshing._association import GeometryAssociation, GeometryAssociationKind
 from phydrax.meshing._association_routes import target_dimension
 from phydrax.meshing._layer_core_association_transfer import (
     NativeLayerCoreAssociationTransfer,
@@ -271,6 +274,57 @@ def _replace_table(
     return eqx.tree_at(lambda value: value.associations, result, tuple(tables))
 
 
+def _forged_occurrence(association: GeometryAssociation) -> GeometryAssociation:
+    """Re-key one classified row to a forged occurrence through the constructor.
+
+    Occurrence paths are static metadata, so the forgery is a coherent new table:
+    the row's B-Rep entity key is re-derived for the forged path, as a forger
+    who also controls the identities would emit it.
+    """
+    dimensions = np.asarray(association.source_dimensions)
+    indices = np.asarray(association.source_indices)
+    row = int(np.flatnonzero(dimensions >= 0)[0])
+    paths = list(association.source_occurrence_paths)
+    paths[row] = (*paths[row], "forged-occurrence")
+    entities = list(association.source_entity_ids)
+    if association.association_kind is GeometryAssociationKind.BREP:
+        entities[row] = brep_entity_id(
+            association.source_id,
+            association.source_revision,
+            int(dimensions[row]),
+            int(indices[row]),
+            occurrence_path=paths[row],
+        )
+    return GeometryAssociation(
+        association.association_kind,
+        association.source_id,
+        association.source_revision,
+        association.target_entity_set_id,
+        association.target_global_ids,
+        tuple(entities),
+        association.residuals,
+        resolved=association.resolved,
+        ambiguous=association.ambiguous,
+        exact=association.exact,
+        source_dimensions=dimensions,
+        source_indices=indices,
+        source_roles=association.source_roles,
+        source_occurrence_paths=tuple(paths),
+        source_region_sides=association.source_region_sides,
+        source_parameter_intervals=association.source_parameter_intervals,
+        target_parameter_intervals=association.target_parameter_intervals,
+        target_reference_pieces=association.target_reference_pieces,
+        source_boundary_witness_id=association.source_boundary_witness_id,
+        source_parameter_points=association.source_parameter_points,
+        parameters=association.parameters,
+        orientations=association.orientations,
+        parent_dimensions=association.parent_dimensions,
+        parent_ids=association.parent_ids,
+        parent_association_id=association.parent_association_id,
+        provenance=association.provenance,
+    )
+
+
 def test_brep_wall_refinement_and_complete_coarsening(brep_layer_core: LayerCase) -> None:
     _, _, original, transfer = brep_layer_core
     transfer.validate_source(original)
@@ -309,9 +363,25 @@ def test_brep_wall_refinement_and_complete_coarsening(brep_layer_core: LayerCase
         refined_rows[identifier] == row for identifier, row in original_rows.items()
     )
     new_rows = [row for row in refined_rows.values() if row[4] in new_ids]
-    assert any(
-        row[15] in (1, 2) and isinstance(row[12], tuple) and bool(row[12])
-        for row in new_rows
+    # Created wall vertices lie on source curves and faces. Their vertex rows
+    # carry no target pieces or exact points; each created curve vertex keeps
+    # its exact normalized curve parameter in the wall's CURVE vertex table
+    # (wall-record contract of 396c7e272, ``_layer_wall_source_records``).
+    assert {row[15] for row in new_rows} == {1, 2}
+    curve_key = (
+        old_wall.source_id,
+        old_wall.source_revision,
+        GeometryAssociationKind.CURVE,
+        0,
+    )
+    curve_points = {
+        row[4]: row[10]
+        for row in _layer_association_semantics(refined)
+        if row[:4] == curve_key and row[4] in new_ids
+    }
+    assert set(curve_points) == {row[4] for row in new_rows if row[15] == 1}
+    assert all(
+        isinstance(value, Fraction) and 0 < value < 1 for value in curve_points.values()
     )
     active = {
         int(identifier)
@@ -339,9 +409,24 @@ def test_brep_wall_refinement_and_complete_coarsening(brep_layer_core: LayerCase
     ).target
     transfer.validate_source(restored)
     assert restored.mesh.topology_id == original.mesh.topology_id
-    assert _layer_association_semantics(restored) == _layer_association_semantics(
-        original
-    )
+    # An adapted target carries its own ``adaptation:<prepared_id>`` numeric
+    # version (ff7c77f82, ``_finalize_native``), so its mesh/geometry ids and the
+    # face witness ids that bind them differ from the original's. Every other
+    # association field must be restored exactly, grouped under the witnesses
+    # exactly as the original strata were.
+    assert restored.mesh.mesh_id != original.mesh.mesh_id
+
+    def strata(
+        result: phx.meshing.CellMeshingResult,
+    ) -> list[tuple[tuple[object, ...], ...]]:
+        groups: dict[object, list[tuple[object, ...]]] = {}
+        for row in _layer_association_semantics(result):
+            groups.setdefault(row[13], []).append(row[:13] + row[14:])
+        return sorted(
+            (tuple(sorted(rows, key=repr)) for rows in groups.values()), key=repr
+        )
+
+    assert strata(restored) == strata(original)
 
 
 @pytest.mark.parametrize(
@@ -352,18 +437,17 @@ def test_brep_wall_rejects_forged_source_rows(
 ) -> None:
     _, _, result, transfer = brep_layer_core
     index, table = _wall_table(result)
-    if field == "parameters":
-        values = np.asarray(table.parameters).copy()
-        row = int(np.flatnonzero(np.isfinite(values[:, 0]))[0])
-        values[row, 0] += 0.125
-    elif field == "source_indices":
-        values = np.asarray(table.source_indices).copy()
-        values[0] += 1
+    if field == "source_occurrence_paths":
+        forged = _forged_occurrence(table)
     else:
-        values = list(table.source_occurrence_paths)
-        values[0] = (*values[0], "forged-occurrence")
-        values = tuple(values)
-    forged = eqx.tree_at(lambda value: getattr(value, field), table, values)
+        if field == "parameters":
+            values = np.asarray(table.parameters).copy()
+            row = int(np.flatnonzero(np.isfinite(values[:, 0]))[0])
+            values[row, 0] += 0.125
+        else:
+            values = np.asarray(table.source_indices).copy()
+            values[0] += 1
+        forged = eqx.tree_at(lambda value: getattr(value, field), table, values)
     with pytest.raises(ValueError):
         transfer.validate_source(_replace_table(result, index, forged))
 
@@ -390,18 +474,17 @@ def test_projected_original_wall_rejects_forged_rows(
         pytest.skip("requires the original projected wall fixture")
     association = source.layers.wall_association
     assert association is not None and policy is not None
-    if field == "parameters":
-        values = np.asarray(association.parameters).copy()
-        row = int(np.flatnonzero(np.isfinite(values[:, 0]))[0])
-        values[row, 0] += 0.125
-    elif field == "source_indices":
-        values = np.asarray(association.source_indices).copy()
-        values[0] += 1
+    if field == "source_occurrence_paths":
+        forged = _forged_occurrence(association)
     else:
-        values = list(association.source_occurrence_paths)
-        values[0] = (*values[0], "forged-occurrence")
-        values = tuple(values)
-    forged = eqx.tree_at(lambda value: getattr(value, field), association, values)
+        if field == "parameters":
+            values = np.asarray(association.parameters).copy()
+            row = int(np.flatnonzero(np.isfinite(values[:, 0]))[0])
+            values[row, 0] += 0.125
+        else:
+            values = np.asarray(association.source_indices).copy()
+            values[0] += 1
+        forged = eqx.tree_at(lambda value: getattr(value, field), association, values)
     with pytest.raises(ValueError):
         rebuilt = _projected_source(
             source,
@@ -724,6 +807,69 @@ def test_original_unit_box_grown_wall_query_is_complete_and_source_bound(
         parametric_wall_query(charts, grown[:-1])
     with pytest.raises(ValueError, match="do not bind"):
         parametric_wall_query(charts, (*grown, max(charts.cell_global_ids) + 1))
+
+
+@pytest.mark.parametrize("ulps", (1, 7))
+def test_full_atlas_replay_keeps_sampled_residuals_under_other_platform_rounding(
+    unit_box_staged_source: NativeLayerCoreSource,
+    monkeypatch: pytest.MonkeyPatch,
+    ulps: int,
+) -> None:
+    """Sampled chord residuals are stored evidence, not re-derived bit for bit.
+
+    Another platform's surface evaluation (XLA, FMA contraction, einsum order)
+    lands a few ulps away; the original atlas still restores unchanged.
+    """
+    from phydrax.meshing._layer_wall_source_replay import validate_full_boundary_charts
+
+    source = unit_box_staged_source
+    charts = source.source_boundary_charts
+    assert charts is not None and charts.mesh.blocks[0].cell_kind == "triangle"
+    evaluate = MeshingDomain.evaluate
+
+    def other_platform(
+        self: MeshingDomain, patches: ArrayLike, charts_: ArrayLike, /
+    ) -> np.ndarray:
+        values = np.asarray(evaluate(self, patches, charts_))
+        for _ in range(ulps):
+            values = np.nextafter(values, np.inf)
+        return values
+
+    monkeypatch.setattr(MeshingDomain, "evaluate", other_platform)
+    binding = source.binding_id
+    validate_full_boundary_charts(source, 0.0)
+    assert source.binding_id == binding
+
+
+@pytest.mark.parametrize("residual", (-1.0, float("nan"), float("inf")))
+def test_full_atlas_replay_refuses_an_invalid_stored_residual(
+    unit_box_staged_source: NativeLayerCoreSource, residual: float
+) -> None:
+    from phydrax.meshing._layer_wall_source_replay import (
+        _stored_residual,
+        validate_full_boundary_charts,
+    )
+
+    assert not _stored_residual(residual, None)
+    assert not _stored_residual(np.nextafter(0.0, 1.0), 0.0)
+    assert _stored_residual(0.0, 0.0) and _stored_residual(1.0e-16, None)
+    source = unit_box_staged_source
+    charts = source.source_boundary_charts
+    assert charts is not None
+    faces = charts.mesh.entity_set(2).entity_set_id
+    tables = []
+    for table in charts.associations:
+        if table.target_entity_set_id == faces:
+            residuals = np.array(table.residuals, dtype=np.float64, copy=True)
+            residuals[0] = residual
+            table = eqx.tree_at(lambda value: value.residuals, table, residuals)
+        tables.append(table)
+    forged_charts = eqx.tree_at(lambda value: value.associations, charts, tuple(tables))
+    forged = eqx.tree_at(
+        lambda value: value.source_boundary_charts, source, forged_charts
+    )
+    with pytest.raises(ValueError):
+        validate_full_boundary_charts(forged, 0.0)
 
 
 def test_real_refined_prism_chart_requires_actual_parent_face(

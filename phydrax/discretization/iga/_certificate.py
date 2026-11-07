@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from fractions import Fraction
 from itertools import combinations, permutations
-from math import comb, isfinite
+from math import comb, gcd, isfinite, lcm
 
 import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...geometry._rational import fraction_down, fraction_up
 from ._geometry import NURBSGeometryState
 from ._volume import (
     aabbs_strictly_separated,
@@ -90,7 +92,6 @@ class TensorNURBSCertificatePolicy:
     maximum_subdivision_depth: int = 8
     maximum_subboxes: int = 4096
     positive_margin: float = 0.0
-    roundoff_operation_budget: int = 32768
     policy_id: str = ""
 
     def __post_init__(self) -> None:
@@ -100,8 +101,6 @@ class TensorNURBSCertificatePolicy:
             raise ValueError("maximum_subboxes must be positive.")
         if not isfinite(self.positive_margin) or self.positive_margin < 0.0:
             raise ValueError("positive_margin must be finite and non-negative.")
-        if self.roundoff_operation_budget < 64:
-            raise ValueError("roundoff_operation_budget must be at least 64.")
         if not self.policy_id:
             object.__setattr__(
                 self,
@@ -112,7 +111,6 @@ class TensorNURBSCertificatePolicy:
                         "maximum_subdivision_depth": self.maximum_subdivision_depth,
                         "maximum_subboxes": self.maximum_subboxes,
                         "positive_margin": self.positive_margin,
-                        "roundoff_operation_budget": self.roundoff_operation_budget,
                     }
                 ),
             )
@@ -285,17 +283,60 @@ class GlobalInjectivityCertificate:
         }
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _BernsteinPolynomial:
-    coefficients: np.ndarray
+    """Exact tensor Bernstein polynomial over a positive rational unit.
+
+    ``scaled`` holds Python integers in the scaled Bernstein basis
+    ``prod_a t_a^k_a (1 - t_a)^(n_a - k_a)``: coefficient ``k`` equals
+    ``unit * scaled[k] / prod_a binom(n_a, k_a)``. Products are integer
+    convolutions, so cancelling terms are never enclosed separately.
+    """
+
+    scaled: np.ndarray
+    unit: Fraction
 
     @property
     def degrees(self) -> tuple[int, ...]:
-        return tuple(size - 1 for size in self.coefficients.shape)
+        return tuple(size - 1 for size in self.scaled.shape)
 
 
-def _poly_scale(value: _BernsteinPolynomial, scale: float, /) -> _BernsteinPolynomial:
-    return _BernsteinPolynomial(value.coefficients * scale)
+def _binomial_weights(degrees: tuple[int, ...], /) -> np.ndarray:
+    weights = np.ones(tuple(degree + 1 for degree in degrees), dtype=object)
+    for axis, degree in enumerate(degrees):
+        shape = [1] * len(degrees)
+        shape[axis] = degree + 1
+        axis_weights = np.asarray(
+            [comb(degree, index) for index in range(degree + 1)], dtype=object
+        )
+        weights = weights * axis_weights.reshape(shape)
+    return weights
+
+
+def _exact_integers(values: np.ndarray, /) -> tuple[np.ndarray, int]:
+    """Return integers and one power-of-two denominator that equal ``values``."""
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Bernstein certification requires finite control data.")
+    fractions = [Fraction(float(value)) for value in values.flat]
+    # Binary64 denominators are powers of two, so the largest is their lcm.
+    denominator = max(value.denominator for value in fractions)
+    integers = np.asarray(
+        [value.numerator * (denominator // value.denominator) for value in fractions],
+        dtype=object,
+    ).reshape(values.shape)
+    return integers, denominator
+
+
+def _poly_leaf(coefficients: np.ndarray, /) -> _BernsteinPolynomial:
+    integers, denominator = _exact_integers(coefficients)
+    degrees = tuple(size - 1 for size in coefficients.shape)
+    return _BernsteinPolynomial(
+        integers * _binomial_weights(degrees), Fraction(1, denominator)
+    )
+
+
+def _poly_negate(value: _BernsteinPolynomial, /) -> _BernsteinPolynomial:
+    return _BernsteinPolynomial(-value.scaled, value.unit)
 
 
 def _poly_add(
@@ -303,65 +344,62 @@ def _poly_add(
     second: _BernsteinPolynomial,
     /,
     *,
-    second_scale: float = 1.0,
+    subtract: bool = False,
 ) -> _BernsteinPolynomial:
-    if first.coefficients.shape != second.coefficients.shape:
+    if first.scaled.shape != second.scaled.shape:
         raise ValueError("Bernstein polynomial degrees do not agree.")
-    return _BernsteinPolynomial(first.coefficients + second_scale * second.coefficients)
+    # The largest rational dividing both positive units keeps both integral.
+    unit = Fraction(
+        gcd(first.unit.numerator, second.unit.numerator),
+        lcm(first.unit.denominator, second.unit.denominator),
+    )
+    first_scaled = first.scaled * (first.unit / unit).numerator
+    second_scaled = second.scaled * (second.unit / unit).numerator
+    return _BernsteinPolynomial(
+        first_scaled - second_scaled if subtract else first_scaled + second_scaled,
+        unit,
+    )
 
 
 def _poly_product(
     first: _BernsteinPolynomial, second: _BernsteinPolynomial, /
 ) -> _BernsteinPolynomial:
-    first_degrees = first.degrees
-    second_degrees = second.degrees
-    if len(first_degrees) != len(second_degrees):
+    if len(first.degrees) != len(second.degrees):
         raise ValueError("Bernstein polynomial dimensions do not agree.")
-    result_degrees = tuple(
-        first_degree + second_degree
-        for first_degree, second_degree in zip(first_degrees, second_degrees, strict=True)
+    if first.scaled.size > second.scaled.size:
+        first, second = second, first
+    result = np.zeros(
+        tuple(
+            left + right - 1
+            for left, right in zip(first.scaled.shape, second.scaled.shape, strict=True)
+        ),
+        dtype=object,
     )
-    result = np.zeros(tuple(degree + 1 for degree in result_degrees), dtype=np.float64)
-    first_weights = tuple(
-        tuple(comb(degree, index) for index in range(degree + 1))
-        for degree in first_degrees
-    )
-    second_weights = tuple(
-        tuple(comb(degree, index) for index in range(degree + 1))
-        for degree in second_degrees
-    )
-    result_weights = tuple(
-        tuple(comb(degree, index) for index in range(degree + 1))
-        for degree in result_degrees
-    )
-    for first_index in np.ndindex(first.coefficients.shape):
-        first_value = first.coefficients[first_index]
-        for second_index in np.ndindex(second.coefficients.shape):
-            target = tuple(
-                left + right
-                for left, right in zip(first_index, second_index, strict=True)
+    for index in np.ndindex(first.scaled.shape):
+        value = first.scaled[index]
+        if value:
+            window = tuple(
+                slice(start, start + size)
+                for start, size in zip(index, second.scaled.shape, strict=True)
             )
-            factor = 1.0
-            for axis, (left, right, total) in enumerate(
-                zip(first_index, second_index, target, strict=True)
-            ):
-                factor *= (
-                    first_weights[axis][left]
-                    * second_weights[axis][right]
-                    / result_weights[axis][total]
-                )
-            result[target] += factor * first_value * second.coefficients[second_index]
-    return _BernsteinPolynomial(result)
+            result[window] += value * second.scaled
+    return _BernsteinPolynomial(result, first.unit * second.unit)
 
 
 def _poly_derivative(
-    value: _BernsteinPolynomial, axis: int, parameter_width: float, /
+    coefficients: np.ndarray, axis: int, bounds: tuple[float, float], /
 ) -> _BernsteinPolynomial:
-    degree = value.degrees[axis]
+    """Differentiate exact control coefficients over the exact parameter width."""
+    degree = coefficients.shape[axis] - 1
     if degree < 1:
         raise ValueError("A constant Bernstein axis has no first derivative.")
+    integers, denominator = _exact_integers(coefficients)
+    differences = np.diff(integers, axis=axis)
+    lower, upper = bounds
+    degrees = tuple(size - 1 for size in differences.shape)
     return _BernsteinPolynomial(
-        np.diff(value.coefficients, axis=axis) * (degree / parameter_width)
+        differences * _binomial_weights(degrees),
+        Fraction(degree, denominator) / (Fraction(upper) - Fraction(lower)),
     )
 
 
@@ -379,10 +417,11 @@ def _determinant(
         term = polynomials[0][route[0]]
         for row in range(1, dimension):
             term = _poly_product(term, polynomials[row][route[row]])
+        odd = inversions % 2 == 1
         if result is None:
-            result = _poly_scale(term, -1.0 if inversions % 2 else 1.0)
+            result = _poly_negate(term) if odd else term
         else:
-            result = _poly_add(result, term, second_scale=-1.0 if inversions % 2 else 1.0)
+            result = _poly_add(result, term, subtract=odd)
     if result is None:
         raise ValueError("A polynomial determinant requires positive dimension.")
     return result
@@ -482,26 +521,31 @@ def _split_bezier_axis(
     return np.moveaxis(left, 0, axis), np.moveaxis(right, 0, axis)
 
 
-def _outward_coefficients_bound(
-    coefficients: np.ndarray, policy: TensorNURBSCertificatePolicy, /
-) -> IntervalBound:
-    minimum = float(np.min(coefficients))
-    maximum = float(np.max(coefficients))
-    scale = max(1.0, float(np.max(np.abs(coefficients))))
-    epsilon = np.finfo(np.float64).eps
-    operations = policy.roundoff_operation_budget
-    gamma = operations * epsilon / (1.0 - operations * epsilon)
-    padding = gamma * scale
+def _coefficient_bound(polynomial: _BernsteinPolynomial, /) -> IntervalBound:
+    """Round the exact Bernstein coefficient range outward once.
+
+    A tensor Bernstein polynomial lies between its least and greatest
+    coefficient. Every coefficient is exact, so the directed binary64 rounding
+    of the two extremes is the only approximation.
+    """
+    weights = _binomial_weights(polynomial.degrees)
+    coefficients = [
+        Fraction(int(value), int(weight))
+        for value, weight in zip(polynomial.scaled.flat, weights.flat, strict=True)
+    ]
     return IntervalBound(
-        float(np.nextafter(minimum - padding, -np.inf)),
-        float(np.nextafter(maximum + padding, np.inf)),
+        fraction_down(polynomial.unit * min(coefficients)),
+        fraction_up(polynomial.unit * max(coefficients)),
     )
 
 
 def _positive_power_interval(bound: IntervalBound, exponent: int, /) -> IntervalBound:
     if bound.lower <= 0.0:
         raise ValueError("A positive denominator bound is required.")
-    return IntervalBound(bound.lower**exponent, bound.upper**exponent)
+    return IntervalBound(
+        fraction_down(Fraction(bound.lower) ** exponent),
+        fraction_up(Fraction(bound.upper) ** exponent),
+    )
 
 
 def _divide_intervals(
@@ -526,21 +570,23 @@ def _numerator_jacobian(
     bounds: tuple[tuple[float, float], ...],
     ambient_dimension: int,
 ) -> tuple[_BernsteinPolynomial, list[list[_BernsteinPolynomial]]]:
-    weight = _BernsteinPolynomial(homogeneous[..., -1])
-    coordinates = [
-        _BernsteinPolynomial(homogeneous[..., component])
-        for component in range(ambient_dimension)
+    weight = _poly_leaf(homogeneous[..., -1])
+    derivative_weights = [
+        _poly_derivative(homogeneous[..., -1], axis, axis_bounds)
+        for axis, axis_bounds in enumerate(bounds)
     ]
     numerator: list[list[_BernsteinPolynomial]] = [[] for _ in range(ambient_dimension)]
-    for component, coordinate in enumerate(coordinates):
-        for axis, (lower, upper) in enumerate(bounds):
-            derivative_coordinate = _poly_derivative(coordinate, axis, upper - lower)
-            derivative_weight = _poly_derivative(weight, axis, upper - lower)
+    for component in range(ambient_dimension):
+        coordinate = _poly_leaf(homogeneous[..., component])
+        for axis, axis_bounds in enumerate(bounds):
+            derivative_coordinate = _poly_derivative(
+                homogeneous[..., component], axis, axis_bounds
+            )
             numerator[component].append(
                 _poly_add(
                     _poly_product(weight, derivative_coordinate),
-                    _poly_product(coordinate, derivative_weight),
-                    second_scale=-1.0,
+                    _poly_product(coordinate, derivative_weights[axis]),
+                    subtract=True,
                 )
             )
     return weight, numerator
@@ -565,17 +611,17 @@ def _jacobian_measure_polynomial(
         first = _poly_add(
             _poly_product(numerator[1][0], numerator[2][1]),
             _poly_product(numerator[2][0], numerator[1][1]),
-            second_scale=-1.0,
+            subtract=True,
         )
         second = _poly_add(
             _poly_product(numerator[2][0], numerator[0][1]),
             _poly_product(numerator[0][0], numerator[2][1]),
-            second_scale=-1.0,
+            subtract=True,
         )
         third = _poly_add(
             _poly_product(numerator[0][0], numerator[1][1]),
             _poly_product(numerator[1][0], numerator[0][1]),
-            second_scale=-1.0,
+            subtract=True,
         )
         measure = _poly_add(
             _poly_add(_poly_product(first, first), _poly_product(second, second)),
@@ -595,15 +641,12 @@ def _cell_evidence(
     bounds: tuple[tuple[float, float], ...],
     ambient_dimension: int,
     theorem: str,
-    policy: TensorNURBSCertificatePolicy,
 ) -> CellJacobianEvidence:
     weight_polynomial, measure_polynomial, exponent = _jacobian_measure_polynomial(
         homogeneous, bounds, ambient_dimension, theorem
     )
-    weight = _outward_coefficients_bound(weight_polynomial.coefficients, policy)
-    measure_numerator = _outward_coefficients_bound(
-        measure_polynomial.coefficients, policy
-    )
+    weight = _coefficient_bound(weight_polynomial)
+    measure_numerator = _coefficient_bound(measure_polynomial)
     if weight.lower <= 0.0:
         maximum = np.float64(np.finfo(np.float64).max)
         measure = IntervalBound(-maximum, maximum)
@@ -689,7 +732,6 @@ def _certify_local(
             bounds,
             volume.ambient_dimension,
             theorem,
-            policy,
         )
         if evidence.weight.upper <= 0.0:
             leaves.append(evidence)
@@ -912,7 +954,7 @@ def _p_matrix_proved(
                 minor = _determinant(
                     [[numerator[row][column] for column in indices] for row in indices]
                 )
-                bound = _outward_coefficients_bound(minor.coefficients, policy)
+                bound = _coefficient_bound(minor)
                 if bound.lower <= policy.positive_margin:
                     return False, CertificateDiagnostic(
                         "p-matrix-unproved",
@@ -1102,22 +1144,11 @@ def certify_global_injectivity(
 
 
 def tensor_nurbs_cell_bounds(
-    volume: TensorNURBSVolume,
-    /,
-    *,
-    policy: TensorNURBSCertificatePolicy | None = None,
+    volume: TensorNURBSVolume, /
 ) -> tuple[CellJacobianEvidence, ...]:
     """Expose one nonadaptive analytic bound pass for barrier parameterization."""
     if not isinstance(volume, TensorNURBSVolume):
         raise TypeError("volume must be a TensorNURBSVolume.")
-    policy_ = (
-        TensorNURBSCertificatePolicy(
-            maximum_subdivision_depth=0,
-            maximum_subboxes=max(1, volume.basis.cell_count),
-        )
-        if policy is None
-        else policy
-    )
     return tuple(
         _cell_evidence(
             volume.block_id,
@@ -1127,7 +1158,6 @@ def tensor_nurbs_cell_bounds(
             bounds,
             volume.ambient_dimension,
             "determinant",
-            policy_,
         )
         for homogeneous, bounds, span_index in _bezier_homogeneous_cells(volume)
     )

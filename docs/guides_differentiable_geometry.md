@@ -79,6 +79,14 @@ point_tangent = -field_parameter_tangent * field_gradient
                 / squared_field_gradient_norm
 ```
 
+Higher derivatives are total derivatives along the normal-gauge level-set flow
+`dx/dtheta = point_tangent(x, theta)`. Under an enclosing derivative the
+returned point itself moves along that flow, so nested `jax.jacfwd`,
+`jax.hessian`, and reverse-over-forward compositions return the flow's second
+and higher derivatives at fixed topology. They are not derivatives of the
+fixed-anchor Newton iterate, whose foot point drifts tangentially from the flow
+at second order.
+
 The derivative is valid only when the returned root residual, field-gradient
 margin, and trust-region evidence pass. Failed proposals return finite
 reference points and zero accepted motion, but their forward and reverse

@@ -440,7 +440,18 @@ def test_fixed_cap_edge_obstruction_uses_exact_represented_coordinates() -> None
     assert height == Fraction(8646911284551351, 288230376151711744)
     assert lower_squared == 1 / (16 * height * height)
     assert lower_squared > 4
-    assert _fixed_cap_edge_obstruction(complex_, np.asarray((0,)), 9.0) is None
+    # The side facet (1, 3, 2) meets the cap edge (1, 2) of length sqrt(2) at the
+    # same altitude, so its exact bound 1/(8 h^2) (radius-edge about 11.8) also
+    # obstructs 9.0; only a bound above it is feasible for this proof.
+    side_squared = 1 / (8 * height * height)
+    assert _fixed_cap_edge_obstruction(complex_, np.asarray((0,)), 9.0) == (
+        0,
+        2,
+        (1, 2),
+        side_squared,
+    )
+    assert 9 * 9 < side_squared < 12 * 12
+    assert _fixed_cap_edge_obstruction(complex_, np.asarray((0,)), 12.0) is None
 
 
 @pytest.mark.skipif(

@@ -444,6 +444,44 @@ donor-faithful inscribed carriers, which kept the original test but had larger
 errors and two further defects (sphere L2 boundary-edge median, torus L1 fill
 quality).
 
+**Approved archive representation changes:** each is a one-time clean cutover
+with no compatibility reads.
+1. Omega_H adaptation evidence stores the canonical worker record and the source
+   field identities its evidence identities bind, so Omega_H results archive and
+   restore by recomputing those identities from stored inputs; evidence
+   identities are unchanged.
+2. Wall-clock telemetry (`MeshAdaptationResult.elapsed_seconds` and any other
+   runtime timing outside scientific identity) is not persisted in model
+   archives, so archive bytes are deterministic on each platform; restored
+   results carry no wall time, and timing stays in run receipts and benchmarks.
+3. Model archives share equal arrays across different parents: the first
+   occurrence in canonical order is written, later equal arrays are content-keyed
+   references with a byte-equality collision guard, and readers refuse repeated
+   equal array definitions so each archive has one canonical form. Archive
+   content identities, result identities and report identities are unchanged.
+4. The aggregate archive byte limit counts bytes once per stored owner, as
+   element counts already do, adopted only after measurement proves restore
+   memory scales with stored rather than logical bytes; otherwise the result
+   structure drops duplicate references instead. The limit value is unchanged.
+   Measured: torus restore holds 202 MB of distinct arrays against 281 MB
+   stored and 2.25 GB logical, so per-owner charging was adopted.
+5. Large static integer and digest fields that were JSON lists in the archive
+   manifest (`MeshingScope.unqualified_entity_ids`,
+   `CellValidityCertificate.cell_map_digests`) are stored as integer and byte
+   array columns through the existing column recipes; identities are
+   unchanged. Raising the manifest limit was rejected.
+
+**Resource budget policy:** solver, factorization, Krylov and Hodge memory
+budgets are explicit plan inputs and part of plan identity. Library defaults
+remain documented constants for unbudgeted calls; they are never derived from
+host memory, so a refusal never depends on the machine. Every qualification
+profile declares its execution-memory budget from its run envelope and passes
+it to every solve and factorization in the profile, writer and independent
+reader alike. SPD operators use the canonical symmetric factorization. Native
+searches that can grow without a structural bound (for example exhaustive
+Steiner-free suppression in PLC recovery) take a declared node and byte budget
+and refuse through their typed failure with search-count evidence.
+
 ## 11. Geometry and field transitions, periodicity, distribution and consumers
 
 ### 11.1 Coordinate and field transfer

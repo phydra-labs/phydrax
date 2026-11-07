@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 
@@ -474,6 +474,76 @@ def _restored_nested_restriction_premise(
     if not _same_model_content(premise, stored):
         raise ValueError("Stored nested-restriction premise changed.")
     return premise
+
+
+def _with_stored_quality_evidence(
+    value: CellMeshingResult,
+    result: CellMeshingResult | _CellMeshAcceptance,
+    stored_quality: CellQualityReport,
+    /,
+) -> tuple[CellMeshAuditReport, MeshCertificationReport | None]:
+    """Carry the stored quality diagnostics into a reproved acceptance.
+
+    The caller has already required the recomputed quality, audit and
+    certification identities to equal the stored ones; they bind only the
+    evaluation request and the exactly decided quality gates. The sampled XLA
+    quality arrays and their float summaries are platform-dependent
+    diagnostics, so the restored reports keep the stored evidence instead of
+    this platform's re-evaluation. The stored evaluation must have the
+    recomputed structure (block layout, cell IDs, array shapes and dtypes), and
+    every stored copy of it must be the same evidence.
+    """
+    from copy import copy
+
+    import jax
+    import numpy as np
+
+    from ._model_codec import _same_model_content
+
+    stored_reports = (value.audit.quality, value.quality) + (
+        () if value.certification is None else (value.certification.audit.quality,)
+    )
+    for stored in stored_reports:
+        if stored is not stored_quality and not _same_model_content(
+            CellQualityReport.from_stored_fields(stored), stored_quality
+        ):
+            raise ValueError("Stored quality reports retain different evidence.")
+    recomputed = result.audit.quality
+    if result.quality is not recomputed or (
+        result.certification is not None
+        and result.certification.audit is not result.audit
+    ):
+        raise ValueError(
+            "Recomputed acceptance must retain one audit and quality report."
+        )
+    stored_leaves, stored_structure = jax.tree_util.tree_flatten(
+        stored_quality.evaluation
+    )
+    recomputed_leaves, recomputed_structure = jax.tree_util.tree_flatten(
+        recomputed.evaluation
+    )
+    if stored_structure != recomputed_structure:
+        raise ValueError("Stored quality evaluation has another structure.")
+    for stored_leaf, recomputed_leaf in zip(
+        stored_leaves, recomputed_leaves, strict=True
+    ):
+        stored_array = np.asarray(stored_leaf)
+        recomputed_array = np.asarray(recomputed_leaf)
+        if stored_array.shape != recomputed_array.shape or (
+            stored_array.dtype != recomputed_array.dtype
+        ):
+            raise ValueError("Stored quality evaluation has another layout.")
+        if np.issubdtype(recomputed_array.dtype, np.integer) and not np.array_equal(
+            stored_array, recomputed_array
+        ):
+            raise ValueError("Stored quality evaluation names other cells.")
+    audit = copy(result.audit)
+    object.__setattr__(audit, "quality", stored_quality)
+    certification = result.certification
+    if certification is not None:
+        certification = copy(certification)
+        object.__setattr__(certification, "audit", audit)
+    return audit, certification
 
 
 class CellMeshingResult(StrictModule, NonTrainableState):
@@ -1124,9 +1194,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         # One owner often plays several certification roles (an analytic profile
         # is domain, fidelity query and feature source); restore each distinct
         # stored owner once so the roles keep one exact object.
-        restored_owners: list[tuple[object, object]] = []
+        restored_owners: list[tuple[Any, Any]] = []
 
-        def restored_owner(stored: object, /) -> object:
+        def restored_owner(stored: Any, /) -> Any:
             for previous, owner in restored_owners:
                 if previous is stored or _same_model_content(previous, stored):
                     return owner
@@ -1408,6 +1478,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             _validated_chart_parent_embedding=_validated_chart_parent_embedding,
             embedding_premise=embedding_premise,
             validated_witnesses=validated,
+            # Certified fidelity bounds are stored evidence: each recomputed
+            # certificate must reproduce the stored one, which is then kept.
+            stored_fidelity=(report.fidelity, report.scoped_fidelity),
         )
         rebuilt = cls._complete_reproved_acceptance(
             value, result, stored_quality, computed_root=computed_root
@@ -1483,6 +1556,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             raise ValueError(
                 "Stored result differs from its independently recomputed acceptance."
             )
+        audit, certification = _with_stored_quality_evidence(
+            value, result, stored_quality
+        )
 
         # Scientific acceptance is recomputed above. Reconstruct publication
         # metadata separately: it records the actual provider operation rather
@@ -1600,8 +1676,8 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             mesh,
             geometry,
             contract,
-            result.audit,
-            result.quality,
+            audit,
+            audit.quality,
             compliance,
             trace,
             provider,
@@ -1619,7 +1695,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             adapter_reports=adapter_reports,
             region_boundary_evidence=region_boundaries,
             planar_embedding=embedding,
-            certification=result.certification,
+            certification=certification,
             layer_curving_evidence=layer_curving_evidence,
             layer_core_carrier_witness=layer_core_carrier_witness,
             layer_core_overlap_stencils=layer_core_overlap_stencils,

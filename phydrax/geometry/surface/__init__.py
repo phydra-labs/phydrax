@@ -95,6 +95,7 @@ _EXPORT_GROUPS = (
             "SurfaceOrientationPolicy",
             "SurfaceProviderUnavailableError",
             "SurfaceResourceLimitError",
+            "SurfaceSolidCertificateError",
             "SurfaceUnsupportedFormatError",
             "export_surface",
             "import_surface",

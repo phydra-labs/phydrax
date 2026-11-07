@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
+import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -15,6 +17,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import ModuleType
 from typing import Any
+from xml.etree import ElementTree
+from xml.sax.saxutils import escape
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -34,7 +38,12 @@ from ...units import (
     MILLIMETER,
     UnitDefinition,
 )
-from ._contracts import SurfaceMetadata
+from ._contracts import (
+    SurfaceAuditPolicy,
+    SurfaceAuditReport,
+    SurfaceMetadata,
+    SurfaceValidityCertificate,
+)
 from ._model import _surface_connectivity, SurfaceModel
 
 
@@ -48,6 +57,7 @@ class SurfaceFileFormat(str, Enum):
     OBJ = "obj"
     STEP = "step"
     IGES = "iges"
+    THREE_MF = "3mf"
 
 
 class SurfaceFieldAssociation(str, Enum):
@@ -88,6 +98,21 @@ class SurfaceUnsupportedFormatError(SurfaceInteropError):
     """Raised when no existing real provider implements an operation."""
 
 
+class SurfaceSolidCertificateError(SurfaceInteropError):
+    """Raised when a solid export lacks a closed, oriented 2-manifold certificate.
+
+    ``report`` is the computed audit (closed and outward orientation required)
+    whose issues name every failed condition.
+    """
+
+    def __init__(self, report: SurfaceAuditReport, /) -> None:
+        self.report = report
+        super().__init__(
+            "Solid export requires a closed, oriented 2-manifold surface: "
+            + "; ".join(report.issues)
+        )
+
+
 _LENGTH_UNITS = {
     unit.symbol: unit
     for unit in (
@@ -110,6 +135,7 @@ _EXTENSION_FORMAT = {
     ".stp": SurfaceFileFormat.STEP,
     ".iges": SurfaceFileFormat.IGES,
     ".igs": SurfaceFileFormat.IGES,
+    ".3mf": SurfaceFileFormat.THREE_MF,
 }
 _VERTEX_ID = "phydrax_vertex_global_id"
 _CELL_ID = "phydrax_cell_global_id"
@@ -349,6 +375,7 @@ class SurfaceExportResult:
 
     path: Path
     report: SurfaceInteropReport
+    certificate: SurfaceValidityCertificate | None = None
 
 
 def _encode_text(value: str, /) -> str:
@@ -866,6 +893,10 @@ def import_surface(
     format_ = _resolve_format(source, file_format)
     if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
         return _import_cad_surface(source, format_, policy)
+    if format_ is SurfaceFileFormat.THREE_MF:
+        raise SurfaceUnsupportedFormatError(
+            "3MF is a write-only solid export; no 3MF surface importer exists."
+        )
     _require_module("meshio", f"{format_.value} surface import")
     resource = read_bounded_resource(
         source.name,
@@ -990,6 +1021,253 @@ def _meshio_export_mesh(
     )
 
 
+_THREE_MF_CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+_THREE_MF_MODEL_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+_THREE_MF_METADATA = "urn:phydrax:3mf:surface"
+_THREE_MF_MODEL_PART = "3D/3dmodel.model"
+# 3MF core units (ST_Unit); kilometers have no 3MF unit.
+_THREE_MF_UNITS = {
+    "um": "micron",
+    "mm": "millimeter",
+    "cm": "centimeter",
+    "in": "inch",
+    "ft": "foot",
+    "m": "meter",
+}
+_THREE_MF_CONTENT_TYPES = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    '<Default Extension="rels" '
+    'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    '<Default Extension="model" '
+    'ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>'
+    "</Types>\n"
+)
+_THREE_MF_RELATIONSHIPS = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    f'<Relationship Target="/{_THREE_MF_MODEL_PART}" Id="rel0" '
+    f'Type="{_THREE_MF_MODEL_TYPE}"/>'
+    "</Relationships>\n"
+)
+# Fixed member order, timestamp, host system and permissions: equal inputs give
+# byte-identical packages on every platform.
+_THREE_MF_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+
+
+def _three_mf_unit(unit: UnitDefinition, /) -> str:
+    name = _THREE_MF_UNITS.get(unit.symbol)
+    if name is None or _LENGTH_UNITS.get(unit.symbol) != unit:
+        raise SurfaceUnsupportedFormatError(
+            f"3MF has no model unit for {unit.symbol!r}; choose micron, millimeter, "
+            "centimeter, inch, foot or meter."
+        )
+    return name
+
+
+def _three_mf_metadata(
+    model: SurfaceModel, unit: UnitDefinition, /
+) -> list[tuple[str, str]]:
+    metadata = model.metadata
+    entries = [
+        ("source_id", metadata.source_id),
+        ("source_revision", metadata.source_revision),
+        ("coordinate_system", metadata.coordinate_contract.coordinate_system),
+        ("length_unit", unit.symbol),
+        ("model_id", model.model_id),
+    ]
+    entries.extend(
+        (f"provenance_{index:08d}", entry)
+        for index, entry in enumerate(metadata.provenance)
+    )
+    return entries
+
+
+def _encode_three_mf(
+    points: np.ndarray,
+    faces: np.ndarray,
+    unit_name: str,
+    metadata: Sequence[tuple[str, str]],
+    /,
+) -> bytes:
+    """Canonical 3MF core package: one closed mesh object and one build item.
+
+    Coordinates are written as shortest round-trip decimal strings, so every
+    binary64 coordinate decodes bit-identically.
+    """
+    rows = [
+        '<?xml version="1.0" encoding="UTF-8"?>\n',
+        f'<model unit="{unit_name}" xml:lang="en-US" xmlns="{_THREE_MF_CORE}" '
+        f'xmlns:phydrax="{_THREE_MF_METADATA}">\n',
+        '<metadata name="Application">phydrax</metadata>\n',
+    ]
+    rows.extend(
+        f'<metadata name="phydrax:{name}" preserve="1">{escape(value)}</metadata>\n'
+        for name, value in metadata
+    )
+    rows.append('<resources>\n<object id="1" type="model">\n<mesh>\n<vertices>\n')
+    rows.extend(
+        f'<vertex x="{x!r}" y="{y!r}" z="{z!r}"/>\n' for x, y, z in points.tolist()
+    )
+    rows.append("</vertices>\n<triangles>\n")
+    rows.extend(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>\n' for a, b, c in faces.tolist())
+    rows.append(
+        '</triangles>\n</mesh>\n</object>\n</resources>\n<build>\n<item objectid="1"/>\n'
+        "</build>\n</model>\n"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as package:
+        for name, text in (
+            ("[Content_Types].xml", _THREE_MF_CONTENT_TYPES),
+            ("_rels/.rels", _THREE_MF_RELATIONSHIPS),
+            (_THREE_MF_MODEL_PART, "".join(rows)),
+        ):
+            member = zipfile.ZipInfo(name, date_time=_THREE_MF_TIMESTAMP)
+            member.create_system = 0
+            member.external_attr = 0o644 << 16
+            package.writestr(
+                member,
+                text.encode("utf-8"),
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=9,
+            )
+    return buffer.getvalue()
+
+
+def _decode_three_mf(
+    payload: bytes, /
+) -> tuple[np.ndarray, np.ndarray, str, dict[str, str]]:
+    """Decode the single-object package written by `_encode_three_mf`."""
+    core = f"{{{_THREE_MF_CORE}}}"
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as package:
+            relationships = ElementTree.fromstring(package.read("_rels/.rels"))
+            targets = [
+                item.get("Target", "")
+                for item in relationships
+                if item.get("Type") == _THREE_MF_MODEL_TYPE
+            ]
+            if len(targets) != 1:
+                raise SurfaceDataCorruptionError("3MF package needs one model part.")
+            root = ElementTree.fromstring(package.read(targets[0].lstrip("/")))
+    except (KeyError, zipfile.BadZipFile, ElementTree.ParseError) as error:
+        raise SurfaceDataCorruptionError("3MF package is malformed.") from error
+    objects = root.findall(f"{core}resources/{core}object")
+    items = root.findall(f"{core}build/{core}item")
+    if (
+        len(objects) != 1
+        or objects[0].get("type", "model") != "model"
+        or [item.get("objectid") for item in items] != [objects[0].get("id")]
+    ):
+        raise SurfaceDataCorruptionError("3MF package must build one model object.")
+    mesh = objects[0].find(f"{core}mesh")
+    if mesh is None:
+        raise SurfaceDataCorruptionError("3MF model object has no mesh.")
+    points = np.asarray(
+        [
+            [float(vertex.get(axis, "nan")) for axis in "xyz"]
+            for vertex in mesh.iterfind(f"{core}vertices/{core}vertex")
+        ],
+        dtype=np.float64,
+    ).reshape((-1, 3))
+    faces = np.asarray(
+        [
+            [int(triangle.get(key, "-1")) for key in ("v1", "v2", "v3")]
+            for triangle in mesh.iterfind(f"{core}triangles/{core}triangle")
+        ],
+        dtype=np.int64,
+    ).reshape((-1, 3))
+    metadata = {
+        str(item.get("name")): item.text or "" for item in root.findall(f"{core}metadata")
+    }
+    return points, faces, str(root.get("unit", "")), metadata
+
+
+def _export_three_mf(
+    destination: Path,
+    model: SurfaceModel,
+    policy: SurfaceExportPolicy,
+    fields: Sequence[PortableSurfaceField],
+    /,
+) -> SurfaceExportResult:
+    """Write a 3MF solid, which requires a closed, oriented 2-manifold certificate."""
+    audit = model.audit(
+        SurfaceAuditPolicy(require_closed=True, require_outward_orientation=True)
+    )
+    if not bool(np.asarray(audit.valid)):
+        raise SurfaceSolidCertificateError(audit)
+    certificate = SurfaceValidityCertificate(audit)
+    unit = policy.target_length_unit
+    unit_name = _three_mf_unit(unit)
+    source_unit = model.metadata.coordinate_contract.length_unit
+    scale = float(conversion_factor(source_unit, unit))
+    points = np.asarray(model.mesh.coordinates, dtype=np.float64) * scale
+    faces = np.asarray(_surface_connectivity(model.mesh).cell_vertices, dtype=np.int64)[
+        :, :3
+    ]
+    # The package's vertex and triangle order are the only identities 3MF keeps.
+    vertex_ids = np.asarray(model.mesh.vertex_global_ids, dtype=np.int64)
+    cell_ids = np.asarray(model.mesh.entity_set(2).entity_ids, dtype=np.int64)
+    ids_kept = bool(
+        np.array_equal(vertex_ids, np.arange(vertex_ids.size))
+        and np.array_equal(cell_ids, np.arange(cell_ids.size))
+    )
+    loss_candidates = []
+    if not ids_kept:
+        loss_candidates.append("3mf_cannot_retain_global_ids")
+    if model.metadata.cell_tags:
+        loss_candidates.append("3mf_cannot_retain_cell_tags")
+    if fields:
+        loss_candidates.append("3mf_cannot_retain_portable_fields")
+    losses = _loss_permission(loss_candidates, policy.allow_lossy)
+    if points.nbytes + faces.nbytes > policy.maximum_data_bytes:
+        raise SurfaceResourceLimitError("3MF export payload exceeds its data byte limit.")
+    metadata = _three_mf_metadata(model, unit)
+    metadata.append(("certificate_id", certificate.certificate_id))
+    encoded = _encode_three_mf(points, faces, unit_name, metadata)
+    if len(encoded) > policy.maximum_file_bytes:
+        raise SurfaceResourceLimitError("Surface export exceeds its file byte limit.")
+    decoded_points, decoded_faces, decoded_unit, decoded_metadata = _decode_three_mf(
+        encoded
+    )
+    if (
+        decoded_points.tobytes() != points.tobytes()
+        or not np.array_equal(decoded_faces, faces)
+        or decoded_unit != unit_name
+        or decoded_metadata.get("phydrax:certificate_id") != certificate.certificate_id
+    ):
+        raise SurfaceDataCorruptionError(
+            "3MF codec changed coordinates, triangles, unit or metadata."
+        )
+    publish_bytes(
+        destination,
+        encoded,
+        maximum_bytes=policy.maximum_file_bytes,
+        mode="atomic_replace",
+    )
+    report = SurfaceInteropReport(
+        operation="export",
+        file_format=SurfaceFileFormat.THREE_MF,
+        provider="phydrax-3mf",
+        source_length_unit=source_unit,
+        target_length_unit=unit,
+        coordinate_scale=scale,
+        source_id=model.metadata.source_id,
+        source_revision=model.metadata.source_revision,
+        artifact_digest=hashlib.sha256(encoded).hexdigest(),
+        vertex_count=int(points.shape[0]),
+        cell_count=int(faces.shape[0]),
+        source_ids_preserved=ids_kept,
+        tags_preserved=not model.metadata.cell_tags,
+        source_metadata_preserved=True,
+        orientation_changed=False,
+        lossy=bool(losses),
+        losses=losses,
+        fields=(),
+    )
+    return SurfaceExportResult(destination, report, certificate)
+
+
 def export_surface(
     path: str | Path,
     model: SurfaceModel,
@@ -1012,7 +1290,6 @@ def export_surface(
             "Triangle SurfaceModel has no exact STEP/IGES CAD writer; "
             "surface mesh export is not promoted to source CAD."
         )
-    meshio = _require_module("meshio", f"{format_.value} surface export")
     if (
         model.metadata.coordinate_contract.length_unit.reference_system_id
         != policy.target_length_unit.reference_system_id
@@ -1030,6 +1307,9 @@ def export_surface(
         cell_count,
         policy.maximum_fields,
     )
+    if format_ is SurfaceFileFormat.THREE_MF:
+        return _export_three_mf(destination, model, policy, fields_)
+    meshio = _require_module("meshio", f"{format_.value} surface export")
     loss_candidates = []
     include_metadata = format_ in (
         SurfaceFileFormat.GMSH,
@@ -1140,6 +1420,7 @@ __all__ = [
     "SurfaceOrientationPolicy",
     "SurfaceProviderUnavailableError",
     "SurfaceResourceLimitError",
+    "SurfaceSolidCertificateError",
     "SurfaceUnsupportedFormatError",
     "export_surface",
     "import_surface",

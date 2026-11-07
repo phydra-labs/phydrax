@@ -205,6 +205,28 @@ def test_deep_kernel_parameter_mean_and_noise_score_matches_dense() -> None:
         assert jnp.allclose(actual, expected, rtol=2e-7, atol=2e-8)
 
 
+@pytest.mark.strict_jax
+def test_conditioned_exact_score_assembles_under_strict_dtype_promotion() -> None:
+    points = _design()
+    observations = jnp.sin(points[:, 0])
+    model = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
+    conditioning = phx.linalg.ConditionTargetPolicy(50.0)
+
+    def native(theta: Array) -> Array:
+        return model.log_marginal_likelihood(
+            theta[6] * points[:, 0] + theta[7],
+            state=_state(theta, points, 2, conditioning),
+        )
+
+    # Two columns over seven points cover the looped blocks, the remainder
+    # block, and the conditioned diagonal tangent of every block.
+    strict_value, strict_gradient = jax.value_and_grad(native)(_theta())
+    with phx.config.context(phx.config.NumericsConfig(dtype_promotion="standard")):
+        value, gradient = jax.value_and_grad(native)(_theta())
+    assert jnp.array_equal(strict_value, value)
+    assert jnp.array_equal(strict_gradient, gradient)
+
+
 @pytest.mark.parametrize("bound", ["gershgorin", "trace"])
 def test_condition_target_uses_complete_covariance_and_preserves_exact_score(
     bound: Literal["gershgorin", "trace"],
@@ -494,6 +516,21 @@ def test_inverse_columns_use_target_rhs_and_source_solution_event_shapes() -> No
     assert result.value.shape == (2, 2, 2)
     assert jnp.all(result.successful)
     assert jnp.allclose(result.value.reshape((4, 2)), expected)
+
+
+@pytest.mark.strict_jax
+def test_inverse_columns_accept_int32_indices_under_strict_promotion() -> None:
+    matrix = jnp.array(
+        [[3.0, 0.2, 0.0], [0.2, 2.0, 0.3], [0.0, 0.3, 1.5]], dtype=jnp.float64
+    )
+    factorization = phx.linalg.factorize(
+        phx.linalg.DenseLinearOperator(matrix), phx.linalg.FactorizationPolicy("lu")
+    )
+    columns = jnp.array([2, 0], dtype=jnp.int32)
+    result = factorization.inverse_columns(columns, max_workspace_bytes=64 * 1024)
+    expected = jnp.linalg.solve(matrix, jnp.eye(3, dtype=jnp.float64)[:, columns])
+    assert jnp.all(result.successful)
+    assert jnp.allclose(result.value, expected)
 
 
 def test_streamed_condition_score_uses_the_owner_gershgorin_tie_convention() -> None:

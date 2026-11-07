@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from math import atan2, ceil, cos, floor, isfinite, pi, sin
+from math import atan2, isfinite, pi
 from numbers import Integral, Real
 from typing import overload, TYPE_CHECKING
 
@@ -19,9 +19,15 @@ from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._validation import positive_finite_float
-from ...discretization._exact_algebraic_geometry import ExactScalar, rational_coefficient
+from ...discretization._exact_algebraic_geometry import (
+    coefficient_interval,
+    ExactScalar,
+    rational_coefficient,
+)
+from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import ConvertibleToArray
 from .._atlas import TrimDomain
+from .._rational import fraction_down, fraction_up
 from ._assembly import BRepAffinePlacement, BRepAssemblyGraph
 from ._intersection import (
     ConicParameterEndpoint,
@@ -744,7 +750,12 @@ def _profile_bspline_controls(
     tuple[Fraction, ...],
     tuple[Fraction, ...],
 ]:
-    """Exact controls and endpoint chord of one clamped profile B-spline."""
+    """Exact controls and endpoint chord of one clamped profile B-spline.
+
+    The clamped end controls are the spline's own ends. Like conic-use ends,
+    they may sit off the declared vertices ``start``/``end`` by a gap that
+    ``_profile_endpoint_gap_rows`` certifies; no geometry is moved.
+    """
     if curve.ambient_dimension != 2:
         raise ValueError(
             "Planar profile B-splines must have two-dimensional control points."
@@ -758,15 +769,14 @@ def _profile_bspline_controls(
         raise ValueError(
             "Planar profile B-splines require a full clamped parameter domain."
         )
-    exact_start = tuple(_fraction(value) for value in start)
-    exact_end = tuple(_fraction(value) for value in end)
     controls = tuple(
         tuple(_fraction(value) for value in point) for point in control_points
     )
-    if controls[0] != exact_start or controls[-1] != exact_end:
-        raise ValueError(
-            "Profile B-spline boundary controls must match declared vertices exactly."
-        )
+    exact_start, exact_end = controls[0], controls[-1]
+    if tuple(_fraction(value) for value in start) == tuple(
+        _fraction(value) for value in end
+    ):
+        raise ValueError("Profile B-spline endpoints must be distinct.")
     delta = tuple(b - a for a, b in zip(exact_start, exact_end, strict=True))
     if delta[0] == 0 and delta[1] == 0:
         raise ValueError("Profile B-spline endpoints must be distinct.")
@@ -779,8 +789,15 @@ def _profile_bspline_is_straight(
     end: tuple[float, float],
     /,
 ) -> bool:
-    """Whether every control lies exactly on the endpoint chord."""
+    """Whether the spline is exactly the chord between its declared vertices.
+
+    A spline whose ends sit off its vertices is a curved boundary piece with
+    certified end gaps, never a polygon edge.
+    """
     controls, exact_start, delta = _profile_bspline_controls(curve, start, end)
+    vertices = tuple(tuple(_fraction(value) for value in point) for point in (start, end))
+    if (controls[0], controls[-1]) != vertices:
+        return False
     return all(
         (point[0] - exact_start[0]) * delta[1] - (point[1] - exact_start[1]) * delta[0]
         == 0
@@ -918,6 +935,18 @@ def _unit_tangent(curve: AbstractCurve, parameter: float, /) -> np.ndarray:
     return scaled / length
 
 
+class UnsupportedProfileLoop(NotImplementedError):
+    """A curved profile loop needs a proof route this owner does not provide.
+
+    ``feature`` names the missing proof. It stays a ``NotImplementedError`` so
+    callers that treat an unsupported route as such keep that meaning.
+    """
+
+    def __init__(self, feature: str, message: str, /) -> None:
+        super().__init__(message)
+        self.feature = feature
+
+
 def _conic_turning_number(loop: ProfileLoop, /) -> int:
     tangent_pairs = []
     intrinsic_turns = []
@@ -950,16 +979,18 @@ def _conic_turning_number(loop: ProfileLoop, /) -> int:
     total = float(sum(terms))
     tolerance = 2048.0 * np.finfo(np.float64).eps * max(1, len(loop.segments))
     if abs(abs(total) - _TWO_PI) > tolerance:
-        raise NotImplementedError(
-            "Curved profile loops must have one non-self-intersecting turn."
+        raise UnsupportedProfileLoop(
+            "curved-loop-turning-number",
+            "Curved profile loops must have one non-self-intersecting turn.",
         )
     direction = 1 if total > 0.0 else -1
     if any(
         direction * value < -tolerance for value in terms
     ) and not _curved_loop_is_simple(loop):
-        raise NotImplementedError(
+        raise UnsupportedProfileLoop(
+            "nonconvex-curved-loop-simplicity",
             "Curved profile loops must have one non-self-intersecting turn; "
-            "nonconvex loops require an exact line/circle simplicity proof."
+            "nonconvex loops require an exact line/circle simplicity proof.",
         )
     return direction
 
@@ -2351,40 +2382,62 @@ def _profile_bounds(profile: PlanarProfile, /) -> np.ndarray:
             if isinstance(segment, BSplineCurve):
                 points.extend(np.asarray(segment.control_points, dtype=np.float64))
             if isinstance(segment, ProfileArc):
-                radius = float(
-                    np.linalg.norm(np.subtract(loop.vertices[index], segment.center))
+                # The arc carrier has this binary64 radius; its chart extremes
+                # ``center -/+ radius`` round outward.
+                radius = Fraction(
+                    float(
+                        np.linalg.norm(np.subtract(loop.vertices[index], segment.center))
+                    )
                 )
+                center = tuple(Fraction(float(value)) for value in segment.center)
                 points.extend(
                     (
-                        np.asarray((segment.center[0] - radius, segment.center[1])),
-                        np.asarray((segment.center[0] + radius, segment.center[1])),
-                        np.asarray((segment.center[0], segment.center[1] - radius)),
-                        np.asarray((segment.center[0], segment.center[1] + radius)),
+                        np.asarray(
+                            tuple(fraction_down(value - radius) for value in center),
+                            dtype=np.float64,
+                        ),
+                        np.asarray(
+                            tuple(fraction_up(value + radius) for value in center),
+                            dtype=np.float64,
+                        ),
                     )
                 )
             elif isinstance(segment, ProfileCurveUse):
-                center = np.asarray(segment.curve.center, dtype=np.float64)
-                first_axis = np.asarray(segment.curve.first_axis, dtype=np.float64)
-                second_axis = np.asarray(segment.curve.second_axis, dtype=np.float64)
-                if isinstance(segment.curve, CircleCurve):
-                    first_radius = second_radius = float(segment.curve.radius)
-                else:
-                    first_radius = float(segment.curve.first_radius)
-                    second_radius = float(segment.curve.second_radius)
-                extents = np.asarray(
-                    (
-                        np.hypot(
-                            first_radius * first_axis[0],
-                            second_radius * second_axis[0],
-                        ),
-                        np.hypot(
-                            first_radius * first_axis[1],
-                            second_radius * second_axis[1],
-                        ),
-                    ),
-                    dtype=np.float64,
+                curve = segment.curve
+                radii = (
+                    (curve.radius_exact, curve.radius_exact)
+                    if isinstance(curve, CircleCurve)
+                    else (curve.first_radius_exact, curve.second_radius_exact)
                 )
-                points.extend((center - extents, center + extents))
+                axes = (curve.first_axis_exact, curve.second_axis_exact)
+                lower_corner: list[float] = []
+                upper_corner: list[float] = []
+                for coordinate in (0, 1):
+                    # The conic's extent along a chart axis is the norm of the
+                    # coordinate's components of its two semi-axis vectors.
+                    squared = sum(
+                        (
+                            max(
+                                abs(end)
+                                for end in coefficient_interval(radius * axis[coordinate])
+                            )
+                            ** 2
+                            for radius, axis in zip(radii, axes, strict=True)
+                        ),
+                        Fraction(0),
+                    )
+                    extent = fraction_sqrt_interval(squared)[1]
+                    center_lower, center_upper = coefficient_interval(
+                        curve.center_exact[coordinate]
+                    )
+                    lower_corner.append(fraction_down(center_lower - extent))
+                    upper_corner.append(fraction_up(center_upper + extent))
+                points.extend(
+                    (
+                        np.asarray(lower_corner, dtype=np.float64),
+                        np.asarray(upper_corner, dtype=np.float64),
+                    )
+                )
     values = np.stack(points)
     lower, upper = np.min(values, axis=0), np.max(values, axis=0)
     if np.any(upper <= lower):
@@ -3181,51 +3234,118 @@ def _axis_frame(axis: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return first, second
 
 
-def _curve_axis_distance_bounds(
+def _profile_axis_contact(
     curve: AbstractCurve,
-    first: float,
-    last: float,
-    axis_origin: np.ndarray,
-    radial_direction: np.ndarray,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    axis_origin: tuple[float, float],
+    axis_direction: tuple[float, float],
     /,
-) -> tuple[float, float]:
+) -> bool:
+    """Prove that one profile segment stays in the closed radial half-plane.
+
+    The side of a chart point ``p`` is ``d1 (p0 - o0) - d0 (p1 - o1)``, the radial
+    coordinate ``(axis x normal) . (p - o)`` scaled by ``|d|``, evaluated exactly
+    on the authored binary64 data. The segment ends are the authored vertices;
+    a conic interior is decided by exact sign predicates on its carrier. Returns
+    whether the segment is a line lying on the axis.
+    """
+    if not isinstance(curve, (LineCurve, CircleCurve, EllipseCurve)):
+        raise NotImplementedError(
+            "Revolution requires line, circle, or ellipse profile carriers."
+        )
+    origin = (Fraction(axis_origin[0]), Fraction(axis_origin[1]))
+    direction = (Fraction(axis_direction[0]), Fraction(axis_direction[1]))
+
+    def side(vector: tuple[ExactScalar, ExactScalar], /) -> ExactScalar:
+        return direction[1] * vector[0] - direction[0] * vector[1]
+
+    def offset(point: tuple[float, float], /) -> tuple[Fraction, Fraction]:
+        return (Fraction(point[0]) - origin[0], Fraction(point[1]) - origin[1])
+
+    start_side, end_side = side(offset(start)), side(offset(end))
+    if start_side < 0 or end_side < 0:
+        raise ValueError(
+            "Revolution profile must stay in one closed half-plane of its axis."
+        )
     if isinstance(curve, LineCurve):
-        values = np.asarray(curve.evaluate(jnp.asarray((first, last))), dtype=np.float64)
-        signed = (values - axis_origin) @ radial_direction
-        return float(np.min(signed)), float(np.max(signed))
-    if isinstance(curve, (CircleCurve, EllipseCurve)):
-        center = np.asarray(curve.center) - axis_origin
-        center_radius = float(center @ radial_direction)
-        if isinstance(curve, CircleCurve):
-            first_scale = second_scale = float(curve.radius)
-        else:
-            first_scale = float(curve.first_radius)
-            second_scale = float(curve.second_radius)
-        first_coefficient = first_scale * float(
-            np.asarray(curve.first_axis) @ radial_direction
+        # A segment's side is affine, so it is nonnegative between its ends and
+        # zero inside only when both ends lie on the axis.
+        return start_side == 0 and end_side == 0
+    radii = (
+        (curve.radius_exact, curve.radius_exact)
+        if isinstance(curve, CircleCurve)
+        else (curve.first_radius_exact, curve.second_radius_exact)
+    )
+    first_axis, second_axis = curve.first_axis_exact, curve.second_axis_exact
+    center = curve.center_exact
+    # On the carrier ``center + r1 cos(t) e1 + r2 sin(t) e2`` the side is
+    # ``c + a cos(t) + b sin(t)`` with minimum ``c - sqrt(a^2 + b^2)`` in the
+    # parameter direction ``(cos(t), sin(t)) ~ (-a, -b)``.
+    c = side((center[0] - origin[0], center[1] - origin[1]))
+    a = radii[0] * side((first_axis[0], first_axis[1]))
+    b = radii[1] * side((second_axis[0], second_axis[1]))
+    margin = c * c - a * a - b * b
+    if c > 0 and margin > 0:
+        return False
+    if a == 0 and b == 0:
+        raise ValueError(
+            "Revolution profile must stay in one closed half-plane of its axis."
         )
-        second_coefficient = second_scale * float(
-            np.asarray(curve.second_axis) @ radial_direction
+    determinant = first_axis[0] * second_axis[1] - first_axis[1] * second_axis[0]
+
+    def direction_of(point: tuple[float, float], /) -> tuple[ExactScalar, ExactScalar]:
+        # ``point - center = x e1 + y e2``; ``(x / r1, y / r2)`` scaled by the
+        # positive ``r1 r2 det^2`` is the parameter direction of the vertex.
+        x = Fraction(point[0]) - center[0]
+        y = Fraction(point[1]) - center[1]
+        return (
+            (x * second_axis[1] - y * second_axis[0]) * determinant * radii[1],
+            (first_axis[0] * y - first_axis[1] * x) * determinant * radii[0],
         )
-        lower, upper = min(first, last), max(first, last)
-        angles = [first, last]
-        phase = atan2(second_coefficient, first_coefficient)
-        for turn in range(
-            floor((lower - phase) / pi),
-            ceil((upper - phase) / pi) + 1,
-        ):
-            candidate = phase + turn * pi
-            if lower <= candidate <= upper:
-                angles.append(candidate)
-        values = tuple(
-            center_radius
-            + first_coefficient * cos(angle)
-            + second_coefficient * sin(angle)
-            for angle in angles
+
+    def turn(
+        left: tuple[ExactScalar, ExactScalar], right: tuple[ExactScalar, ExactScalar], /
+    ) -> ExactScalar:
+        return left[0] * right[1] - left[1] * right[0]
+
+    def aligned(
+        left: tuple[ExactScalar, ExactScalar], right: tuple[ExactScalar, ExactScalar], /
+    ) -> bool:
+        return turn(left, right) == 0 and left[0] * right[0] + left[1] * right[1] > 0
+
+    first_direction, last_direction = direction_of(start), direction_of(end)
+    minimum = (-a, -b)
+
+    def lower_half(vector: tuple[ExactScalar, ExactScalar], /) -> bool:
+        # The counterclockwise angle from the first direction lies in [0, pi).
+        sign = turn(first_direction, vector)
+        return sign > 0 or aligned(first_direction, vector)
+
+    # The edge parameter increases, so the arc runs counterclockwise in the
+    # parameter plane from the first vertex direction to the last one; equal
+    # directions bound a full turn.
+    contained = (
+        not any(first_direction)
+        or not any(last_direction)
+        or aligned(first_direction, last_direction)
+        or (
+            lower_half(minimum) and not lower_half(last_direction)
+            if lower_half(minimum) != lower_half(last_direction)
+            else turn(minimum, last_direction) >= 0
         )
-        return min(values), max(values)
-    raise NotImplementedError(
-        "Revolution requires line, circle, or ellipse profile carriers."
+    )
+    if not contained:
+        # The side has no interior minimum on the arc, so the ends bound it.
+        return False
+    if c < 0 or margin < 0:
+        raise ValueError(
+            "Revolution profile must stay in one closed half-plane of its axis."
+        )
+    if aligned(minimum, first_direction) or aligned(minimum, last_direction):
+        return False
+    raise ValueError(
+        "A revolution conic may touch its axis only at an authored endpoint."
     )
 
 
@@ -3304,6 +3424,7 @@ def brep_revolution(
     length = float(np.linalg.norm(direction2))
     if length == 0.0:
         raise ValueError("axis_direction must be nonzero.")
+    authored_direction = (float(direction2[0]), float(direction2[1]))
     direction2 /= length
     origin3 = profile.plane.point(origin2)
     axis3 = _unit(profile.plane.vector(direction2), "axis_direction")
@@ -3332,28 +3453,13 @@ def brep_revolution(
     for index in range(len(loop.vertices)):
         curve2, first, last = _segment_curve(loop, index)
         curve3 = _space_curve(curve2, profile.plane)
-        radial_direction = np.cross(axis3, profile.plane.normal)
-        radial_direction /= np.linalg.norm(radial_direction)
-        minimum_radius, _ = _curve_axis_distance_bounds(
-            curve3, first, last, origin3, radial_direction
+        is_axis_line = _profile_axis_contact(
+            curve2,
+            loop.vertices[index],
+            loop.vertices[(index + 1) % len(loop.vertices)],
+            origin2,
+            authored_direction,
         )
-        endpoints = np.asarray(
-            curve3.evaluate(jnp.asarray((first, last))), dtype=np.float64
-        )
-        endpoint_radii = (endpoints - origin3) @ radial_direction
-        if minimum_radius < 0.0:
-            raise ValueError(
-                "Revolution profile must stay in one closed half-plane of its axis."
-            )
-        is_axis_line = isinstance(curve3, LineCurve) and np.all(endpoint_radii == 0.0)
-        if (
-            minimum_radius == 0.0
-            and not is_axis_line
-            and not np.any(endpoint_radii == 0.0)
-        ):
-            raise ValueError(
-                "A revolution conic may touch its axis only at an authored endpoint."
-            )
         if is_axis_line:
             profile_edges.append(None)
             continue

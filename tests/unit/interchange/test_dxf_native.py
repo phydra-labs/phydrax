@@ -4,10 +4,11 @@ import math
 from pathlib import Path
 
 import mpmath
+import numpy as np
 import pytest
 
 from phydrax.geometry.brep._constructors import ProfileCurveUse
-from phydrax.geometry.brep._patches import EllipseCurve
+from phydrax.geometry.brep._patches import BSplineCurve, EllipseCurve
 from phydrax.interchange._dxf import (
     decode_dxf_bytes,
     DxfImportError,
@@ -185,37 +186,210 @@ SPLINE
         decode_dxf_bytes(_drawing(malformed), DxfImportPolicy())
 
 
-def _quarter_ellipse(corner: tuple[float, float]) -> bytes:
-    # ELLIPSE 0 -> fl(pi/2) with semi-axes 2 and 1, closed by two lines.
+def _spline_wedge(corner: tuple[float, float]) -> bytes:
+    # Quadratic SPLINE (2, 0) -> (0, 1) closed through the origin by two lines;
+    # the first line starts at ``corner``.
     return _drawing(
-        "0\nELLIPSE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
-        "40\n0.5\n41\n0.0\n42\n1.5707963267948966\n"
+        "0\nSPLINE\n70\n0\n71\n2\n72\n6\n73\n3\n"
+        "40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n"
+        "10\n2.0\n20\n0.0\n10\n2.0\n20\n1.0\n10\n0.0\n20\n1.0\n"
         f"0\nLINE\n10\n{corner[0]!r}\n20\n{corner[1]!r}\n30\n0.0\n"
         "11\n0.0\n21\n0.0\n31\n0.0\n"
         "0\nLINE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
     )
 
 
-def test_float_quarter_angle_keeps_its_literal_ellipse_endpoint() -> None:
-    gap = 1e-15
+def test_spline_end_at_its_vertex_joins_exactly() -> None:
+    imported = decode_dxf_bytes(_spline_wedge((0.0, 1.0)), DxfImportPolicy())
+    assert imported.report.losses == ()
+    assert imported.profile.endpoint_gap_bounds is None
+    assert any(
+        isinstance(segment, BSplineCurve) for segment in imported.profile.outer.segments
+    )
+
+
+def test_literal_corner_joins_exact_quarter_arc_under_declared_gap() -> None:
+    # Lines meet the point the float parameter fl(pi/2) denotes, not the exact
+    # axis point (0, 1) that the right-angle convention makes the arc end.
     with mpmath.workprec(200):
-        parameter = mpmath.mpf(1.5707963267948966)
-        exact = (2 * mpmath.cos(parameter), mpmath.sin(parameter))
-        literal = (float(exact[0]), float(exact[1]))
-        displacement = mpmath.hypot(exact[0] - literal[0], exact[1] - literal[1])
-        assert 0 < displacement <= gap
+        parameter = mpmath.mpf(_right_angle(1))
+        corner = (float(2 * mpmath.cos(parameter)), float(mpmath.sin(parameter)))
+        displacement = mpmath.hypot(corner[0], corner[1] - 1)
+    source = _drawing(
+        "0\nELLIPSE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+        f"40\n0.5\n41\n0.0\n42\n{_right_angle(1)!r}\n"
+        f"0\nLINE\n10\n{corner[0]!r}\n20\n{corner[1]!r}\n30\n0.0\n"
+        "11\n0.0\n21\n0.0\n31\n0.0\n"
+        "0\nLINE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+    )
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(source, DxfImportPolicy())
+    imported = decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-15))
+    assert [loss.category for loss in imported.report.losses] == ["transformed"]
+    rows = imported.profile.endpoint_gap_bounds
+    assert rows is not None
+    (arc,) = (
+        index
+        for index, segment in enumerate(imported.profile.outer.segments)
+        if isinstance(segment, BSplineCurve)
+    )
+    assert min(rows[0][arc]) == 0.0
+    assert displacement <= max(rows[0][arc]) <= 1e-15
+
+
+def test_spline_end_off_its_vertex_needs_a_declared_gap() -> None:
+    corner = (2.0**-60, 1.0)
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(_spline_wedge(corner), DxfImportPolicy())
     imported = decode_dxf_bytes(
-        _quarter_ellipse(literal), DxfImportPolicy(maximum_junction_gap=gap)
+        _spline_wedge(corner), DxfImportPolicy(maximum_junction_gap=1e-15)
     )
     assert [loss.category for loss in imported.report.losses] == ["transformed"]
-    # fl(pi/2) is not an exact quarter turn: the exact axis point (0, 1) lies
-    # 1.2e-16 from the authored endpoint and needs a declared gap.
-    with pytest.raises(DxfImportError):
-        decode_dxf_bytes(_quarter_ellipse((0.0, 1.0)), DxfImportPolicy())
-    axis_corner = decode_dxf_bytes(
-        _quarter_ellipse((0.0, 1.0)), DxfImportPolicy(maximum_junction_gap=gap)
+    rows = imported.profile.endpoint_gap_bounds
+    assert rows is not None
+    assert 2.0**-60 <= max(max(row) for row in rows[0]) <= 1e-15
+
+
+# Exact axis points of the ellipse centered at 0 with major (2, 0), ratio 0.5.
+_AXIS_POINTS = ((2.0, 0.0), (0.0, 1.0), (-2.0, 0.0), (0.0, -1.0), (2.0, 0.0))
+
+
+def _right_angle(k: int) -> float:
+    with mpmath.workprec(300):
+        return float(mpmath.mpf(k) * mpmath.pi / 2)
+
+
+def _wedge(first: float, last: float, k_first: int, k_last: int) -> bytes:
+    # ELLIPSE first -> last closed through the center by lines that meet the
+    # exact axis points of the right angles k_first and k_last.
+    end, start = _AXIS_POINTS[k_last], _AXIS_POINTS[k_first]
+    return _drawing(
+        "0\nELLIPSE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+        f"40\n0.5\n41\n{first!r}\n42\n{last!r}\n"
+        f"0\nLINE\n10\n{end[0]!r}\n20\n{end[1]!r}\n30\n0.0\n"
+        "11\n0.0\n21\n0.0\n31\n0.0\n"
+        "0\nLINE\n10\n0.0\n20\n0.0\n30\n0.0\n"
+        f"11\n{start[0]!r}\n21\n{start[1]!r}\n31\n0.0\n"
     )
-    assert [loss.category for loss in axis_corner.report.losses] == ["transformed"]
+
+
+@pytest.mark.parametrize(
+    ("k_first", "k_last"), ((0, 1), (0, 2), (0, 3), (1, 3), (3, 1), (2, 4))
+)
+def test_right_angle_parameters_denote_exact_axis_points(
+    k_first: int, k_last: int
+) -> None:
+    policy = DxfImportPolicy()
+    imported = decode_dxf_bytes(
+        _wedge(_right_angle(k_first), _right_angle(k_last), k_first, k_last), policy
+    )
+    assert imported.report.losses == ()
+    assert imported.profile.endpoint_gap_bounds is None
+    (spline,) = (
+        segment
+        for segment in imported.profile.outer.segments
+        if isinstance(segment, BSplineCurve)
+    )
+    controls = np.asarray(spline.control_points)
+    assert {tuple(controls[0].tolist()), tuple(controls[-1].tolist())} == {
+        _AXIS_POINTS[k_first],
+        _AXIS_POINTS[k_last],
+    }
+    restored = decode_dxf_bytes(
+        encode_dxf(imported.profile, coordinate_unit=MILLIMETER), policy
+    )
+    assert restored.report.losses == ()
+    assert restored.profile.outer.vertices == imported.profile.outer.vertices
+    assert [type(segment) for segment in restored.profile.outer.segments] == [
+        type(segment) for segment in imported.profile.outer.segments
+    ]
+
+
+def _neighbors() -> list[tuple[float, float, int, int]]:
+    cases = []
+    for k_first, k_last in ((0, 1), (0, 2), (1, 3), (3, 1), (2, 4)):
+        first, last = _right_angle(k_first), _right_angle(k_last)
+        cases += [
+            (first, math.nextafter(last, 0.0), k_first, k_last),
+            (math.nextafter(first, math.inf), last, k_first, k_last),
+        ]
+        if k_first:
+            cases.append((math.nextafter(first, -math.inf), last, k_first, k_last))
+        if k_last != 4:
+            cases.append((first, math.nextafter(last, math.inf), k_first, k_last))
+    return cases
+
+
+@pytest.mark.parametrize("k_last", (1, 2))
+def test_signed_zero_start_keeps_the_analytic_carrier(k_last: int) -> None:
+    # -0.0 is not bit-equal to the right angle 0, so no quarter arc is formed;
+    # its analytic end is nevertheless exact and the right-angle end is rooted.
+    imported = decode_dxf_bytes(
+        _wedge(-0.0, _right_angle(k_last), 0, k_last), DxfImportPolicy()
+    )
+    assert imported.report.losses == ()
+    assert any(
+        isinstance(segment, ProfileCurveUse)
+        for segment in imported.profile.outer.segments
+    )
+
+
+@pytest.mark.parametrize(("first", "last", "k_first", "k_last"), _neighbors())
+def test_neighboring_parameters_keep_declared_gap_closure(
+    first: float, last: float, k_first: int, k_last: int
+) -> None:
+    source = _wedge(first, last, k_first, k_last)
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(source, DxfImportPolicy())
+    imported = decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-14))
+    assert [loss.category for loss in imported.report.losses] == ["transformed"]
+
+
+def test_parameter_past_the_full_turn_is_out_of_period() -> None:
+    source = _wedge(_right_angle(2), math.nextafter(_right_angle(4), math.inf), 2, 4)
+    with pytest.raises(DxfImportError, match="one declared period"):
+        decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-14))
+
+
+def test_nonconvex_analytic_ellipse_is_a_reported_refusal() -> None:
+    # A general-path three-quarter ellipse needs a non-convex conic simplicity
+    # proof that the profile owner does not have; it is refused as an import.
+    source = _wedge(0.0, math.nextafter(_right_angle(3), 0.0), 0, 3)
+    with pytest.raises(DxfImportError, match="nonconvex-curved-loop-simplicity"):
+        decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-14))
+
+
+def _mixed_right_angles() -> list[tuple[float, float, int, int]]:
+    cases = []
+    for k in (1, 2, 3):
+        # The general end lies one ulp off the neighboring axis parameter.
+        before = _right_angle(k - 1)
+        start = math.nextafter(before, math.inf) if k > 1 else math.nextafter(0.0, 1.0)
+        cases.append((start, _right_angle(k), k - 1, k))
+        cases.append(
+            (_right_angle(k), math.nextafter(_right_angle(k + 1), 0.0), k, k + 1)
+        )
+    return cases
+
+
+@pytest.mark.parametrize(("first", "last", "k_first", "k_last"), _mixed_right_angles())
+def test_single_right_angle_end_joins_at_its_exact_axis_point(
+    first: float, last: float, k_first: int, k_last: int
+) -> None:
+    source = _wedge(first, last, k_first, k_last)
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(source, DxfImportPolicy())
+    imported = decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-14))
+    assert [loss.category for loss in imported.report.losses] == ["transformed"]
+    rows = imported.profile.endpoint_gap_bounds
+    assert rows is not None
+    (use,) = (
+        index
+        for index, segment in enumerate(imported.profile.outer.segments)
+        if isinstance(segment, ProfileCurveUse)
+    )
+    # The right-angle end is the exact axis point; only the general end has a gap.
+    assert min(rows[0][use]) == 0.0 < max(rows[0][use]) <= 1e-14
 
 
 _TWO_PI = 2 * math.pi

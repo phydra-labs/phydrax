@@ -6,8 +6,10 @@
 
 The implementation deliberately does not contain JAX primitives.  A tetrahedron
 intersection is a small, topology-changing geometry operation and is therefore
-prepared on the host before a remap is committed.  The intersection polytope is
-formed by enumerating vertices of the eight half-spaces (four from each input
+prepared on the host before a remap is committed.  The status and volume are
+decided exactly: the source is clipped by the closed target half-spaces in
+rational arithmetic on the binary64 inputs.  The reported intersection polytope
+is formed by enumerating vertices of the eight half-spaces (four from each input
 cell).  Every numerical decision is conservative: malformed cells, uncertain
 predicates, and unresolved constructions return a typed non-success result,
 never a plausible but unverifiable volume. Orientation and plane-triple singularity
@@ -22,6 +24,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from fractions import Fraction
 from itertools import combinations
 from typing import Any, cast
 
@@ -29,6 +32,13 @@ import numpy as np
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._geometry_predicates import orient3d, PredicateMode, resolve_host_predicate_mode
+from ._rational import (
+    fraction_down,
+    fraction_up,
+    rational_cross,
+    rational_dot,
+    rational_vector,
+)
 
 
 class TetraIntersectionStatus(str, Enum):
@@ -69,8 +79,6 @@ class TetraIntersectionTolerance:
         object.__setattr__(self, "relative", relative)
 
 
-
-
 @dataclass(frozen=True, slots=True)
 class TetraIntersectionEvidence:
     """Evidence produced while certifying an intersection result."""
@@ -91,8 +99,9 @@ class TetraIntersectionResult:
 
     ``vertices`` is a read-only ``(N, 3)`` array in lexicographic order and
     ``faces`` contains outward-oriented polygon index tuples in canonical
-    order.  For ``volume_only=True`` the arrays are intentionally empty while
-    the certified volume and evidence remain available.
+    order.  For ``volume_only=True`` the topology is not constructed: the
+    arrays are empty and the vertex and face counts are zero while the exact
+    status, certified volume, and remaining evidence stay available.
     """
 
     status: TetraIntersectionStatus
@@ -197,8 +206,6 @@ def _resolve_tolerance(tolerance: Any) -> TetraIntersectionTolerance:
         value = float(cast(float, tolerance))
         return TetraIntersectionTolerance(value, value)
     raise TypeError("tolerance must be a scalar, mapping, or TetraIntersectionTolerance.")
-
-
 
 
 def _empty_result(
@@ -418,36 +425,159 @@ def _face_order(
     return tuple(ordered)
 
 
-def _compensated_volume(
-    vertices: np.ndarray, faces: tuple[tuple[int, ...], ...]
-) -> tuple[float, float]:
-    if not faces:
-        return 0.0, 0.0
-    origin = np.mean(vertices, axis=0)
-    total = 0.0
-    correction = 0.0
-    scale = max(float(np.max(np.abs(vertices - origin))), 1.0)
-    terms: list[float] = []
-    for face in faces:
-        anchor = vertices[face[0]] - origin
-        for index in range(1, len(face) - 1):
-            first = vertices[face[index]] - origin
-            second = vertices[face[index + 1]] - origin
-            term = float(np.dot(anchor, np.cross(first, second))) / 6.0
-            terms.append(term)
-            updated = total + term
-            if abs(total) >= abs(term):
-                correction += (total - updated) + term
-            else:
-                correction += (term - updated) + total
-            total = updated
-    signed = total + correction
-    volume = abs(float(signed))
-    # The accumulated correction is an evidence bound, not a volume adjustment.
-    error = abs(float(correction)) + float(np.finfo(np.float64).eps) * max(
-        1.0, scale**3
-    ) * max(1, len(terms))
-    return volume, error
+type _ExactPoint = tuple[Fraction, Fraction, Fraction]
+type _ExactTetrahedron = tuple[_ExactPoint, _ExactPoint, _ExactPoint, _ExactPoint]
+
+
+def _exact_difference(first: _ExactPoint, second: _ExactPoint, /) -> _ExactPoint:
+    return (first[0] - second[0], first[1] - second[1], first[2] - second[2])
+
+
+def _exact_halfspaces(
+    tetrahedron: _ExactTetrahedron, /
+) -> tuple[tuple[_ExactPoint, Fraction], ...]:
+    """Exact closed half-spaces ``normal . x + offset >= 0`` bounding a tetrahedron."""
+    halfspaces: list[tuple[_ExactPoint, Fraction]] = []
+    for opposite in range(4):
+        first, second, third = (
+            tetrahedron[index] for index in range(4) if index != opposite
+        )
+        normal = rational_cross(
+            _exact_difference(second, first), _exact_difference(third, first)
+        )
+        offset = -rational_dot(normal, first)
+        if rational_dot(normal, tetrahedron[opposite]) + offset < 0:
+            normal = (-normal[0], -normal[1], -normal[2])
+            offset = -offset
+        halfspaces.append((normal, offset))
+    return tuple(halfspaces)
+
+
+def _prism_tetrahedra(
+    bottom: tuple[_ExactPoint, _ExactPoint, _ExactPoint],
+    top: tuple[_ExactPoint, _ExactPoint, _ExactPoint],
+    /,
+) -> tuple[_ExactTetrahedron, _ExactTetrahedron, _ExactTetrahedron]:
+    """Staircase triangulation of a convex prism with lateral edges ``bottom[k]-top[k]``."""
+    return (
+        (bottom[0], bottom[1], bottom[2], top[2]),
+        (bottom[0], bottom[1], top[1], top[2]),
+        (bottom[0], top[0], top[1], top[2]),
+    )
+
+
+def _clip_exact_tetrahedron(
+    tetrahedron: _ExactTetrahedron, normal: _ExactPoint, offset: Fraction, /
+) -> tuple[_ExactTetrahedron, ...]:
+    """Tetrahedra tiling ``tetrahedron`` intersected with ``normal . x + offset >= 0``."""
+    values = tuple(rational_dot(normal, point) + offset for point in tetrahedron)
+    inside = tuple(index for index in range(4) if values[index] >= 0)
+    outside = tuple(index for index in range(4) if values[index] < 0)
+
+    def cut(kept: int, dropped: int, /) -> _ExactPoint:
+        weight = values[kept] / (values[kept] - values[dropped])
+        start, stop = tetrahedron[kept], tetrahedron[dropped]
+        return (
+            start[0] + weight * (stop[0] - start[0]),
+            start[1] + weight * (stop[1] - start[1]),
+            start[2] + weight * (stop[2] - start[2]),
+        )
+
+    match len(inside):
+        case 4:
+            return (tetrahedron,)
+        case 0:
+            return ()
+        case 1:
+            kept = inside[0]
+            return (
+                (
+                    tetrahedron[kept],
+                    cut(kept, outside[0]),
+                    cut(kept, outside[1]),
+                    cut(kept, outside[2]),
+                ),
+            )
+        case 2:
+            first, second = inside
+            return _prism_tetrahedra(
+                (
+                    tetrahedron[first],
+                    cut(first, outside[0]),
+                    cut(first, outside[1]),
+                ),
+                (
+                    tetrahedron[second],
+                    cut(second, outside[0]),
+                    cut(second, outside[1]),
+                ),
+            )
+        case 3:
+            dropped = outside[0]
+            return _prism_tetrahedra(
+                (tetrahedron[inside[0]], tetrahedron[inside[1]], tetrahedron[inside[2]]),
+                (
+                    cut(inside[0], dropped),
+                    cut(inside[1], dropped),
+                    cut(inside[2], dropped),
+                ),
+            )
+        case _:
+            raise RuntimeError("A tetrahedron has exactly four vertices.")
+
+
+def _exact_intersection_pieces(
+    source: np.ndarray, target: np.ndarray, /
+) -> tuple[_ExactTetrahedron, ...]:
+    """Tetrahedra whose union is exactly the closed intersection of the inputs.
+
+    ``source`` is clipped by the four closed half-spaces of ``target`` in exact
+    rational arithmetic on the binary64 vertices.  Each clip replaces a
+    (possibly degenerate) tetrahedron by tetrahedra covering exactly its kept
+    part: nothing when every vertex is strictly outside, itself, a corner
+    tetrahedron, or a convex prism with planar lateral faces split by the
+    staircase triangulation.  The pieces are interior-disjoint, so the result is
+    empty exactly when the closed intersection is empty and the absolute
+    determinants sum to its exact volume.
+    """
+
+    def exact_tetrahedron(vertices: np.ndarray, /) -> _ExactTetrahedron:
+        first, second, third, fourth = (
+            rational_vector((float(row[0]), float(row[1]), float(row[2])))
+            for row in vertices
+        )
+        return first, second, third, fourth
+
+    pieces: tuple[_ExactTetrahedron, ...] = (exact_tetrahedron(source),)
+    for normal, offset in _exact_halfspaces(exact_tetrahedron(target)):
+        pieces = tuple(
+            clipped
+            for piece in pieces
+            for clipped in _clip_exact_tetrahedron(piece, normal, offset)
+        )
+    return pieces
+
+
+def _exact_pieces_volume(pieces: tuple[_ExactTetrahedron, ...], /) -> Fraction:
+    """Exact volume of a union of interior-disjoint tetrahedra."""
+    return (
+        sum(
+            (
+                abs(
+                    rational_dot(
+                        _exact_difference(piece[1], piece[0]),
+                        rational_cross(
+                            _exact_difference(piece[2], piece[0]),
+                            _exact_difference(piece[3], piece[0]),
+                        ),
+                    )
+                )
+                for piece in pieces
+            ),
+            Fraction(0),
+        )
+        / 6
+    )
 
 
 def _build_faces(
@@ -490,6 +620,59 @@ def _build_faces(
     return faces, False
 
 
+def _polytope_topology(
+    source: np.ndarray,
+    target: np.ndarray,
+    tolerance: TetraIntersectionTolerance,
+    scale: float,
+    mode: PredicateMode,
+    /,
+) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]] | None:
+    """Constructed vertices and faces of a nonempty intersection, or ``None``.
+
+    ``None`` reports an unresolved construction: an uncertain plane-triple
+    orientation, no constructed vertex, or an unorderable face.
+    """
+    planes = _tetra_planes(source) + _tetra_planes(target)
+    candidates: list[np.ndarray] = []
+    point_tolerance = tolerance.absolute + tolerance.relative * max(scale, 1.0e-300)
+    for point in tuple(source) + tuple(target):
+        if _inside(point, planes, tolerance, scale):
+            _append_unique(candidates, point, point_tolerance)
+    triples = tuple(combinations(range(len(planes)), 3))
+    triple_normals = np.asarray(
+        [[planes[index].normal for index in indices] for indices in triples],
+        dtype=np.float64,
+    )
+    triple_orientation = orient3d(
+        np.zeros(3, dtype=np.float64),
+        triple_normals[:, 0],
+        triple_normals[:, 1],
+        triple_normals[:, 2],
+        mode=mode,
+    )
+    uncertain = False
+    for triple_index, indices in enumerate(triples):
+        point, point_uncertain = _triple_intersection(
+            planes,
+            indices,
+            int(triple_orientation.signs[triple_index]),
+            bool(triple_orientation.certain[triple_index]),
+        )
+        uncertain = uncertain or point_uncertain
+        if point is not None and _inside(point, planes, tolerance, scale):
+            _append_unique(candidates, point, point_tolerance)
+    if uncertain or not candidates:
+        return None
+    candidates.sort(key=lambda point: tuple(float(value) for value in point))
+    vertices = np.asarray(candidates, dtype=np.float64)
+    vertices.setflags(write=False)
+    faces, face_failure = _build_faces(vertices, planes, tolerance, scale)
+    if face_failure:
+        return None
+    return vertices, faces
+
+
 def intersect_tetrahedra(
     source_vertices: Any,
     target_vertices: Any,
@@ -502,9 +685,17 @@ def intersect_tetrahedra(
 ) -> TetraIntersectionResult:
     """Intersect two affine tetrahedra with complete finite candidate enumeration.
 
-    ``DISJOINT`` and ``ZERO_MEASURE_CONTACT`` are resolved outcomes. Filtered
-    orientation uncertainty or an unorderable constructed face returns
-    ``UNCERTAIN_PREDICATE``; no candidate-count or topology cap truncates work.
+    The status is decided exactly on the binary64 inputs: the source is clipped
+    by the closed target half-spaces in rational arithmetic, so ``DISJOINT``
+    means the closed tetrahedra share no point, and a nonempty intersection is
+    ``SUCCESS`` when its exact volume exceeds the volume tolerance and
+    ``ZERO_MEASURE_CONTACT`` otherwise.  ``volume`` and ``volume_error`` enclose
+    that exact volume.  The reported vertices and faces come from the
+    tolerance-based floating-point enumeration; filtered orientation
+    uncertainty, an unorderable constructed face, or a construction that loses
+    a nonempty intersection returns ``UNCERTAIN_PREDICATE``. ``volume_only``
+    skips that construction, so its status never depends on it.  No
+    candidate-count or topology cap truncates work.
     """
 
     policy = GeometryPrecisionPolicy() if precision is None else precision
@@ -525,9 +716,13 @@ def intersect_tetrahedra(
     source, source_status = _coerce_tetrahedron(source_vertices)
     target, target_status = _coerce_tetrahedron(target_vertices)
     if source_status is not None:
-        return _empty_result(source_status, source_id, target_id, pair_id, predicate_mode=mode)
+        return _empty_result(
+            source_status, source_id, target_id, pair_id, predicate_mode=mode
+        )
     if target_status is not None:
-        return _empty_result(target_status, source_id, target_id, pair_id, predicate_mode=mode)
+        return _empty_result(
+            target_status, source_id, target_id, pair_id, predicate_mode=mode
+        )
     if source is None or target is None:
         raise RuntimeError("tetrahedron coercion lost a validated input")
     source_failure, source_volume, source_scale, source_uncertain = _validate_tetrahedron(
@@ -558,47 +753,8 @@ def intersect_tetrahedra(
             predicate_mode=mode,
         )
     scale = max(source_scale, target_scale)
-    planes = _tetra_planes(source) + _tetra_planes(target)
-    candidates: list[np.ndarray] = []
-    point_tolerance = tolerance_.absolute + tolerance_.relative * max(scale, 1.0e-300)
-    for point in tuple(source) + tuple(target):
-        if _inside(point, planes, tolerance_, scale):
-            _append_unique(candidates, point, point_tolerance)
-    uncertain = False
-    triples = tuple(combinations(range(len(planes)), 3))
-    triple_normals = np.asarray(
-        [[planes[index].normal for index in indices] for indices in triples],
-        dtype=np.float64,
-    )
-    triple_orientation = orient3d(
-        np.zeros(3, dtype=np.float64),
-        triple_normals[:, 0],
-        triple_normals[:, 1],
-        triple_normals[:, 2],
-        mode=mode,
-    )
-    for triple_index, indices in enumerate(triples):
-        point, point_uncertain = _triple_intersection(
-            planes,
-            indices,
-            int(triple_orientation.signs[triple_index]),
-            bool(triple_orientation.certain[triple_index]),
-        )
-        uncertain = uncertain or point_uncertain
-        if point is not None and _inside(point, planes, tolerance_, scale):
-            _append_unique(candidates, point, point_tolerance)
-    if uncertain:
-        return _empty_result(
-            TetraIntersectionStatus.UNCERTAIN_PREDICATE,
-            source_id,
-            target_id,
-            pair_id,
-            source_volume=source_volume,
-            target_volume=target_volume,
-            predicate_uncertain=True,
-            predicate_mode=mode,
-        )
-    if not candidates:
+    pieces = _exact_intersection_pieces(source, target)
+    if not pieces:
         return _empty_result(
             TetraIntersectionStatus.DISJOINT,
             source_id,
@@ -608,37 +764,38 @@ def intersect_tetrahedra(
             target_volume=target_volume,
             predicate_mode=mode,
         )
-    candidates.sort(key=lambda point: tuple(float(value) for value in point))
-    vertices = np.asarray(candidates, dtype=np.float64)
-    vertices.setflags(write=False)
-    faces, face_failure = _build_faces(vertices, planes, tolerance_, scale)
-    if face_failure:
-        return _empty_result(
-            TetraIntersectionStatus.UNCERTAIN_PREDICATE,
-            source_id,
-            target_id,
-            pair_id,
-            source_volume=source_volume,
-            target_volume=target_volume,
-            predicate_uncertain=True,
-            predicate_mode=mode,
-        )
-    volume, volume_error = _compensated_volume(vertices, faces)
+    exact_volume = _exact_pieces_volume(pieces)
+    volume = fraction_down(exact_volume)
+    volume_error = fraction_up(exact_volume - Fraction(volume))
     volume_tolerance = max(
         tolerance_.absolute, tolerance_.relative * max(scale**3, 1.0e-300)
     )
     status = (
         TetraIntersectionStatus.SUCCESS
-        if volume > volume_tolerance
+        if exact_volume > Fraction(volume_tolerance)
         else TetraIntersectionStatus.ZERO_MEASURE_CONTACT
     )
-    output_vertices = np.empty((0, 3), dtype=np.float64) if volume_only else vertices
-    output_faces: tuple[tuple[int, ...], ...] = () if volume_only else faces
+    vertices = np.empty((0, 3), dtype=np.float64)
+    faces: tuple[tuple[int, ...], ...] = ()
+    if not volume_only:
+        topology = _polytope_topology(source, target, tolerance_, scale, mode)
+        if topology is None:
+            return _empty_result(
+                TetraIntersectionStatus.UNCERTAIN_PREDICATE,
+                source_id,
+                target_id,
+                pair_id,
+                source_volume=source_volume,
+                target_volume=target_volume,
+                predicate_uncertain=True,
+                predicate_mode=mode,
+            )
+        vertices, faces = topology
     return TetraIntersectionResult(
         status=status,
         volume=volume,
-        vertices=output_vertices,
-        faces=output_faces,
+        vertices=vertices,
+        faces=faces,
         source_id=source_id,
         target_id=target_id,
         pair_id=pair_id,

@@ -13,6 +13,7 @@ devices. Eight devices cover slabs, 2×4/4×2 spectral pencils, and the separate
 from __future__ import annotations
 
 import math
+import os
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,8 @@ def _mesh(shape: tuple[int, ...], names: tuple[str, ...] | None = None) -> Mesh:
 
 
 def _repository(tmp_path: Path) -> POSIXArtifactRepository:
+    if os.name != "posix":
+        pytest.skip("These bindings require the explicit POSIX artifact provider.")
     profile = HPCFilesystemProfile(
         "posix.pic-restart-test",
         "local-posix",

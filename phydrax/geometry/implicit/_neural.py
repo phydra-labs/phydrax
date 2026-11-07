@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Any, final, NoReturn
 
 import equinox as eqx
@@ -24,6 +25,7 @@ from ..._model._array import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, partition_parameters
 from ..._validation import positive_finite_float
+from ...linalg._hermitian_spectral import _scalar_exp_enclosure, fraction_sqrt_interval
 from ...typing import checked, PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
@@ -40,6 +42,7 @@ from .._contracts import (
     GeometryKind,
     GeometrySource,
 )
+from .._rational import fraction_up
 from .._sampling import bounded_rejection_sample, RejectionSamplingPlan, SamplingResult
 from .._validity import GeometryValidityEvidence
 from ..analytic._primitives import _check_points, _feature_id
@@ -207,15 +210,57 @@ def _activation_lipschitz_factors(
     return (*factors, final_constant)
 
 
-def _constructed_lipschitz_bound(network: Any, factors: tuple[float, ...], /) -> Array:
-    # The Frobenius norm bounds the operator 2-norm of every layer matrix.
-    bound = jnp.asarray(factors[-1], dtype=jnp.float64)
+def _constructed_lipschitz_estimate(network: Any, factors: tuple[float, ...], /) -> Array:
+    """Binary64 estimate of the constructed bound, traceable at any design state."""
+    estimate = jnp.asarray(factors[-1], dtype=jnp.float64)
     for layer, constant in zip(network.layers, factors[:-1], strict=True):
         weight = layer.weight
         if layer.random_weight_factorization:
             weight = jnp.exp(layer.rwf_log_scales)[:, None] * weight
-        bound = bound * constant * jnp.sqrt(jnp.sum(weight * weight))
-    return bound
+        estimate = estimate * constant * jnp.sqrt(jnp.sum(weight * weight))
+    return estimate
+
+
+def _exact_squared_norm(values: np.ndarray, /) -> Fraction:
+    """Exact sum of squares of finite binary64 values."""
+    # Every finite binary64 value is an integer multiple of 2**-1074.
+    total = 0
+    for value in values.ravel().tolist():
+        numerator, denominator = float(value).as_integer_ratio()
+        scaled = numerator << (1075 - denominator.bit_length())
+        total += scaled * scaled
+    return Fraction(total, 1 << 2148)
+
+
+def _constructed_lipschitz_bound(network: Any, factors: tuple[float, ...], /) -> float:
+    """Upper bound of the real-arithmetic network's Lipschitz constant.
+
+    The Frobenius norm bounds the operator 2-norm of every layer matrix. Squares
+    sum exactly from the binary64 weights, the square roots and the RWF scales
+    ``exp(s)`` enter at verified rational upper endpoints, and the exact product
+    is rounded up once, so the bound holds on every IEEE binary64 platform.
+    """
+    bound = Fraction(factors[-1])
+    for layer, constant in zip(network.layers, factors[:-1], strict=True):
+        weight = np.asarray(layer.weight, dtype=np.float64)
+        scales = (
+            np.asarray(layer.rwf_log_scales, dtype=np.float64)
+            if layer.random_weight_factorization
+            else None
+        )
+        if not np.all(np.isfinite(weight)) or (
+            scales is not None and not np.all(np.isfinite(scales))
+        ):
+            raise ValueError("The constructed Lipschitz bound is not finite.")
+        if scales is None:
+            squared = _exact_squared_norm(weight)
+        else:
+            squared = Fraction(0)
+            for scale, row in zip(scales.tolist(), weight, strict=True):
+                center, radius = _scalar_exp_enclosure(Fraction(scale))
+                squared += (center + radius) ** 2 * _exact_squared_norm(row)
+        bound *= Fraction(constant) * fraction_sqrt_interval(squared)[1]
+    return fraction_up(bound)
 
 
 def _field_regularity(regularity: DerivativeRegularity | None, /) -> FieldRegularity:
@@ -403,7 +448,7 @@ class _NeuralImplicitKernel(GeometryKernel):
         if self.activation_lipschitz is not None:
             margins.append(
                 lipschitz
-                - _constructed_lipschitz_bound(network, self.activation_lipschitz)
+                - _constructed_lipschitz_estimate(network, self.activation_lipschitz)
             )
             names.append("lipschitz_construction")
         margin_array = jnp.stack(margins)
@@ -849,7 +894,11 @@ def _lipschitz_evidence(
             "A Lipschitz bound cannot be constructed for this network; declare "
             "lipschitz_upper_bound explicitly."
         )
-    bound = float(np.asarray(_constructed_lipschitz_bound(network, factors)))
+    # The certificate also dominates the binary64 estimate that
+    # `geometry_validity` recomputes in-trace, so that consistency margin is
+    # nonnegative at the certified weights.
+    estimate = float(np.asarray(_constructed_lipschitz_estimate(network, factors)))
+    bound = max(_constructed_lipschitz_bound(network, factors), estimate)
     if not np.isfinite(bound):
         raise ValueError("The constructed Lipschitz bound is not finite.")
     return bound, CapabilityEvidenceKind.CONSTRUCTED

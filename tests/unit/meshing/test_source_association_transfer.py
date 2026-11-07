@@ -5,7 +5,7 @@ import subprocess
 import sys
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -18,6 +18,10 @@ from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
     SourceBoundaryImagePullback,
+)
+from phydrax.geometry._source_fidelity import (
+    validate_source_fidelity_witness,
+    ValidatedSourceFidelityWitness,
 )
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
@@ -46,7 +50,11 @@ from phydrax.meshing._association import (
     SourceBoundaryTargetPieceRow,
 )
 from phydrax.meshing._association_composition import ComposedAssociationTransfer
-from phydrax.meshing._association_routes import boundary_mask, target_dimension
+from phydrax.meshing._association_routes import (
+    boundary_mask,
+    entity_rows,
+    target_dimension,
+)
 from phydrax.meshing._bisection import BisectionCompatibility, BisectionHierarchy
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._contracts import (
@@ -75,6 +83,7 @@ from phydrax.meshing._surface_association_transfer import (
     _target_edge_parameter,
     SurfaceAssociationTransfer,
 )
+from phydrax.meshing._topology_edit import entity_keys, key_rows
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.meshing.providers._native import NativeMeshingProvider
 from phydrax.meshing.providers._native_implicit import (
@@ -87,6 +96,7 @@ from phydrax.meshing.providers._native_schedules import (
 )
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
 from tests.unit.geometry.test_implicit_source_charts import _retarget_implicit_witness
+from tests.unit.interchange.test_native_cad_archive import _worker_oracle
 from tests.unit.meshing.test_native_mapped_hex_routes import _mapped_plc_tetra_source
 from tests.unit.meshing.test_native_surface_routes import (
     _square_domain,
@@ -307,11 +317,20 @@ def test_implicit_bisection_inherits_parent_chart_bounds_by_restriction(
     )
     from phydrax.geometry.implicit import _source_charts
 
-    def unexpected_proof(*args: object, **kwargs: object) -> None:
-        raise AssertionError("An exact chart restriction must not re-prove source rows.")
+    parent_witness = parent.witness
+    assert isinstance(parent_witness, SourceBoundaryChartWitness)
+    build_face = _source_charts._build_face
+    proved_witnesses: list[SourceBoundaryChartWitness] = []
 
+    def recorded_proof(*args: Any, **kwargs: Any) -> Any:
+        proved_witnesses.append(args[1])
+        return build_face(*args, **kwargs)
+
+    # Since 36467b364 the parent proof is replayed from scratch before any
+    # operation-scoped reuse, so the parent's own rows are proved once more.
+    # An exact chart restriction must not prove any target row.
     with monkeypatch.context() as reuse:
-        reuse.setattr(_source_charts, "_build_face", unexpected_proof)
+        reuse.setattr(_source_charts, "_build_face", recorded_proof)
         refined = execute_mesh_adaptation(
             prepare_mesh_adaptation(
                 source,
@@ -321,6 +340,14 @@ def test_implicit_bisection_inherits_parent_chart_bounds_by_restriction(
                 policy=policy,
             )
         )
+    assert all(
+        np.array_equal(
+            np.asarray(witness.cell_global_ids),
+            np.asarray(parent_witness.cell_global_ids),
+        )
+        and witness.source_chart_ids == parent_witness.source_chart_ids
+        for witness in proved_witnesses
+    )
     target = refined.target
     assert target.certification is not None
     assert target.certification.embedding.nested_restriction is not None
@@ -369,6 +396,8 @@ def test_implicit_bisection_inherits_parent_chart_bounds_by_restriction(
     elements, routes, coordinates = target.geometry.resolve(target.mesh)
     changed_coordinates = np.array(coordinates, copy=True)
     changed_coordinates[0, 0] = np.nextafter(changed_coordinates[0, 0], np.inf)
+    # A source-mesh binding needs a source coordinate map (6bffc1354); the
+    # nudged geometry is a plain coordinate field.
     changed_geometry = CellGeometrySpec(
         {
             block.name: element
@@ -379,7 +408,6 @@ def test_implicit_bisection_inherits_parent_chart_bounds_by_restriction(
             for block, route in zip(target.mesh.blocks, routes, strict=True)
         },
         changed_coordinates,
-        source_mesh=target.mesh,
     )
     with pytest.raises(ValueError, match="bound|geometry|inputs"):
         certify_implicit_chart_restriction(
@@ -601,8 +629,29 @@ def test_curve_edge_replay_retains_original_root_parent() -> None:
         source, lineage, source.mesh, stencil, parent
     )
     assert result.parent_association_id == "original-curve-bank"
-    np.testing.assert_array_equal(result.parent_ids, ids + 1000)
-    assert result.source_parameter_intervals == parent.source_parameter_intervals
+    # Replay rows follow the source curves, so each retained edge is compared
+    # by its target id rather than by row position.
+    replayed = np.asarray(result.target_global_ids, dtype=np.int64).tolist()
+    assert sorted(replayed) == ids.tolist()
+    expected = {
+        int(target): (int(target) + 1000, int(curve), interval)
+        for target, curve, interval in zip(
+            ids.tolist(),
+            np.asarray(parent.source_indices).tolist(),
+            parent.source_parameter_intervals,
+            strict=True,
+        )
+    }
+    assert {
+        target: (int(root), int(curve), interval)
+        for target, root, curve, interval in zip(
+            replayed,
+            np.asarray(result.parent_ids, dtype=np.int64).tolist(),
+            np.asarray(result.source_indices).tolist(),
+            result.source_parameter_intervals,
+            strict=True,
+        )
+    } == expected
 
 
 def test_mapped_reference_root_association_and_composed_namespaces() -> None:
@@ -719,8 +768,10 @@ def _outward_boundary_triangles(volume: CellMesh, surface: CellMesh) -> bool:
     return corners.shape[0] == boundary and bool(np.all(outward))
 
 
-def test_implicit_volume_boundary_remap_orients_triangles_outward() -> None:
-    profile = _profile("association-ball")
+def _implicit_ball_volume(
+    source_id: str,
+) -> tuple[CellMeshingResult, NativeImplicitSource]:
+    profile = _profile(source_id)
     policy = AdaptiveImplicitSurfacePolicy(
         relative_cell_diameter=0.2,
         root_tolerance=1.0e-8,
@@ -757,6 +808,11 @@ def test_implicit_volume_boundary_remap_orients_triangles_outward() -> None:
     authority = certification.inputs.feature_source
     if not isinstance(authority, NativeImplicitSource):
         raise AssertionError("Native implicit volume must retain its implicit source.")
+    return source, authority
+
+
+def test_implicit_volume_boundary_remap_orients_triangles_outward() -> None:
+    source, authority = _implicit_ball_volume("association-ball")
     transfer = ImplicitAssociationTransfer(authority)
     lineage, _ = _identity_lineage(source.mesh)
     # The native volume carries simplicial incidence; the copy carries
@@ -775,6 +831,183 @@ def test_implicit_volume_boundary_remap_orients_triangles_outward() -> None:
         model = transfer.remap_boundary(source, lineage, target)
         assert model is not None
         assert _outward_boundary_triangles(target, model.mesh)
+
+
+def _preserved_lineage(source: CellMesh, target: CellMesh, /) -> MeshLineage:
+    """Lineage of every entity whose sorted vertex-ID key both meshes keep."""
+    records = []
+    for dimension in range(4):
+        source_ids = np.asarray(source.entity_set(dimension).entity_ids, dtype=np.int64)
+        target_ids = np.asarray(target.entity_set(dimension).entity_ids, dtype=np.int64)
+        if dimension == 3:
+            rows = entity_rows(target, 3, source_ids)
+        else:
+            rows = key_rows(
+                entity_keys(target, dimension), entity_keys(source, dimension)
+            )
+        kept = rows >= 0
+        records.append(
+            EntityLineage(
+                dimension,
+                source.entity_set(dimension).entity_set_id,
+                target.entity_set(dimension).entity_set_id,
+                source_ids[kept],
+                target_ids[rows[kept]],
+                np.full(
+                    (int(np.count_nonzero(kept)),),
+                    EntityLineageKind.PRESERVED,
+                    dtype=np.int32,
+                ),
+            )
+        )
+    return MeshLineage(source.topology_id, target.topology_id, tuple(records))
+
+
+def test_implicit_composite_created_vertices_use_certified_support() -> None:
+    """Created vertices whose exact stencil spans no single source simplex.
+
+    Implicit-only boundary moves, collapses and flips join vertices across the
+    source facets of one implicit group, so a later metric split creates a
+    vertex whose stencil spans no source simplex (the offset-ring torus metric
+    epoch). A zero-set vertex then needs the validated target root-chart
+    witness of an incident face; a region vertex takes its incident cells'
+    source ancestry.
+    """
+    source, authority = _implicit_ball_volume("association-composite-ball")
+    transfer = ImplicitAssociationTransfer(authority)
+    mesh = source.mesh
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    on_boundary = np.asarray(boundary_mask(mesh, 0), dtype=np.bool_)
+    source_edges = {tuple(row) for row in entity_keys(mesh, 1).tolist()}
+    boundary_ids = vertex_ids[on_boundary].tolist()
+    interior_ids = vertex_ids[~on_boundary].tolist()
+    assert len(boundary_ids) > 3 and interior_ids
+    surface_vertex = boundary_ids[0]
+    first = boundary_ids[1]
+    second = next(
+        value
+        for value in boundary_ids[2:]
+        if (min(first, value), max(first, value)) not in source_edges
+    )
+    region_vertex = interior_ids[0]
+    region_support = sorted(
+        value for value in vertex_ids.tolist() if value != region_vertex
+    )[:5]
+    born = int(np.max(vertex_ids)) + 1
+    renamed = {surface_vertex: born, region_vertex: born + 1}
+    target_ids = np.asarray(
+        [renamed.get(value, value) for value in vertex_ids.tolist()], dtype=np.int64
+    )
+    cells = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
+    cell_ids = np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
+    target = CellMesh.from_tetrahedra(
+        np.asarray(mesh.coordinates),
+        cells,
+        vertex_global_ids=target_ids,
+        cell_global_ids=cell_ids,
+        numeric_version=mesh.numeric_version,
+    )
+    lineage = _preserved_lineage(mesh, target)
+    exact_rows: dict[int, tuple[tuple[int, Fraction], ...]] = {
+        born: ((first, Fraction(1, 2)), (second, Fraction(1, 2))),
+        born + 1: tuple(
+            zip(
+                region_support,
+                (
+                    Fraction(1, 2),
+                    Fraction(1, 4),
+                    Fraction(1, 8),
+                    Fraction(1, 16),
+                    Fraction(1, 16),
+                ),
+                strict=True,
+            )
+        ),
+    }
+    width = 5
+    sources = np.full((target_ids.size, width), -1, dtype=np.int64)
+    weights = np.zeros((target_ids.size, width), dtype=np.float64)
+    valid = np.zeros((target_ids.size, width), dtype=np.bool_)
+    exact: list[tuple[Fraction, ...]] = []
+    for row, identifier in enumerate(target_ids.tolist()):
+        entries = exact_rows.get(identifier, ((identifier, Fraction(1)),))
+        sources[row, : len(entries)] = [value for value, _ in entries]
+        weights[row, : len(entries)] = [float(weight) for _, weight in entries]
+        valid[row, : len(entries)] = True
+        exact.append(
+            tuple(weight for _, weight in entries)
+            + (Fraction(0),) * (width - len(entries))
+        )
+    stencil = VertexInterpolationStencil(
+        mesh.entity_set(0).entity_set_id,
+        target.entity_set(0).entity_set_id,
+        target_ids,
+        sources,
+        weights,
+        valid,
+        exact_weights=tuple(exact),
+    )
+    geometry = CellGeometrySpec.affine(target)
+    assert source.certification is not None
+    query = source.certification.inputs.source
+    source_witness = source.certification.inputs.fidelity_witness
+    assert query is not None and isinstance(source_witness, SourceBoundaryChartWitness)
+    # The target keeps every source face; renamed vertices only rename its key.
+    face_keys = entity_keys(mesh, 2)
+    renamed_keys = np.sort(
+        np.asarray(
+            [[renamed.get(value, value) for value in row] for row in face_keys.tolist()],
+            dtype=np.int64,
+        ),
+        axis=1,
+    )
+    target_face_ids = np.asarray(target.entity_set(2).entity_ids, dtype=np.int64)[
+        key_rows(entity_keys(target, 2), renamed_keys)
+    ]
+    witness = _retarget_implicit_witness(
+        source_witness,
+        target,
+        geometry,
+        np.asarray(source_witness.cell_global_ids, dtype=np.int64),
+        entity_ids=target_face_ids[
+            entity_rows(mesh, 2, np.asarray(source_witness.entity_global_ids))
+        ],
+    )
+    validated = validate_source_fidelity_witness(target, geometry, query, witness)
+
+    def propagate(
+        target_witness: SourceBoundaryChartWitness | None,
+        tokens: tuple[ValidatedSourceFidelityWitness, ...],
+    ) -> tuple[GeometryAssociation, ...]:
+        return transfer.propagate(
+            source,
+            lineage,
+            target,
+            vertex_stencil=stencil,
+            geometry_transition=None,
+            target_fidelity_witness=target_witness,
+            target_scoped_fidelity=(),
+            validated_fidelity=tokens,
+        )
+
+    # Without the validated root chart, the composite zero-set stencil has no
+    # source-stratum support.
+    for target_witness, tokens in ((None, ()), (witness, ())):
+        with pytest.raises(AssociationPropagationError, match="root-chart witness"):
+            propagate(target_witness, tokens)
+    associations = propagate(witness, (validated,))
+    vertices = next(
+        value for value in associations if target_dimension(target, value) == 0
+    )
+    assert vertices.complete
+    surface_row, region_row = vertices.target_rows(np.asarray((born, born + 1)))
+    assert vertices.source_roles[surface_row] is GeometrySourceEntityRole.FACET
+    assert int(np.asarray(vertices.parent_dimensions)[surface_row]) == -1
+    assert vertices.source_roles[region_row] is GeometrySourceEntityRole.REGION
+    region_target_row = int(np.flatnonzero(target_ids == born + 1)[0])
+    region_cells = cell_ids[np.any(cells == region_target_row, axis=1)]
+    assert int(np.asarray(vertices.parent_dimensions)[region_row]) == 3
+    assert int(np.asarray(vertices.parent_ids)[region_row]) == int(np.min(region_cells))
 
 
 def test_implicit_chart_restriction_replays_in_an_independent_cold_process(
@@ -799,7 +1032,7 @@ def test_implicit_chart_restriction_replays_in_an_independent_cold_process(
             str(worker),
             "read-implicit-chart-restriction",
             str(tmp_path / "implicit-chart-restriction.phx"),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         check=False,
         capture_output=True,
@@ -1782,7 +2015,9 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
     from phydrax.meshing._sizing import UniformSizeControl
 
     model = brep_box(
-        np.zeros(3), np.ones(3), coordinate_contract=_CONTRACT,
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=_CONTRACT,
         source_id="test:brep-volume-curve-transfer",
     )
     boundary = MeshingScope.whole(model, 2)
@@ -1793,11 +2028,15 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
         size_controls=(UniformSizeControl(boundary, 0.5),),
         maximum_deviation=0.02,
     )
-    source = NativeMeshingProvider().plan(
-        model, specification, coordinate_contract=_CONTRACT
-    ).execute()
+    source = (
+        NativeMeshingProvider()
+        .plan(model, specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
     assert source.certification is not None
-    assert isinstance(source.certification.inputs.fidelity_witness, SourceBoundaryChartWitness)
+    assert isinstance(
+        source.certification.inputs.fidelity_witness, SourceBoundaryChartWitness
+    )
 
     def witness_of(value: phx.meshing.CellMeshingResult) -> SourceBoundaryChartWitness:
         assert value.certification is not None
@@ -1819,12 +2058,15 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
         phx.geometry.prepare_brep_projection(model)
     )
     curve = next(
-        item for item in source.associations
+        item
+        for item in source.associations
         if item.association_kind is GeometryAssociationKind.CURVE
     )
     transfer.validate_source(source)
     foreign = brep_box(
-        np.zeros(3), np.ones(3), coordinate_contract=_CONTRACT,
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=_CONTRACT,
         source_id="test:foreign-volume-curve-transfer",
     )
     with pytest.raises(ValueError, match="vertex association"):
@@ -1838,9 +2080,7 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
     )
     with pytest.raises(ValueError, match="source chart witness"):
         transfer.validate_source(stale)
-    curve_index = next(
-        i for i, item in enumerate(source.associations) if item is curve
-    )
+    curve_index = next(i for i, item in enumerate(source.associations) if item is curve)
     invalid_curve = copy(curve)
     object.__setattr__(invalid_curve, "association_kind", GeometryAssociationKind.SURFACE)
     invalid = eqx.tree_at(
@@ -1854,7 +2094,7 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
         associations_and_witness,
         source,
         (
-            source.associations[:curve_index] + source.associations[curve_index + 1:],
+            source.associations[:curve_index] + source.associations[curve_index + 1 :],
             absent_witness,
         ),
     )
@@ -1887,9 +2127,13 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
         return tuple(values[int(row)] for row in rows)
 
     forged_curve = GeometryAssociation(
-        curve.association_kind, curve.source_id, curve.source_revision,
-        curve.target_entity_set_id, target_ids,
-        selected(curve.source_entity_ids), np.asarray(curve.residuals)[rows],
+        curve.association_kind,
+        curve.source_id,
+        curve.source_revision,
+        curve.target_entity_set_id,
+        target_ids,
+        selected(curve.source_entity_ids),
+        np.asarray(curve.residuals)[rows],
         resolved=np.asarray(curve.resolved)[rows],
         ambiguous=np.asarray(curve.ambiguous)[rows],
         exact=curve.exact,
@@ -1930,7 +2174,8 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
     )
     target = result.target
     target_curve = next(
-        item for item in target.associations
+        item
+        for item in target.associations
         if item.association_kind is GeometryAssociationKind.CURVE
     )
     assert target.certification is not None
@@ -1941,17 +2186,22 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
     assert target_curve.association_id == (
         target_witness.cad_curve_association.association_id
     )
-    assert all(interval is not None for interval in target_curve.source_parameter_intervals)
+    assert all(
+        interval is not None for interval in target_curve.source_parameter_intervals
+    )
     assert source.surface_source is not None
     root = next(
-        item for item in source.surface_source.associations
+        item
+        for item in source.surface_source.associations
         if item.association_id == curve.parent_association_id
     )
-    expected = dict(zip(
-        np.asarray(root.target_global_ids).tolist(),
-        root.source_parameter_intervals,
-        strict=True,
-    ))
+    expected = dict(
+        zip(
+            np.asarray(root.target_global_ids).tolist(),
+            root.source_parameter_intervals,
+            strict=True,
+        )
+    )
     assert all(interval is not None for interval in root.source_parameter_intervals)
     for current in (curve, target_curve):
         grouped = {}
@@ -1970,7 +2220,6 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
             assert intervals[0][0] == expected_interval[0]
             assert intervals[-1][1] == expected_interval[1]
             assert all(
-                left[1] == right[0]
-                for left, right in zip(intervals, intervals[1:])
+                left[1] == right[0] for left, right in zip(intervals, intervals[1:])
             )
     transfer.validate_source(target)

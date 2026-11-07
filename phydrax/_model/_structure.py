@@ -2433,6 +2433,18 @@ def restore_row_record_recipes(value: Any, /) -> Any:
     return result
 
 
+# Wall-clock telemetry outside scientific identity is not persisted, so archive
+# bytes are deterministic; restored values carry ``None`` for these fields.
+_RUNTIME_TELEMETRY_FIELDS: dict[tuple[str, str], frozenset[str]] = {
+    ("phydrax.meshing._adaptation", "MeshAdaptationResult"): frozenset(
+        {"elapsed_seconds"}
+    ),
+    ("phydrax.meshing.providers._mmg", "MmgSessionEvidence"): frozenset(
+        {"elapsed_seconds"}
+    ),
+}
+
+
 def model_archive_projection(value: Any, /) -> Any:
     """Return a structural archive view with query caches replaced by owner inputs."""
     if type(value).__module__ == "phydrax.meshing._certification_inputs":
@@ -2858,10 +2870,13 @@ def model_archive_projection(value: Any, /) -> Any:
     if isinstance(value, (jax.Array, np.ndarray)) or _is_prng_key(value):
         return value
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        telemetry = _RUNTIME_TELEMETRY_FIELDS.get(
+            (type(value).__module__, type(value).__qualname__), frozenset()
+        )
         fields = {
-            field.name: model_archive_projection(
-                object.__getattribute__(value, field.name)
-            )
+            field.name: None
+            if field.name in telemetry
+            else model_archive_projection(object.__getattribute__(value, field.name))
             for field in dataclasses.fields(value)
         }
         if all(
@@ -3420,21 +3435,27 @@ def _validate_model_structure_recipe(
         else:
             elements = 0
             byte_count = 0
+        # Elements and bytes are charged once per stored owner: an immutable
+        # physical owner when writing, an authenticated shared node when reading
+        # immutably, and every occurrence for expanded APIs. Owner constructors
+        # reuse the restored immutable arrays rather than copying each
+        # occurrence, so restored array memory follows the stored bytes.
         if elements and owners.charge(node):
             if limits is None:
                 if total_elements > maximum_addressable - elements:
                     raise ValueError("Model recipe exceeds addressable total elements.")
-            elif total_elements > limits.max_total_array_elements - elements:
-                raise ValueError("Model artifact recipe exceeds its total element limit.")
-            total_elements += elements
-        # Even immutable shared payloads may be copied by scientific owner
-        # constructors. Bound the complete logical expansion before invoking them.
-        if byte_count:
-            if limits is None:
                 if total_bytes > maximum_addressable - byte_count:
                     raise ValueError("Model recipe exceeds addressable total bytes.")
-            elif total_bytes > limits.max_aggregate_bytes - byte_count:
-                raise ValueError("Model artifact recipe exceeds its total array-byte limit.")
+            else:
+                if total_elements > limits.max_total_array_elements - elements:
+                    raise ValueError(
+                        "Model artifact recipe exceeds its total element limit."
+                    )
+                if total_bytes > limits.max_aggregate_bytes - byte_count:
+                    raise ValueError(
+                        "Model artifact recipe exceeds its total array-byte limit."
+                    )
+            total_elements += elements
             total_bytes += byte_count
 
         if kind in ("array", "prng_key"):
@@ -4265,7 +4286,9 @@ def _model_from_descriptor_tree(
         )
         if cached is not None:
             if cached[0] is not payload:
-                raise RuntimeError("Immutable payload identity changed during restoration.")
+                raise RuntimeError(
+                    "Immutable payload identity changed during restoration."
+                )
             restored[entry.tree_index] = cached[1]
             continue
         if entry.backend == "prng_key":
@@ -4328,13 +4351,17 @@ def model_from_structure_recipe(
 
 # Shared archive nodes ---------------------------------------------------------------
 #
-# A native model archive stores each distinct object subtree once. Every object
-# node (and every container holding arrays) has a content key: the canonical
-# fingerprint of its recipe with child subtrees replaced by their keys and array
-# descriptors bound to their payload content. In canonical traversal order the
-# first occurrence of a key is written in full; later equal nodes are written as
-# ``{"kind": "shared", "key": ...}`` and their arrays are not stored again. Keys
-# depend only on content, so archives are independent of object aliasing.
+# A native model archive stores each distinct object subtree and each distinct
+# array once. Every object node, every container holding arrays and every array
+# node has a content key: the canonical fingerprint of its recipe with child
+# subtrees replaced by their keys and array descriptors bound to their payload
+# content. In canonical traversal order the first occurrence of a key is written
+# in full; later equal nodes, including equal arrays under different parents, are
+# written as ``{"kind": "shared", "key": ...}`` and their arrays are not stored
+# again. Writers compare the bytes of equal-key arrays so a digest collision is
+# refused, and readers refuse a repeated equal definition, so each archive has
+# one canonical form. Keys depend only on content, so archives are independent of
+# object aliasing.
 
 _SHARED_RECIPE_KIND = "shared"
 _SHARED_OBJECT_KINDS = frozenset(
@@ -4434,6 +4461,15 @@ def _is_recipe_leaf(node: Mapping[str, Any], /) -> bool:
     return node["kind"] not in _ARRAY_RECIPE_KINDS and not _recipe_children(node)
 
 
+def _same_array_bytes(left: np.ndarray, right: np.ndarray, /) -> bool:
+    """Compare dtype, shape and C-order bytes without copying contiguous payloads."""
+    if left.dtype.str != right.dtype.str or left.shape != right.shape:
+        return False
+    left_bytes = np.ascontiguousarray(left).reshape(-1).view(np.uint8)
+    right_bytes = np.ascontiguousarray(right).reshape(-1).view(np.uint8)
+    return memoryview(left_bytes) == memoryview(right_bytes)
+
+
 def share_model_archive_recipe(
     recipe: Mapping[str, Any],
     arrays: Mapping[str, np.ndarray],
@@ -4441,11 +4477,12 @@ def share_model_archive_recipe(
     *,
     prefix: str,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
-    """Write each distinct object subtree and array bank once.
+    """Write each distinct object subtree and array once.
 
     ``arrays`` is the exact per-occurrence inventory of ``recipe``. The result is
     the canonical shared manifest recipe and its array members, named in
-    canonical traversal order.
+    canonical traversal order. An array whose content key was already written is
+    a reference only after its bytes are proven equal to the written payload.
     """
     nodes = _recipe_array_nodes(recipe)
     names = [f"{prefix}/{index:06d}" for index in range(len(nodes))]
@@ -4465,12 +4502,21 @@ def share_model_archive_recipe(
 
     digest(recipe)
     written: set[str] = set()
+    written_arrays: dict[str, np.ndarray] = {}
     members: dict[str, np.ndarray] = {}
 
     def emit(node: Mapping[str, Any], /) -> dict[str, Any]:
         identity = id(node)
         if node["kind"] in _ARRAY_RECIPE_KINDS:
-            members[f"{prefix}/{len(members):06d}"] = content.payloads[identity]
+            key = content.keys[identity]
+            payload = content.payloads[identity]
+            previous = written_arrays.get(key)
+            if previous is not None:
+                if not _same_array_bytes(previous, payload):
+                    raise RuntimeError("Model archive array content keys collided.")
+                return {"kind": _SHARED_RECIPE_KIND, "key": key}
+            written_arrays[key] = payload
+            members[f"{prefix}/{len(members):06d}"] = payload
             return dict(node)
         if _is_recipe_leaf(node):
             return dict(node)
@@ -4494,10 +4540,11 @@ def expand_shared_model_archive_recipe(
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """Resolve a canonical shared manifest into its recipe and array inventory.
 
-    Shared references resolve only to an earlier complete subtree with the same
-    recomputed content key, so a changed definition is refused for every
-    referrer. Equal subtrees written twice, unused members, or unresolved keys
-    are refused as noncanonical. The validated recipe reuses one node per key.
+    Shared references resolve only to an earlier complete subtree or array with
+    the same recomputed content key, so a changed definition is refused for every
+    referrer. Equal subtrees or arrays written twice, unused members, or
+    unresolved keys are refused as noncanonical. The validated recipe reuses one
+    node per key.
     """
     return _expand_shared_model_archive_recipe(
         shared, members, prefix, limits, _OccurrenceRecipeOwners()
@@ -4560,6 +4607,10 @@ def _expand_shared_model_archive_recipe(
             expanded = dict(node)
             content.payloads[id(expanded)] = np.asarray(members[name])
             content.digest(expanded)
+            key = content.keys[id(expanded)]
+            if key in definitions:
+                raise ValueError("Shared model recipe repeats an equal array.")
+            definitions[key] = expanded
             return expanded
         if _is_recipe_leaf(node):
             return dict(node)

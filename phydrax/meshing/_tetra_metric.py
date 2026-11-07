@@ -11,9 +11,9 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
-from itertools import combinations
+from itertools import combinations, islice
 from math import gcd, lcm
-from typing import Any, NamedTuple
+from typing import Any, cast, NamedTuple
 
 import equinox as eqx
 import numpy as np
@@ -70,6 +70,13 @@ _VIOLATION_QUANTUM = 2.0**-10
 # this relative determinant |det E| / max_v prod |e| a cell's binary64 metric
 # determinant det(E^T E) is not certainly positive. No edit creates such a cell.
 _DETERMINANT_FLOOR = 2.0**-22
+# Relocation goals are generated in blocks of ``_GOAL_BLOCK`` rows and screened
+# in batches of at least ``_SCREEN_BATCH`` new goals. Both only batch
+# row-independent evaluations; neither bounds the search.
+_GOAL_BLOCK = 64
+_SCREEN_BATCH = 256
+# The 24 bytes of one binary64 goal: goals are equal exactly when these are.
+_GOAL_KEY = np.dtype((np.void, 24))
 _TETRA_EDGE_CORNERS = tuple(combinations(range(4), 2))
 _TETRA_FACE_CORNERS = ((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2))
 _TETRA_EDGES = np.asarray(_TETRA_EDGE_CORNERS, dtype=np.int32)
@@ -79,10 +86,13 @@ _TETRA_FACES.setflags(write=False)
 
 
 def _edge_key(vertices: Iterable[int], /) -> tuple[int, int]:
-    values = tuple(int(value) for value in vertices)
-    if len(values) != 2:
-        raise ValueError("A tetra edge key must contain exactly two vertex IDs.")
-    first, second = values
+    try:
+        first, second = vertices
+    except ValueError as error:
+        raise ValueError(
+            "A tetra edge key must contain exactly two vertex IDs."
+        ) from error
+    first, second = int(first), int(second)
     return (first, second) if first <= second else (second, first)
 
 
@@ -392,6 +402,10 @@ class _NativeState:
     unrepresentable_edges: set[tuple[int, int]]
     # Host tables derived from exactly ``snapshot`` (see ``_snapshot_tables``).
     tables: _SnapshotTables | None = None
+    # Exact integer data of located source cells and carrier simplices, keyed
+    # by their ordered source vertex IDs (``_quantized_relocation_candidates``):
+    # a pure function of the immutable source, built once per adaptation.
+    source_supports: dict[tuple[int, ...], _SourceSupport] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -418,6 +432,9 @@ class _SnapshotTables:
     edge_orbits: tuple[tuple[tuple[int, int], ...], ...] | None = None
     face_orbits: tuple[tuple[tuple[int, int, int], ...], ...] | None = None
     vertex_orbits: tuple[tuple[int, ...], ...] | None = None
+    replacement_keys: (
+        dict[str, tuple[tuple[tuple[int, ...], ...], frozenset[tuple[int, ...]]]] | None
+    ) = None
 
 
 class _CandidateTetraSnapshot(NamedTuple):
@@ -2225,45 +2242,76 @@ def _exact_split_parameters(
     constrained: set[tuple[int, int]],
     /,
 ) -> tuple[Fraction, ...] | None:
+    """Short dyadic split parameters of current edges (``_dyadic_split_parameters``)."""
+    members = []
+    for edge in edges:
+        first_row, second_row = topology.vertex_row[edge[0]], topology.vertex_row[edge[1]]
+        members.append(
+            (
+                points[first_row],
+                points[second_row],
+                metrics[first_row],
+                metrics[second_row],
+                state.vertex_stencils[edge[0]],
+                state.vertex_stencils[edge[1]],
+                edge in constrained,
+            )
+        )
+    return _dyadic_split_parameters(state, members)
+
+
+def _dyadic_split_parameters(
+    state: _NativeState,
+    members: list[
+        tuple[
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+            dict[int, Fraction],
+            dict[int, Fraction],
+            bool,
+        ]
+    ],
+    /,
+) -> tuple[Fraction, ...] | None:
     """Short dyadic split parameters with a consistent binary64 realization.
 
-    Each metric midpoint is rounded to the dyadic grid ``2**-bits`` for
+    ``members`` hold each orbit edge's oriented endpoint points, metrics and
+    stencils and whether its PWL support requires a representable split. Each
+    metric midpoint is rounded to the dyadic grid ``2**-bits`` for
     ``bits = _SPLIT_PARAMETER_BITS, ..., 1``; the finest level at which every
     orbit member is admissible (``_split_member_admissible``) wins. Short
     parameters keep nested ancestry weights binary64. ``None`` means no dyadic
     point of the edge has a consistent realization.
     """
-    members = []
-    for edge in edges:
-        first, second = edge
-        first_row, second_row = topology.vertex_row[first], topology.vertex_row[second]
-        parameter, _ = _metric_midpoint(
-            points[first_row], points[second_row], metrics[first_row], metrics[second_row]
-        )
-        members.append((first_row, second_row, edge, parameter))
+    parameters = [
+        _metric_midpoint(first, second, first_metric, second_metric)[0]
+        for first, second, first_metric, second_metric, *_ in members
+    ]
     tried: set[tuple[Fraction, ...]] = set()
     for bits in range(_SPLIT_PARAMETER_BITS, 0, -1):
         scale = 1 << bits
         candidate = tuple(
             Fraction(min(max(round(parameter * scale), 1), scale - 1), scale)
-            for *_, parameter in members
+            for parameter in parameters
         )
         if candidate in tried:
             continue
         tried.add(candidate)
         if all(
             _split_member_admissible(
-                state,
-                points[first_row],
-                points[second_row],
-                state.vertex_stencils[edge[0]],
-                state.vertex_stencils[edge[1]],
-                value,
-                edge in constrained,
+                state, first, second, first_stencil, second_stencil, value, boundary
             )
-            for (first_row, second_row, edge, _), value in zip(
-                members, candidate, strict=True
-            )
+            for (
+                first,
+                second,
+                _,
+                _,
+                first_stencil,
+                second_stencil,
+                boundary,
+            ), value in zip(members, candidate, strict=True)
         ):
             return candidate
     return None
@@ -4014,6 +4062,78 @@ def _source_permits_collapse(
     )
 
 
+def _moved_spokes_splittable(
+    state: _NativeState,
+    records: _BoundaryRecords,
+    removed: int,
+    kept: int,
+    local_vertices: tuple[int, ...],
+    move: dict[str, Any],
+    local_points: np.ndarray,
+    local_metrics: np.ndarray,
+    spokes: np.ndarray,
+    lengths: np.ndarray,
+    new_facets: list[tuple[tuple[int, int, int], int, int]],
+    new_segments: list[tuple[tuple[int, int], int]],
+    /,
+) -> bool:
+    """Whether every long spoke of a moved collapse survivor keeps an exact split.
+
+    Moving the survivor changes its point and source stencil, and with them the
+    binary64 realization of every dyadic point on its spokes. A move that
+    leaves a long spoke without a representable split
+    (``_dyadic_split_parameters``) trades a long edge the next split batch can
+    remove for one no split reaches, so the collapse must stay in place.
+    ``local_points``/``local_metrics`` are the star-local arrays (row 0 the
+    survivor before the move); ``spokes`` and ``lengths`` are the measured
+    survivor spokes and their lengths after the moved collapse. The constrained
+    support is the survivor's after the collapse: its surviving segments and
+    non-implicit facets plus the images of the removed vertex's.
+    """
+    long_rows = np.flatnonzero(lengths > _UPPER)
+    if long_rows.size == 0:
+        return True
+    points = local_points.copy()
+    points[0] = move["point"]
+    metrics = local_metrics.copy()
+    metrics[0] = move["metric"]
+    implicit = state.implicit_groups
+    constrained = {
+        key for key in records.vertex_segments.get(kept, ()) if removed not in key
+    }
+    constrained.update(_edge_key(segment) for segment, _ in new_segments)
+    faces = [
+        key
+        for key in records.vertex_facets.get(kept, ())
+        if removed not in key and records.facets[key][1] not in implicit
+    ]
+    faces.extend(
+        _face_key(face) for face, group, _ in new_facets if group not in implicit
+    )
+    for first, second, third in faces:
+        constrained.update(((first, second), (first, third), (second, third)))
+    for row in long_rows.tolist():
+        other_index = int(spokes[row, 1])
+        other = local_vertices[other_index]
+        ends = (0, other_index) if kept < other else (other_index, 0)
+        stencils = [
+            move["stencil"] if index == 0 else state.vertex_stencils[other]
+            for index in ends
+        ]
+        member = (
+            points[ends[0]],
+            points[ends[1]],
+            metrics[ends[0]],
+            metrics[ends[1]],
+            stencils[0],
+            stencils[1],
+            _edge_key((kept, other)) in constrained,
+        )
+        if _dyadic_split_parameters(state, [member]) is None:
+            return False
+    return True
+
+
 def _directed_collapse(
     state: _NativeState,
     topology: _TetTopology,
@@ -4178,6 +4298,7 @@ def _directed_collapse(
             "rows": rows,
             "quality": float(np.min(quality)),
             "violations": _band_violations(after_lengths),
+            "lengths": after_lengths,
         }
 
     best = variant(local_points[0], local_metrics[0], removed_cells)
@@ -4185,15 +4306,34 @@ def _directed_collapse(
     if best is None or best["violations"][0]:
         # Collapsing in place creates a long edge (or is refused): move the
         # survivor to a quantized source point on its carrier that shortens
-        # its longest spoke, replacing both stars.
+        # its longest spoke, replacing both stars. A move must keep every long
+        # spoke of the moved survivor exactly splittable; otherwise the
+        # collapse stays in place.
         for move in _survivor_moves(
             state, records, topology, kept, local_points, local_metrics
         ):
             moved = variant(move["point"], move["metric"], removed_cells + kept_cells)
-            if moved is not None and (
-                best is None
-                or (moved["violations"], -moved["quality"])
-                < (best["violations"], -best["quality"])
+            if (
+                moved is not None
+                and (
+                    best is None
+                    or (moved["violations"], -moved["quality"])
+                    < (best["violations"], -best["quality"])
+                )
+                and _moved_spokes_splittable(
+                    state,
+                    records,
+                    removed,
+                    kept,
+                    local_vertices,
+                    move,
+                    local_points,
+                    local_metrics,
+                    after_spokes,
+                    moved["lengths"],
+                    new_facets,
+                    new_segments,
+                )
             ):
                 best, survivor = moved, move
                 if not best["violations"][0]:
@@ -5018,6 +5158,9 @@ class _ReplacementMemo:
     metrics: np.ndarray | None = None
     interior: dict[tuple[int, ...], dict[str, Any] | None] = field(default_factory=dict)
     boundary: dict[tuple[int, ...], dict[str, Any] | None] = field(default_factory=dict)
+    # The proposals (non-``None`` entries) of ``interior`` and ``boundary``.
+    interior_found: dict[tuple[int, ...], dict[str, Any]] = field(default_factory=dict)
+    boundary_found: dict[tuple[int, ...], dict[str, Any]] = field(default_factory=dict)
 
 
 def _refresh_replacement_memo(
@@ -5064,14 +5207,65 @@ def _refresh_replacement_memo(
     )
     affected.update(topology.cell_vertex_ids[added].ravel().tolist())
     rows = {row for vertex in affected for row in topology.vertex_cells.get(vertex, ())}
+    stale: set[tuple[int, ...]] = set()
     for row in rows:
         cell = topology.cell_vertex_ids[row].tolist()
-        for first, second in _TETRA_EDGE_CORNERS:
-            key = _edge_key((cell[first], cell[second]))
-            memo.interior.pop(key, None)
-            memo.boundary.pop(key, None)
-        for first, second, third in _TETRA_FACE_CORNERS:
-            memo.interior.pop(_face_key((cell[first], cell[second], cell[third])), None)
+        stale.update(
+            _edge_key((cell[first], cell[second]))
+            for first, second in _TETRA_EDGE_CORNERS
+        )
+        stale.update(
+            _face_key((cell[first], cell[second], cell[third]))
+            for first, second, third in _TETRA_FACE_CORNERS
+        )
+    for key in stale:
+        memo.interior.pop(key, None)
+        memo.interior_found.pop(key, None)
+        memo.boundary.pop(key, None)
+        memo.boundary_found.pop(key, None)
+
+
+def _replacement_keys(
+    state: _NativeState, topology: _TetTopology, name: str, /
+) -> tuple[tuple[tuple[int, ...], ...], frozenset[tuple[int, ...]]]:
+    """Faces or edges a replacement kind proposes on, in key order, with their
+    set; built once per snapshot. ``flip23``: interior faces of two cells;
+    ``flip32`` / ``reconnect``: unconstrained, unprotected, unclassified
+    edges of three / at least four cells; ``boundary``: every edge."""
+    tables = _snapshot_tables(state)
+    if tables.replacement_keys is None:
+        tables.replacement_keys = {}
+    cached = tables.replacement_keys.get(name)
+    if cached is not None:
+        return cached
+    if name == "flip23":
+        ordered: tuple[tuple[int, ...], ...] = tuple(
+            face
+            for face, rows in topology.face_cells.items()
+            if len(rows) == 2 and face not in topology.facet_row
+        )
+    elif name == "boundary":
+        ordered = tuple(topology.edge_cells)
+    elif name in ("flip32", "reconnect"):
+        classes, protected = _current_edge_controls(state, topology)
+        constrained_edges = {
+            _edge_key((face[index], face[(index + 1) % 3]))
+            for face in topology.facet_row
+            for index in range(3)
+        }
+        ordered = tuple(
+            edge
+            for edge, rows in topology.edge_cells.items()
+            if edge not in constrained_edges
+            and not protected[edge]
+            and classes[edge] == 0
+            and (len(rows) == 3 if name == "flip32" else len(rows) >= 4)
+        )
+    else:
+        raise ValueError(f"Unknown replacement key set {name!r}.")
+    cached = (ordered, frozenset(ordered))
+    tables.replacement_keys[name] = cached
+    return cached
 
 
 def _replacement_candidates(
@@ -5098,13 +5292,33 @@ def _replacement_candidates(
             del negative_rings[old_edge]
     cell_ids = np.asarray(state.snapshot.cell_ids, dtype=np.int64)
 
+    vertex_ids = np.asarray(state.snapshot.vertex_ids, dtype=np.int64)
+
     def cell_edges(rows: np.ndarray) -> set[tuple[int, int]]:
-        vertex_ids = np.asarray(state.snapshot.vertex_ids, dtype=np.int64)
+        corners = vertex_ids[rows].tolist()
         return {
-            _edge_key((int(vertex_ids[cell[first]]), int(vertex_ids[cell[second]])))
-            for cell in rows
+            (cell[first], cell[second])
+            if cell[first] <= cell[second]
+            else (cell[second], cell[first])
+            for cell in corners
             for first, second in _TETRA_EDGE_CORNERS
         }
+
+    # Proposals are queued and evaluated together by ``flush``: every kernel
+    # (exact orientation, quality, determinant floor, metric length) is
+    # row-independent, so each proposal's values are those of its own call.
+    pending: list[
+        tuple[
+            tuple[int, ...],
+            tuple[int, ...],
+            tuple[int, ...],
+            int,
+            int,
+            np.ndarray,
+            tuple[tuple[int, ...], tuple[tuple[tuple[int, int, int], int, int], ...]]
+            | None,
+        ]
+    ] = []
 
     def propose(
         key: tuple[int, ...],
@@ -5117,65 +5331,136 @@ def _replacement_candidates(
     ) -> None:
         if key in blocked:
             return
-        cell_ids = np.asarray(state.snapshot.cell_ids, dtype=np.int64)
         cavity_ids = tuple(sorted(int(cell_ids[row]) for row in cavity_rows))
         cavity_regions = {int(regions[row]) for row in cavity_rows}
         cavity_blocks = {state.cell_blocks[int(cell_ids[row])] for row in cavity_rows}
         if len(cavity_regions) != 1 or len(cavity_blocks) != 1:
             return
+        local = np.asarray(
+            [[topology.vertex_row[int(vertex)] for vertex in cell] for cell in raw_cells],
+            dtype=np.int64,
+        ).reshape((-1, 4))
+        pending.append(
+            (
+                key,
+                cavity_rows,
+                cavity_ids,
+                next(iter(cavity_regions)),
+                next(iter(cavity_blocks)),
+                local,
+                boundary,
+            )
+        )
+
+    def split_rows(values: np.ndarray, counts: list[int]) -> list[np.ndarray]:
+        return np.split(values, np.cumsum(counts)[:-1]) if counts else []
+
+    def flush() -> dict[tuple[int, ...], dict[str, Any]]:
+        """Evaluate the queued proposals; append and return those admitted."""
+        queued = list(pending)
+        pending.clear()
+        admitted: dict[tuple[int, ...], dict[str, Any]] = {}
+        if not queued:
+            return admitted
         # Flip cells are listed in one consistent corner order: all positive,
         # or all mirrored (then reversed together); a mixed set is not a flip.
-        oriented = _oriented_tetrahedra(
-            points,
-            topology,
-            np.asarray(raw_cells, dtype=np.int64),
-            mode,
-            reversible=True,
+        signs = split_rows(
+            _tetra_orientation(
+                points, np.concatenate([record[5] for record in queued]), mode
+            ),
+            [record[5].shape[0] for record in queued],
         )
-        if oriented is None:
-            return
-        before_rows = cells[np.asarray(cavity_rows, dtype=np.int64)]
-        before = _tetra_quality(points, metrics, before_rows)
-        after = _tetra_quality(points, metrics, oriented)
-        if (
-            before.size == 0
-            or after.size == 0
-            or not np.all(np.isfinite(after))
-            or np.any(after <= 0.0)
-            or not _clears_determinant_floor(points[oriented])
-        ):
-            return
-        old_edges = cell_edges(before_rows)
-        new_edges = cell_edges(oriented)
-        removed_edges = sorted(
-            edge for edge in old_edges - new_edges if not protected[edge]
+        oriented_records = []
+        for record, sign in zip(queued, signs, strict=True):
+            local = record[5]
+            if np.all(sign == 1):
+                oriented_records.append((record, local))
+            elif np.all(sign == -1):
+                local = local.copy()
+                local[:, [2, 3]] = local[:, [3, 2]]
+                oriented_records.append((record, local))
+        if not oriented_records:
+            return admitted
+        before_rows = [
+            cells[np.asarray(record[1], dtype=np.int64)] for record, _ in oriented_records
+        ]
+        after_rows = [oriented for _, oriented in oriented_records]
+        before_counts = [rows.shape[0] for rows in before_rows]
+        after_counts = [rows.shape[0] for rows in after_rows]
+        qualities = _tetra_quality(
+            points, metrics, np.concatenate([*before_rows, *after_rows])
         )
-        added_edges = sorted(new_edges - old_edges)
-        if not _objective_decreases(
-            _edge_set_lengths(points, metrics, topology, removed_edges),
-            _edge_set_lengths(points, metrics, topology, added_edges),
-            float(np.min(after)) > float(np.min(before)) + _IMPROVEMENT,
-        ):
-            return
-        vertices = np.asarray(state.snapshot.vertex_ids, dtype=np.int64)[oriented]
-        ancestors = sorted(
-            {
-                int(source_id)
-                for cell_id in cavity_ids
-                for source_id in state.cell_ancestry[cell_id]
-            }
+        before_qualities = split_rows(qualities[: sum(before_counts)], before_counts)
+        after_qualities = split_rows(qualities[sum(before_counts) :], after_counts)
+        floors = split_rows(
+            _relative_determinants(points[np.concatenate(after_rows)])
+            > _DETERMINANT_FLOOR,
+            after_counts,
         )
-        candidates.append(
-            {
+        survivors = []
+        for index, (record, oriented) in enumerate(oriented_records):
+            before, after = before_qualities[index], after_qualities[index]
+            if (
+                before.size == 0
+                or after.size == 0
+                or not np.all(np.isfinite(after))
+                or np.any(after <= 0.0)
+                or not bool(np.all(floors[index]))
+            ):
+                continue
+            old_edges = cell_edges(before_rows[index])
+            new_edges = cell_edges(oriented)
+            removed_edges = sorted(
+                edge for edge in old_edges - new_edges if not protected[edge]
+            )
+            added_edges = sorted(new_edges - old_edges)
+            survivors.append(
+                (record, oriented, before, after, removed_edges, added_edges)
+            )
+        if not survivors:
+            return admitted
+        edge_counts = [
+            count
+            for *_, removed_edges, added_edges in survivors
+            for count in (len(removed_edges), len(added_edges))
+        ]
+        lengths = split_rows(
+            _edge_set_lengths(
+                points,
+                metrics,
+                topology,
+                [
+                    edge
+                    for *_, removed_edges, added_edges in survivors
+                    for edge in (*removed_edges, *added_edges)
+                ],
+            ),
+            edge_counts,
+        )
+        for index, (record, oriented, before, after, _, _) in enumerate(survivors):
+            key, _, cavity_ids, region, block, _, boundary = record
+            if not _objective_decreases(
+                lengths[2 * index],
+                lengths[2 * index + 1],
+                float(np.min(after)) > float(np.min(before)) + _IMPROVEMENT,
+            ):
+                continue
+            vertices = vertex_ids[oriented]
+            ancestors = sorted(
+                {
+                    int(source_id)
+                    for cell_id in cavity_ids
+                    for source_id in state.cell_ancestry[cell_id]
+                }
+            )
+            proposal = {
                 "candidate_key": key,
                 "removed_cell_ids": cavity_ids,
                 "replacement_cell_vertices": vertices,
                 "replacement_regions": np.full(
-                    (vertices.shape[0],),
-                    next(iter(cavity_regions)),
-                    dtype=np.int32,
+                    (vertices.shape[0],), region, dtype=np.int32
                 ),
-                "block": next(iter(cavity_blocks)),
+                "block": block,
                 "source_ancestors": tuple(ancestors),
                 "lineage_kind": EntityLineageKind.SWAPPED_FROM,
                 "cavity": frozenset(cavity_ids),
@@ -5183,31 +5468,59 @@ def _replacement_candidates(
                 "removed_facet_ids": () if boundary is None else boundary[0],
                 "replacement_facets": () if boundary is None else boundary[1],
             }
-        )
+            candidates.append(proposal)
+            admitted[key] = proposal
+        return admitted
 
-    def remember(
+    # Edges whose ring proposal awaits ``flush``, with their ring signature.
+    ring_signatures: dict[tuple[int, int], tuple[Any, ...]] = {}
+
+    def scan(
+        name: str,
         table: dict[tuple[int, ...], dict[str, Any] | None] | None,
-        key: tuple[int, ...],
-        evaluate: Callable[[], None],
+        found: dict[tuple[int, ...], dict[str, Any]] | None,
+        evaluate: Callable[[tuple[int, ...]], None],
     ) -> None:
-        # A proposal reads only the closure of the key's cells, which
-        # ``_refresh_replacement_memo`` re-validates after every commit.
-        if table is not None and key in table:
-            cached = table[key]
-            if cached is not None:
-                candidates.append(cached)
-            return
-        previous_count = len(candidates)
-        evaluate()
-        if table is not None:
-            table[key] = candidates[-1] if len(candidates) > previous_count else None
+        """Propose every unblocked key of ``name`` (``_replacement_keys``).
 
-    interior = None if memo is None else memo.interior
+        With a memo, a key keeps its proposal while its closure is untouched
+        (``_refresh_replacement_memo``) and only keys without one are
+        evaluated; the proposals and hence the sorted groups are unchanged."""
+        ordered, members = _replacement_keys(state, topology, name)
+        if table is None or found is None:
+            missing: list[tuple[int, ...]] = [
+                key for key in ordered if key not in blocked
+            ]
+        else:
+            candidates.extend(
+                proposal
+                for key, proposal in found.items()
+                if key in members and key not in blocked
+            )
+            missing = sorted(members - blocked - table.keys())
+        for key in missing:
+            evaluate(key)
+        admitted = flush()
+        if negative_rings is not None:
+            for edge, signature in ring_signatures.items():
+                if edge in admitted:
+                    negative_rings.pop(edge, None)
+                else:
+                    negative_rings[edge] = signature
+        ring_signatures.clear()
+        if table is not None and found is not None:
+            for key in missing:
+                proposal = admitted.get(key)
+                table[key] = proposal
+                if proposal is not None:
+                    found[key] = proposal
+
     if memo is not None:
         _refresh_replacement_memo(state, memo, topology, metrics)
+    interior = None if memo is None else memo.interior
+    interior_found = None if memo is None else memo.interior_found
 
     if kind is TetMeshEditKind.FLIP23:
-        face_sources = topology.facet_row
 
         def flip23(face: tuple[int, ...], rows: tuple[int, ...]) -> None:
             first, second = rows
@@ -5244,21 +5557,20 @@ def _replacement_candidates(
                 ],
             )
 
-        for face, rows in topology.face_cells.items():
-            if len(rows) != 2 or face in face_sources or face in blocked:
-                continue
-            remember(interior, face, lambda: flip23(face, rows))
+        scan(
+            "flip23",
+            interior,
+            interior_found,
+            lambda face: flip23(
+                face, topology.face_cells[cast("tuple[int, int, int]", face)]
+            ),
+        )
         return _group_periodic_replacement_candidates(state, candidates, 2)
 
     if kind not in (TetMeshEditKind.FLIP32, TetMeshEditKind.RECONNECT):
         raise ValueError(
             "Replacement candidate kind must be FLIP23, FLIP32, or RECONNECT."
         )
-    constrained_edges = {
-        _edge_key((face[index], face[(index + 1) % 3]))
-        for face in topology.facet_row
-        for index in range(3)
-    }
 
     def ring_edit(edge: tuple[int, int], rows: tuple[int, ...]) -> None:
         ring = _edge_ring(topology, edge, rows)
@@ -5315,27 +5627,19 @@ def _replacement_candidates(
                     negative_rings[edge] = signature
                 return
             raw = list(triangulation[0])
-        previous_count = len(candidates)
+        if signature is not None:
+            ring_signatures[edge] = signature
         propose(edge, rows, raw)
-        if signature is not None and negative_rings is not None:
-            if len(candidates) == previous_count:
-                negative_rings[edge] = signature
-            else:
-                negative_rings.pop(edge, None)
 
-    for edge, rows in topology.edge_cells.items():
-        if (
-            edge in blocked
-            or edge in constrained_edges
-            or protected[edge]
-            or classes[edge] != 0
-        ):
-            continue
-        if kind is TetMeshEditKind.FLIP32 and len(rows) != 3:
-            continue
-        if kind is TetMeshEditKind.RECONNECT and len(rows) < 4:
-            continue
-        remember(interior, edge, lambda: ring_edit(edge, rows))
+    scan(
+        "flip32" if kind is TetMeshEditKind.FLIP32 else "reconnect",
+        interior,
+        interior_found,
+        lambda edge: ring_edit(
+            cast("tuple[int, int]", edge),
+            topology.edge_cells[cast("tuple[int, int]", edge)],
+        ),
+    )
     if kind is TetMeshEditKind.RECONNECT and state.target_mesh.periodic_topology is None:
         records = _boundary_records(state)
 
@@ -5351,14 +5655,16 @@ def _replacement_candidates(
                 if triangulation is not None:
                     propose(edge, rows, list(triangulation[0]), boundary)
 
-        for edge, rows in topology.edge_cells.items():
-            # ``_boundary_swap`` only reads; a blocked edge is never proposed.
-            if edge not in blocked:
-                remember(
-                    None if memo is None else memo.boundary,
-                    edge,
-                    lambda: boundary_edit(edge, rows),
-                )
+        # ``_boundary_swap`` only reads; a blocked edge is never proposed.
+        scan(
+            "boundary",
+            None if memo is None else memo.boundary,
+            None if memo is None else memo.boundary_found,
+            lambda edge: boundary_edit(
+                cast("tuple[int, int]", edge),
+                topology.edge_cells[cast("tuple[int, int]", edge)],
+            ),
+        )
     return _group_periodic_replacement_candidates(state, candidates, 1)
 
 
@@ -5476,26 +5782,28 @@ def _group_periodic_replacement_candidates(
         candidate_key = candidate["candidate_key"]
         key = _edge_key(candidate_key) if dimension == 1 else _face_key(candidate_key)
         by_key[key] = candidate
-    grouped = []
-    orbit_groups = (
-        _periodic_edge_orbit_groups(state)
-        if dimension == 1
-        else _periodic_face_orbit_groups(state)
-        if dimension == 2
-        else None
-    )
-    if orbit_groups is None:
+    if dimension not in (1, 2):
         raise ValueError("Replacement candidates require edge or face orbits.")
-    for orbit in orbit_groups:
-        keys = tuple(orbit)
-        if not keys or any(key not in by_key for key in keys):
-            continue
-        members = tuple(by_key[key] for key in keys)
-        cavities = [member["cavity"] for member in members]
-        cavity = frozenset().union(*cavities)
-        if sum(map(len, cavities)) != len(cavity):
-            continue
-        grouped.append(members)
+    grouped: list[tuple[dict[str, Any], ...]] = []
+    if state.target_mesh.periodic_topology is None:
+        # Nonperiodic orbits are the single faces or edges of the topology.
+        grouped = [(candidate,) for candidate in by_key.values()]
+    else:
+        orbit_groups = (
+            _periodic_edge_orbit_groups(state)
+            if dimension == 1
+            else _periodic_face_orbit_groups(state)
+        )
+        for orbit in orbit_groups:
+            keys = tuple(orbit)
+            if not keys or any(key not in by_key for key in keys):
+                continue
+            members = tuple(by_key[key] for key in keys)
+            cavities = [member["cavity"] for member in members]
+            cavity = frozenset().union(*cavities)
+            if sum(map(len, cavities)) != len(cavity):
+                continue
+            grouped.append(members)
     return sorted(
         grouped,
         key=lambda members: (
@@ -5839,17 +6147,25 @@ def _quantized_relocation(
 def _relocation_goals(
     point: np.ndarray, pulls: np.ndarray, /, *, seed_only: bool = False
 ) -> Iterator[np.ndarray]:
-    """Try inexpensive seeds first; the fallback reaches binary64 resolution."""
+    """Try inexpensive seeds first; the fallback reaches binary64 resolution.
+
+    Each pull yields ``point + ldexp(pull, -step)`` for ``step = 0, 1, ...``
+    until the goal rounds to ``point`` (seeds stop after step
+    ``_SPLIT_PARAMETER_BITS``). Steps are evaluated in blocks; ``ldexp`` and
+    the sum are exact or correctly rounded per element, so each goal is the
+    one of the stepwise recurrence.
+    """
     for pull in pulls:
-        step = 0
+        start = 0
         while True:
-            goal = point + np.ldexp(pull, -step)
-            if np.array_equal(goal, point):
+            count = _SPLIT_PARAMETER_BITS + 1 if seed_only else _GOAL_BLOCK
+            steps = np.arange(start, start + count, dtype=np.int64)
+            goals = point + np.ldexp(pull, -steps[:, None])
+            reached = np.flatnonzero(np.all(goals == point, axis=1))
+            yield from goals[: reached[0] if reached.size else count]
+            if reached.size or seed_only:
                 break
-            yield goal
-            step += 1
-            if seed_only and step > _SPLIT_PARAMETER_BITS:
-                break
+            start += count
 
 
 class _RelocationPreparation(NamedTuple):
@@ -5978,6 +6294,173 @@ def _prepare_relocation_geometry(
         edge_rows,
         incident_edges,
     )
+
+
+def _band_violation_rows(lengths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """``_band_violations`` of each row of finite positive ``(g, m)`` lengths.
+
+    Each row's long (short) quanta are the same elementwise values, sorted
+    descending and padded with zeros to ``m``. Violations are at least one
+    quantum, so the lexicographic order of padded rows is the max-first tuple
+    order (a proper prefix is smaller).
+    """
+    long = lengths > _UPPER
+    short = lengths < _LOWER
+    long_quanta = np.ceil(
+        np.log(np.where(long, lengths, _UPPER) / _UPPER) / _VIOLATION_QUANTUM
+    )
+    short_quanta = np.ceil(
+        np.log(_LOWER / np.where(short, lengths, _LOWER)) / _VIOLATION_QUANTUM
+    )
+    long_counts = np.where(long, np.maximum(long_quanta, 1.0), 0.0)
+    short_counts = np.where(short, np.maximum(short_quanta, 1.0), 0.0)
+    return -np.sort(-long_counts, axis=1), -np.sort(-short_counts, axis=1)
+
+
+def _lexicographic_signs(rows: np.ndarray, reference: np.ndarray, /) -> np.ndarray:
+    """Sign of the lexicographic comparison of each row with ``reference``."""
+    if rows.shape[1] == 0:
+        return np.zeros((rows.shape[0],), dtype=np.int64)
+    differs = rows != reference
+    first = np.argmax(differs, axis=1)
+    picked = rows[np.arange(rows.shape[0]), first]
+    return np.where(
+        np.any(differs, axis=1), np.where(picked > reference[first], 1, -1), 0
+    )
+
+
+def _screen_relocation_goals(
+    goals: np.ndarray,
+    local_points: np.ndarray,
+    local_metrics: np.ndarray,
+    local_cells: np.ndarray,
+    spokes: np.ndarray,
+    measured: np.ndarray,
+    before_band: tuple[tuple[int, ...], tuple[int, ...]],
+    before_quality: float,
+    band_only: bool,
+    constant_metric: bool,
+    evaluate: Callable[[np.ndarray, np.ndarray], object],
+    /,
+) -> np.ndarray:
+    """Per-goal screen of ``_relocation_proposals`` for ``(g, 3)`` goals.
+
+    A graded field admits a goal whose moved star is ``_floor_oriented``; a
+    constant field one that ``evaluate(goal, local_metrics[0])`` admits (no
+    coincident neighbor, no larger band violation, floor orientation, and a
+    quality gain on a band tie). All goals are evaluated together by the
+    same row-independent kernels (metric lengths, band quanta, determinants,
+    quality) on stacked stars, so every verdict is the per-goal one. A goal
+    with a zero or non-finite measured spoke takes ``evaluate`` itself.
+    """
+    count, size = goals.shape[0], local_points.shape[0]
+    stacked = np.repeat(local_points[None], count, axis=0)
+    stacked[:, 0] = goals
+
+    def oriented(rows: np.ndarray) -> np.ndarray:
+        values = stacked[rows][:, local_cells].reshape((-1, 4, 3))
+        determinants = np.linalg.det(values[:, 1:] - values[:, :1])
+        relative = _relative_determinants(values, determinants=determinants)
+        shape = (rows.size, local_cells.shape[0])
+        return np.all((determinants > 0.0).reshape(shape), axis=1) & np.all(
+            (relative > _DETERMINANT_FLOOR).reshape(shape), axis=1
+        )
+
+    if not constant_metric:
+        return oriented(np.arange(count))
+    admitted = np.zeros((count,), dtype=np.bool_)
+    rows = np.flatnonzero(
+        ~np.any(np.all(local_points[None, 1:] == goals[:, None], axis=2), axis=1)
+    )
+    if rows.size == 0:
+        return admitted
+
+    def star_metrics(stars: int) -> np.ndarray:
+        return np.broadcast_to(local_metrics, (stars, *local_metrics.shape)).reshape(
+            (-1, 3, 3)
+        )
+
+    offsets = size * np.arange(rows.size, dtype=np.int64)
+    lengths = _metric_lengths(
+        stacked[rows].reshape((-1, 3)),
+        star_metrics(rows.size),
+        (spokes[None] + offsets[:, None, None]).reshape((-1, 2)),
+    ).reshape((rows.size, -1))[:, measured]
+    regular = np.all(np.isfinite(lengths) & (lengths > 0.0), axis=1)
+    for row in rows[~regular].tolist():
+        admitted[row] = evaluate(goals[row], local_metrics[0]) is not None
+    rows, lengths = rows[regular], lengths[regular]
+    width = lengths.shape[1]
+    long_rows, short_rows = _band_violation_rows(lengths)
+    references = []
+    for violations in before_band:
+        reference = np.zeros((width,), dtype=np.float64)
+        reference[: len(violations)] = violations
+        references.append(reference)
+    signs = _lexicographic_signs(long_rows, references[0])
+    signs = np.where(signs != 0, signs, _lexicographic_signs(short_rows, references[1]))
+    selected = signs < 0 if band_only else signs <= 0
+    rows, signs = rows[selected], signs[selected]
+    if rows.size:
+        floor = oriented(rows)
+        rows, signs = rows[floor], signs[floor]
+    admitted[rows[signs < 0]] = True
+    tied = rows[signs == 0]
+    if tied.size:
+        offsets = size * np.arange(tied.size, dtype=np.int64)
+        quality = _tetra_quality(
+            stacked[tied].reshape((-1, 3)),
+            star_metrics(tied.size),
+            (local_cells[None] + offsets[:, None, None]).reshape((-1, 4)),
+        ).reshape((tied.size, -1))
+        admitted[tied[np.min(quality, axis=1) > before_quality + _IMPROVEMENT]] = True
+    return admitted
+
+
+def _band_tangents(
+    directions: np.ndarray, normals: np.ndarray, lengths: np.ndarray, pairs: bool, /
+) -> np.ndarray:
+    """Deep relocation tangents, per pull in ``directions`` order.
+
+    For each pull: ``pull - (pull.n / n.n) n`` for every band constraint
+    normal ``n`` (in order) the pull pushes across the band, then, with
+    ``pairs`` (interior vertices), ``(pull.t / t.t) t`` for every nonzero
+    cross product ``t`` of two normals (in ``combinations`` order). Each dot
+    product is a stacked binary64 matrix product, the per-pair kernel of the
+    one-vector ``@``.
+    """
+
+    def dots(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+        return np.matmul(first[:, None, None, :], second[None, :, :, None])[:, :, 0, 0]
+
+    def squares(vectors: np.ndarray) -> np.ndarray:
+        return np.matmul(vectors[:, None, :], vectors[:, :, None])[:, 0, 0]
+
+    squared = squares(normals)
+    components = dots(directions, normals)
+    # The normal points toward the neighbor: positive motion shortens its
+    # spoke, negative motion lengthens it.
+    crosses_band = ((lengths < 1.0) & (components > 0.0)) | (
+        (lengths > 1.0) & (components < 0.0)
+    )
+    candidates = [
+        directions[:, None, :]
+        - (components / np.where(squared > 0.0, squared, 1.0))[:, :, None] * normals[None]
+    ]
+    admitted = [crosses_band & (squared > 0.0)]
+    if pairs:
+        left, right = np.triu_indices(normals.shape[0], k=1)
+        crossed = np.cross(normals[left], normals[right])
+        crossed_squared = squares(crossed)
+        positive = crossed_squared > 0.0
+        candidates.append(
+            (dots(directions, crossed) / np.where(positive, crossed_squared, 1.0))[
+                :, :, None
+            ]
+            * crossed[None]
+        )
+        admitted.append(np.broadcast_to(positive, (directions.shape[0], positive.size)))
+    return np.concatenate(candidates, axis=1)[np.concatenate(admitted, axis=1)]
 
 
 def _relocation_proposals(
@@ -6111,7 +6594,7 @@ def _relocation_proposals(
         if corners is not None:
             span = (corners[1:] - corners[0]).T
             projection = span @ np.linalg.lstsq(span, np.eye(3), rcond=None)[0]
-        frames: dict[tuple[int, ...], _SourceSupport] = {}
+        frames = state.source_supports
         images: _CarrierCache = {}
         if deep and np.any(outside) and not constant_metric:
             # A varying tensor changes with the vertex. Finite differences
@@ -6200,28 +6683,14 @@ def _relocation_proposals(
                 np.abs(lengths[active_rows] - _UPPER),
             )
             active_rows = active_rows[np.argsort(margins, kind="stable")]
-            constrained = normals[active_rows]
-            constrained_lengths = lengths[active_rows]
-            tangents = []
-            for pull in directions:
-                for normal, length in zip(constrained, constrained_lengths, strict=True):
-                    squared = float(normal @ normal)
-                    component = float(pull @ normal)
-                    # The normal points toward the neighbor: positive motion
-                    # shortens its spoke, negative motion lengthens it.
-                    crosses_band = (length < 1.0 and component > 0.0) or (
-                        length > 1.0 and component < 0.0
-                    )
-                    if squared > 0.0 and crosses_band:
-                        tangents.append(pull - (component / squared) * normal)
-                if corners is None:
-                    for first, second in combinations(constrained, 2):
-                        tangent = np.cross(first, second)
-                        squared = float(tangent @ tangent)
-                        if squared > 0.0:
-                            tangents.append((pull @ tangent / squared) * tangent)
-            if tangents:
-                pulls = np.concatenate((pulls, np.asarray(tangents)), axis=0)
+            tangents = _band_tangents(
+                directions,
+                normals[active_rows],
+                lengths[active_rows],
+                corners is None,
+            )
+            if tangents.shape[0]:
+                pulls = np.concatenate((pulls, tangents), axis=0)
 
         def evaluate(
             point: np.ndarray, metric: np.ndarray
@@ -6255,29 +6724,66 @@ def _relocation_proposals(
         # change its exact quantization or admission result.
         seen_goals: set[bytes] = set()
         rejected_stencils: set[tuple[tuple[int, Fraction], ...]] = set()
+        before_quality = float(np.min(before))
+
+        def fresh_goals() -> Iterator[np.ndarray]:
+            """Projected goals not seen before, in generation order, in
+            batches of at least ``_SCREEN_BATCH`` rows (but the last)."""
+            raw_goals = _relocation_goals(points[row], pulls, seed_only=not deep)
+            batch: list[np.ndarray] = []
+            size = 0
+            while block := list(islice(raw_goals, _GOAL_BLOCK)):
+                goals = np.asarray(block, dtype=np.float64)
+                if corners is not None and projection is not None:
+                    # A stacked matrix-vector product per row: the binary64
+                    # result of ``projection @ (goal - corners[0])``.
+                    goals = (
+                        corners[0]
+                        + np.matmul(projection, (goals - corners[0])[:, :, None])[:, :, 0]
+                    )
+                goals = np.ascontiguousarray(goals)
+                # Byte keys in first-occurrence order; a key is the exact
+                # binary64 goal, so new goals are rebuilt from their keys.
+                fresh = [
+                    key
+                    for key in dict.fromkeys(goals.view(_GOAL_KEY)[:, 0].tolist())
+                    if key not in seen_goals
+                ]
+                seen_goals.update(fresh)
+                batch.append(
+                    np.frombuffer(b"".join(fresh), dtype=np.float64).reshape((-1, 3))
+                )
+                size += len(fresh)
+                if size >= _SCREEN_BATCH:
+                    yield np.concatenate(batch)
+                    batch, size = [], 0
+            if size:
+                yield np.concatenate(batch)
 
         def candidate_goals() -> Iterator[tuple[np.ndarray, bool]]:
             prepared: list[np.ndarray] = []
-            for goal in _relocation_goals(points[row], pulls, seed_only=not deep):
-                if corners is not None and projection is not None:
-                    goal = corners[0] + projection @ (goal - corners[0])
-                goal_key = goal.tobytes()
-                if goal_key in seen_goals:
-                    continue
-                seen_goals.add(goal_key)
-                # Constant fields can screen using the current tensor; graded
+            for goals in fresh_goals():
+                # Constant fields screen with the current tensor; graded
                 # fields must first locate the candidate's source tensor.
-                if constant_metric:
-                    if evaluate(goal, local_metrics[0]) is None:
-                        continue
-                else:
-                    screen_points = local_points.copy()
-                    screen_points[0] = goal
-                    if not _floor_oriented(screen_points[local_cells]):
-                        continue
+                admitted = goals[
+                    _screen_relocation_goals(
+                        goals,
+                        local_points,
+                        local_metrics,
+                        local_cells,
+                        spokes,
+                        measured,
+                        before_band,
+                        before_quality,
+                        band_only,
+                        constant_metric,
+                        evaluate,
+                    )
+                ]
                 if refine:
-                    prepared.append(goal)
-                yield goal, False
+                    prepared.extend(admitted)
+                for goal in admitted:
+                    yield goal, False
             if refine:
                 # Only after every finest carrier has been considered, revisit
                 # the same prepared goals at all remaining dyadic resolutions.

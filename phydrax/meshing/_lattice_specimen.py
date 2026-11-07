@@ -186,13 +186,17 @@ def mesh_lattice_specimen(
 ) -> LatticeSpecimenVolume:
     """Fill a specimen's mixed boundary (implicit faces and trimmed caps) with tetrahedra.
 
-    The boundary is a fixed piecewise-linear complex: the implicit lattice face
-    and each envelope face are facets, and the creases and sharp envelope edges
-    are authored protected segments. The native ``plc_tetrahedral`` route keeps
-    every boundary vertex and facet. As for the periodic quotient fill, the
-    fixed boundary is the discovery lattice's contour, so the default schedule
-    makes shape targets soft and reports unmet shapes in the construction
-    compliance. The result is certified with the open-boundary audit rejected.
+    The boundary is a fixed piecewise-linear complex with one facet per
+    surface triangle (facet identities name the implicit face or envelope
+    face), and the creases and sharp envelope edges are authored protected
+    segments. The native ``plc_tetrahedral`` route keeps every boundary vertex
+    and facet. The fixed boundary is the discovery lattice's contour, whose
+    local feature size is far below any useful shape target, so the default
+    schedule sets no radius-edge or dihedral target (refining toward them
+    exhausts memory) and keeps only cell validity: the native validity floor
+    still applies and its clearing insertion removes near-flat cells. The
+    result is certified with the open-boundary audit rejected, the mesh
+    boundary matched to the surface, and the coverage of its enclosed volume.
     """
     from ._contracts import VolumeMeshingSpec
     from .providers._native import NativeMeshingProvider
@@ -276,7 +280,11 @@ def mesh_lattice_specimen(
             NativeMeshingOptions(
                 "plc_tetrahedral",
                 volume_schedule=(
-                    NativeVolumeSchedule(shape_strength=SizeControlStrength.SOFT)
+                    NativeVolumeSchedule(
+                        radius_edge_bound=None,
+                        minimum_dihedral_degrees=0.0,
+                        shape_strength=SizeControlStrength.SOFT,
+                    )
                     if volume_schedule is None
                     else volume_schedule
                 ),

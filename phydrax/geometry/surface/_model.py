@@ -101,6 +101,47 @@ def _face_components(
     return components, component_count
 
 
+def _vertex_fans_connected(
+    faces: np.ndarray,
+    records: dict[tuple[int, int], list[tuple[int, int]]],
+    /,
+) -> bool:
+    """Whether the triangles around every vertex form one edge-connected fan.
+
+    With every edge on at most two triangles, a vertex is a manifold vertex
+    exactly when its incident triangles are connected through the edges at
+    that vertex (its link is one cycle or one path). Two fans meeting only at
+    a vertex (a pinch) are not a 2-manifold although every edge is.
+    """
+    corner = {
+        (face_index, int(vertex)): 3 * face_index + local
+        for face_index, face in enumerate(faces)
+        for local, vertex in enumerate(face)
+    }
+    parent = list(range(3 * faces.shape[0]))
+
+    def find(item: int, /) -> int:
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    for (start, stop), incidents in records.items():
+        if len(incidents) != 2:
+            continue
+        (first, _), (second, _) = incidents
+        for vertex in (start, stop):
+            a, b = find(corner[(first, vertex)]), find(corner[(second, vertex)])
+            if a != b:
+                parent[max(a, b)] = min(a, b)
+    fans: dict[int, int] = {}
+    for (_, vertex), slot in corner.items():
+        root = find(slot)
+        if fans.setdefault(vertex, root) != root:
+            return False
+    return True
+
+
 def _orientation_solution(
     faces: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray, dict[tuple[int, int], list[tuple[int, int]]]]:
@@ -300,6 +341,7 @@ def _surface_audit(
     components, component_count = _face_components(faces.shape[0], records)
     finite = bool(np.all(np.isfinite(points)))
     manifold = all(len(incidents) <= 2 for incidents in records.values())
+    manifold = manifold and _vertex_fans_connected(faces, records)
     orientation_consistent = all(
         len(incidents) != 2 or incidents[0][1] != incidents[1][1]
         for incidents in records.values()
@@ -384,7 +426,9 @@ def _surface_audit(
     if not topology_valid:
         issues.append("topology has unused vertices or non-loop boundary incidence")
     if not manifold:
-        issues.append("an edge has more than two incident cells")
+        issues.append(
+            "an edge has more than two incident cells or a vertex joins separate fans"
+        )
     if not metric_valid:
         issues.append("one or more triangle metrics are degenerate or non-finite")
     if not orientation_consistent:

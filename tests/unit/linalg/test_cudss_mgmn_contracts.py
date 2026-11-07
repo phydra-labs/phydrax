@@ -356,7 +356,10 @@ def test_communication_build_mismatch_is_refused(
 
 
 def test_mgmn_refuses_hybrid_and_certified_host_bounds() -> None:
-    method = _method(Path("/explicit/site/libcudss_commlayer_openmpi.so"), "a" * 64)
+    method = _method(
+        Path(Path.cwd().anchor, "explicit", "site", "libcudss_commlayer_openmpi.so"),
+        "a" * 64,
+    )
     with pytest.raises(ValueError, match="hybrid"):
         SparseLDLT(execution=method.execution, memory_mode="hybrid")
     with pytest.raises(ValueError, match="bounds|host"):

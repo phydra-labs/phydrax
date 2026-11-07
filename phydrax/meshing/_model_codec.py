@@ -785,6 +785,16 @@ def _register_model_archive_types() -> None:
     from .providers._native_periodic import NativePeriodicSource
     from .providers._native_schedules import NativeCurveSchedule, NativeSurfaceSchedule
     from .providers._native_sources import NativeStructuredSource, NativeSweepSource
+    from .providers._omega_h import (
+        OmegaHAdaptationEvidence,
+        OmegaHAdaptationResult,
+        OmegaHClassification,
+        OmegaHFieldEvidence,
+        OmegaHFieldTransfer,
+        OmegaHOptions,
+        OmegaHPartition,
+        OmegaHTransferredField,
+    )
 
     types = (
         ("phydrax.geometry", CompartmentDefinition),
@@ -1166,6 +1176,14 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", MmgReference),
         ("phydrax.meshing", MmgReferenceRetention),
         ("phydrax.meshing", MmgSessionEvidence),
+        ("phydrax.meshing", OmegaHAdaptationResult),
+        ("phydrax.meshing", OmegaHAdaptationEvidence),
+        ("phydrax.meshing", OmegaHOptions),
+        ("phydrax.meshing", OmegaHFieldEvidence),
+        ("phydrax.meshing", OmegaHFieldTransfer),
+        ("phydrax.meshing", OmegaHClassification),
+        ("phydrax.meshing", OmegaHPartition),
+        ("phydrax.meshing", OmegaHTransferredField),
         ("phydrax.meshing", SurfaceMetricOutcome),
         ("phydrax.meshing", SurfaceMetricGeometryWitness),
         ("phydrax.meshing", SurfaceMetricStatus),

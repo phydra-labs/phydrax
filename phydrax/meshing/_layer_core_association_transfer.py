@@ -14,6 +14,7 @@ import equinox as eqx
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from .._live_proofs import _same_fingerprint, live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
@@ -56,24 +57,25 @@ from ._layer_core_boundary_replay import (
     core_source_facet_keys,
     is_internal_core_chart,
     mapped_cap_edge_owner,
-    require_scoped_cap_coverage,
     replay_composite_regions,
     replay_core_boundary_faces,
     replay_core_facet_edges,
     replay_core_interface_faces,
     replay_layer_region_vertices,
+    require_scoped_cap_coverage,
 )
 from ._layer_core_carrier_witness import (
     NativeLayerCoreCarrierWitness,
     require_layer_core_specification,
 )
+from ._layer_core_mapped_replay import replay_mapped_root_associations
 from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
+from ._layer_core_segment_overlay import replay_source_edge_face_overlays
 from ._layer_source_association_replay import replay_layer_source_associations
 from ._lineage import MeshLineage, VertexInterpolationStencil
-from ._layer_core_segment_overlay import replay_source_edge_face_overlays
-from ._layer_core_mapped_replay import replay_mapped_root_associations
 from ._result import CellMeshingResult
 from .providers._native_sources import NativeLayerCoreSource
+
 
 if TYPE_CHECKING:
     from ._association import _LayerImageSupportPreparation
@@ -102,6 +104,16 @@ type _SemanticRow = tuple[
     str | None,
     bool,
 ]
+
+# Completed source replays bound to the exact live authoring source, request and
+# result objects (see NativeLayerCoreAssociationTransfer._validate_source).
+_VALIDATED_SOURCES: LiveProofLedger[bool] = LiveProofLedger()
+# Endpoint strata bound to the exact live endpoint operands, with the content
+# fingerprint of the region table they were replayed for (see
+# NativeLayerCoreAssociationTransfer._endpoint).
+_REPLAYED_ENDPOINTS: LiveProofLedger[
+    tuple[tuple[object, str], tuple[GeometryAssociation, ...]]
+] = LiveProofLedger()
 
 
 def _semantic_rows(
@@ -403,6 +415,66 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
         computed_root: ComputedLayerCoreRoot | None = None,
         image_preparation: _LayerImageSupportPreparation | None = None,
     ) -> tuple[GeometryAssociation, ...]:
+        """Replay endpoint strata once per exact live endpoint.
+
+        The replay is determined by the authoring source and request, the
+        endpoint mesh, map, witnesses, carrier and root, and the content of the
+        region table. Validated tokens, computed roots and image preparations
+        only avoid repeating proofs of those operands. A later call on the same
+        unchanged objects with a content-equal region table reuses the replay;
+        anything else replays in full.
+        """
+        # Each scoped fidelity input is a plain (query, witness, tolerance)
+        # tuple. A tuple cannot be weakly referenced and is rebuilt per call, so
+        # it binds through its live query and witness and its exact tolerance.
+        operands = (
+            self.source,
+            self.specification,
+            mesh,
+            geometry,
+            witness,
+            carrier,
+            root,
+            *(item for query, token, _ in scoped_fidelity for item in (query, token)),
+        )
+        tolerances = tuple(tolerance for _, _, tolerance in scoped_fidelity)
+        regions = live_content_fingerprint(region_table)
+        replayed = _REPLAYED_ENDPOINTS.find(operands, parameters=tolerances)
+        if replayed is not None and _same_fingerprint(replayed[0], regions):
+            return replayed[1]
+        fingerprint = live_content_fingerprint(operands)
+        records = self._replay_endpoint(
+            mesh,
+            geometry,
+            witness,
+            region_table,
+            carrier,
+            root,
+            scoped_fidelity,
+            validated_fidelity,
+            computed_root=computed_root,
+            image_preparation=image_preparation,
+        )
+        _REPLAYED_ENDPOINTS.record(
+            operands, fingerprint, (regions, records), parameters=tolerances
+        )
+        return records
+
+    def _replay_endpoint(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness,
+        region_table: GeometryAssociation,
+        carrier: NativeLayerCoreCarrierWitness,
+        root: LayerCoreRootGeometry | None,
+        scoped_fidelity: tuple[ScopedFidelityInput, ...],
+        validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        /,
+        *,
+        computed_root: ComputedLayerCoreRoot | None,
+        image_preparation: _LayerImageSupportPreparation | None,
+    ) -> tuple[GeometryAssociation, ...]:
         from ._association import (
             _LayerImageSupportPreparation,
             _prepare_layer_image_support,
@@ -507,13 +579,21 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
                 )
         if image_preparation is None:
             image_preparation = _prepare_layer_image_support(
-                self.source, mesh, geometry, layer.core_cell_ids,
-                root=root, computed_root=computed_root,
+                self.source,
+                mesh,
+                geometry,
+                layer.core_cell_ids,
+                root=root,
+                computed_root=computed_root,
             )
         elif type(image_preparation) is _LayerImageSupportPreparation:
             image_preparation.require(
-                self.source, mesh, geometry, layer.core_cell_ids,
-                root=root, computed_root=computed_root,
+                self.source,
+                mesh,
+                geometry,
+                layer.core_cell_ids,
+                root=root,
+                computed_root=computed_root,
             )
         else:
             raise TypeError(
@@ -649,7 +729,28 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
             if self.source.reference_source is None
             else self.source.reference_source
         )
-        if authored.layers.wall_association is not None:
+        if (
+            authored.layers.wall_association is not None
+            and self.specification.target.geometry_order == 1
+        ):
+            # A straight (P1) contract publishes no curved wall chart: its wall
+            # rows are the authored wall-vertex rows carried by the exact layer
+            # vertex containment proved above, as the generator composed them.
+            from ._layer_core_association import layer_wall_associations
+
+            vertex_targets: dict[int, int] = {}
+            for relation in layer.containment:
+                if relation.fine_dimension != 0 or relation.coarse_dimension != 0:
+                    continue
+                if (
+                    vertex_targets.setdefault(relation.coarse_id, relation.fine_id)
+                    != relation.fine_id
+                ):
+                    raise ValueError(
+                        "An authored layer vertex has conflicting target descendants."
+                    )
+            records.extend(layer_wall_associations(authored, mesh, vertex_targets))
+        elif authored.layers.wall_association is not None:
             from ..geometry._domain_boundary import MeshingDomainBoundarySource
             from ..geometry._mesh_certificates import _same_tree_content
             from ._layer_curving import layer_wall_boundary_query
@@ -658,7 +759,9 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
             wall_query = (
                 self.source.fidelity_source
                 if authored.source_wall_charts is None
-                else layer_wall_boundary_query(authored.layers, authored.source_wall_charts)
+                else layer_wall_boundary_query(
+                    authored.layers, authored.source_wall_charts
+                )
             )
             wall_tokens = tuple(
                 token
@@ -679,7 +782,7 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
             )
             if not wall_tokens:
                 raise ValueError(
-                    "Layer wall replay requires its independently validated source chart."
+                    "Curved layer wall replay requires its independently validated source chart."
                 )
             wall_witness = wall_tokens[0].witness
             assert isinstance(wall_witness, SourceBoundaryChartWitness)
@@ -697,7 +800,9 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
         if domain is not None:
             records.extend(
                 replay_mapped_root_associations(
-                    domain, mesh, geometry,
+                    domain,
+                    mesh,
+                    geometry,
                     source=self.source,
                     specification=self.specification,
                     root=root,
@@ -716,10 +821,28 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
         *,
         computed_root: ComputedLayerCoreRoot | None,
     ) -> None:
-        from ._adaptation import _identity_lineage
-
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
+        # A completed replay is bound to this exact live authoring source,
+        # request and result: repeated preparation, propagation and caller
+        # checks of the same unchanged objects reuse it; any copy or changed
+        # content replays.
+        operands = (self.source, self.specification, source)
+        if _VALIDATED_SOURCES.find(operands) is not None:
+            return
+        fingerprint = live_content_fingerprint(operands)
+        self._replay_source(source, computed_root=computed_root)
+        _VALIDATED_SOURCES.record(operands, fingerprint, True)
+
+    def _replay_source(
+        self,
+        source: CellMeshingResult,
+        /,
+        *,
+        computed_root: ComputedLayerCoreRoot | None,
+    ) -> None:
+        from ._adaptation import _identity_lineage
+
         self.source.validate_restored()
         require_layer_core_specification(self.source, self.specification)
         query = self.source.fidelity_source
@@ -853,7 +976,9 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
         if computed_root is not None:
             root = source.layer_core_root_geometry
             if type(computed_root) is not ComputedLayerCoreRoot or root is None:
-                raise ValueError("Layer association classes require their actual computed root.")
+                raise ValueError(
+                    "Layer association classes require their actual computed root."
+                )
             computed_root.require(
                 self.source, self.specification, root.mesh, root.geometry, root
             )

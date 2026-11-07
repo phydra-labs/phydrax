@@ -13,13 +13,17 @@ projected onto their entity. Interior nodes are relaxed with
 mean-ratio distortion of the Jacobian relative to the straight-sided element
 (sampled at the Bernstein control-point lattice of the Jacobian determinant),
 a displacement term, and the squared distance of constrained nodes from the
-tangent space at their current foot points. Constrained nodes are re-projected
-between rounds, periodic target nodes follow their source nodes through the
-declared isometry, and a candidate is accepted only when the Bernstein
-certificate proves every cell valid, global embedding is certified, every
-constrained node lies within the residual tolerance, and any supplied retained
-source certification passes; relaxations must also converge unless the policy
-explicitly accepts valid non-converged relaxations. Otherwise the result rolls back.
+tangent space at their current foot points. Each round relaxes only the coupled
+star of the cells the latest certified candidate does not prove valid, solved by
+the native Newton trust region on displacements in units of the mean straight
+edge; a candidate proving every cell valid ends relaxation. Constrained nodes
+are re-projected between rounds, periodic target nodes follow their source
+nodes through the declared isometry, and a candidate is accepted only when the
+Bernstein certificate proves every cell valid, global embedding is certified,
+every constrained node lies within the residual tolerance, and any supplied
+retained source certification passes; relaxations must also converge unless the
+policy explicitly accepts valid non-converged relaxations. Otherwise the result
+rolls back.
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ from ..discretization import (
     CellMesh,
     CellValidityCertificate,
     CellValidityPolicy,
+    CellValidityStatus,
     reference_cell_topology,
 )
 from ..discretization._cell_geometry import (
@@ -86,7 +91,12 @@ from ..linalg import (
     inverse_small_linear,
     SmallLinearSolvePlan,
 )
-from ..optim import MinimizationResult, OptimizationStatus, OptimizationTermination
+from ..optim import (
+    MinimizationResult,
+    NewtonTrustRegion,
+    OptimizationStatus,
+    OptimizationTermination,
+)
 from ..typing import checked
 from ._adaptation import (
     _extend_prior_volume_material_chain,
@@ -206,9 +216,14 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
 
     ``degree`` is the geometry order (2 or 3). ``relaxation_rounds`` bounds the
     optimize/re-project/certify rounds (0 accepts or rejects the projected
-    configuration directly). Weights scale the mean sampled distortion, the
-    squared tangent-space residual of constrained nodes, and the squared nodal
+    configuration directly); round ``k`` relaxes the cells the latest certified
+    candidate does not prove valid together with ``k`` rings of node-sharing
+    cells, and no round runs once a candidate proves every cell valid. Weights
+    scale the mean sampled distortion of the relaxed cells, the squared
+    tangent-space residual of constrained nodes, and the squared nodal
     displacement (the latter two relative to the mean straight edge length).
+    ``termination`` controls the native Newton trust region, whose parameters are
+    nodal displacements in units of the mean straight edge length.
     ``regularization`` is the Escobar determinant regularization of the
     distortion, which keeps inverted starting configurations finite.
     ``residual_tolerance`` is the absolute acceptance bound of constrained-node
@@ -1275,6 +1290,55 @@ def _distortion_blocks(
     return tuple(blocks)
 
 
+def _relaxation_star(
+    blocks: tuple[_BlockDistortion, ...],
+    certificate: CellValidityCertificate,
+    fixed: np.ndarray,
+    rings: int,
+    /,
+) -> tuple[np.ndarray, tuple[_BlockDistortion, ...]]:
+    """Movable nodes and distortion blocks of one relaxation round.
+
+    The cells ``certificate`` does not prove valid, grown by ``rings`` rings of
+    node-sharing cells, free their non-fixed nodes; every cell sharing a movable
+    node carries the distortion, so the round solves that coupled star alone and
+    every other node keeps its position.
+    """
+    routes = tuple(np.asarray(block.routes, dtype=np.int64) for block in blocks)
+    unproven = np.split(
+        np.asarray(certificate.status) != CellValidityStatus.CERTIFIED_VALID,
+        certificate.block_offsets[1:-1],
+    )
+    star = np.zeros(fixed.shape, dtype=np.bool_)
+    for route, cells in zip(routes, unproven, strict=True):
+        star[route[cells]] = True
+    for _ in range(rings):
+        grown = star.copy()
+        for route in routes:
+            grown[route[np.any(star[route], axis=1)]] = True
+        star = grown
+    movable = star & ~fixed
+    restricted = []
+    for block, route in zip(blocks, routes, strict=True):
+        cells = np.flatnonzero(np.any(movable[route], axis=1))
+        if not cells.size:
+            continue
+        rows = jnp.asarray(cells, dtype=jnp.int32)
+        restricted.append(
+            _BlockDistortion(
+                routes=block.routes[rows],
+                gradients=(
+                    block.gradients[rows] if block.per_cell_gradients else block.gradients
+                ),
+                target_inverses=block.target_inverses[rows],
+                plan=block.plan,
+                embedded=block.embedded,
+                per_cell_gradients=block.per_cell_gradients,
+            )
+        )
+    return movable, tuple(restricted)
+
+
 def _sampled_block_quality(
     block: _BlockDistortion, values: Array, /
 ) -> tuple[Array, Array]:
@@ -2057,11 +2121,21 @@ def curve_cell_mesh(
     record(0, coordinates, True)
     minimizations = []
     for round_ in range(1, policy.relaxation_rounds + 1):
+        # Round k relaxes the k-ring star of the cells the latest certified
+        # candidate leaves unproven; relaxation ends once every cell is proven.
+        certificate = candidates[-1][3].computed_validity.certificate
+        if certificate.all_certified:
+            break
+        movable, star_blocks = _relaxation_star(blocks, certificate, fixed, round_)
+        if not np.any(movable):
+            break
+        relaxed_constraints = movable[constrained_rows]
+        relaxed_rows = constrained_rows[relaxed_constraints]
         energy = _CurvingEnergy(
-            blocks=blocks,
-            constrained_rows=jnp.asarray(constrained_rows, dtype=jnp.int32),
-            feet=jnp.asarray(coordinates[constrained_rows]),
-            normal_projectors=jnp.asarray(projectors),
+            blocks=star_blocks,
+            constrained_rows=jnp.asarray(relaxed_rows, dtype=jnp.int32),
+            feet=jnp.asarray(coordinates[relaxed_rows]),
+            normal_projectors=jnp.asarray(projectors[relaxed_constraints]),
             reference=jnp.asarray(coordinates),
             weights=jnp.asarray(
                 (
@@ -2073,11 +2147,15 @@ def curve_cell_mesh(
             ),
             regularization=jnp.asarray(policy.regularization, dtype=jnp.float64),
         )
+        # Displacements in mean-edge units make the trust radius and the step
+        # tolerances independent of the model's length unit.
         relaxed = optimize_cell_geometry_coordinates(
             candidate_geometry(coordinates),
             energy,
-            fixed_coordinates=fixed,
+            fixed_coordinates=~movable,
+            method=NewtonTrustRegion(),
             termination=policy.termination,
+            length_scale=length,
         )
         minimizations.append(relaxed.minimization)
         moved = np.asarray(relaxed.coordinates, dtype=np.float64)

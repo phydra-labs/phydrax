@@ -25,6 +25,7 @@ from phydrax.geometry.brep import (
     RuledSurface,
 )
 from phydrax.geometry.brep._boolean_core import AffinePCurve, PeriodicPCurve
+from phydrax.geometry.brep._conic_gaps import endpoint_gap_bounds
 from phydrax.geometry.brep._correspondence import exact_source_lift, native_edge_pcurve
 from phydrax.geometry.brep._intersection import TrimIntersectionRoot
 from phydrax.geometry.brep._intersection_curve import SurfaceRegion
@@ -1676,3 +1677,45 @@ def test_plane_cylinder_section_factory_lifts_exact_conic_edges() -> None:
     assert not exact_source_lift(
         wrong_curve, section.cylinder_pcurve, cylinder_region, first, last
     )
+
+
+@pytest.mark.parametrize("k", (1, 2, 3))
+def test_endpoint_gap_bounds_honor_exact_quarter_turn_conic_roots(k: int) -> None:
+    curve = EllipseCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 2.0, 1.0)
+    cosine, sine = ((0, 1), (-1, 0), (0, -1))[k - 1]
+    root = ConicParameterRoot(curve, Fraction(cosine), Fraction(sine))
+    point = (2.0 * cosine, float(sine))
+    parameter = k * float(np.pi) / 2
+    vertices = np.asarray((point, point))
+    unrooted = endpoint_gap_bounds(curve, (parameter, parameter), vertices)
+    rooted = endpoint_gap_bounds(
+        curve, (parameter, parameter), vertices, endpoint_roots=(root, None)
+    )
+    # The binary64 parameter only approximates k pi / 2; the root is exact.
+    assert rooted == (0.0, unrooted[1]) and unrooted[1] > 0.0
+    other = ConicParameterRoot(curve, Fraction(-cosine), Fraction(-sine))
+    with pytest.raises(ValueError, match="realize its exact conic root"):
+        endpoint_gap_bounds(
+            curve, (parameter, parameter), vertices, endpoint_roots=(other, None)
+        )
+
+
+def test_nonconvex_ellipse_profile_refusal_names_its_missing_proof() -> None:
+    from phydrax.geometry.brep._constructors import (
+        PlanarProfile,
+        ProfileCurveUse,
+        ProfileLine,
+        ProfileLoop,
+        ProfilePlane,
+        UnsupportedProfileLoop,
+    )
+
+    curve = EllipseCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 2.0, 1.0)
+    loop = ProfileLoop(
+        ((2.0, 0.0), (0.0, -1.0), (0.0, 0.0)),
+        (ProfileCurveUse(curve, 0.0, 3 * np.pi / 2), ProfileLine(), ProfileLine()),
+    )
+    with pytest.raises(UnsupportedProfileLoop) as refusal:
+        PlanarProfile(ProfilePlane(), loop)
+    assert refusal.value.feature == "nonconvex-curved-loop-simplicity"
+    assert isinstance(refusal.value, NotImplementedError)

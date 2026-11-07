@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import IntEnum
 from fractions import Fraction
@@ -46,7 +47,6 @@ from ._policy import (
 )
 
 
-_INTERVAL_BATCH_SIZE = 64
 _GridIndex: TypeAlias = tuple[int, int, int]
 _GridEdge: TypeAlias = tuple[_GridIndex, _GridIndex]
 _GridFaceKey: TypeAlias = tuple[_GridIndex, ...]
@@ -83,32 +83,23 @@ class _PolygonErrors(Protocol):
 def _evaluate_interval_points(
     program: PreparedIntervalFunction, points: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    lower_parts: list[np.ndarray] = []
-    upper_parts: list[np.ndarray] = []
-    for start in range(0, points.shape[0], program.batch_capacity):
-        stop = min(start + program.batch_capacity, points.shape[0])
-        lower, upper = program.evaluate(points[start:stop], points[start:stop])
-        lower_parts.append(np.asarray(lower, dtype=np.float64))
-        upper_parts.append(np.asarray(upper, dtype=np.float64))
-    if not lower_parts:
+    # The program schedules its own blocks; block sizes never change results.
+    if points.shape[0] == 0:
         empty = np.empty((0,), dtype=np.float64)
         return empty, empty.copy()
-    return np.concatenate(lower_parts, axis=0), np.concatenate(upper_parts, axis=0)
+    lower, upper = program.evaluate(points, points)
+    return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
 
 
 def _evaluate_interval_boxes(
     program: PreparedIntervalFunction, lower: np.ndarray, upper: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    lower_parts: list[np.ndarray] = []
-    upper_parts: list[np.ndarray] = []
-    for start in range(0, lower.shape[0], _INTERVAL_BATCH_SIZE):
-        stop = min(start + _INTERVAL_BATCH_SIZE, lower.shape[0])
-        bound_lower, bound_upper = program.evaluate(lower[start:stop], upper[start:stop])
-        lower_parts.append(np.asarray(bound_lower, dtype=np.float64))
-        upper_parts.append(np.asarray(bound_upper, dtype=np.float64))
-    if not lower_parts:
+    if lower.shape[0] == 0:
         return np.empty((0, 3), dtype=np.float64), np.empty((0, 3), dtype=np.float64)
-    return np.concatenate(lower_parts, axis=0), np.concatenate(upper_parts, axis=0)
+    bound_lower, bound_upper = program.evaluate(lower, upper)
+    return np.asarray(bound_lower, dtype=np.float64), np.asarray(
+        bound_upper, dtype=np.float64
+    )
 
 
 _DIMENSION = 3
@@ -725,8 +716,9 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
     """Adaptive-discovery issues and numerical termination evidence.
 
     ``lattice_anchor`` names the discovery lattice: ``0`` subdivides the declared
-    domain, ``k > 0`` the ``k``-th deterministic re-anchored lattice, tried because
-    the previous lattice placed a vertex on a sign crossing of the zero set.
+    domain, ``k > 0`` the ``k``-th deterministic re-anchored lattice, reached
+    because an earlier lattice placed a vertex on a sign crossing of the zero set
+    or a face tangent to it (see `discover_adaptive_implicit_surface`).
     ``declared_domain`` is the caller's box.
     """
 
@@ -1606,8 +1598,13 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
         )
         if np.any(unresolved & terminal_issues):
             return True
-        refinement_issues = int(AdaptiveImplicitBoxIssue.EDGE) | int(
-            AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
+        # Finer lattices shrink edge-ambiguous, multiple-sheet and tangency
+        # boxes toward their witnessed neighbours, so they stay refinable for
+        # the cover radius even though a tangency never drives discovery.
+        refinement_issues = int(
+            AdaptiveImplicitBoxIssue.EDGE
+            | AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
+            | AdaptiveImplicitBoxIssue.TANGENCY
         )
         refinement_mask = (unresolved & refinement_issues) != 0
         if not np.any(refinement_mask):
@@ -1802,6 +1799,99 @@ def _prove_constant_signs(
     return ~failed
 
 
+# Width, as a fraction of a box's extent, of the face slab that confines the
+# possible zeros of a lattice-face tangency (``AdaptiveImplicitBoxIssue.TANGENCY``).
+_TANGENCY_SLAB = 2.0**-8
+
+
+def _tangency_faces(
+    bounds: _FieldEnclosures,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    signs: np.ndarray,
+    gradient_lower: np.ndarray,
+    gradient_upper: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Faces of each box whose thin slab holds every possible zero of the box.
+
+    Column ``2 * axis + side`` of row ``i`` is true when ``signs[i] F`` is proved
+    positive (`_prove_constant_signs`) on box ``i`` with the slab of that face
+    (``side`` 0 the lower, 1 the upper face), of width ``_TANGENCY_SLAB`` times
+    the box extent along ``axis``, removed. Every possible zero of the box then
+    lies in that slab. A slab bound that rounds onto a box face proves nothing.
+    """
+    count = int(lower.shape[0])
+    faces = np.zeros((count, 6), dtype=np.bool_)
+    if not count:
+        return faces
+    width = (upper - lower) * _TANGENCY_SLAB
+    low = np.repeat(lower[:, None, :], 6, axis=1)
+    high = np.repeat(upper[:, None, :], 6, axis=1)
+    for axis in range(_DIMENSION):
+        low[:, 2 * axis, axis] = lower[:, axis] + width[:, axis]
+        high[:, 2 * axis + 1, axis] = upper[:, axis] - width[:, axis]
+    valid = np.all(low < high, axis=2)
+    for axis in range(_DIMENSION):
+        valid[:, 2 * axis] &= low[:, 2 * axis, axis] > lower[:, axis]
+        valid[:, 2 * axis + 1] &= high[:, 2 * axis + 1, axis] < upper[:, axis]
+    rows, columns = np.nonzero(valid)
+    faces[rows, columns] = _prove_constant_signs(
+        bounds,
+        low[rows, columns],
+        high[rows, columns],
+        np.asarray(signs)[rows],
+        np.asarray(gradient_lower)[rows],
+        np.asarray(gradient_upper)[rows],
+    )
+    return faces
+
+
+def _tangency_slabs(
+    bounds: _FieldEnclosures, boxes: np.ndarray, /
+) -> tuple[tuple[int, float, float], ...]:
+    """Closed ``(axis, low, high)`` neighbourhoods of every tangency face of ``boxes``.
+
+    Each box is a ``TANGENCY`` box: corners of one strict sign and possible
+    zeros confined to the slab of one or more faces (`_tangency_faces`, with
+    the box's own value and gradient enclosures). The neighbourhood of a face
+    at coordinate ``p`` with slab width ``w`` is ``[p - w, p + w]`` widened
+    outward by one rounding step; a lattice with no plane in it separates the
+    face. A box whose lower corner has no strict sign proves no face.
+    """
+    boxes = np.asarray(boxes, dtype=np.float64).reshape((-1, 2, _DIMENSION))
+    if not boxes.shape[0]:
+        return ()
+    lower = np.ascontiguousarray(boxes[:, 0])
+    upper = np.ascontiguousarray(boxes[:, 1])
+    evidence = bounds.boxes(lower, upper)
+    corner_lower, corner_upper = bounds.point_values(lower)
+    signs = np.where(corner_lower > 0.0, 1, np.where(corner_upper < 0.0, -1, 0))
+    strict = signs != 0
+    faces = np.zeros((boxes.shape[0], 6), dtype=np.bool_)
+    faces[strict] = _tangency_faces(
+        bounds,
+        lower[strict],
+        upper[strict],
+        signs[strict],
+        np.asarray(evidence.gradient_lower, dtype=np.float64)[strict],
+        np.asarray(evidence.gradient_upper, dtype=np.float64)[strict],
+    )
+    slabs: list[tuple[int, float, float]] = []
+    for row, column in zip(*np.nonzero(faces), strict=True):
+        axis = int(column) // 2
+        plane = float(boxes[row, int(column) % 2, axis])
+        width = float((upper[row, axis] - lower[row, axis]) * _TANGENCY_SLAB)
+        slabs.append(
+            (
+                axis,
+                math.nextafter(plane - width, -math.inf),
+                math.nextafter(plane + width, math.inf),
+            )
+        )
+    return tuple(slabs)
+
+
 def _cell_box(
     prefix: _GridIndex, level: int, domain: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -1841,10 +1931,11 @@ def _target_level(domain: np.ndarray, relative_diameter: float) -> int:
 
 
 # Per-axis lattice shifts, in target-level cells, of the re-anchored lattices
-# tried when a lattice vertex lies on a regular crossing of the zero set. The
-# shifts are the fractional parts of multiples of the golden ratio, sqrt(2) and
-# sqrt(3): no low-denominator dyadic coincidence with authored coordinates, and
-# the zero set meets any one shifted vertex family only on a measure-zero set.
+# tried when a lattice vertex lies on a regular crossing of the zero set or a
+# lattice face is tangent to it. The shifts are the binary64 (dyadic) values of
+# the fractional parts of multiples of the golden ratio, sqrt(2) and sqrt(3): no
+# low-denominator dyadic coincidence with authored coordinates, and the zero set
+# meets any one shifted vertex family only on a measure-zero set.
 _LATTICE_ANCHORS: tuple[tuple[float, float, float], ...] = (
     (0.6180339887498949, 0.41421356237309515, 0.7320508075688772),
     (0.2360679774997898, 0.8284271247461903, 0.4641016151377544),
@@ -2105,11 +2196,87 @@ def _grid_point(index: _GridIndex, level: int, domain: np.ndarray) -> np.ndarray
     )
 
 
-def _triangle_area(
-    vertices: _PolygonVertices, triangle: tuple[int, int, int], /
-) -> float:
-    first, second, third = (vertices[index] for index in triangle)
-    return 0.5 * float(np.linalg.norm(np.cross(second - first, third - first)))
+def _exact_binary64_integers(values: list[float], /) -> list[int] | None:
+    """Finite binary64 values as integers over one common power-of-two denominator.
+
+    Sums, differences and products of the integers are exact multiples of the
+    values' (positive) scale, so every sign and comparison they decide is the
+    exact decision on the represented binary64 inputs, on any platform.
+    """
+    if not all(math.isfinite(value) for value in values):
+        return None
+    ratios = [float(value).as_integer_ratio() for value in values]
+    denominator = max(den for _, den in ratios)
+    return [numerator * (denominator // den) for numerator, den in ratios]
+
+
+def _integer_cross(
+    first: Sequence[int], second: Sequence[int], /
+) -> tuple[int, int, int]:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _integer_difference(
+    first: Sequence[int], second: Sequence[int], /
+) -> tuple[int, int, int]:
+    return (first[0] - second[0], first[1] - second[1], first[2] - second[2])
+
+
+def _integer_dot(first: Sequence[int], second: Sequence[int], /) -> int:
+    return first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+
+
+# A floating-point squared edge length is within a few units in the last place
+# of the exact one, so a longest edge this far ahead of the next, above the
+# subnormal range, is the exact longest edge; any other triangle is decided
+# exactly.
+_WIDEST_CORNER_GAP = 2.0**-40
+_WIDEST_CORNER_FLOOR = 2.0**-1000
+
+
+def _widest_corner_offsets(corners: np.ndarray, /) -> np.ndarray:
+    """Rotation offset putting first each triangle's corner opposite its longest edge.
+
+    ``corners`` is ``(n, 3, 3)``. By the law of sines the corner opposite the
+    longest edge has the largest angle sine, so the corner-0 Jacobian columns
+    of the rotated triangle (which cell validity and finite-element geometry
+    normalize and measure) are its best conditioned; a cyclic rotation keeps
+    the triangle and its orientation. The longest edge is decided exactly on
+    the binary64 corners, and equal longest edges keep the earliest corner.
+    """
+    points = np.asarray(corners, dtype=np.float64)
+    offsets = np.zeros(points.shape[0], dtype=np.int64)
+    if points.shape[0] == 0:
+        return offsets
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        # The edge opposite corner k joins corners k + 1 and k + 2.
+        opposite = np.roll(points, -2, axis=1) - np.roll(points, -1, axis=1)
+        lengths = np.sum(opposite * opposite, axis=2)
+        ordered = np.sort(lengths, axis=1)
+        decided = (
+            np.all(np.isfinite(lengths), axis=1)
+            & (ordered[:, 2] > _WIDEST_CORNER_FLOOR)
+            & (ordered[:, 2] - ordered[:, 1] > _WIDEST_CORNER_GAP * ordered[:, 2])
+        )
+    offsets[decided] = np.argmax(lengths[decided], axis=1)
+    for row in np.flatnonzero(~decided).tolist():
+        values = _exact_binary64_integers(points[row].reshape(-1).tolist())
+        if values is None:
+            continue
+        exact = [values[3 * corner : 3 * corner + 3] for corner in range(3)]
+        squared = [
+            sum(
+                (exact[(corner + 2) % 3][axis] - exact[(corner + 1) % 3][axis]) ** 2
+                for axis in range(3)
+            )
+            for corner in range(3)
+        ]
+        offsets[row] = squared.index(max(squared))
+    return offsets
 
 
 def _certified_triangle_orientations(
@@ -2164,8 +2331,32 @@ def _certified_triangle_orientations(
 def _triangulate_polygon(
     vertices: _PolygonVertices, cycle: list[int], /
 ) -> tuple[tuple[int, int, int], ...] | None:
+    """Triangulate one contour cycle by exact predicates on its binary64 points.
+
+    A quadrilateral takes the diagonal whose smaller triangle is larger (the
+    first diagonal on a tie). A longer cycle clips, among its ears, the one of
+    largest area, then of largest middle vertex. Convexity and containment
+    are orientations about the cycle's exact Newell normal ``N`` (the sign of
+    ``N . (b - a) x (c - a)``), areas compare as exact squared doubled areas:
+    no rounded norm, projection or reduction order decides any choice, so
+    every platform triangulates a cycle the same way.
+    """
     if len(cycle) == 3:
         return ((cycle[0], cycle[1], cycle[2]),)
+    values = _exact_binary64_integers(
+        [float(value) for index in cycle for value in vertices[index]]
+    )
+    if values is None:
+        return None
+    points = [tuple(values[3 * row : 3 * row + 3]) for row in range(len(cycle))]
+
+    def area(first: int, second: int, third: int, /) -> int:
+        normal = _integer_cross(
+            _integer_difference(points[second], points[first]),
+            _integer_difference(points[third], points[first]),
+        )
+        return _integer_dot(normal, normal)
+
     if len(cycle) == 4:
         first_split = (
             (cycle[0], cycle[1], cycle[2]),
@@ -2175,62 +2366,49 @@ def _triangulate_polygon(
             (cycle[0], cycle[1], cycle[3]),
             (cycle[1], cycle[2], cycle[3]),
         )
-        first_minimum = min(_triangle_area(vertices, row) for row in first_split)
-        second_minimum = min(_triangle_area(vertices, row) for row in second_split)
+        first_minimum = min(area(0, 1, 2), area(0, 2, 3))
+        second_minimum = min(area(0, 1, 3), area(1, 2, 3))
         return first_split if first_minimum >= second_minimum else second_split
 
-    points = np.asarray([vertices[index] for index in cycle], dtype=np.float64)
-    center = np.mean(points, axis=0)
-    centered = points - center
-    normal = np.sum(np.cross(centered, np.roll(centered, -1, axis=0)), axis=0)
-    normal_length = float(np.linalg.norm(normal))
-    if not math.isfinite(normal_length) or normal_length == 0.0:
+    normal = (0, 0, 0)
+    for row in range(len(cycle)):
+        term = _integer_cross(points[row], points[(row + 1) % len(cycle)])
+        normal = (normal[0] + term[0], normal[1] + term[1], normal[2] + term[2])
+    # A cycle winds positively about its own Newell normal (its signed area
+    # about N is |N| / 2), so orientations about N need no separate sign.
+    if normal == (0, 0, 0):
         return None
-    normal /= normal_length
-    reference = centered[0] - normal * float(np.dot(centered[0], normal))
-    reference_length = float(np.linalg.norm(reference))
-    if reference_length == 0.0:
-        axis = np.eye(3, dtype=np.float64)[int(np.argmin(np.abs(normal)))]
-        reference = np.cross(normal, axis)
-        reference_length = float(np.linalg.norm(reference))
-    if not math.isfinite(reference_length) or reference_length == 0.0:
-        return None
-    first_axis = reference / reference_length
-    second_axis = np.cross(normal, first_axis)
-    planar = np.stack((centered @ first_axis, centered @ second_axis), axis=1)
-    # Python binary64 rows: the same IEEE operations as NumPy scalars, without
-    # a fancy-indexed array per predicate.
-    rows = planar.tolist()
 
-    def orient(first: int, second: int, third: int, /) -> float:
-        a, b, c = rows[first], rows[second], rows[third]
-        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    def orient(first: int, second: int, third: int, /) -> int:
+        return _integer_dot(
+            normal,
+            _integer_cross(
+                _integer_difference(points[second], points[first]),
+                _integer_difference(points[third], points[first]),
+            ),
+        )
 
-    signed_area_twice = sum(
-        planar[index, 0] * planar[(index + 1) % len(cycle), 1]
-        - planar[index, 1] * planar[(index + 1) % len(cycle), 0]
-        for index in range(len(cycle))
-    )
-    if not math.isfinite(float(signed_area_twice)) or signed_area_twice == 0.0:
-        return None
-    orientation = 1.0 if signed_area_twice > 0.0 else -1.0
     remaining = list(range(len(cycle)))
     triangles: list[tuple[int, int, int]] = []
     while len(remaining) > 3:
-        ears: list[tuple[float, int, tuple[int, int, int]]] = []
+        ears: list[tuple[int, int, int, tuple[int, int, int]]] = []
         for position, current in enumerate(remaining):
             previous = remaining[position - 1]
             following = remaining[(position + 1) % len(remaining)]
-            if orientation * orient(previous, current, following) <= 0.0:
+            if orient(previous, current, following) <= 0:
                 continue
             contains_vertex = False
             for candidate in remaining:
                 if candidate in (previous, current, following):
                     continue
-                first_side = orientation * orient(previous, current, candidate)
-                second_side = orientation * orient(current, following, candidate)
-                third_side = orientation * orient(following, previous, candidate)
-                if min(first_side, second_side, third_side) >= 0.0:
+                if (
+                    min(
+                        orient(previous, current, candidate),
+                        orient(current, following, candidate),
+                        orient(following, previous, candidate),
+                    )
+                    >= 0
+                ):
                     contains_vertex = True
                     break
             if contains_vertex:
@@ -2240,13 +2418,12 @@ def _triangulate_polygon(
                 cycle[current],
                 cycle[following],
             )
-            ears.append((_triangle_area(vertices, triangle), position, triangle))
+            ears.append(
+                (area(previous, current, following), cycle[current], position, triangle)
+            )
         if not ears:
             return None
-        _area, position, triangle = max(
-            ears,
-            key=lambda row: (row[0], cycle[remaining[row[1]]]),
-        )
+        _area, _vertex, position, triangle = max(ears, key=lambda row: row[:2])
         triangles.append(triangle)
         del remaining[position]
     triangles.append(
@@ -2443,21 +2620,33 @@ def _triangulate_cell_band(
         return issue, witness, first_error
 
     cycle = cycles[0]
-    cycle_points = np.asarray([vertices[vertex] for vertex in cycle])
-    cycle_center = np.mean(cycle_points, axis=0)
-    centered_points = cycle_points - cycle_center
-    cycle_normal = np.sum(
-        np.cross(centered_points, np.roll(centered_points, -1, axis=0)),
-        axis=0,
+    # Both scaled by one positive power of two: the sign of the integer dot
+    # product is the exact sign of the Newell normal against the gradient.
+    exact = _exact_binary64_integers(
+        [float(value) for vertex in cycle for value in vertices[vertex]]
+        + [float(value) for value in gradient]
     )
-    orientation = float(np.dot(cycle_normal, gradient))
-    if not math.isfinite(orientation) or orientation == 0.0:
+    orientation = 0
+    if exact is not None:
+        cycle_normal = (0, 0, 0)
+        for row in range(len(cycle)):
+            term = _integer_cross(
+                exact[3 * row : 3 * row + 3],
+                exact[3 * ((row + 1) % len(cycle)) : 3 * ((row + 1) % len(cycle)) + 3],
+            )
+            cycle_normal = (
+                cycle_normal[0] + term[0],
+                cycle_normal[1] + term[1],
+                cycle_normal[2] + term[2],
+            )
+        orientation = _integer_dot(cycle_normal, exact[3 * len(cycle) :])
+    if orientation == 0:
         issue |= int(AdaptiveImplicitBoxIssue.SINGULAR)
         witness = (
             np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
         )
         return issue, witness, first_error
-    if orientation < 0.0:
+    if orientation < 0:
         cycle.reverse()
     triangles = _triangulate_polygon(vertices, cycle)
     if triangles is None:
@@ -2481,7 +2670,18 @@ def _triangulate_cell_band(
         normal = np.cross(second_point - first_point, third_point - first_point)
         if float(np.dot(normal, gradient)) < 0.0:
             triangle = (triangle[0], triangle[2], triangle[1])
-        faces.append(triangle)
+        offset = int(
+            _widest_corner_offsets(
+                np.stack([vertices[vertex] for vertex in triangle])[None]
+            )[0]
+        )
+        faces.append(
+            (
+                triangle[offset],
+                triangle[(offset + 1) % 3],
+                triangle[(offset + 2) % 3],
+            )
+        )
         triangle_cell_rows.append(cell_row)
     witness = np.zeros(3, dtype=np.float64) if first_witness is None else first_witness
     return issue, witness, first_error
@@ -2566,7 +2766,8 @@ def _discover_adaptive_implicit_surface_once(
     Possible-zero leaves are resolved to the requested physical cell diameter.
     Pure edge-ambiguous leaves trigger finer dyadic discovery until their roots
     are witnessed or their diameter reaches the requested root tolerance.
-    Singular and otherwise unresolved leaves remain explicit.
+    Lattice-face tangencies, singular and otherwise unresolved leaves remain
+    explicit.
     """
     _validate_discovery_inputs(geometry, policy, source_id)
     domain_ = np.asarray(domain, dtype=np.float64)
@@ -2624,6 +2825,7 @@ def _discover_adaptive_implicit_surface_once(
             | AdaptiveImplicitBoxIssue.EDGE
             | AdaptiveImplicitBoxIssue.FACE
             | AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
+            | AdaptiveImplicitBoxIssue.TANGENCY
         )
         if np.any(unresolved_issues & physical_issues):
             status |= int(AdaptiveImplicitSurfaceStatus.PHYSICAL_RESOLUTION_REACHED)
@@ -2758,12 +2960,18 @@ def _discover_adaptive_implicit_surface_once(
 def _next_discovery_resolution(
     surface: AdaptiveImplicitSurface, policy: AdaptiveImplicitSurfacePolicy, /
 ) -> float | None:
-    """Return the next dyadic resolution only for a retryable discovery."""
+    """Return the next dyadic resolution only for a retryable discovery.
+
+    ``TANGENCY`` boxes do not drive refinement: every finer lattice keeps the
+    face they hug. The remaining unresolved boxes must all be edge-ambiguous
+    or multiple-sheet boxes wider than the root tolerance.
+    """
     issues = np.asarray(surface.evidence.unresolved_issues, dtype=np.int64)
     refinable = int(
         AdaptiveImplicitBoxIssue.EDGE | AdaptiveImplicitBoxIssue.MULTIPLE_SHEETS
     )
-    if not issues.size or np.any(issues & ~refinable):
+    others = issues != int(AdaptiveImplicitBoxIssue.TANGENCY)
+    if not np.any(others) or np.any(issues[others] & ~refinable):
         return None
     retryable = int(
         AdaptiveImplicitSurfaceStatus.UNRESOLVED_BOXES
@@ -2771,7 +2979,7 @@ def _next_discovery_resolution(
     )
     if int(surface.evidence.status_flags) & ~retryable:
         return None
-    boxes = np.asarray(surface.evidence.unresolved_boxes)
+    boxes = np.asarray(surface.evidence.unresolved_boxes)[others]
     if (
         max((_cell_diagonal(box[0], box[1]) for box in boxes), default=0.0)
         <= policy.root_tolerance
@@ -2789,27 +2997,92 @@ def _next_discovery_resolution(
     return next_relative
 
 
+def _anchored_lattice(
+    declared: np.ndarray, policy: AdaptiveImplicitSurfacePolicy, anchor: int, /
+) -> tuple[np.ndarray, AdaptiveImplicitSurfacePolicy]:
+    """Discovery box and first-attempt policy of lattice ``anchor``."""
+    domain = _anchored_domain(declared, policy.relative_cell_diameter, anchor)
+    if anchor == 0:
+        return domain, policy
+    return domain, replace(
+        policy,
+        relative_cell_diameter=_anchored_relative_diameter(
+            declared, domain, policy.relative_cell_diameter
+        ),
+    )
+
+
+def _lattice_separates(
+    domain: np.ndarray, level: int, slabs: tuple[tuple[int, float, float], ...], /
+) -> bool:
+    """Whether no exact level-``level`` plane of ``domain`` meets any slab."""
+    denominator = 1 << level
+    for axis, low, high in slabs:
+        start = Fraction(float(domain[0, axis]))
+        span = Fraction(float(domain[1, axis])) - start
+        first = max(0, math.ceil((Fraction(low) - start) * denominator / span))
+        if first <= denominator and start + span * Fraction(
+            first, denominator
+        ) <= Fraction(high):
+            return False
+    return True
+
+
+def _separating_anchor(
+    bounds: _FieldEnclosures,
+    tangencies: np.ndarray,
+    declared: np.ndarray,
+    policy: AdaptiveImplicitSurfacePolicy,
+    anchor: int,
+    /,
+) -> int | None:
+    """First later lattice anchor whose first lattice separates every tangency face.
+
+    ``tangencies`` are the ``TANGENCY`` boxes of the lattice being left and of
+    every lattice left before it. A candidate lattice separates them when none
+    of its exact target-level planes lies in the neighbourhood of a tangency
+    face (`_tangency_slabs`), so its cells meet each touching or hugging zero
+    set away from their faces. Without tangencies the next anchor is taken.
+    ``None`` when no later anchor of the fixed sequence separates them.
+    """
+    slabs = _tangency_slabs(bounds, tangencies)
+    for candidate in range(anchor + 1, len(_LATTICE_ANCHORS) + 1):
+        domain, candidate_policy = _anchored_lattice(declared, policy, candidate)
+        level = _target_level(domain, candidate_policy.relative_cell_diameter)
+        if _lattice_separates(domain, level, slabs):
+            return candidate
+    return None
+
+
+def _tangency_boxes(surface: AdaptiveImplicitSurface, /) -> np.ndarray:
+    issues = np.asarray(surface.evidence.unresolved_issues, dtype=np.int64)
+    return np.asarray(surface.evidence.unresolved_boxes, dtype=np.float64)[
+        issues == int(AdaptiveImplicitBoxIssue.TANGENCY)
+    ]
+
+
 def _discover_on_lattice(
     geometry: CompiledGeometry,
     declared_domain: np.ndarray,
     lattice_anchor: int,
     policy: AdaptiveImplicitSurfacePolicy,
     source_id: str,
+    known_tangencies: np.ndarray,
     /,
-) -> AdaptiveImplicitSurface:
-    """Discover on one lattice, refining edge-ambiguous cell contours as needed."""
-    selected_domain = _anchored_domain(
-        declared_domain, policy.relative_cell_diameter, lattice_anchor
-    )
-    effective_policy = (
-        policy
-        if lattice_anchor == 0
-        else replace(
-            policy,
-            relative_cell_diameter=_anchored_relative_diameter(
-                declared_domain, selected_domain, policy.relative_cell_diameter
-            ),
-        )
+) -> tuple[AdaptiveImplicitSurface, int | None, np.ndarray]:
+    """Discover on one lattice and name the next lattice anchor, if any.
+
+    Each attempt first leaves the lattice when it has ``TANGENCY`` boxes and
+    a later anchor separates them and ``known_tangencies``, those of the
+    lattices already left (`_separating_anchor`); otherwise it refines
+    edge-ambiguous cell contours (`_next_discovery_resolution`). The final
+    attempt leaves for the next separating anchor only when its undecided
+    vertices are lattice coincidences. Also returns every tangency box known
+    on leaving.
+    """
+    bounds = _FieldEnclosures(geometry, policy.enclosure)
+    selected_domain, effective_policy = _anchored_lattice(
+        declared_domain, policy, lattice_anchor
     )
     while True:
         surface = _discover_adaptive_implicit_surface_once(
@@ -2820,6 +3093,14 @@ def _discover_on_lattice(
             declared_domain=declared_domain,
             lattice_anchor=lattice_anchor,
         )
+        tangencies = _tangency_boxes(surface)
+        known = np.concatenate((known_tangencies, tangencies))
+        if tangencies.shape[0]:
+            following = _separating_anchor(
+                bounds, known, declared_domain, policy, lattice_anchor
+            )
+            if following is not None:
+                return surface, following, known
         next_relative = _next_discovery_resolution(surface, effective_policy)
         if next_relative is None:
             break
@@ -2830,88 +3111,99 @@ def _discover_on_lattice(
         )
         # The prior, rejected carrier is not an input to the next discovery.
         del surface
-    if effective_policy is policy:
-        return surface
-    return AdaptiveImplicitSurface(
-        surface.mesh,
-        surface.evidence,
-        surface.cover,
-        surface.topology,
-        surface.volume,
-        surface.scaffold,
-        surface.feature_edges,
-        surface.boundary_witness_boxes,
-        surface.boundary_witnesses,
-        surface.boundary_errors,
-        surface.geometry,
-        policy,
-        surface.source_id,
+    following = (
+        _separating_anchor(bounds, known, declared_domain, policy, lattice_anchor)
+        if _vertex_roots_are_lattice_coincidences(geometry, surface, policy.enclosure)
+        else None
     )
+    if effective_policy is not policy:
+        surface = AdaptiveImplicitSurface(
+            surface.mesh,
+            surface.evidence,
+            surface.cover,
+            surface.topology,
+            surface.volume,
+            surface.scaffold,
+            surface.feature_edges,
+            surface.boundary_witness_boxes,
+            surface.boundary_witnesses,
+            surface.boundary_errors,
+            surface.geometry,
+            policy,
+            surface.source_id,
+        )
+    return surface, following, known
 
 
 def verify_discovery_history(surface: AdaptiveImplicitSurface, /) -> bool:
     """Cold-replay prior retries and bind a validated result to its policy.
 
     The caller independently validates retained leaf and polygon evidence.
-    Rejected attempts are replayed in bounded chunks without constructing
-    another discovery, mesh, or scaffold.
+    Rejected attempts, on earlier lattices and at coarser resolutions, are
+    replayed in bounded chunks without constructing another discovery, mesh,
+    or scaffold, and must reproduce the lattice schedule of
+    `_discover_on_lattice` that ends at the retained lattice and resolution.
     """
     from ._adaptive_polygon_replay import replay_history_attempt
 
     declared = np.asarray(surface.evidence.declared_domain, dtype=np.float64)
     policy = surface.policy
-    anchor = surface.evidence.lattice_anchor
-    if not 0 <= anchor <= len(_LATTICE_ANCHORS):
+    final_anchor = surface.evidence.lattice_anchor
+    if not 0 <= final_anchor <= len(_LATTICE_ANCHORS):
         return False
-    for previous_anchor in range(anchor):
-        previous_domain = _anchored_domain(
-            declared, policy.relative_cell_diameter, previous_anchor
-        )
-        previous_policy = (
-            policy
-            if previous_anchor == 0
-            else replace(
-                policy,
-                relative_cell_diameter=_anchored_relative_diameter(
-                    declared, previous_domain, policy.relative_cell_diameter
-                ),
-            )
-        )
+    bounds = _FieldEnclosures(surface.geometry, policy.enclosure)
+    known = np.empty((0, 2, _DIMENSION), dtype=np.float64)
+    anchor = 0
+    while anchor != final_anchor:
+        if anchor > final_anchor:
+            return False
+        previous_domain, previous_policy = _anchored_lattice(declared, policy, anchor)
         while True:
-            retry, coincident = replay_history_attempt(
+            retry, coincident, tangencies = replay_history_attempt(
                 surface.geometry, previous_domain, previous_policy
             )
+            attempt_known = np.concatenate((known, tangencies))
+            following = (
+                _separating_anchor(bounds, attempt_known, declared, policy, anchor)
+                if tangencies.shape[0]
+                else None
+            )
+            if following is not None:
+                break
             if not retry:
+                following = (
+                    _separating_anchor(bounds, attempt_known, declared, policy, anchor)
+                    if coincident
+                    else None
+                )
                 break
             previous_policy = replace(
                 previous_policy,
                 relative_cell_diameter=previous_policy.relative_cell_diameter * 0.5,
             )
-        if not coincident:
+        if following is None:
             return False
+        known = attempt_known
+        anchor = following
 
-    selected_domain = _anchored_domain(declared, policy.relative_cell_diameter, anchor)
+    selected_domain, effective_policy = _anchored_lattice(declared, policy, anchor)
     if not np.array_equal(selected_domain, surface.scaffold.domain):
         return False
-    effective_policy = (
-        policy
-        if anchor == 0
-        else replace(
-            policy,
-            relative_cell_diameter=_anchored_relative_diameter(
-                declared, selected_domain, policy.relative_cell_diameter
-            ),
-        )
-    )
     target_level = surface.scaffold.target_level
     while (
         _target_level(selected_domain, effective_policy.relative_cell_diameter)
         < target_level
     ):
-        retry, _ = replay_history_attempt(
+        retry, _, tangencies = replay_history_attempt(
             surface.geometry, selected_domain, effective_policy
         )
-        if not retry:
+        if not retry or (
+            tangencies.shape[0]
+            and _separating_anchor(
+                bounds, np.concatenate((known, tangencies)), declared, policy, anchor
+            )
+            is not None
+        ):
             return False
         effective_policy = replace(
             effective_policy,
@@ -2922,10 +3214,20 @@ def verify_discovery_history(surface: AdaptiveImplicitSurface, /) -> bool:
         != target_level
     ):
         return False
+    tangencies = _tangency_boxes(surface)
+    final_known = np.concatenate((known, tangencies))
+    if (
+        tangencies.shape[0]
+        and _separating_anchor(bounds, final_known, declared, policy, anchor) is not None
+    ):
+        return False
     if _next_discovery_resolution(surface, effective_policy) is not None:
         return False
-    return anchor == len(_LATTICE_ANCHORS) or not _vertex_roots_are_lattice_coincidences(
-        surface.geometry, surface, policy.enclosure
+    return (
+        not _vertex_roots_are_lattice_coincidences(
+            surface.geometry, surface, policy.enclosure
+        )
+        or _separating_anchor(bounds, final_known, declared, policy, anchor) is None
     )
 
 
@@ -2940,25 +3242,44 @@ def discover_adaptive_implicit_surface(
 ) -> AdaptiveImplicitSurface:
     """Discover every possible zero, refining unresolved cell contours as needed.
 
-    The discovery lattice is internal. A lattice vertex whose point enclosure
-    contains zero while the field takes both certified signs on its small
-    neighbour stencil is a coincidence of where the lattice falls on a crossing of
-    the zero set, so discovery restarts on the next deterministic re-anchored
-    lattice covering the declared domain at the declared physical resolution. Any
-    other singular cell (a touching or degenerate vertex zero, or a possible zero
-    without a corner sign change or a nonvanishing gradient component) is refused
-    on the current lattice without re-anchoring. When every anchor still places a
-    vertex on a crossing, the last lattice's singular cells remain the refusal.
+    The discovery lattice is internal and two of its defects depend only on
+    where the lattice falls:
+
+    - a lattice vertex whose point enclosure contains zero while the field
+      takes both certified signs on its small neighbour stencil lies on a
+      crossing of the zero set;
+    - a ``TANGENCY`` box has corners of one sign and possible zeros proved to
+      lie in a slab of ``2**-8`` of its width along one face: the zero set
+      touches or hugs that lattice face, which every finer lattice keeps.
+
+    Either restarts discovery on the first later lattice of a fixed sequence
+    of deterministic, exactly computed re-anchored lattices (covering the
+    declared domain at the declared physical resolution) whose target-level
+    planes are proved to avoid the neighbourhood of every tangency face. A
+    tangency defect leaves a lattice at once; refinement never targets it.
+    Any other singular cell (a touching or degenerate vertex zero, or a
+    possible zero without a corner sign change or a nonvanishing gradient
+    component) is refused on the current lattice without re-anchoring. When
+    no later anchor separates the current tangencies, or the sequence is
+    exhausted, the current lattice's ``TANGENCY`` and singular cells remain
+    the refusal: a tangency that persists on every lattice tried is an
+    unresolved tangency event.
+
+    Termination: anchors strictly increase through the finite sequence, and
+    on one lattice each refinement strictly deepens the target level of
+    nonempty edge-ambiguous boxes wider than the root tolerance, which binary64
+    representability bounds.
     """
     declared = np.array(domain, dtype=np.float64, copy=True)
+    known = np.empty((0, 2, _DIMENSION), dtype=np.float64)
     anchor = 0
     while True:
-        surface = _discover_on_lattice(geometry, declared, anchor, policy, source_id)
-        if anchor == len(_LATTICE_ANCHORS) or not _vertex_roots_are_lattice_coincidences(
-            geometry, surface, policy.enclosure
-        ):
+        surface, following, known = _discover_on_lattice(
+            geometry, declared, anchor, policy, source_id, known
+        )
+        if following is None:
             return surface
-        anchor += 1
+        anchor = following
         del surface
 
 

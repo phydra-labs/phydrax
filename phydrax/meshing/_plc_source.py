@@ -276,8 +276,13 @@ def _certify_cad_surface(
     /,
     *,
     computed_surface: _ComputedSurfaceAcceptance | None = None,
+    stored_fidelity: SourceFidelityCertificate | None = None,
 ) -> tuple[GlobalEmbeddingCertificate, SourceFidelityCertificate]:
-    """Compute the source's mathematical certificates without retaining a report."""
+    """Compute the source's mathematical certificates without retaining a report.
+
+    ``stored_fidelity`` is a retained certificate being replayed; the
+    certification adopts it once the recomputation reproduces it.
+    """
     from ._certification import MeshCertificationReport
     from ._certification_inputs import (
         MeshCertificationInputs,
@@ -328,6 +333,7 @@ def _certify_cad_surface(
         ),
         validated=validated,
         computed_surface=computed_surface,
+        stored_fidelity=None if stored_fidelity is None else (stored_fidelity, ()),
     )
     report.require_passed()
     if report.fidelity is None:
@@ -479,18 +485,16 @@ def _cad_segment_incidence(
         )
     junctions = np.asarray(embedding.binding.junction_vertices, dtype=np.int64)
     if validated_surface is None:
-        if computed_surface is None:
-            fresh_embedding, fresh_fidelity = _certify_cad_surface(
-                surface, fidelity_tolerance, maximum_normal_deviation, junctions
-            )
-        else:
-            fresh_embedding, fresh_fidelity = _certify_cad_surface(
-                surface,
-                fidelity_tolerance,
-                maximum_normal_deviation,
-                junctions,
-                computed_surface=computed_surface,
-            )
+        # The replay adopts the retained fidelity evidence inside its own
+        # certification, so bound-limit decisions are not re-decided here.
+        fresh_embedding, fresh_fidelity = _certify_cad_surface(
+            surface,
+            fidelity_tolerance,
+            maximum_normal_deviation,
+            junctions,
+            computed_surface=computed_surface,
+            stored_fidelity=fidelity,
+        )
     elif type(validated_surface) is _ValidatedCadSurface:
         fresh_embedding, fresh_fidelity = validated_surface.require(
             surface, fidelity_tolerance, maximum_normal_deviation, junctions
@@ -498,10 +502,12 @@ def _cad_segment_incidence(
     else:
         raise TypeError("CAD surface proof handoff requires a validated artifact.")
     _register_model_archive_types()
-    if not _same_model_content(fresh_embedding, embedding) or not _same_model_content(
-        fresh_fidelity, fidelity
-    ):
+    if not _same_model_content(fresh_embedding, embedding):
         raise ValueError("CAD PLC mathematical proofs differ from their source replay.")
+    # Certified fidelity bounds are stored evidence: the replay must reproduce
+    # the retained certificate's exact content and intersect its enclosures,
+    # and the retained proof, not this platform's rounding of it, is kept.
+    fresh_fidelity = fidelity.adopt_reproof(fresh_fidelity)
     # The retained archive graph may still contain column recipes.  Its exact
     # projected content has just matched the freshly constructed proofs, whose
     # own currentness checks operate on the restored scientific owners.

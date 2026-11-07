@@ -302,6 +302,34 @@ def test_tetra_metric_adaptation_round_trips_and_refuses_tamper(
     )
 
 
+def test_metric_cube_archives_are_byte_identical_without_wall_time(
+    tmp_path: Path,
+) -> None:
+    source = _certified(_kuhn_cube())
+    request = _metric_request(source, (4.0, 3.8, 3.6))
+    route = MeshAdaptationRoute.NATIVE_METRIC_3D
+    first, second = (_adapt(source, request, route) for _ in range(2))
+    assert first.result_id == second.result_id
+    assert first.elapsed_seconds is not None and second.elapsed_seconds is not None
+    paths = [
+        write_model_artifact(
+            tmp_path / f"run-{index}.phx", value, limits=MODEL_ARCHIVE_LIMITS
+        )
+        for index, value in enumerate((first, second))
+    ]
+    assert paths[0].read_bytes() == paths[1].read_bytes()
+    restored = read_model_artifact(
+        paths[0],
+        expected_type=MeshAdaptationResult,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    _assert_same_adaptation(restored, first)
+    assert restored.elapsed_seconds is None
+    # An archive that carries wall time is not canonical.
+    _refuses_tamper(paths[0], MeshAdaptationResult, ("elapsed_seconds",), lambda _: 0.25)
+
+
 def test_native_metric_2d_adaptation_round_trips(tmp_path: Path) -> None:
     source = _certified(_triangle_grid(3, 3))
     original = _adapt(
@@ -639,6 +667,8 @@ def test_mmg_provider_adaptation_restores_without_rerunning_mmg(
     path = tmp_path / "mmg.phx"
     restored = _round_trip(path, original, MeshAdaptationResult)
     _assert_same_adaptation(restored, original)
+    assert restored.elapsed_seconds is None
+    assert restored.evidence.session.elapsed_seconds is None
     assert restored.target.adapter_reports[0].report_id == report.report_id
     _refuses_tamper(
         path, MeshAdaptationResult, ("evidence", "session", "evidence_id"), _flip_hex
@@ -646,9 +676,281 @@ def test_mmg_provider_adaptation_restores_without_rerunning_mmg(
     _refuses_tamper(
         path,
         MeshAdaptationResult,
+        ("evidence", "session", "elapsed_seconds"),
+        lambda _: 0.25,
+    )
+    _refuses_tamper(
+        path,
+        MeshAdaptationResult,
         ("target", "adapter_reports", 0, "report_id"),
         _flip_hex,
     )
+
+
+def _omega_h_adaptation() -> tuple[MeshAdaptationResult, dict[str, Any]]:
+    """A fabricated serial Omega_h result; the host has no Omega_h worker."""
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing._adaptation import (
+        _compliance,
+        _RouteOutcome,
+        _StoredAdaptationBinding,
+        _unknown_lineage,
+    )
+    from phydrax.meshing._lineage import CellMeshTransition, MeshTransitionKind
+    from phydrax.meshing.providers._omega_h import (
+        _entity_scope,
+        _GatheredTarget,
+        _RankArrays,
+        OmegaHAdaptationEvidence,
+        OmegaHAdaptationResult,
+        OmegaHClassification,
+        OmegaHField,
+        OmegaHFieldEvidence,
+        OmegaHFieldTransfer,
+        OmegaHOptions,
+        OmegaHPartition,
+        OmegaHTransferredField,
+    )
+
+    source = _certified(_triangle_grid(2, 2))
+    target = _certified(_triangle_grid(3, 3))
+    source_vertices = np.asarray(source.mesh.entity_set(0).entity_ids, dtype=np.int64)
+    source_cells = np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
+    vertices = np.asarray(target.mesh.entity_set(0).entity_ids, dtype=np.int64)
+    cells = np.asarray(target.mesh.entity_set(2).entity_ids, dtype=np.int64)
+    vertex_scope = _entity_scope(target.mesh, 0, vertices)
+    cell_scope = _entity_scope(target.mesh, 2, cells)
+    linear = OmegaHField(
+        "temperature",
+        OmegaHFieldTransfer.LINEAR,
+        _entity_scope(source.mesh, 0, source_vertices),
+        np.linspace(0.0, 1.0, source_vertices.size),
+    )
+    conserve = OmegaHField(
+        "density",
+        OmegaHFieldTransfer.CONSERVE,
+        _entity_scope(source.mesh, 2, source_cells),
+        np.full(source_cells.size, 2.0),
+    )
+    options = OmegaHOptions()
+    record = {
+        "cell_count": int(cells.size),
+        "classification": {"generated_facet_classes": 1},
+        "facet_count": 0,
+        "fields": [
+            {"name": "field-0", "method": "OMEGA_H_LINEAR_INTERP"},
+            {
+                "name": "field-1",
+                "method": "OMEGA_H_CONSERVE",
+                "integral_before": [2.0],
+                "integral_after": [2.0],
+            },
+        ],
+        "iterations": 3,
+        "maximum_length": 1.25,
+        "maximum_quality": 1.0,
+        "minimum_length": 0.75,
+        "minimum_quality": 0.5,
+        "options": {
+            **options.worker_record()["adapt"],
+            "feature_angle": options.feature_angle,
+            "gradation_rate": options.gradation_rate,
+            "maximum_iterations": options.maximum_iterations,
+            "min_quality_allowed": 0.3,
+            "min_quality_desired": 0.4,
+        },
+        "ranks": 1,
+        "vertex_count": int(vertices.size),
+    }
+    field_evidence = (
+        OmegaHFieldEvidence(
+            linear.name,
+            linear.transfer,
+            "OMEGA_H_LINEAR_INTERP",
+            None,
+            None,
+            None,
+            linear.field_id,
+        ),
+        OmegaHFieldEvidence(
+            conserve.name,
+            conserve.transfer,
+            "OMEGA_H_CONSERVE",
+            conserve.diffusion_tolerance,
+            np.asarray([2.0]),
+            np.asarray([2.0]),
+            conserve.field_id,
+        ),
+    )
+    evidence = OmegaHAdaptationEvidence(
+        options,
+        field_evidence,
+        record,
+        session_id="fabricated-session",
+        identity_id="fabricated-worker",
+        sequence=1,
+        peak_rss_bytes=1,
+    )
+    # The canonical record hashes exactly as the worker's JSON record.
+    assert evidence.evidence_id == canonical_fingerprint(
+        {
+            "kind": "omega-h-adaptation-evidence",
+            "options": options.options_id,
+            "record": record,
+            "fields": [value.evidence_id for value in field_evidence],
+            "identity": "fabricated-worker",
+        }
+    )
+    metric = MeshMetricField(
+        vertex_scope,
+        np.broadcast_to(4.0 * np.eye(2), (vertices.size, 2, 2)).copy(),
+        minimum_size=0.1,
+        maximum_size=1.0,
+    )
+    transferred = (
+        OmegaHTransferredField(
+            "temperature",
+            OmegaHFieldTransfer.LINEAR,
+            vertex_scope,
+            np.linspace(0.0, 1.0, vertices.size),
+        ),
+        OmegaHTransferredField(
+            "density", OmegaHFieldTransfer.CONSERVE, cell_scope, np.full(cells.size, 2.0)
+        ),
+    )
+    rows = target.mesh.blocks[0].vertices
+    partition = OmegaHPartition(
+        0,
+        _RankArrays(
+            vertices,
+            np.asarray(target.mesh.coordinates, dtype=np.float64),
+            np.asarray(metric.values),
+            np.zeros(vertices.size, dtype=np.int32),
+            np.arange(vertices.size, dtype=np.int32),
+            cells,
+            np.asarray(rows, dtype=np.int32),
+            np.zeros(cells.size, dtype=np.int32),
+            np.zeros(cells.size, dtype=np.int32),
+            np.arange(cells.size, dtype=np.int32),
+            np.zeros((0,), dtype=np.int64),
+            np.zeros((0, 2), dtype=np.int64),
+            np.zeros((0,), dtype=np.int32),
+            np.zeros((0,), dtype=np.int32),
+            tuple(np.asarray(field.values) for field in transferred),
+        ),
+    )
+    classification = OmegaHClassification(
+        cell_blocks=(target.mesh.blocks[0].name,),
+        cell_zones=(None,),
+        cell_labels=((),),
+        facet_patches=(),
+        facet_zones=(),
+        facet_labels=(),
+        feature_angle=options.feature_angle,
+    )
+    omega_h = OmegaHAdaptationResult(
+        source,
+        "fabricated-input-metric",
+        (partition,),
+        classification,
+        evidence,
+        _GatheredTarget(
+            target,
+            metric,
+            transferred,
+            np.zeros((0,), dtype=np.int32),
+            np.zeros((0,), dtype=np.int64),
+        ),
+        None,
+        target.provider,
+        target.runtime,
+        target.provenance,
+    )
+    lineage = _unknown_lineage(source.mesh, target.mesh)
+    binding = _StoredAdaptationBinding(
+        MeshAdaptationRoute.OMEGA_H, source, "fabricated-prepared"
+    )
+    result = MeshAdaptationResult(
+        binding,
+        _RouteOutcome(
+            MeshAdaptationStatus.COMPLETE,
+            target,
+            CellMeshTransition(
+                source.mesh.mesh_id,
+                source.mesh.topology_id,
+                target,
+                lineage,
+                MeshTransitionKind.REMESH,
+            ),
+            lineage,
+            None,
+            None,
+            metric,
+            omega_h,
+            None,
+        ),
+        _compliance(binding, target),
+        None,
+        0.25,
+    )
+    return result, record
+
+
+def _refuses_record_tamper(path: Path, /) -> None:
+    manifest, arrays = read_model_archive(path, limits=MODEL_ARCHIVE_LIMITS)
+    record = manifest["model_recipe"]["fields"]["evidence"]["fields"]["evidence"][
+        "fields"
+    ]["record"]
+    assert record["kind"] == "frozendict"
+    (value,) = (item for key, item in record["items"] if key["value"] == "iterations")
+    value["value"] += 1
+    changed = write_model_archive(
+        path.with_name("tampered-record.phx"),
+        manifest=manifest,
+        arrays=arrays,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_artifact(
+            changed,
+            expected_type=MeshAdaptationResult,
+            restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+
+
+def test_omega_h_adaptation_restores_without_rerunning_omega_h(tmp_path: Path) -> None:
+    from phydrax.meshing.providers._omega_h import OmegaHAdaptationResult
+
+    original, record = _omega_h_adaptation()
+    path = tmp_path / "omega-h.phx"
+    restored = _round_trip(path, original, MeshAdaptationResult)
+    _assert_same_adaptation(restored, original)
+    evidence, stored = restored.evidence, original.evidence
+    assert isinstance(evidence, OmegaHAdaptationResult)
+    assert isinstance(stored, OmegaHAdaptationResult)
+    assert evidence.result_id == stored.result_id
+    assert evidence.evidence.evidence_id == stored.evidence.evidence_id
+    assert evidence.evidence.record == stored.evidence.record
+    assert evidence.evidence.record["fields"][1]["integral_after"] == (2.0,)
+    assert [value.field_id for value in evidence.evidence.fields] == [
+        value.field_id for value in stored.evidence.fields
+    ]
+    assert [value.field_id for value in evidence.fields] == [
+        value.field_id for value in stored.fields
+    ]
+    assert evidence.partitions[0].partition_id == stored.partitions[0].partition_id
+    assert evidence.metric is not None and stored.metric is not None
+    assert evidence.metric.metric_id == stored.metric.metric_id
+    assert record["iterations"] == evidence.evidence.iterations
+
+    _refuses_record_tamper(path)
+    for field_path in (
+        ("evidence", "evidence", "fields", 0, "field_id"),
+        ("evidence", "partitions", 0, "partition_id"),
+        ("evidence", "classification", "classification_id"),
+    ):
+        _refuses_tamper(path, MeshAdaptationResult, field_path, _flip_hex)
 
 
 def test_two_epoch_material_chain_restores_every_epoch_map(tmp_path: Path) -> None:

@@ -70,6 +70,8 @@ def test_global_quota_and_budget_span_participants_with_unchanged_identities(
 def test_killed_participant_restarts_from_the_global_commit_exactly(
     tmp_path: Path,
 ) -> None:
+    # The authority publishes into an atomistic structure store (optional zarr).
+    pytest.importorskip("zarr")
     killed = run_scenario("checkpoint-kill", tmp_path, timeout_seconds=DEADLINE_SECONDS)
     assert killed["passed"], killed["errors"]
     assert killed["launch"]["error"] is not None

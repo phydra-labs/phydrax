@@ -1513,3 +1513,110 @@ def test_affine_trim_incidence_keeps_boundary_unresolved_without_false_exclusion
     np.testing.assert_array_equal(result.resolved, (False, False, True, True, True, True))
     np.testing.assert_array_equal(result.inside, (False, False, True, False, True, False))
     np.testing.assert_array_equal(result.boundary, (False,) * 6)
+
+
+def test_coaxial_revolution_rim_is_one_closed_branch_with_chart_scale_margins() -> None:
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry.brep import brep_cylinder
+    from phydrax.geometry.brep._boolean_core import boolean_face_chart_box
+
+    # The radial cap and the lateral face revolve two lines of one meridian
+    # plane: their rim's second angle follows the first with unit slope, so a
+    # chart's angle margin scales with the chart. A fixed resolution margin
+    # needed millions of charts for this circle.
+    model = brep_cylinder(0.5, 1.0, coordinate_contract=SpatialCoordinateContract.si())
+    regions = tuple(
+        SurfaceRegion(model.patches[face], boolean_face_chart_box(model, face))
+        for face in (0, 1)
+    )
+    result = intersect_surface_regions(*regions)
+    assert result.complete and len(result.curves) == 1
+    (curve,) = result.curves
+    assert curve.closed and curve.fully_certified
+    assert curve.num_charts < 1024
+    for parameter in np.linspace(0.0, float(curve.num_charts), 9):
+        point = np.asarray(curve.evaluate_coupled(float(parameter)).point)
+        np.testing.assert_allclose(np.hypot(point[0], point[1]), 0.5, atol=1e-12)
+        np.testing.assert_allclose(point[2], 0.0, atol=1e-12)
+
+
+class _PiecewiseLinearValue:
+    """``f(x) = b (x - r)`` right of ``c`` and ``(x - c) + b (c - r)`` left of it."""
+
+    def __init__(self, center: Fraction, root: Fraction, slope: Fraction, /) -> None:
+        self.center = center
+        self.root = root
+        self.slope = slope
+
+    def at(self, value: Fraction, /) -> Fraction:
+        if value >= self.center:
+            return self.slope * (value - self.root)
+        return value - self.center + self.slope * (self.center - self.root)
+
+    def evaluate(
+        self, lower: np.ndarray, upper: np.ndarray, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        from phydrax.geometry._rational import fraction_down, fraction_up
+
+        # The map increases, so its endpoint images enclose the box image.
+        return (
+            np.asarray(
+                [[fraction_down(self.at(Fraction(float(v))))] for v in lower[:, 0]],
+                dtype=np.float64,
+            ),
+            np.asarray(
+                [[fraction_up(self.at(Fraction(float(v))))] for v in upper[:, 0]],
+                dtype=np.float64,
+            ),
+        )
+
+
+class _PiecewiseLinearSlope:
+    def __init__(self, slope: float, /) -> None:
+        self.slope = slope
+
+    def evaluate(
+        self, lower: np.ndarray, upper: np.ndarray, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        count = lower.shape[0]
+        return (
+            np.ones((count, 1, 1), dtype=np.float64),
+            np.full((count, 1, 1), self.slope, dtype=np.float64),
+        )
+
+
+class _PiecewiseLinearMap:
+    def __init__(self, center: Fraction, root: Fraction, slope: float, /) -> None:
+        self._value = _PiecewiseLinearValue(center, root, Fraction(slope))
+        self._jacobian = _PiecewiseLinearSlope(slope)
+
+    @property
+    def value(self) -> _PiecewiseLinearValue:
+        return self._value
+
+    @property
+    def jacobian(self) -> _PiecewiseLinearSlope:
+        return self._jacobian
+
+    def point_jacobians(self, points: np.ndarray, /) -> np.ndarray:
+        return np.ones((points.shape[0], 1, 1), dtype=np.float64)
+
+
+def test_krawczyk_certified_box_contains_the_exact_root_after_every_rounding() -> None:
+    from phydrax.geometry.brep._intersection_kernel import krawczyk
+
+    lower = np.asarray([[float.fromhex("0x1.fffffff54fc69p-1")]], dtype=np.float64)
+    upper = np.asarray([[float.fromhex("0x1.0000000000009p+0")]], dtype=np.float64)
+    center = float.fromhex("0x1.fffffffaa7e3ep-1")
+    assert center == 0.5 * float(lower[0, 0]) + 0.5 * float(upper[0, 0])
+    slope = float.fromhex("0x1.0000100000000p+0")
+    # The map's slopes lie in [1, slope], so ``root`` is its only zero.
+    root = Fraction(302231454903657224499891, 302231454903657293676544)
+    evaluator = _PiecewiseLinearMap(Fraction(center), root, slope)
+    assert evaluator.value.at(root) == 0
+
+    result = krawczyk(evaluator, lower, upper)
+
+    assert bool(result.certified[0])
+    assert Fraction(float(result.lower[0, 0])) <= root
+    assert root <= Fraction(float(result.upper[0, 0]))

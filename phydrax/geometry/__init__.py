@@ -406,6 +406,10 @@ _DEFERRED_EXPORTS = {
     "Vertical": ".design._sketch",
     "discover_implicit_curve": ".implicit",
     "discover_implicit_surface": ".implicit",
+    "discover_clipped_implicit_surface": ".implicit",
+    "discover_parametric_chart_curve": ".implicit",
+    "ClippedImplicitSurface": ".implicit",
+    "ParametricChartCurve": ".implicit",
     "ImplicitCurveEvidence": ".implicit",
     "ImplicitCurvePlan": ".implicit",
     "ImplicitCurveRealization": ".implicit",
@@ -913,8 +917,11 @@ if TYPE_CHECKING:
         Vertical,
     )
     from .implicit import (
+        ClippedImplicitSurface,
+        discover_clipped_implicit_surface,
         discover_implicit_curve,
         discover_implicit_surface,
+        discover_parametric_chart_curve,
         ImplicitCurveEvidence,
         ImplicitCurvePlan,
         ImplicitCurveRealization,
@@ -931,6 +938,7 @@ if TYPE_CHECKING:
         ImplicitSurfaceStatus,
         NeuralImplicitCertificate,
         NeuralImplicitRegion,
+        ParametricChartCurve,
     )
     from .process import (
         lower_process_stack,
@@ -1355,6 +1363,10 @@ __all__ = [
     "design",
     "discover_implicit_curve",
     "discover_implicit_surface",
+    "discover_clipped_implicit_surface",
+    "discover_parametric_chart_curve",
+    "ClippedImplicitSurface",
+    "ParametricChartCurve",
     "discrete_operators",
     "evaluate_fixed_topology_mesh",
     "exact_sharp_geometry",

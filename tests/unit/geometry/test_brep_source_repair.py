@@ -441,6 +441,34 @@ def test_combined_washer_points_on_cylinder_axes_are_decided(
     ] * len(on_axes)
 
 
+def test_combined_washer_projects_points_on_cylinder_periodic_seams(
+    combined_washer: BRepModel,
+) -> None:
+    # Both washer cylinders put their periodic seam at y = -r. A P2 node on
+    # that seam line, rounded to x = -2e-18, takes the angle representative
+    # one ulp inside the outward 2π chart bound, where the trim is undecidable;
+    # the seam coedge still supplies a proved closest point.
+    faces = {
+        float(patch.radius): face
+        for face, patch in enumerate(combined_washer.patches)
+        if isinstance(patch, CylinderPatch)
+    }
+    queries = [
+        ((-1.959434878635765e-18, -0.016, -0.000375), faces[0.016]),
+        ((-3.8576374173141625e-18, -0.0315, -0.001125), faces[0.0315]),
+        ((0.0, -0.016, -0.001125), faces[0.016]),
+    ]
+    result = prepare_brep_projection(combined_washer).project(
+        np.asarray([point for point, _ in queries], dtype=np.float64),
+        np.full(len(queries), int(BRepEntityDimension.FACE), dtype=np.int64),
+        np.asarray([face for _, face in queries], dtype=np.int64),
+    )
+    assert np.asarray(result.status).tolist() == [BRepProjectionStatus.SEAM] * len(
+        queries
+    )
+    assert np.all(np.asarray(result.residuals) < 1e-12)
+
+
 def test_combined_washer_refuses_tangent_ray_and_next_direction_decides(
     combined_washer: BRepModel, monkeypatch: pytest.MonkeyPatch
 ) -> None:

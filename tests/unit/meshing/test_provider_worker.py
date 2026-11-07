@@ -1,3 +1,4 @@
+import os
 import sys
 import threading
 import time
@@ -11,9 +12,15 @@ import pytest
 
 from phydrax import _config_state, config as pxconfig
 from phydrax._external_exchange import read_exchange, write_exchange
-from phydrax._external_runtime import NativeWorkerPolicy
+from phydrax._external_runtime import NativeWorkerError, NativeWorkerPolicy
 from phydrax.meshing import MeshingFailure, MeshingFailureCategory
 from phydrax.meshing.providers._worker import ProviderWorker
+
+
+# NativeWorker refuses non-POSIX hosts; launching tests skip at that boundary.
+posix_worker = pytest.mark.skipif(
+    os.name != "posix", reason="Persistent native workers require a POSIX host."
+)
 
 
 # A protocol-faithful stand-in for a native worker: stdout is the private
@@ -91,11 +98,11 @@ def test_native_worker_policy_operation_and_exchange_defaults() -> None:
     assert policy.maximum_input_exchange_bytes == 4_000_000_000
     assert policy.maximum_output_exchange_bytes == 4_000_000_000
     assert (
-        NativeWorkerPolicy(operation_timeout_seconds=30.0).policy_id
-        != policy.policy_id
+        NativeWorkerPolicy(operation_timeout_seconds=30.0).policy_id != policy.policy_id
     )
 
 
+@posix_worker
 def test_provider_worker_uses_input_exchange_policy(tmp_path: Any) -> None:
     worker = _worker(
         tmp_path,
@@ -136,6 +143,7 @@ def _selection_worker(tmp_path: Path, *, executable: str | None = None) -> Provi
     )
 
 
+@posix_worker
 @pytest.mark.parametrize("selection", ("explicit", "configured", "ambient", "default"))
 def test_worker_selection_precedence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: str
@@ -169,6 +177,7 @@ def test_present_empty_worker_environment_is_refused(
     assert worker.launches == 0
 
 
+@posix_worker
 def test_explicit_none_worker_setting_masks_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -181,6 +190,7 @@ def test_explicit_none_worker_setting_masks_environment(
         worker.close()
 
 
+@posix_worker
 def test_worker_selection_is_lazy_and_rechecked_for_each_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -200,6 +210,7 @@ def test_worker_selection_is_lazy_and_rechecked_for_each_session(
         worker.close()
 
 
+@posix_worker
 def test_worker_session_is_reused_and_identity_is_probed_once(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "echo")
     values = np.arange(6, dtype=np.float64).reshape(3, 2)
@@ -215,6 +226,7 @@ def test_worker_session_is_reused_and_identity_is_probed_once(tmp_path: Any) -> 
     assert not second.arrays["y"].flags.writeable
 
 
+@posix_worker
 def test_worker_timeout_is_refused_and_the_next_call_relaunches(tmp_path: Any) -> None:
     worker = _worker(
         tmp_path, "sleep", policy=NativeWorkerPolicy(operation_timeout_seconds=0.5)
@@ -234,6 +246,7 @@ def test_worker_timeout_is_refused_and_the_next_call_relaunches(tmp_path: Any) -
     worker.close()
 
 
+@posix_worker
 def test_worker_rejection_maps_its_kind_and_keeps_the_session(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "reject")
     values = np.ones((1, 1), dtype=np.float64)
@@ -247,6 +260,7 @@ def test_worker_rejection_maps_its_kind_and_keeps_the_session(tmp_path: Any) -> 
     assert result.sequence == 2 and worker.launches == 1
 
 
+@posix_worker
 @pytest.mark.parametrize(
     ("mode", "category"),
     (
@@ -275,6 +289,7 @@ def test_worker_failures_surface_as_meshing_failures_with_evidence(
     worker.close()
 
 
+@posix_worker
 def test_concurrent_calls_share_one_session_in_sequence(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "echo")
     barrier = threading.Barrier(8)
@@ -295,6 +310,7 @@ def test_concurrent_calls_share_one_session_in_sequence(tmp_path: Any) -> None:
         np.testing.assert_array_equal(result.arrays["y"], np.full((2, 2), 2.0 * index))
 
 
+@posix_worker
 def test_concurrent_calls_replace_exhausted_sessions_without_failure(
     tmp_path: Any,
 ) -> None:
@@ -315,6 +331,7 @@ def test_concurrent_calls_replace_exhausted_sessions_without_failure(
     assert all(result.sequence == 1 for result in results)
 
 
+@posix_worker
 def test_session_close_waits_for_the_call_in_flight(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "slow")
     session = worker.session()
@@ -341,6 +358,24 @@ def test_session_close_waits_for_the_call_in_flight(tmp_path: Any) -> None:
     worker.close()
     assert replacement.evidence["session_id"] != result.evidence["session_id"]
     assert worker.launches == 2
+
+
+@pytest.mark.skipif(os.name == "posix", reason="Non-POSIX worker admission")
+def test_non_posix_worker_host_is_provider_unavailable() -> None:
+    worker = ProviderWorker(
+        "fake",
+        executable=sys.executable,
+        setting="mmg",
+        default_executable="phydrax-fake-worker",
+        build_hint="Build the fake worker.",
+    )
+
+    with pytest.raises(MeshingFailure, match="require a POSIX host") as failure:
+        worker.session()
+
+    assert failure.value.category is MeshingFailureCategory.PROVIDER_UNAVAILABLE
+    cause = failure.value.__cause__
+    assert isinstance(cause, NativeWorkerError) and cause.kind == "unavailable"
 
 
 def test_missing_worker_is_provider_unavailable(tmp_path: Any) -> None:
@@ -376,6 +411,8 @@ def test_exchange_round_trip_verifies_checksums_and_declared_entries(
     with pytest.raises(ValueError, match="maximum_bytes"):
         read_exchange(tmp_path, maximum_bytes=64)
 
+    # Release the verified memory maps: Windows cannot rewrite a mapped file.
+    del contents
     payload = bytearray((tmp_path / "ids.npy").read_bytes())
     payload[-1] ^= 1
     (tmp_path / "ids.npy").write_bytes(bytes(payload))

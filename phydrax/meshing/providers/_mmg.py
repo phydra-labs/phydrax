@@ -1153,14 +1153,18 @@ class MmgReferenceRetention(StrictModule, NonTrainableState):
 
 @final
 class MmgSessionEvidence(StrictModule, NonTrainableState):
-    """The persistent worker session and call that produced one adaptation."""
+    """The persistent worker session and call that produced one adaptation.
+
+    ``elapsed_seconds`` is the call's wall time, outside ``evidence_id``. Model
+    archives do not persist wall time, so restored evidence carries ``None``.
+    """
 
     session_id: str = eqx.field(static=True)
     identity_id: str = eqx.field(static=True)
     sequence: int = eqx.field(static=True)
     ranks: int = eqx.field(static=True)
     peak_rss_bytes: int = eqx.field(static=True)
-    elapsed_seconds: float = eqx.field(static=True)
+    elapsed_seconds: float | None = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1172,7 +1176,7 @@ class MmgSessionEvidence(StrictModule, NonTrainableState):
         sequence: int,
         ranks: int,
         peak_rss_bytes: int,
-        elapsed_seconds: float,
+        elapsed_seconds: float | None,
     ) -> None:
         session = normalized_identifier(session_id, "session_id")
         identity = normalized_identifier(identity_id, "identity_id")
@@ -1185,7 +1189,7 @@ class MmgSessionEvidence(StrictModule, NonTrainableState):
         self.sequence = int(sequence)
         self.ranks = int(ranks)
         self.peak_rss_bytes = int(peak_rss_bytes)
-        self.elapsed_seconds = float(elapsed_seconds)
+        self.elapsed_seconds = None if elapsed_seconds is None else float(elapsed_seconds)
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "mmg-session-evidence",
@@ -1911,9 +1915,7 @@ class MmgProvider:
             provider=encoding.backend,
             program=encoding.program,
         )
-        call = self.worker.call(
-            encoding.backend, encoding.parameters, encoding.arrays
-        )
+        call = self.worker.call(encoding.backend, encoding.parameters, encoding.arrays)
         emit(
             "DEBUG",
             "provider.worker.completed",

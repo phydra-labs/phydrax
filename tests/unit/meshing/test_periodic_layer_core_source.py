@@ -1179,14 +1179,19 @@ def test_original_archived_ridge_reconstructs_fixed_periodic_core() -> None:
     assert prepare_core_periodic(source, mapping, polygons, points) is not None
 
 
-def test_original_ridge_layer_core_retains_full_boundary_chart_witness() -> None:
-    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+def test_original_ridge_layer_core_retains_full_boundary_source_witness() -> None:
+    from phydrax.geometry._source_boundary_records import SourceBoundaryFaceImageWitness
     from tools.meshing_qualification.scenarios.native_hybrid_profiles import (
         _archived_ridge_source,
         _periodic_layer_core_specification,
     )
 
-    source, _, _ = _archived_ridge_source()
+    # The fixed-cap original cannot meet its radius-edge bound: the plan's
+    # approved archived-ridge cap policy says so, and the boundary quality
+    # preflight refuses it (396c7e272). The original ridge is therefore generated
+    # with a conforming cap. Its subdivided boundary is certified by the exact
+    # overlap image witness over every boundary face.
+    source, _, _ = _archived_ridge_source(cap_refinement="conforming")
     specification = _periodic_layer_core_specification(source)
     result = (
         phx.meshing.NativeMeshingProvider(phx.meshing.NativeMeshingOptions("layer_core"))
@@ -1198,7 +1203,7 @@ def test_original_ridge_layer_core_retains_full_boundary_chart_witness() -> None
     certificate = result.certification
     assert certificate is not None and certificate.passed
     witness = certificate.inputs.fidelity_witness
-    assert isinstance(witness, SourceBoundaryChartWitness)
+    assert isinstance(witness, SourceBoundaryFaceImageWitness)
     ids = np.asarray(result.mesh.entity_set(2).entity_ids, dtype=np.int64)
     boundary = np.asarray(result.mesh.boundary_masks[2], dtype=np.bool_)
     assert set(witness.entity_global_ids.tolist()) == set(ids[boundary].tolist())

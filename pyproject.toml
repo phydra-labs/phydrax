@@ -295,6 +295,10 @@ qa = [
 
 
 [tool.uv]
+required-version = "==0.13.5"
+# The ROCm runtime wheels are built by tools/build_rocm_wheels.py and not
+# published; the tracked universal lock omits only that package.
+exclude-dependencies = ["phydrax-rocm-runtime"]
 conflicts = [
   [
     {extra = "fmi"},

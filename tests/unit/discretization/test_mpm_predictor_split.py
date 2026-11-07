@@ -239,9 +239,14 @@ def test_first_piola_increment_matches_one_force_predictor_evaluation() -> None:
         jnp.asarray(((0.4, 0.1), (0.1, -0.2)), dtype=jnp.float64),
         state.particles.first_piola.shape,
     )
-    predictor = dynamics.predict_grid(
-        state, 0.001, arguments, first_piola_increment=increment
-    )
+    # step_detailed compiles its attempt under lax.cond. The unrolled APIC
+    # products may contract to FMA when compiled but not op by op, so the split
+    # predictor is compared bitwise in the same compiled execution mode.
+    predictor = eqx.filter_jit(
+        lambda value, delta: dynamics.predict_grid(
+            value, 0.001, arguments, first_piola_increment=delta
+        )
+    )(state, increment)
     force_state = eqx.tree_at(
         lambda value: value.particles.first_piola,
         state,

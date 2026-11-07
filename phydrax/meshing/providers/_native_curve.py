@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
+from functools import cache
+from itertools import accumulate
 from typing import final, NamedTuple
 
 import equinox as eqx
@@ -52,7 +54,11 @@ from ...geometry._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
-from ...geometry._rational import binary64_difference_magnitude, binary64_norm_upper
+from ...geometry._rational import (
+    binary64_difference_magnitude,
+    binary64_norm_upper,
+    upper_float,
+)
 from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
@@ -106,6 +112,18 @@ class _AtlasCurveCarrier(AbstractCurve):
         local = (values - self.first) / (self.last - self.first)
         rows = jnp.full(values.shape, self.chart_row, dtype=jnp.int32)
         return self.mapping.map(rows, local[..., None])
+
+    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
+        """Enclose the atlas chart program, which is this carrier's source map."""
+        AbstractCurve.is_c1_on(self, first, last)
+        prepared = prepare_interval_function(
+            lambda parameters: self.evaluate(parameters[0]), 1
+        )
+        lower, upper = prepared.evaluate(
+            np.asarray(((first,),), dtype=np.float64),
+            np.asarray(((last,),), dtype=np.float64),
+        )
+        return np.stack((lower[0], upper[0]))
 
 
 def _curve_source_query(
@@ -1171,6 +1189,72 @@ def _integrand(
     return result
 
 
+# Rounding model of the Gauss sums (Higham, Accuracy and Stability of Numerical
+# Algorithms, 2nd ed., sections 2.2 and 3.1): every binary64 operation returns
+# ``exact (1 + delta) + eta`` with ``|delta| <= u = 2**-53`` and
+# ``|eta| <= tiny = 2**-1022``. ``eta`` covers gradual and flush-to-zero
+# underflow; fused multiply-adds and any summation order only remove roundings.
+_UNIT_ROUNDOFF = Fraction(1, 2**53)
+_UNDERFLOW = Fraction(1, 2**1022)
+
+
+def _gamma(count: int, /) -> Fraction:
+    """``gamma_k = k u / (1 - k u)``, the relative bound of ``k`` roundings."""
+    return count * _UNIT_ROUNDOFF / (1 - count * _UNIT_ROUNDOFF)
+
+
+class _GaussRule(NamedTuple):
+    """Binary64 Gauss-Legendre nodes and positive weights on ``[-1, 1]``.
+
+    ``constant_defect`` is the exact ``|sum(weights) - 2|``: the stored rule's
+    error on a constant integrand, which the exact rule integrates exactly.
+    """
+
+    nodes: np.ndarray
+    weights: np.ndarray
+    constant_defect: Fraction
+
+
+@cache
+def _gauss_rule(order: int, /) -> _GaussRule:
+    nodes, weights = np.polynomial.legendre.leggauss(order)
+    return _GaussRule(
+        nodes, weights, abs(sum(map(Fraction, weights.tolist()), Fraction(0)) - 2)
+    )
+
+
+def _gauss_rounding(
+    rule: _GaussRule, half: float, total: float, values: np.ndarray, /
+) -> Fraction:
+    """Bound ``|half * total - h S|`` for the computed ``total = dot(w, f)``.
+
+    Here ``h`` is the exact half width, ``S = sum w f`` over the ``n`` positive
+    weights and the nonnegative evaluated integrand values ``f``, which enter as
+    data. One subtraction and one halving give ``|half - h| <= u h + 2 tiny``;
+    ``n`` products and ``n - 1`` additions give ``|total - S| <= gamma_n S + N``
+    with ``N = 2 n tiny``; the final product rounds once more. Expanding,
+
+        |fl(half total) - h S|
+            <= gamma_(n+2) h S + (1 + u)**2 h N + 2 (1 + u) tiny total + tiny,
+
+    where ``h <= (half + 2 tiny) / (1 - u)`` and
+    ``S <= (total + N) / (1 - gamma_n)`` invert the first two inequalities. The
+    added ``h max(f) |sum(w) - 2|`` covers the stored weights against the exact
+    rule on constant integrands, where two Gauss orders agree exactly.
+    """
+    count = rule.weights.size
+    noise = 2 * count * _UNDERFLOW
+    width = (Fraction(half) + 2 * _UNDERFLOW) / (1 - _UNIT_ROUNDOFF)
+    weighted = (Fraction(total) + noise) / (1 - _gamma(count))
+    return (
+        _gamma(count + 2) * width * weighted
+        + (1 + _UNIT_ROUNDOFF) ** 2 * width * noise
+        + 2 * (1 + _UNIT_ROUNDOFF) * _UNDERFLOW * Fraction(total)
+        + _UNDERFLOW
+        + width * Fraction(float(np.max(values))) * rule.constant_defect
+    )
+
+
 def _panel_integral(
     prepared: PreparedCurveNetwork,
     row: int,
@@ -1180,19 +1264,63 @@ def _panel_integral(
     /,
     *,
     density: bool,
-) -> tuple[float, float]:
-    nodes, weights = np.polynomial.legendre.leggauss(order)
+) -> tuple[float, float, Fraction]:
+    """Fine Gauss value, the estimate ``|fine - coarse|``, and its rounding bound.
+
+    The bound ``rho`` dominates both Gauss sums' rounding and the subtraction's,
+    so the exact-arithmetic estimate lies within ``rho`` of the returned one
+    and the exact fine sum lies within ``rho`` of the returned value.
+    """
     half = 0.5 * (upper - lower)
-    parameters = lower + half * (nodes + 1.0)
-    coarse = half * float(
-        np.dot(weights, _integrand(prepared, row, parameters, density=density))
-    )
-    fine_nodes, fine_weights = np.polynomial.legendre.leggauss(2 * order)
-    fine_parameters = lower + half * (fine_nodes + 1.0)
-    fine = half * float(
-        np.dot(fine_weights, _integrand(prepared, row, fine_parameters, density=density))
-    )
-    return fine, abs(fine - coarse)
+    sums: list[tuple[float, Fraction]] = []
+    for rule in (_gauss_rule(order), _gauss_rule(2 * order)):
+        values = _integrand(
+            prepared, row, lower + half * (rule.nodes + 1.0), density=density
+        )
+        total = float(np.dot(rule.weights, values))
+        value = half * total
+        if not math.isfinite(value):
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                "curve quadrature sums must remain finite on the source chart",
+                provider_code="native_curve_unresolved",
+                stage="curve_meshing",
+                entity_ids=(int(prepared.scope_entity_ids[row]),),
+            )
+        sums.append((value, _gauss_rounding(rule, half, total, values)))
+    (coarse, coarse_rounding), (fine, fine_rounding) = sums
+    estimate = abs(fine - coarse)
+    subtraction = abs(Fraction(estimate) - abs(Fraction(fine) - Fraction(coarse)))
+    return fine, estimate, coarse_rounding + fine_rounding + subtraction
+
+
+class _QuadratureTable(NamedTuple):
+    """Adaptive Gauss panels of one source parameter interval.
+
+    ``mass`` is the published binary64 running sum of the panel values. The
+    prefixes are exact rational running sums, at every break, of the panel
+    values, their error estimates, and their rounding bounds, so differences of
+    two prefixes cancel the shared panels exactly.
+    """
+
+    breaks: np.ndarray
+    mass: float
+    values: tuple[Fraction, ...]
+    estimates: tuple[Fraction, ...]
+    roundings: tuple[Fraction, ...]
+
+    @property
+    def error(self) -> float:
+        """Reported error of ``mass``: estimates plus attained rounding bounds.
+
+        Each panel's ``rho`` enters twice, once for its estimate and once for its
+        value, followed by the exact rounding of the published running sum.
+        """
+        return upper_float(
+            self.estimates[-1]
+            + 2 * self.roundings[-1]
+            + abs(Fraction(self.mass) - self.values[-1])
+        )
 
 
 def _adaptive_integral(
@@ -1205,15 +1333,22 @@ def _adaptive_integral(
     *,
     density: bool,
     intervals: int,
-) -> tuple[float, float, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[float, _QuadratureTable]:
     """Refine Gauss panels until the physical request's error estimate is met.
 
-    Returns the integral, its error estimate, the panel breaks, and the
-    cumulative integral and cumulative error estimate at every break.
+    Refinement stops once the summed estimate is within ``tolerance`` plus the
+    summed rounding bounds, compared exactly. Every exact-arithmetic estimate
+    within the tolerance, in particular a mathematically zero one, stops; an
+    estimate beyond it is a discretization error that rounding cannot explain
+    and still refines.
+
+    Returns the correctly rounded integral and the panel table.
     """
     if lower == upper:
-        zeros = np.zeros((2,), dtype=np.float64)
-        return 0.0, 0.0, np.asarray((lower, upper)), zeros, zeros
+        zeros = (Fraction(0), Fraction(0))
+        return 0.0, _QuadratureTable(
+            np.asarray((lower, upper), dtype=np.float64), 0.0, zeros, zeros, zeros
+        )
     pieces = np.linspace(lower, upper, intervals + 1)
     panels = [
         (
@@ -1230,22 +1365,11 @@ def _adaptive_integral(
         )
         for a, b in zip(pieces[:-1], pieces[1:], strict=True)
     ]
-    while True:
-        total = math.fsum(panel[2] for panel in panels)
-        error = math.fsum(panel[3] for panel in panels)
-        if error <= tolerance:
-            breaks = np.asarray(
-                (panels[0][0], *(panel[1] for panel in panels)), dtype=np.float64
-            )
-            cumulative = np.concatenate(
-                ([0.0], np.cumsum([panel[2] for panel in panels]))
-            )
-            cumulative_errors = np.concatenate(
-                ([0.0], np.cumsum([panel[3] for panel in panels]))
-            )
-            return total, error, breaks, cumulative, cumulative_errors
+    estimate = sum((Fraction(panel[3]) for panel in panels), Fraction(0))
+    rounding = sum((panel[4] for panel in panels), Fraction(0))
+    while estimate > Fraction(tolerance) + rounding:
         index = max(range(len(panels)), key=lambda item: panels[item][3])
-        start, stop, _, _ = panels[index]
+        start, stop, _, panel_estimate, panel_rounding = panels[index]
         middle = start + 0.5 * (stop - start)
         if middle <= start or middle >= stop:
             raise MeshingFailure(
@@ -1279,58 +1403,76 @@ def _adaptive_integral(
                 density=density,
             ),
         )
+        estimate += Fraction(left[3]) + Fraction(right[3]) - Fraction(panel_estimate)
+        rounding += left[4] + right[4] - panel_rounding
         panels[index : index + 1] = [left, right]
+    values = [panel[2] for panel in panels]
+    return math.fsum(values), _QuadratureTable(
+        np.asarray((panels[0][0], *(panel[1] for panel in panels)), dtype=np.float64),
+        float(np.cumsum(values)[-1]),
+        tuple(accumulate(map(Fraction, values), initial=Fraction(0))),
+        tuple(accumulate((Fraction(panel[3]) for panel in panels), initial=Fraction(0))),
+        tuple(accumulate((panel[4] for panel in panels), initial=Fraction(0))),
+    )
 
 
-class _DensityTable(NamedTuple):
-    """Adaptive cumulative size-density table of one source chart on ``[0, 1]``."""
+class _TableMass(NamedTuple):
+    """Exact density mass on ``[0, parameter]`` over the computed Gauss sums.
 
-    breaks: np.ndarray
-    cumulative: np.ndarray
-    cumulative_errors: np.ndarray
+    The estimate and the rounding bound are split into the table prefix through
+    the last whole panel and the one in-panel integral, so differences of two
+    masses cancel the shared prefix exactly.
+    """
 
-    @property
-    def mass(self) -> float:
-        return float(self.cumulative[-1])
-
-    @property
-    def error(self) -> float:
-        return float(self.cumulative_errors[-1])
+    value: Fraction
+    prefix_estimate: Fraction
+    local_estimate: Fraction
+    prefix_rounding: Fraction
+    local_rounding: Fraction
 
 
 def _table_mass(
     prepared: PreparedCurveNetwork,
     row: int,
-    table: _DensityTable,
+    table: _QuadratureTable,
     parameter: float,
     tolerance: float,
     /,
-) -> tuple[float, float, float]:
-    """Density mass on ``[0, parameter]`` and its two error parts.
-
-    The mass is the table prefix through the last whole panel plus one
-    in-panel integral. The error is returned as the prefix's cumulative panel
-    estimate and the in-panel estimate, so differences of two masses can
-    cancel the shared prefix exactly.
-    """
+) -> _TableMass:
     panel = int(np.searchsorted(table.breaks, parameter, side="right")) - 1
     if panel >= table.breaks.size - 1:
-        return table.mass, table.error, 0.0
+        return _TableMass(
+            table.values[-1],
+            table.estimates[-1],
+            Fraction(0),
+            table.roundings[-1],
+            Fraction(0),
+        )
     start = float(table.breaks[panel])
-    prefix = float(table.cumulative[panel])
-    prefix_error = float(table.cumulative_errors[panel])
     if parameter == start:
-        return prefix, prefix_error, 0.0
-    local, local_error, _, _, _ = _adaptive_integral(
+        return _TableMass(
+            table.values[panel],
+            table.estimates[panel],
+            Fraction(0),
+            table.roundings[panel],
+            Fraction(0),
+        )
+    _, local = _adaptive_integral(
         prepared, row, start, parameter, tolerance, density=True, intervals=1
     )
-    return prefix + local, prefix_error, local_error
+    return _TableMass(
+        table.values[panel] + local.values[-1],
+        table.estimates[panel],
+        local.estimates[-1],
+        table.roundings[panel],
+        local.roundings[-1],
+    )
 
 
 def _place(
     prepared: PreparedCurveNetwork,
     row: int,
-    table: _DensityTable,
+    table: _QuadratureTable,
     lower: float,
     upper: float,
     fraction: float,
@@ -1340,20 +1482,32 @@ def _place(
 
     Every bisection step integrates only inside one panel of the chart's
     density table, so a placement costs one short integral per step rather
-    than a full re-integration of ``[lower, middle]``.
+    than a full re-integration of ``[lower, middle]``. Masses, residuals, and
+    estimates are exact over the computed Gauss sums, so the only rounding left
+    is the sums' own: each panel's ``rho`` bounds both its value's and its
+    estimate's, and the exit admits twice the involved bounds beyond the
+    tolerance.
     """
     tolerance = prepared.tolerance(row)
-    lower_mass, lower_prefix_error, lower_local_error = _table_mass(
-        prepared, row, table, lower, tolerance
+    low = _table_mass(prepared, row, table, lower, tolerance)
+
+    def span(mass: _TableMass, /) -> tuple[Fraction, Fraction, Fraction]:
+        return (
+            mass.value - low.value,
+            mass.prefix_estimate
+            - low.prefix_estimate
+            + mass.local_estimate
+            + low.local_estimate,
+            mass.prefix_rounding
+            - low.prefix_rounding
+            + mass.local_rounding
+            + low.local_rounding,
+        )
+
+    total, total_estimate, total_rounding = span(
+        _table_mass(prepared, row, table, upper, tolerance)
     )
-    upper_mass, upper_prefix_error, upper_local_error = _table_mass(
-        prepared, row, table, upper, tolerance
-    )
-    total = upper_mass - lower_mass
-    total_error = (
-        upper_prefix_error - lower_prefix_error + upper_local_error + lower_local_error
-    )
-    if not math.isfinite(total) or total <= 0.0:
+    if total <= 0:
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             "curve size density has no positive finite mass on a requested interval",
@@ -1361,7 +1515,8 @@ def _place(
             stage="curve_meshing",
             entity_ids=(int(prepared.scope_entity_ids[row]),),
         )
-    target = fraction * total
+    share = Fraction(fraction)
+    target = share * total
     left, right = lower, upper
     while True:
         middle = left + 0.5 * (right - left)
@@ -1373,24 +1528,24 @@ def _place(
                 stage="curve_meshing",
                 entity_ids=(int(prepared.scope_entity_ids[row]),),
             )
-        mass, prefix_error, local_error = _table_mass(
-            prepared, row, table, middle, tolerance
+        partial, estimate, rounding = span(
+            _table_mass(prepared, row, table, middle, tolerance)
         )
-        partial = mass - lower_mass
-        error = prefix_error - lower_prefix_error + local_error + lower_local_error
         residual = partial - target
-        if abs(residual) + error + fraction * total_error <= tolerance:
+        if abs(residual) + estimate + share * total_estimate <= Fraction(
+            tolerance
+        ) + 2 * (rounding + share * total_rounding):
             return middle
-        if residual < 0.0:
+        if residual < 0:
             left = middle
         else:
             right = middle
 
 
-def _density_tables(prepared: PreparedCurveNetwork, /) -> tuple[_DensityTable, ...]:
-    tables: list[_DensityTable] = []
+def _density_tables(prepared: PreparedCurveNetwork, /) -> tuple[_QuadratureTable, ...]:
+    tables: list[_QuadratureTable] = []
     for row in range(prepared.curve_entity_ids.size):
-        total, _, breaks, cumulative, cumulative_errors = _adaptive_integral(
+        total, table = _adaptive_integral(
             prepared,
             row,
             0.0,
@@ -1407,7 +1562,7 @@ def _density_tables(prepared: PreparedCurveNetwork, /) -> tuple[_DensityTable, .
                 stage="curve_meshing",
                 entity_ids=(int(prepared.scope_entity_ids[row]),),
             )
-        tables.append(_DensityTable(breaks, cumulative, cumulative_errors))
+        tables.append(table)
     return tuple(tables)
 
 

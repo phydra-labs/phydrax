@@ -193,8 +193,15 @@ def krawczyk(
     if lower.ndim != 2 or upper.shape != lower.shape:
         raise ValueError("Krawczyk bounds must have aligned shape (count, dimension).")
     dimension = lower.shape[1]
-    if dimension == 0 or np.any(np.isnan(lower)) or np.any(np.isnan(upper)) or np.any(lower > upper):
-        raise ValueError("Krawczyk bounds must be ordered, non-NaN, and nonempty in dimension.")
+    if (
+        dimension == 0
+        or np.any(np.isnan(lower))
+        or np.any(np.isnan(upper))
+        or np.any(lower > upper)
+    ):
+        raise ValueError(
+            "Krawczyk bounds must be ordered, non-NaN, and nonempty in dimension."
+        )
     if parameter_axis is not None and (
         isinstance(parameter_axis, bool)
         or not isinstance(parameter_axis, int)
@@ -216,7 +223,9 @@ def krawczyk(
     jacobian_lower, jacobian_upper = prepared.jacobian.evaluate(lower, upper)
     jacobian_lower = jacobian_lower[:, :, free]
     jacobian_upper = jacobian_upper[:, :, free]
-    point_jacobian = np.asarray(prepared.point_jacobians(center), dtype=np.float64)[:, :, free]
+    point_jacobian = np.asarray(prepared.point_jacobians(center), dtype=np.float64)[
+        :, :, free
+    ]
     preconditioner = approximate_inverses(point_jacobian)
     shift_lower, shift_upper = point_times_interval(
         preconditioner, value_lower[..., None], value_upper[..., None]
@@ -228,15 +237,21 @@ def krawczyk(
     residual_lower, residual_upper = round_interval(
         identity - product_upper, identity - product_lower
     )
-    offset_lower = (lower - center)[:, free, None]
-    offset_upper = (upper - center)[:, free, None]
+    # Every binary64 operation below rounds to nearest once, so each result is
+    # widened by one outward step before it feeds the next operation.
+    offset_lower, offset_upper = round_interval(lower - center, upper - center)
     spread_lower, spread_upper = interval_times_interval(
-        residual_lower, residual_upper, offset_lower, offset_upper
+        residual_lower,
+        residual_upper,
+        offset_lower[:, free, None],
+        offset_upper[:, free, None],
     )
     base = center[:, free]
+    step_lower, step_upper = round_interval(
+        base - shift_upper[..., 0], base - shift_lower[..., 0]
+    )
     result_lower, result_upper = round_interval(
-        base - shift_upper[..., 0] + spread_lower[..., 0],
-        base - shift_lower[..., 0] + spread_upper[..., 0],
+        step_lower + spread_lower[..., 0], step_upper + spread_upper[..., 0]
     )
     finite = np.all(np.isfinite(result_lower) & np.isfinite(result_upper), axis=1)
     box_lower = lower[:, free]

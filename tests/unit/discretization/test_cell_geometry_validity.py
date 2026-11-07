@@ -1678,3 +1678,122 @@ def test_embedded_affine_minor_matches_gram_for_adversarial_cases(case: str) -> 
             (Fraction(0), Fraction(1)),
         )
     _assert_embedded_affine_minor_matches_gram(jacobian, case)
+
+
+def test_numerical_pyramid_enclosure_covers_subnormal_determinant() -> None:
+    # Pyramids take the numerical Bernstein route. This affine pyramid has even
+    # integer Jacobian columns times 2^-370, so its constant determinant is
+    # subnormal and every relative rounding margin underflows to zero.
+    columns = (
+        (-2085424, 1344604, -1564386),
+        (1915976, -1246650, 1209512),
+        (-1341916, -1592634, -1647846),
+    )
+    scale = 2.0**-370
+    element = D.fem.lagrange_element("pyramid", 1)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    # Reference nodes are dyadic and the columns are scaled integers, so the
+    # affine vertices x = X0 c0 + X1 c1 + X2 c2 are exact.
+    vertices = nodes @ (np.asarray(columns, dtype=np.float64) * scale)
+    exact_integer = (
+        columns[0][0] * (columns[1][1] * columns[2][2] - columns[1][2] * columns[2][1])
+        - columns[1][0] * (columns[0][1] * columns[2][2] - columns[0][2] * columns[2][1])
+        + columns[2][0] * (columns[0][1] * columns[1][2] - columns[0][2] * columns[1][1])
+    )
+    exact = exact_integer * Fraction(scale) ** 3
+
+    block = validity_module._certify_polynomial_block(
+        element,
+        "pyramid",
+        vertices[None],
+        validity_module.CellValidityPolicy(),
+        original_local=vertices[None],
+    )
+
+    assert exact == Fraction(72020134946597053, 2**1106)
+    assert Fraction(float(block.lower[0])) <= exact <= Fraction(float(block.upper[0]))
+
+
+def test_polygon_measure_enclosure_covers_subnormal_area() -> None:
+    # Pentagon near 2^-530: centered shoelace products are subnormal, so the
+    # relative rounding margin underflows. The exact twice-area is ~1874 * 2^-1074.
+    points = np.asarray(
+        [
+            [float.fromhex(x), float.fromhex(y)]
+            for x, y in (
+                ("0x1.1a25926aa091fp-530", "0x1.48364bdb18732p-530"),
+                ("0x1.8502fa2112deap-531", "0x1.2e01f647033f4p-530"),
+                ("0x1.689f59c774262p-531", "0x1.e5f72312a4af9p-531"),
+                ("0x1.6e7685b33f4fap-531", "0x1.cee3779e61f9cp-531"),
+                ("0x1.75fc0dbe642eep-531", "0x1.bc95e806e52a1p-531"),
+            )
+        ],
+        dtype=np.float64,
+    )
+    exact = sum(
+        (
+            Fraction(points[index, 0]) * Fraction(points[(index + 1) % 5, 1])
+            - Fraction(points[index, 1]) * Fraction(points[(index + 1) % 5, 0])
+            for index in range(5)
+        ),
+        Fraction(0),
+    )
+
+    determinant, margin, *_ = validity_module._polygon_measure(
+        points[None], validity_module.CellValidityPolicy()
+    )
+
+    assert Fraction(float((determinant - margin)[0])) <= exact
+    assert exact <= Fraction(float((determinant + margin)[0]))
+
+
+def test_polyhedral_star_enclosure_covers_subnormal_determinants() -> None:
+    # Cube of side 45 * 2^-362: its centroid and face centroids are exact, every
+    # star tetrahedron has exact determinant side^3 / 4 (about 5.56 * 2^-1074), and
+    # the final cofactor products round inside the subnormal range while the
+    # relative margin underflows to zero.
+    side = 45.0 * 2.0**-362
+    corners = np.asarray(
+        [[x, y, z] for z in (0.0, side) for y in (0.0, side) for x in (0.0, side)],
+        dtype=np.float64,
+    )
+    faces = (
+        (0, 2, 3, 1),
+        (4, 5, 7, 6),
+        (0, 1, 5, 4),
+        (2, 6, 7, 3),
+        (0, 4, 6, 2),
+        (1, 3, 7, 5),
+    )
+    exact_corners = [tuple(Fraction(value) for value in row) for row in corners]
+    center = tuple(
+        sum((row[axis] for row in exact_corners), Fraction(0)) / 8 for axis in range(3)
+    )
+
+    def offset(point: tuple[Fraction, ...]) -> tuple[Fraction, ...]:
+        return tuple(point[axis] - center[axis] for axis in range(3))
+
+    determinants: list[Fraction] = []
+    for face in faces:
+        face_center = offset(
+            tuple(
+                sum((exact_corners[v][axis] for v in face), Fraction(0)) / 4
+                for axis in range(3)
+            )
+        )
+        for first, second in zip(face, face[1:] + face[:1], strict=True):
+            a, b = offset(exact_corners[first]), offset(exact_corners[second])
+            determinants.append(
+                face_center[0] * (a[1] * b[2] - a[2] * b[1])
+                - face_center[1] * (a[0] * b[2] - a[2] * b[0])
+                + face_center[2] * (a[0] * b[1] - a[1] * b[0])
+            )
+
+    certificate = D.certify_cell_geometry_validity(
+        D.CellMesh.from_polyhedra(corners, (faces,))
+    )
+
+    assert set(determinants) == {Fraction(side) ** 3 / 4}
+    assert int(certificate.status[0]) == Status.CERTIFIED_VALID
+    assert Fraction(float(certificate.determinant_lower[0])) <= min(determinants)
+    assert max(determinants) <= Fraction(float(certificate.determinant_upper[0]))

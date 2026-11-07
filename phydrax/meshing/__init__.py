@@ -258,6 +258,9 @@ _DEFERRED_EXPORTS = {
     "mesh_periodic_trigonometric_region": "._periodic_implicit_volume",
     "LatticeSpecimenVolume": "._lattice_specimen",
     "mesh_lattice_specimen": "._lattice_specimen",
+    "LatticeSolidExport": "._lattice_export",
+    "export_lattice_solid": "._lattice_export",
+    "lattice_solid_surface": "._lattice_export",
     "LatticeSpecimenEventError": "._surface_construction",
     "LatticeSpecimenSurface": "._surface_construction",
     "construct_lattice_specimen_surface": "._surface_construction",
@@ -581,6 +584,11 @@ if TYPE_CHECKING:
         import_cell_mesh,
         MeshInteropPolicy,
         read_mesh_array_artifact,
+    )
+    from ._lattice_export import (
+        export_lattice_solid,
+        lattice_solid_surface,
+        LatticeSolidExport,
     )
     from ._lattice_specimen import LatticeSpecimenVolume, mesh_lattice_specimen
     from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
@@ -1051,6 +1059,9 @@ __all__ = [
     "mesh_periodic_trigonometric_region",
     "LatticeSpecimenVolume",
     "mesh_lattice_specimen",
+    "LatticeSolidExport",
+    "export_lattice_solid",
+    "lattice_solid_surface",
     "LatticeSpecimenEventError",
     "LatticeSpecimenSurface",
     "construct_lattice_specimen_surface",

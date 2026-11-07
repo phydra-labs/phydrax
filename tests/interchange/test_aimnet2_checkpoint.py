@@ -323,7 +323,8 @@ def _torch_save(
     state = collections.OrderedDict()
     records = {}
     for index, (name, value) in enumerate(tensors.items()):
-        array = np.ascontiguousarray(value, dtype="<f8")
+        # Not np.ascontiguousarray: it promotes 0-d scalars (aev.rc_s) to (1,).
+        array = np.asarray(value, dtype="<f8", order="C")
         state[name] = Tensor(str(index), array)
         records[f"archive/data/{index}"] = array.tobytes()
     if views:

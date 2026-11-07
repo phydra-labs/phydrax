@@ -54,7 +54,7 @@ def _annulus(parameters: np.ndarray) -> np.ndarray:
     return np.stack((radius * np.cos(angle), radius * np.sin(angle)), axis=-1)
 
 
-def _curved_p2_space(kind: str) -> Any:
+def _curved_p2_space(kind: str, component_shape: tuple[int, ...] = ()) -> Any:
     """P2 field on a quarter annulus whose P2 coordinate map interpolates the chart."""
     points, cells = _triangles(3)
     nodes = phx.discretization.FiniteElementDofMap(
@@ -69,7 +69,9 @@ def _curved_p2_space(kind: str) -> Any:
     return phx.discretization.FiniteElementPlan(
         mesh,
         phx.discretization.FiniteElementFieldSpec(
-            "u", phx.discretization.lagrange_element(kind, 2)
+            "u",
+            phx.discretization.lagrange_element(kind, 2),
+            component_shape=component_shape,
         ),
         coordinate_spec=geometry,
     ).prepare()
@@ -524,4 +526,181 @@ def test_restricted_triangle_boundary_geometry_is_differentiable() -> None:
     )[1]
     np.testing.assert_allclose(
         restricted_tangent, shared_tangent, rtol=2.0e-13, atol=2.0e-14
+    )
+
+
+def _elasticity_problem(space: Any, *actions: Any, **compile_options: Any) -> Any:
+    elasticity = phx.equations.fem.linear_elasticity_form("u", 1.3, 0.7)
+    return phx.equations.compile_finite_element_problem(
+        phx.equations.FiniteElementForm(
+            "elasticity",
+            "u",
+            elasticity.actions + actions,
+            properties=elasticity.declared_properties,
+        ),
+        space,
+        **compile_options,
+    )
+
+
+def _mixed_vector_space(count: int) -> Any:
+    mesh = _distorted_hex_pyramid_tet_mesh(count)
+    return phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u",
+            {
+                block.name: phx.discretization.lagrange_element(block.cell_kind, 1)
+                for block in mesh.blocks
+            },
+            component_shape=(3,),
+        ),
+    ).prepare()
+
+
+def _dense(operator: Any) -> np.ndarray:
+    sparse = la.assemble_sparse(operator)
+    assert isinstance(sparse, phx.sparse.SparseCoordinateOperator)
+    relation = sparse.relation
+    assert isinstance(relation, phx.sparse.EdgeRelation)
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    dense = np.zeros((relation.target_size, relation.source_size))
+    np.add.at(
+        dense,
+        (
+            np.asarray(relation.target_indices)[valid],
+            np.asarray(relation.source_indices)[valid],
+        ),
+        np.asarray(sparse.coefficients)[valid],
+    )
+    return dense
+
+
+def test_coupled_cell_assembly_uses_node_major_component_order() -> None:
+    """A coupled ``k (x) I`` block scatters exactly like the per-component path."""
+    space = _curved_p2_space("triangle", (2,))
+    geometry = space.block_geometries[0][0]
+    gradients = np.asarray(geometry.physical_gradients)
+    local = np.einsum(
+        "cq,cqid,cqjd->cij", np.asarray(geometry.physical_weights), gradients, gradients
+    )
+    cells, width = local.shape[:2]
+    coupled = np.einsum("cij,ab->ciajb", local, np.eye(2)).reshape(
+        cells, 2 * width, 2 * width
+    )
+    shared = space.assemble_cell_operator("u", (local,), operator_id="per-component")
+    blocks = space.assemble_cell_operator(
+        "u", (coupled,), operator_id="coupled", coupled_components=True
+    )
+    np.testing.assert_array_equal(_dense(blocks), _dense(shared))
+    with pytest.raises(ValueError, match="Cell operator tensor shape"):
+        space.assemble_cell_operator(
+            "u", (local,), operator_id="coupled", coupled_components=True
+        )
+
+
+@pytest.mark.parametrize("case", ("curved-p2", "curved-p2-with-mass", "mixed-3d"))
+def test_linear_elasticity_sparse_operator_is_the_residual_jacobian(case: str) -> None:
+    """Structural elasticity assembles the opaque residual's exact Jacobian."""
+    if case == "mixed-3d":
+        problem = _elasticity_problem(_mixed_vector_space(2))
+    else:
+        mass = (phx.equations.MassAction("u", 0.4),) if case.endswith("mass") else ()
+        problem = _elasticity_problem(_curved_p2_space("triangle", (2,)), *mass)
+    zero = problem.state_space.zeros()
+    jacobian = np.asarray(
+        jax.jacfwd(lambda flat: problem.residual(flat.reshape(zero.shape)).reshape(-1))(
+            zero.reshape(-1)
+        )
+    )
+    # Direct CSR conversion refuses any lowering that would materialize.
+    csr = problem.to_scipy_csr()
+    size = zero.size
+    assert csr.shape == (size, size)
+    assert csr.nnz < size * size // 2
+    scale = float(np.max(np.abs(jacobian)))
+    np.testing.assert_allclose(csr.toarray(), jacobian, rtol=0.0, atol=1.0e-13 * scale)
+
+
+def test_linear_elasticity_patch_test_through_sparse_cholesky() -> None:
+    """An affine displacement on the boundary is reproduced at interior nodes."""
+    space = _mixed_vector_space(3)
+    dofs = np.asarray(space.dof_maps[0].dof_coordinates)
+    gradient = np.asarray(((1.0, 0.2, -0.3), (0.1, -0.5, 0.25), (0.4, 0.0, 0.7)))
+    affine = dofs @ gradient.T + np.asarray((0.1, -0.2, 0.05))
+    boundary = np.asarray(space.dof_maps[0].boundary_dof_mask, dtype=np.bool_)
+    assert np.count_nonzero(~boundary) > 0
+    problem = _elasticity_problem(
+        space,
+        constraint=phx.discretization.dirichlet_constraint(
+            space, "u", boundary_mask=boundary
+        ),
+        dirichlet_values=np.where(boundary[:, None], affine, 0.0),
+    )
+    system, rhs = problem.linear_system(storage="sparse")
+    operator = system.operator
+    assert isinstance(operator, phx.sparse.SparseCoordinateOperator)
+    assert operator.properties.certifies("self_adjoint")
+    factor = la.factorize_sparse(
+        operator, la.SparseFactorizationPolicy("cholesky", ordering="nested-dissection")
+    )
+    assert int(factor.status) == int(la.SparseFactorizationStatus.SUCCESS)
+    assert int(factor.diagnostics.rejected_pivots) == 0
+    assert float(factor.diagnostics.minimum_pivot) > 0.0
+    solved = factor.solve(rhs)
+    assert bool(solved.success)
+    np.testing.assert_allclose(
+        np.asarray(problem.expand(solved.value)), affine, rtol=0.0, atol=1.0e-13
+    )
+
+
+def test_clamped_linear_elasticity_is_spd_after_sparse_elimination() -> None:
+    """Dirichlet elimination of the rigid modes leaves an SPD sparse block."""
+    space = _mixed_vector_space(2)
+    dofs = np.asarray(space.dof_maps[0].dof_coordinates)
+    full = _elasticity_problem(space).to_scipy_csr().toarray()
+    singular = la.verify_dense_properties(
+        full,
+        policy=la.DensePropertyVerificationPolicy(require_positive_semidefinite=True),
+    )
+    assert bool(singular.successful)
+    # The six rigid-body modes are the whole kernel of the free operator.
+    assert int(singular.numerical_rank) == full.shape[0] - 6
+    clamp = dofs[:, 0] < 1.0e-12
+    problem = _elasticity_problem(
+        space,
+        phx.equations.SourceAction("u", jnp.asarray((0.0, 0.0, -1.0))),
+        constraint=phx.discretization.dirichlet_constraint(
+            space, "u", boundary_mask=clamp
+        ),
+        dirichlet_values=0.0,
+    )
+    system, rhs = problem.linear_system(storage="sparse")
+    operator = system.operator
+    assert isinstance(operator, phx.sparse.SparseCoordinateOperator)
+    matrix = problem.to_scipy_csr().toarray()
+    evidence = la.verify_dense_properties(
+        matrix,
+        policy=la.DensePropertyVerificationPolicy(require_positive_definite=True),
+    )
+    assert bool(evidence.successful)
+    assert evidence.properties.certifies("positive_definite")
+    verified = phx.sparse.SparseCoordinateOperator(
+        operator.relation,
+        operator.coefficients,
+        source=operator.source,
+        target=operator.target,
+        properties=evidence.properties,
+    )
+    prepared = la.prepare(la.LinearSystem(verified), _NATIVE_CHOLESKY)
+    factorization = _factorization(prepared)
+    assert int(factorization.status) == int(la.SparseFactorizationStatus.SUCCESS)
+    result = la.solve(prepared, rhs)
+    assert bool(result.successful)
+    value = np.asarray(result.value)
+    np.testing.assert_allclose(
+        value,
+        np.linalg.solve(matrix, np.asarray(rhs)),
+        rtol=0.0,
+        atol=1.0e-12 * float(np.max(np.abs(value))),
     )

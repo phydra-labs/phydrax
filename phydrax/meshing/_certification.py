@@ -628,6 +628,10 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         validated_embedding: ValidatedGlobalEmbedding | None = None,
         computed_root: ComputedLayerCoreRoot | None = None,
         _validated_chart_parent_embedding: ValidatedGlobalEmbedding | None = None,
+        stored_fidelity: tuple[
+            SourceFidelityCertificate | None, tuple[SourceFidelityCertificate, ...]
+        ]
+        | None = None,
     ) -> None:
         """Compute acceptance from ``inputs``.
 
@@ -646,9 +650,32 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         is required current and reused. Otherwise local validity is proved,
         reusing the cell proofs of ``validity_parent`` certificates of the
         acceptance validity policy for identical exact cell maps.
+        ``stored_fidelity`` is used only when restoring a stored report: its
+        ``(fidelity, scoped_fidelity)`` certificates are adopted in place of
+        each recomputed certificate once that recomputation reproduces them
+        (:meth:`SourceFidelityCertificate.adopt_reproof`), so bound-limit
+        decisions taken at generation are not re-decided on this platform's
+        floats.
         """
         if not isinstance(inputs, MeshCertificationInputs):
             raise TypeError("inputs must be MeshCertificationInputs.")
+        stored_main, stored_scoped = (
+            (None, ()) if stored_fidelity is None else stored_fidelity
+        )
+        if stored_fidelity is not None and (
+            (stored_main is None) != (inputs.source is None)
+            or len(stored_scoped) != len(inputs.scoped_fidelity)
+            or any(
+                type(value) is not SourceFidelityCertificate
+                for value in (
+                    *(() if stored_main is None else (stored_main,)),
+                    *stored_scoped,
+                )
+            )
+        ):
+            raise ValueError(
+                "Stored fidelity proofs must align with the certification inputs."
+            )
         if organization is not None and not isinstance(
             organization, NativeMeshOrganization
         ):
@@ -826,9 +853,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                     chart_parent=fidelity_premise,
                     validated_chart_parent=validated_chart_parent,
                 )
+            if stored_main is not None:
+                fidelity = stored_main.adopt_reproof(fidelity)
             findings.extend(fidelity.findings)
         scoped_certificates: list[SourceFidelityCertificate] = []
-        for query, witness, tolerance in inputs.scoped_fidelity:
+        for index, (query, witness, tolerance) in enumerate(inputs.scoped_fidelity):
             scoped_witness = validated_fidelity_witness(
                 validated_, inputs.mesh, inputs.geometry, query, witness
             )
@@ -851,17 +880,18 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                     )
                 )
             ):
-                scoped_certificates.append(fidelity)
+                certificate = fidelity
             else:
-                scoped_certificates.append(
-                    certify_source_fidelity(
-                        inputs.mesh,
-                        inputs.geometry,
-                        query,
-                        tolerance=tolerance,
-                        witness=scoped_witness,
-                    )
+                certificate = certify_source_fidelity(
+                    inputs.mesh,
+                    inputs.geometry,
+                    query,
+                    tolerance=tolerance,
+                    witness=scoped_witness,
                 )
+            if stored_fidelity is not None:
+                certificate = stored_scoped[index].adopt_reproof(certificate)
+            scoped_certificates.append(certificate)
         scoped = tuple(scoped_certificates)
         for certificate in scoped:
             findings.extend(certificate.findings)

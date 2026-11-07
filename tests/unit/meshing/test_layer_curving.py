@@ -1,7 +1,7 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from fractions import Fraction
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -24,6 +24,7 @@ from phydrax.discretization.fem._reference import lagrange_reference_node_data
 from phydrax.geometry._global_embedding import certify_global_embedding
 from phydrax.geometry._source_identity import source_entity_id
 from phydrax.geometry._surface_source_support import SurfaceSourceCharts
+from phydrax.meshing import _curving
 from phydrax.meshing._adaptation import (
     _identity_lineage,
     _identity_reference_maps_for_transition,
@@ -46,6 +47,7 @@ from phydrax.meshing._layer_curving_records import (
     _prepare_barycentric_solver_3d,
     _reference_face_dofs,
     _require_reoriented_wall_side,
+    LayerCurvingSourceEvidence,
 )
 from phydrax.meshing._mixed_adaptation import MixedCoarseningMap
 from tests._support.implicit_layer_curving_fixtures import (
@@ -815,6 +817,46 @@ def test_mapped_root_layer_builds_and_revalidates_exact_source_evidence() -> Non
         np.asarray(result.construction.mesh.coordinates),
     )
     evidence.revalidate(result.construction.mesh, result.candidate_geometry)
+
+
+@pytest.mark.parametrize(
+    "make_case",
+    (make_layer_curving_archive_case, make_mapped_layer_curving_archive_case),
+    ids=("parametric", "root-chart"),
+)
+def test_layer_evidence_restore_keeps_stored_sampled_quality(
+    make_case: Callable[[], tuple[Any, Any, Any, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Generation records the sampled quality without gating on it; restore
+    # keeps it as stored evidence, so another platform's XLA rounding of the
+    # same samples (simulated by one ulp) cannot refuse an unchanged result.
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    result, layers, control, policy = make_case()
+    evidence = result.source_evidence
+    geometry = result.candidate_geometry
+    assert evidence is not None and geometry is not None
+    sampled = _curving._sampled_quality
+
+    def other_platform(*arguments: Any) -> tuple[float, float]:
+        minimum, maximum = sampled(*arguments)
+        return float(np.nextafter(minimum, 0.0)), float(np.nextafter(maximum, np.inf))
+
+    monkeypatch.setattr(_curving, "_sampled_quality", other_platform)
+    restored, _, _, _ = LayerCurvingSourceEvidence._restore_standalone(
+        evidence,
+        result.construction.mesh,
+        geometry,
+        layers,
+        evidence.source_query,
+        evidence.source_surface_charts,
+        control,
+        policy,
+    )
+    assert restored.minimum_scaled_jacobian == evidence.minimum_scaled_jacobian
+    assert restored.maximum_distortion == evidence.maximum_distortion
+    assert restored.evidence_id == evidence.evidence_id
 
 
 def test_layer_curving_source_revision_mismatch_rolls_back_unchanged() -> None:

@@ -2568,7 +2568,7 @@ def _adaptive_implicit_root_chart_degree(
     embedding: GlobalEmbeddingCertificate,
     witness: SourceBoundaryChartWitness,
     /,
-) -> tuple[str, int, int]:
+) -> tuple[str, int, int, float | None]:
     """Recompute complete whole-face charts and their degree one.
 
     A witness naming every scaffold triangle exactly once keeps the one-to-one
@@ -2578,6 +2578,12 @@ def _adaptive_implicit_root_chart_degree(
     so the lift is a covering of degree equal to the preimage count of any
     regular value; one certified lifted point per target component has exactly
     one preimage (``_single_sheet_preimages``).
+
+    A target with crease faces (``root_witness`` rows of a non-smooth field)
+    has no lift there; its affine region is instead proved equal to the
+    source region outside a certified boundary band
+    (`certify_implicit_sign_coverage`), and the band's distance bound is
+    returned last (``None`` for the chart arguments).
     """
     from ..discretization._cell_geometry_validity import cell_geometry_id
     from .implicit._source_charts import prepare_adaptive_implicit_root_charts
@@ -2723,6 +2729,9 @@ def _adaptive_implicit_root_chart_degree(
                 status="violated",
             )
         normal_lower, normal_upper = chart.source_normal_deviation_bounds
+        # A crease face carries a root-witness distance bound and no chart;
+        # the region argument below covers it without one.
+        charted = chart.bound == "root_chart"
         if (
             chart.status != "certified"
             or not math.isfinite(chart.field_residual_bound)
@@ -2737,12 +2746,17 @@ def _adaptive_implicit_root_chart_degree(
             or normal_lower < 0.0
             or normal_upper < normal_lower
             or normal_upper > math.pi
-            or not math.isfinite(chart.chart_jacobian_lower)
-            or chart.chart_jacobian_lower <= 0.0
-            or not math.isfinite(chart.chart_injectivity_margin)
-            or chart.chart_injectivity_margin <= 0.0
-            or not math.isfinite(chart.source_gradient_lower)
-            or chart.source_gradient_lower <= 0.0
+            or (
+                charted
+                and (
+                    not math.isfinite(chart.chart_jacobian_lower)
+                    or chart.chart_jacobian_lower <= 0.0
+                    or not math.isfinite(chart.chart_injectivity_margin)
+                    or chart.chart_injectivity_margin <= 0.0
+                    or not math.isfinite(chart.source_gradient_lower)
+                    or chart.source_gradient_lower <= 0.0
+                )
+            )
         ):
             detail = (
                 chart.detail
@@ -2764,6 +2778,46 @@ def _adaptive_implicit_root_chart_degree(
                 chart.source_normal_deviation_bounds,
             )
         )
+    if any(chart.bound == "root_witness" for chart in evidence):
+        from .implicit._source_charts import certify_implicit_sign_coverage
+
+        keys, triangles = _affine_witness_triangles(mesh, geometry, regions, witness)
+        del keys
+        tolerance = fidelity.tolerance
+        if tolerance is None:
+            raise SourceCoverageUnavailable(
+                "Crease-face coverage needs a positive fidelity tolerance.",
+                status="unresolved",
+            )
+        coverage = certify_implicit_sign_coverage(
+            domain,
+            triangles,
+            _affine_tetrahedra(mesh),
+            mesh_to_source=float(fidelity.mesh_to_source_upper),
+            tolerance=float(tolerance),
+        )
+        if coverage.status != "certified":
+            raise SourceCoverageUnavailable(coverage.detail, status=coverage.status)
+        degree = canonical_fingerprint(
+            {
+                "kind": "adaptive-implicit-sign-component-region-coverage",
+                "domain": domain.domain_id,
+                "source": (source.source_id, source.source_revision, root_map.frame_id),
+                "region": region_ids[0],
+                "chart_witness": witness.witness_id,
+                "root_chart_map": root_map.witness_id,
+                "tolerance": fidelity.tolerance,
+                "maximum_normal_deviation": fidelity.maximum_normal_deviation,
+                "scaffold_triangle_count": source_count,
+                "target_chart_count": target_count,
+                "target_regions": array_tree_fingerprint(regions),
+                "embedding": embedding.certificate_id,
+                "charts": tuple(chart_rows),
+                "chart_bounds": tuple(chart.bound for chart in evidence),
+                "sign_coverage": coverage.evidence_id,
+            }
+        )
+        return degree, source_count, target_count, coverage.distance_upper
     if _names_each_scaffold_triangle_once(domain, witness):
         degree = canonical_fingerprint(
             {
@@ -2783,7 +2837,7 @@ def _adaptive_implicit_root_chart_degree(
                 "degree": 1,
             }
         )
-        return degree, source_count, target_count
+        return degree, source_count, target_count, None
     preimages = _single_sheet_preimages(mesh, geometry, regions, root_map, witness)
     degree = canonical_fingerprint(
         {
@@ -2804,7 +2858,7 @@ def _adaptive_implicit_root_chart_degree(
             "degree": 1,
         }
     )
-    return degree, source_count, target_count
+    return degree, source_count, target_count, None
 
 
 def _names_each_scaffold_triangle_once(
@@ -2889,57 +2943,36 @@ def _names_each_scaffold_triangle_once(
     return True
 
 
-# Relative rounding slack of the binary64 face-distance lower bound.
-_DISTANCE_SLACK = 2.0**-30
-
-
 def _face_distance_lower(point: np.ndarray, triangle: np.ndarray, /) -> float:
-    """Lower bound on dist(point, triangle) from its plane and edge half-planes.
+    """Binary64 lower bound on dist(point, triangle) from the exact distance.
 
-    The triangle lies in its plane P and in each in-plane half-plane H_k behind
-    edge k, so dist^2 >= dist(point, P)^2 + max_k dist(point, H_k)^2 (the edge
-    normals are orthogonal to the plane normal). Rounding is absorbed by a
-    relative slack.
+    The squared distance is exact in Q over the binary64 coordinates (exact
+    closest-feature classification); the lower rational square-root endpoint is
+    rounded toward negative infinity.
     """
-    first, second, third = triangle
-    normal = np.cross(second - first, third - first)
-    length = float(np.linalg.norm(normal))
-    if not length > 0.0:
-        return 0.0
-    normal = normal / length
-    plane = abs(float(np.dot(point - first, normal)))
-    outside = 0.0
-    for start, end in ((first, second), (second, third), (third, first)):
-        edge_normal = np.cross(end - start, normal)
-        edge_length = float(np.linalg.norm(edge_normal))
-        if edge_length > 0.0:
-            outside = max(
-                outside, float(np.dot(point - start, edge_normal)) / edge_length
-            )
-    scale = float(np.max(np.abs(triangle))) + float(np.max(np.abs(point)))
-    return max(0.0, math.hypot(plane, outside) - _DISTANCE_SLACK * scale)
+    from ..linalg._hermitian_spectral import fraction_sqrt_interval
+    from ._domain_boundary import _point_triangle_squared
+    from ._rational import fraction_down, rational_vector
+
+    def exact(row: np.ndarray, /) -> tuple[Fraction, Fraction, Fraction]:
+        return rational_vector((float(row[0]), float(row[1]), float(row[2])))
+
+    squared = _point_triangle_squared(
+        exact(point), (exact(triangle[0]), exact(triangle[1]), exact(triangle[2]))
+    )
+    return fraction_down(fraction_sqrt_interval(squared)[0])
 
 
-def _single_sheet_preimages(
+def _affine_witness_triangles(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     regions: np.ndarray,
-    root_map: AdaptiveImplicitRootChartMap,
     witness: SourceBoundaryChartWitness,
     /,
-) -> tuple[tuple[int, tuple[float, float, float], float], ...]:
-    """Certify exactly one preimage of one lifted point per target component.
+) -> tuple[list[tuple[int, ...]], np.ndarray]:
+    """Vertex keys and exact corners of the witness faces of an affine target.
 
-    Per connected target component, the face with the largest inradius lifts
-    its reference centroid to a certified zero-set point q (within its root
-    error). Every lift moves a face point by at most the face's certified
-    target-to-root bound, so a face whose distance lower bound to q exceeds
-    that bound plus q's error has no preimage of q; the lifting face itself
-    is injective. A face the prepared bound cannot exclude is re-proved by
-    splitting only its pieces whose lifted-point boxes still reach q, until each
-    is excluded, lifts into q's error, or cannot be split further in binary64.
-    A face that still reaches q (a folded or duplicated sheet) leaves the degree
-    unresolved.
+    The witness must name every target boundary facet exactly once.
     """
     from ..discretization._coordinate_enclosure import affine_map
     from ._domain_numerics import cell_coordinate_expressions
@@ -2974,7 +3007,7 @@ def _single_sheet_preimages(
     triangles = coordinates[
         np.asarray(
             [[vertex_rows[vertex] for vertex in key] for key in keys], dtype=np.int64
-        )
+        ).reshape((-1, 3))
     ]
     required = {
         key
@@ -2986,6 +3019,48 @@ def _single_sheet_preimages(
             "Implicit witness repeats or omits a target boundary facet.",
             status="violated",
         )
+    return keys, triangles
+
+
+def _affine_tetrahedra(mesh: CellMesh, /) -> np.ndarray:
+    """Corner coordinates ``(cells, 4, 3)`` of an affine tetrahedral target."""
+    from ..discretization._reference_cell import reference_cell_topology
+
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    corners: list[np.ndarray] = []
+    for block in mesh.blocks:
+        reference = reference_cell_topology(block.cell_kind)
+        if reference.dimension != 3 or len(reference.vertices) != 4:
+            raise SourceCoverageUnavailable(
+                "Crease-face coverage requires tetrahedral target cells.",
+                status="unresolved",
+            )
+        corners.append(coordinates[np.asarray(block.vertices, dtype=np.int64)])
+    return np.concatenate(corners).reshape((-1, 4, 3))
+
+
+def _single_sheet_preimages(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    regions: np.ndarray,
+    root_map: AdaptiveImplicitRootChartMap,
+    witness: SourceBoundaryChartWitness,
+    /,
+) -> tuple[tuple[int, tuple[float, float, float], float], ...]:
+    """Certify exactly one preimage of one lifted point per target component.
+
+    Per connected target component, the face with the largest inradius lifts
+    its reference centroid to a certified zero-set point q (within its root
+    error). Every lift moves a face point by at most the face's certified
+    target-to-root bound, so a face whose distance lower bound to q exceeds
+    that bound plus q's error has no preimage of q; the lifting face itself
+    is injective. A face the prepared bound cannot exclude is re-proved by
+    splitting only its pieces whose lifted-point boxes still reach q, until each
+    is excluded, lifts into q's error, or cannot be split further in binary64.
+    A face that still reaches q (a folded or duplicated sheet) leaves the degree
+    unresolved.
+    """
+    keys, triangles = _affine_witness_triangles(mesh, geometry, regions, witness)
     parent = list(range(len(keys)))
 
     def root(row: int, /) -> int:
@@ -3365,6 +3440,7 @@ def approximate_source_coverage(
             "Every target volume cell must have an explicit source material region.",
             "unresolved",
         )
+    region_distance: float | None = None
     try:
         if isinstance(domain, MeshingDomain):
             if (source.source_id, source.source_revision) != (
@@ -3421,15 +3497,17 @@ def approximate_source_coverage(
                     "Adaptive implicit source scaffold is empty.",
                 )
             try:
-                degree, source_count, target_count = _adaptive_implicit_root_chart_degree(
-                    domain,
-                    mesh,
-                    geometry,
-                    regions,
-                    adaptive_query,
-                    fidelity,
-                    embedding,
-                    witness,
+                degree, source_count, target_count, region_distance = (
+                    _adaptive_implicit_root_chart_degree(
+                        domain,
+                        mesh,
+                        geometry,
+                        regions,
+                        adaptive_query,
+                        fidelity,
+                        embedding,
+                        witness,
+                    )
                 )
             except SourceCoverageUnavailable as chart_error:
                 if chart_error.status != "unresolved":
@@ -3508,7 +3586,11 @@ def approximate_source_coverage(
         return fail(
             "source_boundary_homotopy", f"Source boundary homotopy is unresolved: {error}"
         )
-    distance = max(fidelity.mesh_to_source_upper, fidelity.source_to_mesh_upper)
+    distance = max(
+        fidelity.mesh_to_source_upper,
+        fidelity.source_to_mesh_upper,
+        0.0 if region_distance is None else region_distance,
+    )
     witness_id = canonical_fingerprint(
         {
             "kind": "bounded-source-domain-coverage",

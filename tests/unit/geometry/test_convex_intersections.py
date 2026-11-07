@@ -1,3 +1,5 @@
+from fractions import Fraction
+
 import numpy as np
 import pytest
 
@@ -111,6 +113,15 @@ def test_exact_predicates_resolve_the_sliver() -> None:
     assert result.predicate_evidence.mode is PredicateMode.EXACT
     assert result.predicate_evidence.uncertain_count == 0
     assert result.area == 5.75 * 2.0**-48
+
+
+def test_filtered_area_is_the_rounded_exact_area_outside_the_product_window() -> None:
+    # The Dekker split of 2**997 overflows binary64; the exact area is 2**996.
+    source = np.asarray([[0.0, 0.0], [2.0**997, 0.0], [0.0, 1.0]], dtype=np.float64)
+    result = intersect_convex_polygons(source, 2.0 * source, precision=FILTERED)
+
+    assert result.status is IntersectionStatus.SUCCESS
+    assert result.area == float(Fraction(2) ** 996)
 
 
 def test_convex_intersections_scenario_3() -> None:

@@ -1,5 +1,6 @@
 """Exercise the native owning-device teardown boundary without a CUDA context."""
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -206,21 +207,48 @@ int main(int argc, char** argv) {
 
 @pytest.fixture(scope="module")
 def cleanup_harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    compiler = shutil.which("c++")
+    # Windows builds with the MSVC driver of a Visual Studio developer
+    # environment (cl on PATH with its INCLUDE/LIB); POSIX hosts use c++.
+    windows = os.name == "nt"
+    compiler = shutil.which("cl" if windows else "c++")
     if compiler is None:
         pytest.fail("Native tensor cleanup tests require a C++ compiler")
     directory = tmp_path_factory.mktemp("tensor_cleanup")
     source = directory / "cleanup.cpp"
     source.write_text(_SOURCE)
-    executable = directory / "cleanup"
+    executable = directory / ("cleanup.exe" if windows else "cleanup")
     include = Path(__file__).resolve().parents[2] / "native/cuda/src/common"
     # Only external CUDA/XLA types are stubbed; registry and C ABI behavior
     # comes from the production implementation.
+    # capi.cpp exports the address of each runtime entry point, so every one
+    # needs a definition with its CUDA runtime API signature.
     (directory / "cuda_runtime_api.h").write_text(
         "#pragma once\n"
-        "using cudaError_t = int;\n"
-        "constexpr cudaError_t cudaSuccess = 0;\n"
-        "inline cudaError_t cudaGetDevice(int* value) { *value = 0; return 0; }\n"
+        "#include <cstddef>\n"
+        "enum cudaError { cudaSuccess = 0 };\n"
+        "typedef enum cudaError cudaError_t;\n"
+        "enum cudaMemcpyKind { cudaMemcpyHostToHost = 0, cudaMemcpyHostToDevice = 1,\n"
+        "  cudaMemcpyDeviceToHost = 2, cudaMemcpyDeviceToDevice = 3, cudaMemcpyDefault = 4 };\n"
+        "enum cudaDeviceAttr { cudaDevAttrMaxThreadsPerBlock = 1 };\n"
+        "enum cudaDriverEntryPointQueryResult { cudaDriverEntryPointSuccess = 0 };\n"
+        "inline cudaError_t cudaGetDevice(int* device) { *device = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaSetDevice(int) { return cudaSuccess; }\n"
+        "inline cudaError_t cudaGetDeviceCount(int* count) { *count = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaDeviceSynchronize() { return cudaSuccess; }\n"
+        "inline cudaError_t cudaDriverGetVersion(int* version) { *version = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaRuntimeGetVersion(int* version) { *version = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaMemGetInfo(std::size_t* free, std::size_t* total) {\n"
+        "  *free = 0; *total = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaDeviceGetAttribute(int* value, cudaDeviceAttr, int) {\n"
+        "  *value = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaDeviceCanAccessPeer(int* can, int, int) { *can = 0; return cudaSuccess; }\n"
+        "inline cudaError_t cudaMalloc(void** pointer, std::size_t) { *pointer = nullptr; return cudaSuccess; }\n"
+        "inline cudaError_t cudaFree(void*) { return cudaSuccess; }\n"
+        "inline cudaError_t cudaMemcpy(void*, const void*, std::size_t, cudaMemcpyKind) { return cudaSuccess; }\n"
+        "inline cudaError_t cudaMemcpyPeer(void*, int, const void*, int, std::size_t) { return cudaSuccess; }\n"
+        "inline cudaError_t cudaGetDriverEntryPointByVersion(const char*, void** function,\n"
+        "  unsigned int, unsigned long long, cudaDriverEntryPointQueryResult* status = nullptr) {\n"
+        "  *function = nullptr; if (status) *status = cudaDriverEntryPointSuccess; return cudaSuccess; }\n"
         'inline const char* cudaGetErrorString(cudaError_t) { return "test"; }\n'
     )
     ffi = directory / "xla/ffi/api"
@@ -233,26 +261,30 @@ def cleanup_harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "static Error Internal(const std::string&) { return {}; }\n"
         "}; }\n"
     )
-    subprocess.run(
-        [
+    includes = (directory, include, include.parents[1] / "include")
+    sources = (str(source), str(include / "capi.cpp"))
+    if windows:
+        command = [
+            compiler,
+            "/nologo",
+            "/std:c++17",
+            "/EHsc",
+            *(f"/I{path}" for path in includes),
+            *sources,
+            f"/Fe{executable}",
+        ]
+    else:
+        command = [
             compiler,
             "-std=c++17",
             "-pthread",
-            "-I",
-            str(directory),
-            "-I",
-            str(include),
-            "-I",
-            str(include.parents[1] / "include"),
-            str(source),
-            str(include / "capi.cpp"),
+            *(argument for path in includes for argument in ("-I", str(path))),
+            *sources,
             "-o",
             str(executable),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+        ]
+    # MSVC writes object files to the working directory.
+    subprocess.run(command, check=True, capture_output=True, text=True, cwd=directory)
     return executable
 
 

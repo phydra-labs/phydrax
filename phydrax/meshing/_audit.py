@@ -850,15 +850,30 @@ def _mesh_evidence_issues(
                 if edge_face or previous_edge_face:
                     if (
                         (
-                            edge_face and previous_edge_face and previous_identity == identity
+                            edge_face
+                            and previous_edge_face
+                            and previous_identity == identity
                             and (
-                                source_interval is None or previous_source_interval is None
+                                source_interval is None
+                                or previous_source_interval is None
                                 or max(source_interval[0], previous_source_interval[0])
                                 < min(source_interval[1], previous_source_interval[1])
                             )
                         )
-                        or (not edge_face and (role is not GeometrySourceEntityRole.FACET or piece_witness is None))
-                        or (not previous_edge_face and (previous_role is not GeometrySourceEntityRole.FACET or previous_witness is None))
+                        or (
+                            not edge_face
+                            and (
+                                role is not GeometrySourceEntityRole.FACET
+                                or piece_witness is None
+                            )
+                        )
+                        or (
+                            not previous_edge_face
+                            and (
+                                previous_role is not GeometrySourceEntityRole.FACET
+                                or previous_witness is None
+                            )
+                        )
                     ):
                         issues.append("conflicting_geometry_association")
                     continue
@@ -907,8 +922,16 @@ def _mesh_evidence_issues(
                 ):
                     issues.append("conflicting_geometry_association")
             previous_rows.append(
-                (identity, piece_witness, interval, facet_edge, role, curve_vertex,
-                 edge_face, source_interval)
+                (
+                    identity,
+                    piece_witness,
+                    interval,
+                    facet_edge,
+                    role,
+                    curve_vertex,
+                    edge_face,
+                    source_interval,
+                )
             )
     return tuple(dict.fromkeys(issues))
 
@@ -977,8 +1000,14 @@ def _record_source_witness_issue(
     issues.append(
         "association_source_witness_detail:"
         + json.dumps(
-            {"stage": stage, "witness_id": witness_id, "target_scopes": scope, "reason": reason},
-            sort_keys=True, separators=(",", ":"),
+            {
+                "stage": stage,
+                "witness_id": witness_id,
+                "target_scopes": scope,
+                "reason": reason,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
         )
     )
 
@@ -1012,7 +1041,9 @@ def _validated_layer_wall_association_ids(
         or inputs.feature_source is not source
         or inputs.layer_core_root_geometry is not root
     ):
-        raise ValueError("Wall association replay requires its actual source and certification inputs.")
+        raise ValueError(
+            "Wall association replay requires its actual source and certification inputs."
+        )
     if computed_replay is None:
         layer = replay_layer_source_associations(
             source, mesh, geometry, root, computed_root=computed_root
@@ -1020,22 +1051,37 @@ def _validated_layer_wall_association_ids(
     elif type(computed_replay) is _ComputedLayerAssociationReplay:
         layer = computed_replay.require(source, mesh, geometry, root)
     else:
-        raise TypeError("Wall association replay requires its bound operation-local proof.")
+        raise TypeError(
+            "Wall association replay requires its bound operation-local proof."
+        )
     expected = replay_layer_wall_associations(
         source, mesh, geometry, witness, layer, inputs.fidelity_tolerance
     )
     expected_rows = _semantic_rows(mesh, expected)
     actual_rows = _semantic_rows(mesh, associations)
-    if not expected_rows or any(actual_rows.get(key) != value for key, value in expected_rows.items()):
-        raise ValueError("Wall source identity, occurrence, side, orientation or support changed.")
+    if not expected_rows or any(
+        actual_rows.get(key) != value for key, value in expected_rows.items()
+    ):
+        raise ValueError(
+            "Wall source identity, occurrence, side, orientation or support changed."
+        )
     covered = set()
     for association in associations:
         if all(
-            (association.source_id, association.source_revision, association.association_kind,
-             dimension, int(identifier)) in expected_rows
+            (
+                association.source_id,
+                association.source_revision,
+                association.association_kind,
+                dimension,
+                int(identifier),
+            )
+            in expected_rows
             for dimension in range(mesh.topological_dimension + 1)
-            if association.target_entity_set_id == mesh.entity_set(dimension).entity_set_id
-            for identifier in np.asarray(association.target_global_ids, dtype=np.int64).tolist()
+            if association.target_entity_set_id
+            == mesh.entity_set(dimension).entity_set_id
+            for identifier in np.asarray(
+                association.target_global_ids, dtype=np.int64
+            ).tolist()
         ) and any(
             association.target_entity_set_id == mesh.entity_set(dimension).entity_set_id
             for dimension in range(mesh.topological_dimension + 1)
@@ -1083,19 +1129,29 @@ def _validated_partial_face_coverage(
     wall_association_ids: set[str] = set()
     issues: list[str] = []
     selected_wall_query = None
-    if type(association_source) is NativeLayerCoreSource and any(
-        item.association_kind is GeometryAssociationKind.BREP
-        for group in tables.values()
-        for item in group
-    ):
-        from ._layer_curving import layer_wall_boundary_query
-
+    if type(association_source) is NativeLayerCoreSource:
         wall_authority = (
             association_source
             if association_source.reference_source is None
             else association_source.reference_source
         )
-        if wall_authority.source_wall_charts is not None:
+        authored_wall_kind = (
+            None
+            if wall_authority.layers.wall_association is None
+            else wall_authority.layers.wall_association.association_kind
+        )
+        if (
+            authored_wall_kind
+            in (GeometryAssociationKind.BREP, GeometryAssociationKind.SURFACE)
+            and wall_authority.source_wall_charts is not None
+            and any(
+                item.association_kind is authored_wall_kind
+                for group in tables.values()
+                for item in group
+            )
+        ):
+            from ._layer_curving import layer_wall_boundary_query
+
             selected_wall_query = layer_wall_boundary_query(
                 wall_authority.layers, wall_authority.source_wall_charts
             )
@@ -1106,12 +1162,14 @@ def _validated_partial_face_coverage(
             if type(token) is ValidatedSourceFidelityWitness
             and token.binds(mesh, geometry, token.source)
             and isinstance(
-                token.witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+                token.witness,
+                (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness),
             )
             and token.witness.witness_id == witness_id
         ]
         matches = [
-            token for index, token in enumerate(matches)
+            token
+            for index, token in enumerate(matches)
             if not any(
                 prior.source is token.source and prior.witness is token.witness
                 for prior in matches[:index]
@@ -1119,7 +1177,10 @@ def _validated_partial_face_coverage(
         ]
         if len(matches) != 1:
             _record_source_witness_issue(
-                issues, "face_token", group, witness_id,
+                issues,
+                "face_token",
+                group,
+                witness_id,
                 f"ValueError: expected one bound token, found {len(matches)}",
             )
             continue
@@ -1130,12 +1191,15 @@ def _validated_partial_face_coverage(
             NativeSweepSource,
         )
 
+        authored_wall: GeometryAssociation | None = None
         if type(association_source) is NativeLayerCoreSource:
-            authored = (
+            authored_layer_source = (
                 association_source
                 if association_source.reference_source is None
                 else association_source.reference_source
             )
+            authored = authored_layer_source
+            authored_wall = authored_layer_source.layers.wall_association
         elif type(association_source) in (NativeStructuredSource, NativeSweepSource):
             authored = association_source
             if (
@@ -1148,13 +1212,19 @@ def _validated_partial_face_coverage(
                 or certification_inputs.domain is not association_source.domain
             ):
                 _record_source_witness_issue(
-                    issues, "face_binding", group, witness_id,
+                    issues,
+                    "face_binding",
+                    group,
+                    witness_id,
                     "ValueError: source, query, domain or current operands do not match",
                 )
                 continue
         else:
             _record_source_witness_issue(
-                issues, "face_source", group, witness_id,
+                issues,
+                "face_source",
+                group,
+                witness_id,
                 f"TypeError: unsupported source type {type(association_source).__name__}",
             )
             continue
@@ -1162,8 +1232,17 @@ def _validated_partial_face_coverage(
         from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
         from ..geometry._mesh_certificates import _same_tree_content
 
+        # Wall faces carry the authored wall association's own kind: BRep for a
+        # BRep wall, surface for a non-BRep surface-domain wall.
+        wall_kind = (
+            authored_wall.association_kind
+            if authored_wall is not None
+            and authored_wall.association_kind
+            in (GeometryAssociationKind.BREP, GeometryAssociationKind.SURFACE)
+            else None
+        )
         is_wall = (
-            type(association_source) is NativeLayerCoreSource
+            wall_kind is not None
             and isinstance(selected_wall_query, MeshingDomainBoundarySource)
             and isinstance(token.source, MeshingDomainBoundarySource)
             and isinstance(token.witness, SourceBoundaryChartWitness)
@@ -1171,11 +1250,12 @@ def _validated_partial_face_coverage(
             and token.source.source_scope_id == selected_wall_query.source_scope_id
             and _same_tree_content(token.source, selected_wall_query)
             and bool(group)
-            and all(item.association_kind is GeometryAssociationKind.BREP for item in group)
+            and all(item.association_kind is wall_kind for item in group)
         )
 
         expected_kind = (
-            GeometryAssociationKind.BREP if is_wall
+            wall_kind
+            if is_wall and wall_kind is not None
             else GeometryAssociationKind.MAPPED_REFERENCE
             if type(association_source) is NativeSweepSource
             and isinstance(token.source, MappedReferenceBoundarySource)
@@ -1189,7 +1269,10 @@ def _validated_partial_face_coverage(
             for association in group
         ):
             _record_source_witness_issue(
-                issues, "face_kind", group, witness_id,
+                issues,
+                "face_kind",
+                group,
+                witness_id,
                 f"ValueError: expected {expected_kind.value} association bound to the source and target",
             )
             continue
@@ -1208,13 +1291,24 @@ def _validated_partial_face_coverage(
         try:
             if is_wall:
                 if not isinstance(witness, SourceBoundaryChartWitness):
-                    raise TypeError("Authored wall replay requires its exact chart witness.")
+                    raise TypeError(
+                        "Authored wall replay requires its exact chart witness."
+                    )
                 checked_wall = _validated_layer_wall_association_ids(
-                    mesh, geometry, associations, association_source, witness,
-                    certification_inputs, layer_core_root_geometry, computed_root, computed_replay,
+                    mesh,
+                    geometry,
+                    associations,
+                    association_source,
+                    witness,
+                    certification_inputs,
+                    layer_core_root_geometry,
+                    computed_root,
+                    computed_replay,
                 )
                 if any(item.association_id not in checked_wall for item in group):
-                    raise ValueError("Wall source face table differs from the independently replayed wall.")
+                    raise ValueError(
+                        "Wall source face table differs from the independently replayed wall."
+                    )
                 wall_association_ids.update(checked_wall)
             elif isinstance(witness, SourceBoundaryFaceImageWitness):
                 from ._certification_inputs import MeshCertificationInputs
@@ -1227,30 +1321,46 @@ def _validated_partial_face_coverage(
                     or certification_inputs.mesh is not mesh
                     or certification_inputs.geometry is not geometry
                     or certification_inputs.feature_source is not association_source
-                    or certification_inputs.layer_core_root_geometry is not layer_core_root_geometry
+                    or certification_inputs.layer_core_root_geometry
+                    is not layer_core_root_geometry
                     or certification_inputs.domain is None
                     or certification_inputs.cell_regions is None
                 ):
-                    raise ValueError("Image support requires its current material assignments.")
+                    raise ValueError(
+                        "Image support requires its current material assignments."
+                    )
                 _validate_partial_image_association_rows(
-                    mesh, geometry, token, associations, association_source,
-                    layer_core_root_geometry, certification_inputs,
+                    mesh,
+                    geometry,
+                    token,
+                    associations,
+                    association_source,
+                    layer_core_root_geometry,
+                    certification_inputs,
                     computed_root=computed_root,
                     computed_replay=computed_replay,
                 )
             elif any(
                 role is GeometrySourceEntityRole.FACET
-                for association in group for role in association.source_roles
+                for association in group
+                for role in association.source_roles
             ):
-                if type(association_source) in (NativeStructuredSource, NativeSweepSource):
+                if type(association_source) in (
+                    NativeStructuredSource,
+                    NativeSweepSource,
+                ):
                     from ._layer_core_association_transfer import _semantic_rows
                     from .providers._native_structured import _source_face_associations
 
                     expected_associations = _source_face_associations(
                         association_source, mesh, witness
                     )
-                    if _semantic_rows(mesh, tuple(group)) != _semantic_rows(mesh, expected_associations):
-                        raise ValueError("Sweep source face support, sides or orientation changed.")
+                    if _semantic_rows(mesh, tuple(group)) != _semantic_rows(
+                        mesh, expected_associations
+                    ):
+                        raise ValueError(
+                            "Sweep source face support, sides or orientation changed."
+                        )
                 else:
                     from ._layer_core_boundary_replay import (
                         validate_partial_association_rows,
@@ -1282,7 +1392,10 @@ def _validated_partial_face_coverage(
                     keys.add(key)
         except (TypeError, ValueError) as error:
             _record_source_witness_issue(
-                issues, "face_replay", group, witness_id,
+                issues,
+                "face_replay",
+                group,
+                witness_id,
                 f"{type(error).__name__}: {error}",
             )
             continue
@@ -1343,7 +1456,8 @@ def _validated_partial_edge_coverage(
             if type(token) is ValidatedSourceFidelityWitness
             and token.binds(mesh, geometry, token.source)
             and isinstance(
-                token.witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+                token.witness,
+                (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness),
             )
             and (token.witness.source_id, token.witness.source_revision) == source_key
             and (
@@ -1353,7 +1467,8 @@ def _validated_partial_edge_coverage(
             )
         ]
         tokens = [
-            token for index, token in enumerate(tokens)
+            token
+            for index, token in enumerate(tokens)
             if not any(
                 prior.source is token.source and prior.witness is token.witness
                 for prior in tokens[:index]
@@ -1361,7 +1476,10 @@ def _validated_partial_edge_coverage(
         ]
         if len(tokens) != 1:
             _record_source_witness_issue(
-                issues, "edge_token", group, witness_id,
+                issues,
+                "edge_token",
+                group,
+                witness_id,
                 f"ValueError: expected one bound token, found {len(tokens)}",
             )
             continue
@@ -1369,7 +1487,10 @@ def _validated_partial_edge_coverage(
 
         if type(association_source) is not NativeLayerCoreSource:
             _record_source_witness_issue(
-                issues, "edge_source", group, witness_id,
+                issues,
+                "edge_source",
+                group,
+                witness_id,
                 f"TypeError: unsupported source type {type(association_source).__name__}",
             )
             continue
@@ -1388,7 +1509,10 @@ def _validated_partial_edge_coverage(
             for association in group
         ):
             _record_source_witness_issue(
-                issues, "edge_binding", group, witness_id,
+                issues,
+                "edge_binding",
+                group,
+                witness_id,
                 "ValueError: edge kind, source identity or witness binding differs",
             )
             continue
@@ -1411,7 +1535,10 @@ def _validated_partial_edge_coverage(
             )
         except (TypeError, ValueError) as error:
             _record_source_witness_issue(
-                issues, "edge_replay", group, witness_id,
+                issues,
+                "edge_replay",
+                group,
+                witness_id,
                 f"{type(error).__name__}: {error}",
             )
             continue
@@ -1801,13 +1928,20 @@ def audit_cell_mesh(
         for value in associations
     ):
         _record_source_witness_issue(
-            issues, "target_scope",
-            tuple(value for value in associations if value.source_boundary_witness_id is not None
-                  and value.target_entity_set_id not in supported_piece_sets),
-            None, "ValueError: witness-bound target entity set is unsupported",
+            issues,
+            "target_scope",
+            tuple(
+                value
+                for value in associations
+                if value.source_boundary_witness_id is not None
+                and value.target_entity_set_id not in supported_piece_sets
+            ),
+            None,
+            "ValueError: witness-bound target entity set is unsupported",
         )
     facet_edge_proofs = _facet_edge_proof_tables(mesh, associations, association_source)
     from .providers._native_sources import NativeLayerCoreSource
+
     computed_replay = None
     image_preparations: list[_LayerImageSupportPreparation] = []
     if computed_root is not None:
@@ -1818,22 +1952,33 @@ def audit_cell_mesh(
             or type(association_source) is not NativeLayerCoreSource
             or layer_core_root_geometry is None
         ):
-            raise ValueError("Computed root requires its exact layer/core source and root.")
+            raise ValueError(
+                "Computed root requires its exact layer/core source and root."
+            )
         computed_root.require(
-            association_source, layer_core_root_geometry.specification,
-            layer_core_root_geometry.mesh, layer_core_root_geometry.geometry,
+            association_source,
+            layer_core_root_geometry.specification,
+            layer_core_root_geometry.mesh,
+            layer_core_root_geometry.geometry,
             layer_core_root_geometry,
         )
         from ._layer_source_association_replay import _ComputedLayerAssociationReplay
 
         try:
             computed_replay = _ComputedLayerAssociationReplay(
-                association_source, mesh, geometry, layer_core_root_geometry,
+                association_source,
+                mesh,
+                geometry,
+                layer_core_root_geometry,
                 computed_root=computed_root,
             )
         except (TypeError, ValueError) as error:
             _record_source_witness_issue(
-                issues, "layer_replay", associations, None, f"{type(error).__name__}: {error}"
+                issues,
+                "layer_replay",
+                associations,
+                None,
+                f"{type(error).__name__}: {error}",
             )
 
     if (
@@ -1863,7 +2008,8 @@ def audit_cell_mesh(
         from ._layer_core_boundary_replay import _validate_source_edge_face_overlays
 
         chart_tokens = [
-            token for token in validated_fidelity
+            token
+            for token in validated_fidelity
             if type(token) is ValidatedSourceFidelityWitness
             and token.binds(mesh, geometry, token.source)
             and (
@@ -1878,26 +2024,73 @@ def audit_cell_mesh(
         ]
         if chart_tokens:
             token = next(
-                (value for value in chart_tokens
-                 if value.source is association_source.fidelity_source),
+                (
+                    value
+                    for value in chart_tokens
+                    if value.source is association_source.fidelity_source
+                ),
                 chart_tokens[0],
             )
-            try:
-                _validate_source_edge_face_overlays(
-                    mesh, geometry, token, associations, association_source,
-                    validated_fidelity, layer_core_root_geometry,
-                    computed_root=computed_root,
-                    computed_replay=computed_replay,
-                    image_preparations=image_preparations,
+            if any(block.cell_kind == "polyhedron" for block in mesh.blocks):
+                # Overlay replay resolves core edges through reference-cell
+                # charts, which polyhedral cores lack; their constructions emit
+                # no source-edge face overlay, so any such row is unproved.
+                authored = (
+                    association_source
+                    if association_source.reference_source is None
+                    else association_source.reference_source
                 )
-            except (TypeError, ValueError) as error:
-                _record_source_witness_issue(
-                    issues, "edge_face_overlay", associations,
-                    token.witness.witness_id, f"{type(error).__name__}: {error}",
+                face_set = mesh.entity_set(2).entity_set_id
+                overlays = tuple(
+                    value
+                    for value in associations
+                    if value.target_entity_set_id == face_set
+                    and (value.source_id, value.source_revision)
+                    == (authored.source_id, authored.source_revision)
+                    and GeometrySourceEntityRole.EDGE in value.source_roles
                 )
-    support_coverage, face_issues, wall_association_ids = _validated_partial_face_coverage(
-        mesh, geometry, associations, validated_fidelity, association_source,
-        layer_core_root_geometry, certification_inputs, computed_root, computed_replay,
+                if overlays:
+                    _record_source_witness_issue(
+                        issues,
+                        "edge_face_overlay",
+                        overlays,
+                        token.witness.witness_id,
+                        "ValueError: A polyhedral core admits no source-edge face overlay.",
+                    )
+            else:
+                try:
+                    _validate_source_edge_face_overlays(
+                        mesh,
+                        geometry,
+                        token,
+                        associations,
+                        association_source,
+                        validated_fidelity,
+                        layer_core_root_geometry,
+                        computed_root=computed_root,
+                        computed_replay=computed_replay,
+                        image_preparations=image_preparations,
+                    )
+                except (TypeError, ValueError) as error:
+                    _record_source_witness_issue(
+                        issues,
+                        "edge_face_overlay",
+                        associations,
+                        token.witness.witness_id,
+                        f"{type(error).__name__}: {error}",
+                    )
+    support_coverage, face_issues, wall_association_ids = (
+        _validated_partial_face_coverage(
+            mesh,
+            geometry,
+            associations,
+            validated_fidelity,
+            association_source,
+            layer_core_root_geometry,
+            certification_inputs,
+            computed_root,
+            computed_replay,
+        )
     )
     issues.extend(face_issues)
     facet_edge_proofs.difference_update(wall_association_ids)

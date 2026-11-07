@@ -446,7 +446,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or obstacles.topological_dimension != 2
             or obstacles.ambient_dimension != 3
         ):
-            raise ValueError("obstacles must be a surface mesh in three dimensions or None.")
+            raise ValueError(
+                "obstacles must be a surface mesh in three dimensions or None."
+            )
         if source_wall.topological_dimension != 2 or source_wall.ambient_dimension != 3:
             raise ValueError("source_wall must be an ambient-3 surface mesh.")
         cell_count = sum(block.cell_count for block in mesh.blocks)
@@ -511,14 +513,17 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or np.any((stored_scale <= 0) | (stored_scale > 1))
             or stored_count.shape != source_vertex_ids.shape
             or not np.issubdtype(stored_count.dtype, np.integer)
-            or np.any((stored_count < 1) | (stored_count > len(evidence.requested_thicknesses)))
+            or np.any(
+                (stored_count < 1) | (stored_count > len(evidence.requested_thicknesses))
+            )
             or stored_stretch.shape != column_ids.shape
             or not np.all(np.isfinite(stored_stretch))
             or np.any(stored_stretch <= 0)
             or stored_merge.shape != column_ids.shape
             or not np.issubdtype(stored_merge.dtype, np.integer)
             or np.any((stored_merge < -1) | (stored_merge >= column_ids.size))
-            or stored_level_points.shape != (len(evidence.requested_thicknesses), column_ids.size, 3)
+            or stored_level_points.shape
+            != (len(evidence.requested_thicknesses), column_ids.size, 3)
             or not np.all(np.isfinite(stored_level_points))
         ):
             raise ValueError("Retained final column parameters are invalid.")
@@ -2918,8 +2923,10 @@ def _certify_warped_wall_contacts(
             ):
                 for face_row, wall_row in zip(face_rows, wall_rows, strict=True):
                     if not _bilinear_quad_triangle_contact_is_declared(
-                        corners[face_row], faces[face_row],
-                        wall_corners[wall_row], triangles[wall_row],
+                        corners[face_row],
+                        faces[face_row],
+                        wall_corners[wall_row],
+                        triangles[wall_row],
                         sliding_side=bool(environment.side[wall_row]),
                     ):
                         raise ValueError(
@@ -2942,7 +2949,8 @@ def _certify_obstacle_cell_containment(
         return 0
     obstacle_corners = environment.obstacle_points[environment.obstacle_triangles]
     obstacle_bvh = prepare_bvh(
-        np.min(obstacle_corners, axis=1), np.max(obstacle_corners, axis=1),
+        np.min(obstacle_corners, axis=1),
+        np.max(obstacle_corners, axis=1),
         dtype=jnp.float64,
     )
     volume_charts: dict[str, tuple[Any, ...]] | None = None
@@ -2986,11 +2994,17 @@ def _certify_obstacle_cell_containment(
                     volume_charts = {}
                     offset = 0
                     for block in mesh.blocks:
-                        volume_charts[block.cell_kind] = prepared[offset:offset + block.cell_count]
+                        volume_charts[block.cell_kind] = prepared[
+                            offset : offset + block.cell_count
+                        ]
                         offset += block.cell_count
                     obstacle_mesh = CellMesh(
                         environment.obstacle_points,
-                        (CellBlock("obstacles", "triangle", environment.obstacle_triangles),),
+                        (
+                            CellBlock(
+                                "obstacles", "triangle", environment.obstacle_triangles
+                            ),
+                        ),
                     )
                     obstacle_charts = prepare_embedding_cells(
                         obstacle_mesh, CellGeometrySpec.affine(obstacle_mesh)
@@ -3003,8 +3017,12 @@ def _certify_obstacle_cell_containment(
                     trace = _stratum_trace(
                         chart, tuple(chart.vertex_ids[index] for index in route)
                     )
-                    facet = None if trace is None else _root_reference_cell(
-                        "quadrilateral", trace, -1 - int(valid_rows[face_row])
+                    facet = (
+                        None
+                        if trace is None
+                        else _root_reference_cell(
+                            "quadrilateral", trace, -1 - int(valid_rows[face_row])
+                        )
                     )
                     if facet is None or not _strict_image_separation(
                         facet, obstacle_charts[int(obstacle_row)], {}
@@ -3031,7 +3049,9 @@ def _certify_obstacle_cell_containment(
         cell_bvh = prepare_bvh(
             np.min(corners, axis=1), np.max(corners, axis=1), dtype=jnp.float64
         )
-        pairs = tuple(bvh_overlap_pair_blocks(cell_bvh, vertex_bvh, include_touching=True))
+        pairs = tuple(
+            bvh_overlap_pair_blocks(cell_bvh, vertex_bvh, include_touching=True)
+        )
         if not pairs:
             continue
         cell_rows = np.concatenate([pair[0] for pair in pairs])
@@ -3051,24 +3071,30 @@ def _certify_obstacle_cell_containment(
                 candidates[:, 0], candidates[:, 1], candidates[:, 2], candidates[:, 3]
             )
             if np.any((sign != 0) | ~known):
-                raise ValueError("Obstacle containment in a warped pyramid is unresolved.")
+                raise ValueError(
+                    "Obstacle containment in a warped pyramid is unresolved."
+                )
             for cell_row, vertex_row in zip(cell_rows, vertex_rows, strict=True):
                 cell = corners[cell_row]
                 point = vertices[vertex_row]
-                if _point_in_tetrahedron(point, cell[[0, 1, 2, 4]]) or _point_in_tetrahedron(
-                    point, cell[[0, 2, 3, 4]]
-                ):
+                if _point_in_tetrahedron(
+                    point, cell[[0, 1, 2, 4]]
+                ) or _point_in_tetrahedron(point, cell[[0, 2, 3, 4]]):
                     bad[block.cell_kind][cell_row] = True
                     hit_count += 1
             continue
         mask = np.zeros((block.cell_count,), dtype=np.bool_)
         mask[cell_rows] = True
-        locator = PreparedMappedCellLocator.from_cell_geometry(mesh, geometry, block_index)
+        locator = PreparedMappedCellLocator.from_cell_geometry(
+            mesh, geometry, block_index
+        )
         location = locator.locate(vertices[np.unique(vertex_rows)], cell_mask=mask)
         status = np.asarray(location.status)
-        if np.any(~np.isin(
-            status, (int(CellLocationStatus.OUTSIDE), int(CellLocationStatus.LOCATED))
-        )):
+        if np.any(
+            ~np.isin(
+                status, (int(CellLocationStatus.OUTSIDE), int(CellLocationStatus.LOCATED))
+            )
+        ):
             raise ValueError("Obstacle-to-layer cell-image containment is unresolved.")
         hits = np.asarray(location.candidate_cells, dtype=np.int64)
         hits = hits[hits >= 0]
@@ -3112,15 +3138,14 @@ def _certify_cells(
         for route in _FACE_ROUTES[name]:
             if len(route) == 4:
                 face = points[rows[:, route]]
-                sign, known = _orient3d(
-                    face[:, 0], face[:, 1], face[:, 2], face[:, 3]
-                )
+                sign, known = _orient3d(face[:, 0], face[:, 1], face[:, 2], face[:, 3])
                 warped_triangles.append(np.repeat((sign != 0) | ~known, 2))
             else:
                 warped_triangles.append(np.zeros(rows.shape[0], dtype=np.bool_))
     warped_mask = (
         np.concatenate(warped_triangles)
-        if warped_triangles else np.zeros(new_triangles.shape[0], dtype=np.bool_)
+        if warped_triangles
+        else np.zeros(new_triangles.shape[0], dtype=np.bool_)
     )
     _certify_warped_wall_contacts(points, cells, environment, bad)
     old = [_cell_triangles(values)[0] for values in accepted]
@@ -3703,15 +3728,22 @@ def _reprove_retained_front(
 
     if not isinstance(retained, BoundaryLayerMesh):
         raise TypeError("retained must be a BoundaryLayerMesh.")
-    if not isinstance(source_wall, CellMesh) or not isinstance(
-        control, BoundaryLayerControl
-    ) or not isinstance(policy, BoundaryLayerPolicy):
-        raise TypeError("Retained layers require their original wall, control and policy.")
+    if (
+        not isinstance(source_wall, CellMesh)
+        or not isinstance(control, BoundaryLayerControl)
+        or not isinstance(policy, BoundaryLayerPolicy)
+    ):
+        raise TypeError(
+            "Retained layers require their original wall, control and policy."
+        )
     if not bool(eqx.tree_equal(retained.source_wall, source_wall)):
         raise ValueError("Retained layers do not bind the actual source wall.")
     if not _same_tree_content(retained.wall_association, wall_association):
         raise ValueError("Retained layers do not bind the actual wall association.")
-    if retained.control_id != control.control_id or retained.policy_id != policy.policy_id:
+    if (
+        retained.control_id != control.control_id
+        or retained.policy_id != policy.policy_id
+    ):
         raise ValueError("Retained layers do not bind the supplied control and policy.")
     if control.route is not BoundaryLayerRoute.ADVANCING:
         raise ValueError("Retained boundary layers require an ADVANCING control.")
@@ -3827,7 +3859,9 @@ def _reprove_retained_cell_intersections(
         if any(rows.size for rows in groups[-1]["pyramid"]):
             raise ValueError("Retained transition pyramids require simplex_cap.")
     if any(
-        rows.size for name in _VOLUME_KINDS if name != "pyramid"
+        rows.size
+        for name in _VOLUME_KINDS
+        if name != "pyramid"
         for rows in groups[-1][name]
     ):
         raise ValueError("Only cap transition pyramids may follow the layer schedule.")
@@ -3846,9 +3880,7 @@ def _reprove_retained_cell_intersections(
             raise ValueError("Retained boundary-layer cells are invalid or intersect.")
         accepted.append(layer)
     certificate = certify_cell_geometry_validity(retained.mesh, policy=policy.validity)
-    if np.any(
-        np.asarray(certificate.status) != int(CellValidityStatus.CERTIFIED_VALID)
-    ):
+    if np.any(np.asarray(certificate.status) != int(CellValidityStatus.CERTIFIED_VALID)):
         raise ValueError("Retained boundary-layer cells are not certified valid.")
     return certificate
 
@@ -3895,12 +3927,16 @@ def _reprove_retained_boundary_layers(
         # which the archive does not store; only the predictor consumes it.
         stretch = _probe_stretch(wall, front)
     columns = _Columns(
-        levels, realized_stretch, scale, count,
+        levels,
+        realized_stretch,
+        scale,
+        count,
         np.asarray(retained.column_merged_top, dtype=np.int64),
     )
     obstacle_points = (
         np.empty((0, 3), dtype=np.float64)
-        if obstacles is None else np.asarray(obstacles.coordinates, dtype=np.float64)
+        if obstacles is None
+        else np.asarray(obstacles.coordinates, dtype=np.float64)
     )
     if obstacles is None:
         obstacle_triangles = np.empty((0, 3), dtype=np.int64)
@@ -3911,18 +3947,31 @@ def _reprove_retained_boundary_layers(
         wall, front, stretch, obstacle_points[obstacle_triangles], control, policy_
     )
     initial, _ = _initial_columns(
-        wall, front, stretch, limits, medial, curvature_limited, control, _vertex_graph(wall)
+        wall,
+        front,
+        stretch,
+        limits,
+        medial,
+        curvature_limited,
+        control,
+        _vertex_graph(wall),
     )
     if np.any(scale[wall.wall_vertices] < control.minimum_thickness_fraction):
         raise ValueError("Retained column scale violates the physical thickness floor.")
     if source_wall.periodic_topology is not None:
-        orbits = np.asarray(source_wall.periodic_topology.vertex_representatives, dtype=np.int64)
+        orbits = np.asarray(
+            source_wall.periodic_topology.vertex_representatives, dtype=np.int64
+        )
         initial_scale = np.full_like(initial.scale, np.inf)
         initial_count = np.full_like(initial.count, thicknesses.size)
         np.minimum.at(initial_scale, orbits, initial.scale)
         np.minimum.at(initial_count, orbits, initial.count)
-        initial = replace(initial, scale=initial_scale[orbits], count=initial_count[orbits])
-        if not np.array_equal(scale, scale[orbits]) or not np.array_equal(count, count[orbits]):
+        initial = replace(
+            initial, scale=initial_scale[orbits], count=initial_count[orbits]
+        )
+        if not np.array_equal(scale, scale[orbits]) or not np.array_equal(
+            count, count[orbits]
+        ):
             raise ValueError("Retained periodic column parameters are not synchronized.")
     if control.collision is BoundaryLayerCollisionPolicy.REDUCE_THICKNESS:
         valid_parameters = (
@@ -3951,82 +4000,127 @@ def _reprove_retained_boundary_layers(
     owners = []
     for level in range(thicknesses.size):
         cells, cell_owners = _layer_cells(
-            rows, arity, _level_ids(front, columns, base, level),
-            _level_ids(front, columns, base, level + 1), source_rows,
+            rows,
+            arity,
+            _level_ids(front, columns, base, level),
+            _level_ids(front, columns, base, level + 1),
+            source_rows,
         )
         by_level.append(cells)
         owners.append(cell_owners)
     cap, cap_arity, cap_columns = _cap_faces(front, columns, base)
-    quads = cap[cap_arity == 4] if policy_.simplex_cap else np.empty((0, 4), dtype=np.int64)
+    quads = (
+        cap[cap_arity == 4] if policy_.simplex_cap else np.empty((0, 4), dtype=np.int64)
+    )
     pyramid_columns = (
-        cap_columns[cap_arity == 4] if policy_.simplex_cap else np.empty((0,), dtype=np.int64)
+        cap_columns[cap_arity == 4]
+        if policy_.simplex_cap
+        else np.empty((0,), dtype=np.int64)
     )
     point_count = base + thicknesses.size * front.column_vertex.size
     apex_ids = point_count + np.arange(quads.shape[0], dtype=np.int64)
-    pyramids = {name: np.empty((0, _CELL_ARITY[name]), dtype=np.int64) for name in _VOLUME_KINDS}
+    pyramids = {
+        name: np.empty((0, _CELL_ARITY[name]), dtype=np.int64) for name in _VOLUME_KINDS
+    }
     pyramids["pyramid"] = np.column_stack((quads, apex_ids))
     cells = {
         name: np.concatenate([level[name] for level in by_level] + [pyramids[name]])
         for name in _VOLUME_KINDS
     }
-    expected_layers = np.concatenate([
-        np.concatenate(
-            [np.full(level[name].shape[0], i, dtype=np.int64) for i, level in enumerate(by_level)]
-            + [np.full(pyramids[name].shape[0], thicknesses.size, dtype=np.int64)]
-        ) for name in _VOLUME_KINDS
-    ])
-    expected_owners = np.concatenate([
-        np.concatenate(
-            [front.ancestry.front_row_ids[level[name]] for level in owners]
-            + [front.ancestry.front_row_ids[pyramid_columns] if name == "pyramid"
-               else np.empty((0,), dtype=np.int64)]
-        ) for name in _VOLUME_KINDS
-    ])
-    if not np.array_equal(expected_layers, np.asarray(retained.layer_index)) or not np.array_equal(
-        expected_owners, np.asarray(retained.column_index)
-    ):
-        raise ValueError("Retained cells do not have the prescribed front and layer ownership.")
+    expected_layers = np.concatenate(
+        [
+            np.concatenate(
+                [
+                    np.full(level[name].shape[0], i, dtype=np.int64)
+                    for i, level in enumerate(by_level)
+                ]
+                + [np.full(pyramids[name].shape[0], thicknesses.size, dtype=np.int64)]
+            )
+            for name in _VOLUME_KINDS
+        ]
+    )
+    expected_owners = np.concatenate(
+        [
+            np.concatenate(
+                [front.ancestry.front_row_ids[level[name]] for level in owners]
+                + [
+                    front.ancestry.front_row_ids[pyramid_columns]
+                    if name == "pyramid"
+                    else np.empty((0,), dtype=np.int64)
+                ]
+            )
+            for name in _VOLUME_KINDS
+        ]
+    )
+    if not np.array_equal(
+        expected_layers, np.asarray(retained.layer_index)
+    ) or not np.array_equal(expected_owners, np.asarray(retained.column_index)):
+        raise ValueError(
+            "Retained cells do not have the prescribed front and layer ownership."
+        )
     used = np.unique(np.concatenate([value.reshape(-1) for value in cells.values()]))
     actual_points = np.asarray(retained.mesh.coordinates, dtype=np.float64)
     if used.size != actual_points.shape[0]:
         raise ValueError("Retained layer vertex bank does not match its front complex.")
-    points = np.concatenate((
-        wall.points,
-        np.asarray(retained.column_level_coordinates, dtype=np.float64).reshape(-1, 3),
-        np.zeros((quads.shape[0], 3), dtype=np.float64),
-    ))
+    points = np.concatenate(
+        (
+            wall.points,
+            np.asarray(retained.column_level_coordinates, dtype=np.float64).reshape(
+                -1, 3
+            ),
+            np.zeros((quads.shape[0], 3), dtype=np.float64),
+        )
+    )
     ordinary_mask = used < point_count
     if not np.array_equal(points[used[ordinary_mask]], actual_points[ordinary_mask]):
-        raise ValueError("Retained mesh vertices differ from their actual column coordinates.")
+        raise ValueError(
+            "Retained mesh vertices differ from their actual column coordinates."
+        )
     points[used[~ordinary_mask]] = actual_points[~ordinary_mask]
     expected_points = _positions(front, columns, wall.points)
     periodic_vertices = None
     if source_wall.periodic_topology is not None:
-        roots, shifts = _periodic_layer_vertices(source_wall, front, columns, points.shape[0])
+        roots, shifts = _periodic_layer_vertices(
+            source_wall, front, columns, points.shape[0]
+        )
         expected_points[base:] = apply_periodic(
-            source_wall.periodic_topology.cell, expected_points[roots[base:point_count]],
+            source_wall.periodic_topology.cell,
+            expected_points[roots[base:point_count]],
             shifts[base:point_count],
         )
         periodic_vertices = (roots, shifts)
     if not np.array_equal(points[:point_count], expected_points):
-        raise ValueError("Retained column coordinates differ from the prescribed schedule.")
+        raise ValueError(
+            "Retained column coordinates differ from the prescribed schedule."
+        )
     if quads.size:
         corners = points[quads]
         normals, _ = _newell_normals(points, quads, np.full(quads.shape[0], 4))
-        heights = 0.5 * np.mean(np.linalg.norm(corners - np.roll(corners, -1, axis=1), axis=2), axis=1)
+        heights = 0.5 * np.mean(
+            np.linalg.norm(corners - np.roll(corners, -1, axis=1), axis=2), axis=1
+        )
         centroids = np.mean(corners, axis=1)
         for index, apex in enumerate(points[apex_ids]):
             height = heights[index]
-            while height > 0.0 and not np.array_equal(apex, centroids[index] + height * normals[index]):
+            while height > 0.0 and not np.array_equal(
+                apex, centroids[index] + height * normals[index]
+            ):
                 next_height = 0.5 * height
-                if next_height == height or np.linalg.norm(apex - centroids[index]) > height * 2.0:
+                if (
+                    next_height == height
+                    or np.linalg.norm(apex - centroids[index]) > height * 2.0
+                ):
                     break
                 height = next_height
-            if height == 0.0 or not np.array_equal(apex, centroids[index] + height * normals[index]):
+            if height == 0.0 or not np.array_equal(
+                apex, centroids[index] + height * normals[index]
+            ):
                 raise ValueError("Retained cap apex is not a valid transition point.")
     expected_mesh, _ = _cell_mesh(points, cells)
     if periodic_vertices is not None:
-        expected_mesh = _bind_layer_periodic_mesh(source_wall, expected_mesh, used, *periodic_vertices)
+        expected_mesh = _bind_layer_periodic_mesh(
+            source_wall, expected_mesh, used, *periodic_vertices
+        )
     if not bool(eqx.tree_equal(retained.mesh, expected_mesh)):
         raise ValueError("Retained layer cells differ from the prescribed front complex.")
     remap = np.full(points.shape[0], -1, dtype=np.int64)
@@ -4034,12 +4128,16 @@ def _reprove_retained_boundary_layers(
     if not np.array_equal(np.asarray(retained.wall_vertices), remap[:base]):
         raise ValueError("Retained wall vertex rows differ from the source complex.")
     if quads.size:
-        sides = np.concatenate([
-            np.stack((quads[:, i], quads[:, (i + 1) % 4], apex_ids), axis=1)
-            for i in range(4)
-        ])
+        sides = np.concatenate(
+            [
+                np.stack((quads[:, i], quads[:, (i + 1) % 4], apex_ids), axis=1)
+                for i in range(4)
+            ]
+        )
         triangles = cap[cap_arity == 3]
-        cap = np.concatenate((triangles, np.pad(sides, ((0, 0), (0, 1)), constant_values=-1)))
+        cap = np.concatenate(
+            (triangles, np.pad(sides, ((0, 0), (0, 1)), constant_values=-1))
+        )
         cap_arity = np.full(cap.shape[0], 3)
     expected_cap, cap_vertices = _cap_mesh(points, cap, cap_arity)
     if expected_cap is not None and periodic_vertices is not None:
@@ -4054,22 +4152,39 @@ def _reprove_retained_boundary_layers(
         source_wall, wall_association, front, columns, used, pyramid_columns
     )
     for name, expected in zip(
-        ("vertex_source_vertex_ids", "vertex_source_entity_ids", "vertex_column_ids",
-         "vertex_source_occurrence_paths", "vertex_column_parent_offsets",
-         "vertex_column_parent_ids", "vertex_column_parent_weights"),
-        ancestry, strict=True,
+        (
+            "vertex_source_vertex_ids",
+            "vertex_source_entity_ids",
+            "vertex_column_ids",
+            "vertex_source_occurrence_paths",
+            "vertex_column_parent_offsets",
+            "vertex_column_parent_ids",
+            "vertex_column_parent_weights",
+        ),
+        ancestry,
+        strict=True,
     ):
         actual = getattr(retained, name)
-        if not (np.array_equal(np.asarray(actual), expected) if isinstance(expected, np.ndarray) else actual == expected):
+        if not (
+            np.array_equal(np.asarray(actual), expected)
+            if isinstance(expected, np.ndarray)
+            else actual == expected
+        ):
             raise ValueError(f"Retained vertex ancestry differs in {name}.")
-    mean, minimum, maximum, active = _measured_thicknesses(wall, front, columns, points[:point_count])
+    mean, minimum, maximum, active = _measured_thicknesses(
+        wall, front, columns, points[:point_count]
+    )
     evidence = retained.evidence
     for name, expected in (
-        ("achieved_thicknesses", mean), ("minimum_thicknesses", minimum),
-        ("maximum_thicknesses", maximum), ("layer_active", active),
+        ("achieved_thicknesses", mean),
+        ("minimum_thicknesses", minimum),
+        ("maximum_thicknesses", maximum),
+        ("layer_active", active),
         ("achieved_growth_rates", mean[1:] / mean[:-1]),
     ):
-        if not np.array_equal(np.asarray(getattr(evidence, name)), expected, equal_nan=True):
+        if not np.array_equal(
+            np.asarray(getattr(evidence, name)), expected, equal_nan=True
+        ):
             raise ValueError(f"Retained layer evidence differs in {name}.")
     if evidence.requested_thicknesses != tuple(control.schedule.thicknesses):
         raise ValueError("Retained requested thicknesses differ from the control.")
@@ -4078,7 +4193,9 @@ def _reprove_retained_boundary_layers(
     distances = _nearest_distances(
         wall.points[wall_triangles], level_points.reshape(-1, 3)
     ).reshape(thicknesses.size, -1)
-    increments = np.diff(np.concatenate((np.zeros((1, distances.shape[1])), distances)), axis=0)
+    increments = np.diff(
+        np.concatenate((np.zeros((1, distances.shape[1])), distances)), axis=0
+    )
     carried = np.arange(1, thicknesses.size + 1)[:, None] <= count[front.column_vertex]
     minimum_required = thicknesses[:, None] * control.minimum_thickness_fraction
     if np.any((increments < minimum_required) & carried):
@@ -4094,10 +4211,14 @@ def _reprove_retained_boundary_layers(
         "maximum_stretch": float(np.max(realized_stretch)),
         "collision_policy": control.collision,
         "reduced_vertex_count": np.count_nonzero(scale[wall.wall_vertices] < 1.0),
-        "terminated_vertex_count": np.count_nonzero(count[wall.wall_vertices] < thicknesses.size),
+        "terminated_vertex_count": np.count_nonzero(
+            count[wall.wall_vertices] < thicknesses.size
+        ),
         "merged_vertex_count": 2 * np.count_nonzero(columns.merged_top >= 0),
         "minimum_scale": float(np.min(scale[wall.wall_vertices])),
-        "cell_counts": tuple((block.cell_kind, block.cell_count) for block in retained.mesh.blocks),
+        "cell_counts": tuple(
+            (block.cell_kind, block.cell_count) for block in retained.mesh.blocks
+        ),
     }
     for name, expected in final_fields.items():
         if getattr(evidence, name) != expected:
@@ -4107,13 +4228,17 @@ def _reprove_retained_boundary_layers(
         with np.errstate(divide="ignore", invalid="ignore"):
             growth = increments[1:] / increments[:-1]
         active_pairs = carried[1:] & carried[:-1]
-        if np.any(((growth < lower) | (growth > upper) | ~np.isfinite(growth)) & active_pairs):
+        if np.any(
+            ((growth < lower) | (growth > upper) | ~np.isfinite(growth)) & active_pairs
+        ):
             raise ValueError("Retained physical column growth violates the control.")
     certificate = _reprove_retained_cell_intersections(retained, wall, policy_, obstacles)
     if evidence.certified_valid_count != certificate.certified_valid_count:
         raise ValueError("Retained validity evidence differs from the actual cells.")
     if not bool(eqx.tree_equal(retained.validity, certificate)):
-        raise ValueError("Retained validity certificate differs from the independently computed proof.")
+        raise ValueError(
+            "Retained validity certificate differs from the independently computed proof."
+        )
     from ..discretization import CellGeometrySpec
     from ..geometry._global_embedding import certify_global_embedding
 
@@ -4515,7 +4640,7 @@ def _assemble(
         column_layer_count=columns.count,
         column_stretch=columns.stretch,
         column_merged_top=columns.merged_top,
-        column_level_coordinates=resolution.points[wall.points.shape[0]:].reshape(
+        column_level_coordinates=resolution.points[wall.points.shape[0] :].reshape(
             layers, front.column_vertex.size, 3
         ),
         column_vertex_sources=front.ancestry.column_vertex_sources,

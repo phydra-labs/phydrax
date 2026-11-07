@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import IntEnum
 from fractions import Fraction
 from itertools import groupby
@@ -279,18 +279,71 @@ class SourceBoundaryChartCover(StrictModule, NonTrainableState):
         self.source_revision = revision
         self.findings = tuple(findings)
         self.restriction_ids = restrictions
-        self.cover_id = canonical_fingerprint(
+        self.cover_id = self._exact_identity()
+
+    def _exact_identity(self) -> str:
+        """Hash only exact content; simplices and their bounds are stored evidence.
+
+        The simplex corners are decided points and the bounds certified upper
+        bounds, both rounded through platform arithmetic, so the identity binds
+        their layout and the exact restriction rows they cover, not their bits.
+        """
+        return canonical_fingerprint(
             {
                 "kind": "source-boundary-chart-cover",
-                "source": source,
-                "revision": revision,
-                "arrays": array_tree_fingerprint((simplices_, bounds_)),
+                "source": self.source_id,
+                "revision": self.source_revision,
+                "simplices": int(np.shape(self.simplices)[0]),
                 "semantics": self.semantics,
                 "complete": self.complete,
                 "findings": tuple(finding.finding_id for finding in self.findings),
-                "restrictions": restrictions,
+                "restrictions": self.restriction_ids,
             }
         )
+
+    def require_reproduced_by(self, fresh: SourceBoundaryChartCover, /) -> None:
+        """Require ``fresh``, this cover's recomputation, to reproduce it exactly.
+
+        Exact content must be equal field by field: source, semantics,
+        completeness, findings, restriction rows and the simplex and bound
+        layouts. Each stored deviation bound is a one-sided certified upper bound
+        with no stored lower bound, so the sound check on the evidence itself is
+        that every corner is finite and every bound nonnegative.
+        """
+        from ._source_fidelity_certificate import SourceFidelityReproofError
+
+        if type(fresh) is not SourceBoundaryChartCover:
+            raise TypeError("A cover reproof must be a SourceBoundaryChartCover.")
+        if self.cover_id != self._exact_identity():
+            raise SourceFidelityReproofError(
+                "Stored source chart cover differs from its identity", bound="cover_id"
+            )
+        simplices = np.asarray(self.simplices, dtype=np.float64)
+        bounds = np.asarray(self.deviation_bounds, dtype=np.float64)
+        for name, stored, recomputed in (
+            ("source_id", self.source_id, fresh.source_id),
+            ("source_revision", self.source_revision, fresh.source_revision),
+            ("semantics", self.semantics, fresh.semantics),
+            ("complete", self.complete, fresh.complete),
+            (
+                "findings",
+                tuple(finding.finding_id for finding in self.findings),
+                tuple(finding.finding_id for finding in fresh.findings),
+            ),
+            ("restriction_ids", self.restriction_ids, fresh.restriction_ids),
+            ("simplices", simplices.shape, np.shape(fresh.simplices)),
+            ("deviation_bounds", bounds.shape, np.shape(fresh.deviation_bounds)),
+        ):
+            if stored != recomputed:
+                raise SourceFidelityReproofError(
+                    "Recomputed source chart cover has other exact content",
+                    bound=f"cover.{name}",
+                )
+        if not np.all(np.isfinite(simplices)) or np.any(~(bounds >= 0.0)):
+            raise SourceFidelityReproofError(
+                "Stored source chart cover evidence is not a finite certified cover",
+                bound="cover.deviation_bounds",
+            )
 
 
 type _RationalToken = tuple[int, int]
@@ -1233,7 +1286,16 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                     else (
                         cad_plc.complex_id,
                         cad_source_charts.source_chart_id,
-                        array_tree_fingerprint(cad_plc),
+                        # The CAD fidelity proof enters through ``complex_id``
+                        # by its exact identity; its certified float bounds
+                        # are stored evidence and are not hashed here.
+                        array_tree_fingerprint(
+                            tuple(
+                                getattr(cad_plc, item.name)
+                                for item in fields(cad_plc)
+                                if item.name != "cad_fidelity"
+                            )
+                        ),
                     ),
                     None
                     if cad_curve_association is None

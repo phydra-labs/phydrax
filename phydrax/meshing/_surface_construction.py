@@ -26,6 +26,7 @@ from ..geometry._contracts import CompiledGeometry
 from ..geometry._interval_enclosure import prepare_interval_function
 from ..geometry.analytic._operations import SharpCSG
 from ..geometry.analytic._specimen_envelope import SpecimenEnvelope
+from ..geometry.implicit._adaptive_discovery import _FieldEnclosures
 from ..geometry.implicit._clipped_discovery import ClippedImplicitSurface
 from ..geometry.implicit._curve_discovery import ParametricChartCurve
 from ..geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
@@ -474,8 +475,9 @@ class LatticeSpecimenSurface(StrictModule, NonTrainableState):
 
     Fidelity bounds, in Cartesian length: ``implicit_face_distance`` bounds
     the distance of every implicit-face point to the region's zero set
-    (interval Hessian and gradient bounds of the region field on each
-    triangle; see ``_implicit_face_distances``);
+    (per triangle, the smaller of a gradient-flow bound from interval
+    Hessian and gradient bounds of the region field and a root-witness
+    bound from its vertices' roots; see ``_implicit_face_distances``);
     ``cap_deviation`` bounds the distance of each flat cap triangle to its
     envelope surface; ``crease_root_distance`` bounds each crease vertex's
     distance to a root of the field along its chart edge.
@@ -751,8 +753,12 @@ class _HessianEnclosures:
 
         self._program = prepare_interval_function(entries, 3)
 
-    def frobenius_upper(self, lower: np.ndarray, upper: np.ndarray, /) -> np.ndarray:
-        """Upper bound of the Hessian Frobenius norm (dominating its spectral norm)."""
+    def spectral_upper(self, lower: np.ndarray, upper: np.ndarray, /) -> np.ndarray:
+        """Upper bound of the Hessian spectral norm on each box.
+
+        The smaller of the Frobenius norm and the largest absolute row sum,
+        both of which dominate the spectral norm of a symmetric matrix.
+        """
         low, high = self._program.evaluate(lower, upper)
         magnitude = np.maximum(np.abs(low), np.abs(high))
         squares = np.nextafter(magnitude * magnitude, np.inf)
@@ -760,41 +766,31 @@ class _HessianEnclosures:
         total = np.zeros(squares.shape[0], dtype=np.float64)
         for column in range(6):
             total = np.nextafter(total + weights[column] * squares[:, column], np.inf)
-        return np.nextafter(np.sqrt(total), np.inf)
+        frobenius = np.nextafter(np.sqrt(total), np.inf)
+        rows = np.zeros(squares.shape[0], dtype=np.float64)
+        for diagonal, first, second in ((0, 3, 4), (1, 3, 5), (2, 4, 5)):
+            row = np.nextafter(magnitude[:, diagonal] + magnitude[:, first], np.inf)
+            row = np.nextafter(row + magnitude[:, second], np.inf)
+            rows = np.maximum(rows, row)
+        return np.minimum(frobenius, rows)
 
 
-def _implicit_face_distances(
-    geometry: CompiledGeometry, triangles: np.ndarray, groups: np.ndarray, /
-) -> np.ndarray:
-    """Certified distance from each flat implicit-face triangle to the zero set.
-
-    For ``p = sum_j l_j v_j`` in a triangle, ``g(p) - sum_j l_j g(v_j)`` is
-    ``-sum_j l_j (g(v_j) - g(p) - grad g(p) . (v_j - p))``, so
-    ``|g(p)| <= U = max_j |g(v_j)| + M R^2 / 2`` with ``M`` an interval bound
-    of the Hessian norm on a box containing the triangle and ``R`` the radius
-    of its smallest enclosing disc, ``R^2 <= e^2 / 3`` for the longest edge
-    ``e`` (Jung's theorem); vertex values are enclosed at the vertex points.
-    If ``||grad g|| >= m > 0`` on that box grown by ``delta`` and
-    ``U / m <= delta``, the gradient flow from ``p`` reaches the zero set
-    within ``U / m``. Enclosures are shared by the triangles of one
-    ``groups`` label (one discovery cell): the box is their common bounding
-    box. ``delta`` starts at their longest edge; a group whose premise fails
-    with ``m > 0`` retries with ``delta`` twice its largest ``U / m``, so
-    ``delta`` at least doubles per retry and the loop ends once the premise
-    holds or ``m`` vanishes on the grown box (an infinite, uncertified bound).
-    """
-    from ..geometry.implicit._adaptive_discovery import _FieldEnclosures
-
-    points = np.asarray(triangles, dtype=np.float64).reshape(-1, 3, 3)
-    if not points.shape[0]:
-        return np.empty((0,), dtype=np.float64)
-    bounds = _FieldEnclosures(geometry, "interval")
-    if not bounds.gradient_rigorous:
-        return np.full(points.shape[0], np.inf)
-    vertex_low, vertex_high = bounds.point_values(points.reshape(-1, 3))
-    vertex_value = np.max(
-        np.maximum(np.abs(vertex_low), np.abs(vertex_high)).reshape(-1, 3), axis=1
+def _gradient_norm_lower(lower: np.ndarray, upper: np.ndarray, /) -> np.ndarray:
+    """Rounded-down lower bound of ``||v||`` over the boxes ``lower <= v <= upper``."""
+    smallest = np.where(
+        (lower <= 0.0) & (upper >= 0.0),
+        0.0,
+        np.minimum(np.abs(lower), np.abs(upper)),
     )
+    squares = np.nextafter(smallest * smallest, -np.inf)
+    total = np.zeros(squares.shape[0], dtype=np.float64)
+    for axis in range(3):
+        total = np.nextafter(total + squares[:, axis], -np.inf)
+    return np.nextafter(np.sqrt(np.maximum(total, 0.0)), -np.inf)
+
+
+def _longest_edges(points: np.ndarray, /) -> np.ndarray:
+    """Rounded-up longest edge of each triangle ``(N, 3, 3)``."""
     edges = np.stack(
         (
             points[:, 1] - points[:, 0],
@@ -803,57 +799,207 @@ def _implicit_face_distances(
         ),
         axis=1,
     )
-    longest = np.nextafter(np.max(np.linalg.norm(edges, axis=2), axis=1), np.inf)
-    labels, group = np.unique(np.asarray(groups), return_inverse=True)
-    group = group.reshape(-1)
-    count = labels.shape[0]
-    lower = np.full((count, 3), np.inf)
-    upper = np.full((count, 3), -np.inf)
-    reach = np.zeros(count)
-    np.minimum.at(lower, group, np.min(points, axis=1))
-    np.maximum.at(upper, group, np.max(points, axis=1))
-    np.maximum.at(reach, group, longest)
-    hessian = _HessianEnclosures(geometry).frobenius_upper(lower, upper)[group]
-    squared_radius = np.nextafter(
-        np.nextafter(longest * longest, np.inf) / np.nextafter(3.0, -np.inf), np.inf
+    return np.nextafter(np.max(np.linalg.norm(edges, axis=2), axis=1), np.inf)
+
+
+def _third_of_square(length: np.ndarray, /) -> np.ndarray:
+    """Rounded-up ``length^2 / 3``."""
+    return np.nextafter(
+        np.nextafter(length * length, np.inf) / np.nextafter(3.0, -np.inf), np.inf
     )
-    excess = np.nextafter(
-        vertex_value + np.nextafter(0.5 * hessian * squared_radius, np.inf), np.inf
+
+
+def _gradient_flow_distances(
+    bounds: _FieldEnclosures, hessian: _HessianEnclosures, points: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Gradient-flow distance bound of each flat triangle to the zero set.
+
+    For ``p = sum_j l_j v_j`` in a triangle with longest edge ``e``,
+    ``sum_j l_j |p - v_j|^2 = sum_{i<j} l_i l_j |v_i - v_j|^2 <= e^2 / 3``
+    and ``g(p) - sum_j l_j g(v_j)`` is
+    ``-sum_j l_j (g(v_j) - g(p) - grad g(p) . (v_j - p))``, so
+    ``|g(p)| <= U = V + T`` with ``V = max_j |g(v_j)|`` (enclosed at the
+    vertices) and ``T = M e^2 / 6``, ``M`` an interval bound of the Hessian
+    spectral norm on the triangle's bounding box ``B``. If
+    ``||grad g|| >= m > 0`` on ``B`` grown by ``delta`` and
+    ``U / m <= delta``, the gradient flow from ``p`` reaches the zero set
+    within ``U / m``. ``m`` is the larger of the componentwise interval
+    bound and the centred form ``||grad g(c)|| - M_delta (s + delta)`` about
+    the centroid ``c`` (``s`` its largest vertex distance, so ``s + delta``
+    covers every point within ``delta`` of the triangle; ``M_delta`` the
+    Hessian bound on the grown box): componentwise intervals alone contain
+    zero on boxes the normal turns across, although the gradient is far
+    from zero there. ``delta`` starts at ``2 U / m`` with ``m`` on ``B``; a
+    triangle whose premise fails with ``m > 0`` retries with ``delta``
+    twice its ``U / m``, so ``delta`` at least doubles per retry and the
+    loop ends once the premise holds, ``m`` vanishes or ``delta``
+    overflows.
+
+    Returns the bounds (``inf`` where unproved) and, per triangle, whether
+    splitting an unproved one can help: ``m > 0`` on ``B`` and ``T > V``
+    (the Taylor term, which quarters under a midpoint split, still
+    dominates).
+    """
+    count = points.shape[0]
+    third = _third_of_square(_longest_edges(points))
+    vertex_low, vertex_high = bounds.point_values(points.reshape(-1, 3))
+    vertex_value = np.max(
+        np.maximum(np.abs(vertex_low), np.abs(vertex_high)).reshape(-1, 3), axis=1
     )
-    distance = np.full(points.shape[0], np.inf)
-    pending = np.arange(count)
-    while pending.size:
-        grown = bounds.boxes(
-            np.nextafter(lower[pending] - reach[pending, None], -np.inf),
-            np.nextafter(upper[pending] + reach[pending, None], np.inf),
+    lower = np.min(points, axis=1)
+    upper = np.max(points, axis=1)
+    center = np.clip(np.sum(points, axis=1) / 3.0, lower, upper)
+    spread = np.nextafter(
+        np.max(np.linalg.norm(points - center[:, None, :], axis=2), axis=1), np.inf
+    )
+    at_center = bounds.boxes(center, center)
+    center_slope = _gradient_norm_lower(
+        np.asarray(at_center.gradient_lower, dtype=np.float64),
+        np.asarray(at_center.gradient_upper, dtype=np.float64),
+    )
+
+    def grown_box(
+        rows: np.ndarray, delta: np.ndarray, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        with np.errstate(over="ignore", invalid="ignore"):
+            return (
+                np.nextafter(lower[rows] - delta[:, None], -np.inf),
+                np.nextafter(upper[rows] + delta[:, None], np.inf),
+            )
+
+    def slope_lower(
+        rows: np.ndarray, delta: np.ndarray, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Gradient-norm lower bound and Hessian bound on the grown boxes."""
+        low, high = grown_box(rows, delta)
+        grown = bounds.boxes(low, high)
+        componentwise = _gradient_norm_lower(
+            np.asarray(grown.gradient_lower, dtype=np.float64),
+            np.asarray(grown.gradient_upper, dtype=np.float64),
         )
-        gradient_low = np.asarray(grown.gradient_lower, dtype=np.float64)
-        gradient_high = np.asarray(grown.gradient_upper, dtype=np.float64)
-        smallest = np.where(
-            (gradient_low <= 0.0) & (gradient_high >= 0.0),
-            0.0,
-            np.minimum(np.abs(gradient_low), np.abs(gradient_high)),
+        radius = np.nextafter(spread[rows] + delta, np.inf)
+        curvature = hessian.spectral_upper(low, high)
+        centred = np.nextafter(
+            center_slope[rows] - np.nextafter(curvature * radius, np.inf), -np.inf
         )
-        norm = np.full(count, 0.0)
-        norm[pending] = np.nextafter(
-            np.sqrt(
-                np.maximum(
-                    np.nextafter(np.sum(smallest * smallest, axis=1), -np.inf), 0.0
-                )
-            ),
-            -np.inf,
+        return np.maximum(componentwise, centred), curvature
+
+    def growable(rows: np.ndarray, /) -> np.ndarray:
+        """The rows whose box grown by ``reach`` is still a finite float box."""
+        low, high = grown_box(rows, reach[rows])
+        return rows[np.all(np.isfinite(low) & np.isfinite(high), axis=1)]
+
+    every = np.arange(count)
+    own_slope, curvature = slope_lower(every, np.zeros(count))
+    # ``M e^2 / 6 = (M / 2) (e^2 / 3)``; halving is exact.
+    taylor = 0.5 * np.nextafter(curvature * third, np.inf)
+    excess = np.nextafter(vertex_value + taylor, np.inf)
+    distance = np.full(count, np.inf)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        reach = np.where(
+            own_slope > 0.0, np.nextafter(2.0 * (excess / own_slope), np.inf), np.inf
         )
-        rows = np.flatnonzero(np.isin(group, pending) & (norm[group] > 0.0))
-        bound = np.nextafter(excess[rows] / norm[group[rows]], np.inf)
-        certified = bound <= reach[group[rows]]
-        distance[rows[certified]] = bound[certified]
-        needed = np.zeros(count)
-        np.maximum.at(needed, group[rows[~certified]], bound[~certified])
-        retry = np.flatnonzero(needed > 0.0)
-        distance[np.isin(group, retry)] = np.inf
-        reach[retry] = np.nextafter(2.0 * needed[retry], np.inf)
-        pending = retry[np.isfinite(reach[retry])]
-    return distance
+        pending = growable(every)
+        while pending.size:
+            slope, _ = slope_lower(pending, reach[pending])
+            bound = np.where(
+                slope > 0.0, np.nextafter(excess[pending] / slope, np.inf), np.inf
+            )
+            certified = bound <= reach[pending]
+            distance[pending[certified]] = bound[certified]
+            failed = pending[~certified]
+            reach[failed] = np.nextafter(2.0 * bound[~certified], np.inf)
+            pending = growable(failed)
+    return distance, (own_slope > 0.0) & (taylor > vertex_value)
+
+
+def _split_triangles(points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Midpoint split of each triangle into four, and the midpoints' rounding.
+
+    Returns the children ``(4 N, 3, 3)`` (four consecutive rows per parent)
+    and, per parent, a bound on how far a rounded midpoint lies from the
+    exact one: the piecewise-linear map from the exact children onto the
+    rounded ones moves no point farther, so every point of the parent lies
+    within it of a rounded child.
+    """
+    a, b, c = points[:, 0], points[:, 1], points[:, 2]
+    ab, bc, ca = 0.5 * (a + b), 0.5 * (b + c), 0.5 * (c + a)
+    children = np.stack(
+        (
+            np.stack((a, ab, ca), axis=1),
+            np.stack((ab, b, bc), axis=1),
+            np.stack((ca, bc, c), axis=1),
+            np.stack((ab, bc, ca), axis=1),
+        ),
+        axis=1,
+    ).reshape(-1, 3, 3)
+    # ``0.5 (a + b)`` errs by at most half an ulp of ``a + b``: one ulp of
+    # the midpoint per coordinate.
+    ulps = np.spacing(np.abs(np.stack((ab, bc, ca), axis=1)))
+    rounding = np.nextafter(
+        np.sqrt(np.nextafter(np.sum(ulps * ulps, axis=2), np.inf)), np.inf
+    )
+    return children, np.max(rounding, axis=1)
+
+
+def _implicit_face_distances(
+    geometry: CompiledGeometry, triangles: np.ndarray, vertex_distances: np.ndarray, /
+) -> np.ndarray:
+    """Certified distance from each flat implicit-face triangle to the zero set.
+
+    ``vertex_distances[i, j]`` bounds the distance from vertex ``j`` of
+    triangle ``i`` to the zero set (its root witness). Each triangle
+    reports the smaller of two certified bounds:
+
+    - *Root witness:* for ``p = sum_j l_j v_j``,
+      ``min_j |p - v_j|^2 <= sum_j l_j |p - v_j|^2 <= e^2 / 3`` with ``e``
+      the longest edge, so ``e / sqrt(3) + max_j vertex_distances[i, j]``.
+    - *Gradient flow* (``_gradient_flow_distances``), refined locally: an
+      unproved piece that splitting can help is split at its edge midpoints
+      and its four children are bounded in turn, each carrying the
+      accumulated midpoint rounding (``_split_triangles``); the triangle
+      takes the largest piece bound. A piece that is unproved and cannot be
+      helped by splitting leaves its triangle with the root witness.
+
+    Splitting ends: along any chain of split pieces, shrinking to a point
+    ``q``, the Taylor term quarters while the vertex term tends to
+    ``|g(q)|``. If ``g(q) != 0`` the vertex term soon dominates and the
+    chain stops. If ``g(q) = 0`` and ``grad g(q) != 0``, small pieces near
+    ``q`` are proved. If ``grad g(q) = 0``, every piece of the chain contains
+    ``q``, so its gradient bound is not positive and it stops at once.
+    """
+    points = np.asarray(triangles, dtype=np.float64).reshape(-1, 3, 3)
+    count = points.shape[0]
+    if not count:
+        return np.empty((0,), dtype=np.float64)
+    witness = np.nextafter(
+        np.nextafter(np.sqrt(_third_of_square(_longest_edges(points))), np.inf)
+        + np.max(np.asarray(vertex_distances, dtype=np.float64).reshape(-1, 3), axis=1),
+        np.inf,
+    )
+    bounds = _FieldEnclosures(geometry, "interval")
+    if not bounds.gradient_rigorous:
+        return witness
+    hessian = _HessianEnclosures(geometry)
+    gradient = np.zeros(count, dtype=np.float64)
+    proved = np.ones(count, dtype=np.bool_)
+    pieces = points
+    owner = np.arange(count)
+    slack = np.zeros(count, dtype=np.float64)
+    while pieces.shape[0]:
+        distance, divisible = _gradient_flow_distances(bounds, hessian, pieces)
+        certified = np.isfinite(distance)
+        np.maximum.at(
+            gradient,
+            owner[certified],
+            np.nextafter(distance[certified] + slack[certified], np.inf),
+        )
+        proved[owner[~certified & ~divisible]] = False
+        split = ~certified & divisible & proved[owner]
+        pieces, rounding = _split_triangles(pieces[split])
+        owner = np.repeat(owner[split], 4)
+        slack = np.repeat(np.nextafter(slack[split] + rounding, np.inf), 4)
+    return np.where(proved, np.minimum(witness, gradient), witness)
 
 
 def _map_lipschitz(envelope: SpecimenEnvelope, /) -> float:
@@ -1106,19 +1252,33 @@ def construct_lattice_specimen_surface(
     crease_segments = np.asarray(sorted(crease_pairs), dtype=np.int64).reshape(-1, 2)
     parameter_points = np.asarray(bank.points, dtype=np.float64).reshape(-1, 3)
     vertices = envelope.map_host(parameter_points)
-    implicit = facet_rows == 0
-    cell_rows = np.full(facet_rows.shape[0], -1, dtype=np.int64)
-    cell_rows[implicit] = np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
+    lipschitz = _map_lipschitz(envelope)
+    # Root witness of each contour vertex: the envelope map of its certified
+    # parameter-space root bracket half-length.
+    root_distance = np.full(vertices.shape[0], np.inf)
+    np.minimum.at(
+        root_distance,
+        rows,
+        np.nextafter(
+            lipschitz
+            * np.asarray(scaffold.root_errors, dtype=np.float64)[
+                discovery.vertex_root_rows
+            ],
+            np.inf,
+        ),
+    )
     if ratio > 0.0:
+        implicit = facet_rows == 0
         fixed = np.zeros(vertices.shape[0], dtype=np.bool_)
         fixed[triangle_rows[~implicit].reshape(-1)] = True
         fixed[crease_segments.reshape(-1)] = True
         triangle_rows, kept = _collapse_short_edges(vertices, triangle_rows, fixed, ratio)
-        facet_rows, cell_rows = facet_rows[kept], cell_rows[kept]
+        facet_rows = facet_rows[kept]
         survivors = np.unique(triangle_rows)
         remap = np.full(vertices.shape[0], -1, dtype=np.int64)
         remap[survivors] = np.arange(survivors.shape[0], dtype=np.int64)
         vertices, parameter_points = vertices[survivors], parameter_points[survivors]
+        root_distance = root_distance[survivors]
         triangle_rows, crease_segments = remap[triangle_rows], remap[crease_segments]
 
     # Envelope edges: cap triangle edges on a sharp parameter-box edge.
@@ -1141,10 +1301,10 @@ def construct_lattice_specimen_surface(
         if cap_axes.shape[0]
         else 0.0
     )
-    lipschitz = _map_lipschitz(envelope)
     implicit = facet_rows == 0
+    implicit_rows = triangle_rows[implicit]
     implicit_bounds = _implicit_face_distances(
-        region.compile(), vertices[triangle_rows[implicit]], cell_rows[implicit]
+        region.compile(), vertices[implicit_rows], root_distance[implicit_rows]
     )
     implicit_distance = float(np.max(implicit_bounds, initial=0.0))
     crease_errors = np.concatenate([chart.root_errors for chart in discovery.charts])

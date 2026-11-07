@@ -2151,6 +2151,149 @@ def test_non_brep_seam_corner_is_the_exact_whole_turn_image() -> None:
         )
 
 
+def _straight_seam_cylinder(middle: float, /) -> MeshingDomain:
+    """A cylinder whose cap seam is a straight degree-one p-curve.
+
+    The cap's ``theta = 0`` seam use is re-authored with control points
+    ``(0, 0), (0, middle), (0, 1)`` over knots ``[0, 0, 1/2, 1, 1]``: its chart
+    image is the seam segment for every ``middle`` in ``(0, 1)``, and it is
+    affine in its parameter exactly when ``middle == 1/2``.
+    """
+    original = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=SpatialCoordinateContract.si())
+    )
+    cap = original.patches[0]
+    (loop,) = cap.loops
+    seam = loop[3]
+    assert isinstance(seam, PatchCurveUse)
+    assert seam.curve == 0
+    straight = BSplineCurve(
+        np.asarray(((0.0, 0.0), (0.0, middle), (0.0, 1.0)), dtype=np.float64),
+        np.ones((3,), dtype=np.float64),
+        np.asarray((0.0, 0.0, 0.5, 1.0, 1.0), dtype=np.float64),
+        1,
+    )
+    return MeshingDomain(
+        (
+            MeshingSurfacePatch(
+                cap.surface,
+                (
+                    (
+                        *loop[:3],
+                        PatchCurveUse(
+                            seam.curve, straight, seam.first, seam.last, sense=seam.sense
+                        ),
+                    ),
+                ),
+                orientation=cap.orientation,
+            ),
+            *original.patches[1:],
+        ),
+        original.curves,
+        len(original.corner_points),
+        source_id="straight-seam",
+        source_revision="straight-seam-r1",
+        regions=original.regions,
+        corner_points=original.corner_points,
+    )
+
+
+def test_pole_ring_point_joins_a_straight_trim_only_at_its_exact_chart_point() -> None:
+    # The cap seam is re-authored as a straight degree-one p-curve whose interior
+    # control point lies one binary64 step past the chart midpoint. The ring
+    # point (0, 1/2) is on the seam line, but the seam's exact chart point at the
+    # linearly solved parameter 1/2 is that control point: the ring point is not
+    # the trim's vertex there and keeps its ring coordinate, while the rim point
+    # (0, 1) is the trim's exact end vertex and joins it.
+    from phydrax.meshing.providers._native_surface import (
+        _integrate_pole_ring_parameters,
+        _PoleChart,
+    )
+
+    middle = 0.5 + 2.0**-53
+    domain = _straight_seam_cylinder(middle)
+
+    def exact_seam(parameter: Fraction, /) -> tuple[Fraction, Fraction]:
+        # The use maps its parameter to the knot range [0, 1] identically; the
+        # degree-one spline interpolates its control points on each knot span.
+        knot = Fraction(1, 2)
+        lower, upper = (
+            (Fraction(0), Fraction(middle))
+            if parameter <= knot
+            else (Fraction(middle), Fraction(1))
+        )
+        start = Fraction(0) if parameter <= knot else knot
+        return Fraction(0), lower + (parameter - start) / knot * (upper - lower)
+
+    on_seam = (Fraction(0), Fraction(1, 2))
+    rim = (Fraction(0), Fraction(1))
+    assert exact_seam(Fraction(1, 2)) != on_seam
+    assert exact_seam(Fraction(1)) == rim
+    rings = (((Fraction(0), on_seam),), ((Fraction(0), rim),))
+    pole_charts = {(0, 0, 0): _PoleChart((), rings)}
+    parameters_by_curve = {0: {Fraction(0)}}
+
+    _integrate_pole_ring_parameters(domain, (0,), pole_charts, parameters_by_curve)
+
+    assert parameters_by_curve == {0: {Fraction(0), Fraction(1)}}
+    assert pole_charts[(0, 0, 0)].rings == rings
+
+
+def _mesh_straight_seam_cylinder(middle: float, /) -> NativeMeshConstruction:
+    domain = _straight_seam_cylinder(middle)
+    return prepare_native_surface(
+        domain,
+        _surface_specification(domain, maximum_deviation=0.05),
+        NativeMeshingOptions("parametric_surface"),
+        SpatialCoordinateContract.si(),
+    ).execute()
+
+
+def test_pole_rings_on_an_affine_straight_seam_mesh_conformingly() -> None:
+    # Control for the refusal below: with the interior control point at the
+    # chart midpoint the seam is affine, every ring end on either seam use is
+    # the seam's exact vertex, and the closed surface meshes conformingly: each
+    # directed triangle edge is matched by exactly one opposite edge, so no
+    # vertex lies inside another triangle's edge.
+    construction = _mesh_straight_seam_cylinder(0.5)
+    assert construction.compliance.passed
+    triangles = np.concatenate(
+        tuple(
+            np.asarray(block.vertices, dtype=np.int64)
+            for block in construction.mesh.blocks
+        )
+    )
+    directed = [
+        (int(row[corner]), int(row[(corner + 1) % 3]))
+        for row in triangles
+        for corner in range(3)
+    ]
+    assert len(set(directed)) == len(directed)
+    assert {(last, first) for first, last in directed} == set(directed)
+
+
+def test_pole_ring_on_a_nonaffine_straight_seam_is_a_typed_refusal() -> None:
+    # The cap's graded rings end on both seam uses of curve 0. On the 2*pi side
+    # the seam is an exact line, so every ring end is its exact vertex and adds
+    # its parameter to curve 0. On the theta = 0 side the interior control point
+    # lies one binary64 step past the midpoint: the seam's chart point at that
+    # parameter is not the ring end, which then lies on the seam polyline
+    # without being a seam vertex, while its radial spoke overlaps the seam
+    # collinearly. The exact chart triangulation refuses the cap as a typed
+    # invalid source; it never meshes a ring vertex inside a trim edge.
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+
+    with pytest.raises(MeshingFailure) as failure:
+        _mesh_straight_seam_cylinder(0.5 + 2.0**-53)
+    assert failure.value.category is MeshingFailureCategory.INVALID_SOURCE
+    assert failure.value.entity_ids == (0,)
+    assert "native constrained chart triangulation failed for source patch 0" in str(
+        failure.value
+    )
+    assert isinstance(failure.value.__cause__, ValueError)
+    assert "constraint segments cross in their interiors" in str(failure.value.__cause__)
+
+
 def test_curve_chord_endpoint_box_refusal_is_a_typed_meshing_failure() -> None:
     from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
     from phydrax.meshing.providers._native_surface import _CurveChordBounds

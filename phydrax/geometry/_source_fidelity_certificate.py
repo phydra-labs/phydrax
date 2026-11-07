@@ -12,12 +12,13 @@ at runtime without importing the proof machinery that consumes those models.
 from __future__ import annotations
 
 import math
+from dataclasses import fields
 from typing import Any, final
 
 import numpy as np
 from jax.typing import ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import canonical_fingerprint
 from .._strict import reconstruct_strict, register_strict_reconstruction, StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
@@ -34,8 +35,8 @@ from ._mesh_certificates import (
 from ._source_boundary_records import (
     SourceBoundaryChartCover,
     SourceBoundaryChartWitness,
-    SourceBoundaryFaceImageWitness,
     SourceBoundaryDistanceWitness,
+    SourceBoundaryFaceImageWitness,
     SourceBoundaryPointWitness,
     SourceBoundaryQuery,
     SurfaceEnvelopeDistanceWitness,
@@ -87,23 +88,35 @@ def _source_domain_id(source: SourceBoundaryQuery, /) -> str:
     return source.source_revision
 
 
+# Findings that compare a certified bound with a requested limit. Their decision
+# is taken once, on the generating platform's enclosure; restore adopts it after
+# proving the stored enclosure consistent with a fresh one (``adopt_reproof``).
+_BOUND_DECISION_CHECKS = frozenset(
+    {
+        "normal_deviation_limit",
+        "source_fidelity_tolerance",
+        "source_point_distance_limit",
+        "source_point_distance_range",
+    }
+)
+
+
 def _fidelity_certificate_identity(fields: dict[str, Any], /) -> str:
-    values = tuple(float(fields[name]) for name in (
-        "mesh_to_source_lower", "mesh_to_source_upper",
-        "source_to_mesh_lower", "source_to_mesh_upper",
-    ))
+    """Hash only exact content: inputs, entity bindings, decisions and evidence IDs.
+
+    Certified float bounds are re-derived through platform arithmetic (libm,
+    XLA and BLAS rounding of sound enclosures), so they are stored evidence and
+    never part of the identity. The decisions taken on them are: findings and
+    status.
+    """
     witness, coverage = fields["witness"], fields["coverage"]
-    normal = fields["normal_deviation_bounds"]
     identity = {
         "kind": "source-fidelity-certificate",
         "binding": fields["binding"].binding_id,
         "source": (fields["source_id"], fields["source_revision"], fields["domain_id"]),
         "tolerance": fields["tolerance"],
         "maximum_normal_deviation": fields["maximum_normal_deviation"],
-        "deviation_bounds": array_tree_fingerprint(fields["deviation_bounds"]),
-        "directed_bounds": tuple(value if math.isfinite(value) else value.hex() for value in values),
-        "normal_bounds": None if normal is None else array_tree_fingerprint(normal),
-        "normal_lower": fields["maximum_normal_deviation_lower"],
+        "normal_bounds": fields["normal_deviation_bounds"] is not None,
         "cells": fields["source_cell_global_ids"],
         "patches": fields["source_patch_ids"],
         "occurrences": fields["source_occurrence_paths"],
@@ -116,6 +129,57 @@ def _fidelity_certificate_identity(fields: dict[str, Any], /) -> str:
     if restriction is not None:
         identity["chart_restriction"] = restriction.evidence_id
     return canonical_fingerprint(identity)
+
+
+class SourceFidelityReproofError(ValueError):
+    """A stored fidelity certificate is not reproduced by its recomputation.
+
+    ``bound`` names the exact field or certified bound that differs; ``cell``
+    is the source cell global ID of a disjoint per-cell enclosure, if any.
+    """
+
+    def __init__(self, message: str, /, *, bound: str, cell: int | None = None) -> None:
+        location = "" if cell is None else f" at cell {cell}"
+        super().__init__(f"{message}: {bound}{location}.")
+        self.bound = bound
+        self.cell = cell
+
+
+def _require_intersecting(
+    stored: np.ndarray,
+    fresh: np.ndarray,
+    cells: tuple[int, ...] | None,
+    bound: str,
+    /,
+) -> None:
+    """Two certified ``[lower, upper]`` enclosures of one exact value intersect."""
+    stored_ = np.asarray(stored, dtype=np.float64).reshape((-1, 2))
+    fresh_ = np.asarray(fresh, dtype=np.float64).reshape((-1, 2))
+    if stored_.shape != fresh_.shape:
+        raise SourceFidelityReproofError(
+            "Stored and recomputed certified enclosures have different layouts",
+            bound=bound,
+        )
+    invalid = np.flatnonzero(
+        ~(stored_[:, 0] <= stored_[:, 1]) | ~(fresh_[:, 0] <= fresh_[:, 1])
+    )
+    if invalid.size:
+        row = int(invalid[0])
+        raise SourceFidelityReproofError(
+            "A certified bound pair is not an enclosure",
+            bound=bound,
+            cell=None if cells is None else int(cells[row]),
+        )
+    disjoint = np.flatnonzero(
+        (stored_[:, 0] > fresh_[:, 1]) | (fresh_[:, 0] > stored_[:, 1])
+    )
+    if disjoint.size:
+        row = int(disjoint[0])
+        raise SourceFidelityReproofError(
+            "Stored and recomputed certified enclosures are disjoint",
+            bound=bound,
+            cell=None if cells is None else int(cells[row]),
+        )
 
 
 @final
@@ -352,29 +416,25 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
 
     def _derived_certificate_id(self) -> str:
         """The content identity these stored claims determine."""
-        return _fidelity_certificate_identity({
-            "binding": self.binding,
-            "source_id": self.source_id,
-            "source_revision": self.source_revision,
-            "domain_id": self.domain_id,
-            "tolerance": self.tolerance,
-            "maximum_normal_deviation": self.maximum_normal_deviation,
-            "deviation_bounds": self.deviation_bounds,
-            "mesh_to_source_lower": self.mesh_to_source_lower,
-            "mesh_to_source_upper": self.mesh_to_source_upper,
-            "source_to_mesh_lower": self.source_to_mesh_lower,
-            "source_to_mesh_upper": self.source_to_mesh_upper,
-            "normal_deviation_bounds": self.normal_deviation_bounds,
-            "maximum_normal_deviation_lower": self.maximum_normal_deviation_lower,
-            "source_cell_global_ids": self.source_cell_global_ids,
-            "source_patch_ids": self.source_patch_ids,
-            "source_occurrence_paths": self.source_occurrence_paths,
-            "witness": self.witness,
-            "coverage": self.coverage,
-            "findings": self.findings,
-            "status": self.status,
-            "chart_restriction": self.chart_restriction,
-        })
+        return _fidelity_certificate_identity(
+            {
+                "binding": self.binding,
+                "source_id": self.source_id,
+                "source_revision": self.source_revision,
+                "domain_id": self.domain_id,
+                "tolerance": self.tolerance,
+                "maximum_normal_deviation": self.maximum_normal_deviation,
+                "normal_deviation_bounds": self.normal_deviation_bounds,
+                "source_cell_global_ids": self.source_cell_global_ids,
+                "source_patch_ids": self.source_patch_ids,
+                "source_occurrence_paths": self.source_occurrence_paths,
+                "witness": self.witness,
+                "coverage": self.coverage,
+                "findings": self.findings,
+                "status": self.status,
+                "chart_restriction": self.chart_restriction,
+            }
+        )
 
     def require_current(
         self,
@@ -419,7 +479,11 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         *,
         validated_chart_parent: ValidatedImplicitChartParent | None = None,
     ) -> None:
-        """Recompute the proof; stored identities are not proof authority."""
+        """Recompute the proof; stored identities are not proof authority.
+
+        The recomputation must reproduce this certificate under
+        :meth:`adopt_reproof`.
+        """
         from ._source_fidelity import certify_source_fidelity
 
         self.require_current(mesh, geometry, source)
@@ -439,14 +503,252 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             chart_parent=self.chart_premise,
             validated_chart_parent=validated_chart_parent,
         )
+        self.adopt_reproof(fresh)
+
+    def adopt_reproof(
+        self, fresh: SourceFidelityCertificate, /
+    ) -> SourceFidelityCertificate:
+        """Return this stored proof once ``fresh``, its recomputation, reproduces it.
+
+        ``fresh`` is this platform's certificate for the same restored mesh,
+        coordinate map, source, witness and controls. Its exact content must
+        equal this certificate's: inputs, binding, cells, patches, occurrences,
+        witness, cover and restriction identities, and every finding other than
+        a bound-limit decision. Certified float bounds are stored evidence; a
+        stored and a fresh enclosure of one exact quantity, both sound, must
+        intersect:
+
+        - ``deviation_bounds[i]`` is a ``[lower, upper]`` enclosure of cell ``i``'s
+          directed deviation, checked per cell;
+        - ``[mesh_to_source_lower, mesh_to_source_upper]`` and
+          ``[source_to_mesh_lower, source_to_mesh_upper]`` enclose the directed
+          distances;
+        - ``normal_deviation_bounds[i]`` is only an upper bound of a nonnegative
+          angle, so ``[0, upper]`` always intersects and per cell only the shared
+          layout is checkable; ``[maximum_normal_deviation_lower,
+          max(normal_deviation_bounds)]`` encloses the maximum normal deviation
+          and must intersect.
+
+        Bound-limit decisions (findings of ``_BOUND_DECISION_CHECKS``) were taken
+        on the generating platform's enclosure and are not re-decided on this
+        platform's floats: the stored decisions are adopted, and a stored
+        ``certified`` status must hold exactly on the stored bounds. The result
+        carries the stored evidence, decisions and identity on the fresh
+        restored owners. A mismatch raises :class:`SourceFidelityReproofError`
+        naming the bound and cell.
+        """
+        if type(fresh) is not SourceFidelityCertificate:
+            raise TypeError("A fidelity reproof must be a SourceFidelityCertificate.")
         if (
-            fresh.certificate_id != self.certificate_id
-            or not _same_tree_content(fresh.chart_rows, self.chart_rows)
-            or not _same_tree_content(fresh.chart_restriction, self.chart_restriction)
+            self.status != certificate_status(self.findings)
+            or self.certificate_id != self._derived_certificate_id()
         ):
-            raise ValueError(
-                "Source fidelity proof does not reproduce its current source and map inputs."
+            raise SourceFidelityReproofError(
+                "Stored source fidelity claims differ from their identity",
+                bound="certificate_id",
             )
+        for name in (
+            "source_id",
+            "source_revision",
+            "domain_id",
+            "mesh_id",
+            "topology_id",
+            "geometry_id",
+            "tolerance",
+            "maximum_normal_deviation",
+            "source_cell_global_ids",
+            "source_patch_ids",
+            "source_occurrence_paths",
+        ):
+            if getattr(self, name) != getattr(fresh, name):
+                raise SourceFidelityReproofError(
+                    "Recomputed source fidelity binds other exact content", bound=name
+                )
+        for name, key in (
+            ("binding", "binding_id"),
+            ("witness", "witness_id"),
+            ("chart_restriction", "evidence_id"),
+        ):
+            stored, recomputed = getattr(self, name), getattr(fresh, name)
+            if (None if stored is None else getattr(stored, key)) != (
+                None if recomputed is None else getattr(recomputed, key)
+            ):
+                raise SourceFidelityReproofError(
+                    "Recomputed source fidelity binds other exact content",
+                    bound=f"{name}.{key}",
+                )
+        coverage = self.coverage
+        if (coverage is None) != (fresh.coverage is None):
+            raise SourceFidelityReproofError(
+                "Recomputed source fidelity binds other exact content", bound="coverage"
+            )
+        if coverage is not None:
+            assert fresh.coverage is not None
+            coverage.require_reproduced_by(fresh.coverage)
+        if {
+            finding.finding_id
+            for finding in self.findings
+            if finding.check not in _BOUND_DECISION_CHECKS
+        } != {
+            finding.finding_id
+            for finding in fresh.findings
+            if finding.check not in _BOUND_DECISION_CHECKS
+        }:
+            raise SourceFidelityReproofError(
+                "Recomputed source fidelity has other exact findings", bound="findings"
+            )
+        cells = self.source_cell_global_ids
+        _require_intersecting(
+            self.deviation_bounds, fresh.deviation_bounds, cells, "deviation_bounds"
+        )
+        for name in ("mesh_to_source", "source_to_mesh"):
+            _require_intersecting(
+                np.asarray(
+                    (getattr(self, f"{name}_lower"), getattr(self, f"{name}_upper"))
+                ),
+                np.asarray(
+                    (getattr(fresh, f"{name}_lower"), getattr(fresh, f"{name}_upper"))
+                ),
+                None,
+                name,
+            )
+        stored_normal, fresh_normal = (
+            self.normal_deviation_bounds,
+            fresh.normal_deviation_bounds,
+        )
+        if (
+            (stored_normal is None) != (fresh_normal is None)
+            or (
+                stored_normal is not None
+                and np.shape(stored_normal) != np.shape(fresh_normal)
+            )
+            or (self.maximum_normal_deviation_lower is None)
+            != (fresh.maximum_normal_deviation_lower is None)
+        ):
+            raise SourceFidelityReproofError(
+                "Recomputed source fidelity has another normal-bound layout",
+                bound="normal_deviation_bounds",
+            )
+        if (
+            stored_normal is not None
+            and fresh_normal is not None
+            and np.size(stored_normal)
+            and self.maximum_normal_deviation_lower is not None
+            and fresh.maximum_normal_deviation_lower is not None
+        ):
+            _require_intersecting(
+                np.asarray(
+                    (
+                        float(self.maximum_normal_deviation_lower),
+                        float(np.max(stored_normal)),
+                    )
+                ),
+                np.asarray(
+                    (
+                        float(fresh.maximum_normal_deviation_lower),
+                        float(np.max(fresh_normal)),
+                    )
+                ),
+                None,
+                "maximum_normal_deviation",
+            )
+        # Claims derived from the stored evidence are recomputed exactly from it.
+        derived_normal = (
+            None
+            if stored_normal is None or np.size(stored_normal) == 0
+            else float(np.max(np.asarray(stored_normal, dtype=np.float64)))
+        )
+        if self.maximum_normal_deviation_bound != derived_normal:
+            raise SourceFidelityReproofError(
+                "Stored normal-deviation claim differs from its stored bounds",
+                bound="maximum_normal_deviation_bound",
+            )
+        if self.status == "certified":
+            self._require_certified_bounds()
+        stored_rows, fresh_rows = self.chart_rows, fresh.chart_rows
+        if (stored_rows is None) != (fresh_rows is None) or (
+            stored_rows is not None
+            and fresh_rows is not None
+            and (
+                not np.array_equal(stored_rows.keys, fresh_rows.keys)
+                or not np.array_equal(stored_rows.reusable, fresh_rows.reusable)
+            )
+        ):
+            raise SourceFidelityReproofError(
+                "Recomputed implicit chart rows decide other proofs", bound="chart_rows"
+            )
+        if stored_rows is not None and fresh_rows is not None:
+            stored_rows.require_current()
+            # Two-sided row evidence must intersect its reproof; the one-sided
+            # lower/upper columns are evidence whose gate (``reusable``) was
+            # re-decided exactly above.
+            rows = np.flatnonzero(np.asarray(stored_rows.reusable))
+            stored_values = np.asarray(stored_rows.values, dtype=np.float64)[rows]
+            fresh_values = np.asarray(fresh_rows.values, dtype=np.float64)[rows]
+            for lower, upper, name in (
+                (1, 2, "chart_rows.target_to_root"),
+                (3, 4, "chart_rows.source_normal_deviation"),
+            ):
+                _require_intersecting(
+                    stored_values[:, (lower, upper)],
+                    fresh_values[:, (lower, upper)],
+                    None,
+                    name,
+                )
+        attributes = {item.name: getattr(fresh, item.name) for item in fields(fresh)}
+        attributes.update(
+            deviation_bounds=self.deviation_bounds,
+            mesh_to_source_lower=self.mesh_to_source_lower,
+            mesh_to_source_upper=self.mesh_to_source_upper,
+            source_to_mesh_lower=self.source_to_mesh_lower,
+            source_to_mesh_upper=self.source_to_mesh_upper,
+            normal_deviation_bounds=self.normal_deviation_bounds,
+            maximum_normal_deviation_lower=self.maximum_normal_deviation_lower,
+            maximum_normal_deviation_bound=self.maximum_normal_deviation_bound,
+            coverage=coverage,
+            findings=self.findings,
+            status=self.status,
+            chart_rows=stored_rows,
+            certificate_id=self.certificate_id,
+        )
+        adopted = reconstruct_strict(SourceFidelityCertificate, attributes)
+        if adopted._derived_certificate_id() != self.certificate_id:
+            raise SourceFidelityReproofError(
+                "Adopted source fidelity evidence differs from its identity",
+                bound="certificate_id",
+            )
+        return adopted
+
+    def _require_certified_bounds(self) -> None:
+        """A certified status holds exactly on the stored upper bounds.
+
+        Every bound-limit decision compares a sound upper bound, rounded
+        outward to binary64, with the binary64 request, so a certified proof has
+        every stored upper bound at most its limit.
+        """
+        deviation = np.asarray(self.deviation_bounds, dtype=np.float64)
+        exceeded = np.flatnonzero(deviation[:, 1] > self.tolerance)
+        if exceeded.size:
+            raise SourceFidelityReproofError(
+                "A certified fidelity bound exceeds its tolerance",
+                bound="deviation_bounds",
+                cell=int(self.source_cell_global_ids[int(exceeded[0])]),
+            )
+        for name in ("mesh_to_source_upper", "source_to_mesh_upper"):
+            if getattr(self, name) > self.tolerance:
+                raise SourceFidelityReproofError(
+                    "A certified fidelity bound exceeds its tolerance", bound=name
+                )
+        limit = self.maximum_normal_deviation
+        if limit is not None and self.normal_deviation_bounds is not None:
+            normal = np.asarray(self.normal_deviation_bounds, dtype=np.float64)
+            exceeded = np.flatnonzero(normal > limit)
+            if exceeded.size:
+                raise SourceFidelityReproofError(
+                    "A certified normal bound exceeds its limit",
+                    bound="normal_deviation_bounds",
+                    cell=int(self.source_cell_global_ids[int(exceeded[0])]),
+                )
 
     def require_inputs(
         self,
@@ -517,4 +819,8 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
 register_strict_reconstruction(SourceFidelityCertificate)
 
 
-__all__ = ["SourceFidelityCertificate", "SourceFidelityWitness"]
+__all__ = [
+    "SourceFidelityCertificate",
+    "SourceFidelityReproofError",
+    "SourceFidelityWitness",
+]

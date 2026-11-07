@@ -15,6 +15,7 @@ from typing import (
     Protocol,
     TYPE_CHECKING,
     TypeAlias,
+    TypeGuard,
 )
 
 import equinox as eqx
@@ -22,7 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 from jaxtyping import PyTree
 
 import phydrax.ein as ein
@@ -126,6 +127,7 @@ from ._variational import (
 if TYPE_CHECKING:
     import scipy.sparse as sp
 
+    from ..discretization.fem._generic import FiniteElementBlockGeometry
     from ..integration import (
         ReferenceCellData,
         ReferenceHexahedronRule,
@@ -386,6 +388,65 @@ class CellResidualAction(StrictModule, NonTrainableState):
             provider_action_kind="cell-residual",
             evaluator=self.kernel,
             provider_offers=("native", "prepared-local"),
+        )
+
+
+@final
+class LinearElasticityKernel(StrictModule, NonTrainableState):
+    """Isotropic Hooke cell residual ``sigma = lambda tr(eps) I + 2 mu eps``.
+
+    `stress` is the single constitutive definition. The residual program calls
+    the kernel, and the structural sparse lowering assembles `stiffness_tensor`,
+    which is `stress` applied to unit displacement gradients; the assembled
+    operator is therefore the residual's exact Jacobian. Displacement gradients
+    carry ``(..., coordinate, component)`` axes, the layout finite-element
+    residual programs pass to cell kernels.
+    """
+
+    lame_lambda: Array
+    shear_modulus: Array
+
+    def __init__(self, lame_lambda: ArrayLike, shear_modulus: ArrayLike, /) -> None:
+        lambda_ = jnp.asarray(lame_lambda)
+        mu = jnp.asarray(shear_modulus)
+        if lambda_.shape != () or mu.shape != ():
+            raise ValueError("Linear elasticity Lame moduli must be scalars.")
+        self.lame_lambda = lambda_
+        self.shear_modulus = mu
+
+    def stress(self, gradient: Array, /) -> Array:
+        """Stress ``(..., component, coordinate)`` of a displacement gradient."""
+        if gradient.shape[-1] != gradient.shape[-2]:
+            raise ValueError("Linear elasticity requires square displacement gradients.")
+        strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
+        trace = jnp.trace(strain, axis1=-2, axis2=-1)
+        identity = jnp.eye(strain.shape[-1], dtype=strain.dtype)
+        return (
+            self.lame_lambda * trace[..., None, None] * identity
+            + 2.0 * self.shear_modulus * strain
+        )
+
+    def stiffness_tensor(self, dimension: int, dtype: DTypeLike, /) -> Array:
+        """``C[a, d, e, b]``: stress ``(a, d)`` of the unit gradient ``(e, b)``."""
+        size = int(dimension)
+        unit = jnp.eye(size * size, dtype=dtype).reshape((size, size, size, size))
+        return jnp.moveaxis(self.stress(unit), (0, 1), (2, 3))
+
+    def __call__(
+        self,
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
+        return ein.contract(
+            "cq,cqid,cqad->cia",
+            weights,
+            test_gradients,
+            self.stress(gradients[0]),
         )
 
 
@@ -1479,16 +1540,22 @@ def _rule_coefficient_values(
     return values
 
 
-def _assemble_tensor_diffusion_action(
-    action: TensorDiffusionAction,
+def _assemble_cell_action(
+    action: TensorDiffusionAction | CellResidualAction,
     discretization: FiniteElementDiscretization,
     context: FiniteElementExecutionContext,
+    local_tensor: Callable[
+        [int, ReferenceRule, ReferenceCellData, FiniteElementBlockGeometry, np.ndarray],
+        Array,
+    ],
     /,
+    *,
+    kind: str,
+    coefficient_id: str | None,
+    properties: OperatorProperties,
+    coupled_components: bool,
 ) -> SparseLinearMap:
-    field_index = discretization._field_index(action.field_name)
-    dof_map = discretization.dof_maps[field_index]
-    if dof_map.component_shape:
-        raise ValueError("TensorDiffusionAction requires a scalar finite-element field.")
+    """Assemble one cell action's per-block local tensors on its domain and rules."""
     domain = _action_domain(action, discretization)
     active_cells = np.asarray(domain.entity_indices, dtype=np.int32)
     local_values = []
@@ -1506,6 +1573,44 @@ def _assemble_tensor_diffusion_action(
         entity_indices = np.arange(
             cell_start, cell_start + block.cell_count, dtype=np.int32
         )
+        local = local_tensor(block_index, rule, rule_data, geometry, entity_indices)
+        active = np.isin(entity_indices, active_cells)
+        local_values.append(jnp.where(active[:, None, None], local, 0.0))
+        cell_start += block.cell_count
+    return discretization.assemble_cell_operator(
+        action.field_name,
+        tuple(local_values),
+        operator_id=canonical_fingerprint(
+            {
+                "kind": kind,
+                "action": action.action_id,
+                "coefficient": coefficient_id,
+                "runtime": _runtime_id(context),
+                "domain": domain.domain_id,
+            }
+        ),
+        properties=properties,
+        coupled_components=coupled_components,
+    )
+
+
+def _assemble_tensor_diffusion_action(
+    action: TensorDiffusionAction,
+    discretization: FiniteElementDiscretization,
+    context: FiniteElementExecutionContext,
+    /,
+) -> SparseLinearMap:
+    field_index = discretization._field_index(action.field_name)
+    if discretization.dof_maps[field_index].component_shape:
+        raise ValueError("TensorDiffusionAction requires a scalar finite-element field.")
+
+    def local_tensor(
+        block_index: int,
+        rule: ReferenceRule,
+        rule_data: ReferenceCellData,
+        geometry: FiniteElementBlockGeometry,
+        entity_indices: np.ndarray,
+    ) -> Array:
         coefficient_values = _rule_coefficient_values(
             action.diffusivity,
             discretization,
@@ -1523,29 +1628,93 @@ def _assemble_tensor_diffusion_action(
             dimension,
             leading_shape=point_shape,
         )
-        local = ein.contract(
+        return ein.contract(
             "cq,cqid,cqde,cqje->cij",
             geometry.physical_weights,
             geometry.physical_gradients,
             tensor,
             geometry.physical_gradients,
         )
-        active = np.isin(entity_indices, active_cells)
-        local_values.append(jnp.where(active[:, None, None], local, 0.0))
-        cell_start += block.cell_count
-    return discretization.assemble_cell_operator(
-        action.field_name,
-        tuple(local_values),
-        operator_id=canonical_fingerprint(
-            {
-                "kind": "finite-element-tensor-diffusion",
-                "action": action.action_id,
-                "coefficient": action.diffusivity.coefficient_id,
-                "runtime": _runtime_id(context),
-                "domain": domain.domain_id,
-            }
-        ),
+
+    return _assemble_cell_action(
+        action,
+        discretization,
+        context,
+        local_tensor,
+        kind="finite-element-tensor-diffusion",
+        coefficient_id=action.diffusivity.coefficient_id,
         properties=action.properties,
+        coupled_components=False,
+    )
+
+
+def _is_structural_elasticity(
+    action: FiniteElementAction, /
+) -> TypeGuard[CellResidualAction]:
+    """Whether ``action`` is a single-field `LinearElasticityKernel` residual."""
+    return (
+        isinstance(action, CellResidualAction)
+        and isinstance(action.kernel, LinearElasticityKernel)
+        and action.input_fields == (action.field_name,)
+    )
+
+
+def _assemble_linear_elasticity_action(
+    action: CellResidualAction,
+    discretization: FiniteElementDiscretization,
+    context: FiniteElementExecutionContext,
+    /,
+) -> SparseLinearMap:
+    """Coupled vector stiffness ``K[(i, a), (j, b)]`` of the elasticity residual.
+
+    Local blocks are node-major ``(node, component)``, the global DOF order
+    ``dof * d + component`` of vector finite-element fields.
+    """
+    kernel = action.kernel
+    if not isinstance(kernel, LinearElasticityKernel):
+        raise TypeError("Structural elasticity requires a LinearElasticityKernel.")
+    field_index = discretization._field_index(action.field_name)
+    dimension = discretization.mesh.ambient_dimension
+    if discretization.dof_maps[field_index].component_shape != (dimension,):
+        raise ValueError(
+            "Linear elasticity requires a vector field with one component per "
+            "physical coordinate."
+        )
+
+    def local_tensor(
+        block_index: int,
+        rule: ReferenceRule,
+        rule_data: ReferenceCellData,
+        geometry: FiniteElementBlockGeometry,
+        entity_indices: np.ndarray,
+    ) -> Array:
+        gradients = geometry.physical_gradients
+        local = ein.contract(
+            "cq,cqid,adeb,cqje->ciajb",
+            geometry.physical_weights,
+            gradients,
+            kernel.stiffness_tensor(dimension, gradients.dtype),
+            gradients,
+        )
+        width = local.shape[1] * dimension
+        return local.reshape((local.shape[0], width, width))
+
+    return _assemble_cell_action(
+        action,
+        discretization,
+        context,
+        local_tensor,
+        kind="finite-element-linear-elasticity",
+        coefficient_id=None,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        coupled_components=True,
     )
 
 
@@ -2754,6 +2923,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             try_affine = all(
                 (
                     isinstance(term, TensorDiffusionAction)
+                    or _is_structural_elasticity(term)
                     or (
                         (
                             (
@@ -2876,9 +3046,11 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             return None
         # Classify every action before assembling, and assemble only the
         # structural operators the form uses.
-        terms: list[tuple[bool, Array] | TensorDiffusionAction] = []
+        terms: list[tuple[bool, Array] | TensorDiffusionAction | CellResidualAction] = []
         for action in self.form.actions:
-            if isinstance(action, TensorDiffusionAction):
+            if isinstance(action, TensorDiffusionAction) or _is_structural_elasticity(
+                action
+            ):
                 terms.append(action)
             elif (
                 isinstance(action, DiffusionAction)
@@ -2902,11 +3074,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 return None
         if not terms:
             return None
-        kinds = tuple(
-            sorted(
-                {term[0] for term in terms if not isinstance(term, TensorDiffusionAction)}
-            )
-        )
+        kinds = tuple(sorted({term[0] for term in terms if isinstance(term, tuple)}))
         structural = (
             dict(
                 zip(
@@ -2920,10 +3088,39 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             if kinds
             else {}
         )
+        full_space = self.full_space
+        shaped = bool(discretization.dof_maps[self.field_index].component_shape)
+
+        def on_field_space(operator: SparseLinearMap, /) -> AbstractLinearOperator:
+            # Structural maps scatter to flat ``dof * C + component`` coordinates;
+            # vector fields act on their ``(dof, component)`` field space.
+            if not shaped:
+                return operator
+            return SparseCoordinateOperator(
+                operator.relation,
+                operator.coefficients,
+                source=full_space,
+                target=full_space,
+                properties=operator.properties,
+                operator_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-element-field-space-operator",
+                        "operator": operator.operator_id,
+                        "space": full_space.space_id,
+                    }
+                ),
+            )
+
         operators = [
-            _assemble_tensor_diffusion_action(term, discretization, context)
+            on_field_space(
+                _assemble_tensor_diffusion_action(term, discretization, context)
+            )
             if isinstance(term, TensorDiffusionAction)
-            else term[1] * structural[term[0]]
+            else on_field_space(
+                _assemble_linear_elasticity_action(term, discretization, context)
+            )
+            if isinstance(term, CellResidualAction)
+            else term[1] * on_field_space(structural[term[0]])
             for term in terms
         ]
         result = operators[0]

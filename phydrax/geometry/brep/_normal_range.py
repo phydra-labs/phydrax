@@ -40,11 +40,13 @@ from .._rational import fraction_down, fraction_up, rational_vector
 from ._edge_classification import _material_orientations
 from ._model import BRepEntityId, BRepModel
 from ._patches import (
+    AbstractCurve,
     AbstractSurfacePatch,
     BSplineCurve,
     BSplineSurfacePatch,
     CircleCurve,
     ConePatch,
+    ConicRootLinePCurve,
     CylinderPatch,
     ExactLineCurve,
     ExtrusionSurface,
@@ -83,6 +85,8 @@ BRepNormalSingularityKind: TypeAlias = Literal[
 
 _PI = float(np.nextafter(pi, np.inf))
 _HALF_PI = pi / 2.0
+# ``fl(pi) < pi < _PI``, so half of ``_PI`` is a rational upper bound of pi/2.
+_HALF_PI_UPPER = Fraction(_PI) / 2
 
 
 @final
@@ -93,7 +97,9 @@ class BRepNormalSingularity:
     ``declared_degenerate_edge``: the cell meets a degenerate edge p-curve whose
     exact pole collapse the model proved (or a collapsed clamped spline boundary
     row); ``parameter_box`` is the exact box of that p-curve inside the cell and
-    ``point`` its pole. ``isolated_cross_product_zero``: a Krawczyk box isolates
+    ``point`` its pole. A conic-root pole latitude is known only by its certified
+    rational enclosure, so its ``parameter_box`` spans that enclosure on the
+    latitude axis. ``isolated_cross_product_zero``: a Krawczyk box isolates
     the unique zero of two cross-product components and the third vanishes there
     exactly; ``parameter_box`` is that exact point and ``point`` its exact image.
     """
@@ -194,6 +200,7 @@ def _norm(value: Interval, /) -> tuple[float, float]:
 
 type _ExactVector = tuple[Fraction, Fraction, Fraction]
 type _ExactBox = tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
+type _DeclaredKey = tuple[str, _ExactBox]
 # Exact polynomial in span-relative parameters ``(s, t)``, keyed by exponents.
 type _Poly = dict[tuple[int, int], Fraction]
 
@@ -694,6 +701,10 @@ class _DeclaredLine:
     point: tuple[ExactScalar, ...] | None
     edge_id: BRepEntityId | None
 
+    @property
+    def key(self) -> _DeclaredKey:
+        return ("segment", (min(self.start, self.end), max(self.start, self.end)))
+
     def box_in(self, box: _ExactBox, /) -> _ExactBox | None:
         """Exact bounding box of the segment inside the closed ``box``."""
         first, last = Fraction(0), Fraction(1)
@@ -721,6 +732,62 @@ class _DeclaredLine:
             (min(ends[0][0], ends[1][0]), max(ends[0][0], ends[1][0])),
             (min(ends[0][1], ends[1][1]), max(ends[0][1], ends[1][1])),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _DeclaredRootedLine:
+    """Degenerate chart ``u`` line at a latitude known by its certified enclosure.
+
+    The segment runs over ``span`` in ``u`` at one exact ``v`` inside ``level``
+    (a conic-root pole latitude), so a box certainly meets it only when it
+    contains the whole enclosure in ``v``.
+    """
+
+    span: tuple[Fraction, Fraction]
+    level: tuple[Fraction, Fraction]
+    point: tuple[ExactScalar, ...] | None
+    edge_id: BRepEntityId | None
+
+    @property
+    def key(self) -> _DeclaredKey:
+        return ("rooted", (self.span, self.level))
+
+    def box_in(self, box: _ExactBox, /) -> _ExactBox | None:
+        """Exact box of the segment enclosure inside ``box`` if ``box`` surely meets it."""
+        if not box[1][0] <= self.level[0] <= self.level[1] <= box[1][1]:
+            return None
+        first, last = max(self.span[0], box[0][0]), min(self.span[1], box[0][1])
+        if first > last:
+            return None
+        return (first, last), self.level
+
+
+def _rooted_pole_latitude(pcurve: AbstractCurve, /) -> tuple[Fraction, Fraction] | None:
+    """Certified latitude enclosure of a rooted pole p-curve ``t -> (t, theta)``.
+
+    This is the conic-root pole form whose full-interval collapse the model
+    proves; its latitude is the exact root, and the binary64 realization of that
+    generally irrational parameter is only a reference.
+    """
+    from ._boolean_core import AffinePCurve
+
+    if not isinstance(pcurve, AffinePCurve) or not isinstance(
+        pcurve.curve, ConicRootLinePCurve
+    ):
+        return None
+    line = pcurve.curve
+    if (
+        pcurve.matrix != ((Fraction(0), Fraction(1)), (Fraction(1), Fraction(0)))
+        or pcurve.offset != (Fraction(0), Fraction(0))
+        or line.phase_shift_exact != 0
+        or line.height_origin_exact != 0
+        or line.height_direction_exact != 1
+    ):
+        return None
+    return (
+        Fraction.from_float(line.root.parameter_lower),
+        Fraction.from_float(line.root.parameter_upper),
+    )
 
 
 def _collapsed_spline_boundaries(
@@ -769,13 +836,13 @@ def _collapsed_spline_boundaries(
 
 def _declared_lines(
     model: BRepModel, face: int, patch: AbstractSurfacePatch, /
-) -> tuple[_DeclaredLine, ...]:
+) -> tuple[_DeclaredLine | _DeclaredRootedLine, ...]:
     """Degenerate edge p-curves of ``face`` and collapsed spline boundary rows.
 
     The model proved at construction that each degenerate coedge maps its full
     source interval to one exact vertex, so ``S_u x S_v`` vanishes along it.
     """
-    lines: list[_DeclaredLine] = []
+    lines: list[_DeclaredLine | _DeclaredRootedLine] = []
     geometry = model.geometry
     if geometry is not None:
         ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
@@ -784,9 +851,23 @@ def _declared_lines(
                 edge = int(geometry.coedge_edges[coedge])
                 if geometry.edge_curves[edge] >= 0:
                     continue
-                affine = _affine_curve_coefficients(
-                    geometry.pcurves[coedge], (Fraction(0), Fraction(0))
+                first, last = (
+                    Fraction.from_float(float(value)) for value in ranges[edge]
                 )
+                vertex = int(geometry.edge_vertices[edge][0])
+                pcurve = geometry.pcurves[coedge]
+                latitude = _rooted_pole_latitude(pcurve)
+                if latitude is not None:
+                    lines.append(
+                        _DeclaredRootedLine(
+                            (first, last),
+                            latitude,
+                            geometry.vertex_exact_points[vertex],
+                            model.edge_ids[edge],
+                        )
+                    )
+                    continue
+                affine = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
                 if affine is None or len(affine[0]) != 2 or len(affine[1]) != 2:
                     continue
                 (x0, y0), (dx, dy) = affine
@@ -797,12 +878,8 @@ def _declared_lines(
                     and isinstance(dy, Fraction)
                 ):
                     continue
-                first, last = (
-                    Fraction.from_float(float(value)) for value in ranges[edge]
-                )
                 start = (x0 + first * dx, y0 + first * dy)
                 end = (x0 + last * dx, y0 + last * dy)
-                vertex = int(geometry.edge_vertices[edge][0])
                 lines.append(
                     _DeclaredLine(
                         start,
@@ -813,9 +890,9 @@ def _declared_lines(
                 )
     if isinstance(patch, BSplineSurfacePatch):
         lines.extend(_collapsed_spline_boundaries(patch))
-    unique: dict[tuple[tuple[Fraction, Fraction], ...], _DeclaredLine] = {}
+    unique: dict[_DeclaredKey, _DeclaredLine | _DeclaredRootedLine] = {}
     for line in lines:
-        unique.setdefault(tuple(sorted((line.start, line.end))), line)
+        unique.setdefault(line.key, line)
     return tuple(unique.values())
 
 
@@ -1252,7 +1329,9 @@ def _status(
     limit = _HALF_PI - draft
     if upper < limit:
         return "positive"
-    if lower > limit and upper < _HALF_PI:
+    # Insufficient draft needs ``lower > pi/2 - draft``; ``limit`` starts from
+    # ``fl(pi)/2 < pi/2``, so decide against a rational upper bound instead.
+    if lower > fraction_up(_HALF_PI_UPPER - Fraction(draft)) and upper < _HALF_PI:
         return "insufficient"
     if lower > _HALF_PI:
         return "undercut"

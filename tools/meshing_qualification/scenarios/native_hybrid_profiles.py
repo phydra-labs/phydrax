@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast, Literal, NamedTuple
@@ -9,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._periodic_exact import (
@@ -38,6 +40,24 @@ _PREFIX = "native-hybrid-lifecycle:"
 _LAYER_TOLERANCE = 1.0e-9
 _VOLUME_TOLERANCE = 1.0e-10
 _GROWTH_RATE = 1.2
+# Declared symbolic work (ordering, elimination tree, counts) of every
+# harmonic-history Cholesky analysis: the refined archived-layer-core operator
+# (238,387 P2 DOFs) needs 111,319,274 under minimum degree, so 2**30 leaves ~10x.
+_SYMBOLIC_WORK_BUDGET = 1 << 30
+# Run envelope 24 GiB per layer/core profile (25.77 GB). One declared execution
+# budget serves every harmonic-history solve and every de Rham Hodge admission
+# factorization. Measured needs: the unit-box target's degree-1 Hodge factor
+# is 2,934,501,142 bytes, so the budget must exceed 2.73 GiB. Measured peaks:
+# 11.67 GB at the archived-layer-core history-transition solve, and a
+# 20.90 GB process peak for unit-box at its target complex, which holds that
+# Hodge factor. Hence 4 GiB: it admits the Hodge factor, and the history
+# transition plus a factor and workspace at the budget (11.67 + 2 x 4.29 =
+# 20.3 GB) fits the envelope.
+_LAYER_CORE_SOLVE_BUDGET = 4 << 30
+# MAC-20261107T1759Z: declared byte budget of every layer/core cycle archive,
+# writer and cold reader alike. The cold reader materializes the archive's
+# logical aggregate, so it is bounded by the same 4 GiB execution budget.
+_LAYER_CORE_ARCHIVE_BUDGET = 4 << 30
 
 
 class _ProfileFailure(RuntimeError):
@@ -50,7 +70,14 @@ class _ProfileFailure(RuntimeError):
 
 
 class _LayerCoreLifecycle(NamedTuple):
-    """Original per-profile material, manufactured-field and cycle controls."""
+    """Original per-profile material, manufactured-field and cycle controls.
+
+    ``solve_memory_bytes`` is the profile's declared execution-memory budget of
+    every harmonic-history solve and factorization, writer and cold reader
+    alike (MAC-20261107T1649Z); it enters plan_id and is never host-derived.
+    ``archive_bytes`` is its declared cycle-archive byte budget
+    (MAC-20261107T1759Z), recorded with each cycle and checked by the reader.
+    """
 
     densities: tuple[float, ...]
     site_id: str
@@ -58,6 +85,8 @@ class _LayerCoreLifecycle(NamedTuple):
     cycles: int
     semantics: str
     density_semantics: str
+    solve_memory_bytes: int
+    archive_bytes: int
 
 
 # Material densities/sites are the original campaign controls; nonperiodic
@@ -70,6 +99,8 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-periodic-ridge",
         "two-material-cell-average-density",
+        _LAYER_CORE_SOLVE_BUDGET,
+        _LAYER_CORE_ARCHIVE_BUDGET,
     ),
     "concave-box-core-lifecycle": _LayerCoreLifecycle(
         (2.0,),
@@ -78,6 +109,8 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-concave-closed-cap",
         "fluid-cell-average-density",
+        _LAYER_CORE_SOLVE_BUDGET,
+        _LAYER_CORE_ARCHIVE_BUDGET,
     ),
     "concave-box-core-lifecycle:larger": _LayerCoreLifecycle(
         (2.0,),
@@ -86,6 +119,8 @@ _LAYER_CORE_LIFECYCLES = {
         2,
         "original-concave-closed-cap",
         "fluid-cell-average-density",
+        _LAYER_CORE_SOLVE_BUDGET,
+        _LAYER_CORE_ARCHIVE_BUDGET,
     ),
     "unit-box": _LayerCoreLifecycle(
         (2.0,),
@@ -94,8 +129,33 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-unit-box",
         "fluid-cell-average-density",
+        _LAYER_CORE_SOLVE_BUDGET,
+        _LAYER_CORE_ARCHIVE_BUDGET,
     ),
 }
+
+
+def _layer_core_archive_limits(budget: int, /) -> ArrayArchiveLimits:
+    """Cycle-archive admission limits from one declared byte budget.
+
+    Container, aggregate and member bytes are the budget. Element and axis
+    counts use the same number, since each element takes at least one byte.
+    Manifest bytes are budget / 64, central-directory bytes budget / 1024.
+    Member-count and nesting limits stay the codec's model limits.
+    """
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS
+
+    return replace(
+        MODEL_ARCHIVE_LIMITS,
+        max_container_bytes=budget,
+        max_aggregate_bytes=budget,
+        max_member_bytes=budget,
+        max_manifest_bytes=budget // 64,
+        max_central_directory_bytes=budget // 1024,
+        max_axis_length=budget,
+        max_array_elements=budget,
+        max_total_array_elements=budget,
+    )
 
 
 def _migration_profiles() -> tuple[str, ...]:
@@ -768,6 +828,45 @@ def _layer_core_initial_history(
     return accepted, space, defect
 
 
+def _harmonic_history_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
+    """PCG on the exact supernodal Cholesky factor under one declared byte budget.
+
+    Every solve and factorization budget is the profile's declared execution
+    budget: all fields are static, so they enter plan_id, and the writer and
+    the cold reader prepare under the same declaration. The factor's
+    structural nonzeros are bounded by the same bytes (one float64 each).
+    Minimum degree is the ordering. Nested dissection is refused on the
+    unit-box refined target: its 3,690-vertex separator exceeds the library's
+    fixed 2,048 separator capacity, which the factorization policy cannot
+    declare. On the refined archived-layer-core operator (238,387 P2 DOFs)
+    minimum degree needs 88,052,378 factor nonzeros (1.25 GB) and 111 M
+    symbolic work, against 70,816,866 nonzeros and 1.11 G work for nested
+    dissection.
+    """
+    return phx.linalg.LinearSolvePolicy(
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=1.0e-14),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.SparseFactorizationPreconditionerBuilder(
+                phx.linalg.SparseFactorizationPolicy(
+                    "cholesky",
+                    ordering="approximate-minimum-degree",
+                    max_factor_nnz=budget // np.dtype(np.float64).itemsize,
+                    max_factor_bytes=budget,
+                    max_symbolic_work=_SYMBOLIC_WORK_BUDGET,
+                )
+            )
+        ),
+        resources=phx.linalg.SolveResourcePolicy(
+            factorization_bytes=budget,
+            workspace_bytes=budget,
+            krylov_basis_bytes=budget,
+            preconditioner_bytes=budget,
+            recycling_state_bytes=budget,
+        ),
+    )
+
+
 def _layer_core_harmonic_history(
     result: Any,
     volume: Any,
@@ -779,9 +878,14 @@ def _layer_core_harmonic_history(
     """Solve the harmonic state and its affine Dirichlet ``offsets`` on one operator.
 
     The space, the compiled problem and its sparse operator are prepared once; the
-    accepted state (offset 0) and every offset state are one multi-RHS solve that
-    differs only in the Dirichlet lift. Returns the accepted state, its space, the
-    largest affine-oracle defect and the expanded ``u`` values of each offset.
+    accepted state (offset 0) and every offset state differ only in the Dirichlet
+    lift, so one sparse LU factor solves them as one multi-RHS block. The Q2
+    diffusion form is SPD, but its assembled entries are symmetric only to
+    rounding (transposed pairs differ by an ulp), and a Cholesky factor reads one
+    entry per symmetric pair; LU factors the assembled operator itself. A direct
+    solve leaves no iterative stopping error between the solution and the 1e-9
+    affine oracle. Returns the accepted state, its space, the largest
+    affine-oracle defect and the expanded ``u`` values of each offset.
     """
     a, b, c = (float(value) for value in controls.harmonic)
     elements = {
@@ -807,13 +911,23 @@ def _layer_core_harmonic_history(
             "layer-core-harmonic-diffusion",
             "u",
             (phx.equations.DiffusionAction("u", 1.0),),
+            # The Dirichlet-constrained P2 Laplacian is symmetric positive definite.
+            properties=phx.linalg.OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={"positive_definite": "asserted"},
+            ),
         ),
         space,
         constraint=constraint,
         dirichlet_values=affine(0.0),
         execution_policy=phx.equations.FiniteElementExecutionPolicy(realization="sparse"),
     )
-    operator, rhs = problem.linear_system(storage="sparse")
+    system, rhs = problem.linear_system(storage="sparse")
+    if not isinstance(rhs, jnp.ndarray):
+        raise TypeError(
+            "The harmonic history operator requires an array right-hand side."
+        )
     contexts = (
         None,
         *(
@@ -823,26 +937,18 @@ def _layer_core_harmonic_history(
             for offset in offsets
         ),
     )
-    policy = phx.linalg.LinearSolvePolicy(
-        phx.linalg.GMRES(restart=40, stagnation_iterations=40),
-        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=1.0e-14),
+    solved = phx.linalg.solve(
+        system,
+        jnp.stack(
+            (rhs, *(problem.right_hand_side(context) for context in contexts[1:])),
+            axis=-1,
+        ),
+        policy=_harmonic_history_policy(controls.solve_memory_bytes),
+        rhs_layout=phx.linalg.RHSLayout((len(contexts),)),
     )
-    if offsets:
-        solved = phx.linalg.solve(
-            operator,
-            jnp.stack(
-                (rhs, *(problem.right_hand_side(context) for context in contexts[1:])),
-                axis=-1,
-            ),
-            policy=policy,
-            rhs_layout=phx.linalg.RHSLayout((len(contexts),)),
-        )
-        states = tuple(solved.value[:, index] for index in range(len(contexts)))
-    else:
-        solved = phx.linalg.solve(operator, rhs, policy=policy)
-        states = (solved.value,)
     if not bool(np.all(np.asarray(solved.successful))):
-        raise ValueError("The original layer/core harmonic solve did not converge.")
+        raise ValueError("The original layer/core harmonic direct solve failed.")
+    states = tuple(solved.value[:, index] for index in range(len(contexts)))
     del solved, rhs
     points = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
     oracle = a * points[:, 0] + b * points[:, 1] + c * points[:, 2]
@@ -1128,7 +1234,6 @@ def _write_layer_core_cycle_archive(
         _layer_core_accepted_lifecycle_recipes,
         layer_core_authoring_recipe,
         model_archive_content_id,
-        MODEL_ARCHIVE_LIMITS,
         write_model_artifact,
     )
 
@@ -1304,8 +1409,9 @@ def _write_layer_core_cycle_archive(
         ),
         boundary_id=f"{controls.semantics}-refined-accepted-state",
     )
-    write_model_artifact(path, composition, limits=MODEL_ARCHIVE_LIMITS)
-    return model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
+    limits = _layer_core_archive_limits(controls.archive_bytes)
+    write_model_artifact(path, composition, limits=limits)
+    return model_archive_content_id(path, limits=limits)
 
 
 def _write_mapped_refinement_archive(
@@ -3163,7 +3269,7 @@ def _core_specification(source: NativeLayerCoreSource, /, *, target_size: float)
     )
 
 
-def _mimetic_affine_field(mesh: Any, /) -> dict[str, object]:
+def _mimetic_affine_field(mesh: Any, budget: int, /) -> dict[str, object]:
     from phydrax.discretization.finite_volume import (
         HybridDiffusionBoundary,
         HybridMimeticDiffusion,
@@ -3187,6 +3293,13 @@ def _mimetic_affine_field(mesh: Any, /) -> dict[str, object]:
         policy=phx.linalg.LinearSolvePolicy(
             phx.linalg.GMRES(restart=40, stagnation_iterations=40),
             tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=1.0e-14),
+            resources=phx.linalg.SolveResourcePolicy(
+                factorization_bytes=budget,
+                workspace_bytes=budget,
+                krylov_basis_bytes=budget,
+                preconditioner_bytes=budget,
+                recycling_state_bytes=budget,
+            ),
         ),
     )
     count = int(discretization.cell_volumes.shape[0])
@@ -3213,7 +3326,8 @@ def _mimetic_affine_field(mesh: Any, /) -> dict[str, object]:
     return {
         "consumer": "HybridMimeticDiffusion",
         "cell_unknowns": count,
-        "face_unknowns": int(discretization.face_measures.shape[0]),
+        # The hybrid solve carries one trace unknown per facet, not per face.
+        "facet_unknowns": int(system.facet_count),
         "successful": bool(np.all(np.asarray(solved.successful, dtype=np.bool_))),
         "exact_field": "u=1+0.2x-0.3y+0.4z",
         "maximum_affine_error": maximum_error,
@@ -3974,7 +4088,9 @@ def _complete_wall_attempt(
                     "The current native layer-core route did not publish independent source coverage certification.",
                     {"wall_layer": layer, "generated_result_id": generated.result_id},
                 )
-            field = _mimetic_affine_field(generated.mesh)
+            field = _mimetic_affine_field(
+                generated.mesh, _LAYER_CORE_LIFECYCLES[name].solve_memory_bytes
+            )
             core_measure = float(
                 np.sum(
                     np.asarray(generated.quality.evaluation.measures, dtype=np.float64)
@@ -4992,7 +5108,9 @@ def _run_unit_box() -> dict[str, object]:
                 "absolute_residual": volume_residual,
             },
         )
-    field = _mimetic_affine_field(generated.mesh)
+    field = _mimetic_affine_field(
+        generated.mesh, _LAYER_CORE_LIFECYCLES["unit-box"].solve_memory_bytes
+    )
     lifecycle = _run_layer_core_lifecycle(
         "unit-box", source, specification, options, generated
     )
@@ -5038,7 +5156,7 @@ def _run_unit_box() -> dict[str, object]:
 
 
 def _resume_layer_core_cycle(
-    path: Path, content_id: str, profile: str, /
+    path: Path, content_id: str, profile: str, archive_bytes: str, /
 ) -> dict[str, object]:
     """Authenticate and continue one accepted layer/core cycle in a fresh process."""
     from phydrax._array_archive import ArrayArchiveCorruptionError
@@ -5046,7 +5164,6 @@ def _resume_layer_core_cycle(
     from phydrax.lifecycle import Composition
     from phydrax.meshing._model_codec import (
         _restore_layer_core_accepted_lifecycle,
-        MODEL_ARCHIVE_LIMITS,
         read_model_artifact,
         restore_finite_element_field_banks,
         restore_layer_core_authoring,
@@ -5055,6 +5172,13 @@ def _resume_layer_core_cycle(
     )
 
     controls = _LAYER_CORE_LIFECYCLES[profile]
+    # The cold reader admits the archive under its profile's own declaration,
+    # which must be the archive budget the writer recorded.
+    if controls.archive_bytes != int(archive_bytes):
+        raise ValueError(
+            "Cold reader's declared archive budget differs from the writer's."
+        )
+    limits = _layer_core_archive_limits(controls.archive_bytes)
     if not content_id:
         raise ValueError("Cold layer/core continuation requires its trusted content ID.")
     changed_id = ("0" if content_id[0] != "0" else "1") + content_id[1:]
@@ -5063,7 +5187,7 @@ def _resume_layer_core_cycle(
             path,
             expected_type=Composition,
             restore=restore_model_archive_value,
-            limits=MODEL_ARCHIVE_LIMITS,
+            limits=limits,
             expected_content_id=changed_id,
         )
     except ArrayArchiveCorruptionError:
@@ -5075,7 +5199,7 @@ def _resume_layer_core_cycle(
         path,
         expected_type=Composition,
         restore=restore_model_archive_value,
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=limits,
         expected_content_id=content_id,
     )
     specification = phx.meshing.VolumeMeshingSpec.from_stored_fields(
@@ -5374,10 +5498,11 @@ def _run_layer_core_lifecycle(
                 "from tools.meshing_qualification.scenarios.native_hybrid_profiles "
                 "import _resume_layer_core_cycle; "
                 "print(json.dumps(_resume_layer_core_cycle("
-                "Path(sys.argv[1]), sys.argv[2], sys.argv[3])))",
+                "Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4])))",
                 str(path),
                 content_id,
                 profile,
+                str(controls.archive_bytes),
             ),
             cwd=str(Path(__file__).resolve().parents[3]),
             capture_output=True,
@@ -5396,6 +5521,7 @@ def _run_layer_core_lifecycle(
                 "refinement_id": refined.result_id,
                 "archive_path": str(path),
                 "archive_content_id": content_id,
+                "archive_budget_bytes": controls.archive_bytes,
                 "forward_history": forward_history,
                 "forward_scalar_transfer": forward_scalars,
                 "forward_compatible_transfer": forward_forms,

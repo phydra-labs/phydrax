@@ -533,7 +533,22 @@ _BASE_CAPABILITIES = tuple(
                 revision="meshio-profile",
                 dependency="meshio",
                 capabilities=("triangles",),
-                losses=("field-and-unit-metadata",),
+                losses=("field-and-unit-metadata", "source-and-solid-certificate"),
+            ),
+            _capability(
+                "3mf",
+                "surface",
+                (".3mf",),
+                CarrierKind.ARCHIVE,
+                ("write",),
+                revision="3mf-core-single-object",
+                capabilities=(
+                    "closed-oriented-manifold-solid",
+                    "binary64-coordinates",
+                    "units",
+                    "source-metadata",
+                ),
+                losses=("global-ids", "cell-tags", "portable-fields"),
             ),
             _capability(
                 "obj",

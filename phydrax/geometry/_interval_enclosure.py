@@ -22,7 +22,12 @@ from jax.extend import core as jax_core
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
-from .._exact_kernels import float64_interval_product, float64_interval_sum
+from .._exact_kernels import (
+    ElementaryFunction,
+    float64_interval_elementary,
+    float64_interval_product,
+    float64_interval_sum,
+)
 from .._interpolation._bspline import bspline_jet_rule_alignment
 from .._interpolation._bspline_extraction import (
     _bernstein_derivative,
@@ -403,65 +408,33 @@ def interval_sqrt(value: Interval, /) -> Interval:
     return _round_out(low, high)
 
 
+def _elementary(function: ElementaryFunction, value: Interval, /) -> Interval:
+    """Rigorous enclosure from the native libm-free elementary kernel.
+
+    No host rule is sound on every platform (libm results carry no error
+    bound), so without meshcore the primitive has no sound interval extension.
+    """
+    if not meshcore_available():
+        raise IntervalExtensionError(
+            f"the rigorous {function} enclosure requires the native meshcore library."
+        )
+    return float64_interval_elementary(function, value[0], value[1])
+
+
 def interval_exp(value: Interval, /) -> Interval:
-    with np.errstate(over="ignore", invalid="ignore"):
-        return _round_out(np.exp(value[0]), np.exp(value[1]))
+    return _elementary("exp", value)
 
 
 def interval_log(value: Interval, /) -> Interval:
-    lower, upper = np.asarray(value[0]), np.asarray(value[1])
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        low = np.log(lower)
-        high = np.log(upper)
-    low = np.where(lower <= 0.0, -np.inf, low)
-    high = np.where(upper <= 0.0, np.inf, high)
-    return _round_out(low, high)
-
-
-def _trigonometric_interval(value: Interval, kind: str, /) -> Interval:
-    lower, upper = (
-        np.asarray(value[0], dtype=np.float64),
-        np.asarray(value[1], dtype=np.float64),
-    )
-    width = upper - lower
-    with np.errstate(invalid="ignore"):
-        representable_step = np.maximum(
-            np.spacing(np.abs(lower)), np.spacing(np.abs(upper))
-        )
-    wide = (
-        ~np.isfinite(lower)
-        | ~np.isfinite(upper)
-        | (width >= 2.0 * math.pi)
-        | (representable_step >= 0.5 * math.pi)
-    )
-    with np.errstate(invalid="ignore", over="ignore"):
-        if kind == "sin":
-            low = _ieee_minimum(np.sin(lower), np.sin(upper))
-            high = _ieee_maximum(np.sin(lower), np.sin(upper))
-            maximum = np.ceil((lower - 0.5 * math.pi) / (2.0 * math.pi))
-            minimum = np.ceil((lower + 0.5 * math.pi) / (2.0 * math.pi))
-            high = np.where(0.5 * math.pi + maximum * (2.0 * math.pi) <= upper, 1.0, high)
-            low = np.where(-0.5 * math.pi + minimum * (2.0 * math.pi) <= upper, -1.0, low)
-        elif kind == "cos":
-            low = _ieee_minimum(np.cos(lower), np.cos(upper))
-            high = _ieee_maximum(np.cos(lower), np.cos(upper))
-            maximum = np.ceil(lower / (2.0 * math.pi))
-            minimum = np.ceil((lower - math.pi) / (2.0 * math.pi))
-            high = np.where(maximum * (2.0 * math.pi) <= upper, 1.0, high)
-            low = np.where(math.pi + minimum * (2.0 * math.pi) <= upper, -1.0, low)
-        else:
-            raise ValueError(f"unknown trigonometric interval function {kind!r}.")
-    low = np.where(wide, -1.0, low)
-    high = np.where(wide, 1.0, high)
-    return _round_out(low, high)
+    return _elementary("log", value)
 
 
 def interval_sin(value: Interval, /) -> Interval:
-    return _trigonometric_interval(value, "sin")
+    return _elementary("sin", value)
 
 
 def interval_cos(value: Interval, /) -> Interval:
-    return _trigonometric_interval(value, "cos")
+    return _elementary("cos", value)
 
 
 # Outward binary64 enclosure of the real constant 2 pi.
@@ -515,23 +488,7 @@ def interval_periodic_harmonic(
 
 
 def interval_tan(value: Interval, /) -> Interval:
-    lower, upper = (
-        np.asarray(value[0], dtype=np.float64),
-        np.asarray(value[1], dtype=np.float64),
-    )
-    with np.errstate(invalid="ignore"):
-        resolution = np.maximum(np.spacing(np.abs(lower)), np.spacing(np.abs(upper)))
-    first_pole = np.ceil((lower - 0.5 * math.pi) / math.pi)
-    pole = 0.5 * math.pi + first_pole * math.pi
-    crosses = (
-        ~np.isfinite(lower)
-        | ~np.isfinite(upper)
-        | (resolution >= 0.5 * math.pi)
-        | (pole <= upper)
-    )
-    with np.errstate(invalid="ignore", over="ignore"):
-        low, high = np.tan(lower), np.tan(upper)
-    return _round_out(np.where(crosses, -np.inf, low), np.where(crosses, np.inf, high))
+    return _elementary("tan", value)
 
 
 def interval_absolute(value: Interval, /) -> Interval:
@@ -1609,9 +1566,9 @@ def _primitive(
         case "tan":
             return (interval_tan(values[0]),)
         case "atan":
-            return (_round_out(np.arctan(values[0][0]), np.arctan(values[0][1])),)
+            return (_elementary("atan", values[0]),)
         case "tanh":
-            return (_round_out(np.tanh(values[0][0]), np.tanh(values[0][1])),)
+            return (_elementary("tanh", values[0]),)
         case "integer_pow":
             exponent = int(params["y"])
             if exponent == 0:
@@ -2161,6 +2118,7 @@ class _ValueIdentity:
         self._stacks: dict[jax_core.Var, tuple[int, tuple[int, ...]]] = {}
         self._extrema: dict[jax_core.Var, _Extremum] = {}
         self._reductions: dict[jax_core.Var, _Extremum] = {}
+        self._attainments: dict[jax_core.Var, _Extremum] = {}
 
     def _intern(self, key: object, /) -> int:
         return self._identities.setdefault(key, len(self._identities))
@@ -2245,6 +2203,25 @@ class _ValueIdentity:
         )
         return _Extremum((self.atom(source),), (winners,), decided, axes)
 
+    def identify(
+        self, equation: jax_core.JaxprEqn, nested_outputs: Sequence[object] | None, /
+    ) -> tuple[int, ...]:
+        """Assign the outputs' identities from the operands'; return the operands'."""
+        operands = tuple(self.atom(atom) for atom in equation.invars)
+        if nested_outputs is not None:
+            identities = tuple(self.atom(atom) for atom in nested_outputs)
+        else:
+            parameters = _parameter_key(dict(equation.params))
+            identities = tuple(
+                self._fresh()
+                if parameters is _UNKEYED
+                else self._intern((equation.primitive.name, operands, parameters, index))
+                for index in range(len(equation.outvars))
+            )
+        for variable, identity in zip(equation.outvars, identities, strict=True):
+            self._representatives[variable] = identity
+        return operands
+
     def record(
         self,
         equation: jax_core.JaxprEqn,
@@ -2255,19 +2232,7 @@ class _ValueIdentity:
     ) -> tuple[tuple[int, ...], _Extremum | None]:
         """Assign the outputs' identities; return the operands' and any winners."""
         name = equation.primitive.name
-        operands = tuple(self.atom(atom) for atom in equation.invars)
-        if nested_outputs is not None:
-            identities = tuple(self.atom(atom) for atom in nested_outputs)
-        else:
-            parameters = _parameter_key(dict(equation.params))
-            identities = tuple(
-                self._fresh()
-                if parameters is _UNKEYED
-                else self._intern((name, operands, parameters, index))
-                for index in range(len(equation.outvars))
-            )
-        for variable, identity in zip(equation.outvars, identities, strict=True):
-            self._representatives[variable] = identity
+        operands = self.identify(equation, nested_outputs)
         extremum = self.extremum(equation, arguments)
         if not equation.outvars:
             return operands, extremum
@@ -2279,6 +2244,12 @@ class _ValueIdentity:
             self._extrema[result] = extremum
         elif extremum is not None and name in ("reduce_min", "reduce_max"):
             self._reductions[result] = extremum
+        elif (
+            name == "convert_element_type"
+            and isinstance(equation.invars[0], jax_core.Var)
+            and equation.invars[0] in self._attainments
+        ):
+            self._attainments[result] = self._attainments[equation.invars[0]]
         elif name in ("reshape", "broadcast_in_dim") and isinstance(
             equation.invars[0], jax_core.Var
         ):
@@ -2341,10 +2312,34 @@ class _ValueIdentity:
                 decided = np.broadcast_to(extremum.decided, lower.shape)
             except ValueError:
                 continue
+            if name == "eq" and extremum.axes and equation.outvars:
+                self._attainments[equation.outvars[0]] = extremum
             truth = equal if name == "eq" else ~equal
             lower = np.where(decided, truth, lower)
             upper = np.where(decided, truth, upper)
         return lower, upper
+
+    def bound_attainment(
+        self, equation: jax_core.JaxprEqn, result: Interval, /
+    ) -> Interval:
+        """Count at least one attaining element in a sum of extremum indicators.
+
+        A reduction attains its extremum at every point, so the indicators of
+        ``operand == extremum`` summed over the reduced axes are at least one;
+        JAX divides its min/max tangent by exactly this count.
+        """
+        source = equation.invars[0] if equation.invars else None
+        extremum = (
+            self._attainments.get(source) if isinstance(source, jax_core.Var) else None
+        )
+        if (
+            equation.primitive.name != "reduce_sum"
+            or extremum is None
+            or tuple(int(axis) for axis in equation.params["axes"]) != extremum.axes
+        ):
+            return result
+        lower, upper = _endpoints(result)
+        return np.maximum(lower, 1.0), upper
 
 
 class _BranchLedger:
@@ -2578,6 +2573,8 @@ def _evaluate_jaxpr(
             outputs = _primitive(name, arguments, equation.params)
             if values is not None and name in ("eq", "ne"):
                 outputs = (values.decide_comparison(equation, arguments, outputs[0]),)
+            elif values is not None and name == "reduce_sum":
+                outputs = (values.bound_attainment(equation, outputs[0]),)
         if len(outputs) != len(equation.outvars):
             raise IntervalExtensionError(
                 f"primitive {name!r} returned the wrong interval arity."
@@ -2656,6 +2653,12 @@ def _evaluate_scan(
     return tuple(outputs)
 
 
+# The host reference interpreter costs a fixed amount per equation and call,
+# so larger host evaluations run the point map traced once more at this many
+# boxes. Batch sizes are scheduling-only: every primitive acts box by box.
+_HOST_BLOCK = 2048
+
+
 @dataclass(frozen=True, slots=True)
 class PreparedIntervalFunction:
     """One immutable jaxpr interval extension with a scheduling-only batch size."""
@@ -2682,6 +2685,15 @@ class PreparedIntervalFunction:
     branch_axes: dict[jax_core.Var, int | None] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
+    # The point map traced at `_HOST_BLOCK` boxes with its constants' intervals
+    # (``None`` when that trace captures other constants), derived on first use.
+    host_block: list[tuple[jax_core.ClosedJaxpr, tuple[Interval, ...]] | None] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+    # The native program with branch-evidence events, lowered on first query.
+    native_branch_program: NativeIntervalProgram | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
     # Whether a min/max selects among values: evaluation then tracks value
     # identities so a decided selection is decided in every comparison.
     selects_values: bool = field(init=False, repr=False, compare=False)
@@ -2697,6 +2709,17 @@ class PreparedIntervalFunction:
                 self, "execution_reason", "host interval reference was requested."
             )
             return
+        object.__setattr__(self, "native_program", self._lower_native(None))
+        object.__setattr__(
+            self,
+            "execution_reason",
+            "meshcore advertised every opcode in the native interval program.",
+        )
+
+    def _lower_native(
+        self, branch_axes: Mapping[jax_core.Var, int | None] | None, /
+    ) -> NativeIntervalProgram:
+        """Lower to an advertised native program, with ledger events given box axes."""
         from ._interval_native import lower_interval_jaxpr
 
         program = lower_interval_jaxpr(
@@ -2704,6 +2727,7 @@ class PreparedIntervalFunction:
             self.constant_intervals,
             self.batch_capacity,
             self.input_dimension,
+            branch_axes,
         )
         from .._meshcore import load_meshcore, MeshcoreUnavailableError
 
@@ -2714,12 +2738,7 @@ class PreparedIntervalFunction:
                 f"native interval execution requires the meshcore capability query: {error}"
             ) from error
         program.require_supported_opcodes(supported_opcodes)
-        object.__setattr__(self, "native_program", program)
-        object.__setattr__(
-            self,
-            "execution_reason",
-            "meshcore advertised every opcode in the native interval program.",
-        )
+        return program
 
     def _boxes(
         self, lower: ArrayLike, upper: ArrayLike, /
@@ -2743,13 +2762,33 @@ class PreparedIntervalFunction:
         return lower_, upper_
 
     def _padded(
-        self, values: NDArray[np.float64], start: int, stop: int, /
+        self, values: NDArray[np.float64], start: int, stop: int, capacity: int, /
     ) -> NDArray[np.float64]:
         chunk = values[start:stop]
-        pad = self.batch_capacity - (stop - start)
+        pad = capacity - (stop - start)
         if pad:
             chunk = np.concatenate((chunk, np.repeat(chunk[-1:], pad, axis=0)))
         return chunk
+
+    def _host_block(
+        self,
+    ) -> tuple[jax_core.ClosedJaxpr, tuple[Interval, ...]] | None:
+        """The point map traced at `_HOST_BLOCK` boxes, if it keeps these constants."""
+        if self.function is None or self.batch_capacity >= _HOST_BLOCK:
+            return None
+        if not self.host_block:
+            probe = jax.ShapeDtypeStruct((_HOST_BLOCK, self.input_dimension), np.float64)
+            closed = jax.make_jaxpr(jax.vmap(self.function))(probe)
+            same = len(closed.consts) == len(self.closed_jaxpr.consts) and all(
+                np.asarray(wide).dtype == np.asarray(narrow).dtype
+                and np.shape(wide) == np.shape(narrow)
+                and np.array_equal(np.asarray(wide), np.asarray(narrow))
+                for wide, narrow in zip(
+                    closed.consts, self.closed_jaxpr.consts, strict=True
+                )
+            )
+            self.host_block.append((closed, self.constant_intervals) if same else None)
+        return self.host_block[0]
 
     def evaluate(
         self, lower: ArrayLike, upper: ArrayLike, /
@@ -2758,19 +2797,28 @@ class PreparedIntervalFunction:
         count = lower_.shape[0]
         low_result = np.empty((count, *self.output_shape), dtype=np.float64)
         high_result = np.empty_like(low_result)
-        for start in range(0, count, self.batch_capacity):
-            stop = min(start + self.batch_capacity, count)
+        closed, constants, capacity = (
+            self.closed_jaxpr,
+            self.constant_intervals,
+            self.batch_capacity,
+        )
+        if self.native_program is None and count > capacity:
+            block = self._host_block()
+            if block is not None:
+                (closed, constants), capacity = block, _HOST_BLOCK
+        for start in range(0, count, capacity):
+            stop = min(start + capacity, count)
             active = stop - start
-            chunk_lower = self._padded(lower_, start, stop)
-            chunk_upper = self._padded(upper_, start, stop)
+            chunk_lower = self._padded(lower_, start, stop, capacity)
+            chunk_upper = self._padded(upper_, start, stop, capacity)
             if self.native_program is None:
                 values: _ValueIdentity | None = None
                 if self.selects_values:
                     values = _ValueIdentity()
-                    values.bind_inputs(self.closed_jaxpr.jaxpr.invars)
+                    values.bind_inputs(closed.jaxpr.invars)
                 (output,) = _evaluate_jaxpr(
-                    self.closed_jaxpr.jaxpr,
-                    self.constant_intervals,
+                    closed.jaxpr,
+                    constants,
                     ((chunk_lower, chunk_upper),),
                     self.jet_tables,
                     values,
@@ -2792,15 +2840,15 @@ class PreparedIntervalFunction:
         NDArray[np.bool_],
         NDArray[np.bool_],
     ]:
-        """Host enclosures with per-box branch decisions from the same evaluation.
+        """Enclosures with per-box branch decisions from the same evaluation.
 
         Returns ``(lower, upper, smooth, continuous)``. ``smooth[i]`` proves
         the traced map C-infinity on a neighbourhood of box ``i`` (see
         `_BranchLedger`), so derivative programs of the same map enclose its
         true derivatives there; it assumes custom-JVP rules are derivatives
         of their primal maps where those are smooth. ``continuous[i]`` proves
-        the map continuous on box ``i``. The host reference interpreter
-        evaluates regardless of the selected execution.
+        the map continuous on box ``i``. The native route records the same
+        ledger events in its program (``phx_mc_interval_program_branches``).
         """
         lower_, upper_ = self._boxes(lower, upper)
         axes = self._branch_batch_axes()
@@ -2810,24 +2858,38 @@ class PreparedIntervalFunction:
         smooth = np.empty((count,), dtype=np.bool_)
         continuous = np.empty((count,), dtype=np.bool_)
         jaxpr = self.closed_jaxpr.jaxpr
+        native = None
+        if self.native_program is not None:
+            native = self.native_branch_program
+            if native is None:
+                native = self._lower_native(axes)
+                object.__setattr__(self, "native_branch_program", native)
         for start in range(0, count, self.batch_capacity):
             stop = min(start + self.batch_capacity, count)
             active = stop - start
-            values = _ValueIdentity()
-            values.bind_inputs(jaxpr.invars)
-            ledger = _BranchLedger(axes, self.batch_capacity)
-            (output,) = _evaluate_jaxpr(
-                jaxpr,
-                self.constant_intervals,
-                ((self._padded(lower_, start, stop), self._padded(upper_, start, stop)),),
-                self.jet_tables,
-                values,
-                ledger,
-            )
-            low_result[start:stop] = np.asarray(output[0])[:active]
-            high_result[start:stop] = np.asarray(output[1])[:active]
-            smooth[start:stop] = ledger.smooth[:active]
-            continuous[start:stop] = ledger.continuous[:active]
+            chunk_lower = self._padded(lower_, start, stop, self.batch_capacity)
+            chunk_upper = self._padded(upper_, start, stop, self.batch_capacity)
+            if native is not None:
+                output_low, output_high, chunk_smooth, chunk_continuous = (
+                    native.evaluate_branches(chunk_lower, chunk_upper)
+                )
+            else:
+                values = _ValueIdentity()
+                values.bind_inputs(jaxpr.invars)
+                ledger = _BranchLedger(axes, self.batch_capacity)
+                ((output_low, output_high),) = _evaluate_jaxpr(
+                    jaxpr,
+                    self.constant_intervals,
+                    ((chunk_lower, chunk_upper),),
+                    self.jet_tables,
+                    values,
+                    ledger,
+                )
+                chunk_smooth, chunk_continuous = ledger.smooth, ledger.continuous
+            low_result[start:stop] = np.asarray(output_low)[:active]
+            high_result[start:stop] = np.asarray(output_high)[:active]
+            smooth[start:stop] = chunk_smooth[:active]
+            continuous[start:stop] = chunk_continuous[:active]
         return low_result, high_result, smooth, continuous
 
     def _branch_batch_axes(self) -> dict[jax_core.Var, int | None]:

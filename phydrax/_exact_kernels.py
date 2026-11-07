@@ -22,20 +22,28 @@ from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
 from math import comb, lcm, prod
-from typing import cast, Literal
+from typing import cast, get_args, Literal
 
 import numpy as np
 
 from ._meshcore import _raise_for_call, load_meshcore, MeshcoreStatus
+from .typing import parse
 
 
 type BernsteinDomain = Literal["simplex", "prism", "box"]
+type ElementaryFunction = Literal[
+    "exp", "log", "sin", "cos", "tan", "atan", "tanh", "asin", "acos"
+]
 type HostTree = tuple[np.ndarray, ...]
 type _IntegerRows = tuple[tuple[int, ...], ...]
 
 # Native exact word widths in 64-bit limbs (256 to 4096 bits).
 _WORD_LIMBS = (4, 8, 16, 32, 64)
 _DOMAIN_CODES = {"simplex": 0, "box": 1, "prism": 2}
+# Native PHX_MC_ELEMENTARY_* codes follow the declaration order of the selector.
+_ELEMENTARY_CODES = {
+    name: code for code, name in enumerate(get_args(ElementaryFunction.__value__))
+}
 _RANGE_ERROR = int(MeshcoreStatus.RANGE_ERROR)
 _PARALLELISM_ENVIRONMENT = "PHX_MESHCORE_THREADS"
 
@@ -159,6 +167,44 @@ def float64_interval_sum(
     )
     _raise_for_call(status, "interval_sum")
     return lower, upper
+
+
+def float64_interval_elementary(
+    function: ElementaryFunction,
+    lower: np.ndarray | np.generic,
+    upper: np.ndarray | np.generic,
+    /,
+    *,
+    parallelism: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rigorous enclosure of an elementary function over broadcastable float64 boxes.
+
+    ``function`` is one of ``exp``, ``log``, ``sin``, ``cos``, ``tan``, ``atan``,
+    ``tanh``, ``asin`` or ``acos``. The native kernel uses no platform libm, so enclosures are
+    bit-identical on every platform and for every ``parallelism``; endpoint
+    conventions (NaN gives the whole line, log of a nonpositive endpoint gives
+    the matching infinity, asin/acos boxes clipped to [-1, 1] with an empty
+    intersection giving the whole line, sin/cos/tan full ranges, signed zeros)
+    are those of
+    ``phx_mc_interval_elementary``.
+
+    Inputs are converted to contiguous float64 buffers, as for the product.
+    """
+    selected = parse(function, ElementaryFunction, "function")
+    workers = _workers(parallelism)
+    endpoints, shape = _aligned_endpoints(lower, upper)
+    out_lower = np.empty(shape, dtype=np.float64)
+    out_upper = np.empty(shape, dtype=np.float64)
+    status = load_meshcore()["phx_mc_interval_elementary"](
+        _ELEMENTARY_CODES[selected],
+        out_lower.size,
+        *(_pointer(value) for value in endpoints),
+        _pointer(out_lower),
+        _pointer(out_upper),
+        workers,
+    )
+    _raise_for_call(status, "interval_elementary")
+    return out_lower, out_upper
 
 
 def _aligned_endpoints(
@@ -845,11 +891,13 @@ def bvh_pair_blocks(
 
 __all__ = [
     "BisectedNets",
+    "ElementaryFunction",
     "IntegerBernsteinNet",
     "SeparationDecision",
     "bisect_integer_nets",
     "bvh_pair_blocks",
     "exact_kernel_parallelism",
+    "float64_interval_elementary",
     "float64_interval_product",
     "float64_interval_sum",
     "interval_bernstein_restrict",

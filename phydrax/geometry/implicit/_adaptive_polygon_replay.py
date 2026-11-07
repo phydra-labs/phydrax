@@ -111,6 +111,7 @@ def replay_polygon(
         _edge_key,
         _faces_exclude_zero,
         _prove_constant_signs,
+        _tangency_faces,
         _triangulate_cell_band,
         AdaptiveImplicitBoxIssue as Issue,
     )
@@ -259,6 +260,20 @@ def replay_polygon(
                 )
                 empty[candidates[proved]] = True
                 preliminary[candidates[proved]] = 0
+                edge = candidates[~proved & gradient[candidates]]
+                if len(edge):
+                    tangent = np.any(
+                        _tangency_faces(
+                            bounds,
+                            s.cell_boxes[start + edge, 0],
+                            s.cell_boxes[start + edge, 1],
+                            cell_signs[edge, 0],
+                            s.cell_gradient_lower[start + edge],
+                            s.cell_gradient_upper[start + edge],
+                        ),
+                        axis=1,
+                    )
+                    preliminary[edge[tangent]] = int(Issue.TANGENCY)
             boundary_mask = np.any(
                 (s.cell_boxes[start:stop, 0] == s.domain[0])
                 | (s.cell_boxes[start:stop, 1] == s.domain[1]),
@@ -567,13 +582,16 @@ def replay_history_attempt(
     /,
     *,
     clipped: ClippedBoundary | None = None,
-) -> tuple[bool, bool]:
-    """Stream a rejected attempt's retry and lattice-coincidence predicates.
+) -> tuple[bool, bool, np.ndarray]:
+    """Stream a rejected attempt's retry, lattice-coincidence and tangency predicates.
 
-    The disk-backed index retains only shared face decisions and vertex order;
-    no cover, mesh, scaffold, or prior discovery object is materialized.
-    ``clipped`` replays the declared open-boundary mode with that attempt's
-    crease certificate: domain-face roots are its bank records.
+    Returns whether the attempt refines (`_next_discovery_resolution`), whether
+    its undecided vertices are lattice coincidences
+    (`_vertex_roots_are_lattice_coincidences`), and its ``TANGENCY`` boxes in
+    leaf order. The disk-backed index retains only shared face decisions and
+    vertex order; no cover, mesh, scaffold, or prior discovery object is
+    materialized. ``clipped`` replays the declared open-boundary mode with that
+    attempt's crease certificate: domain-face roots are its bank records.
     """
     from ._adaptive_discovery import (
         _Cell,
@@ -589,6 +607,7 @@ def replay_history_attempt(
         _prove_constant_signs,
         _ROOT_PROBE_OFFSETS,
         _ROOT_PROBE_SCALE,
+        _tangency_faces,
         _target_level,
         _triangulate_cell_band,
         AdaptiveImplicitBoxIssue as Issue,
@@ -607,6 +626,7 @@ def replay_history_attempt(
         and np.all(domain[1] >= geometry_bounds[1])
     )
     refine_mask = int(Issue.EDGE | Issue.MULTIPLE_SHEETS)
+    tangency_boxes: list[np.ndarray] = []
     unresolved = False
     refinable = True
     max_diagonal = 0.0
@@ -647,23 +667,55 @@ def replay_history_attempt(
             issues: np.ndarray,
             mask: np.ndarray,
         ) -> None:
-            nonlocal unresolved, refinable, max_diagonal, has_undecided, crossing
-            nonlocal vertex_count, boundary_crossing
+            nonlocal has_undecided, crossing, vertex_count, boundary_crossing
             coords = _Coordinates(domain, level, 0)
-            for row in np.flatnonzero(mask):
+
+            def tally(row: int, issue: int, /) -> None:
+                nonlocal unresolved, refinable, max_diagonal
+                unresolved = True
+                refinable &= not bool(issue & ~refine_mask)
+                max_diagonal = max(
+                    max_diagonal, _cell_diagonal(boxes[row, 0], boxes[row, 1])
+                )
+
+            cell_rows: list[int] = []
+            for row in np.flatnonzero(mask).tolist():
                 leaf_issue = int(issues[row])
                 if leaf_issue or int(levels[row]) != level:
-                    unresolved = True
-                    refinable &= not bool(leaf_issue & ~refine_mask)
-                    max_diagonal = max(
-                        max_diagonal, _cell_diagonal(boxes[row, 0], boxes[row, 1])
-                    )
+                    tally(row, leaf_issue)
                     continue
-                cell_indices = indices[row] + _CORNER_OFFSETS
-                points = coords.values(cell_indices, 2)
-                lo, hi = bounds.point_values(points)
-                values = bounds.field_values(points)
-                signs = np.where(hi < 0, -1, np.where(lo > 0, 1, 0)).astype(np.int8)
+                cell_rows.append(row)
+            if not cell_rows:
+                return
+            # Corner and root evaluations are batched per streamed block; every
+            # enclosure is row-wise, so the batch never changes a result.
+            all_indices = indices[cell_rows][:, None, :] + _CORNER_OFFSETS
+            all_points = coords.values(all_indices.reshape(-1, 3), 2).reshape(-1, 8, 3)
+            all_lo, all_hi = bounds.point_values(all_points.reshape(-1, 3))
+            all_values = bounds.field_values(all_points.reshape(-1, 3)).reshape(-1, 8)
+            all_signs = (
+                np.where(all_hi < 0, -1, np.where(all_lo > 0, 1, 0))
+                .astype(np.int8)
+                .reshape(-1, 8)
+            )
+            pending: list[
+                tuple[
+                    int,
+                    _Cell,
+                    np.ndarray,
+                    np.ndarray,
+                    tuple[tuple[int, int, int], ...],
+                    dict[tuple[tuple[int, int, int], ...], int],
+                    dict[int, _GridEdge],
+                    list[_GridEdge],
+                ]
+            ] = []
+            root_requests: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+            for local, row in enumerate(cell_rows):
+                cell_indices = all_indices[local]
+                points = all_points[local]
+                values = all_values[local]
+                signs = all_signs[local]
                 corner_keys = tuple(
                     (int(point[0]), int(point[1]), int(point[2]))
                     for point in cell_indices
@@ -734,6 +786,22 @@ def replay_history_attempt(
                         continue
                     gradient = np.any((grad_lower[row] > 0) | (grad_upper[row] < 0))
                     issue = int(Issue.EDGE if gradient else Issue.SINGULAR)
+                    if gradient and bool(
+                        np.any(
+                            _tangency_faces(
+                                bounds,
+                                boxes[row : row + 1, 0],
+                                boxes[row : row + 1, 1],
+                                signs[:1],
+                                grad_lower[row : row + 1],
+                                grad_upper[row : row + 1],
+                            )
+                        )
+                    ):
+                        # A lattice-face tangency is not refined; the
+                        # lattice is re-anchored instead.
+                        tangency_boxes.append(np.array(boxes[row], dtype=np.float64))
+                        continue
                 else:
                     issue = 0
                 if not issue and clipped is not None:
@@ -747,112 +815,138 @@ def replay_history_attempt(
                     if faces and not _faces_exclude_zero(bounds, faces):
                         issue = int(Issue.DOMAIN_BOUNDARY)
                         boundary_crossing = True
-                if not issue:
-                    edge_keys = {}
-                    for edge_no, (a, b) in enumerate(_CUBE_EDGES):
-                        if signs[a] != signs[b]:
-                            edge_keys[edge_no] = _edge_key(corner_keys[a], corner_keys[b])
-                    sorted_keys = sorted(edge_keys.values())
-                    endpoints = np.asarray(sorted_keys, dtype=np.int64)
-                    endpoint_points = coords.values(endpoints.reshape(-1, 3), 2).reshape(
-                        -1, 2, 3
-                    )
-                    sign_by_key = dict(zip(corner_keys, signs, strict=True))
-                    endpoint_signs = np.asarray(
-                        [[sign_by_key[a], sign_by_key[b]] for a, b in sorted_keys],
-                        dtype=np.int8,
-                    )
-                    records = _attempt_roots(
-                        bounds,
+                if issue:
+                    tally(row, issue)
+                    continue
+                edge_keys: dict[int, _GridEdge] = {}
+                for edge_no, (a, b) in enumerate(_CUBE_EDGES):
+                    if signs[a] != signs[b]:
+                        edge_keys[edge_no] = _edge_key(corner_keys[a], corner_keys[b])
+                sorted_keys = sorted(edge_keys.values())
+                endpoints = np.asarray(sorted_keys, dtype=np.int64)
+                sign_by_key = dict(zip(corner_keys, signs, strict=True))
+                root_requests.append(
+                    (
                         endpoints.reshape(-1, 2, 3),
-                        endpoint_points,
-                        endpoint_signs,
-                        policy.root_tolerance,
-                        level,
-                        clipped,
-                    )
-                    root_cache = dict(zip(sorted_keys, records, strict=True))
-                    vertices = {}
-                    for edge_no in face_order:
-                        if edge_no not in edge_keys:
-                            continue
-                        key = edge_keys[edge_no]
-                        encoded = key_bytes(key)
-                        found = database.execute(
-                            "SELECT row FROM vertices WHERE key=?", (encoded,)
-                        ).fetchone()
-                        if found is None:
-                            vertex = vertex_count
-                            vertex_count += 1
-                            database.execute(
-                                "INSERT INTO vertices VALUES (?, ?)", (encoded, vertex)
-                            )
-                        else:
-                            vertex = found[0]
-                        vertices[key] = vertex
-                    root_rows = {key: i for i, key in enumerate(sorted_keys)}
-                    edge_roots = np.full((1, 12), -1, dtype=np.int64)
-                    for edge_no, key in edge_keys.items():
-                        edge_roots[0, edge_no] = root_rows[key]
-                    vertex_rows = np.asarray(
-                        [vertices[key] for key in sorted_keys], dtype=np.int64
-                    )
-                    root_points = np.asarray(
-                        [root_cache[key][0] for key in sorted_keys], dtype=np.float64
-                    )
-                    root_issues = np.asarray(
-                        [root_cache[key][2] for key in sorted_keys], dtype=np.int64
-                    )
-                    fast, _, _, native_issues = contours(
-                        signs.reshape(1, 8),
-                        values.reshape(1, 8),
-                        boxes[row : row + 1],
-                        edge_roots,
-                        vertex_rows,
-                        root_points,
-                        root_issues,
+                        coords.values(endpoints.reshape(-1, 3), 2).reshape(-1, 2, 3),
                         np.asarray(
-                            [root_cache[key][1] for key in sorted_keys],
-                            dtype=np.float64,
+                            [[sign_by_key[a], sign_by_key[b]] for a, b in sorted_keys],
+                            dtype=np.int8,
                         ),
                     )
-                    if fast[0]:
-                        issue = int(native_issues[0])
-                    else:
-                        point_by_vertex = PointRows(
-                            (vertices[key], root_cache[key][0]) for key in sorted_keys
-                        )
-                        key_by_vertex = EdgeRows(
-                            (vertices[key], key) for key in sorted_keys
-                        )
-                        issue, _, _ = _triangulate_cell_band(
-                            cell,
-                            corner_keys,
-                            {
-                                key: int(sign)
-                                for key, sign in zip(corner_keys, signs, strict=True)
-                            },
-                            {
-                                key: float(value)
-                                for key, value in zip(corner_keys, values, strict=True)
-                            },
-                            face_signs,
-                            root_cache,
-                            point_by_vertex,
-                            [],
-                            vertices,
-                            [],
-                            key_by_vertex,
-                            [],
-                            0,
-                            policy,
-                        )
-                if issue:
-                    unresolved = True
-                    refinable &= not bool(issue & ~refine_mask)
-                    max_diagonal = max(
-                        max_diagonal, _cell_diagonal(boxes[row, 0], boxes[row, 1])
+                )
+                pending.append(
+                    (
+                        row,
+                        cell,
+                        signs,
+                        values,
+                        corner_keys,
+                        face_signs,
+                        edge_keys,
+                        sorted_keys,
                     )
+                )
+            if not pending:
+                return
+            all_records = _attempt_roots(
+                bounds,
+                np.concatenate([request[0] for request in root_requests]),
+                np.concatenate([request[1] for request in root_requests]),
+                np.concatenate([request[2] for request in root_requests]),
+                policy.root_tolerance,
+                level,
+                clipped,
+            )
+            offset = 0
+            for (
+                row,
+                cell,
+                signs,
+                values,
+                corner_keys,
+                face_signs,
+                edge_keys,
+                sorted_keys,
+            ) in pending:
+                records = all_records[offset : offset + len(sorted_keys)]
+                offset += len(sorted_keys)
+                root_cache = dict(zip(sorted_keys, records, strict=True))
+                vertices = {}
+                for edge_no in face_order:
+                    if edge_no not in edge_keys:
+                        continue
+                    key = edge_keys[edge_no]
+                    encoded = key_bytes(key)
+                    found = database.execute(
+                        "SELECT row FROM vertices WHERE key=?", (encoded,)
+                    ).fetchone()
+                    if found is None:
+                        vertex = vertex_count
+                        vertex_count += 1
+                        database.execute(
+                            "INSERT INTO vertices VALUES (?, ?)", (encoded, vertex)
+                        )
+                    else:
+                        vertex = found[0]
+                    vertices[key] = vertex
+                root_rows = {key: i for i, key in enumerate(sorted_keys)}
+                edge_roots = np.full((1, 12), -1, dtype=np.int64)
+                for edge_no, key in edge_keys.items():
+                    edge_roots[0, edge_no] = root_rows[key]
+                vertex_rows = np.asarray(
+                    [vertices[key] for key in sorted_keys], dtype=np.int64
+                )
+                root_points = np.asarray(
+                    [root_cache[key][0] for key in sorted_keys], dtype=np.float64
+                )
+                root_issues = np.asarray(
+                    [root_cache[key][2] for key in sorted_keys], dtype=np.int64
+                )
+                fast, _, _, native_issues = contours(
+                    signs.reshape(1, 8),
+                    values.reshape(1, 8),
+                    boxes[row : row + 1],
+                    edge_roots,
+                    vertex_rows,
+                    root_points,
+                    root_issues,
+                    np.asarray(
+                        [root_cache[key][1] for key in sorted_keys],
+                        dtype=np.float64,
+                    ),
+                )
+                if fast[0]:
+                    issue = int(native_issues[0])
+                else:
+                    point_by_vertex = PointRows(
+                        (vertices[key], root_cache[key][0]) for key in sorted_keys
+                    )
+                    key_by_vertex = EdgeRows((vertices[key], key) for key in sorted_keys)
+                    issue, _, _ = _triangulate_cell_band(
+                        cell,
+                        corner_keys,
+                        {
+                            key: int(sign)
+                            for key, sign in zip(corner_keys, signs, strict=True)
+                        },
+                        {
+                            key: float(value)
+                            for key, value in zip(corner_keys, values, strict=True)
+                        },
+                        face_signs,
+                        root_cache,
+                        point_by_vertex,
+                        [],
+                        vertices,
+                        [],
+                        key_by_vertex,
+                        [],
+                        0,
+                        policy,
+                    )
+                if issue:
+                    tally(row, issue)
 
         _, status = discover_leaves(bounds, domain, level, sink=consume)
         retryable_status = int(
@@ -874,4 +968,9 @@ def replay_history_attempt(
             or _target_level(domain, next_relative) <= level
         ):
             retry = False
-        return bool(retry), bool(has_undecided and crossing)
+        tangencies = (
+            np.stack(tangency_boxes)
+            if tangency_boxes
+            else np.empty((0, 2, 3), dtype=np.float64)
+        )
+        return bool(retry), bool(has_undecided and crossing), tangencies

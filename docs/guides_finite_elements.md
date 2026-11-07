@@ -216,6 +216,18 @@ gives conditioning bounds. Forms without structural sparse actions,
 matrix-free realization, and constraints that are not coordinate selections
 refuse this route.
 
+Structural sparse actions are constant scalar `DiffusionAction` and
+`MassAction`, `TensorDiffusionAction`, and `linear_elasticity_form`. The
+elasticity residual kernel defines the isotropic stress once; the structural
+lowering assembles its stiffness tensor (the stress of unit displacement
+gradients) as coupled `(cells, d·n, d·n)` vector blocks in node-major
+`(node, component)` order (`FiniteElementDiscretization.assemble_cell_operator(
+..., coupled_components=True)`), so the sparse operator is the residual's exact
+Jacobian. A clamped elastic problem is self-adjoint but declares only
+semidefiniteness, so factor its eliminated block directly with
+`factorize_sparse(system.operator, SparseFactorizationPolicy("cholesky", ...))`;
+a successful factor with no rejected pivots is the SPD evidence.
+
 Independent cell contractions and local orientation transforms are evaluated in
 bounded deterministic blocks. This bounds temporary assembly tensors without
 changing cell ordering or sparse duplicate-accumulation ordering.

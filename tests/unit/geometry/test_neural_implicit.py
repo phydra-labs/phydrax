@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from fractions import Fraction
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import mpmath
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry.implicit._neural import _lipschitz_evidence
 
 
 # tanh(b + s x) + tanh(b - s x) = 2 tanh(b) - CURVATURE x^2 + O(x^4), so pairs of
@@ -266,6 +269,51 @@ def test_neural_implicit_scenario_2() -> None:
     base = geometry.state.values[geometry.schema.index(bias)]
     recertified = region.recertify(geometry.with_parameters({bias: base - 0.01}).state)
     np.testing.assert_array_equal(np.asarray(recertified.network.shift), shift)
+
+
+def _readout_network(weight: tuple[str, str], *, log_scale: str | None = None) -> Any:
+    """A single-layer `MLP` f(x) = w . x + b, optionally with an RWF scale."""
+    network = phx.nn.models.MLP(
+        in_size=2,
+        out_size="scalar",
+        hidden_sizes=(),
+        rwf=log_scale is not None,
+        dtype=jnp.float64,
+    )
+    values = jnp.asarray([[float.fromhex(value) for value in weight]], dtype=jnp.float64)
+    network = eqx.tree_at(lambda model: model.layers[0].weight, network, values)
+    if log_scale is None:
+        return network
+    scales = jnp.asarray([float.fromhex(log_scale)], dtype=jnp.float64)
+    return eqx.tree_at(lambda model: model.layers[0].rwf_log_scales, network, scales)
+
+
+def test_constructed_lipschitz_bound_contains_the_rank_one_norm() -> None:
+    # A single readout layer is rank one, so its exact Lipschitz constant is
+    # ||w||_2 and the Frobenius bound has no slack left to hide rounding.
+    weight = ("0x1.791a5bc251e2fp+0", "0x1.43d89c2cd2f09p-1")
+    bound, kind = _lipschitz_evidence(_readout_network(weight), None)
+
+    squared = sum(Fraction(float.fromhex(value)) ** 2 for value in weight)
+    assert kind is phx.CapabilityEvidenceKind.CONSTRUCTED
+    assert Fraction(bound) ** 2 >= squared
+    loose = Fraction(bound - 4 * np.spacing(bound, dtype=np.float64))
+    assert loose * loose < squared
+
+
+def test_constructed_lipschitz_bound_contains_the_rwf_scaled_norm() -> None:
+    log_scale = "0x1.8fd597ed6e7fcp+1"
+    weight = ("0x1.fc83b364f2044p+0", "0x1.ccd1ae51c0240p+0")
+    bound, kind = _lipschitz_evidence(_readout_network(weight, log_scale=log_scale), None)
+
+    with mpmath.workprec(256):
+        squared = sum(Fraction(float.fromhex(value)) ** 2 for value in weight)
+        exact = mpmath.exp(mpmath.mpf(float.fromhex(log_scale))) * mpmath.sqrt(
+            mpmath.mpf(squared.numerator) / squared.denominator
+        )
+        assert kind is phx.CapabilityEvidenceKind.CONSTRUCTED
+        assert mpmath.mpf(bound) >= exact
+        assert mpmath.mpf(bound) - exact < 4 * np.spacing(bound, dtype=np.float64)
 
 
 # A lattice cell of the 25-point discovery lattice over `_BOUNDS` spans

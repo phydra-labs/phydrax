@@ -10,8 +10,9 @@ import weakref
 from fractions import Fraction
 from inspect import signature
 from itertools import product
-from typing import Any
+from typing import Any, get_args, Literal
 
+import mpmath
 import numpy as np
 import pytest
 
@@ -727,3 +728,208 @@ def test_bvh_yielded_blocks_do_not_alias_reused_output_buffers() -> None:
         block[0][:] = -1
     assert count == 80 * 80
     assert all(np.array_equal(a, b) for a, b in zip(first, saved, strict=True))
+
+
+# WIN-5 audit counterexamples: libm-padded host enclosures that excluded the true
+# range. C1: tan boxes straddling a pole; C2: sin/cos boxes around an extremum;
+# C3 and the exp point: libm values more than one padded ulp off.
+_POLE_BOXES = (
+    ("0x1.1abe4b73fefb5p+6", "0x1.1abe4b73fefb6p+6"),
+    ("0x1.4d02421c87558p+6", "0x1.4d02421c87559p+6"),
+    ("0x1.7f4638c50fafbp+6", "0x1.7f4638c50fafcp+6"),
+    ("0x1.0525177794649p+10", "0x1.052517779464ap+10"),
+    ("0x1.0dc8c5dc8bd41p+10", "0x1.0dc8c5dc8bd42p+10"),
+)
+_EXTREMUM_BOXES = (
+    ("0x1.22b056b5fff13p+32", "0x1.22b056b5fff14p+32"),
+    ("0x1.6161e49e749a0p+32", "0x1.6161e49e749a1p+32"),
+    ("0x1.6f477b705c833p+30", "0x1.6f477b705c834p+30"),
+    ("0x1.2548680d3aa50p+29", "0x1.2548680d3aa51p+29"),
+    ("0x1.7e8b4d8a376cdp+31", "0x1.7e8b4d8a376cep+31"),
+    ("0x1.41748d545c13dp+31", "0x1.41748d545c13ep+31"),
+    ("0x1.7e8b4d93a42b1p+31", "0x1.7e8b4d93a42b2p+31"),
+    ("0x1.41748d5dc8d21p+31", "0x1.41748d5dc8d22p+31"),
+    ("0x1.840807e204d00p+31", "0x1.840807e204d01p+31"),
+)
+
+
+def _boxes(rows: tuple[tuple[str, str], ...]) -> tuple[np.ndarray, np.ndarray]:
+    lower = np.asarray([float.fromhex(row[0]) for row in rows], dtype=np.float64)
+    upper = np.asarray([float.fromhex(row[1]) for row in rows], dtype=np.float64)
+    return lower, upper
+
+
+def test_float64_interval_elementary_encloses_tangent_pole_counterexamples() -> None:
+    lower, upper = _boxes(_POLE_BOXES)
+    with mpmath.workprec(256):
+        for low, high in zip(lower, upper, strict=True):
+            pole = mpmath.ceil(mpmath.mpf(low) / mpmath.pi - mpmath.mpf(0.5))
+            assert mpmath.mpf(low) <= (pole + mpmath.mpf(0.5)) * mpmath.pi <= high
+    result = _exact_kernels.float64_interval_elementary("tan", lower, upper)
+    assert np.all(result[0] == -np.inf) and np.all(result[1] == np.inf)
+
+
+@pytest.mark.parametrize("function", ("sin", "cos"))
+def test_float64_interval_elementary_encloses_extremum_counterexamples(
+    function: Literal["sin", "cos"],
+) -> None:
+    lower, upper = _boxes(_EXTREMUM_BOXES)
+    result = _exact_kernels.float64_interval_elementary(function, lower, upper)
+    evaluate = mpmath.sin if function == "sin" else mpmath.cos
+    phase = mpmath.mpf(0.5) if function == "sin" else mpmath.mpf(0)
+    with mpmath.workprec(256):
+        for index, (low, high) in enumerate(zip(lower, upper, strict=True)):
+            values = [evaluate(mpmath.mpf(low)), evaluate(mpmath.mpf(high))]
+            critical = (
+                mpmath.ceil(mpmath.mpf(low) / mpmath.pi - phase) + phase
+            ) * mpmath.pi
+            if critical <= high:
+                values.append(evaluate(critical))
+            assert result[0][index] <= min(values) and max(values) <= result[1][index]
+
+
+@pytest.mark.parametrize(
+    ("function", "point"),
+    (("tanh", "-0x1.1476b62c72180p-1"), ("exp", "-0x1.dd3739315e97ap-27")),
+    ids=("tanh_C3", "exp_point"),
+)
+def test_float64_interval_elementary_encloses_point_counterexamples(
+    function: Literal["tanh", "exp"], point: str
+) -> None:
+    value = np.asarray(float.fromhex(point), dtype=np.float64)
+    lower, upper = _exact_kernels.float64_interval_elementary(function, value, value)
+    with mpmath.workprec(256):
+        exact = getattr(mpmath, function)(mpmath.mpf(float(value)))
+    assert lower <= exact <= upper
+    assert np.nextafter(lower, np.inf) >= upper
+
+
+_INFINITY = np.inf
+_SMALLEST = 5.0e-324
+
+
+@pytest.mark.parametrize(
+    ("function", "box", "expected"),
+    (
+        ("exp", (np.nan, 0.0), (-_INFINITY, _INFINITY)),
+        ("sin", (0.0, np.nan), (-_INFINITY, _INFINITY)),
+        ("exp", (0.0, 0.0), (1.0, 1.0)),
+        ("exp", (-_INFINITY, -_INFINITY), (0.0, _SMALLEST)),
+        ("exp", (_INFINITY, _INFINITY), (np.finfo(np.float64).max, _INFINITY)),
+        ("log", (1.0, 1.0), (0.0, 0.0)),
+        ("log", (-1.0, 1.0), (-_INFINITY, 0.0)),
+        ("log", (-2.0, -0.0), (-_INFINITY, _INFINITY)),
+        ("sin", (-0.0, -0.0), (-0.0, -0.0)),
+        ("cos", (-0.0, 0.0), (1.0, 1.0)),
+        ("sin", (0.0, 7.0), (-1.0, 1.0)),
+        ("cos", (1.0, _INFINITY), (-1.0, 1.0)),
+        ("tan", (1.0, 2.0), (-_INFINITY, _INFINITY)),
+        ("atan", (-0.0, -0.0), (-0.0, -0.0)),
+        ("tanh", (-_INFINITY, _INFINITY), (-1.0, 1.0)),
+    ),
+    ids=(
+        "nan_exp",
+        "nan_sin",
+        "exp_zero",
+        "exp_minus_infinity",
+        "exp_plus_infinity",
+        "log_one",
+        "log_nonpositive_lower",
+        "log_nonpositive_box",
+        "sin_negative_zero",
+        "cos_signed_zero",
+        "sin_wide",
+        "cos_unbounded",
+        "tan_pole",
+        "atan_negative_zero",
+        "tanh_unbounded",
+    ),
+)
+def test_float64_interval_elementary_endpoint_conventions(
+    function: _exact_kernels.ElementaryFunction,
+    box: tuple[float, float],
+    expected: tuple[float, float],
+) -> None:
+    lower, upper = _exact_kernels.float64_interval_elementary(
+        function, np.float64(box[0]), np.float64(box[1])
+    )
+    assert lower.tobytes() == np.float64(expected[0]).tobytes()
+    assert upper.tobytes() == np.float64(expected[1]).tobytes()
+
+
+def test_float64_interval_elementary_broadcasts_and_ignores_parallelism() -> None:
+    noise = np.random.default_rng(5)
+    lower = noise.normal(size=(3, 700)) * 10.0 ** noise.integers(-8, 8, size=(3, 700))
+    upper = lower.max(axis=0, keepdims=True) + np.abs(noise.normal(size=(1, 700)))
+    for function in get_args(_exact_kernels.ElementaryFunction.__value__):
+        serial = _exact_kernels.float64_interval_elementary(
+            function, lower, upper, parallelism=1
+        )
+        parallel = _exact_kernels.float64_interval_elementary(
+            function, lower, upper, parallelism=3
+        )
+        assert serial[0].shape == lower.shape and serial[0].dtype == np.float64
+        for first, second in zip(serial, parallel, strict=True):
+            assert first.tobytes() == second.tobytes()
+        assert np.all(serial[0] <= serial[1])
+
+
+def test_float64_interval_elementary_refuses_unknown_functions() -> None:
+    with pytest.raises(ValueError, match="function"):
+        _exact_kernels.float64_interval_elementary(
+            "sinh",  # ty: ignore[invalid-argument-type]
+            np.zeros(2),
+            np.ones(2),
+        )
+
+
+@pytest.mark.parametrize("function", ("asin", "acos"))
+def test_float64_interval_elementary_encloses_inverse_sine_and_cosine(
+    function: Literal["asin", "acos"],
+) -> None:
+    noise = np.random.default_rng(29)
+    points = np.concatenate(
+        (
+            noise.uniform(-1.0, 1.0, size=300),
+            noise.uniform(-1.0, 1.0, size=100) * 10.0 ** noise.integers(-20, 0, size=100),
+            np.asarray((-1.0, -0.5, -0.0, 0.0, 0.5, 1.0, np.nextafter(1.0, 0.0))),
+        )
+    )
+    lower, upper = _exact_kernels.float64_interval_elementary(function, points, points)
+    evaluate = getattr(mpmath, function)
+    with mpmath.workprec(256):
+        for x, low, high in zip(points, lower, upper, strict=True):
+            exact = evaluate(mpmath.mpf(float(x)))
+            assert low <= exact <= high
+            assert np.nextafter(np.nextafter(low, np.inf), np.inf) >= high
+
+
+@pytest.mark.parametrize(
+    ("function", "box", "expected"),
+    (
+        ("asin", (-0.0, -0.0), (-0.0, -0.0)),
+        ("acos", (1.0, 1.0), (0.0, 0.0)),
+        ("asin", (2.0, 3.0), (-_INFINITY, _INFINITY)),
+        ("acos", (np.nan, 0.5), (-_INFINITY, _INFINITY)),
+        ("asin", (-_INFINITY, 0.0), (np.nextafter(-np.pi / 2, -np.inf), 0.0)),
+        ("acos", (0.0, 5.0), (0.0, np.nextafter(np.pi / 2, np.inf))),
+    ),
+    ids=(
+        "asin_negative_zero",
+        "acos_one",
+        "asin_empty",
+        "acos_nan",
+        "asin_clipped",
+        "acos_clipped",
+    ),
+)
+def test_float64_interval_elementary_inverse_domain_rules(
+    function: _exact_kernels.ElementaryFunction,
+    box: tuple[float, float],
+    expected: tuple[float, float],
+) -> None:
+    lower, upper = _exact_kernels.float64_interval_elementary(
+        function, np.float64(box[0]), np.float64(box[1])
+    )
+    assert lower.tobytes() == np.float64(expected[0]).tobytes()
+    assert upper.tobytes() == np.float64(expected[1]).tobytes()

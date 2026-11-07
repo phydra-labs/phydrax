@@ -54,6 +54,8 @@ class _Bounds(Protocol):
 # particular, invalid boxes precede valid boxes *within each such batch*.
 _BATCH = 64
 _BLOCK = 16384
+# Boxes enclosed per call to the field bounds: a whole number of batches.
+_EVALUATION_BLOCK = 32 * _BATCH
 _CHILDREN = np.asarray(
     [(x, y, z) for x in (0, 1) for y in (0, 1) for z in (0, 1)],
     dtype=np.int64,
@@ -356,11 +358,37 @@ def discover_leaves(
             if level < target_level
             else None
         )
+        block_lower = block_upper = np.empty((0, 3), dtype=np.float64)
+        block_valid = np.empty((0,), dtype=np.bool_)
+        block_value_lower = block_value_upper = np.empty((0,), dtype=np.float64)
+        block_gradient_lower = block_gradient_upper = np.empty((0, 3), dtype=np.float64)
         for start in range(0, len(frontier), _BATCH):
+            offset = start % _EVALUATION_BLOCK
+            if offset == 0:
+                # Enclose a whole block in one call; each box's enclosure is
+                # independent of its neighbours, so the batches below see the
+                # same values as when they were evaluated one at a time.
+                block = frontier[start : start + _EVALUATION_BLOCK]
+                block_lower = coords.values(block, 0)
+                block_upper = coords.values(block + 1, 1)
+                block_valid = ~np.any(block_lower >= block_upper, axis=1)
+                block_value_lower = np.full(len(block), np.nan)
+                block_value_upper = np.full(len(block), np.nan)
+                block_gradient_lower = np.full((len(block), 3), np.nan)
+                block_gradient_upper = np.full((len(block), 3), np.nan)
+                if np.any(block_valid):
+                    enclosed = bounds.boxes(
+                        block_lower[block_valid], block_upper[block_valid]
+                    )
+                    block_value_lower[block_valid] = enclosed.value_lower
+                    block_value_upper[block_valid] = enclosed.value_upper
+                    block_gradient_lower[block_valid] = enclosed.gradient_lower
+                    block_gradient_upper[block_valid] = enclosed.gradient_upper
             prefix = frontier[start : start + _BATCH]
-            lower = coords.values(prefix, 0)
-            upper = coords.values(prefix + 1, 1)
-            invalid = np.any(lower >= upper, axis=1)
+            rows_in_block = slice(offset, offset + len(prefix))
+            lower = block_lower[rows_in_block]
+            upper = block_upper[rows_in_block]
+            invalid = ~block_valid[rows_in_block]
             if np.any(invalid):
                 p, lo, hi = prefix[invalid], lower[invalid], upper[invalid]
                 n = len(p)
@@ -379,11 +407,10 @@ def discover_leaves(
             if not np.any(valid):
                 continue
             p, lo, hi = prefix[valid], lower[valid], upper[valid]
-            evidence = bounds.boxes(lo, hi)
-            value_lower = np.asarray(evidence.value_lower, dtype=np.float64)
-            value_upper = np.asarray(evidence.value_upper, dtype=np.float64)
-            gradient_lower = np.asarray(evidence.gradient_lower, dtype=np.float64)
-            gradient_upper = np.asarray(evidence.gradient_upper, dtype=np.float64)
+            value_lower = block_value_lower[rows_in_block][valid]
+            value_upper = block_value_upper[rows_in_block][valid]
+            gradient_lower = block_gradient_lower[rows_in_block][valid]
+            gradient_upper = block_gradient_upper[rows_in_block][valid]
             band = ~((value_upper < 0.0) | (value_lower > 0.0))
             issue = np.zeros(len(p), dtype=np.int64)
             if level < target_level:
@@ -425,9 +452,9 @@ def discover_leaves(
                     issue[rows],
                     surface=surface[rows],
                 )
-        # The final batch is a view into the old frontier. Drop both references
-        # before finalizing the next frontier or the completed cover columns.
-        del prefix, frontier
+        # The final batch and block are views into the old frontier. Drop every
+        # reference before finalizing the next frontier or the cover columns.
+        del prefix, block, frontier
         frontier = next_frontier.finish()[0]
         level += 1
     if sink is not None:

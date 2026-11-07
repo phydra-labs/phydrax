@@ -28,6 +28,7 @@ from jax.typing import ArrayLike
 
 from ..._external_runtime import NativeWorkerCall, NativeWorkerPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._frozendict import frozendict
 from ..._identity import SemanticProvenance
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -378,7 +379,11 @@ class OmegaHTransferredField(StrictModule, NonTrainableState):
 
 
 class OmegaHFieldEvidence(StrictModule, NonTrainableState):
-    """Transfer method and, for conservative fields, Omega_h's owned integrals."""
+    """Transfer method and, for conservative fields, Omega_h's owned integrals.
+
+    ``field_id`` is the identity of the source ``OmegaHField`` the evidence
+    binds; it is retained so the evidence identity can be recomputed on restore.
+    """
 
     name: str = eqx.field(static=True)
     transfer: OmegaHFieldTransfer = eqx.field(static=True)
@@ -386,32 +391,43 @@ class OmegaHFieldEvidence(StrictModule, NonTrainableState):
     diffusion_tolerance: float | None = eqx.field(static=True)
     integral_before: Array | None
     integral_after: Array | None
+    field_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
-        field: OmegaHField,
+        name: str,
+        transfer: OmegaHFieldTransfer,
         method: str,
+        diffusion_tolerance: float | None,
         integral_before: ArrayLike | None,
         integral_after: ArrayLike | None,
+        field_id: str,
         /,
     ) -> None:
+        if not isinstance(transfer, OmegaHFieldTransfer):
+            raise TypeError("transfer must be OmegaHFieldTransfer.")
+        if not isinstance(field_id, str) or not field_id:
+            raise ValueError("Omega_h field evidence must name its source field.")
         before = (
             None if integral_before is None else np.asarray(integral_before, np.float64)
         )
         after = None if integral_after is None else np.asarray(integral_after, np.float64)
-        conservative = field.transfer is OmegaHFieldTransfer.CONSERVE
+        conservative = transfer is OmegaHFieldTransfer.CONSERVE
         if (before is None) == conservative or (after is None) == conservative:
             raise ValueError("Integrals are reported exactly for conservative fields.")
-        self.name, self.transfer, self.method = field.name, field.transfer, str(method)
-        self.diffusion_tolerance = field.diffusion_tolerance
+        self.name, self.transfer, self.method = str(name), transfer, str(method)
+        self.diffusion_tolerance = (
+            None if diffusion_tolerance is None else float(diffusion_tolerance)
+        )
         self.integral_before = None if before is None else jnp.asarray(before)
         self.integral_after = None if after is None else jnp.asarray(after)
+        self.field_id = field_id
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "omega-h-field-evidence",
-                "field": field.field_id,
+                "field": field_id,
                 "method": self.method,
                 "integral_before": None if before is None else before.tolist(),
                 "integral_after": None if after is None else after.tolist(),
@@ -551,12 +567,27 @@ class OmegaHPartition(StrictModule, NonTrainableState):
         return ~self.facet_owned
 
 
+def _canonical_record(value: Any, /) -> Any:
+    """A worker JSON record as immutable, key-sorted canonical content."""
+    if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("Omega_h worker record keys must be strings.")
+        return frozendict({key: _canonical_record(value[key]) for key in sorted(value)})
+    if isinstance(value, (list, tuple)):
+        return tuple(_canonical_record(item) for item in value)
+    if value is None or type(value) in (bool, int, float, str):
+        return value
+    raise TypeError("Omega_h worker records hold JSON values only.")
+
+
 class OmegaHAdaptationEvidence(StrictModule, NonTrainableState):
     """What Omega_h was asked to do, what it achieved, and which session ran it.
 
     Quality is Omega_h's element quality measured in the metric (1 for the
     regular simplex); lengths are edge lengths in the adapted metric (the
-    extremes of Omega_h's length histogram).
+    extremes of Omega_h's length histogram). ``record`` is the worker's result
+    record in canonical form (mappings as ``frozendict``, sequences as tuples);
+    every summary field derives from it and ``evidence_id`` hashes it.
     """
 
     options: OmegaHOptions
@@ -577,6 +608,7 @@ class OmegaHAdaptationEvidence(StrictModule, NonTrainableState):
     identity_id: str = eqx.field(static=True)
     sequence: int = eqx.field(static=True)
     peak_rss_bytes: int = eqx.field(static=True)
+    record: frozendict = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     @checked
@@ -585,37 +617,46 @@ class OmegaHAdaptationEvidence(StrictModule, NonTrainableState):
         options: OmegaHOptions,
         fields: tuple[OmegaHFieldEvidence, ...],
         record: Mapping[str, Any],
-        call: NativeWorkerCall,
-        identity_id: str,
         /,
+        *,
+        session_id: str,
+        identity_id: str,
+        sequence: int,
+        peak_rss_bytes: int,
     ) -> None:
         if not all(isinstance(value, OmegaHFieldEvidence) for value in fields):
             raise TypeError("fields must contain OmegaHFieldEvidence values.")
+        frozen = _canonical_record(record)
+        if not isinstance(frozen, frozendict):
+            raise TypeError("The Omega_h worker record must be a mapping.")
         self.options = options
-        self.min_quality_allowed = float(record["options"]["min_quality_allowed"])
-        self.min_quality_desired = float(record["options"]["min_quality_desired"])
-        self.iterations = int(record["iterations"])
-        self.minimum_quality = float(record["minimum_quality"])
-        self.maximum_quality = float(record["maximum_quality"])
-        self.minimum_length = float(record["minimum_length"])
-        self.maximum_length = float(record["maximum_length"])
-        self.vertex_count = int(record["vertex_count"])
-        self.cell_count = int(record["cell_count"])
-        self.facet_count = int(record["facet_count"])
+        self.min_quality_allowed = float(frozen["options"]["min_quality_allowed"])
+        self.min_quality_desired = float(frozen["options"]["min_quality_desired"])
+        self.iterations = int(frozen["iterations"])
+        self.minimum_quality = float(frozen["minimum_quality"])
+        self.maximum_quality = float(frozen["maximum_quality"])
+        self.minimum_length = float(frozen["minimum_length"])
+        self.maximum_length = float(frozen["maximum_length"])
+        self.vertex_count = int(frozen["vertex_count"])
+        self.cell_count = int(frozen["cell_count"])
+        self.facet_count = int(frozen["facet_count"])
         self.generated_facet_classes = int(
-            record["classification"]["generated_facet_classes"]
+            frozen["classification"]["generated_facet_classes"]
         )
         self.fields = tuple(fields)
-        self.ranks = int(record["ranks"])
-        self.session_id = str(call.evidence["session_id"])
+        self.ranks = int(frozen["ranks"])
+        self.session_id = str(session_id)
         self.identity_id = str(identity_id)
-        self.sequence = call.sequence
-        self.peak_rss_bytes = int(call.evidence["peak_rss_bytes"])
+        self.sequence = int(sequence)
+        self.peak_rss_bytes = int(peak_rss_bytes)
+        self.record = frozen
+        # Mappings and sequences hash by content, so this equals the hash of
+        # the worker's own JSON record.
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "omega-h-adaptation-evidence",
                 "options": options.options_id,
-                "record": dict(record),
+                "record": frozen,
                 "fields": [value.evidence_id for value in fields],
                 "identity": self.identity_id,
             }
@@ -1034,8 +1075,6 @@ def _carrier(
         feature_angle=options.feature_angle,
     )
     return _Carrier(arrays, classification)
-
-
 
 
 def _require(condition: bool, message: str, /) -> None:
@@ -1877,15 +1916,24 @@ class OmegaHProvider:
         _require_adapted_metric_bounds(metric, merged["metric"])
         field_evidence = tuple(
             OmegaHFieldEvidence(
-                field,
+                field.name,
+                field.transfer,
                 entry["method"],
+                field.diffusion_tolerance,
                 entry.get("integral_before"),
                 entry.get("integral_after"),
+                field.field_id,
             )
             for field, entry in zip(fields, record["fields"], strict=True)
         )
         evidence = OmegaHAdaptationEvidence(
-            options, field_evidence, record, call, identity_id
+            options,
+            field_evidence,
+            record,
+            session_id=call.evidence["session_id"],
+            identity_id=identity_id,
+            sequence=call.sequence,
+            peak_rss_bytes=call.evidence["peak_rss_bytes"],
         )
         provider = self._provider(reported)
         runtime = MeshingRuntimeInfo(

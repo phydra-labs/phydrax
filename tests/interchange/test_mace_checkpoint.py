@@ -15,6 +15,7 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal, NoReturn
 
 import jax
@@ -124,7 +125,63 @@ def test_provider_record_files_stream_and_validate_size(
             _mace_worker._verify_record_files(distribution)
 
 
-@pytest.mark.parametrize("fault", ("overwrite", "replace", "touch", "nonregular"))
+def test_provider_record_files_compare_path_and_handle_stats_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Windows reports st_ctime through path queries differently from handle
+    # queries; an unchanged file still verifies when the two disagree.
+    payload = b"provider file"
+    location = tmp_path / "provider.bin"
+    location.write_bytes(payload)
+    digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+    info = tmp_path / "provider.dist-info"
+    info.mkdir()
+    (info / "RECORD").write_text(
+        f"provider.bin,sha256={digest.decode('ascii')},{len(payload)}\n",
+        encoding="utf-8",
+    )
+    distribution = metadata.Distribution.at(info)
+    original_stat = Path.stat
+
+    def path_stat(self: Path, *, follow_symlinks: bool = True) -> Any:
+        value = original_stat(self, follow_symlinks=follow_symlinks)
+        if self != location:
+            return value
+        return SimpleNamespace(
+            st_dev=value.st_dev,
+            st_ino=value.st_ino,
+            st_mode=value.st_mode,
+            st_size=value.st_size,
+            st_mtime_ns=value.st_mtime_ns,
+            st_ctime_ns=value.st_ctime_ns + 1_000,
+        )
+
+    monkeypatch.setattr(Path, "stat", path_stat)
+    assert _mace_worker._verify_record_files(distribution) == 1
+
+
+@pytest.mark.parametrize(
+    "fault",
+    (
+        "overwrite",
+        # Windows refuses to replace a file held open without FILE_SHARE_DELETE,
+        # so the replace race cannot occur there.
+        pytest.param(
+            "replace",
+            marks=pytest.mark.skipif(
+                os.name != "posix", reason="POSIX replace of an open file"
+            ),
+        ),
+        "touch",
+        # Unprivileged Windows hosts cannot create symbolic links.
+        pytest.param(
+            "nonregular",
+            marks=pytest.mark.skipif(
+                os.name != "posix", reason="POSIX unprivileged symbolic links"
+            ),
+        ),
+    ),
+)
 def test_provider_record_files_refuse_stat_mutations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
 ) -> None:
@@ -1987,6 +2044,8 @@ _COMMITTED_FAMILY_CASES = {
         "two_maceles",
     ),
 }
+# Generated only where the caller supplies the rights-gated LES provider.
+_LES_GATED_CASES = frozenset({"two_maceles"})
 
 
 def _committed_structure(manifest: Mapping[str, Any], name: str) -> Any:
@@ -2015,6 +2074,8 @@ def test_committed_family_fixture_matches_its_provider_evaluation(
     from phydrax.atomistic._latent_electrostatics import LatentEwaldDefinition
 
     manifest = committed_manifest(release)
+    if case in _LES_GATED_CASES and case not in manifest["cases"]:
+        pytest.skip("MACELES fixtures need the rights-gated LES provider (NOTICE).")
     assert case in manifest["cases"], (
         f"Regenerate tests/fixtures/mace_torch_{release.replace('.', '_')} with "
         "its generate.py and the pinned provider."
@@ -2057,3 +2118,14 @@ def test_committed_family_fixture_matches_its_provider_evaluation(
                 -fixture[prefix + "virials"][0],
                 FLOAT64_GATES["stress"],
             )
+
+
+@pytest.mark.parametrize("release", sorted(_COMMITTED_FAMILY_CASES))
+def test_committed_fixture_records_its_regeneration_gates(release: str) -> None:
+    # Fixtures are self-consistent on their generating host, not bitwise across
+    # hosts; the family evaluation above checks them under exactly these gates.
+    manifest = committed_manifest(release)
+    gates = {name: tuple(gate) for name, gate in manifest["gates"].items()}
+    assert gates == FLOAT64_GATES
+    assert set(manifest["host"]) == {"machine", "platform", "python"}
+    assert manifest["provider"]["mace-torch"] == release

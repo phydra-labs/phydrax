@@ -8,9 +8,9 @@ one static value per mesh entity (source IDs, roles, tags, exact witness text)
 would otherwise put one JSON node per row into the manifest. These columns move
 the row data into array members: repeated values become a first-occurrence table
 plus one row-index array, unique text becomes UTF-8 bytes plus offsets,
-variable-length integer rows become int64 values plus row ends, and regular
-exact integer or rational tensors become canonical decimal text. All decode to
-exactly the original tuple.
+variable-length integer rows become int64 values plus row ends, fixed-width byte
+rows become one uint8 matrix, and regular exact integer or rational tensors
+become canonical decimal text. All decode to exactly the original value.
 """
 
 from __future__ import annotations
@@ -137,6 +137,22 @@ def integer_column_values(rows: Any, /) -> tuple[int, ...]:
     if array.ndim != 1 or array.dtype != np.int64:
         raise TypeError("Integer column rows must be one int64 vector.")
     return tuple(array.tolist())
+
+
+def byte_rows_column(value: bytes, width: int, /) -> np.ndarray:
+    """Return fixed-width byte rows as one read-only uint8 matrix."""
+    if type(value) is not bytes:
+        raise TypeError("Byte row columns hold only bytes.")
+    if width <= 0 or len(value) % width:
+        raise ValueError("Byte row columns must hold whole fixed-width rows.")
+    return np.frombuffer(value, dtype=np.uint8).reshape((len(value) // width, width))
+
+
+def byte_rows_column_values(rows: Any, width: int, /) -> bytes:
+    array = np.asarray(rows)
+    if array.ndim != 2 or array.dtype != np.uint8 or array.shape[1] != width:
+        raise TypeError("Byte row columns must be one uint8 matrix of fixed width.")
+    return np.ascontiguousarray(array).tobytes()
 
 
 class IntegerRowsArchiveRecipe(NamedTuple):

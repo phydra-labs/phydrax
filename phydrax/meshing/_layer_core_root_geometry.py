@@ -13,33 +13,41 @@ import equinox as eqx
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
-from ..discretization._cell_geometry_validity import cell_geometry_id
-from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
-from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._cell_geometry_transition_types import (
     _geometry_map_expressions,
     _reference_map_identity,
     _require_exact_reference_group,
 )
+from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._nested_reference_types import (
     exact_reference_cell_vertices,
     ReferenceCellPartition,
     validate_reference_cell_partition,
 )
+from ..discretization._reference_cell import reference_cell_topology
 from ._contracts import VolumeMeshingSpec
 from ._layer_core_carrier_witness import require_layer_core_specification
 from ._layer_core_subdivision import (
+    _require_overlap_provenance,
     OverlapSourceStencils,
     RefinedColumnCertification,
-    _require_overlap_provenance,
     require_refined_column_certification,
 )
 
+
 if TYPE_CHECKING:
     from .providers._native_sources import NativeLayerCoreSource
+
+
+# Root reproofs bound to the exact live root, source and request objects (see
+# LayerCoreRootGeometry.require_current); the outcome is the mapped chart-bank
+# equality sink of that reproof.
+_PROVEN_ROOTS: LiveProofLedger[tuple[bool, ...]] = LiveProofLedger()
 
 
 @final
@@ -307,8 +315,25 @@ class LayerCoreRootGeometry(StrictModule, NonTrainableState):
         *,
         _chart_match_sink: list[bool] | None = None,
     ) -> None:
-        """Reprove the root geometry and its binding to current authoring inputs."""
+        """Reprove the root geometry and its binding to current authoring inputs.
+
+        The reproof is bound to these exact live operands: a later call on the
+        same unchanged objects reuses its outcome; any copy, rebuild or changed
+        content replays it in full.
+        """
         require_layer_core_specification(source, self.specification)
+        operands = (self, source, specification)
+        chart_match = _PROVEN_ROOTS.find(operands)
+        if chart_match is None:
+            fingerprint = live_content_fingerprint(operands)
+            chart_match = self._reprove(source, specification)
+            _PROVEN_ROOTS.record(operands, fingerprint, chart_match)
+        if _chart_match_sink is not None:
+            _chart_match_sink.extend(chart_match)
+
+    def _reprove(
+        self, source: NativeLayerCoreSource, specification: VolumeMeshingSpec, /
+    ) -> tuple[bool, ...]:
         chart_match: list[bool] = []
         rebuilt = type(self)(
             source,
@@ -332,15 +357,19 @@ class LayerCoreRootGeometry(StrictModule, NonTrainableState):
             raise ValueError(
                 "Layer root geometry is stale or differs from its source authority."
             )
-        if _chart_match_sink is not None:
-            _chart_match_sink.extend(chart_match)
+        return tuple(chart_match)
 
 
 class ComputedLayerCoreRoot:
     """Operation-local root proof for the exact operands used to construct it."""
 
     __slots__ = (
-        "source", "specification", "mesh", "geometry", "root", "mapped_chart_bank_equal"
+        "source",
+        "specification",
+        "mesh",
+        "geometry",
+        "root",
+        "mapped_chart_bank_equal",
     )
 
     def __init__(

@@ -449,6 +449,11 @@ class AIMNet2SourceProvenance:
         size = record["source_byte_size"]
         if type(size) is not int or size < 0:
             raise ValueError("source_byte_size must be a nonnegative integer.")
+        # model_yaml is the exact source text (YAML ends in a newline): it is held
+        # to the source admission rule, not to the stripped form of identifiers.
+        model_yaml = record["model_yaml"]
+        if not isinstance(model_yaml, str) or not model_yaml.strip():
+            raise ValueError("model_yaml must be nonempty source text.")
         parsed = cls(
             source_sha256=_record_digest(record["source_sha256"], "source_sha256"),
             source_byte_size=size,
@@ -474,7 +479,7 @@ class AIMNet2SourceProvenance:
             if record["provider"] is None
             else MappingProxyType(_record_mapping(record["provider"], "provider")),
             metadata=MappingProxyType(_record_mapping(record["metadata"], "metadata")),
-            model_yaml=_record_text(record["model_yaml"], "model_yaml"),
+            model_yaml=model_yaml,
             legacy_attributes=None
             if record["legacy_attributes"] is None
             else MappingProxyType(
@@ -807,12 +812,15 @@ def read_safetensors_tensors(
             not isinstance(shape, list)
             or len(shape) > rank
             or any(type(extent) is not int or extent < 0 for extent in shape)
-            or any(extent > limits.max_tensor_elements for extent in shape)
             or not isinstance(offsets, list)
             or len(offsets) != 2
             or any(type(offset) is not int or offset < 0 for offset in offsets)
         ):
             raise _refuse(f"safetensors entry {name!r} has malformed extents.")
+        # An extent above the element limit is a limit refusal, checked before the
+        # extent product is formed.
+        if any(extent > limits.max_tensor_elements for extent in shape):
+            raise _refuse(f"safetensors tensor {name!r} exceeds the tensor limits.")
         elements = math.prod(shape)
         size = elements * dtype.itemsize
         if elements > limits.max_tensor_elements or size > limits.max_tensor_bytes:

@@ -51,6 +51,18 @@ from .providers._mmg import (
     MmgReference,
     MmgReferenceRetention,
 )
+from .providers._omega_h import (
+    _entity_scope,
+    _GatheredTarget,
+    _RankArrays,
+    OmegaHAdaptationEvidence,
+    OmegaHAdaptationResult,
+    OmegaHClassification,
+    OmegaHFieldEvidence,
+    OmegaHOptions,
+    OmegaHPartition,
+    OmegaHTransferredField,
+)
 
 
 if TYPE_CHECKING:
@@ -561,8 +573,8 @@ def restore_mixed_adaptation_result(
         and not _same_model_content(distribution, raw.distribution)
     ):
         raise ValueError("Stored mixed distribution differs from its source and lineage.")
-    if not math.isfinite(raw.elapsed_seconds) or raw.elapsed_seconds < 0:
-        raise ValueError("Stored mixed elapsed time is invalid.")
+    if raw.elapsed_seconds is not None:
+        raise ValueError("Model archives do not persist adaptation wall time.")
     outcome = _RouteOutcome(
         raw.status,
         target,
@@ -580,7 +592,7 @@ def restore_mixed_adaptation_result(
         outcome,
         _compliance(prepared, target),
         distribution,
-        raw.elapsed_seconds,
+        None,
     )
     if rebuilt.result_id != expected_result_id or not _same_model_content(
         rebuilt.compliance, raw.compliance
@@ -597,6 +609,7 @@ _RouteEvidence = (
     | BisectionEvidence
     | PolyhedralAdaptationEvidence
     | MmgAdaptationResult
+    | OmegaHAdaptationResult
     | SurfaceMetricOutcome
 )
 
@@ -609,6 +622,7 @@ _ROUTE_EVIDENCE: dict[str, type] = {
     "device_bisection": BisectionEvidence,
     "native_polyhedral": PolyhedralAdaptationEvidence,
     "mmg": MmgAdaptationResult,
+    "omega_h": OmegaHAdaptationResult,
     "native_metric_surface": SurfaceMetricOutcome,
 }
 
@@ -812,7 +826,7 @@ def _route_evidence(value: Any, route: str, /) -> _RouteEvidence:
     expected = _ROUTE_EVIDENCE[route]
     if type(value) is not expected:
         raise TypeError("Stored adaptation evidence does not belong to its route.")
-    if type(value) is MmgAdaptationResult:
+    if type(value) in (MmgAdaptationResult, OmegaHAdaptationResult):
         # Rebound to the restored target after endpoint recertification.
         return value
     if type(value) is SurfaceMetricOutcome:
@@ -907,7 +921,7 @@ def _route_decision(
                 else MeshAdaptationStatus.UNCHANGED
             )
             return changed, status, MeshTransitionKind.REMESH, False
-        case MmgAdaptationResult():
+        case MmgAdaptationResult() | OmegaHAdaptationResult():
             return True, MeshAdaptationStatus.COMPLETE, MeshTransitionKind.REMESH, False
         case SurfaceMetricOutcome():
             applied = (
@@ -1123,6 +1137,8 @@ def _mmg_evidence(
         type(item) is not MmgReference for item in references.references
     ):
         raise TypeError("Stored Mmg evidence lost its reference retention.")
+    if value.session.elapsed_seconds is not None:
+        raise ValueError("Model archives do not persist Mmg session wall time.")
     rebuilt = MmgAdaptationResult(
         value.plan_id,
         target,
@@ -1148,6 +1164,135 @@ def _mmg_evidence(
     )
     if rebuilt.result_id != value.result_id or not _same_model_content(rebuilt, value):
         raise ValueError("Stored Mmg evidence identity changed.")
+    return rebuilt
+
+
+def _omega_h_target_scope(stored: Any, target: CellMesh, /) -> MeshingScope:
+    """Rebind a stored Omega_h vertex or cell scope to the restored target mesh."""
+    if type(stored) is not MeshingScope:
+        raise TypeError("Stored Omega_h scope must be MeshingScope.")
+    dimension = int(stored.entity_dimension)
+    if dimension not in (0, target.topological_dimension):
+        raise ValueError("Stored Omega_h scope is neither vertices nor cells.")
+    identifiers = np.asarray(stored.entity_ids, dtype=np.int64)
+    expected = np.asarray(target.entity_set(dimension).entity_ids, dtype=np.int64)
+    if identifiers.shape != expected.shape or not np.array_equal(
+        np.sort(identifiers), np.sort(expected)
+    ):
+        raise ValueError("Stored Omega_h scope does not cover the adapted target.")
+    return _entity_scope(target, dimension, identifiers)
+
+
+def _omega_h_partition(stored: Any, /) -> OmegaHPartition:
+    """Rebuild one rank partition from its stored native arrays."""
+    from ._model_codec import _same_model_content
+
+    if type(stored) is not OmegaHPartition:
+        raise TypeError("Stored Omega_h partitions must be OmegaHPartition.")
+    arrays = _RankArrays(
+        vertex_global_ids=np.asarray(stored.vertex_global_ids),
+        coordinates=np.asarray(stored.coordinates),
+        metric=np.asarray(stored.metric),
+        vertex_owner_ranks=np.asarray(stored.vertex_owner_ranks),
+        vertex_owner_indices=np.asarray(stored.vertex_owner_indices),
+        cell_global_ids=np.asarray(stored.cell_global_ids),
+        cells=np.asarray(stored.cells),
+        cell_class_ids=np.asarray(stored.cell_class_ids),
+        cell_owner_ranks=np.asarray(stored.cell_owner_ranks),
+        cell_owner_indices=np.asarray(stored.cell_owner_indices),
+        facet_global_ids=np.asarray(stored.facet_global_ids),
+        facet_vertices=np.asarray(stored.facet_vertices),
+        facet_class_ids=np.asarray(stored.facet_class_ids),
+        facet_owner_ranks=np.asarray(stored.facet_owner_ranks),
+        fields=tuple(np.asarray(values) for values in stored.fields),
+    )
+    rebuilt = OmegaHPartition(stored.rank, arrays)
+    if rebuilt.partition_id != stored.partition_id or not _same_model_content(
+        rebuilt, stored
+    ):
+        raise ValueError("Stored Omega_h partition identity changed.")
+    return rebuilt
+
+
+def _omega_h_evidence(
+    value: OmegaHAdaptationResult,
+    source: CellMeshingResult,
+    target: CellMeshingResult,
+    /,
+) -> OmegaHAdaptationResult:
+    """Rebuild stored Omega_h evidence over the recertified endpoints.
+
+    Omega_h is not re-run. Every identity is recomputed from its stored inputs,
+    including the canonical worker record and the source field identities.
+    """
+    from ._model_codec import _same_model_content
+
+    if (
+        type(value) is not OmegaHAdaptationResult
+        or value.target is None
+        or value.metric is None
+        or value.source_id != source.result_id
+        or value.target.result_id != target.result_id
+    ):
+        raise ValueError("Stored Omega_h evidence does not bind the adapted endpoints.")
+    stored = value.evidence
+    if (
+        type(stored) is not OmegaHAdaptationEvidence
+        or type(stored.options) is not OmegaHOptions
+        or any(type(item) is not OmegaHFieldEvidence for item in stored.fields)
+        or type(value.classification) is not OmegaHClassification
+        or any(type(item) is not OmegaHTransferredField for item in value.fields)
+    ):
+        raise TypeError("Stored Omega_h evidence lost its registered records.")
+    if (value.distribution is None) != (stored.ranks == 1):
+        raise ValueError("Stored Omega_h distribution differs from its rank count.")
+    evidence = _reconstructed(
+        stored,
+        "evidence_id",
+        "Omega_h adaptation evidence",
+        options=_reconstructed(stored.options, "options_id", "Omega_h options"),
+        fields=tuple(
+            _reconstructed(item, "evidence_id", "Omega_h field evidence")
+            for item in stored.fields
+        ),
+    )
+    vertex_scope = _omega_h_target_scope(value.metric.scope, target.mesh)
+    if vertex_scope.entity_dimension != 0:
+        raise ValueError("The stored Omega_h metric is not a vertex field.")
+    gathered = _GatheredTarget(
+        target,
+        _target_metric(value.metric, target.mesh, scope=vertex_scope),
+        tuple(
+            _reconstructed(
+                item,
+                "field_id",
+                "Omega_h transferred field",
+                scope=_omega_h_target_scope(item.scope, target.mesh),
+            )
+            for item in value.fields
+        ),
+        # The result stores neither; they only build a fresh distribution.
+        np.zeros((0,), dtype=np.int32),
+        np.zeros((0,), dtype=np.int64),
+    )
+    rebuilt = OmegaHAdaptationResult(
+        source,
+        value.metric_id,
+        tuple(_omega_h_partition(item) for item in value.partitions),
+        _reconstructed(
+            value.classification, "classification_id", "Omega_h classification"
+        ),
+        evidence,
+        gathered,
+        None
+        if value.distribution is None
+        else _restored_distribution(value.distribution, target),
+        target.provider,
+        target.runtime,
+        target.provenance,
+    )
+    if rebuilt.result_id != value.result_id or not _same_model_content(rebuilt, value):
+        raise ValueError("Stored Omega_h evidence identity changed.")
     return rebuilt
 
 
@@ -1455,8 +1600,8 @@ def restore_route_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptat
         )
     if not isinstance(raw.prepared_id, str) or not raw.prepared_id:
         raise ValueError("Stored adaptation lost its prepared identity.")
-    if not math.isfinite(raw.elapsed_seconds) or raw.elapsed_seconds < 0:
-        raise ValueError("Stored adaptation elapsed time is invalid.")
+    if raw.elapsed_seconds is not None:
+        raise ValueError("Model archives do not persist adaptation wall time.")
     if raw.cell_content_transfer is not None or (
         raw.surface_chart_witness is not None
         and type(raw.evidence) is not SurfaceMetricOutcome
@@ -1489,7 +1634,7 @@ def restore_route_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptat
         stored = raw.transition
         if raw.lineage is None or stored is None:
             raise ValueError("Stored adaptation transition lacks its lineage.")
-        provider_route = type(evidence) is MmgAdaptationResult
+        provider_route = type(evidence) in (MmgAdaptationResult, OmegaHAdaptationResult)
         if provider_route:
             from ._adaptation import _unknown_lineage
 
@@ -1624,6 +1769,20 @@ def restore_route_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptat
             and metric.metric_id != stored_metric.metric_id
         ):
             raise ValueError("Stored Mmg adaptation metric differs from its evidence.")
+    elif type(evidence) is OmegaHAdaptationResult:
+        if raw.hierarchy is not None or raw.conservative_remap is not None:
+            raise ValueError("Stored Omega_h adaptation retains foreign evidence.")
+        hierarchy = None
+        evidence = _omega_h_evidence(evidence, source, target)
+        metric = evidence.metric
+        if (
+            metric is None
+            or raw.metric is None
+            or metric.metric_id != raw.metric.metric_id
+        ):
+            raise ValueError(
+                "Stored Omega_h adaptation metric differs from its evidence."
+            )
     elif type(evidence) is PolyhedralAdaptationEvidence:
         if raw.metric is not None or (raw.conservative_remap is None) == changed:
             raise ValueError(
@@ -1688,7 +1847,7 @@ def restore_route_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptat
         ),
         _compliance(binding, target),
         distribution,
-        raw.elapsed_seconds,
+        None,
     )
     if rebuilt.result_id != raw.result_id or not _same_model_content(
         rebuilt.compliance, raw.compliance

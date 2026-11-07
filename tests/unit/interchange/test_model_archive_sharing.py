@@ -391,7 +391,9 @@ def test_shared_archive_nodes_refuse_changed_or_noncanonical_definitions(
 def test_shared_archive_raw_manifest_depth_is_bounded(tmp_path: Path) -> None:
     from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS
 
-    path = write_model_artifact(tmp_path / "depth.phx", _composition(_mesh()), limits=None)
+    path = write_model_artifact(
+        tmp_path / "depth.phx", _composition(_mesh()), limits=None
+    )
     limits = dataclasses.replace(MODEL_ARCHIVE_LIMITS, max_manifest_nesting=3)
     with pytest.raises(ArrayArchiveCorruptionError):
         read_model_artifact(
@@ -439,7 +441,10 @@ def test_model_archive_readers_see_only_expanded_recipes(tmp_path: Path) -> None
 
 def test_pack_charges_only_proven_immutable_owners() -> None:
     from phydrax._array_archive import ArrayArchiveLimits
-    from phydrax._model._structure import _pack_owned_model_array_tree, model_structure_recipe
+    from phydrax._model._structure import (
+        _pack_owned_model_array_tree,
+        model_structure_recipe,
+    )
 
     limits = ArrayArchiveLimits(max_total_array_elements=8, max_manifest_nesting=64)
     shared = jnp.arange(8)
@@ -471,9 +476,14 @@ def test_pack_charges_only_proven_immutable_owners() -> None:
     assert packed["leaves/000000"] is packed["leaves/000001"]
 
 
-def test_model_immutable_shared_admission_preserves_wire_and_records(tmp_path: Path) -> None:
+def test_model_immutable_shared_admission_preserves_wire_and_records(
+    tmp_path: Path,
+) -> None:
     from phydrax._model._structure import model_archive_root_projection
-    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, model_archive_content_id
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+    )
 
     mesh = _mesh()
     value = _composition(mesh, mesh)
@@ -520,39 +530,198 @@ def test_model_immutable_shared_admission_preserves_wire_and_records(tmp_path: P
     assert decoded.entries[0].value is not decoded.entries[1].value
 
 
-def test_shared_payloads_still_bound_logical_expanded_bytes() -> None:
+def test_shared_payloads_bound_bytes_once_per_stored_owner() -> None:
+    """The aggregate byte limit counts each stored owner once (plan section 10).
+
+    Restoring the torus implicit volume (281 MB stored, 2.25 GB logical) left
+    202 MB of distinct array buffers: owner constructors reuse shared immutable
+    arrays, so restored array memory follows stored, not logical, bytes.
+    Expanded per-occurrence APIs still charge every occurrence.
+    """
     from phydrax._array_archive import ArrayArchiveLimits
     from phydrax._model._structure import (
         _expand_shared_immutable_model_archive_recipe,
         _pack_owned_model_array_tree,
+        expand_shared_model_archive_recipe,
         model_structure_recipe,
         pack_model_array_tree,
         share_model_archive_recipe,
     )
 
-    payload = np.frombuffer(bytes(range(32)), dtype=np.uint8)
-    value = ((payload,), (payload,), (payload,))
-    recipe = model_structure_recipe(value)
-    arrays = pack_model_array_tree(value, recipe, prefix="leaves", limits=None)
-    shared, members = share_model_archive_recipe(recipe, arrays, prefix="leaves")
-    assert _nodes(shared, "shared")
     limits = ArrayArchiveLimits(
-        max_total_array_elements=32, max_aggregate_bytes=64, max_manifest_nesting=64
+        max_total_array_elements=1024, max_aggregate_bytes=64, max_manifest_nesting=64
     )
-    with pytest.raises(ValueError, match="total array-byte limit"):
-        _pack_owned_model_array_tree(value, recipe, prefix="leaves", limits=limits)
-    with pytest.raises(ValueError, match="total array-byte limit"):
-        _expand_shared_immutable_model_archive_recipe(shared, members, "leaves", limits)
 
-    distinct = ((payload,), (np.frombuffer(bytes(range(32, 64)), dtype=np.uint8),))
-    distinct_recipe = model_structure_recipe(distinct)
-    distinct_arrays = pack_model_array_tree(
-        distinct, distinct_recipe, prefix="leaves", limits=None
+    def payload(start: int, /) -> np.ndarray:
+        return np.frombuffer(bytes(range(start, start + 32)), dtype=np.uint8)
+
+    def shared_recipe(value: Any, /) -> tuple[Any, Any, Any]:
+        recipe = model_structure_recipe(value)
+        arrays = pack_model_array_tree(value, recipe, prefix="leaves", limits=None)
+        return recipe, *share_model_archive_recipe(recipe, arrays, prefix="leaves")
+
+    # Three occurrences of one 32-byte owner: 96 logical bytes, 32 stored.
+    one = payload(0)
+    value = ((one,), (one,), (one,))
+    recipe, shared, members = shared_recipe(value)
+    assert _nodes(shared, "shared") and len(members) == 1
+    packed = _pack_owned_model_array_tree(value, recipe, prefix="leaves", limits=limits)
+    assert len(packed) == 3
+    expanded, arrays = _expand_shared_immutable_model_archive_recipe(
+        shared, members, "leaves", limits
     )
-    distinct_shared, distinct_members = share_model_archive_recipe(
-        distinct_recipe, distinct_arrays, prefix="leaves"
-    )
-    with pytest.raises(ValueError, match="total element limit"):
+    assert expanded == recipe and len(arrays) == 3
+    with pytest.raises(ValueError, match="total array-byte limit"):
+        expand_shared_model_archive_recipe(
+            shared, members, prefix="leaves", limits=limits
+        )
+
+    # Three distinct 32-byte owners store 96 bytes and are refused.
+    distinct = ((payload(0),), (payload(32),), (payload(64),))
+    distinct_recipe, distinct_shared, distinct_members = shared_recipe(distinct)
+    assert len(distinct_members) == 3
+    with pytest.raises(ValueError, match="total array-byte limit"):
+        _pack_owned_model_array_tree(
+            distinct, distinct_recipe, prefix="leaves", limits=limits
+        )
+    with pytest.raises(ValueError, match="total array-byte limit"):
         _expand_shared_immutable_model_archive_recipe(
             distinct_shared, distinct_members, "leaves", limits
         )
+
+
+def _array_sharing_value() -> tuple[Any, ...]:
+    # Equal int64 content under different parents (distinct objects), plus the
+    # same eight bytes as another dtype and shape, which must stay distinct.
+    return (
+        (np.arange(6, dtype=np.int64), "left"),
+        (np.arange(6, dtype=np.int64), "right"),
+        (np.zeros(8, dtype=np.uint8), np.zeros(1, dtype=np.int64)),
+    )
+
+
+def _shared_array_recipe(
+    value: Any, /
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, np.ndarray]]:
+    from phydrax._model._structure import (
+        model_structure_recipe,
+        pack_model_array_tree,
+        share_model_archive_recipe,
+    )
+
+    recipe = model_structure_recipe(value)
+    arrays = pack_model_array_tree(value, recipe, prefix="leaves", limits=None)
+    shared, members = share_model_archive_recipe(recipe, arrays, prefix="leaves")
+    return recipe, arrays, shared, members
+
+
+def test_equal_arrays_under_different_parents_are_archived_once() -> None:
+    from phydrax._model._structure import expand_shared_model_archive_recipe
+
+    recipe, arrays, shared, members = _shared_array_recipe(_array_sharing_value())
+    assert len(arrays) == 4
+    assert list(members) == ["leaves/000000", "leaves/000001", "leaves/000002"]
+    assert shared["items"][1]["items"][0]["kind"] == "shared"
+    assert shared["items"][2]["items"][1]["kind"] == "array"
+
+    # Archives depend only on content, not on whether the equal arrays alias.
+    left = np.arange(6, dtype=np.int64)
+    aliased = ((left, "left"), (left, "right"), _array_sharing_value()[2])
+    _, _, aliased_shared, aliased_members = _shared_array_recipe(aliased)
+    assert aliased_shared == shared
+    assert list(aliased_members) == list(members)
+    for name, value in aliased_members.items():
+        assert value.dtype == members[name].dtype
+        np.testing.assert_array_equal(value, members[name])
+
+    expanded, restored = expand_shared_model_archive_recipe(
+        shared, members, prefix="leaves", limits=None
+    )
+    assert expanded == recipe
+    assert expanded["items"][0]["items"][0] is expanded["items"][1]["items"][0]
+    assert set(restored) == set(arrays)
+    for name, value in arrays.items():
+        assert restored[name].dtype == value.dtype
+        np.testing.assert_array_equal(restored[name], value)
+
+
+@pytest.mark.parametrize("tamper", ("duplicate", "unresolved", "forward", "changed"))
+def test_shared_array_references_refuse_noncanonical_or_changed_members(
+    tamper: str,
+) -> None:
+    from phydrax._model._structure import expand_shared_model_archive_recipe
+
+    _, _, shared, members = _shared_array_recipe(_array_sharing_value())
+    shared = copy.deepcopy(shared)
+    payloads = list(members.values())
+    definition = shared["items"][0]["items"][0]
+    reference = shared["items"][1]["items"][0]
+    if tamper == "duplicate":
+        shared["items"][1]["items"][0] = copy.deepcopy(definition)
+        payloads.insert(1, payloads[0].copy())
+        match = "repeats an equal array"
+    elif tamper == "unresolved":
+        reference["key"] = "0" * 64
+        match = "no earlier equal definition"
+    elif tamper == "forward":
+        shared["items"][0]["items"][0] = reference
+        shared["items"][1]["items"][0] = definition
+        match = "no earlier equal definition"
+    else:
+        payloads[0] = payloads[0] + 1
+        match = "no earlier equal definition"
+    tampered = {f"leaves/{index:06d}": value for index, value in enumerate(payloads)}
+    with pytest.raises(ValueError, match=match):
+        expand_shared_model_archive_recipe(shared, tampered, prefix="leaves", limits=None)
+
+
+def test_shared_array_digest_collision_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._model import _structure
+
+    digest = _structure._RecipeContent.digest
+
+    def colliding(self: Any, node: Any, /) -> None:
+        digest(self, node)
+        if node["kind"] == "array":
+            self.keys[id(node)] = "0" * 64
+
+    monkeypatch.setattr(_structure._RecipeContent, "digest", colliding)
+    value = (
+        (np.arange(3, dtype=np.int64), "left"),
+        (np.ones(3, dtype=np.int64), "right"),
+    )
+    with pytest.raises(RuntimeError, match="content keys collided"):
+        _shared_array_recipe(value)
+
+
+def test_model_archive_stores_equal_arrays_of_different_meshes_once(
+    tmp_path: Path,
+) -> None:
+    mesh = _mesh()
+    # Same coordinates, different cells: the meshes differ, the coordinates don't.
+    other = CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0))),
+        np.asarray(((0, 1, 3), (0, 3, 2)), dtype=np.int32),
+    )
+    assert other.mesh_id != mesh.mesh_id
+    path = write_model_artifact(
+        tmp_path / "meshes.phx", _composition(mesh, other), limits=None
+    )
+    _, digests = _archive(path)
+    assert len(set(digests.values())) == len(digests)
+    manifest, arrays = read_model_archive(path, limits=None)
+    entries = manifest["model_recipe"]["fields"]["entries"]["items"]
+    first, second = (entry["fields"]["value"] for entry in entries)
+    assert first is not second
+    assert first["fields"]["coordinates"] is second["fields"]["coordinates"]
+    restored = _read(path)
+    assert [entry.value.mesh_id for entry in restored.entries] == [
+        mesh.mesh_id,
+        other.mesh_id,
+    ]
+    np.testing.assert_array_equal(
+        np.asarray(restored.entries[1].value.coordinates), np.asarray(other.coordinates)
+    )
+    assert len(arrays) > len(digests)

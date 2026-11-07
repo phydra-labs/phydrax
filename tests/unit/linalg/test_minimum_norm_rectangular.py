@@ -179,6 +179,37 @@ def test_preconditioned_craig_matches_oracle_and_classifies_incompatibility(
     ) * (1.0 + 1e-8)
 
 
+@pytest.mark.parametrize("weighted", (False, True), ids=("euclidean", "weighted"))
+def test_row_gram_diagonal_coalesces_unplanned_sparse_routes(weighted: bool) -> None:
+    # Each entry splits across two routes, so squaring before coalescing would
+    # be wrong; the operator carries no prepared storage plan.
+    rows, columns = np.nonzero(_MATRIX)
+    halves = _MATRIX[rows, columns] * np.asarray([[0.25], [0.75]])
+    source = _SOURCE_WEIGHTS if weighted else np.ones(4)
+    target = _TARGET_WEIGHTS if weighted else np.ones(6)
+    operator = SparseCoordinateOperator(
+        EdgeRelation(
+            np.tile(columns, 2).astype(np.int32),
+            np.tile(rows, 2).astype(np.int32),
+            source_size=4,
+            target_size=6,
+        ),
+        jnp.asarray(halves.reshape(-1)),
+        source=la.ArraySpace(
+            (4,), dtype=jnp.float64, pairing=la.DiagonalPairing(jnp.asarray(source))
+        ),
+        target=la.ArraySpace(
+            (6,), dtype=jnp.float64, pairing=la.DiagonalPairing(jnp.asarray(target))
+        ),
+    )
+
+    diagonal = la.assemble_diagonal(la.RowGramLinearOperator(operator))
+
+    np.testing.assert_allclose(
+        np.asarray(diagonal), target * ((_MATRIX**2) @ (1.0 / source)), rtol=1e-13
+    )
+
+
 def test_auto_planning_selects_craig_only_with_preconditioning_and_fingerprints_assembly() -> (
     None
 ):

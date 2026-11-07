@@ -28,7 +28,6 @@ from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
 from ..typing import checked
-from ._certification_inputs import ScopedFidelityInput
 from ._association import (
     _child_sources,
     AssociationEntityClasses,
@@ -46,6 +45,7 @@ from ._association_routes import (
     require_transfer_lineage,
     target_dimension,
 )
+from ._certification_inputs import ScopedFidelityInput
 from ._lineage import EntityLineageKind, MeshLineage, VertexInterpolationStencil
 from ._result import CellMeshingResult
 from ._topology_edit import key_rows
@@ -442,7 +442,9 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         *,
         vertex_stencil: VertexInterpolationStencil | None,
         geometry_transition: CellGeometryTransition | None,
-        target_fidelity_witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        target_fidelity_witness: SourceBoundaryChartWitness
+        | SourceBoundaryFaceImageWitness
+        | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
@@ -533,7 +535,16 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
                 for role in roles
             )
             parent_dimensions, parent_ids = self._parents(
-                source.mesh, target, lineage, dimension, identifiers, vertex_stencil
+                source.mesh,
+                target,
+                lineage,
+                dimension,
+                identifiers,
+                vertex_stencil,
+                classes.dimensions,
+                target_fidelity_witness,
+                validated_fidelity,
+                surface_key,
             )
             points = self._classification_points(target, dimension, classes)
             residuals = np.zeros(identifiers.shape, dtype=np.float64)
@@ -750,60 +761,121 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         dimension: int,
         identifiers: np.ndarray,
         vertex_stencil: VertexInterpolationStencil | None,
+        strata: np.ndarray,
+        target_fidelity_witness: SourceBoundaryChartWitness
+        | SourceBoundaryFaceImageWitness
+        | None,
+        validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        surface_key: tuple[str, tuple[str, ...]],
         /,
     ) -> tuple[np.ndarray, np.ndarray]:
-        record = lineage.entity_lineage(dimension)
-        old_ids = np.asarray(record.source_global_ids, dtype=np.int64)
-        new_ids = np.asarray(record.target_global_ids, dtype=np.int64)
-        parent_dimensions = np.full(identifiers.shape, -1, dtype=np.int8)
-        parent_ids = np.full(identifiers.shape, -1, dtype=np.int64)
-        # Each target's parent is its least lineage source present in the source
-        # mesh, else itself when retained; one sorted pass serves every target.
-        present = entity_rows(source, dimension, old_ids) >= 0
-        lineage_new = new_ids[present]
-        lineage_old = old_ids[present]
-        order = np.lexsort((lineage_old, lineage_new))
-        lineage_new = lineage_new[order]
-        lineage_old = lineage_old[order]
-        positions = np.searchsorted(lineage_new, identifiers, side="left")
-        inside = positions < lineage_new.size
-        has_parent = np.zeros(identifiers.shape, dtype=np.bool_)
-        has_parent[inside] = lineage_new[positions[inside]] == identifiers[inside]
-        parent_dimensions[has_parent] = dimension
-        parent_ids[has_parent] = lineage_old[positions[has_parent]]
-        retained = ~has_parent & (entity_rows(source, dimension, identifiers) >= 0)
-        parent_dimensions[retained] = dimension
-        parent_ids[retained] = identifiers[retained]
-        if dimension == 0:
-            created_rows = np.flatnonzero(entity_rows(source, 0, identifiers) < 0)
-            if created_rows.size:
-                if vertex_stencil is None:
-                    raise AssociationPropagationError(
-                        "Created implicit vertices require an exact source interpolation stencil.",
-                        identifiers[created_rows],
-                    )
-                created_ids = np.sort(identifiers[created_rows])
-                child_dimensions, child_rows = _child_sources(
-                    lineage, source, target, created_ids, vertex_stencil
+        parent_dimensions, parent_ids = _lineage_parents(
+            source, lineage, dimension, identifiers
+        )
+        if dimension != 0:
+            return parent_dimensions, parent_ids
+        created_rows = np.flatnonzero(entity_rows(source, 0, identifiers) < 0)
+        if not created_rows.size:
+            return parent_dimensions, parent_ids
+        if vertex_stencil is None:
+            raise AssociationPropagationError(
+                "Created implicit vertices require an exact source interpolation stencil.",
+                identifiers[created_rows],
+            )
+        created_ids = np.sort(identifiers[created_rows])
+        child_dimensions, child_rows = _child_sources(
+            lineage, source, target, created_ids, vertex_stencil
+        )
+        target_rows = entity_rows(target, 0, created_ids)
+        supported = (child_dimensions >= 0) & (child_rows >= 0)
+        for target_row, source_dimension, source_row in zip(
+            target_rows[supported].tolist(),
+            child_dimensions[supported].tolist(),
+            child_rows[supported].tolist(),
+            strict=True,
+        ):
+            parent_dimensions[target_row] = source_dimension
+            parent_ids[target_row] = int(
+                source.entity_set(source_dimension).entity_ids[source_row]
+            )
+        # Implicit-only boundary moves, collapses and flips join vertices across
+        # source simplices, so a created stencil may span no single source
+        # simplex. Such a zero-set vertex is classified by the validated target
+        # root-chart witness of an incident boundary face (no mesh parent); an
+        # interior vertex inherits the region of its incident cells' ancestry.
+        open_rows = target_rows[~supported]
+        open_ids = created_ids[~supported]
+        on_surface = strata[open_rows] == 2
+        if np.any(on_surface):
+            certified = self._chart_certified_vertices(
+                target, target_fidelity_witness, validated_fidelity, surface_key
+            )
+            uncertified = ~np.isin(open_ids[on_surface], certified)
+            if np.any(uncertified):
+                raise AssociationPropagationError(
+                    "Created implicit zero-set vertices require exact source support "
+                    "or a validated root-chart witness.",
+                    open_ids[on_surface][uncertified],
                 )
-                target_rows = entity_rows(target, 0, created_ids)
-                for identifier, target_row, source_dimension, source_row in zip(
-                    created_ids.tolist(),
-                    target_rows.tolist(),
-                    child_dimensions.tolist(),
-                    child_rows.tolist(),
-                    strict=True,
-                ):
-                    if source_dimension < 0 or source_row < 0:
-                        raise AssociationPropagationError(
-                            "Created implicit vertices require exact source-stratum support.",
-                            np.asarray((identifier,), dtype=np.int64),
-                        )
-                    parent_dimensions[target_row] = source_dimension
-                    parent_ids[target_row] = int(
-                        source.entity_set(source_dimension).entity_ids[source_row]
-                    )
+        interior_rows = open_rows[~on_surface]
+        if interior_rows.size:
+            region_parents = _cell_ancestors(source, target, lineage, interior_rows)
+            if np.any(region_parents < 0):
+                raise AssociationPropagationError(
+                    "Created implicit region vertices require source cell ancestry.",
+                    open_ids[~on_surface][region_parents < 0],
+                )
+            parent_dimensions[interior_rows] = 3
+            parent_ids[interior_rows] = region_parents
         return parent_dimensions, parent_ids
+
+    def _chart_certified_vertices(
+        self,
+        target: CellMesh,
+        witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        validated: tuple[ValidatedSourceFidelityWitness, ...],
+        surface_key: tuple[str, tuple[str, ...]],
+        /,
+    ) -> np.ndarray:
+        """Sorted target vertex IDs on faces charted to the implicit zero set.
+
+        Only the target's implicit root-chart witness counts, and only when its
+        validation against this exact target mesh is supplied.
+        """
+        if (
+            not isinstance(witness, SourceBoundaryChartWitness)
+            or not witness.implicit_cell_keys.size
+            or witness.mesh_id != target.mesh_id
+            or witness.topology_id != target.topology_id
+            or (witness.source_id, witness.source_revision) != self.source_namespaces[0]
+            or not any(
+                token.witness is witness and token.mesh is target for token in validated
+            )
+        ):
+            return np.empty((0,), dtype=np.int64)
+        charted = np.asarray(
+            [
+                (entity, path) == surface_key
+                for entity, path in zip(
+                    witness.source_entity_ids, witness.occurrence_paths, strict=True
+                )
+            ],
+            dtype=np.bool_,
+        )
+        face_rows = entity_rows(
+            target, 2, np.asarray(witness.entity_global_ids, dtype=np.int64)[charted]
+        )
+        if np.any(face_rows < 0):
+            raise ValueError(
+                "Implicit root-chart witness names faces outside its target."
+            )
+        selected = np.zeros((target.entity_set(2).count,), dtype=np.bool_)
+        selected[face_rows] = True
+        pairs = incidence_pairs(target, 0, 2)
+        vertex_rows = np.unique(pairs[selected[pairs[:, 1]], 0])
+        return np.sort(
+            np.asarray(target.entity_set(0).entity_ids, dtype=np.int64)[vertex_rows]
+        )
 
     def _classification_points(
         self, mesh: CellMesh, dimension: int, classes: AssociationEntityClasses, /
@@ -821,6 +893,60 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
                 "Every associated implicit entity must contain mesh vertices."
             )
         return sums / weights[:, None]
+
+
+def _lineage_parents(
+    source: CellMesh,
+    lineage: MeshLineage,
+    dimension: int,
+    identifiers: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Least same-dimension lineage source present in ``source``, else retained self."""
+    record = lineage.entity_lineage(dimension)
+    old_ids = np.asarray(record.source_global_ids, dtype=np.int64)
+    new_ids = np.asarray(record.target_global_ids, dtype=np.int64)
+    parent_dimensions = np.full(identifiers.shape, -1, dtype=np.int8)
+    parent_ids = np.full(identifiers.shape, -1, dtype=np.int64)
+    # One sorted pass serves every target.
+    present = entity_rows(source, dimension, old_ids) >= 0
+    lineage_new = new_ids[present]
+    lineage_old = old_ids[present]
+    order = np.lexsort((lineage_old, lineage_new))
+    lineage_new = lineage_new[order]
+    lineage_old = lineage_old[order]
+    positions = np.searchsorted(lineage_new, identifiers, side="left")
+    inside = positions < lineage_new.size
+    has_parent = np.zeros(identifiers.shape, dtype=np.bool_)
+    has_parent[inside] = lineage_new[positions[inside]] == identifiers[inside]
+    parent_dimensions[has_parent] = dimension
+    parent_ids[has_parent] = lineage_old[positions[has_parent]]
+    retained = ~has_parent & (entity_rows(source, dimension, identifiers) >= 0)
+    parent_dimensions[retained] = dimension
+    parent_ids[retained] = identifiers[retained]
+    return parent_dimensions, parent_ids
+
+
+def _cell_ancestors(
+    source: CellMesh,
+    target: CellMesh,
+    lineage: MeshLineage,
+    vertex_rows: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Least source cell in the lineage of each vertex's incident target cells.
+
+    ``-1`` marks a vertex with no incident cell descended from a source cell.
+    """
+    top = target.topological_dimension
+    cell_ids = np.asarray(target.entity_set(top).entity_ids, dtype=np.int64)
+    _, cell_parents = _lineage_parents(source, lineage, top, cell_ids)
+    pairs = incidence_pairs(target, 0, top)
+    pairs = pairs[cell_parents[pairs[:, 1]] >= 0]
+    least = np.full((target.entity_set(0).count,), np.iinfo(np.int64).max, dtype=np.int64)
+    np.minimum.at(least, pairs[:, 0], cell_parents[pairs[:, 1]])
+    result = least[vertex_rows]
+    return np.where(result == np.iinfo(np.int64).max, -1, result)
 
 
 __all__ = ["ImplicitAssociationTransfer"]

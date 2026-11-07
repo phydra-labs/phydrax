@@ -828,8 +828,11 @@ the noncap core boundary, not movement of original vertices or changes to the
 authored geometry, layer controls, material sides, or quality targets. The
 original layer control and policy must be retained on the source. The accepted
 result retains source ancestry and independently checks the realized boundary
-and the layer/core interface. Fixed remains the default; cap refinement is a
-separate opt-in.
+and the layer/core interface. Its organization keeps the authored
+`facet:<source face>` patches. A subdivided core boundary face joins a patch only
+when its execution facet's source polygons all lie on that one facet, and a layer
+side strip joins the facet above its rim edge, as in the fixed organization.
+Fixed remains the default; cap refinement is a separate opt-in.
 For this conforming noncap policy, native quality repair may collapse only
 eligible generated boundary vertices; the original execution vertex bank and
 protected facets remain constraints. Repair status, unmet criteria, and its
@@ -1184,8 +1187,12 @@ comparison or index is decided on the box. It also checks that square roots,
 reciprocals, logarithms and fractional powers stay away from their singular
 points. Values that do not depend on the box are constants. Equations with the
 same primitive, static parameters and operands denote one value, so
-`primitive | primitive` ties no branch. A face whose proof only meets decided
-boxes keeps its root chart, since the Hessian program is then exact there.
+`primitive | primitive` ties no branch. Host evaluation of any program with
+min/max tracks the same identities. A decided selection then decides the
+comparisons in JAX's min/max derivative rules, and a reduction's attaining
+count is at least one, so gradient and Hessian enclosures of sharp CSG stay
+finite. A face whose proof only meets decided boxes keeps its root chart,
+since the Hessian program is then exact there.
 
 A face that meets a crease, such as the seam of overlapping spheres, takes the
 root-witness bound instead. Every retained root witness encloses a zero, so a
@@ -1533,6 +1540,205 @@ entities and their associations must remain authoritative.
 isosurface with `OpenVDBLevelSetRebuild` before extraction. `PoissonProvider`
 publishes native per-vertex sample density, optional density-quantile trimming,
 an explicit thread count, and the declared (Neumann) boundary condition.
+
+### TPMS lattices
+
+A triply periodic minimal surface (TPMS) lattice is a `TrigonometricLevelSet`:
+an exact rational trigonometric table on the reduced coordinates of a
+`PeriodicCell`, with a region selector. The named tables are the gyroid and its
+mirror image, Schwarz P, Schwarz D (diamond), I-WP and the lidinoid; user tables
+use the same representation. They are nodal approximations of the minimal
+surfaces, not the surfaces themselves. The regions are `network` (`F <= c`),
+`complement` (`F >= c`) and `sheet` (`|F - c| <= tau`, with the sheet-thickness
+semantics of the geometry reference). Each boundary level is separated from the
+table's certified critical values when the source is built. A level that meets
+a critical-value enclosure raises `TrigonometricSingularLevelError` with the
+separation evidence, so a topology change such as Schwarz P at `|c| = 1` is
+refused rather than meshed.
+
+A periodic cell goes through four owners:
+
+1. `discover_periodic_trigonometric_surface(source, policy=..., source_id=...)`
+   discovers the zero set on the three-torus quotient. It reports the quotient
+   topology (`PeriodicSurfaceTopology`: components, Euler characteristic, genus)
+   and, through `lattice_metrics()`, the certified solid-fraction and porosity
+   enclosure and the measured surface area.
+2. `mesh_periodic_trigonometric_region(surface)` fills the quotient region with
+   a periodic tetrahedral mesh (`PeriodicImplicitVolume`). The upper cell-face
+   caps are exact lattice translates of the lower ones, and
+   `quotient_region_components` counts the region's quotient components.
+3. `PeriodicCellProblem(volume.mesh, physics="conductivity")` (or
+   `"elasticity"`) homogenizes the cell with Hill–Mandel evidence. The
+   cubic-symmetry defect of the effective tensor is measured, never imposed.
+4. `prepare_periodic_implicit_realization(volume, source)` freezes the
+   topology for design sensitivities in the level, sheet half-width and cell
+   scale.
+
+Symmetry facts used as oracles are proved from the table.
+`TrigonometricTable.symmetry_sign(A, b)` proves `F(A u + b) = ±F(u)` exactly for
+a signed permutation `A` and a quarter-lattice shift `b`. For Schwarz P the
+half-lattice shift gives `-F`, so the network fraction at `c = 0` is exactly
+1/2. For the gyroid, the maps with sign `±1` preserve every sheet
+`{|F| <= tau}`, and their linear parts leave only multiples of the identity
+invariant among symmetric rank-2 tensors. The exact effective conductivity of a
+gyroid sheet is therefore isotropic, and the discrete tensor's cubic defect is a
+measured discretization error.
+
+### Finite lattice specimens
+
+`construct_lattice_specimen_surface(Intersection(region, envelope), ...)`
+builds the closed, oriented boundary of a lattice clipped by a `Box`, a full
+`Cylinder` or a `Sphere`. The boundary has implicit faces (the clipped
+discovery contour) and trimmed envelope caps. Creases and sharp envelope edges
+are protected segments. A certified unresolved event, such as a crease tangent
+to the envelope, raises `LatticeSpecimenEventError` and nothing is meshed.
+
+Implicit-face edges no longer than `short_edge_ratio` (default 0.25) times the
+longest edge around their free end are collapsed onto existing vertices.
+Creases, rims and caps never move. A collapse is accepted only when:
+
+- the link condition holds;
+- no moved triangle flips or grows an edge;
+- the worst nearby triangle quality does not drop.
+
+The surface's fidelity bounds are certified on the final triangles:
+`implicit_face_distance`, `cap_deviation` and `crease_root_distance`. Each
+implicit-face triangle takes the smaller of two certified bounds on the
+distance of its points to the region's zero set:
+
+- a gradient-flow bound `U/m`, where `U` bounds `|F|` on the triangle (vertex
+  values plus the interval Hessian's spectral bound times `e²/6`, `e` the
+  longest edge) and `m` bounds `‖∇F‖` from below on the triangle's box grown
+  by `δ ≥ U/m`; `m` is the larger of the componentwise interval bound and the
+  centred form `‖∇F(c)‖ − M·(s + δ)` about the centroid `c`, `s` its largest
+  vertex distance. A triangle this does not prove is split at its edge
+  midpoints, and the pieces are bounded in turn, while the Taylor term still
+  dominates `U`;
+- a root-witness bound `e/√3` plus the largest vertex root distance, which
+  holds even where no gradient bound is proved.
+
+`mesh_lattice_specimen` fills the surface through the native fixed-boundary
+`plc_tetrahedral` route, with one facet per triangle. The default schedule sets
+no radius-edge or dihedral target, so only cell validity is enforced. The
+result counts as a certified solid only when all of these pass:
+
+- the audit, with the watertight check rejected;
+- an exact match between the mesh boundary and the surface (bit-identical
+  vertices, outward orientation);
+- coverage: the summed cell volume equals the enclosed volume.
+
+`measure` and `porosity` are measured values; the fidelity bounds are their
+evidence.
+
+### Lattice solid export
+
+`export_lattice_solid(path, volume, policy, file_format=None)` writes an
+accepted lattice as an STL or 3MF solid through `export_surface`, the surface
+interchange owner. It returns a `LatticeSolidExport` with the audit, the
+certificate, the declared losses and the fidelity bounds. The exported surface
+depends on the volume:
+
+- for a `LatticeSpecimenVolume` that is a certified solid, the specimen
+  surface;
+- for an audited `PeriodicImplicitVolume`, the closed boundary of the lifted
+  fundamental cell (the contour and the paired cell-face caps), which is one
+  printable unit cell, not the quotient.
+
+`lattice_solid_surface(volume)` returns that surface as a `SurfaceModel`. It
+keeps only boundary vertices, numbered in order of first appearance, so formats
+that store bare triangles reproduce the numbering. Its metadata records the
+source identity, the accepted result identity (`source_revision`) and the
+fidelity bounds.
+
+Solid export requires a closed, oriented 2-manifold certificate: a valid
+`SurfaceModel.audit(SurfaceAuditPolicy(require_closed=True,
+require_outward_orientation=True))`, issued as a `SurfaceValidityCertificate`.
+The audit requires:
+
+- every edge on exactly two triangles with opposite directions;
+- every vertex joining a single fan (the audit's `manifold` flag also covers
+  vertices, so two solids touching at one vertex are refused);
+- no unused vertices;
+- nondegenerate triangles;
+- a positive enclosed volume for every component.
+
+A surface that fails raises `SurfaceSolidCertificateError`, which carries the
+audit report and its issues; nothing is published. The certificate is
+combinatorial and orientational. Embedding (no self-intersection) is evidence of
+the producing volume mesh's audit, which `export_lattice_solid` requires.
+
+The formats differ in what they keep:
+
+- **3MF** (`.3mf`, `SurfaceFileFormat.THREE_MF`) is written natively, with no
+  provider dependency. The package is a 3MF core model with one `model` object
+  and one build item. Coordinates are written as shortest round-trip decimals,
+  so they decode bit for bit. The 3MF unit is micron, millimeter, centimeter,
+  inch, foot or meter; other units are refused. Metadata in the
+  `urn:phydrax:3mf:surface` namespace records the source identity and
+  revision, the coordinate system, the length unit, the model identity, the
+  provenance (including the fidelity bounds) and the certificate identity.
+  Packages are deterministic: fixed member order, timestamps, host system and
+  permissions, so equal inputs give equal bytes. Every package is decoded again
+  and compared before it is published. `export_surface` requires the same
+  certificate for any 3MF write. Global IDs (other than `0..n-1`), cell tags and
+  portable fields are declared losses. There is no 3MF importer.
+- **STL** (`.stl`) goes through the meshio profile in ASCII, which keeps
+  binary64 coordinates but no units, identities, provenance, fidelity bounds or
+  certificate. `export_lattice_solid` therefore declares STL lossy with respect
+  to the source (`stl_lossy_with_respect_to_source`), on top of the format's
+  own losses, and requires `allow_lossy=True`. Binary STL stores float32
+  coordinates, so its round-trip comparison refuses it.
+
+### TPMS qualification and benchmarks
+
+`python -m tools.meshing_qualification --scenario native-tpms` runs five
+profiles, each against an independent oracle:
+
+- `gyroid-sheet-cell`: the sheet `{|F| <= 0.3}`. The profile checks:
+  - quotient topology (two genus-5 boundary sheets per conventional cell);
+  - exact lattice lifts and exact pairing of every cell-face cap triangle;
+  - the certified volume-fraction enclosure against an independent quadrature
+    (exact along `x`, composite Gauss–Legendre in `(y, z)`, with its
+    self-convergence reported);
+  - homogenized conductivity within the Hashin–Shtrikman void bracket, with the
+    isotropy proved from the table and the cubic defect measured.
+- `schwarz-p-network`: the fraction 1/2 proved by the half-lattice shift and
+  enclosed by the cover, with one percolating quotient component (winding
+  rank 3) for the network and one for the complement.
+- `schwarz-p-singular`: levels `1`, `-1` and `3` lie inside critical-value
+  enclosures and are refused with `quarter_point` evidence; `c = 0.5` is
+  accepted.
+- `diamond-cylinder-specimen`: a Schwarz D network clipped by a cylinder. The
+  profile checks:
+  - certified creases and caps, a certified solid and its 3MF export;
+  - mesh volume and porosity against an exact-per-line oracle, within the
+    fidelity tube (boundary area times the larger fidelity bound);
+  - linear-elastic compression between bonded platens. The FE strain energy
+    must not exceed the energy of the uniaxial-strain trial field, which is P1
+    and meets every Dirichlet value, so this bound holds exactly in the
+    discrete space. An affine field imposed on the boundary must also be
+    reproduced at the interior nodes (patch test).
+- `periodic-cold-restore`: a separate process reads the archived Schwarz P cell
+  and recomputes its identities, certification, quotient components and
+  measure. It re-solves the homogenized conductivity, which must match bit for
+  bit.
+
+`examples/native_tpms_lattice.py` walks through the same pieces at example
+size. `python -m benchmarks.tpms_lattice` measures the following as separate
+phases:
+
+- critical-level certification;
+- quotient discovery, cold, warm and host allocation;
+- the periodic fill;
+- the specimen surface, and its six-face crease discovery alone;
+- the specimen fill;
+- homogenization: preparation, lowering, compilation, first and warm runs, and
+  XLA memory.
+
+It scales with the level near the Schwarz P critical value, with lattice cells
+per specimen and with the quotient mesh size. Run it without the correctness
+environment's JAX cache. Its record states that the shared workstation was
+contended.
 
 ### Native quadrilateral and hexahedral family routes
 
@@ -2284,9 +2490,11 @@ non-converged untangling stages), and `NONCONVERGED` (not accepted) otherwise.
 status returns the unmodified coordinates, and
 `MeshOptimizationResult.minimization` carries the native termination evidence,
 including the rejected iterate. `optimize_cell_geometry_coordinates` runs the
-same route for user-defined high-order objectives; the objective must encode the
-required curved-element validity, and `CellGeometryOptimizationResult` reports
-`optimizer_status`/`converged` for the caller's explicit acceptance decision.
+same route for user-defined high-order objectives; `length_scale=` makes its
+parameters the free-row displacements in units of that length. The objective
+must encode the required curved-element validity, and
+`CellGeometryOptimizationResult` reports `optimizer_status`/`converged` for the
+caller's explicit acceptance decision.
 Derivatives of numerical objectives do not differentiate topology changes or
 host-side acceptance.
 
@@ -2728,7 +2936,14 @@ dimension than the ambient space. Interior nodes relax through
 inverse mean-ratio distortion of the Jacobian relative to the straight-sided
 element, sampled at the Bernstein control-point lattice of the determinant, a
 displacement term, and the distance of constrained nodes from their tangent
-spaces. Constrained nodes are re-projected after every round. A candidate is
+spaces. Relaxation repairs locally: round `k` frees the nodes of the cells the
+latest certified candidate does not prove valid and of `k` rings of node-sharing
+cells around them, averages the distortion over the cells sharing a freed node,
+and solves that coupled star with the native `NewtonTrustRegion` on nodal
+displacements in units of the mean straight edge length, so the trust radius and
+step tolerances do not depend on the model's length unit. Every other node keeps
+its projected position, and no round runs once a candidate proves every cell
+valid. Constrained nodes are re-projected after every round. A candidate is
 accepted only when `certify_cell_geometry_validity` certifies every cell, global
 embedding is certified, and every constrained residual is within
 `residual_tolerance`. Supplying `source_result=` to `curve_cell_mesh` (or

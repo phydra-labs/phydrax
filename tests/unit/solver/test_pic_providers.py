@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 from collections.abc import Callable
 from fractions import Fraction
 from io import BytesIO
@@ -980,7 +981,7 @@ def test_warpx_rz_refuses_particles_beyond_its_shifted_box() -> None:
 
 def test_warpx_runners_refuse_the_other_scenarios(tmp_path: Path) -> None:
     provider = S.WarpXProvider(
-        pin_executable("/usr/bin/true", version="0", license_id="BSD-3-Clause-LBNL")
+        pin_executable(sys.executable, version="0", license_id="BSD-3-Clause-LBNL")
     )
     with pytest.raises(ValueError, match="run_warpx_track"):
         S.run_warpx(provider, _tiny_track_case(), tmp_path)

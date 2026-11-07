@@ -73,6 +73,7 @@ NATIVE_CASE_REGISTRY = {
         "native_cold_fe_fv_continuation",
     ),
     "native-design-loop": (".scenarios.native_design", "native_design_loop"),
+    "native-tpms": (".scenarios.native_tpms", "native_tpms"),
 }
 
 NATIVE_SCENARIOS = tuple(NATIVE_CASE_REGISTRY)

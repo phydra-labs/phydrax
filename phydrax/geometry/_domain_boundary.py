@@ -91,34 +91,6 @@ def _triangle3(values: tuple[tuple[object, ...], ...], /) -> _Triangle3:
     return (_point3(values[0]), _point3(values[1]), _point3(values[2]))
 
 
-def _exact_span_point_gap_upper(
-    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
-    parameters: _Point2,
-    realized: np.ndarray,
-    /,
-) -> Fraction:
-    """Bound a realized corner's distance to its exact rational span source point."""
-    from ._source_interpolation import _exact_rational_surface_point_bounds
-
-    source = _exact_rational_surface_point_bounds(spans, parameters)
-    target = np.asarray(realized, dtype=np.float64)
-    if (
-        source is None
-        or len(source) != 3
-        or target.shape != (3,)
-        or not np.all(np.isfinite(target))
-    ):
-        raise ValueError(
-            "An exact surface source point has no exact rational span enclosure."
-        )
-    squared = Fraction(0)
-    for (lower, upper), value in zip(source, target, strict=True):
-        represented = Fraction.from_float(float(value))
-        coordinate_error = max(abs(lower - represented), abs(upper - represented))
-        squared += coordinate_error * coordinate_error
-    return fraction_sqrt_interval(squared)[1]
-
-
 def _cross2(
     first: tuple[Fraction, Fraction],
     second: tuple[Fraction, Fraction],
@@ -881,7 +853,7 @@ _TURN = 2.0 * math.pi
 
 
 class _ChartedPatch(NamedTuple):
-    """A patch's exact chart cover awaiting its batched physical evaluation."""
+    """A patch's exact chart cover and the source data that decides its corners."""
 
     patch: int
     surface: AbstractSurfacePatch
@@ -891,6 +863,111 @@ class _ChartedPatch(NamedTuple):
     uv_points: tuple[_Point2, ...]
     exact_charts: tuple[_Triangle2, ...]
     uv_triangles: np.ndarray
+
+
+def _enclosure_center(
+    bounds: tuple[tuple[Fraction, Fraction], ...], /
+) -> tuple[np.ndarray, Fraction]:
+    """Nearest binary64 center of an exact point enclosure and its distance bound."""
+    center = np.asarray(
+        [float((lower + upper) / 2) for lower, upper in bounds], dtype=np.float64
+    )
+    if not np.all(np.isfinite(center)):
+        raise ValueError("Exact source point box is unavailable.")
+    squared = Fraction(0)
+    for (lower, upper), value in zip(bounds, center.tolist(), strict=True):
+        represented = Fraction.from_float(value)
+        error = max(abs(lower - represented), abs(upper - represented))
+        squared += error * error
+    return center, fraction_sqrt_interval(squared)[1]
+
+
+def _source_point_box(
+    surface: AbstractSurfacePatch,
+    point: _Point2,
+    preparation: SourcePreparation,
+    /,
+) -> tuple[tuple[Fraction, Fraction], ...]:
+    """Certified source box of an exact chart point's outward parameter box."""
+    from ._meshing_domain import _outward_surface_parameter_box
+
+    parameter_box = _outward_surface_parameter_box(
+        surface,
+        tuple(fraction_down(value) for value in point),
+        tuple(fraction_up(value) for value in point),
+    )
+    if any(
+        Fraction.from_float(float(parameter_box[0, axis])) > point[axis]
+        or Fraction.from_float(float(parameter_box[1, axis])) < point[axis]
+        for axis in range(2)
+    ):
+        raise ValueError("Point lies outside its source chart.")
+    box = np.asarray(preparation.surface_box(surface, parameter_box), dtype=np.float64)
+    if box.shape != (2, 3) or not np.all(np.isfinite(box)) or np.any(box[0] > box[1]):
+        raise ValueError("Exact source point box is unavailable.")
+    return tuple(
+        (
+            Fraction.from_float(float(box[0, axis])),
+            Fraction.from_float(float(box[1, axis])),
+        )
+        for axis in range(3)
+    )
+
+
+def _decided_chart_images(
+    entry: _ChartedPatch, preparation: SourcePreparation, /
+) -> tuple[np.ndarray, tuple[Fraction, ...]]:
+    """Binary64 chart-cover corners decided by exact source data alone.
+
+    A corner is the nearest binary64 point of its exact source point, of the
+    center of its exact rational span enclosure, or of the center of the
+    certified source box of its outward parameter box. No floating-point
+    surface evaluation decides a cover vertex, so a cover and its identity
+    are the same on every platform. The second result bounds, per triangle,
+    the largest distance from a corner to its exact source point.
+    """
+    from ..discretization._coordinate_enclosure import evaluate_expression
+    from ._source_interpolation import _exact_rational_surface_point_bounds
+
+    physical = np.empty((len(entry.exact_charts), 3, 3), dtype=np.float64)
+    errors: list[Fraction] = []
+    for row, exact_chart in enumerate(entry.exact_charts):
+        endpoint_error = Fraction(0)
+        for corner, point in enumerate(exact_chart):
+            if entry.exact_surface is not None:
+                exact = tuple(
+                    evaluate_expression(expression, point)
+                    for expression in entry.exact_surface
+                )
+                realized = np.asarray([float(value) for value in exact], np.float64)
+                if not np.all(np.isfinite(realized)):
+                    raise ValueError("Exact source point has no binary64 realization.")
+                gap = fraction_sqrt_interval(
+                    sum(
+                        (
+                            coefficient_rounding_error(value, represented) ** 2
+                            for value, represented in zip(
+                                exact, realized.tolist(), strict=True
+                            )
+                        ),
+                        Fraction(0),
+                    )
+                )[1]
+            elif entry.exact_spans is not None:
+                bounds = _exact_rational_surface_point_bounds(entry.exact_spans, point)
+                if bounds is None or len(bounds) != 3:
+                    raise ValueError(
+                        "An exact surface source point has no exact rational span enclosure."
+                    )
+                realized, gap = _enclosure_center(bounds)
+            else:
+                realized, gap = _enclosure_center(
+                    _source_point_box(entry.surface, point, preparation)
+                )
+            physical[row, corner] = realized
+            endpoint_error = max(endpoint_error, gap)
+        errors.append(endpoint_error)
+    return physical, tuple(errors)
 
 
 class ExactPlaneChart(NamedTuple):
@@ -2042,8 +2119,8 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         )
         from .brep._root_bindings import _source_coefficients_are_binary
 
-        # Every charted patch's corners are evaluated in one batched call; the
-        # findings and cover rows keep patch order.
+        # Charts are proved per patch first; the findings and cover rows keep
+        # patch order.
         pending: list[MeshCertificateFinding | _ChartedPatch] = []
         for patch in self.patches:
             surface = self.domain.patches[patch].surface
@@ -2147,232 +2224,98 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     uv_triangles,
                 )
             )
-        charted = [entry for entry in pending if isinstance(entry, _ChartedPatch)]
-        realized = self.domain.evaluate(
-            np.concatenate(
-                [
-                    np.full((len(entry.exact_charts) * 3,), entry.patch, dtype=np.int64)
-                    for entry in charted
-                ]
-                or [np.empty((0,), dtype=np.int64)]
-            ),
-            np.concatenate(
-                [entry.uv_triangles.reshape((-1, 2)) for entry in charted]
-                or [np.empty((0, 2), dtype=np.float64)]
-            ),
-        ).reshape((-1, 3, 3))
-        start = 0
         for entry in pending:
             if isinstance(entry, MeshCertificateFinding):
                 findings.append(entry)
                 continue
             patch = entry.patch
-            surface = entry.surface
             exact_surface = entry.exact_surface
             exact_spans = entry.exact_spans
-            source_analytic = entry.source_analytic
             uv_points = entry.uv_points
             exact_charts = entry.exact_charts
             uv_triangles = entry.uv_triangles
-            physical = realized[start : start + len(exact_charts)]
-            start += len(exact_charts)
-            if exact_surface is None:
-                try:
-                    if exact_spans is not None:
-                        interpolation = _exact_rational_span_interpolation_bounds(
-                            exact_spans, exact_charts
-                        )
-                    elif source_analytic:
-                        from ._meshing_domain import _outward_surface_parameter_box
-
-                        cells = []
-                        for exact_chart in exact_charts:
-                            lower = tuple(
-                                fraction_down(min(point[axis] for point in exact_chart))
-                                for axis in range(2)
-                            )
-                            upper = tuple(
-                                fraction_up(max(point[axis] for point in exact_chart))
-                                for axis in range(2)
-                            )
-                            cells.append(
-                                (lower, (upper[0], lower[1]), upper, (lower[0], upper[1]))
-                            )
-                        interpolation = self.domain.interpolation_bounds(
-                            patch,
-                            np.asarray(cells, dtype=np.float64),
-                            preparation=preparation,
-                        )
-                        if interpolation.shape != (len(exact_charts),) or not np.all(
-                            np.isfinite(interpolation)
-                        ):
-                            raise ValueError(
-                                "Exact source Hessian bounds are unavailable."
-                            )
-                        for row, exact_chart in enumerate(exact_charts):
-                            endpoint_error = Fraction(0)
-                            for corner, point in enumerate(exact_chart):
-                                lower = tuple(fraction_down(value) for value in point)
-                                upper = tuple(fraction_up(value) for value in point)
-                                parameter_box = _outward_surface_parameter_box(
-                                    surface, lower, upper
-                                )
-                                if any(
-                                    Fraction.from_float(float(parameter_box[0, axis]))
-                                    > point[axis]
-                                    or Fraction.from_float(float(parameter_box[1, axis]))
-                                    < point[axis]
-                                    for axis in range(2)
-                                ):
-                                    raise ValueError(
-                                        "Point lies outside its source chart."
-                                    )
-                                box = preparation.surface_box(surface, parameter_box)
-                                if (
-                                    box.shape != (2, 3)
-                                    or not np.all(np.isfinite(box))
-                                    or np.any(box[0] > box[1])
-                                    or not np.all(np.isfinite(physical[row, corner]))
-                                ):
-                                    raise ValueError(
-                                        "Exact source point box is unavailable."
-                                    )
-                                squared = sum(
-                                    (
-                                        max(
-                                            abs(
-                                                Fraction.from_float(float(box[0, axis]))
-                                                - Fraction.from_float(
-                                                    float(physical[row, corner, axis])
-                                                )
-                                            ),
-                                            abs(
-                                                Fraction.from_float(float(box[1, axis]))
-                                                - Fraction.from_float(
-                                                    float(physical[row, corner, axis])
-                                                )
-                                            ),
-                                        )
-                                        ** 2
-                                        for axis in range(3)
-                                    ),
-                                    Fraction(0),
-                                )
-                                endpoint_error = max(
-                                    endpoint_error, fraction_sqrt_interval(squared)[1]
-                                )
-                            interpolation[row] = fraction_endpoint(
-                                Fraction.from_float(float(interpolation[row]))
-                                + endpoint_error,
-                                upper=True,
-                                saturate=True,
-                            )
-                    else:
-                        interpolation = self.domain.interpolation_bounds(
-                            patch, uv_triangles, preparation=preparation
-                        )
-                    if exact_spans is not None:
-                        if interpolation.shape != (len(exact_charts),) or not np.all(
-                            np.isfinite(interpolation)
-                        ):
-                            raise NotImplementedError(
-                                "Exact rational spans did not provide finite interpolation bounds."
-                            )
-                        for row, exact_chart in enumerate(exact_charts):
-                            endpoint_error = max(
-                                _exact_span_point_gap_upper(
-                                    exact_spans, exact_point, physical[row, corner]
-                                )
-                                for corner, exact_point in enumerate(exact_chart)
-                            )
-                            interpolation[row] = fraction_endpoint(
-                                Fraction.from_float(float(interpolation[row]))
-                                + endpoint_error,
-                                upper=True,
-                                saturate=True,
-                            )
-                except (
-                    ArithmeticError,
-                    FloatingPointError,
-                    NotImplementedError,
-                    TypeError,
-                    ValueError,
-                ) as error:
-                    complete = False
-                    findings.append(
-                        MeshCertificateFinding(
-                            "source_surface_interpolation",
-                            "unresolved",
-                            "source_facet",
-                            (patch,),
-                            detail=f"Exact source chart interpolation is unavailable: {error}",
-                        )
+            try:
+                if exact_surface is not None:
+                    interpolation = np.asarray(
+                        [
+                            _exact_surface_interpolation_bound(exact_surface, exact_chart)
+                            for exact_chart in exact_charts
+                        ],
+                        dtype=np.float64,
                     )
-                    continue
-            else:
-                from ..discretization._coordinate_enclosure import evaluate_expression
-
-                interpolation = np.empty((len(exact_charts),), dtype=np.float64)
-                try:
-                    for row, exact_chart in enumerate(exact_charts):
-                        exact_corners = tuple(
-                            tuple(
-                                evaluate_expression(expression, point)
-                                for expression in exact_surface
-                            )
-                            for point in exact_chart
-                        )
-                        endpoint_error = Fraction(0)
-                        for exact_corner, realized_corner in zip(
-                            exact_corners, physical[row], strict=True
-                        ):
-                            component_errors = tuple(
-                                coefficient_rounding_error(
-                                    exact_value, float(realized_value)
-                                )
-                                for exact_value, realized_value in zip(
-                                    exact_corner, realized_corner, strict=True
-                                )
-                            )
-                            endpoint_error = max(
-                                endpoint_error,
-                                fraction_sqrt_interval(
-                                    sum(
-                                        (value * value for value in component_errors),
-                                        Fraction(0),
-                                    )
-                                )[1],
-                            )
-                        interpolation_bound = _exact_surface_interpolation_bound(
-                            exact_surface, exact_chart
-                        )
-                        interpolation[row] = (
-                            math.inf
-                            if not math.isfinite(interpolation_bound)
-                            else fraction_endpoint(
-                                Fraction.from_float(interpolation_bound) + endpoint_error,
-                                upper=True,
-                                saturate=True,
-                            )
-                        )
-                except (
-                    ArithmeticError,
-                    FloatingPointError,
-                    NotImplementedError,
-                    TypeError,
-                    ValueError,
-                ) as error:
-                    complete = False
-                    findings.append(
-                        MeshCertificateFinding(
-                            "source_surface_interpolation",
-                            "unresolved",
-                            "source_facet",
-                            (patch,),
-                            detail=f"Exact source chart interpolation is unavailable: {error}",
-                        )
+                elif exact_spans is not None:
+                    interpolation = _exact_rational_span_interpolation_bounds(
+                        exact_spans, exact_charts
                     )
-                    continue
+                    if interpolation.shape != (len(exact_charts),) or not np.all(
+                        np.isfinite(interpolation)
+                    ):
+                        raise NotImplementedError(
+                            "Exact rational spans did not provide finite interpolation bounds."
+                        )
+                elif entry.source_analytic:
+                    cells = []
+                    for exact_chart in exact_charts:
+                        lower = tuple(
+                            fraction_down(min(point[axis] for point in exact_chart))
+                            for axis in range(2)
+                        )
+                        upper = tuple(
+                            fraction_up(max(point[axis] for point in exact_chart))
+                            for axis in range(2)
+                        )
+                        cells.append(
+                            (lower, (upper[0], lower[1]), upper, (lower[0], upper[1]))
+                        )
+                    interpolation = self.domain.interpolation_bounds(
+                        patch,
+                        np.asarray(cells, dtype=np.float64),
+                        preparation=preparation,
+                    )
+                    if interpolation.shape != (len(exact_charts),) or not np.all(
+                        np.isfinite(interpolation)
+                    ):
+                        raise ValueError("Exact source Hessian bounds are unavailable.")
+                else:
+                    interpolation = self.domain.interpolation_bounds(
+                        patch, uv_triangles, preparation=preparation
+                    )
+                physical, endpoint_errors = _decided_chart_images(entry, preparation)
+                interpolation = np.asarray(
+                    [
+                        math.inf
+                        if not math.isfinite(bound)
+                        else fraction_endpoint(
+                            Fraction.from_float(bound) + endpoint_error,
+                            upper=True,
+                            saturate=True,
+                        )
+                        for bound, endpoint_error in zip(
+                            np.asarray(interpolation, dtype=np.float64).tolist(),
+                            endpoint_errors,
+                            strict=True,
+                        )
+                    ],
+                    dtype=np.float64,
+                )
+            except (
+                ArithmeticError,
+                FloatingPointError,
+                NotImplementedError,
+                TypeError,
+                ValueError,
+            ) as error:
+                complete = False
+                findings.append(
+                    MeshCertificateFinding(
+                        "source_surface_interpolation",
+                        "unresolved",
+                        "source_facet",
+                        (patch,),
+                        detail=f"Exact source chart interpolation is unavailable: {error}",
+                    )
+                )
+                continue
             images.append(physical)
             deviations.append(interpolation)
             restrictions.append(

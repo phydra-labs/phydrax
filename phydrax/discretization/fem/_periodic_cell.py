@@ -56,7 +56,9 @@ from .._reference_cell import reference_cell_topology
 
 
 _EDGES = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
-_FACTORIZATION = SparseFactorizationPolicy("cholesky", ordering="reverse-cuthill-mckee")
+# Three-dimensional tetrahedral quotient patterns: nested dissection keeps the
+# supernodal Cholesky fill far below a bandwidth (Cuthill-McKee) ordering.
+_FACTORIZATION = SparseFactorizationPolicy("cholesky", ordering="nested-dissection")
 _PROPERTIES = OperatorProperties(
     self_adjoint=True,
     positive_definite=True,
@@ -331,7 +333,10 @@ class PeriodicSimplexOperatorPattern(StrictModule, NonTrainableState):
     gauge DOF of `PeriodicSimplexSpace`; every pinned coordinate is zero. Local
     element coordinates are ordered ``node * components + component``.
     ``plan`` is the symbolic supernodal Cholesky analysis of the free pattern,
-    computed once and refreshed for every numeric value set.
+    computed once and refreshed for every numeric value set. ``factorization``
+    is the declared Cholesky policy (ordering and resource budget); the default
+    is nested dissection under the library's default budget. It enters
+    ``pattern_id``.
     """
 
     space: PeriodicSimplexSpace
@@ -345,7 +350,19 @@ class PeriodicSimplexOperatorPattern(StrictModule, NonTrainableState):
     entry_count: int = eqx.field(static=True)
     pattern_id: str = eqx.field(static=True)
 
-    def __init__(self, space: PeriodicSimplexSpace, /, *, components: int) -> None:
+    def __init__(
+        self,
+        space: PeriodicSimplexSpace,
+        /,
+        *,
+        components: int,
+        factorization: SparseFactorizationPolicy | None = None,
+    ) -> None:
+        policy = _FACTORIZATION if factorization is None else factorization
+        if not isinstance(policy, SparseFactorizationPolicy) or policy.kind != "cholesky":
+            raise ValueError(
+                "factorization must be a Cholesky SparseFactorizationPolicy."
+            )
         if not isinstance(space, PeriodicSimplexSpace):
             raise TypeError("space must be a PeriodicSimplexSpace.")
         width = int(components)
@@ -381,6 +398,12 @@ class PeriodicSimplexOperatorPattern(StrictModule, NonTrainableState):
                 "kind": "periodic-simplex-operator-pattern",
                 "space": space.space_id,
                 "components": width,
+                "factorization": {
+                    "ordering": policy.ordering,
+                    "max_factor_nnz": policy.max_factor_nnz,
+                    "max_factor_bytes": policy.max_factor_bytes,
+                    "max_symbolic_work": policy.max_symbolic_work,
+                },
             }
         )
         template = SparseLinearMap(
@@ -394,7 +417,7 @@ class PeriodicSimplexOperatorPattern(StrictModule, NonTrainableState):
         self.entry_positions = jnp.asarray(positions, dtype=jnp.int32)
         self.entry_kept = jnp.asarray(kept)
         self.relation = relation
-        self.plan = prepare_sparse_factorization(template, _FACTORIZATION)
+        self.plan = prepare_sparse_factorization(template, policy)
         self.components = width
         self.free_count = free_count
         self.entry_count = int(unique.size)

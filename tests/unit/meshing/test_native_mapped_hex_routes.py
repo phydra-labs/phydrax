@@ -685,8 +685,12 @@ def test_mapped_grid_hex_certifies_exact_restriction_without_requested_deviation
 def test_mapped_grid_hex_preserves_multiple_charts_per_source_face() -> None:
     source, _ = _mapped_cube_source(shared_facets=True)
     query = source.boundary_query()
-    assert len(query.face_chart_ids) == 12
-    assert len(set(query.face_chart_ids)) == 12
+    # Charts are exact source-triangle/root-fan-triangle overlay pieces. The
+    # canonical root face (0, 3, 7, 4) fans across diagonal 0-7 while its source
+    # triangles share diagonal 3-4, so that face carries four charts; the other
+    # five faces' diagonals coincide and carry two each.
+    assert len(query.face_chart_ids) == 14
+    assert len(set(query.face_chart_ids)) == 14
     assert len(set(query.face_scope_keys)) == 6
     result = (
         NativeMeshingProvider(NativeMeshingOptions("mapped_balanced_grid_hex"))
@@ -1732,7 +1736,9 @@ def test_mapped_domain_codec_rebuilds_coordinate_elements_and_refuses_tampering(
     assert restored.domain_id == original.domain_id
     assert _same_tree_content(restored.reference_mesh, original.reference_mesh)
     assert _same_tree_content(restored.source_geometry, original.source_geometry)
-    elements, routes, coordinates = restored.source_geometry.resolve(restored.reference_mesh)
+    elements, routes, coordinates = restored.source_geometry.resolve(
+        restored.reference_mesh
+    )
     assert elements[0].cell_kind == "hexahedron"
     assert len(routes) == 1
     np.testing.assert_array_equal(coordinates, original.source_geometry.coordinates)

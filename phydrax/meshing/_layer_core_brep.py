@@ -24,6 +24,7 @@ import phydrax.meshing._layer_core_controls as controls_owner
 import phydrax.meshing._plc_source as plc_source_owner
 import phydrax.meshing.providers._native_sources as sources_owner
 
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
 from ..geometry._meshing_domain import MeshingDomain
 from ..geometry._surface_source_support import SurfaceSourceCharts
@@ -31,6 +32,11 @@ from ..typing import checked
 from ._contracts import VolumeMeshingSpec
 from ._result import CellMeshingResult
 from .providers._native_schedules import NativeSurfaceSchedule
+
+
+# Authored-orientation charts bound to the exact live wall charts they restore
+# (see outward_surface_charts).
+_OUTWARD_CHARTS: LiveProofLedger[SurfaceSourceCharts] = LiveProofLedger()
 
 
 def _target_association(
@@ -124,7 +130,46 @@ def inward_wall_charts(
     if charts is None:
         raise ValueError("The accepted CAD boundary must retain its exact source charts.")
     charts.require_root(boundary.mesh, boundary.geometry)
-    mesh = boundary.mesh
+    return _reversed_charts(charts)
+
+
+def outward_surface_charts(charts: SurfaceSourceCharts, /) -> SurfaceSourceCharts:
+    """The exact charts in their authored patch orientation.
+
+    A layer wall carries the accepted outward boundary reversed (see
+    :func:`inward_wall_charts`). Every exact chart triangle of such a wall has
+    the opposite sign to its source patch orientation; reversing it again
+    restores the accepted boundary charts. Charts of any other, or mixed,
+    orientation are returned unchanged for the fidelity proof to judge. The
+    reversal is bound to the exact live charts, so repeated proofs reuse it.
+    """
+    operands = (charts,)
+    outward = _OUTWARD_CHARTS.find(operands)
+    if outward is not None:
+        return outward
+    fingerprint = live_content_fingerprint(operands)
+    signs = set()
+    for chart, patch in zip(
+        charts.root_parameter_exact,
+        np.asarray(charts.root_patches, dtype=np.int64).tolist(),
+        strict=True,
+    ):
+        (u0, v0), (u1, v1), (u2, v2) = chart
+        area2 = (u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0)
+        orientation = int(charts.domain.patches[patch].orientation)
+        signs.add(orientation * ((area2 > 0) - (area2 < 0)))
+    if signs != {-1}:
+        return charts
+    outward = _reversed_charts(charts)[0]
+    _OUTWARD_CHARTS.record(operands, fingerprint, outward)
+    return outward
+
+
+def _reversed_charts(
+    charts: SurfaceSourceCharts, /
+) -> tuple[SurfaceSourceCharts, association_owner.GeometryAssociation]:
+    """Reverse every triangle of exact surface charts and rebind their associations."""
+    mesh = charts.mesh
     if any(block.cell_kind != "triangle" for block in mesh.blocks):
         raise ValueError("Source-face layer walls require a triangular CAD boundary.")
     wall = CellMesh(

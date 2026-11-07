@@ -51,6 +51,17 @@ _WORKER = Path(__file__).with_name("_native_cad_archive_worker.py")
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _worker_oracle(directory: Path, expected: object, /) -> str:
+    """Hand the cold worker its oracle as a file instead of one argv string.
+
+    Oracles exceed the process limits: 128 KiB per argument on Linux and
+    32,767 characters for the whole command line on Windows.
+    """
+    path = directory / "cold-worker-oracle.json"
+    path.write_text(json.dumps(expected), encoding="utf-8")
+    return str(path)
+
+
 def _find_layer_record(node: object, record_type: str, /) -> dict[str, Any] | None:
     """Return the stored fields of the first columnized layer record of a type."""
     if isinstance(node, dict):
@@ -113,7 +124,9 @@ def _store_exact_tokens(
     tensor["items"][0]["items"][0]["shape"] = list(changed.data.shape)
 
 
-def test_exact_plc_bank_restores_by_constructor_and_refuses_forgery(tmp_path: Path) -> None:
+def test_exact_plc_bank_restores_by_constructor_and_refuses_forgery(
+    tmp_path: Path,
+) -> None:
     from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
     from phydrax.meshing._model_codec import (
         read_model_artifact,
@@ -122,14 +135,19 @@ def test_exact_plc_bank_restores_by_constructor_and_refuses_forgery(tmp_path: Pa
     )
 
     source = ExactPlcCellGeometrySource(
-        "periodic-quotient-chart", "original-mesh", np.asarray([2, 7], dtype=np.int64),
+        "periodic-quotient-chart",
+        "original-mesh",
+        np.asarray([2, 7], dtype=np.int64),
         ((Fraction(1, 3), Fraction(0)), (Fraction(4, 3), Fraction(0))),
-        vertex_source_entity_ids=(None, None), vertex_occurrence_paths=((), ()),
+        vertex_source_entity_ids=(None, None),
+        vertex_occurrence_paths=((), ()),
     )
     path = tmp_path / "bank.phx"
     write_model_artifact(path, source, limits=MODEL_ARCHIVE_LIMITS)
     restored = read_model_artifact(
-        path, expected_type=ExactPlcCellGeometrySource, restore=restore_model_archive_value,
+        path,
+        expected_type=ExactPlcCellGeometrySource,
+        restore=restore_model_archive_value,
         limits=MODEL_ARCHIVE_LIMITS,
     )
     assert restored.source_map_id == source.source_map_id
@@ -140,7 +158,9 @@ def test_exact_plc_bank_restores_by_constructor_and_refuses_forgery(tmp_path: Pa
     write_model_artifact(path, forged, limits=MODEL_ARCHIVE_LIMITS)
     with pytest.raises(ArrayArchiveCorruptionError) as refusal:
         read_model_artifact(
-            path, expected_type=ExactPlcCellGeometrySource, restore=restore_model_archive_value,
+            path,
+            expected_type=ExactPlcCellGeometrySource,
+            restore=restore_model_archive_value,
             limits=MODEL_ARCHIVE_LIMITS,
         )
     assert "does not reproduce" in str(refusal.value.__cause__)
@@ -254,11 +274,15 @@ def test_brep_archive_cold_restores_source_and_exact_spline_in_new_process(
         capture_output=True,
         text=True,
     )
-    # The cold-restore oracle exceeds the per-argument process limit; it is a file.
-    expected = tmp_path / "cold-restore-expected.json"
-    expected.write_text(json.dumps(json.loads(written.stdout)), encoding="utf-8")
+    expected = json.loads(written.stdout)
     restored = subprocess.run(
-        [sys.executable, str(_WORKER), "read", str(tmp_path), str(expected)],
+        [
+            sys.executable,
+            str(_WORKER),
+            "read",
+            str(tmp_path),
+            _worker_oracle(tmp_path, expected),
+        ],
         cwd=_REPOSITORY_ROOT,
         check=True,
         capture_output=True,
@@ -284,7 +308,7 @@ def test_brep_projection_result_archive_recomputes_rows_cold(
             str(_WORKER),
             "read-brep-projection",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -346,7 +370,7 @@ def test_brep_projection_result_archive_rejects_tampered_frame_binding(
             str(_WORKER),
             "read-brep-projection",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -464,7 +488,7 @@ def test_composition_archive_recomputes_identity_in_a_cold_process(
             str(_WORKER),
             "read-continuation",
             str(corrupted),
-            "{}",
+            _worker_oracle(tmp_path, {}),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -498,7 +522,7 @@ def test_polyhedral_periodic_archive_cold_restores_ragged_connectivity(
             str(_WORKER),
             "read-polyhedral-periodic",
             str(source),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -540,7 +564,7 @@ def test_polyhedral_periodic_archive_cold_restores_ragged_connectivity(
             str(_WORKER),
             "read-polyhedral-periodic",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -568,7 +592,7 @@ def test_composition_archive_refuses_tampered_fe_layout_identity(
             str(_WORKER),
             "read-continuation",
             str(tmp_path / "continuation.phx"),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -613,7 +637,7 @@ def test_composition_archive_refuses_tampered_fe_layout_identity(
             str(_WORKER),
             "read-continuation",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -661,7 +685,7 @@ def test_composition_archive_refuses_tampered_fe_layout_identity(
                 str(_WORKER),
                 "read-continuation",
                 str(directory / "continuation.phx"),
-                json.dumps(expected),
+                _worker_oracle(tmp_path, expected),
             ],
             cwd=_REPOSITORY_ROOT,
             check=False,
@@ -727,7 +751,7 @@ def test_composition_archive_refuses_tampered_fe_layout_identity(
             str(_WORKER),
             "read-continuation",
             str(semantic_archive),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -784,7 +808,7 @@ def test_composition_archive_rejects_tampered_material_deformation_identity(
             str(_WORKER),
             "read-continuation",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -842,7 +866,7 @@ def test_composition_archive_rejects_tampered_material_deformation_identity(
                 str(_WORKER),
                 "read-continuation",
                 str(chart_corruption),
-                json.dumps(expected),
+                _worker_oracle(tmp_path, expected),
             ],
             cwd=_REPOSITORY_ROOT,
             check=False,
@@ -875,7 +899,7 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
             str(_WORKER),
             "read-layer-curving-evidence",
             str(source),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -919,7 +943,7 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
             str(_WORKER),
             "read-layer-curving-evidence",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -952,7 +976,7 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
             str(_WORKER),
             "read-layer-curving-evidence",
             str(changed_rows),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1004,7 +1028,7 @@ def test_layer_curving_source_evidence_archive_revalidates_in_cold_process(
             str(_WORKER),
             "read-layer-curving-evidence",
             str(changed_reference),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1042,7 +1066,7 @@ def test_mapped_layer_curving_composition_rebuilds_source_trace_cold(
             str(_WORKER),
             "read-layer-curving-evidence",
             str(source),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -1073,7 +1097,7 @@ def test_mapped_layer_curving_composition_rebuilds_source_trace_cold(
             str(_WORKER),
             "read-layer-curving-evidence",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1113,7 +1137,7 @@ def test_restricted_layer_curving_archive_replays_exact_reference_points(
             str(_WORKER),
             "read-restricted-layer-curving-evidence",
             str(source),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -1151,7 +1175,7 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
             str(_WORKER),
             "read-implicit-layer-curving-evidence",
             str(source),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         env={**os.environ, "PYTHONHASHSEED": "2"},
@@ -1190,7 +1214,7 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
             str(_WORKER),
             "read-implicit-layer-curving-evidence",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1224,7 +1248,7 @@ def test_seed_transition_preserves_material_reference_without_maps(
             str(_WORKER),
             "read-material-reference-seed-transition",
             str(source),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -1267,7 +1291,7 @@ def test_seed_transition_preserves_material_reference_without_maps(
             str(_WORKER),
             "read-material-reference-seed-transition",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1300,7 +1324,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
             str(_WORKER),
             "read-mapped-reference-domain",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -1348,7 +1372,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
             str(_WORKER),
             "read-mapped-reference-domain",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1386,7 +1410,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
             str(_WORKER),
             "read-mapped-reference-domain",
             str(spatial_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1434,7 +1458,7 @@ def test_mapped_reference_domain_archive_replays_root_vertex_relation(
             str(_WORKER),
             "read-mapped-reference-domain",
             str(path_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1471,7 +1495,7 @@ def test_piecewise_linear_domain_archives_duplicate_region_occurrences_cold(
             str(_WORKER),
             "read-piecewise-region-occurrences",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -1519,7 +1543,7 @@ def test_piecewise_linear_domain_archives_duplicate_region_occurrences_cold(
             str(_WORKER),
             "read-piecewise-region-occurrences",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1552,7 +1576,7 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
             str(_WORKER),
             "read-mapped-reference-boundary-query",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -1598,7 +1622,7 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
             str(_WORKER),
             "read-mapped-reference-boundary-query",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1646,7 +1670,7 @@ def test_mapped_reference_boundary_query_archive_rebuilds_root_authority_cold(
             str(_WORKER),
             "read-mapped-reference-boundary-query",
             str(relation_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1674,7 +1698,7 @@ def test_brep_archive_revalidates_occurrence_entity_membership_cold(
             str(_WORKER),
             "read-brep-entity",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -1721,7 +1745,7 @@ def test_brep_archive_revalidates_occurrence_entity_membership_cold(
             str(_WORKER),
             "read-brep-entity",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1755,7 +1779,13 @@ def test_composition_archive_rejects_payload_checksum_corruption(
             archive.writestr(name, member_payload)
 
     refused = subprocess.run(
-        [sys.executable, str(_WORKER), "read-continuation", str(corrupted), "{}"],
+        [
+            sys.executable,
+            str(_WORKER),
+            "read-continuation",
+            str(corrupted),
+            _worker_oracle(tmp_path, {}),
+        ],
         cwd=_REPOSITORY_ROOT,
         check=False,
         capture_output=True,
@@ -1789,7 +1819,7 @@ def test_t_spline_archive_recomputes_basis_certificate_in_a_cold_process(
             str(_WORKER),
             "read-tspline-cold-archive",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1945,7 +1975,7 @@ def test_plane_cylinder_section_pcurve_archive_recomputes_exact_phase_cold(
             str(_WORKER),
             "read-plane-cylinder-section-pcurve",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -1993,7 +2023,7 @@ def test_plane_cylinder_section_pcurve_archive_recomputes_exact_phase_cold(
                 str(_WORKER),
                 "read-plane-cylinder-section-pcurve",
                 str(directory),
-                json.dumps(expected),
+                _worker_oracle(tmp_path, expected),
             ],
             cwd=_REPOSITORY_ROOT,
             check=False,
@@ -2057,7 +2087,7 @@ def test_brep_curve_surface_lift_archive_recomputes_chart_bounds_cold(
             str(_WORKER),
             "read-brep-curve-surface-lift",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2085,7 +2115,7 @@ def test_brep_curve_surface_lift_archive_recomputes_chart_bounds_cold(
             str(_WORKER),
             "read-brep-curve-surface-lift",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2120,7 +2150,7 @@ def test_sphere_chamfer_archive_cold_restores_exact_conic_root_rail(
             str(_WORKER),
             "read-sphere-chamfer-conic-root",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2205,7 +2235,7 @@ def test_parallel_cylinder_chamfer_archive_cold_restores_witness_and_refuses_tam
             str(_WORKER),
             "read-parallel-cylinder-chamfer",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2270,7 +2300,7 @@ def test_parallel_cylinder_chamfer_archive_cold_restores_witness_and_refuses_tam
                 str(_WORKER),
                 "read-parallel-cylinder-chamfer",
                 str(directory),
-                json.dumps(expected),
+                _worker_oracle(tmp_path, expected),
             ],
             cwd=_REPOSITORY_ROOT,
             check=False,
@@ -2388,7 +2418,7 @@ def test_torus_exact_source_archive_cold_preserves_coefficients_and_refuses_tamp
             str(_WORKER),
             "read-torus-exact-source",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2447,7 +2477,7 @@ def test_torus_exact_source_archive_cold_preserves_coefficients_and_refuses_tamp
             str(_WORKER),
             "read-torus-exact-source",
             str(tampered_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2488,7 +2518,7 @@ def test_brep_archive_cold_restores_orthogonal_quadric_intersection_period_shift
             str(_WORKER),
             "read-orthogonal-quadric-boolean",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2530,7 +2560,7 @@ def test_brep_archive_cold_restores_orthogonal_quadric_intersection_period_shift
             str(_WORKER),
             "read-orthogonal-quadric-boolean",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2558,7 +2588,7 @@ def test_adaptive_implicit_domain_archive_recomputes_proof_in_a_cold_process(
             str(_WORKER),
             "read-implicit",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -2583,7 +2613,7 @@ def test_adaptive_implicit_domain_archive_recomputes_proof_in_a_cold_process(
             str(_WORKER),
             "read-implicit",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2611,7 +2641,7 @@ def test_reconstructed_geometry_source_recipe_restores_stable_rows_cold(
             str(_WORKER),
             "read-reconstructed",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -2641,7 +2671,7 @@ def test_reconstructed_geometry_source_recipe_restores_stable_rows_cold(
             str(_WORKER),
             "read-reconstructed",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2690,7 +2720,7 @@ def test_reconstructed_geometry_source_recipe_restores_stable_rows_cold(
             str(_WORKER),
             "read-reconstructed",
             str(corrupted_domain_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -2717,7 +2747,7 @@ def test_parametric_curve_query_archive_rebuilds_source_in_a_cold_process(
             str(_WORKER),
             "read-curve-query",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -2753,7 +2783,7 @@ def test_parametric_curve_query_archive_rebuilds_source_in_a_cold_process(
             str(_WORKER),
             "read-curve-query",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3125,7 +3155,7 @@ def test_brep_archive_recomputes_revolution_offset_witness_cold(
             str(_WORKER),
             "read-revolution-offset",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -3176,7 +3206,7 @@ def test_brep_archive_recomputes_revolution_offset_witness_cold(
             str(_WORKER),
             "read-revolution-offset",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3204,7 +3234,7 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
             str(_WORKER),
             "read-certification",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -3232,7 +3262,7 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
             str(_WORKER),
             "read-certification",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3262,7 +3292,7 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
             str(_WORKER),
             "read-certification",
             str(evidence_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3316,7 +3346,7 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
             str(_WORKER),
             "read-certification",
             str(quality_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3347,19 +3377,21 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
     )
     # The computed audit, the report's audit and the report's embedding each
     # retain the validity proof; a damaged field in any occurrence is refused.
+    # Validity certificates archive as column records, so fields are mapping keys.
     validity_owners = (
         ".audit.validity",
         ".certification.audit.validity",
         ".certification.embedding.validity",
     )
     for validity_field in validity_fields:
+        field_path = f".fields['{validity_field}']"
         matches = tuple(
             entry
             for entry in validity_inventory
-            if "validity" in entry.path and entry.path.endswith(f".{validity_field}")
+            if "validity" in entry.path and entry.path.endswith(field_path)
         )
         assert tuple(entry.path for entry in matches) == tuple(
-            f"{owner}.{validity_field}" for owner in validity_owners
+            f"{owner}{field_path}" for owner in validity_owners
         ), validity_field
         for occurrence, match in enumerate(matches):
             damaged_arrays = {name: array.copy() for name, array in proof_arrays.items()}
@@ -3383,7 +3415,7 @@ def test_computed_mesh_certification_archive_recomputes_acceptance_cold(
                     str(_WORKER),
                     "read-certification",
                     str(field_directory),
-                    json.dumps(expected),
+                    _worker_oracle(tmp_path, expected),
                 ],
                 cwd=_REPOSITORY_ROOT,
                 check=False,
@@ -3413,7 +3445,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
             str(_WORKER),
             "read-source-coverage",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -3472,7 +3504,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
             str(_WORKER),
             "read-source-coverage",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3509,7 +3541,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
             str(_WORKER),
             "read-source-coverage",
             str(path_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3545,7 +3577,7 @@ def test_region_boundary_archive_preserves_source_occurrence_identity_cold(
             str(_WORKER),
             "read-region-boundary-evidence",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -3616,7 +3648,7 @@ def test_region_boundary_archive_preserves_source_occurrence_identity_cold(
             str(_WORKER),
             "read-region-boundary-evidence",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3643,7 +3675,7 @@ def test_source_chart_rational_banks_restore_exactly_in_a_cold_process(
             str(_WORKER),
             "read-source-chart-rational",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -3672,7 +3704,7 @@ def test_source_chart_rational_banks_restore_exactly_in_a_cold_process(
             str(_WORKER),
             "read-source-chart-rational",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3700,7 +3732,7 @@ def test_coordinate_map_composition_cold_replays_native_source_maps(
             str(_WORKER),
             "read-coordinate-maps",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -3740,7 +3772,7 @@ def test_coordinate_map_composition_cold_replays_native_source_maps(
             str(_WORKER),
             "read-coordinate-maps",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3787,7 +3819,7 @@ def test_coordinate_map_composition_cold_replays_native_source_maps(
             str(_WORKER),
             "read-coordinate-maps",
             str(node_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3839,7 +3871,7 @@ def test_coordinate_map_composition_cold_replays_native_source_maps(
             str(_WORKER),
             "read-coordinate-maps",
             str(bank_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3873,7 +3905,7 @@ def test_periodic_power_source_context_archive_cold_restores_and_refuses_tamper(
             str(_WORKER),
             "read-periodic-power-map",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3940,7 +3972,7 @@ def test_periodic_power_source_context_archive_cold_restores_and_refuses_tamper(
             str(_WORKER),
             "read-periodic-power-map",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -3981,7 +4013,7 @@ def test_periodic_power_source_context_archive_cold_restores_and_refuses_tamper(
             str(_WORKER),
             "read-periodic-power-map",
             str(shard_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4015,7 +4047,7 @@ def test_owner_local_periodic_remap_archive_cold_restores_and_refuses_tamper(
             str(_WORKER),
             "read-owner-local-remap",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4079,7 +4111,7 @@ def test_owner_local_periodic_remap_archive_cold_restores_and_refuses_tamper(
                 str(_WORKER),
                 "read-owner-local-remap",
                 str(directory),
-                json.dumps(expected),
+                _worker_oracle(tmp_path, expected),
             ],
             cwd=_REPOSITORY_ROOT,
             check=False,
@@ -4111,7 +4143,7 @@ def test_owner_local_periodic_remap_archive_cold_restores_and_refuses_tamper(
             str(_WORKER),
             "read-owner-local-remap",
             str(rank_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4174,7 +4206,7 @@ def test_owner_local_periodic_remap_archive_cold_restores_and_refuses_tamper(
             str(_WORKER),
             "read-owner-local-remap",
             str(remap_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4208,7 +4240,7 @@ def test_owner_local_periodic_adaptive_archive_cold_reattaches_new_group_with_sp
             str(_WORKER),
             "read-owner-local-periodic-adaptive",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4288,7 +4320,7 @@ def test_owner_local_periodic_adaptive_archive_cold_reattaches_new_group_with_sp
             str(_WORKER),
             "read-owner-local-periodic-adaptive",
             str(stale_spec_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4318,7 +4350,7 @@ def test_owner_local_periodic_adaptive_archive_cold_reattaches_new_group_with_sp
             str(_WORKER),
             "read-owner-local-periodic-adaptive",
             str(stale_plan_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4349,7 +4381,7 @@ def test_owner_local_periodic_adaptive_archive_cold_reattaches_new_group_with_sp
             str(_WORKER),
             "read-owner-local-periodic-adaptive",
             str(stale_evidence_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4381,7 +4413,7 @@ def test_owner_local_periodic_adaptive_archive_cold_reattaches_new_group_with_sp
             str(_WORKER),
             "read-owner-local-periodic-adaptive",
             str(stale_group_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4421,7 +4453,7 @@ def test_owner_local_periodic_adaptive_archive_cold_reattaches_new_group_with_sp
             str(_WORKER),
             "read-owner-local-periodic-adaptive",
             str(target_cell_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4450,7 +4482,7 @@ def test_meshing_spec_archive_cold_rebuilds_background_metric_and_all_spec_types
             str(_WORKER),
             "read-meshing-specs",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4508,7 +4540,7 @@ def test_meshing_spec_archive_cold_rebuilds_background_metric_and_all_spec_types
             str(_WORKER),
             "read-meshing-specs",
             str(tampered_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4542,7 +4574,7 @@ def test_meshing_spec_archive_cold_rebuilds_background_metric_and_all_spec_types
             str(_WORKER),
             "read-meshing-specs",
             str(metric_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4576,7 +4608,7 @@ def test_meshing_spec_archive_cold_rebuilds_background_metric_and_all_spec_types
             str(_WORKER),
             "read-meshing-specs",
             str(mesh_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4604,7 +4636,7 @@ def test_analytic_implicit_profile_archive_rebuilds_query_cold(
             str(_WORKER),
             "read-analytic-profile",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -4646,7 +4678,7 @@ def test_analytic_implicit_profile_archive_rebuilds_query_cold(
             str(_WORKER),
             "read-analytic-profile",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4679,7 +4711,7 @@ def test_surface_chart_boundary_query_archive_cold_restores_sphere_authority(
             str(_WORKER),
             "read-surface-chart-query",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -4735,7 +4767,7 @@ def test_surface_chart_boundary_query_archive_cold_restores_sphere_authority(
             str(_WORKER),
             "read-surface-chart-query",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4777,7 +4809,7 @@ def test_brep_archive_rejects_tampered_source_piece_witness(
             str(_WORKER),
             "read-surface-witness",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4832,7 +4864,7 @@ def test_brep_archive_rejects_tampered_exact_surface_chart_bank(
             str(_WORKER),
             "read-surface-witness",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4913,7 +4945,7 @@ def test_brep_archive_rejects_tampered_surface_root_mesh_binding(
             str(_WORKER),
             "read-surface-witness",
             str(corrupt_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -4937,8 +4969,8 @@ def test_brep_entity_archive_revalidates_source_owner() -> None:
         _reconstruct_brep_graph((model, foreign_entity))
 
 
-def _write_pwl_boundary_query(directory: Path, /) -> Path:
-    """Write the PWL query archive; return its per-entity oracle as a JSON file."""
+def _write_pwl_boundary_query(directory: Path, /) -> dict[str, Any]:
+    """Write the PWL query archive; return its per-entity oracle."""
     written = subprocess.run(
         [sys.executable, str(_WORKER), "write-pwl-boundary-query", str(directory)],
         cwd=_REPOSITORY_ROOT,
@@ -4946,13 +4978,11 @@ def _write_pwl_boundary_query(directory: Path, /) -> Path:
         capture_output=True,
         text=True,
     )
-    expected = directory / "pwl-boundary-query-expected.json"
-    expected.write_text(written.stdout, encoding="utf-8")
-    return expected
+    return json.loads(written.stdout)
 
 
 def _read_pwl_boundary_query(
-    directory: Path, expected: Path, /, *, check: bool
+    directory: Path, expected: dict[str, Any], /, *, check: bool
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -4960,7 +4990,7 @@ def _read_pwl_boundary_query(
             str(_WORKER),
             "read-pwl-boundary-query",
             str(directory),
-            str(expected),
+            _worker_oracle(directory, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=check,
@@ -4982,7 +5012,6 @@ def test_piecewise_boundary_query_archive_rejects_tampered_chart_ancestry(
     tmp_path: Path, tampered: str
 ) -> None:
     expected = _write_pwl_boundary_query(tmp_path)
-    oracle = json.loads(expected.read_text(encoding="utf-8"))
     source = tmp_path / "pwl-boundary-query.phx"
     corrupted_directory = tmp_path / f"changed-pwl-boundary-{tampered}"
     corrupted_directory.mkdir()
@@ -5023,7 +5052,9 @@ def test_piecewise_boundary_query_archive_rejects_tampered_chart_ancestry(
         # Same selected set, different stored order: the owner canonicalizes the
         # selection, so the stored chart order no longer matches its rebuild.
         facet_ids = next(
-            query["entity_ids"] for query in oracle["queries"] if query["dimension"] == 2
+            query["entity_ids"]
+            for query in expected["queries"]
+            if query["dimension"] == 2
         )
         names = [
             name
@@ -5066,7 +5097,7 @@ def test_reference_chart_rational_archive_cold_restores_exact_maps(
             str(_WORKER),
             "read-reference-chart-arguments",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=True,
@@ -5141,7 +5172,7 @@ def test_reference_chart_rational_archive_rejects_tampered_expression(
             str(_WORKER),
             "read-reference-chart-arguments",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5170,7 +5201,7 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
             str(_WORKER),
             "read-finite-element-transfer",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5214,7 +5245,7 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
             str(_WORKER),
             "read-finite-element-transfer",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5255,7 +5286,7 @@ def test_finite_element_transfer_archive_rebuilds_sparse_evidence_cold(
             str(_WORKER),
             "read-finite-element-transfer",
             str(pairing_corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5285,7 +5316,7 @@ def test_vertex_interpolation_stencil_archive_preserves_exact_fraction_weights_c
             str(_WORKER),
             "read-vertex-stencil",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5319,7 +5350,7 @@ def test_vertex_interpolation_stencil_archive_preserves_exact_fraction_weights_c
             str(_WORKER),
             "read-vertex-stencil",
             str(corrupted_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5357,7 +5388,7 @@ def test_periodic_distributed_fe_transfer_rebuilds_from_mesh_and_rejects_corrupt
             str(_WORKER),
             "read-periodic-distributed-fe-transfer",
             str(source),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5401,7 +5432,7 @@ def test_periodic_distributed_fe_transfer_rebuilds_from_mesh_and_rejects_corrupt
             str(_WORKER),
             "read-periodic-distributed-fe-transfer",
             str(corrupted),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5441,7 +5472,7 @@ def test_brep_assembly_placement_evidence_archive_round_trips_cold_and_refuses_t
             str(_WORKER),
             "read-brep-assembly-placement-evidence",
             str(tmp_path),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5493,7 +5524,7 @@ def test_brep_assembly_placement_evidence_archive_round_trips_cold_and_refuses_t
             str(_WORKER),
             "read-brep-assembly-placement-evidence",
             str(tampered_directory),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,
@@ -5522,7 +5553,7 @@ def test_exact_tensor_quad_fidelity_restores_in_independent_process(
             str(_WORKER),
             "read-exact-tensor-quad-fidelity",
             str(tmp_path / "exact-tensor-quad-fidelity.phx"),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         cwd=_REPOSITORY_ROOT,
         check=False,

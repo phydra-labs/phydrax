@@ -238,8 +238,13 @@ def layer_wall_associations(
     source: sources_owner.NativeLayerCoreSource,
     target: CellMesh,
     /,
+    vertex_targets: dict[int, int] | None = None,
 ) -> tuple[association_owner.GeometryAssociation, ...]:
-    """Carry unchanged source-wall vertex associations through exact row lineage."""
+    """Carry unchanged source-wall vertex associations through exact row lineage.
+
+    ``vertex_targets`` maps authored layer vertex IDs to the target vertices
+    that exactly retain them; without it the target retains the authored IDs.
+    """
     parent = source.layers.wall_association
     if parent is None:
         return ()
@@ -277,7 +282,10 @@ def layer_wall_associations(
             raise ValueError(
                 "Accepted layer wall vertices moved their source coordinates."
             )
-        target_id = int(layer_vertex_ids[int(layer_row)])
+        layer_id = int(layer_vertex_ids[int(layer_row)])
+        target_id = (
+            layer_id if vertex_targets is None else vertex_targets.get(layer_id, -1)
+        )
         if target_id not in target_rows:
             raise ValueError("An accepted wall vertex is absent from the combined mesh.")
         target_ids.append(target_id)

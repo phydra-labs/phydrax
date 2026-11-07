@@ -125,7 +125,10 @@ def test_sparse_validity_rejects_non_spd_positive_diagonal_after_refresh(
     assert admission.ordering == "approximate-minimum-degree"
     assert admission.max_factor_bytes == defaults.max_factor_bytes
     assert admission.max_symbolic_work == defaults.max_symbolic_work
-    assert admission.max_factor_nnz == defaults.max_factor_bytes // np.dtype(np.float64).itemsize
+    assert (
+        admission.max_factor_nnz
+        == defaults.max_factor_bytes // np.dtype(np.float64).itemsize
+    )
     invalid = hodge.refresh(jnp.asarray(bad_values, dtype=jnp.float64))
     assert not bool(
         jax.jit(lambda values: hodge.refresh(values).valid)(invalid.upper_values)
@@ -136,19 +139,42 @@ def test_sparse_validity_rejects_non_spd_positive_diagonal_after_refresh(
 
 @pytest.mark.parametrize(
     ("limit_name", "metric", "limit"),
-    [("max_factor_bytes", "factor_bytes", 128), ("max_symbolic_work", "symbolic_work", 1)],
+    [
+        ("max_factor_bytes", "factor_bytes", 128),
+        ("max_symbolic_work", "symbolic_work", 1),
+    ],
 )
 def test_sparse_hodge_respects_native_factor_resource_limits(
-    monkeypatch: pytest.MonkeyPatch, limit_name: str, metric: str, limit: int,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_name: str,
+    metric: str,
+    limit: int,
 ) -> None:
     from functools import partial
 
     monkeypatch.setattr(
-        cochain_hodge, "SparseFactorizationPolicy",
+        cochain_hodge,
+        "SparseFactorizationPolicy",
         partial(SparseFactorizationPolicy, **{limit_name: limit}),
     )
     with pytest.raises(ValueError, match=rf"{metric} requires"):
         SparseHodge(_ROWS, _COLUMNS, _VALUES, 3)
+
+
+def test_sparse_hodge_admission_uses_its_declared_budget() -> None:
+    with pytest.raises(ValueError, match="factor_bytes requires"):
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=128)
+    budget = 1 << 20
+    declared = SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=budget).admit()
+    assert declared._admission_plan is not None
+    assert declared._admission_plan.policy.max_factor_bytes == budget
+    assert declared.layout_id != SparseHodge(_ROWS, _COLUMNS, _VALUES, 3).layout_id
+    restricted = declared.restrict(np.asarray([True, False, True], dtype=np.bool_))
+    assert restricted.admission_bytes == budget
+    with pytest.raises(TypeError, match="admission_bytes"):
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=True)
+    with pytest.raises(ValueError, match="positive"):
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=0)
 
 
 def test_diagonal_restriction_and_refresh_preserve_dynamic_metric_derivative() -> None:

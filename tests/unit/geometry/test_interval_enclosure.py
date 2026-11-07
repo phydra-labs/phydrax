@@ -1,3 +1,4 @@
+import hashlib
 from collections.abc import Callable
 from dataclasses import replace
 from fractions import Fraction
@@ -7,9 +8,11 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import mpmath
 import numpy as np
 import pytest
 
+from phydrax._exact_kernels import ElementaryFunction, float64_interval_elementary
 from phydrax._interpolation import bspline_jet_stencil
 from phydrax._meshcore import load_meshcore, meshcore_available
 from phydrax.geometry import _interval_enclosure as interval_enclosure, Superquadric
@@ -1074,3 +1077,331 @@ def test_interval_bspline_piece_jets_extrapolate_their_span_polynomial() -> None
         np.testing.assert_allclose(
             (bounds[0][row, 0], bounds[1][row, 0]), (low, high), rtol=1e-12
         )
+
+
+def _elementary_boxes() -> tuple[np.ndarray, np.ndarray]:
+    noise = np.random.default_rng(20261107)
+    points = np.concatenate(
+        (
+            noise.normal(size=60) * 10.0 ** noise.integers(-30, 22, size=60),
+            np.asarray((0.0, -0.0, 1.0, np.pi / 2, 1.0e22, -745.0, 709.0, 5.0e-324)),
+        )
+    )
+    widths = np.abs(noise.normal(size=points.size)) * 10.0 ** noise.integers(
+        -16, 1, size=points.size
+    )
+    lower = np.concatenate((points, points))[:, None]
+    upper = np.concatenate((points, points + widths))[:, None]
+    return lower, upper
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+def test_host_and_native_elementary_routes_agree_bit_for_bit() -> None:
+    lower, upper = _elementary_boxes()
+
+    def native_admitted(point: jax.Array) -> jax.Array:
+        return jnp.stack(
+            (jnp.sin(point[0]), jnp.cos(point[0]), jnp.exp(point[0]), jnp.log(point[0]))
+        )
+
+    def host_only(point: jax.Array) -> jax.Array:
+        return jnp.stack((jnp.tan(point[0]), jnp.arctan(point[0]), jnp.tanh(point[0])))
+
+    native = prepare_interval_function(native_admitted, 1, execution="native")
+    host = prepare_interval_function(native_admitted, 1, execution="host")
+    assert native.execution == "native"
+    for native_bound, host_bound in zip(
+        native.evaluate(lower, upper), host.evaluate(lower, upper), strict=True
+    ):
+        np.testing.assert_array_equal(_bits(native_bound), _bits(host_bound))
+    host_bounds = prepare_interval_function(host_only, 1, execution="host").evaluate(
+        lower, upper
+    )
+    host_only_functions: tuple[ElementaryFunction, ...] = ("tan", "atan", "tanh")
+    for column, function in enumerate(host_only_functions):
+        expected = float64_interval_elementary(function, lower[:, 0], upper[:, 0])
+        for host_bound, wrapper_bound in zip(host_bounds, expected, strict=True):
+            np.testing.assert_array_equal(
+                _bits(host_bound[:, column]), _bits(wrapper_bound)
+            )
+
+
+@pytest.mark.parametrize(
+    "function",
+    (jnp.exp, jnp.log, jnp.sin, jnp.cos, jnp.tan, jnp.arctan, jnp.tanh),
+    ids=("exp", "log", "sin", "cos", "tan", "atan", "tanh"),
+)
+def test_host_elementary_primitives_refuse_without_meshcore(
+    function: Callable[[jax.Array], jax.Array], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(interval_enclosure, "meshcore_available", lambda: False)
+
+    def mapped(point: jax.Array) -> jax.Array:
+        return function(point[0])[None]
+
+    prepared = prepare_interval_function(mapped, 1, execution="host")
+    box = np.asarray(((0.5,),), dtype=np.float64)
+    with pytest.raises(IntervalExtensionError, match="requires the native meshcore"):
+        prepared.evaluate(box, box + 0.25)
+
+
+_HOST_ELEMENTARY: dict[
+    str, Callable[[interval_enclosure.Interval], interval_enclosure.Interval]
+] = {
+    "exp": interval_enclosure.interval_exp,
+    "log": interval_enclosure.interval_log,
+    "sin": interval_enclosure.interval_sin,
+    "cos": interval_enclosure.interval_cos,
+}
+# Largest excess, in ulps per endpoint beyond the tightest binary64 hull of the
+# exact range, that the WIN-7 mpmath oracle measured for the rigorous kernel.
+_ELEMENTARY_EXCESS_ULPS = {"exp": 1, "log": 1, "sin": 0, "cos": 0}
+
+
+def _steps(value: np.ndarray, count: int, /) -> np.ndarray:
+    direction = np.inf if count > 0 else -np.inf
+    for _ in range(abs(count)):
+        value = np.nextafter(value, direction)
+    return value
+
+
+def _sphere_elementary_corpus() -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Fixed boxes built from IEEE basic operations only, identical on every OS.
+
+    sin/cos: high-order-sphere-like boxes (narrow to wider than 2 pi) around
+    multiples of pi/2 and their 1-2 ulp neighbours, dyadic parameter cells
+    over [0, 2 pi] and around the first quarter turns, and huge arguments.
+    exp/log: the overflow and underflow thresholds, tiny and near-one inputs,
+    and the binary64 exponent range.
+    """
+    half_pi = np.float64(np.pi) * 0.5
+    multiples = np.arange(-16.0, 17.0, dtype=np.float64) * half_pi
+    centers = np.concatenate([_steps(multiples, count) for count in range(-2, 3)])
+    radii = np.concatenate(
+        (
+            np.ldexp(1.0, np.asarray((-60, -40, -20, -8, -2, 0, 1, 2), dtype=np.int32)),
+            np.asarray((3.0, 7.0), dtype=np.float64),
+        )
+    )
+    near_lower, near_upper = [centers], [centers]
+    for radius in radii:
+        near_lower += [centers - radius, centers - radius, centers]
+        near_upper += [centers + radius, centers, centers + radius]
+    coarse = np.arange(0.0, 403.0, dtype=np.float64)
+    cells_lower, cells_upper = [coarse * 0.015625], [(coarse + 1.0) * 0.015625]
+    for quarter in range(5):
+        anchor = np.floor(np.float64(quarter) * half_pi * 1048576.0)
+        fine = anchor + np.arange(-3.0, 4.0, dtype=np.float64)
+        cells_lower.append(fine * 0.00000095367431640625)
+        cells_upper.append((fine + 1.0) * 0.00000095367431640625)
+    huge = np.concatenate(
+        (
+            np.ldexp(
+                1.0,
+                np.asarray(
+                    (20, 30, 52, 53, 60, 100, 200, 500, 1000, 1023), dtype=np.int32
+                ),
+            ),
+            np.asarray(
+                (1.0e22, np.finfo(np.float64).max, np.ldexp(6381956970095103.0, 797)),
+                dtype=np.float64,
+            ),
+        )
+    )
+    huge = np.concatenate((huge, -huge))
+    toward_zero = np.nextafter(huge, 0.0)
+    trigonometric = (
+        np.concatenate((*near_lower, *cells_lower, huge, np.minimum(huge, toward_zero))),
+        np.concatenate((*near_upper, *cells_upper, huge, np.maximum(huge, toward_zero))),
+    )
+    tiny = np.ldexp(1.0, np.asarray((-1074, -1022, -600, -60, -30, -10), dtype=np.int32))
+    exponent_points = np.concatenate(
+        (
+            np.arange(-5960.0, 5681.0, 41.0, dtype=np.float64) * 0.125,
+            np.asarray(
+                (709.782712893384, 709.79, -745.1332191019411, -745.2), dtype=np.float64
+            ),
+            tiny,
+            -tiny,
+            np.asarray((0.0, 1.0, -1.0), dtype=np.float64),
+        )
+    )
+    exp_lower, exp_upper = [exponent_points], [exponent_points]
+    for radius in np.ldexp(1.0, np.asarray((-40, -10, -1), dtype=np.int32)):
+        exp_lower.append(exponent_points - radius)
+        exp_upper.append(exponent_points + radius)
+    exponents = np.arange(-1070.0, 1023.0, 23.0, dtype=np.float64).astype(np.int32)
+    mantissas = np.asarray((1.0, 1.25, 1.5, 1.75), dtype=np.float64)
+    logarithm_points = np.concatenate(
+        (
+            np.ldexp(mantissas[:, None], exponents[None, :]).ravel(),
+            np.asarray(
+                (np.finfo(np.float64).max, 0.81, 1.21, 0.5, 2.0), dtype=np.float64
+            ),
+            np.concatenate(
+                [_steps(np.ones(1, dtype=np.float64), count) for count in range(-3, 4)]
+            ),
+            1.0 + np.ldexp(1.0, np.arange(-52, 0, 3, dtype=np.int32)),
+            1.0 - np.ldexp(1.0, np.arange(-53, 0, 3, dtype=np.int32)),
+        )
+    )
+    logarithm = (
+        np.concatenate(
+            (
+                logarithm_points,
+                logarithm_points * 0.5,
+                np.nextafter(logarithm_points, 0.0),
+            )
+        ),
+        np.concatenate((logarithm_points, logarithm_points, logarithm_points)),
+    )
+    return {
+        "exp": (np.concatenate(exp_lower), np.concatenate(exp_upper)),
+        "log": logarithm,
+        "sin": trigonometric,
+        "cos": trigonometric,
+    }
+
+
+def _exact_elementary_range(
+    function: str, low: float, high: float, /
+) -> tuple[mpmath.mpf, mpmath.mpf]:
+    """mpmath infimum and supremum of ``function`` over ``[low, high]``.
+
+    Huge arguments need their binary exponent in bits for the reduction; tiny
+    ones twice theirs to resolve ``sin x = x(1 - x^2/6)``, ``cos x = 1 - x^2/2``.
+    """
+    exponent = max(abs(int(np.frexp(value)[1])) for value in (low, high))
+    with mpmath.workprec(300 + 2 * exponent):
+        first, last = mpmath.mpf(low), mpmath.mpf(high)
+        if function == "exp":
+            return mpmath.exp(first), mpmath.exp(last)
+        if function == "log":
+            return mpmath.log(first), mpmath.log(last)
+        if last - first >= 2 * mpmath.pi:
+            return mpmath.mpf(-1), mpmath.mpf(1)
+        evaluate, peak, trough = (
+            (mpmath.sin, mpmath.pi / 2, -mpmath.pi / 2)
+            if function == "sin"
+            else (mpmath.cos, mpmath.mpf(0), mpmath.pi)
+        )
+        least = min(evaluate(first), evaluate(last))
+        most = max(evaluate(first), evaluate(last))
+        for critical, extreme in ((peak, 1), (trough, -1)):
+            turn = mpmath.ceil((first - critical) / (2 * mpmath.pi))
+            if critical + turn * 2 * mpmath.pi <= last:
+                least, most = min(least, extreme), max(most, extreme)
+        return mpmath.mpf(least), mpmath.mpf(most)
+
+
+def _directed(value: mpmath.mpf, /, *, upward: bool) -> float:
+    """Binary64 rounding of ``value`` toward +inf (``upward``) or -inf."""
+    result = float(value)
+    while (mpmath.mpf(result) < value) if upward else (mpmath.mpf(result) > value):
+        result = float(np.nextafter(result, np.inf if upward else -np.inf))
+    return result
+
+
+def _ordinal(value: float, /) -> int:
+    """Position of ``value`` on the binary64 line (both zeros at 0)."""
+    bits = int(np.float64(abs(value)).view(np.int64))
+    return -bits if value < 0.0 else bits
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+@pytest.mark.parametrize("function", ("exp", "log", "sin", "cos"))
+def test_host_elementary_enclosures_are_tight_on_the_sphere_corpus(
+    function: str,
+) -> None:
+    """Every enclosure holds mpmath's exact range and is at most the WIN-7 bound wider.
+
+    Host libm results carry no error bound and differ across platforms; the
+    rigorous kernel's endpoints lie within the measured ulp excess of the
+    tightest binary64 hull, including extrema next to rounded multiples of
+    pi/2 and huge arguments.
+    """
+    lower, upper = _sphere_elementary_corpus()[function]
+    out_lower, out_upper = _HOST_ELEMENTARY[function]((lower, upper))
+    bound = _ELEMENTARY_EXCESS_ULPS[function]
+    escapes: list[tuple[str, str]] = []
+    loose: list[tuple[str, str]] = []
+    for first, last, low, high in zip(
+        lower.tolist(),
+        upper.tolist(),
+        out_lower.tolist(),
+        out_upper.tolist(),
+        strict=True,
+    ):
+        least, most = _exact_elementary_range(function, first, last)
+        if not (mpmath.mpf(low) <= least and most <= mpmath.mpf(high)):
+            escapes.append((first.hex(), last.hex()))
+        elif (
+            _ordinal(_directed(least, upward=False)) - _ordinal(low) > bound
+            or _ordinal(high) - _ordinal(_directed(most, upward=True)) > bound
+        ):
+            loose.append((first.hex(), last.hex()))
+    assert escapes == []
+    assert loose == []
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+def test_host_elementary_enclosures_reproduce_the_cross_os_digest() -> None:
+    """The host exp/log/sin/cos enclosure bytes over the fixed corpus are pinned.
+
+    The kernel uses no platform libm, so these bytes are the same on every OS,
+    compiler and parallelism. Per function the SHA-256 covers 16 bytes per box
+    (lower, upper, little-endian binary64); the combined digest hashes the
+    lines ``"<function>:<sha256>\\n"`` in the order exp, log, sin, cos.
+    """
+    corpus = _sphere_elementary_corpus()
+    lines = []
+    for function, enclose in _HOST_ELEMENTARY.items():
+        out_lower, out_upper = enclose(corpus[function])
+        payload = np.stack((out_lower, out_upper), axis=-1).astype("<f8").tobytes()
+        lines.append(f"{function}:{hashlib.sha256(payload).hexdigest()}\n")
+    assert (
+        hashlib.sha256("".join(lines).encode()).hexdigest()
+        == "fe9b8dd454aa1ccee83b8539a40c9771009b7442e5aef410709e4a07d5cf4ca8"
+    )
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+def test_native_exact_extrema_fold_orders_signed_zero_ties() -> None:
+    # Constant max/min operands are folded at lowering time with the IEEE
+    # 754-2019 ordering of the _MAXIMUM/_MINIMUM opcodes (+0 above -0), not the
+    # platform-dependent NumPy tie choice.
+    def function(point: jax.Array) -> jax.Array:
+        zero = jnp.arange(1, dtype=jnp.float64)[0]
+        negative = zero * -1.0
+        return jnp.stack(
+            (
+                jnp.maximum(negative, zero),
+                jnp.maximum(zero, negative),
+                jnp.minimum(negative, zero),
+                jnp.minimum(zero, negative),
+                point[0],
+            )
+        )
+
+    box = np.asarray(((1.0,),), dtype=np.float64)
+    native = prepare_interval_function(function, 1, execution="native")
+    host = prepare_interval_function(function, 1, execution="host")
+    expected = np.asarray(((0.0, 0.0, -0.0, -0.0, 1.0),), dtype=np.float64)
+    assert native.execution == "native"
+    for native_bound, host_bound in zip(
+        native.evaluate(box, box), host.evaluate(box, box), strict=True
+    ):
+        np.testing.assert_array_equal(_bits(native_bound), _bits(expected))
+        np.testing.assert_array_equal(host_bound, expected)

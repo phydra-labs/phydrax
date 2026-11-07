@@ -158,3 +158,43 @@ def test_boolean_cut_washer_source_pair_certificates(tmp_path: Path) -> None:
     )
     assert _shared_two_arc_circle(model, 0, 5) is not None
     assert _shared_two_arc_circle(outside, 0, 5) is None
+
+
+def test_revolution_rims_bind_exact_full_turn_circle_edges() -> None:
+    import equinox as eqx
+
+    from phydrax.geometry.brep import brep_cone, brep_cylinder
+    from phydrax.geometry.brep._source_shell_admissibility import (
+        certify_revolution_rim_pair,
+    )
+
+    contract = SpatialCoordinateContract.si()
+    # Faces 0 and 2 are the radial-profile caps, face 1 the lateral face; each
+    # rim is stored as an exact circle edge, not an intersection branch.
+    for model in (
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract),
+        brep_cone(0.5, 0.25, 1.0, coordinate_contract=contract),
+    ):
+        for first, second in ((0, 1), (1, 2)):
+            common = set(model.geometry.topology.face_edges[first]) & set(
+                model.geometry.topology.face_edges[second]
+            )
+            proof = certify_revolution_rim_pair(model, first, second)
+            assert proof is not None
+            assert set(proof.shared_edges) == common
+            assert proof.replay(model)
+            assert certify_revolution_rim_pair(model, second, first) is None
+        assert certify_revolution_rim_pair(model, 0, 2) is None
+
+    model = brep_cylinder(0.5, 1.0, coordinate_contract=contract)
+    (edge,) = set(model.geometry.topology.face_edges[0]) & set(
+        model.geometry.topology.face_edges[1]
+    )
+    # An edge that stops short of the full native turn leaves part of the
+    # exact rim undeclared.
+    shortened = eqx.tree_at(
+        lambda value: value.geometry.edge_ranges,
+        model,
+        model.geometry.edge_ranges.at[edge, 1].set(1.0),
+    )
+    assert certify_revolution_rim_pair(shortened, 0, 1) is None

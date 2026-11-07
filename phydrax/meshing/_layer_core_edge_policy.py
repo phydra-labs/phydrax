@@ -14,12 +14,13 @@ import numpy as np
 from ..geometry._planar_primitives import plane_key, plane_orientation
 from ._volume_generation import _authored_coplanar_edge_rows, _source_rows
 
+
 if TYPE_CHECKING:
-    from ._contracts import VolumeMeshingSpec
-    from ._plc_source import PiecewiseLinearComplex
-    from ._layer_core_subdivision import NestedLayerPartition
     from ..geometry._meshing_domain import MeshingDomain
     from ..geometry._surface_source_support import SurfaceSourceCharts
+    from ._contracts import VolumeMeshingSpec
+    from ._layer_core_subdivision import NestedLayerPartition
+    from ._plc_source import PiecewiseLinearComplex
     from .providers._native_sources import NativeLayerCoreSource
 
 type _PlaneSides = tuple[tuple[int, int, int, int], tuple[int, int]]
@@ -202,11 +203,12 @@ def prepare_planar_cad_strata(
     from ..geometry._meshing_domain import MeshingDomain
     from ..geometry._source_fidelity import reprove_actual_planar_chart_rows
     from ..geometry._surface_source_support import (
-        SurfaceSourceCharts,
         _cad_root_edges,
+        SurfaceSourceCharts,
         validate_cad_curve_ancestry,
         validate_surface_curve_ancestry,
     )
+    from ._layer_core_brep import outward_surface_charts
     from ._layer_core_staged_domain import _source_sides, exact_planar_atlas_triangles
     from ._layer_core_strata_replay import source_line_interval
 
@@ -216,7 +218,11 @@ def prepare_planar_cad_strata(
         raise TypeError(
             "Planar CAD strata require the actual source domain and surface charts."
         )
-    if domain.brep_authority is None and domain.source_kinds != ("corner", "curve", "surface"):
+    if domain.brep_authority is None and domain.source_kinds != (
+        "corner",
+        "curve",
+        "surface",
+    ):
         return None
     if not _same_tree_content(charts.domain, domain):
         raise ValueError("CAD strata changed the original source domain.")
@@ -238,10 +244,12 @@ def prepare_planar_cad_strata(
         )
         for row in charts.boundary_source.patches
     )
+    # Surface fidelity is proved in the authored patch orientation; a layer
+    # wall carries its accepted boundary reversed, with the same root ids.
     curve_edges = (
         validate_cad_curve_ancestry(charts, 0.0)
         if domain.brep_authority is not None
-        else validate_surface_curve_ancestry(charts, 0.0)
+        else validate_surface_curve_ancestry(outward_surface_charts(charts), 0.0)
     )
     root_edges, incident = _cad_root_edges(charts)
     root_mesh, root_geometry = charts.mesh, charts.geometry
@@ -310,7 +318,9 @@ def _mapped_noncap_source_edge_classification(
     """Unlock only reference diagonals proved to share one actual mapped root face."""
     from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
     from .providers._native_sources import (
-        NativeMappedHexSource, NativePlcSource, _mapped_layer_core_facet_relation,
+        _mapped_layer_core_facet_relation,
+        NativeMappedHexSource,
+        NativePlcSource,
     )
 
     reference = source.reference_source
@@ -329,38 +339,53 @@ def _mapped_noncap_source_edge_classification(
     roots_by_key: dict[tuple[str, tuple[str, ...]], set[tuple[int, int, int]]] = {}
     for row, chart_id in enumerate(query.face_chart_ids):
         key = query.chart_source_key(2, chart_id)
-        roots_by_key.setdefault(key, set()).add((
-            int(query.polygon_root_face_global_ids[row]),
-            int(query.polygon_root_cell_global_ids[row]),
-            int(query.polygon_root_local_face_indices[row]),
-        ))
+        roots_by_key.setdefault(key, set()).add(
+            (
+                int(query.polygon_root_face_global_ids[row]),
+                int(query.polygon_root_cell_global_ids[row]),
+                int(query.polygon_root_local_face_indices[row]),
+            )
+        )
 
     complex_ = reference.complex
-    points = tuple(tuple(Fraction.from_float(float(value)) for value in point)
-                   for point in np.asarray(complex_.vertices, dtype=np.float64))
-    full_points = tuple(tuple(Fraction.from_float(float(value)) for value in point)
-                        for point in np.asarray(full.vertices, dtype=np.float64))
+    points = tuple(
+        tuple(Fraction.from_float(float(value)) for value in point)
+        for point in np.asarray(complex_.vertices, dtype=np.float64)
+    )
+    full_points = tuple(
+        tuple(Fraction.from_float(float(value)) for value in point)
+        for point in np.asarray(full.vertices, dtype=np.float64)
+    )
     full_segments = tuple(
         (full_points[int(a)], full_points[int(b)])
         for a, b in np.asarray(full.segments, dtype=np.int64)
     )
     offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
     vertices = np.asarray(complex_.polygon_vertices, dtype=np.int64)
-    cap_polygons = set(int(value) for value in np.asarray(reference.cap_polygon_ids, dtype=np.int64))
+    cap_polygons = set(
+        int(value) for value in np.asarray(reference.cap_polygon_ids, dtype=np.int64)
+    )
     seam_polygons = set()
     if reference.core_seam_polygon_pairs is not None:
         seam_polygons.update(
-            int(value) for value in np.asarray(reference.core_seam_polygon_pairs, dtype=np.int64).reshape(-1)
+            int(value)
+            for value in np.asarray(
+                reference.core_seam_polygon_pairs, dtype=np.int64
+            ).reshape(-1)
         )
     proven_seam_diagonals: set[tuple[int, int]] = set()
     if seam_polygons and partition is not None:
         from ._layer_core_periodic import partition_periodic_seams
 
         def polygon_edges(row: int) -> set[tuple[int, int]]:
-            polygon = tuple(int(value) for value in vertices[offsets[row]:offsets[row + 1]])
+            polygon = tuple(
+                int(value) for value in vertices[offsets[row] : offsets[row + 1]]
+            )
             return {
-                (min(first, polygon[(index + 1) % len(polygon)]),
-                 max(first, polygon[(index + 1) % len(polygon)]))
+                (
+                    min(first, polygon[(index + 1) % len(polygon)]),
+                    max(first, polygon[(index + 1) % len(polygon)]),
+                )
                 for index, first in enumerate(polygon)
             }
 
@@ -368,14 +393,16 @@ def _mapped_noncap_source_edge_classification(
             for first, second in seam.source_polygons:
                 shared = polygon_edges(first) & polygon_edges(second)
                 if len(shared) != 1:
-                    raise ValueError("A proved periodic seam quad lacks one internal source diagonal.")
+                    raise ValueError(
+                        "A proved periodic seam quad lacks one internal source diagonal."
+                    )
                 proven_seam_diagonals.update(shared)
     locked: set[tuple[int, int]] = {
         (min(int(a), int(b)), max(int(a), int(b)))
         for a, b in np.asarray(complex_.segments, dtype=np.int64)
     }
     for row in cap_polygons | seam_polygons:
-        polygon = tuple(int(value) for value in vertices[offsets[row]:offsets[row + 1]])
+        polygon = tuple(int(value) for value in vertices[offsets[row] : offsets[row + 1]])
         for index, first in enumerate(polygon):
             last = polygon[(index + 1) % len(polygon)]
             edge = (min(first, last), max(first, last))
@@ -390,7 +417,9 @@ def _mapped_noncap_source_edge_classification(
         intervals = []
         crossing = False
         for first, last in full_segments:
-            interval, crosses = _segment_relation(points[pair[0]], points[pair[1]], first, last)
+            interval, crosses = _segment_relation(
+                points[pair[0]], points[pair[1]], first, last
+            )
             if interval is not None:
                 intervals.append(interval)
             crossing |= crosses
@@ -403,19 +432,27 @@ def _mapped_noncap_source_edge_classification(
             authored_segments.add(pair)
             continue
         if intervals or crossing:
-            raise ValueError("An authored source segment crosses only part of a mapped PLC edge.")
+            raise ValueError(
+                "An authored source segment crosses only part of a mapped PLC edge."
+            )
         if pair in locked or edge_row in physical_rows:
             continue
         facets = tuple(int(value) for value in complex_.plc_edge_facets[edge_row])
         keys = tuple(
-            (reference.core_facet_source_ids[facet], reference.core_facet_source_occurrence_paths[facet])
+            (
+                reference.core_facet_source_ids[facet],
+                reference.core_facet_source_occurrence_paths[facet],
+            )
             for facet in facets
         )
         if not keys:
             continue
         if all(identity is None and path is None for identity, path in keys):
             sides = np.asarray(complex_.facet_regions, dtype=np.int64)
-            if any(sides[facet, 0] < 0 or sides[facet, 0] != sides[facet, 1] for facet in facets):
+            if any(
+                sides[facet, 0] < 0 or sides[facet, 0] != sides[facet, 1]
+                for facet in facets
+            ):
                 continue
             selection = tuple(sorted(set(facets)))
             if selection not in internal_roots:
@@ -440,14 +477,21 @@ def _mapped_noncap_source_edge_classification(
         elif any(identity is None or path is None for identity, path in keys):
             continue
         else:
-            root_sets = tuple(roots_by_key.get((identity, path), set()) for identity, path in keys)
-        if all(len(roots) == 1 for roots in root_sets) and all(roots == root_sets[0] for roots in root_sets):
+            root_sets = tuple(
+                roots_by_key.get((identity, path), set()) for identity, path in keys
+            )
+        if all(len(roots) == 1 for roots in root_sets) and all(
+            roots == root_sets[0] for roots in root_sets
+        ):
             removable.add(pair)
     return frozenset(removable), frozenset(authored_segments)
 
 
 def noncap_source_edge_classification(
-    source: NativeLayerCoreSource, /, *, partition: NestedLayerPartition | None = None,
+    source: NativeLayerCoreSource,
+    /,
+    *,
+    partition: NestedLayerPartition | None = None,
 ) -> tuple[frozenset[tuple[int, int]], frozenset[tuple[int, int]]] | None:
     """Prove removable PLC diagonals and whole-edge CAD coedge coverage.
 
@@ -525,7 +569,9 @@ def noncap_source_edge_classification(
             )
             for row in facets
         )
-        if identities[0][0] is not None and all(identity == identities[0] for identity in identities):
+        if identities[0][0] is not None and all(
+            identity == identities[0] for identity in identities
+        ):
             removable.add(pair)
     return frozenset(removable), frozenset(cad)
 

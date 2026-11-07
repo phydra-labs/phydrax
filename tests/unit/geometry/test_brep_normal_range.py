@@ -98,10 +98,15 @@ def test_sphere_poles_are_declared_singular_points_with_exact_evidence() -> None
     south = (Fraction(0), Fraction(0), Fraction(-1))
     assert set(poles) == {north, south}
     assert poles[north].edge_id != poles[south].edge_id
-    latitude = Fraction.from_float(0.5 * pi)
+    # The pole latitude is its exact conic root, not the binary64 latitude
+    # (077ec39e8; docs/api/geometry.md), so the evidence box is the root's
+    # certified enclosure: it must contain the exact latitude +-pi/2, which
+    # lies strictly between float(pi)/2 and nextafter(float(pi), inf)/2.
+    half_pi = (Fraction(pi) / 2, Fraction(float(np.nextafter(pi, np.inf))) / 2)
     for cell, spatial, item in zip(cells, points, face.singularities, strict=True):
         sign = 1 if item.point == north else -1
-        assert item.parameter_box[1] == (sign * latitude, sign * latitude)
+        lower, upper = sorted(sign * value for value in item.parameter_box[1])
+        assert lower <= half_pi[0] and half_pi[1] <= upper
         assert cell[0, 1] <= sign * 0.5 * pi <= cell[1, 1]
         # Shrunk toward the pole while each split-off strip is regular.
         assert cell[1, 1] - cell[0, 1] <= 1.0e-12
@@ -278,3 +283,17 @@ def test_near_singular_regular_patch_resolves_below_former_singular_width() -> N
     assert face.singularities == ()
     enclosure = np.asarray(face.angle_enclosure)
     assert enclosure[0] == 0.0 and enclosure[1] < pi / 2.0
+
+
+def test_insufficient_draft_needs_a_lower_angle_above_the_exact_limit() -> None:
+    from phydrax.geometry.brep._normal_range import _status
+
+    lower = float.fromhex("0x1.a5ba180991559p-2")
+    upper = float.fromhex("0x1.a5ba18099155ap-2")
+    draft = float.fromhex("0x1.28b12f41de7c2p+0")
+    # The 36-digit truncation of pi is a rational lower bound of pi.
+    pi_lower = Fraction(314159265358979323846264338327950288, 10**35)
+    # The face's angle can still lie at or below pi/2 - draft.
+    assert Fraction(lower) < pi_lower / 2 - Fraction(draft)
+
+    assert _status(lower, upper, draft, False, False) != "insufficient"

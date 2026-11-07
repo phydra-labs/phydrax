@@ -49,7 +49,6 @@ __pycache__
 .DS_Store
 .pytest_cache
 .ruff_cache
-uv.lock
 AGENTS.md
 LLM.md
 scratch.py

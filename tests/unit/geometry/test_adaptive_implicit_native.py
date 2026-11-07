@@ -365,7 +365,8 @@ def test_adaptive_archive_replays_scientific_state_without_authoring(
         evidence_metadata=(*metadata[:4], metadata[4] + 1, *metadata[5:]),
     )
     history = list(recipe.evidence_metadata)
-    history[7] = 1
+    # A later lattice than the authored one, which the history replay refutes.
+    history[7] = original.evidence.lattice_anchor + 1
     history[-1] = canonical_fingerprint(
         {
             "kind": "adaptive-implicit-evidence",
@@ -490,10 +491,9 @@ def test_streamed_history_attempt_matches_authoring_predicates(
     expected_coincidence = owner._vertex_roots_are_lattice_coincidences(
         geometry, previous, policy.enclosure
     )
-    assert replay_history_attempt(geometry, domain, policy) == (
-        expected_retry,
-        expected_coincidence,
-    )
+    retry, coincidence, tangencies = replay_history_attempt(geometry, domain, policy)
+    assert (retry, coincidence) == (expected_retry, expected_coincidence)
+    np.testing.assert_array_equal(tangencies, owner._tangency_boxes(previous))
 
 
 def test_streamed_history_accepts_real_edge_refinement_retry(
@@ -640,6 +640,129 @@ def test_adaptive_resolution_separates_a_thin_gap_between_components() -> None:
     ]
     samples = result.boundary_source.boundary_cover(0.01)
     assert samples.complete and samples.semantics == "certified"
+
+
+# The sphere's x poles (0.25 and 0.5, both exact in binary64) lie on lattice
+# planes of [-1, 1]^3 at every level >= 3, and on no lattice vertex: the zero
+# set touches a lattice face at each pole, at every refinement.
+_POLE_SPHERE = ((0.375, 0.013, -0.021), 0.125)
+_POLE_DOMAIN = np.asarray(((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)))
+_POLE_POLICY = AdaptiveImplicitSurfacePolicy(
+    relative_cell_diameter=0.05, root_tolerance=1.0e-8
+)
+
+
+def test_lattice_face_tangency_is_proved_on_the_touched_face() -> None:
+    from phydrax.geometry.implicit import _adaptive_discovery as owner
+    from phydrax.geometry.implicit._adaptive_polygon_replay import replay_history_attempt
+
+    geometry = _G.Sphere(*_POLE_SPHERE).compile()
+    first = owner._discover_adaptive_implicit_surface_once(
+        geometry,
+        domain=_POLE_DOMAIN,
+        policy=_POLE_POLICY,
+        source_id="pole-tangency",
+        declared_domain=_POLE_DOMAIN,
+        lattice_anchor=0,
+    )
+    # Level-5 cells of width 2**-4: each pole lies in the interior of one face
+    # of exactly one zero-free-cornered cell beyond it.
+    assert first.scaffold.target_level == 5
+    np.testing.assert_array_equal(
+        first.evidence.unresolved_boxes,
+        [
+            [[0.1875, 0.0, -0.0625], [0.25, 0.0625, 0.0]],
+            [[0.5, 0.0, -0.0625], [0.5625, 0.0625, 0.0]],
+        ],
+    )
+    assert (
+        first.evidence.unresolved_issues.tolist()
+        == [int(AdaptiveImplicitBoxIssue.TANGENCY)] * 2
+    )
+    assert owner._next_discovery_resolution(first, _POLE_POLICY) is None
+    # Only the touched faces (upper x of the first box, lower x of the second)
+    # confine the zeros; their neighbourhoods are [p - 2**-12, p + 2**-12],
+    # widened by one rounding step.
+    bounds = owner._FieldEnclosures(geometry, _POLE_POLICY.enclosure)
+    width = 2.0**-12
+    assert owner._tangency_slabs(bounds, owner._tangency_boxes(first)) == tuple(
+        (0, np.nextafter(plane - width, -np.inf), np.nextafter(plane + width, np.inf))
+        for plane in (0.25, 0.5)
+    )
+    retry, coincidence, tangencies = replay_history_attempt(
+        geometry, _POLE_DOMAIN, _POLE_POLICY
+    )
+    assert (retry, coincidence) == (False, False)
+    np.testing.assert_array_equal(tangencies, first.evidence.unresolved_boxes)
+
+
+def test_lattice_face_tangency_reanchors_without_refinement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.implicit import _adaptive_discovery as owner
+
+    geometry = _G.Sphere(*_POLE_SPHERE).compile()
+    result = discover_adaptive_implicit_surface(
+        geometry, domain=_POLE_DOMAIN, policy=_POLE_POLICY, source_id="pole-tangency"
+    )
+    assert result.evidence.lattice_anchor == 1
+    assert result.evidence.unresolved_count == 0
+    assert result.mesh is not None and result.mesh.topology.watertight
+    # The tangency was not refined: the re-anchored lattice keeps the
+    # declared resolution, and none of its planes meets either touched face.
+    domain = np.asarray(result.scaffold.domain)
+    assert result.scaffold.target_level == 5
+    assert owner._lattice_separates(
+        domain,
+        5,
+        tuple(
+            (
+                0,
+                np.nextafter(plane - 2.0**-12, -np.inf),
+                np.nextafter(plane + 2.0**-12, np.inf),
+            )
+            for plane in (0.25, 0.5)
+        ),
+    )
+    assert owner.verify_discovery_history(result)
+    monkeypatch.setattr(
+        owner,
+        "_discover_adaptive_implicit_surface_once",
+        lambda *args, **kwargs: pytest.fail("re-executed discovery"),
+    )
+    restored = restore_adaptive_implicit_surface(
+        result.archive_recipe, geometry, _POLE_POLICY
+    )
+    assert restored.evidence.lattice_anchor == 1
+    assert restored.mesh is not None
+    np.testing.assert_array_equal(restored.mesh.faces, result.mesh.faces)
+
+
+def test_persistent_lattice_face_tangency_is_an_unresolved_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.implicit import _adaptive_discovery as owner
+
+    # Without a later anchor the tangency persists on every lattice tried.
+    monkeypatch.setattr(owner, "_LATTICE_ANCHORS", ())
+    geometry = _G.Sphere(*_POLE_SPHERE).compile()
+    result = discover_adaptive_implicit_surface(
+        geometry, domain=_POLE_DOMAIN, policy=_POLE_POLICY, source_id="pole-tangency"
+    )
+    assert result.evidence.lattice_anchor == 0
+    assert result.scaffold.target_level == 5
+    assert result.mesh is None
+    assert (
+        result.evidence.unresolved_issues.tolist()
+        == [int(AdaptiveImplicitBoxIssue.TANGENCY)] * 2
+    )
+    assert result.evidence.status_flags == (
+        AdaptiveImplicitSurfaceStatus.UNRESOLVED_BOXES
+        | AdaptiveImplicitSurfaceStatus.PHYSICAL_RESOLUTION_REACHED
+    )
+    for pole in ((0.25, 0.013, -0.021), (0.5, 0.013, -0.021)):
+        assert _contains(result.evidence.unresolved_boxes, np.asarray(pole))
+    assert owner.verify_discovery_history(result)
 
 
 def test_discovery_buffer_adoption_requires_sealed_owning_storage() -> None:

@@ -1,5 +1,6 @@
 import os
 import socket
+import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -1506,6 +1507,12 @@ def test_ipi_unix_and_tcp_roundtrip(tmp_path: Path, mode: str) -> None:
         plan = phx.atomistic.interchange.IPITransportPlan.unix(
             f"/tmp/phydrax-ipi-{os.getpid()}.sock", timeout=5.0, virial="optional"
         )
+        if os.name != "posix":
+            with pytest.raises(
+                OSError, match="Unix i-PI socket transport requires a POSIX"
+            ):
+                plan.listen()
+            return
     else:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.bind(("127.0.0.1", 0))
@@ -1517,8 +1524,8 @@ def test_ipi_unix_and_tcp_roundtrip(tmp_path: Path, mode: str) -> None:
 
 
 def test_packmol_subprocess_boundary_and_provenance(tmp_path: Path) -> None:
-    executable = tmp_path / "fake_packmol.py"
-    executable.write_text(
+    script = tmp_path / "fake_packmol.py"
+    script.write_text(
         """#!/usr/bin/env python3
 from pathlib import Path
 import sys
@@ -1536,7 +1543,14 @@ Path('output.xyz').write_text(f'{len(output)}\\nfake packmol\\n' + '\\n'.join(ou
 """,
         encoding="utf-8",
     )
-    executable.chmod(0o755)
+    # PACKMOL launches one executable path without arguments. Windows cannot
+    # execute a #! script, so a batch launcher runs it with this interpreter.
+    if os.name == "nt":
+        executable = tmp_path / "fake_packmol.cmd"
+        executable.write_text(f'@"{sys.executable}" "{script}"\n', encoding="utf-8")
+    else:
+        script.chmod(0o755)
+        executable = script
     template = phx.atomistic.AtomisticFrame(
         0.0,
         0,
@@ -1566,3 +1580,4 @@ Path('output.xyz').write_text(f'{len(output)}\\nfake packmol\\n' + '\\n'.join(ou
     assert result.units.unit_system_id == template.units.unit_system_id
     assert result.component_slices == ((0, 4),)
     assert result.input_digest
+    assert result.executable == str(executable)

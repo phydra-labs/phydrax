@@ -55,6 +55,7 @@ from ...discretization.fem._periodic_cell import (
     simplex_gradients,
 )
 from ...ein import contract
+from ...linalg import SparseFactorizationPolicy
 from ...meshing._periodic_implicit_realization import PeriodicImplicitRealization
 from ...typing import parse
 from ._topology_design import (
@@ -233,7 +234,10 @@ class PeriodicCellProblem(StrictModule, NonTrainableState):
     pattern and its symbolic Cholesky plan once; `solve` refreshes numeric
     values only. Elasticity refuses a quotient component that winds along fewer
     than two lattice directions: its periodic rigid rotations would be further
-    null modes that pinning one DOF does not remove.
+    null modes that pinning one DOF does not remove. ``factorization`` declares
+    the SPD Cholesky policy (ordering and resource budget) of the pattern; the
+    default is nested dissection under the library's default budget, and the
+    choice enters ``pattern.pattern_id``.
     """
 
     space: PeriodicSimplexSpace
@@ -247,6 +251,7 @@ class PeriodicCellProblem(StrictModule, NonTrainableState):
         /,
         *,
         physics: PeriodicCellPhysics,
+        factorization: SparseFactorizationPolicy | None = None,
     ) -> None:
         selected = parse(physics, PeriodicCellPhysics, "physics")
         space = (
@@ -262,7 +267,9 @@ class PeriodicCellProblem(StrictModule, NonTrainableState):
             )
         self.space = space
         self.pattern = PeriodicSimplexOperatorPattern(
-            space, components=1 if selected == "conductivity" else 3
+            space,
+            components=1 if selected == "conductivity" else 3,
+            factorization=factorization,
         )
         self.cases = _unit_cases(selected)
         self.physics = selected

@@ -79,6 +79,7 @@ from ._layer_curving_records import (
     _adaptive_implicit_source_query,
     _barycentric_3d,
     _BarycentricSolver3,
+    _column_identity_row,
     _evaluate_cell_geometry_point,
     _evaluate_mapped_chart_point,
     _exact2,
@@ -717,7 +718,9 @@ def _source_faces(
                 "Source chart degenerates on the realized layer boundary face."
             )
         if actual_chart_rows is not None:
-            _require_reoriented_wall_side(charts, chart_row, actual_chart_rows[chart_row], area)
+            _require_reoriented_wall_side(
+                charts, chart_row, actual_chart_rows[chart_row], area
+            )
         result.append(
             _SourceFace(
                 chart_row,
@@ -1706,16 +1709,22 @@ def _mapped_child_chart_on_parent_face(
         raise ValueError("Mapped child changes its original layer reference chart.")
     arguments = tuple(_reference_expression(value) for value in mapping.arguments)
     if affine_map(arguments, 3) is None:
-        raise ValueError("Mapped child source-wall ancestry requires an exact affine chart.")
+        raise ValueError(
+            "Mapped child source-wall ancestry requires an exact affine chart."
+        )
     points = tuple(_exact3(mapping.evaluate(point)) for point in target_corners)
     vertices = _exact_reference_cell_vertices(parent_kind)
     for face in reference_cell_topology(parent_kind).entities[2]:
         if len(face) not in (3, 4):
             continue
-        corners = _fraction_chart3((vertices[int(face[0])], vertices[int(face[1])], vertices[int(face[-1])]))
+        corners = _fraction_chart3(
+            (vertices[int(face[0])], vertices[int(face[1])], vertices[int(face[-1])])
+        )
         solver = _prepare_barycentric_solver_3d(corners)
         try:
-            weights = tuple(_barycentric_3d(point, corners, solver=solver) for point in points)
+            weights = tuple(
+                _barycentric_3d(point, corners, solver=solver) for point in points
+            )
         except ValueError:
             continue
         if len(face) == 3:
@@ -1724,7 +1733,9 @@ def _mapped_child_chart_on_parent_face(
             inside = all(0 <= row[1] <= 1 and 0 <= row[2] <= 1 for row in weights)
         if inside:
             return
-    raise ValueError("Mapped child source chart leaves every original parent boundary face.")
+    raise ValueError(
+        "Mapped child source chart leaves every original parent boundary face."
+    )
 
 
 def _mapped_layer_column_identity(
@@ -1767,7 +1778,9 @@ def _mapped_layer_column_identity(
                 if mapping.target_cell_id in child_maps:
                     raise ValueError("Mapped layer partition repeats a target cell.")
                 if mapping.source_cell_id not in layer_rows:
-                    raise ValueError("Mapped layer partition names an absent original layer cell.")
+                    raise ValueError(
+                        "Mapped layer partition names an absent original layer cell."
+                    )
                 child_maps[mapping.target_cell_id] = mapping
     from ._layer_core_brep import grown_wall_cells
 
@@ -1832,7 +1845,9 @@ def _mapped_layer_column_identity(
     if len(by_front) != len(provenance):
         raise ValueError("Mapped wall facets do not have unique source front rows.")
     records = []
-    for witness_row, target_cell in enumerate(np.asarray(witness.cell_global_ids, dtype=np.int64)):
+    for witness_row, target_cell in enumerate(
+        np.asarray(witness.cell_global_ids, dtype=np.int64)
+    ):
         target_id = int(target_cell)
         mapping = child_maps.get(target_id)
         parent_id = mapping.source_cell_id if mapping is not None else target_id
@@ -1963,11 +1978,17 @@ def _curve_mapped_layer_core(
             construction.mesh.blocks, elements, routes, strict=True
         ):
             if not isinstance(element, FiniteElementSpec):
-                raise TypeError("Mapped layer realization needs nodal coordinate elements.")
+                raise TypeError(
+                    "Mapped layer realization needs nodal coordinate elements."
+                )
             nodes = lagrange_reference_node_data(element)
-            points = tuple(point for node in nodes if (point := node.exact_point) is not None)
+            points = tuple(
+                point for node in nodes if (point := node.exact_point) is not None
+            )
             if len(points) != len(nodes):
-                raise ValueError("Mapped layer coordinate nodes require exact reference points.")
+                raise ValueError(
+                    "Mapped layer coordinate nodes require exact reference points."
+                )
             values = construction.geometry.evaluate_exact(
                 construction.mesh,
                 np.asarray(block.global_ids, dtype=np.int64),
@@ -1978,12 +1999,19 @@ def _curve_mapped_layer_core(
                     geometry_row = int(np.asarray(route)[cell_row, local_row])
                     old = exact_nodes.setdefault(geometry_row, point)
                     if old != point:
-                        raise ValueError("Mapped source cells disagree at a shared coordinate node.")
+                        raise ValueError(
+                            "Mapped source cells disagree at a shared coordinate node."
+                        )
                     execution = np.asarray(tuple(float(value) for value in point))
-                    if geometry_row < construction.mesh.coordinates.shape[0] and not np.array_equal(
-                        candidate_coordinates[geometry_row].view(np.uint64), execution.view(np.uint64)
+                    if geometry_row < construction.mesh.coordinates.shape[
+                        0
+                    ] and not np.array_equal(
+                        candidate_coordinates[geometry_row].view(np.uint64),
+                        execution.view(np.uint64),
                     ):
-                        raise ValueError("Mapped source changes an immutable mesh vertex.")
+                        raise ValueError(
+                            "Mapped source changes an immutable mesh vertex."
+                        )
                     candidate_coordinates[geometry_row] = execution
         block_rows_by_cell = {
             int(identifier): (block_row, cell_row)
@@ -2114,15 +2142,28 @@ def _curve_mapped_layer_core(
             _displacement_bound,
         )
 
-        if _displacement_bound(
-            construction.mesh, construction.geometry, construction.mesh, candidate
-        ) != 0.0:
-            raise ValueError("Nodal geometry does not reproduce the complete mapped source.")
-        if construction.geometry.restriction_source is None or candidate.source_map is None:
-            raise ValueError("Exact mapped curving must retain its original root-map owners.")
+        if (
+            _displacement_bound(
+                construction.mesh, construction.geometry, construction.mesh, candidate
+            )
+            != 0.0
+        ):
+            raise ValueError(
+                "Nodal geometry does not reproduce the complete mapped source."
+            )
+        if (
+            construction.geometry.restriction_source is None
+            or candidate.source_map is None
+        ):
+            raise ValueError(
+                "Exact mapped curving must retain its original root-map owners."
+            )
         candidate = CellGeometrySpec(
-            layout[0], layout[1], candidate.coordinates,
-            source_map=candidate.source_map, source_mesh=construction.mesh,
+            layout[0],
+            layout[1],
+            candidate.coordinates,
+            source_map=candidate.source_map,
+            source_mesh=construction.mesh,
             restriction_source=construction.geometry.restriction_source,
         )
         target_witness = _rebind_chart_witness_geometry(witness, candidate)
@@ -2861,6 +2902,102 @@ def _mixed_coarsening_reference_maps(
     return transforms
 
 
+def _coarsened_source_chart_partition(
+    target_reference: tuple[tuple[Fraction, Fraction, Fraction], ...],
+    target_parameters: tuple[tuple[Fraction, Fraction], ...],
+    pieces: Sequence[
+        tuple[
+            int,
+            tuple[tuple[Fraction, Fraction, Fraction], ...],
+            tuple[tuple[Fraction, Fraction], ...],
+        ]
+    ],
+    /,
+) -> tuple[int, ...] | None:
+    """Return child rows whose mapped charts exactly partition one coarse chart.
+
+    Complete coarsening merges child cells into a parent whose wall facet is the
+    union of the child facets, so no single child contains the target chart.
+    Each child chart is mapped into the parent reference cell by its exact
+    affine child-to-parent map. The children on the target facet plane are
+    accepted only when, in exact target barycentric coordinates, every child
+    lies inside the target with the target's orientation, the child interiors
+    are pairwise disjoint, their areas sum to the target's area, and every
+    child carries the target's affine source parameters at its own corners
+    (hence on its whole piece). Anything else is not an exact partition.
+    """
+    solver = _prepare_barycentric_solver_3d(target_reference)
+    rows: list[int] = []
+    triangles: list[tuple[tuple[ExactScalar, ExactScalar], ...]] = []
+    total: ExactScalar = Fraction(0)
+    for old_row, reference_chart, old_parameters in pieces:
+        try:
+            weights = tuple(
+                _barycentric_3d(point, target_reference, solver=solver)
+                for point in reference_chart
+            )
+        except ValueError:
+            # Another facet of a child cell on the same source chart lies off
+            # the exact target facet plane; it is not a piece of this facet.
+            continue
+        if any(value < 0 for corner in weights for value in corner):
+            return None
+        for corner, parameters in zip(weights, old_parameters, strict=True):
+            mapped = _exact2(
+                tuple(
+                    sum(
+                        (
+                            corner[index] * target_parameters[index][axis]
+                            for index in range(3)
+                        ),
+                        Fraction(0),
+                    )
+                    for axis in range(2)
+                )
+            )
+            if mapped != parameters:
+                return None
+        triangle = tuple((corner[1], corner[2]) for corner in weights)
+        area = _signed_area2(triangle)
+        if area <= 0:
+            return None
+        rows.append(old_row)
+        triangles.append(triangle)
+        total = total + area
+    if not rows or total != 1:
+        return None
+    for first in range(len(triangles)):
+        for second in range(first + 1, len(triangles)):
+            if not _separated_triangles(
+                triangles[first], triangles[second]
+            ) and not _separated_triangles(triangles[second], triangles[first]):
+                return None
+    return tuple(rows)
+
+
+def _signed_area2(
+    triangle: tuple[tuple[ExactScalar, ExactScalar], ...], /
+) -> ExactScalar:
+    first, second, third = triangle
+    return (second[0] - first[0]) * (third[1] - first[1]) - (third[0] - first[0]) * (
+        second[1] - first[1]
+    )
+
+
+def _separated_triangles(
+    triangle: tuple[tuple[ExactScalar, ExactScalar], ...],
+    other: tuple[tuple[ExactScalar, ExactScalar], ...],
+    /,
+) -> bool:
+    """Whether one positively oriented edge line of ``triangle`` separates ``other``."""
+    for index in range(3):
+        start = triangle[index]
+        end = triangle[(index + 1) % 3]
+        if all(_signed_area2((start, end, point)) <= 0 for point in other):
+            return True
+    return False
+
+
 def _transition_source_chart_rows(
     source_evidence: LayerCurvingSourceEvidence,
     target_witness: SourceBoundaryChartWitness,
@@ -2868,7 +3005,12 @@ def _transition_source_chart_rows(
     reference_maps: dict[tuple[int, int], NestedCellReferenceMap],
     mixed_reference_maps: dict[tuple[int, int], _MixedReferenceAffineMap],
     /,
-) -> tuple[int, ...]:
+) -> tuple[tuple[int, ...], ...]:
+    """Return, per target chart, its exact old ancestor rows.
+
+    A preserved, relocated or refined chart has one old row whose chart contains
+    it. A completely coarsened chart has the child rows that exactly partition it.
+    """
     old_witness = source_evidence.chart_witness
     cell_lineage = lineage.entity_lineage(3)
     relation = {
@@ -2886,7 +3028,7 @@ def _transition_source_chart_rows(
         int(EntityLineageKind.COARSENED_INTO),
         int(EntityLineageKind.RELOCATED),
     }
-    result: list[int] = []
+    result: list[tuple[int, ...]] = []
     for target_row in range(len(target_witness.source_chart_ids)):
         target_cell_id = int(target_witness.cell_global_ids[target_row])
         target_reference = _fraction_chart3(
@@ -2896,6 +3038,13 @@ def _transition_source_chart_rows(
             target_witness.source_parameter_chart(target_row)
         )
         candidates: list[int] = []
+        coarsened_pieces: list[
+            tuple[
+                int,
+                tuple[tuple[Fraction, Fraction, Fraction], ...],
+                tuple[tuple[Fraction, Fraction], ...],
+            ]
+        ] = []
         for old_row in range(len(old_witness.source_chart_ids)):
             if (
                 old_witness.source_chart_ids[old_row]
@@ -2949,6 +3098,7 @@ def _transition_source_chart_rows(
                     )
                     for point in old_reference
                 )
+                coarsened_pieces.append((old_row, reference_chart, old_parameters))
             reference_solver = _prepare_barycentric_solver_3d(reference_chart)
             matches = True
             for target_point, parameter_point in zip(
@@ -2984,11 +3134,45 @@ def _transition_source_chart_rows(
                     break
             if matches:
                 candidates.append(old_row)
-        if len(candidates) != 1:
+        if len(candidates) == 1:
+            result.append((candidates[0],))
+            continue
+        partition = (
+            _coarsened_source_chart_partition(
+                target_reference, target_parameters, coarsened_pieces
+            )
+            if not candidates and coarsened_pieces
+            else None
+        )
+        if partition is None:
             raise ValueError(
                 "Transitioned source chart has no unique exact source-face/reference-map ancestor."
             )
-        result.append(candidates[0])
+        result.append(partition)
+    return tuple(result)
+
+
+def _ancestor_column_rows(
+    identity: LayerColumnProjectionIdentity,
+    ancestors: tuple[tuple[int, ...], ...],
+    /,
+) -> tuple[int, ...]:
+    """Return one old column row per target chart from its exact ancestor rows.
+
+    Refinement copies the parent's layer column and source-wall ancestry onto
+    every child chart, so the children of a completely coarsened chart carry the
+    coarse chart's own identity. A coarse chart is accepted only when all of its
+    children agree exactly; children from different columns or source-wall cells
+    name no single coarse identity.
+    """
+    result: list[int] = []
+    for rows in ancestors:
+        first = _column_identity_row(identity, rows[0])
+        if any(_column_identity_row(identity, row) != first for row in rows[1:]):
+            raise ValueError(
+                "Coarsened source chart children disagree on their layer column/source-wall identity."
+            )
+        result.append(rows[0])
     return tuple(result)
 
 
@@ -2996,7 +3180,7 @@ def _transition_source_faces(
     source_evidence: LayerCurvingSourceEvidence,
     target_mesh: CellMesh,
     target_witness: SourceBoundaryChartWitness,
-    old_chart_rows: tuple[int, ...],
+    ancestors: tuple[tuple[int, ...], ...],
     /,
 ) -> tuple[_SourceFace, ...]:
     charts = source_evidence.source_surface_charts
@@ -3017,6 +3201,7 @@ def _transition_source_faces(
         else {int(cell_id): row for row, cell_id in enumerate(charts.cell_global_ids)}
     )
     column = source_evidence.chart_column_identity
+    old_chart_rows = _ancestor_column_rows(column, ancestors)
     root_rows = (
         ()
         if root_witness is None
@@ -3372,7 +3557,7 @@ def _renew_mapped_layer_source_evidence(
             "Mapped layer renewal lost its original source/frame/root-chart authority."
         )
     source_evidence.require_current(source_mesh, source_geometry)
-    old_chart_rows = _transition_source_chart_rows(
+    ancestors = _transition_source_chart_rows(
         source_evidence,
         target_chart_witness,
         lineage,
@@ -3387,7 +3572,8 @@ def _renew_mapped_layer_source_evidence(
     )
     mapped_rows = _mapped_reference_chart_rows(query, target_chart_witness, mapped_maps)
     chart_identity = _select_column_identity(
-        source_evidence.chart_column_identity, old_chart_rows
+        source_evidence.chart_column_identity,
+        _ancestor_column_rows(source_evidence.chart_column_identity, ancestors),
     )
     elements, routes, coordinates = target_geometry.resolve(target_mesh)
     cell_rows = {
@@ -3626,7 +3812,7 @@ def renew_layer_curving_source_evidence(
             mixed_coarsening_maps,
             mixed_reference_maps,
         )
-    old_chart_rows = _transition_source_chart_rows(
+    ancestors = _transition_source_chart_rows(
         source_evidence,
         target_chart_witness,
         lineage,
@@ -3634,7 +3820,7 @@ def renew_layer_curving_source_evidence(
         mixed_reference_maps,
     )
     faces = _transition_source_faces(
-        source_evidence, target_mesh, target_chart_witness, old_chart_rows
+        source_evidence, target_mesh, target_chart_witness, ancestors
     )
     elements, routes, coordinates = target_geometry.resolve(target_mesh)
     implicit_records: list[
@@ -3896,7 +4082,11 @@ def prepare_layer_column_geometry(
     lower_offset = len(layer_ids)
     upper_offset = lower_offset + wall_geometry.coordinates.shape[0]
     for block, lower, upper, lower_route, upper_route in zip(
-        wall_mesh.blocks, lower_elements, upper_elements, lower_routes, upper_routes,
+        wall_mesh.blocks,
+        lower_elements,
+        upper_elements,
+        lower_routes,
+        upper_routes,
         strict=True,
     ):
         if (
@@ -3944,7 +4134,9 @@ def prepare_layer_column_geometry(
             )
             if identifier in actual_cells:
                 if vertices != actual_cells[identifier]:
-                    raise ValueError("A prepared layer prism changed its vertex identity.")
+                    raise ValueError(
+                        "A prepared layer prism changed its vertex identity."
+                    )
                 seen.add(identifier)
                 top = bottom
                 actual_top = np.asarray(
@@ -3962,8 +4154,14 @@ def prepare_layer_column_geometry(
             )
             rows.append(
                 np.concatenate(
-                    (bottom, top, actual_bottom, actual_top,
-                     bottom[corner_dofs], top[corner_dofs])
+                    (
+                        bottom,
+                        top,
+                        actual_bottom,
+                        actual_top,
+                        bottom[corner_dofs],
+                        top[corner_dofs],
+                    )
                 )
             )
         if prototype is None:
@@ -3976,9 +4174,11 @@ def prepare_layer_column_geometry(
         elements,
         routes,
         np.concatenate(
-            (np.asarray(layer_mesh.coordinates, dtype=np.float64),
-             np.asarray(wall_geometry.coordinates, dtype=np.float64),
-             np.asarray(upper_geometry.coordinates, dtype=np.float64))
+            (
+                np.asarray(layer_mesh.coordinates, dtype=np.float64),
+                np.asarray(wall_geometry.coordinates, dtype=np.float64),
+                np.asarray(upper_geometry.coordinates, dtype=np.float64),
+            )
         ),
     )
 

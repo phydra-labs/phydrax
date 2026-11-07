@@ -41,6 +41,7 @@ from .._finite_element_variational import (
     FiniteElementExecutionContext,
     FiniteElementForm,
     InteriorFacetAction,
+    LinearElasticityKernel,
     PreparedOperatorAction,
     SIPGBoundaryCondition,
     SIPGFacetAction,
@@ -59,30 +60,13 @@ def linear_elasticity_form(
     *,
     form_id: str = "linear-elasticity",
 ) -> FiniteElementForm:
-    lambda_ = jnp.asarray(lame_lambda)
-    mu = jnp.asarray(shear_modulus)
+    """Isotropic linear elasticity with a structural sparse lowering.
 
-    def kernel(
-        values: tuple[Array, ...],
-        gradients: tuple[Array, ...],
-        points: Array,
-        weights: Array,
-        test_basis: Array,
-        test_gradients: Array,
-        context: FiniteElementExecutionContext,
-    ) -> Array:
-        gradient = gradients[0]
-        strain = symmetric_gradient(gradient)
-        trace = jnp.trace(strain, axis1=-2, axis2=-1)
-        identity = jnp.eye(strain.shape[-1], dtype=strain.dtype)
-        stress = lambda_ * trace[..., None, None] * identity + 2.0 * mu * strain
-        return ein.contract(
-            "cq,cqid,cqad->cia",
-            weights,
-            test_gradients,
-            stress,
-        )
-
+    The residual and the assembled stiffness share one constitutive law,
+    `LinearElasticityKernel`; under sparse realization the operator is the
+    coupled vector stiffness, so constrained problems reach
+    ``linear_system(storage="sparse")`` and sparse Cholesky.
+    """
     return FiniteElementForm(
         form_id,
         field_name,
@@ -90,7 +74,7 @@ def linear_elasticity_form(
             CellResidualAction(
                 field_name,
                 (field_name,),
-                kernel,
+                LinearElasticityKernel(lame_lambda, shear_modulus),
                 action_id="elasticity",
             ),
         ),

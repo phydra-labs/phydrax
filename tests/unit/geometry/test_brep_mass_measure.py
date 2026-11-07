@@ -538,8 +538,13 @@ def test_torus_green_strip_binds_exact_period_and_radius(turns: int) -> None:
         cosine = mpmath.cos(mpmath.mpf(1) / 4)
         minor = mpmath.mpf(1) / 10
         expected = (
-            turns * 2 * mpmath.pi * minor * (3 + minor * cosine)
-            * (minor + 3 * cosine) / 3
+            turns
+            * 2
+            * mpmath.pi
+            * minor
+            * (3 + minor * cosine)
+            * (minor + 3 * cosine)
+            / 3
         )
         assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
 
@@ -771,3 +776,50 @@ def test_step_external_routine_source_volume_at_profile_accuracy(tmp_path: Path)
     assert _topology_oracle(model, "external-routine")["passed"] is True
     result = _source_volume_oracle(model, expected, "external-routine")
     assert result["passed"] is True
+
+
+@pytest.mark.parametrize(
+    "fan_radii",
+    (
+        # One 4/3 fan and 2000 fans of about 0.44 binary64 ulps of 4/3 each;
+        # together they exceed a few hundred ulps of per-term headroom.
+        (1.0,) + (13.0 / 16.0 * 2.0**-26,) * 2000,
+        # A fan whose area 2 rho^2 underflows binary64.
+        (2.0**-540,),
+    ),
+    ids=("absorbed-terms", "underflowed-term"),
+)
+def test_gap_closure_bound_covers_its_exact_vertex_fan_flux(
+    fan_radii: tuple[float, ...],
+) -> None:
+    from fractions import Fraction
+    from types import SimpleNamespace
+    from typing import cast
+
+    from phydrax.geometry.brep._measure import _closure_bound, _exact_end, _VolumeSource
+
+    count = len(fan_radii)
+    geometry = SimpleNamespace(
+        edge_face_gap_bounds=None,
+        edge_vertex_gap_bounds=np.asarray(
+            [(0.0, radius) for radius in fan_radii], dtype=np.float64
+        ),
+        edge_ranges=np.zeros((count, 2), dtype=np.float64),
+        vertex_points=np.tile(np.asarray((1.0, 0.0, 0.0)), (count, 1)),
+        face_loops=((tuple(range(count)),),),
+        coedge_edges=tuple(range(count)),
+        coedge_senses=(1,) * count,
+        edge_curves=(-1,) * count,
+        edge_vertices=tuple((index, index) for index in range(count)),
+    )
+    source = cast(_VolumeSource, SimpleNamespace(geometry=geometry))
+    # Every coedge closes onto the next one at the same chart point.
+    end = _exact_end((Fraction(0), Fraction(0)))
+    bound = _closure_bound(source, (0,), {0: (((end, end),) * count,)}, {0: (1.0, 1.0)})
+
+    # Each vertex fan of reach |p| + rho has flux at most (|p| + rho) / 3 * 2 rho^2.
+    exact = sum(
+        ((1 + Fraction(radius)) / 3 * 2 * Fraction(radius) ** 2 for radius in fan_radii),
+        Fraction(0),
+    )
+    assert Fraction(bound) >= exact

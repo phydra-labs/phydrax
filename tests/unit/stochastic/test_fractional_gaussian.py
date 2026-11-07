@@ -158,9 +158,9 @@ def test_dense_method_preserves_seeded_values_and_identifiers() -> None:
         == automatic.coupling_id
         == "0c2e26058e824fcf5243448ae5fa48830f165bb204a2a625ba9c46fd6c5ab92b"
     )
-    # LAPACK eigenvector signs and rounding are not a cross-platform byte
-    # contract. Check the seeded replay above and the law against the analytic
-    # fractional Brownian covariance, independent of the process implementation.
+    # LAPACK rounding is not a cross-platform byte contract. Check the seeded
+    # replay above and the law against the analytic fractional Brownian
+    # covariance, independent of the process implementation.
     ensemble = phx.stochastic.FractionalGaussianRealization(
         process,
         jr.key(61),
@@ -181,6 +181,43 @@ def test_dense_method_preserves_seeded_values_and_identifiers() -> None:
         time_covariance[:, None, :, None] * component_covariance[None, :, None, :]
     ).reshape((18, 18))
     assert np.linalg.norm(empirical - expected) / np.linalg.norm(expected) < 0.06
+
+
+def test_dense_paths_do_not_depend_on_eigenvector_signs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # LAPACK implementations return eigenvectors with different signs. The
+    # dense factor is the principal square root of the grid covariance, so the
+    # same key draws the same path whatever signs the eigensolver chose.
+    process = phx.stochastic.FractionalGaussianProcess(
+        0.3,
+        0.25,
+        dimension=2,
+        process_id="sign-invariant-fractional-gaussian",
+    )
+    grid = jnp.linspace(0.0, 1.0, 17)
+
+    def realization() -> phx.stochastic.FractionalGaussianRealization:
+        return phx.stochastic.FractionalGaussianRealization(
+            process, jr.key(904), grid, method="dense"
+        )
+
+    reference = realization()
+    eigh = np.linalg.eigh
+
+    def flipped_eigh(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        values, vectors = eigh(matrix)
+        signs = np.where(np.arange(vectors.shape[1]) % 3 == 1, -1.0, 1.0)
+        return values, vectors * signs[None, :]
+
+    monkeypatch.setattr(np.linalg, "eigh", flipped_eigh)
+    flipped = realization()
+
+    factor = np.asarray(reference.covariance_factor)
+    assert np.allclose(factor, factor.T, rtol=0.0, atol=1e-15)
+    assert np.array_equal(np.asarray(flipped.covariance_factor), factor)
+    assert jnp.array_equal(flipped.values, reference.values)
+    assert flipped.realization_id == reference.realization_id
 
 
 def test_davies_harte_matches_covariance_autocovariance_and_hurst() -> None:

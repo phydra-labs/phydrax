@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import math
+from collections.abc import Iterable, Sequence
+from fractions import Fraction
+from functools import reduce
 from typing import final, NamedTuple
 
 import equinox as eqx
@@ -12,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from .._exact_kernels import float64_interval_elementary
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -30,6 +34,27 @@ from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._coordinate_enclosure import CoordinateSourceBank
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
+from ..geometry._interval_enclosure import (
+    Interval,
+    interval_absolute,
+    interval_add,
+    interval_cos,
+    interval_divide,
+    interval_minimum,
+    interval_multiply,
+    interval_sin,
+    interval_sqrt,
+    interval_square,
+    interval_subtract,
+)
+from ..geometry._rational import (
+    fraction_down,
+    fraction_up,
+    rational_cross,
+    rational_dot,
+    rational_vector,
+    RationalVector,
+)
 from ..typing import ConvertibleToArray
 
 
@@ -59,6 +84,248 @@ class QuadLayoutObstruction(ValueError):
             sorted({int(value) for value in source_vertex_rows})
         )
         super().__init__(str(message))
+
+
+type _IntervalPair = tuple[Interval, Interval]
+type _IntervalVector = tuple[Interval, ...]
+
+# Acceptance constants of a source-bound cross field. Generation
+# (``_quad_generation``) declares them and restore reuses them; this module owns
+# them because generation imports the field contract from here.
+# Relative residual a sparse connection solve must certify.
+CROSS_FIELD_RELATIVE_RESIDUAL_LIMIT = 1.0e-10
+# Absolute agreement of field evidence with its declared source formula:
+# frames, edge angles, feature residuals, and the absolute energy floor.
+CROSS_FIELD_EVIDENCE_ATOL = 1.0e-12
+# Relative agreement of the field energy with its declared formula.
+CROSS_FIELD_ENERGY_RTOL = 1.0e-10
+# Outward binary64 enclosure of pi: math.pi < pi < nextafter(math.pi, inf).
+_PI: Interval = (np.float64(math.pi), np.float64(np.nextafter(math.pi, math.inf)))
+# Reference rays for winding counts; the count is independent of the ray, so
+# the first ray whose crossings are all certified decides it exactly.
+_WINDING_RAYS = (
+    (1, 0),
+    (0, 1),
+    (1, 1),
+    (1, -1),
+    (2, 1),
+    (1, 2),
+    (2, -1),
+    (1, -2),
+    (3, 1),
+    (1, 3),
+    (3, -1),
+    (1, -3),
+)
+
+
+def _enclose(lower: Fraction, upper: Fraction, /) -> Interval:
+    return (np.float64(fraction_down(lower)), np.float64(fraction_up(upper)))
+
+
+def _enclose_point(value: Fraction, /) -> Interval:
+    return _enclose(value, value)
+
+
+def _enclose_vector(vector: RationalVector, /) -> _IntervalVector:
+    return tuple(_enclose_point(value) for value in vector)
+
+
+def _scaled(value: Interval, factor: float, /) -> Interval:
+    return interval_multiply(value, (np.float64(factor), np.float64(factor)))
+
+
+def _certified_sign(value: Interval, /) -> int | None:
+    """Return the sign of every enclosed value, or None if undecided."""
+    if float(value[0]) > 0.0:
+        return 1
+    if float(value[1]) < 0.0:
+        return -1
+    return None
+
+
+def _certified_at_most(value: Interval, bound: float, /) -> bool:
+    """Decide that every enclosed value is at most ``bound``."""
+    return float(value[1]) <= bound
+
+
+def _certified_within(stored: float, enclosure: Interval, tolerance: float, /) -> bool:
+    """Decide ``|stored - x| <= tolerance`` for every ``x`` in the enclosure."""
+    value = Fraction(stored)
+    return max(
+        value - Fraction(float(enclosure[0])), Fraction(float(enclosure[1])) - value
+    ) <= Fraction(tolerance)
+
+
+def _interval_dot(first: _IntervalVector, second: _IntervalVector, /) -> Interval:
+    products = [
+        interval_multiply(left, right) for left, right in zip(first, second, strict=True)
+    ]
+    return reduce(interval_add, products)
+
+
+def _interval_cross(
+    first: _IntervalVector, second: _IntervalVector, /
+) -> _IntervalVector:
+    return (
+        interval_subtract(
+            interval_multiply(first[1], second[2]), interval_multiply(first[2], second[1])
+        ),
+        interval_subtract(
+            interval_multiply(first[2], second[0]), interval_multiply(first[0], second[2])
+        ),
+        interval_subtract(
+            interval_multiply(first[0], second[1]), interval_multiply(first[1], second[0])
+        ),
+    )
+
+
+def _interval_atan(value: Interval, /) -> Interval:
+    lower, upper = float64_interval_elementary("atan", value[0], value[1])
+    return lower, upper
+
+
+def _edge_angle_enclosure(local: tuple[Fraction, Fraction], /) -> Interval:
+    """Enclose ``atan2(y, x)`` of an exact frame-local edge direction."""
+    first, second = local
+    if first > 0:
+        return _interval_atan(_enclose_point(second / first))
+    if first == 0 and second == 0:
+        raise ValueError("A cross-field edge direction must be finite and nonzero.")
+    half_turn = _scaled(_PI, 0.5)
+    if second > 0:
+        return interval_subtract(
+            half_turn, _interval_atan(_enclose_point(first / second))
+        )
+    if second < 0:
+        return interval_subtract(
+            _scaled(half_turn, -1.0), _interval_atan(_enclose_point(first / second))
+        )
+    return _PI
+
+
+def _periodic_distance(value: Interval, /) -> Interval:
+    """Enclose the distance of every enclosed value to the nearest multiple of 2 pi.
+
+    This is ``|atan2(sin x, cos x)|`` of the generation formulas and the
+    distance between two angles that denote the same direction.
+    """
+    full_turn = _scaled(_PI, 2.0)
+    # Candidate turn counts only select terms; the true nearest multiple is
+    # always among the three around the midpoint estimate.
+    center = np.rint(
+        0.5 * (np.asarray(value[0]) + np.asarray(value[1])) / (2.0 * math.pi)
+    )
+    distances = [
+        interval_absolute(
+            interval_subtract(value, interval_multiply(full_turn, (turns, turns)))
+        )
+        for turns in (center - 1.0, center, center + 1.0)
+    ]
+    return reduce(interval_minimum, distances)
+
+
+def _rotate_between_normals(
+    direction: _IntervalVector,
+    face_normal: RationalVector,
+    vertex_normal: RationalVector,
+    vertex_normal_square: Fraction,
+    vertex: int,
+    /,
+) -> _IntervalVector:
+    """Rotate ``direction`` by the minimal rotation taking one normal to the other.
+
+    Returns a positive multiple of the Rodrigues image: with ``q = a.b``,
+    ``K = a x b`` and ``m = |a||b|``, ``m (m + q) R d`` equals
+    ``(m + q)(q d + K x d) + K (K.d)``, which avoids normalization.
+    """
+    axis = rational_cross(face_normal, vertex_normal)
+    alignment = rational_dot(face_normal, vertex_normal)
+    if not any(axis):
+        if alignment < 0:
+            raise QuadLayoutObstruction(
+                "singularity_transport",
+                "Cross-field index transport is ambiguous across opposed source normals.",
+                source_vertex_rows=(vertex,),
+            )
+        return direction
+    length_square = rational_dot(face_normal, face_normal) * vertex_normal_square
+    shifted = interval_add(
+        interval_sqrt(_enclose(length_square, length_square)),
+        _enclose(alignment, alignment),
+    )
+    if _certified_sign(shifted) != 1:
+        raise QuadLayoutObstruction(
+            "singularity_transport",
+            "Cross-field index transport across nearly opposed source normals is not certified.",
+            source_vertex_rows=(vertex,),
+        )
+    enclosed_axis = _enclose_vector(axis)
+    enclosed_alignment = _enclose(alignment, alignment)
+    swept = _interval_cross(enclosed_axis, direction)
+    along = _interval_dot(enclosed_axis, direction)
+    return tuple(
+        interval_add(
+            interval_multiply(
+                shifted,
+                interval_add(
+                    interval_multiply(component, enclosed_alignment), swept_component
+                ),
+            ),
+            interval_multiply(axis_component, along),
+        )
+        for component, swept_component, axis_component in zip(
+            direction, swept, enclosed_axis, strict=True
+        )
+    )
+
+
+def _certified_winding(points: Sequence[_IntervalPair], vertex: int, /) -> int:
+    """Count the exact winding of a closed polygon of enclosed points about zero.
+
+    Consecutive points must not be antipodal, so each straight edge sweeps the
+    principal argument between its ends. A crossing of the reference ray is
+    decided only from certified signs.
+    """
+    count = len(points)
+    for first, second in _WINDING_RAYS:
+        rotated = [
+            (
+                interval_add(_scaled(real, first), _scaled(imaginary, second)),
+                interval_subtract(_scaled(imaginary, first), _scaled(real, second)),
+            )
+            for real, imaginary in points
+        ]
+        sides = [_certified_sign(imaginary) for _, imaginary in rotated]
+        if any(side is None for side in sides):
+            continue
+        winding = 0
+        certified = True
+        for index, current in enumerate(rotated):
+            following = rotated[(index + 1) % count]
+            start, end = sides[index], sides[(index + 1) % count]
+            if start == end:
+                continue
+            turn = _certified_sign(
+                interval_subtract(
+                    interval_multiply(current[0], following[1]),
+                    interval_multiply(current[1], following[0]),
+                )
+            )
+            if turn is None:
+                certified = False
+                break
+            if start == -1 and turn == 1:
+                winding += 1
+            elif start == 1 and turn == -1:
+                winding -= 1
+        if certified:
+            return winding
+    raise QuadLayoutObstruction(
+        "singularity_index",
+        "The cross-field vertex circulation cannot be certified as a fourfold index.",
+        source_vertex_rows=(vertex,),
+    )
 
 
 @final
@@ -151,7 +418,9 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
                 "Cross-field angles and non-negative patches must cover every triangle."
             )
         if guide_angles_.shape not in ((0,), (face_count,)):
-            raise ValueError("Cross-field guidance must be empty or cover every triangle.")
+            raise ValueError(
+                "Cross-field guidance must be empty or cover every triangle."
+            )
         if links_.ndim != 2 or links_.shape[1] != 2:
             raise ValueError("Cross-field transport edges must have shape (links, 2).")
         if transport_.shape != (links_.shape[0],):
@@ -162,11 +431,7 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
             or residuals_.shape != rows_.shape
         ):
             raise ValueError("Cross-field feature evidence must use aligned vectors.")
-        if (
-            edges_.ndim != 1
-            or np.any(edges_ < 0)
-            or np.any(edges_[1:] <= edges_[:-1])
-        ):
+        if edges_.ndim != 1 or np.any(edges_ < 0) or np.any(edges_[1:] <= edges_[:-1]):
             raise ValueError(
                 "Cross-field feature edges must be sorted unique non-negative edge rows."
             )
@@ -203,7 +468,7 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
             or float(solve_residual_) < 0.0
             or float(relative_residual_) < 0.0
             or float(energy_) < 0.0
-            or float(relative_residual_) > 1.0e-10
+            or float(relative_residual_) > CROSS_FIELD_RELATIVE_RESIDUAL_LIMIT
         ):
             raise ValueError(
                 "Cross-field numerical evidence must be finite, non-negative, and residual-certified."
@@ -254,49 +519,427 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
     def from_stored_fields(
         cls: type[SurfaceCrossField], value: SurfaceCrossField, /
     ) -> SurfaceCrossField:
-        """Restore source inputs and independently repeat the connection solve."""
-        from ._quad_generation import prepare_surface_cross_field
+        """Certify the stored field against its restored source without re-solving.
 
+        The sparse connection solve is deterministic per platform but not
+        bit-identical across platforms, so restore never repeats it. Identity,
+        the source edge graph, feature rows, patch labels, frames, and the
+        canonical angle range are decided exactly; edge directions, feature
+        residuals, and field energy are certified against the stored angles
+        with rational enclosures; singularity indices are recomputed from the
+        stored frames and angles with certified sign decisions and must match.
+        Solve residuals remain validated stored evidence.
+        """
         if type(value) is not cls:
             raise TypeError("value must be SurfaceCrossField.")
         source = CellMesh.from_stored_fields(value.source)
-        guide = np.asarray(value.guide_angles)
-        rebuilt = prepare_surface_cross_field(
+        rebuilt = cls(
+            value.frames,
+            value.angles,
+            value.transport_edges,
+            value.patch_ids,
+            value.feature_edges,
+            value.transport_angles,
+            value.feature_rows,
+            value.feature_angles,
+            value.guide_angles,
+            value.feature_residuals,
+            value.field_solve_residual,
+            value.field_solve_relative_residual,
+            value.field_energy,
+            value.singular_vertices,
+            value.singularity_indices,
             source,
-            feature_edges=value.feature_edges,
-            guide_angles=None if guide.size == 0 else guide,
-        )
-        names = (
-            "frames",
-            "angles",
-            "transport_edges",
-            "patch_ids",
-            "feature_edges",
-            "transport_angles",
-            "feature_rows",
-            "feature_angles",
-            "guide_angles",
-            "feature_residuals",
-            "field_solve_residual",
-            "field_solve_relative_residual",
-            "field_energy",
-            "singular_vertices",
-            "singularity_indices",
         )
         if (
             rebuilt.field_id != value.field_id
             or rebuilt.source_topology_id != value.source_topology_id
             or rebuilt.source_geometry_id != value.source_geometry_id
             or rebuilt.field_solver != value.field_solver
-            or any(
-                not np.array_equal(
-                    np.asarray(getattr(rebuilt, name)), np.asarray(getattr(value, name))
-                )
-                for name in names
-            )
         ):
-            raise ValueError("Stored source-bound cross field does not reproduce.")
+            raise ValueError(
+                "Stored source-bound cross field does not reproduce its identity."
+            )
+        _certify_stored_cross_field(rebuilt)
         return rebuilt
+
+
+def _enclose_all(values: Sequence[Fraction], /) -> Interval:
+    """Enclose rationals as one vector interval of outward binary64 endpoints."""
+    return (
+        np.asarray([fraction_down(value) for value in values], dtype=np.float64),
+        np.asarray([fraction_up(value) for value in values], dtype=np.float64),
+    )
+
+
+def _row(value: Interval, index: int, /) -> Interval:
+    return np.asarray(value[0])[index], np.asarray(value[1])[index]
+
+
+def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
+    """Decide stored field evidence against generation's declared acceptance.
+
+    Every gate reuses the constant with which generation accepts a field and
+    is decided exactly on the stored arrays: exact rationals and outward
+    binary64 intervals with the rigorous native elementary kernels. The solve
+    is never repeated; angles and solve residuals beyond their generation
+    limits are stored evidence bound by the field identity and the archive.
+    """
+    from ._quad_generation import _edge_key, _surface_patch_ids, _triangle_data
+
+    source = field.source
+    data = _triangle_data(source)
+    face_count = data.cells.shape[0]
+    frames = np.asarray(field.frames, dtype=np.float64)
+    angles = np.asarray(field.angles, dtype=np.float64)
+    guidance = np.asarray(field.guide_angles, dtype=np.float64)
+    points = np.asarray(source.coordinates, dtype=np.float64)
+    padded = np.pad(points, ((0, 0), (0, 3 - points.shape[1])))
+    exact_points = [rational_vector(row) for row in padded.tolist()]
+    exact_frames = [
+        (rational_vector(face[0]), rational_vector(face[1])) for face in frames.tolist()
+    ]
+    # Frames: the exact unit tangent e1/|e1| and in-plane normal
+    # (n x e1)/(|n||e1|) of each source triangle.
+    numerators: list[Fraction] = []
+    denominators: list[Fraction] = []
+    for triangle in data.cells.tolist():
+        origin = exact_points[triangle[0]]
+        first = tuple(
+            b - a for a, b in zip(origin, exact_points[triangle[1]], strict=True)
+        )
+        second = tuple(
+            b - a for a, b in zip(origin, exact_points[triangle[2]], strict=True)
+        )
+        normal = rational_cross(first, second)
+        first_square = rational_dot(first, first)
+        normal_square = rational_dot(normal, normal)
+        if first_square == 0 or normal_square == 0:
+            raise ValueError("Cross-field frames require nondegenerate source triangles.")
+        numerators.extend((*first, *rational_cross(normal, first)))
+        denominators.extend((first_square,) * 3 + (normal_square * first_square,) * 3)
+    exact_frame_values = interval_divide(
+        _enclose_all(numerators), interval_sqrt(_enclose_all(denominators))
+    )
+    if not all(
+        _certified_within(
+            stored, _row(exact_frame_values, index), CROSS_FIELD_EVIDENCE_ATOL
+        )
+        for index, stored in enumerate(frames.reshape(-1).tolist())
+    ):
+        raise ValueError(
+            "Stored source-bound cross field does not reproduce its source frames."
+        )
+    features = {int(row) for row in np.asarray(field.feature_edges).tolist()}
+    links: list[tuple[int, int]] = []
+    link_directions: list[tuple[Interval, Interval]] = []
+    feature_rows: list[int] = []
+    feature_directions: list[Interval] = []
+    for edge_row, edge_values in enumerate(data.edges.tolist()):
+        key = _edge_key(int(edge_values[0]), int(edge_values[1]))
+        faces = data.edge_owners[key]
+        direction = tuple(
+            end - start
+            for start, end in zip(exact_points[key[0]], exact_points[key[1]], strict=True)
+        )
+        local = [
+            _edge_angle_enclosure(
+                (
+                    rational_dot(exact_frames[face][0], direction),
+                    rational_dot(exact_frames[face][1], direction),
+                )
+            )
+            for face in faces
+        ]
+        if edge_row in features:
+            feature_rows.extend(faces)
+            feature_directions.extend(local)
+        elif len(faces) == 2:
+            links.append((faces[0], faces[1]))
+            link_directions.append((local[0], local[1]))
+        else:
+            raise ValueError(
+                "Stored source-bound cross field does not retain every boundary edge as a feature."
+            )
+    link_array = np.asarray(links, dtype=np.int32).reshape((-1, 2))
+    if (
+        not np.array_equal(np.asarray(field.transport_edges), link_array)
+        or not np.array_equal(
+            np.asarray(field.feature_rows), np.asarray(feature_rows, dtype=np.int32)
+        )
+        or not np.array_equal(
+            np.asarray(field.patch_ids), _surface_patch_ids(face_count, link_array)
+        )
+    ):
+        raise ValueError(
+            "Stored source-bound cross field does not reproduce its source edge graph."
+        )
+    # Edge angles are fixed source geometry, never solver unknowns; they denote
+    # directions, so agreement is measured modulo a full turn.
+    feature_angles = np.asarray(field.feature_angles, dtype=np.float64).tolist()
+    transport_angles = np.asarray(field.transport_angles, dtype=np.float64).tolist()
+    if not all(
+        _certified_at_most(
+            _periodic_distance(interval_subtract((stored, stored), exact)),
+            CROSS_FIELD_EVIDENCE_ATOL,
+        )
+        for stored, exact in zip(
+            np.asarray(feature_angles, dtype=np.float64),
+            feature_directions,
+            strict=True,
+        )
+    ) or not all(
+        _certified_at_most(
+            _periodic_distance(
+                interval_subtract((stored, stored), interval_subtract(second, first))
+            ),
+            CROSS_FIELD_EVIDENCE_ATOL,
+        )
+        for stored, (first, second) in zip(
+            np.asarray(transport_angles, dtype=np.float64), link_directions, strict=True
+        )
+    ):
+        raise ValueError(
+            "Stored source-bound cross field does not reproduce its source edge directions."
+        )
+    exact_angles = [Fraction(value) for value in angles.tolist()]
+    feature_arguments = [
+        4 * (exact_angles[row] - Fraction(angle))
+        for row, angle in zip(feature_rows, feature_angles, strict=True)
+    ]
+    # Feature residual |atan2(sin 4d, cos 4d)| / 4 of the stored angles.
+    residuals = _scaled(_periodic_distance(_enclose_all(feature_arguments)), 0.25)
+    if not all(
+        _certified_within(stored, _row(residuals, index), CROSS_FIELD_EVIDENCE_ATOL)
+        for index, stored in enumerate(
+            np.asarray(field.feature_residuals, dtype=np.float64).tolist()
+        )
+    ):
+        raise ValueError(
+            "Stored source-bound cross field does not reproduce its feature-alignment residuals."
+        )
+    # Energy of the stored angles: link mismatches, and feature plus guidance
+    # rows weighted four, exactly as the solve assembles them.
+    link_arguments = [
+        4 * (exact_angles[second] - exact_angles[first] - Fraction(transport))
+        for (first, second), transport in zip(links, transport_angles, strict=True)
+    ]
+    guidance_arguments = [
+        4 * (exact_angles[face] - Fraction(value))
+        for face, value in enumerate(guidance.tolist())
+    ]
+    weights = np.asarray(
+        [1.0] * len(link_arguments)
+        + [4.0] * (len(feature_arguments) + len(guidance_arguments)),
+        dtype=np.float64,
+    )
+    arguments = link_arguments + feature_arguments + guidance_arguments
+    energy: Interval = (np.float64(0.0), np.float64(0.0))
+    if arguments:
+        terms = interval_multiply(
+            (weights, weights),
+            interval_subtract(
+                (np.float64(1.0), np.float64(1.0)), interval_cos(_enclose_all(arguments))
+            ),
+        )
+        energy = reduce(
+            interval_add, (_row(terms, index) for index in range(len(arguments)))
+        )
+    stored_energy = Fraction(float(field.field_energy))
+    energy_lower = Fraction(float(energy[0]))
+    energy_upper = Fraction(float(energy[1]))
+    smallest = min(abs(energy_lower), abs(energy_upper))
+    if energy_lower <= 0 <= energy_upper:
+        smallest = Fraction(0)
+    # math.isclose(stored, exact, rel_tol, abs_tol) for every enclosed exact value.
+    if max(stored_energy - energy_lower, energy_upper - stored_energy) > max(
+        Fraction(CROSS_FIELD_ENERGY_RTOL) * max(abs(stored_energy), smallest),
+        Fraction(CROSS_FIELD_EVIDENCE_ATOL),
+    ):
+        raise ValueError(
+            "Stored source-bound cross field does not reproduce its field energy."
+        )
+    angle_cosines = interval_cos((angles, angles))
+    angle_sines = interval_sin((angles, angles))
+    singular_vertices, singularity_indices = _certified_singularity_indices(
+        data.cells.tolist(),
+        data.edges,
+        data.edge_owners,
+        exact_points,
+        exact_frames,
+        [
+            (_row(angle_cosines, face), _row(angle_sines, face))
+            for face in range(face_count)
+        ],
+        features,
+    )
+    if not np.array_equal(
+        np.asarray(field.singular_vertices), np.asarray(singular_vertices, dtype=np.int64)
+    ) or not np.array_equal(
+        np.asarray(field.singularity_indices),
+        np.asarray(singularity_indices, dtype=np.int32),
+    ):
+        raise ValueError(
+            "Stored source-bound cross field does not reproduce its certified singularity indices."
+        )
+
+
+def _certified_singularity_indices(
+    cells: Sequence[Sequence[int]],
+    edges: np.ndarray,
+    edge_owners: dict[tuple[int, int], tuple[int, ...]],
+    points: Sequence[RationalVector],
+    frames: Sequence[tuple[RationalVector, RationalVector]],
+    angles: Sequence[_IntervalPair],
+    feature_edges: set[int],
+    /,
+) -> tuple[list[int], list[int]]:
+    """Decide interior fourfold vertex indices exactly from stored frames and angles.
+
+    Each face direction is transported into its vertex tangent plane by the
+    minimal rotation between the exact face normal and the exact area-weighted
+    vertex normal. The index is the exact winding number of the fourth powers
+    of those directions around the vertex star.
+    """
+    normals: list[RationalVector] = []
+    for triangle in cells:
+        origin = points[triangle[0]]
+        first = tuple(b - a for a, b in zip(origin, points[triangle[1]], strict=True))
+        second = tuple(b - a for a, b in zip(origin, points[triangle[2]], strict=True))
+        normal = rational_cross(first, second)
+        if not any(normal):
+            raise QuadLayoutObstruction(
+                "singularity_transport",
+                "Cross-field vertex indices require nondegenerate oriented source triangles.",
+            )
+        normals.append(normal)
+    vertex_faces: list[list[int]] = [[] for _ in range(len(points))]
+    for face, triangle in enumerate(cells):
+        for vertex in triangle:
+            vertex_faces[vertex].append(face)
+    boundary_vertices = {
+        vertex
+        for key, owners in edge_owners.items()
+        if len(owners) == 1
+        for vertex in key
+    }
+    feature_vertices = {
+        int(vertex) for row in feature_edges for vertex in edges[row].tolist()
+    }
+    indexed_vertices: list[int] = []
+    indices: list[int] = []
+    for vertex, star in enumerate(vertex_faces):
+        if vertex in boundary_vertices or vertex in feature_vertices or not star:
+            continue
+        next_face: dict[int, int] = {}
+        for face in star:
+            triangle = list(cells[face])
+            following = triangle[(triangle.index(vertex) + 2) % 3]
+            incident = edge_owners[(min(vertex, following), max(vertex, following))]
+            if len(incident) != 2:
+                raise QuadLayoutObstruction(
+                    "vertex_link",
+                    "An interior cross-field vertex link is not a closed manifold cycle.",
+                    source_vertex_rows=(vertex,),
+                )
+            next_face[face] = incident[0] if incident[1] == face else incident[1]
+        start = min(star)
+        order: list[int] = []
+        current = start
+        while current not in order:
+            order.append(current)
+            current = next_face.get(current, -1)
+            if current < 0:
+                break
+        if current != start or len(order) != len(star):
+            raise QuadLayoutObstruction(
+                "vertex_link",
+                "An interior cross-field vertex link is disconnected or inconsistently oriented.",
+                source_vertex_rows=(vertex,),
+            )
+        vertex_normal = tuple(
+            sum((normals[face][axis] for face in star), Fraction(0)) for axis in range(3)
+        )
+        normal_square = rational_dot(vertex_normal, vertex_normal)
+        if normal_square == 0:
+            raise QuadLayoutObstruction(
+                "singularity_transport",
+                "A source vertex has no stable tangent plane for cross-field index transport.",
+                source_vertex_rows=(vertex,),
+            )
+        tangent: RationalVector | None = None
+        for face in order:
+            for other in cells[face]:
+                if other == vertex:
+                    continue
+                edge = tuple(
+                    b - a for a, b in zip(points[vertex], points[other], strict=True)
+                )
+                height = rational_dot(edge, vertex_normal)
+                projected = tuple(
+                    normal_square * component - height * normal_component
+                    for component, normal_component in zip(
+                        edge, vertex_normal, strict=True
+                    )
+                )
+                if any(projected):
+                    tangent = projected
+                    break
+            if tangent is not None:
+                break
+        if tangent is None:
+            raise QuadLayoutObstruction(
+                "singularity_transport",
+                "A source vertex has no stable local tangent direction.",
+                source_vertex_rows=(vertex,),
+            )
+        # The second axis has length |n| |t|; scaling the first coordinate by
+        # |n| keeps both coordinates proportional to the unit-frame phase.
+        enclosed_tangent = _enclose_vector(tangent)
+        enclosed_second = _enclose_vector(rational_cross(vertex_normal, tangent))
+        normal_length = interval_sqrt(_enclose(normal_square, normal_square))
+        fourth_powers: list[_IntervalPair] = []
+        for face in order:
+            cosine, sine = angles[face]
+            direction = tuple(
+                interval_add(
+                    interval_multiply(cosine, _enclose(first, first)),
+                    interval_multiply(sine, _enclose(second, second)),
+                )
+                for first, second in zip(frames[face][0], frames[face][1], strict=True)
+            )
+            transported = _rotate_between_normals(
+                direction, normals[face], vertex_normal, normal_square, vertex
+            )
+            real = interval_multiply(
+                normal_length, _interval_dot(transported, enclosed_tangent)
+            )
+            imaginary = _interval_dot(transported, enclosed_second)
+            real_square = interval_square(real)
+            imaginary_square = interval_square(imaginary)
+            fourth_powers.append(
+                (
+                    interval_add(
+                        interval_subtract(
+                            interval_square(real_square),
+                            _scaled(interval_multiply(real_square, imaginary_square), 6),
+                        ),
+                        interval_square(imaginary_square),
+                    ),
+                    _scaled(
+                        interval_multiply(
+                            interval_multiply(real, imaginary),
+                            interval_subtract(real_square, imaginary_square),
+                        ),
+                        4,
+                    ),
+                )
+            )
+        charge = _certified_winding(fourth_powers, vertex)
+        if charge != 0:
+            indexed_vertices.append(vertex)
+            indices.append(charge)
+    return indexed_vertices, indices
 
 
 @final
@@ -402,7 +1045,7 @@ class SurfaceQuadFieldEvent(StrictModule, NonTrainableState):
         complete: bool,
     ) -> None:
         from ..geometry._mesh_certificates import _same_tree_content
-        from ._quad_generation import prepare_surface_quad_layout
+        from ._quad_generation import verify_surface_quad_layout
 
         if type(complete) is not bool:
             raise TypeError("complete must be bool.")
@@ -411,9 +1054,10 @@ class SurfaceQuadFieldEvent(StrictModule, NonTrainableState):
         validity = certify_cell_geometry_validity(source_geometry, mesh=source)
         if validity.invalid_count or validity.unresolved_count:
             raise ValueError("A quad field event requires certified source geometry.")
-        rebuilt = prepare_surface_quad_layout(
+        rebuilt = verify_surface_quad_layout(
             source,
             field,
+            layout.paired_edge_rows,
             maximum_field_error=maximum_field_error,
             source_geometry=source_geometry,
             complete=complete,
@@ -428,7 +1072,9 @@ class SurfaceQuadFieldEvent(StrictModule, NonTrainableState):
             or not np.array_equal(layout.parent_cells, rebuilt.parent_cells)
             or not np.array_equal(layout.paired_edge_rows, rebuilt.paired_edge_rows)
         ):
-            raise ValueError("Quad field event layout does not reproduce from its inputs.")
+            raise ValueError(
+                "Quad field event layout does not reproduce from its inputs."
+            )
         self.source = source
         self.source_geometry = source_geometry
         self.field = field
@@ -457,7 +1103,9 @@ class SurfaceQuadFieldEvent(StrictModule, NonTrainableState):
             complete=self.complete,
         )
         if checked.event_id != self.event_id:
-            raise ValueError("Quad field event no longer matches its scientific identity.")
+            raise ValueError(
+                "Quad field event no longer matches its scientific identity."
+            )
         return SurfaceQuadFieldArchiveRecipe(
             self.source,
             self.source_geometry,
@@ -507,9 +1155,8 @@ def restore_surface_quad_field_event(
     source_geometry: CellGeometrySpec,
     /,
 ) -> SurfaceQuadFieldEvent:
-    """Re-solve the stored scientific inputs; never restore a proof by ID."""
+    """Certify the stored field and decide its stored layout; never solve or restore by ID."""
     from ..geometry._mesh_certificates import _same_tree_content
-    from ._quad_generation import prepare_surface_quad_layout
 
     if type(recipe) is not SurfaceQuadFieldArchiveRecipe:
         raise TypeError("recipe must be SurfaceQuadFieldArchiveRecipe.")
@@ -520,17 +1167,16 @@ def restore_surface_quad_field_event(
         or field.field_id != recipe.field_id
     ):
         raise ValueError("Stored source-bound cross field does not reproduce.")
-    layout = prepare_surface_quad_layout(
+    cell_count = source.blocks[0].cell_count
+    layout = SurfaceQuadLayout(
         source,
-        field,
-        maximum_field_error=recipe.maximum_field_error,
-        source_geometry=source_geometry,
-        complete=recipe.complete,
+        np.arange(cell_count + 1, dtype=np.int64),
+        np.arange(cell_count, dtype=np.int64),
+        recipe.paired_edge_rows,
+        source.topology_id,
+        recipe.layout_id,
     )
-    if layout.layout_id != recipe.layout_id or not np.array_equal(
-        layout.paired_edge_rows, recipe.paired_edge_rows
-    ):
-        raise ValueError("Stored source-bound quad layout does not reproduce.")
+    # The event decides the stored pairing exactly and requires its identity.
     event = SurfaceQuadFieldEvent(
         source,
         source_geometry,
@@ -793,12 +1439,15 @@ class DualExtraction(StrictModule, NonTrainableState):
             or source_geometry is None
             or field_event.source.mesh_id != source.mesh_id
             or field_event.field.field_id != cross_field.field_id
-            or cell_geometry_id(field_event.source_geometry) != cell_geometry_id(source_geometry)
+            or cell_geometry_id(field_event.source_geometry)
+            != cell_geometry_id(source_geometry)
             or not _same_tree_content(field_event.source, source)
             or not _same_tree_content(field_event.field, cross_field)
             or not _same_tree_content(field_event.source_geometry, source_geometry)
         ):
-            raise ValueError("The field event must bind the extraction's source and field.")
+            raise ValueError(
+                "The field event must bind the extraction's source and field."
+            )
         self.mesh = mesh
         self.source = source
         self.vertex_supports = jnp.asarray(supports)

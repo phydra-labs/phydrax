@@ -251,6 +251,123 @@ def _schwarz_p_fraction(level: float, samples: int = 4000) -> float:
     return float(np.mean(1.0 - np.arccos(np.clip(s, -1.0, 1.0)) / np.pi))
 
 
+def _central_difference_bound(
+    function: Callable[[float], Array],
+    step: float,
+    derivative: np.ndarray,
+    /,
+    *,
+    rounding: float,
+    gauge: float,
+) -> tuple[np.ndarray, float]:
+    """Central difference at level 0 and its derived error bound against ``derivative``.
+
+    ``(f(h) - f(-h)) / 2h - f'(0) = h^2 f'''(xi) / 6`` with ``|xi| <= h``. The
+    third difference on ``+-h, +-2h`` estimates ``f'''(0)`` to ``O(h^2)``; twice
+    it bounds ``|f'''|`` over the stencil while ``2h`` stays far inside the
+    fixed-topology window. Each value carries at most ``delta = rounding max|f|``
+    rounding, which reaches the difference as ``delta / h`` and the third
+    difference term as another ``delta / h``. ``gauge`` is the relative offset of
+    the primal projection's vertex tangent from the normal-gauge tangent JAX
+    carries.
+    """
+    values = {k: np.asarray(function(k * step)) for k in (-2, -1, 1, 2)}
+    central = (values[1] - values[-1]) / (2.0 * step)
+    third = (values[2] - 2.0 * values[1] + 2.0 * values[-1] - values[-2]) / (
+        2.0 * step**3
+    )
+    delta = rounding * max(float(np.max(np.abs(value))) for value in values.values())
+    truncation = step**2 / 3.0 * float(np.max(np.abs(third)))
+    offset = gauge * float(np.max(np.abs(derivative)))
+    return central, truncation + 2.0 * delta / step + offset
+
+
+def _normal_gauge_offset(
+    source: TrigonometricLevelSet, plan: PeriodicImplicitRealizationPlan, /
+) -> float:
+    """Relative offset of the Newton foot point's motion from the normal gauge.
+
+    Anchors off the zero set by at most the root tolerance ``r`` move the Newton
+    foot point by ``r / |grad F|``, turning ``grad F / |grad F|^2`` by at most
+    ``2 |H| r / |grad F|^2`` relative to the normal-gauge tangent JAX carries. A
+    central difference of an AD derivative of order ``k`` follows the primal's
+    foot points, so it carries this offset relative to the order ``k + 1``
+    derivative along the normal-gauge flow.
+    """
+    gradient = float(plan.realize(plan.base_state).projection.minimum_gradient_norm)
+    return (
+        2.0
+        * source.table.hessian_bound
+        * plan.projection.policy.root_tolerance
+        / gradient**2
+    )
+
+
+def _schwarz_p_plan() -> tuple[TrigonometricLevelSet, PeriodicImplicitRealizationPlan]:
+    source, volume = _schwarz_p_volume()
+    plan = prepare_periodic_implicit_realization(volume, source)
+    # Finite differences are compared only at fixed topology: the whole +-2h
+    # stencil of _HIGHER_ORDER_STEP must be an accepted realization.
+    for multiple in (-2.0, 2.0):
+        level = multiple * _HIGHER_ORDER_STEP
+        assert bool(plan.realize(_level_state(plan, level)).accepted)
+    return source, plan
+
+
+# The soft-schedule fill's slivers bound the fixed-topology level window to
+# about +-7e-5, so the +-2h stencil stays inside it.
+_HIGHER_ORDER_STEP = 1.0e-5
+
+
+def _nested_jacfwd(
+    function: Callable[[ArrayLike], Array], order: int, /
+) -> Callable[[ArrayLike], Array]:
+    for _ in range(order):
+        function = jax.jacfwd(function)
+    return jax.jit(function)
+
+
+def test_schwarz_p_higher_level_derivatives_follow_the_normal_gauge_flow() -> None:
+    # The projected vertices follow dx/dc = grad F / |grad F|^2 and every higher
+    # derivative is the total derivative along that flow; each order k + 1 is
+    # checked against the central difference of the AD order-k derivative.
+    source, plan = _schwarz_p_plan()
+    gauge = _normal_gauge_offset(source, plan)
+    eps = float(np.finfo(np.float64).eps)
+
+    def coordinates(level: ArrayLike) -> Array:
+        return plan.realize(_level_state(plan, level)).representative_coordinates
+
+    def fraction(level: ArrayLike) -> Array:
+        return plan.realize(_level_state(plan, level)).volume_fraction
+
+    # Each coordinate is one Newton foot point plus a lattice map (a few
+    # roundings); the fraction sums one volume per cell.
+    checks = (
+        (coordinates, 4.0 * eps, (2, 3)),
+        (fraction, plan.space.cell_count * eps, (2, 3)),
+    )
+    for function, rounding, orders in checks:
+        for order in orders:
+            lower = _nested_jacfwd(function, order - 1)
+            derivative = np.asarray(_nested_jacfwd(function, order)(0.0))
+            if order == 2:
+                # Reverse-over-forward (``grad`` of a JVP) agrees with nested JVPs.
+                reverse = np.asarray(jax.jit(jax.jacrev(lower))(0.0))
+                np.testing.assert_allclose(reverse, derivative, rtol=0.0, atol=1.0e-15)
+            difference, bound = _central_difference_bound(
+                lower,
+                _HIGHER_ORDER_STEP,
+                derivative,
+                rounding=rounding,
+                gauge=gauge,
+            )
+            assert float(np.max(np.abs(derivative - difference))) <= bound
+            if function is coordinates and order == 2:
+                # The flow's curvature term moves the vertices at second order.
+                assert float(np.max(np.abs(derivative))) > 1.0e-2
+
+
 def test_schwarz_p_quotient_mesh_homogenizes_and_differentiates() -> None:
     from phydrax.applications.solid_mechanics import isotropic_elastic_stiffness
 
@@ -299,19 +416,39 @@ def test_schwarz_p_quotient_mesh_homogenizes_and_differentiates() -> None:
         realization = plan.realize(_level_state(plan, level))
         return conduction.solve_realization(1.0, realization).effective_tensor
 
+    # Finite differences of the primal are compared only at fixed topology: the
+    # whole +-2h stencil must be an accepted realization of the frozen mesh.
     step = 1.0e-5
+    for multiple in (-2.0, 2.0):
+        assert bool(plan.realize(_level_state(plan, multiple * step)).accepted)
+    gauge = _normal_gauge_offset(source, plan)
+    eps = float(np.finfo(np.float64).eps)
     derivative = float(jax.grad(fraction)(0.0))
-    difference = (float(fraction(step)) - float(fraction(-step))) / (2.0 * step)
-    assert derivative == pytest.approx(difference, rel=1e-7)
+    # The fraction sums one volume per cell (recursive summation rounding).
+    difference, bound = _central_difference_bound(
+        fraction,
+        step,
+        np.asarray(derivative),
+        rounding=plan.space.cell_count * eps,
+        gauge=gauge,
+    )
+    assert abs(derivative - float(difference)) <= bound
     delta = 1.0e-3
     exact = (_schwarz_p_fraction(delta) - _schwarz_p_fraction(-delta)) / (2.0 * delta)
     # Coarea oracle within the O(h^2) contour discretization at d = 0.2.
     assert derivative == pytest.approx(exact, rel=0.05)
     jacobian = np.asarray(jax.jacfwd(conductivity)(0.0))
-    finite = (np.asarray(conductivity(step)) - np.asarray(conductivity(-step))) / (
-        2.0 * step
+    # The solve's audited energy and symmetry defects (<= 1e-12 above) bound its
+    # rounding relative to the tensor; the near-degenerate fill cells near the
+    # surface make |K'''| large, which the third difference measures.
+    finite, bound = _central_difference_bound(
+        conductivity,
+        step,
+        jacobian,
+        rounding=max(1.0e-12, plan.space.cell_count * eps),
+        gauge=gauge,
     )
-    np.testing.assert_allclose(jacobian, finite, rtol=1e-6, atol=1e-9)
+    assert float(np.max(np.abs(jacobian - finite))) <= bound
     assert np.trace(jacobian) > 0.0
 
 

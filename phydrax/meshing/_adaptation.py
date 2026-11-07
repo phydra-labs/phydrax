@@ -1221,9 +1221,8 @@ def _check_route_request(
                 raise ValueError(
                     "NATIVE_POLYHEDRAL requires a three-dimensional polyhedral mesh."
                 )
-            if (
-                request.operation is PolyhedralAdaptationOperation.REGENERATE
-                and (source.attributes or source.associations)
+            if request.operation is PolyhedralAdaptationOperation.REGENERATE and (
+                source.attributes or source.associations
             ):
                 successor = request.regeneration_source
                 certification = source.certification
@@ -1254,12 +1253,15 @@ def _check_route_request(
                     }
                     != expected
                 ):
-                    raise ValueError("Native adaptation needs an explicit attribute remap.")
+                    raise ValueError(
+                        "Native adaptation needs an explicit attribute remap."
+                    )
                 source_cell_ids = np.sort(_cell_ids(mesh))
                 for attribute in source.attributes:
                     if (
                         attribute.scope.entity_dimension != 3
-                        or attribute.scope.entity_set_id != mesh.entity_set(3).entity_set_id
+                        or attribute.scope.entity_set_id
+                        != mesh.entity_set(3).entity_set_id
                         or not np.array_equal(attribute.scope.entity_ids, source_cell_ids)
                         or attribute.component_shape
                         or attribute.unit is not None
@@ -1270,9 +1272,12 @@ def _check_route_request(
                 for association in source.associations:
                     if (
                         association.source_id != certification.inputs.source_id
-                        or association.source_revision != certification.inputs.source_revision
+                        or association.source_revision
+                        != certification.inputs.source_revision
                     ):
-                        raise ValueError("Polyhedral regeneration cannot discard another source namespace.")
+                        raise ValueError(
+                            "Polyhedral regeneration cannot discard another source namespace."
+                        )
                 if source.coordinate_contract.coordinate_system != "cartesian":
                     raise ValueError("Native adaptation requires Cartesian coordinates.")
             else:
@@ -1743,7 +1748,9 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
     otherwise field consumers must use their declared transfer policy or retain
     the accepted state. ``metric`` is the target-bound metric of metric routes,
     ``hierarchy`` the state to pass to the next marked request, and
-    ``elapsed_seconds`` is wall-time evidence outside ``result_id``.
+    ``elapsed_seconds`` is the producing run's wall time, outside ``result_id``.
+    Model archives do not persist wall time, so a restored result carries
+    ``None``.
     """
 
     status: MeshAdaptationStatus = eqx.field(static=True)
@@ -1768,7 +1775,7 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         | None
     )
     distribution: MeshDistributionTransition | None
-    elapsed_seconds: float = eqx.field(static=True)
+    elapsed_seconds: float | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
@@ -1778,7 +1785,7 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         outcome: _RouteOutcome,
         compliance: MeshingComplianceReport,
         distribution: MeshDistributionTransition | None,
-        elapsed_seconds: float,
+        elapsed_seconds: float | None,
         /,
     ) -> None:
         if isinstance(prepared, PreparedMeshAdaptation):
@@ -1827,7 +1834,7 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         self.evidence = outcome.evidence
         self.hierarchy = outcome.hierarchy
         self.distribution = distribution
-        self.elapsed_seconds = float(elapsed_seconds)
+        self.elapsed_seconds = None if elapsed_seconds is None else float(elapsed_seconds)
         self.prepared_id = prepared_id
         self.result_id = canonical_fingerprint(
             {
@@ -3184,7 +3191,9 @@ def _retained_periodic_exact_rows(
     topology = source.mesh.periodic_topology
     witness = None if topology is None else topology.exact_coordinate_source
     # Power witnesses address exact rows by source sites, not retained vertex IDs.
-    if not isinstance(witness, (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource)):
+    if not isinstance(
+        witness, (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource)
+    ):
         return None
     exact_by_id = dict(
         zip(

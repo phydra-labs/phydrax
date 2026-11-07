@@ -432,6 +432,15 @@ def test_failed_training_restart_publication_keeps_resumable_bundle(
     assert artifact.manifest.numeric_revision.revision_id == (
         phx.atomistic.atomistic_model_revision(expected.potential).revision_id
     )
+    # Replacing a published bundle needs atomic directory exchange (renameat2 or
+    # renameatx_np); other hosts refuse it and keep the published bundle.
+    if sys.platform != "darwin" and not sys.platform.startswith("linux"):
+        with pytest.raises(OSError, match="Atomic directory exchange is unsupported"):
+            write_atomistic_training_restart(
+                bundle, continued, problem, _policy(5), licenses=["MIT"]
+            )
+        assert _bundle_bytes(bundle) == published
+        return
     write_atomistic_training_restart(
         bundle, continued, problem, _policy(5), licenses=["MIT"]
     )

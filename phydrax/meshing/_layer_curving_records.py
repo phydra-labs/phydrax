@@ -321,7 +321,10 @@ def _mapped_reference_chart_rows(
     relation = query.authority.root_relation
     root_cells = np.asarray(relation.polygon_root_cell_global_ids, dtype=np.int64)
     root_locals = np.asarray(relation.polygon_root_local_face_indices, dtype=np.int64)
-    if root_cells.shape != (len(query.face_chart_ids), 2) or root_locals.shape != root_cells.shape:
+    if (
+        root_cells.shape != (len(query.face_chart_ids), 2)
+        or root_locals.shape != root_cells.shape
+    ):
         raise ValueError("Mapped layer source root-side incidence is malformed.")
     result = []
     for row, chart_id in enumerate(witness.source_chart_ids):
@@ -541,8 +544,12 @@ def _mapped_chart_reference_contexts(
     query_row = query.chart_row(2, witness.source_chart_ids[chart_row])
     root_face = int(query.polygon_root_face_global_ids[query_row])
     relation = query.authority.root_relation
-    side_cells = np.asarray(relation.polygon_root_cell_global_ids, dtype=np.int64)[query_row]
-    side_locals = np.asarray(relation.polygon_root_local_face_indices, dtype=np.int64)[query_row]
+    side_cells = np.asarray(relation.polygon_root_cell_global_ids, dtype=np.int64)[
+        query_row
+    ]
+    side_locals = np.asarray(relation.polygon_root_local_face_indices, dtype=np.int64)[
+        query_row
+    ]
     sides = np.flatnonzero(side_cells == mapping.source_cell_id)
     if sides.size != 1:
         raise ValueError("Mapped chart nodes do not bind a unique root-cell side.")
@@ -774,16 +781,20 @@ def _require_reoriented_wall_side(
     """Bind a changed, reversed atlas row to the actual outward region side."""
     patch = int(charts.root_patches[chart_row])
     original = charts.root_parameter_exact[chart_row]
-    original_area = (
-        (original[1][0] - original[0][0]) * (original[2][1] - original[0][1])
-        - (original[1][1] - original[0][1]) * (original[2][0] - original[0][0])
-    )
+    original_area = (original[1][0] - original[0][0]) * (
+        original[2][1] - original[0][1]
+    ) - (original[1][1] - original[0][1]) * (original[2][0] - original[0][0])
     orientation = charts.domain.patches[patch].orientation
-    if tuple(tuple(point) for point in actual_chart) == original or original_area * orientation >= 0:
+    if (
+        tuple(tuple(point) for point in actual_chart) == original
+        or original_area * orientation >= 0
+    ):
         return
     uses = tuple(
-        sign for region in charts.domain.regions
-        for region_patch, sign in region.boundary if region_patch == patch
+        sign
+        for region in charts.domain.regions
+        for region_patch, sign in region.boundary
+        if region_patch == patch
     )
     if len(uses) != 1 or target_area * orientation * uses[0] <= 0:
         raise ValueError("Reoriented wall chart does not match the authored region side.")
@@ -800,16 +811,22 @@ def parametric_wall_query(
     selected_cells = {int(value) for value in source_cell_ids}
     cell_patches = {
         int(identifier): int(patch)
-        for identifier, patch in zip(charts.cell_global_ids, charts.root_patches, strict=True)
+        for identifier, patch in zip(
+            charts.cell_global_ids, charts.root_patches, strict=True
+        )
     }
     if not selected_cells or not selected_cells <= set(cell_patches):
-        raise ValueError("Selected layer wall cells do not bind the retained source atlas.")
+        raise ValueError(
+            "Selected layer wall cells do not bind the retained source atlas."
+        )
     patches = tuple(sorted({cell_patches[cell] for cell in selected_cells}))
     if not set(patches) <= set(parent.patches):
         raise ValueError("Selected layer wall patches leave the original source query.")
     complete = {cell for cell, patch in cell_patches.items() if patch in patches}
     if selected_cells != complete:
-        raise ValueError("A selected layer wall must cover each original source patch completely.")
+        raise ValueError(
+            "A selected layer wall must cover each original source patch completely."
+        )
     if patches == parent.patches:
         return parent
     cells = parent.boundary_cell_ids
@@ -817,14 +834,20 @@ def parametric_wall_query(
     occurrences = parent.boundary_occurrences
     if cells is None or owners is None or occurrences is None:
         if cells is not None or owners is not None or occurrences is not None:
-            raise ValueError("Original source boundary occurrence columns are incomplete.")
+            raise ValueError(
+                "Original source boundary occurrence columns are incomplete."
+            )
         return MeshingDomainBoundarySource(
-            charts.domain, patches, resolution=parent.resolution,
+            charts.domain,
+            patches,
+            resolution=parent.resolution,
             validated=parent.validated_domain,
         )
     selected = np.isin(np.asarray(owners, dtype=np.int64), patches)
     return MeshingDomainBoundarySource(
-        charts.domain, patches, resolution=parent.resolution,
+        charts.domain,
+        patches,
+        resolution=parent.resolution,
         boundary_cell_ids=np.asarray(cells)[selected],
         boundary_patch_ids=np.asarray(owners)[selected],
         boundary_occurrences=np.asarray(occurrences)[selected],
@@ -856,7 +879,8 @@ def _validate_parametric_chart_geometry(
         or charts.source_revision != witness.source_revision
         or parametric_wall_query(
             charts, tuple(int(value) for value in column_identity.source_wall_cell_ids)
-        ).source_scope_id != witness.source_query_id
+        ).source_scope_id
+        != witness.source_query_id
         or charts.coordinate_contract.spatial_id == ""
         or witness.chart_dimension != 2
         or witness.reference_dimension != 3
@@ -924,11 +948,10 @@ def _validate_parametric_chart_geometry(
         face_key = (cell_id, local_face)
         target_corners = _fraction_chart3(witness.target_reference_chart(chart_row))
         original_chart = _fraction_chart2(charts.root_parameter_chart(source_chart_row))
-        original_area = (
-            (original_chart[1][0] - original_chart[0][0])
-            * (original_chart[2][1] - original_chart[0][1])
-            - (original_chart[1][1] - original_chart[0][1])
-            * (original_chart[2][0] - original_chart[0][0])
+        original_area = (original_chart[1][0] - original_chart[0][0]) * (
+            original_chart[2][1] - original_chart[0][1]
+        ) - (original_chart[1][1] - original_chart[0][1]) * (
+            original_chart[2][0] - original_chart[0][0]
         )
         if (
             actual_chart_rows is not None
@@ -941,7 +964,9 @@ def _validate_parametric_chart_geometry(
             topology = reference_cell_topology(block.cell_kind)
             slots = _FACE_ROUTES[block.cell_kind][local_face]
             face = tuple(
-                _fraction3(tuple(Fraction(float(value)) for value in topology.vertices[slot]))
+                _fraction3(
+                    tuple(Fraction(float(value)) for value in topology.vertices[slot])
+                )
                 for slot in slots[:3]
             )
             face_solver = _prepare_barycentric_solver_3d(face)
@@ -953,11 +978,10 @@ def _validate_parametric_chart_geometry(
                 (weights[1][1] - weights[0][1]) * (weights[2][2] - weights[0][2])
                 - (weights[1][2] - weights[0][2]) * (weights[2][1] - weights[0][1])
             )
-            source_area = (
-                (source_parameters[1][0] - source_parameters[0][0])
-                * (source_parameters[2][1] - source_parameters[0][1])
-                - (source_parameters[1][1] - source_parameters[0][1])
-                * (source_parameters[2][0] - source_parameters[0][0])
+            source_area = (source_parameters[1][0] - source_parameters[0][0]) * (
+                source_parameters[2][1] - source_parameters[0][1]
+            ) - (source_parameters[1][1] - source_parameters[0][1]) * (
+                source_parameters[2][0] - source_parameters[0][0]
             )
             _require_reoriented_wall_side(
                 charts, source_chart_row, root_chart, reference_area * source_area
@@ -1153,7 +1177,10 @@ class LayerColumnProjectionIdentity(StrictModule, NonTrainableState):
             or not isinstance(allow_unbound, bool)
             or any(
                 not (
-                    layer >= 0 and wall >= 0 and front >= 0 and name
+                    layer >= 0
+                    and wall >= 0
+                    and front >= 0
+                    and name
                     and column_row
                     and len(column_row) == len(name_row) == len(root_row)
                     and all(value >= 0 for value in column_row)
@@ -1161,12 +1188,22 @@ class LayerColumnProjectionIdentity(StrictModule, NonTrainableState):
                     and all(value >= 0 for value in root_row)
                 )
                 and not (
-                    allow_unbound and layer == wall == front == -1 and not name
-                    and not column_row and not name_row and not root_row
+                    allow_unbound
+                    and layer == wall == front == -1
+                    and not name
+                    and not column_row
+                    and not name_row
+                    and not root_row
                 )
                 for layer, wall, front, name, column_row, name_row, root_row in zip(
-                    layers, wall_cells, front_rows, identities, columns,
-                    column_identities, roots, strict=True
+                    layers,
+                    wall_cells,
+                    front_rows,
+                    identities,
+                    columns,
+                    column_identities,
+                    roots,
+                    strict=True,
                 )
             )
         ):
@@ -1908,7 +1945,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     "source_surface_charts must be SurfaceSourceCharts or None."
                 )
             if not isinstance(source_query, MeshingDomainBoundarySource):
-                raise TypeError("Parametric layer evidence requires the original domain boundary query.")
+                raise TypeError(
+                    "Parametric layer evidence requires the original domain boundary query."
+                )
             source_query.require_current()
             if (
                 projection_trace is not None
@@ -1936,7 +1975,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                 tuple(int(value) for value in chart_column_identity.source_wall_cell_ids),
             )
             if not _same_tree_content(source_query, expected_query):
-                raise ValueError("Parametric layer query changes the actual selected source patches.")
+                raise ValueError(
+                    "Parametric layer query changes the actual selected source patches."
+                )
             from ..geometry._source_fidelity import reprove_actual_planar_chart_rows
 
             actual_chart_rows = reprove_actual_planar_chart_rows(source_surface_charts)
@@ -2252,17 +2293,27 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
         """Reprove actual evidence from independently restored scientific owners."""
         if type(source) is BoundaryLayerMesh:
             if layer_control is None or layer_policy is None:
-                raise TypeError("Standalone evidence requires its authored layer controls.")
+                raise TypeError(
+                    "Standalone evidence requires its authored layer controls."
+                )
             evidence, _, _, _ = cls._restore_standalone(
-                stored, mesh, geometry, source, restored_query, restored_charts,
-                layer_control, layer_policy,
+                stored,
+                mesh,
+                geometry,
+                source,
+                restored_query,
+                restored_charts,
+                layer_control,
+                layer_policy,
             )
             return evidence
         layers, charts = _reprove_layer_evidence_owner(
             source, restored_query, restored_charts, layer_control, layer_policy
         )
         if charts is not None:
-            return cls._reprove_parametric(stored, mesh, geometry, layers, restored_query, charts)
+            return cls._reprove_parametric(
+                stored, mesh, geometry, layers, restored_query, charts
+            )
         return _reprove_root_chart(cls, stored, mesh, geometry, layers, restored_query)
 
     @classmethod
@@ -2278,7 +2329,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
         policy: BoundaryLayerPolicy,
         /,
     ) -> tuple[
-        LayerCurvingSourceEvidence, BoundaryLayerMesh, BoundaryLayerControl,
+        LayerCurvingSourceEvidence,
+        BoundaryLayerMesh,
+        BoundaryLayerControl,
         BoundaryLayerPolicy,
     ]:
         """Restore standalone authored operands and evidence in one proof pass."""
@@ -2288,7 +2341,9 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
         if charts is not None:
             charts.require_current()
             charts.require_root(layers.source_wall, charts.geometry)
-            evidence = cls._reprove_parametric(stored, mesh, geometry, layers, query, charts)
+            evidence = cls._reprove_parametric(
+                stored, mesh, geometry, layers, query, charts
+            )
         else:
             evidence = _reprove_root_chart(cls, stored, mesh, geometry, layers, query)
         return evidence, layers, control, policy
@@ -2305,11 +2360,13 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
         /,
     ) -> LayerCurvingSourceEvidence:
         """Reconstruct and reprove actual parametric evidence from restored owners."""
-        from ._curving import _distortion_blocks, _sampled_quality
         from ._layer_curving import _rebind_chart_witness_geometry
         from ._model_codec import _same_model_content
+
         if type(stored) is not cls:
-            raise TypeError("Parametric layer evidence requires its canonical retained record.")
+            raise TypeError(
+                "Parametric layer evidence requires its canonical retained record."
+            )
         if (
             stored.source_surface_charts is None
             or charts is None
@@ -2322,12 +2379,15 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             or stored.implicit_root_chart_witness is not None
             or stored.implicit_root_cell_vertex_global_ids is not None
         ):
-            raise ValueError("Stored evidence is not an exact parametric layer-chart record.")
-        if (
-            stored.layer_result_id != layers.result_id
-            or not _same_tree_content(stored.layer_evidence, layers.evidence)
+            raise ValueError(
+                "Stored evidence is not an exact parametric layer-chart record."
+            )
+        if stored.layer_result_id != layers.result_id or not _same_tree_content(
+            stored.layer_evidence, layers.evidence
         ):
-            raise ValueError("Stored layer evidence changes its actual source atlas or layer owner.")
+            raise ValueError(
+                "Stored layer evidence changes its actual source atlas or layer owner."
+            )
         old_columns = stored.chart_column_identity
         columns = LayerColumnProjectionIdentity(
             old_columns.layer_indices,
@@ -2340,15 +2400,21 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             allow_unbound=old_columns.allow_unbound,
         )
         if not _same_tree_content(columns, old_columns):
-            raise ValueError("Stored layer column ancestry does not reproduce its fields.")
+            raise ValueError(
+                "Stored layer column ancestry does not reproduce its fields."
+            )
         query = parametric_wall_query(
             charts, tuple(int(value) for value in columns.source_wall_cell_ids)
         )
         if not _same_tree_content(restored_query, query):
-            raise ValueError("Stored layer query changes its independently selected source patches.")
+            raise ValueError(
+                "Stored layer query changes its independently selected source patches."
+            )
         witness = _rebind_chart_witness_geometry(stored.chart_witness, geometry)
         if not _same_tree_content(witness, stored.chart_witness):
-            raise ValueError("Stored layer source chart changes its actual target geometry.")
+            raise ValueError(
+                "Stored layer source chart changes its actual target geometry."
+            )
         fidelity = certify_source_fidelity(
             mesh,
             geometry,
@@ -2358,15 +2424,15 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             witness=witness,
         )
         if not _same_model_content(fidelity, stored.fidelity):
-            raise ValueError("Stored layer source fidelity does not reproduce its exact proof.")
+            raise ValueError(
+                "Stored layer source fidelity does not reproduce its exact proof."
+            )
         elements, _, _ = geometry.resolve(mesh)
         if not elements:
             raise ValueError("Layer evidence requires actual target coordinate elements.")
-        degree = max(int(getattr(element, "degree", 1)) for element in elements)
-        minimum, maximum = _sampled_quality(
-            _distortion_blocks(mesh, geometry, degree),
-            np.asarray(geometry.coordinates, dtype=np.float64),
-        )
+        # Generation records the sampled quality without gating on it, so it is
+        # stored evidence: never re-derived in floating point, where another
+        # platform's rounding would refuse an unchanged result.
         evidence = cls(
             charts,
             query,
@@ -2374,13 +2440,15 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             layers.evidence,
             witness,
             fidelity,
-            minimum,
-            maximum,
+            stored.minimum_scaled_jacobian,
+            stored.maximum_distortion,
             chart_column_identity=columns,
             frame_id=stored.frame_id,
         )
         if not _same_layer_evidence_fields(evidence, stored):
-            raise ValueError("Stored parametric layer evidence does not reproduce its actual fields.")
+            raise ValueError(
+                "Stored parametric layer evidence does not reproduce its actual fields."
+            )
         evidence.revalidate(mesh, geometry)
         return evidence
 
@@ -2564,10 +2632,15 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
             charts.require_root(charts.mesh, charts.geometry)
             expected_query = parametric_wall_query(
                 charts,
-                tuple(int(value) for value in self.chart_column_identity.source_wall_cell_ids),
+                tuple(
+                    int(value)
+                    for value in self.chart_column_identity.source_wall_cell_ids
+                ),
             )
             if not _same_tree_content(query, expected_query):
-                raise ValueError("Layer source query no longer matches its selected atlas patches.")
+                raise ValueError(
+                    "Layer source query no longer matches its selected atlas patches."
+                )
             source_chart_rows = {
                 int(cell_id): row for row, cell_id in enumerate(charts.cell_global_ids)
             }
@@ -3007,7 +3080,9 @@ def _reprove_layer_evidence_owner(
                 or owner.mapped_domain is not None
                 or not _same_tree_content(charts, wall_charts)
             ):
-                raise ValueError("Stored curving atlas changes its actual source-wall owner.")
+                raise ValueError(
+                    "Stored curving atlas changes its actual source-wall owner."
+                )
         elif (
             wall_charts is not None
             or owner.fidelity_source is None
@@ -3025,8 +3100,11 @@ def _same_layer_evidence_fields(
     # Implicit rows are independently materialized and compared by the implicit
     # branch, since their portable representation is a primitive mapping.
     excluded = {
-        "source_query", "source_surface_charts", "implicit_root_trace",
-        "implicit_chart_evidence", "fidelity",
+        "source_query",
+        "source_surface_charts",
+        "implicit_root_trace",
+        "implicit_chart_evidence",
+        "fidelity",
     }
     return all(
         _same_tree_content(getattr(rebuilt, field.name), getattr(stored, field.name))
@@ -3041,9 +3119,13 @@ def _restored_column_identity(
     if type(value) is not LayerColumnProjectionIdentity:
         raise TypeError("Stored layer column ancestry has the wrong concrete owner.")
     result = LayerColumnProjectionIdentity(
-        value.layer_indices, value.source_wall_cell_ids, value.front_row_ids,
-        value.front_row_identities, value.source_column_ids,
-        value.source_column_identities, value.source_column_root_vertex_ids,
+        value.layer_indices,
+        value.source_wall_cell_ids,
+        value.front_row_ids,
+        value.front_row_identities,
+        value.source_column_ids,
+        value.source_column_identities,
+        value.source_column_root_vertex_ids,
         allow_unbound=value.allow_unbound,
     )
     if not _same_tree_content(result, value):
@@ -3057,14 +3139,30 @@ def _restored_mapped_trace(
     if type(value) is not LayerCurvingMappedChartTrace:
         raise TypeError("Stored mapped trace has the wrong concrete owner.")
     trace = LayerCurvingMappedChartTrace(
-        value.source_id, value.source_revision, value.frame_id, value.query_id,
-        value.geometry_node_rows, value.target_cell_global_ids, value.target_local_dofs,
-        value.chart_witness_rows, value.target_reference_points,
-        value.root_reference_points, value.source_parameters, value.source_chart_ids,
-        value.source_entity_ids, value.occurrence_paths, value.root_face_global_ids,
-        value.root_cell_global_ids, value.root_local_face_indices, value.target_points,
-        value.source_points, value.distance_lower_bounds, value.distance_upper_bounds,
-        value.normals, value.tangents, _restored_column_identity(value.column_identity),
+        value.source_id,
+        value.source_revision,
+        value.frame_id,
+        value.query_id,
+        value.geometry_node_rows,
+        value.target_cell_global_ids,
+        value.target_local_dofs,
+        value.chart_witness_rows,
+        value.target_reference_points,
+        value.root_reference_points,
+        value.source_parameters,
+        value.source_chart_ids,
+        value.source_entity_ids,
+        value.occurrence_paths,
+        value.root_face_global_ids,
+        value.root_cell_global_ids,
+        value.root_local_face_indices,
+        value.target_points,
+        value.source_points,
+        value.distance_lower_bounds,
+        value.distance_upper_bounds,
+        value.normals,
+        value.tangents,
+        _restored_column_identity(value.column_identity),
     )
     if not _same_tree_content(trace, value):
         raise ValueError("Stored mapped trace does not reproduce its fields.")
@@ -3082,11 +3180,21 @@ def _restored_implicit_chart_row(value: object, /) -> ImplicitRootChartEvidence:
             raise TypeError("Implicit chart field names must be strings.")
         row[key] = item
     expected = {
-        "row", "target_cell_global_id", "target_entity_global_id",
-        "target_local_entity_index", "source_cell_key", "root_edge_keys", "status",
-        "field_residual_bound", "target_to_root_lower_bound", "target_to_root_bound",
-        "source_normal_deviation_bounds", "chart_jacobian_lower",
-        "chart_injectivity_margin", "source_gradient_lower", "detail",
+        "row",
+        "target_cell_global_id",
+        "target_entity_global_id",
+        "target_local_entity_index",
+        "source_cell_key",
+        "root_edge_keys",
+        "status",
+        "field_residual_bound",
+        "target_to_root_lower_bound",
+        "target_to_root_bound",
+        "source_normal_deviation_bounds",
+        "chart_jacobian_lower",
+        "chart_injectivity_margin",
+        "source_gradient_lower",
+        "detail",
     }
     if set(row) != expected:
         raise TypeError("Stored implicit chart fields differ from the canonical record.")
@@ -3126,7 +3234,12 @@ def _restored_implicit_chart_row(value: object, /) -> ImplicitRootChartEvidence:
     if not isinstance(key, tuple) or len(key) != 4:
         raise TypeError("Implicit source cell keys must be integer quadruples.")
     a, b, c, d = key
-    if type(a) is not int or type(b) is not int or type(c) is not int or type(d) is not int:
+    if (
+        type(a) is not int
+        or type(b) is not int
+        or type(c) is not int
+        or type(d) is not int
+    ):
         raise TypeError("Implicit source cell keys must contain exact integers.")
     edges = row["root_edge_keys"]
     if not isinstance(edges, tuple) or len(edges) != 3:
@@ -3163,12 +3276,24 @@ def _restored_implicit_trace(
         raise TypeError("Stored implicit trace has the wrong concrete owner.")
     chart_rows = tuple(_restored_implicit_chart_row(row) for row in value.chart_evidence)
     trace = LayerCurvingImplicitRootTrace(
-        value.source_id, value.source_revision, value.frame_id, value.map_witness_id,
-        value.root_chart_witness_id, value.geometry_node_rows,
-        value.target_cell_global_ids, value.target_local_dofs, value.chart_rows,
-        value.target_reference_points, value.target_points, value.source_points,
-        value.displacement_upper, value.root_error, value.source_cell_keys,
-        value.root_edge_keys, value.statuses, chart_rows,
+        value.source_id,
+        value.source_revision,
+        value.frame_id,
+        value.map_witness_id,
+        value.root_chart_witness_id,
+        value.geometry_node_rows,
+        value.target_cell_global_ids,
+        value.target_local_dofs,
+        value.chart_rows,
+        value.target_reference_points,
+        value.target_points,
+        value.source_points,
+        value.displacement_upper,
+        value.root_error,
+        value.source_cell_keys,
+        value.root_edge_keys,
+        value.statuses,
+        chart_rows,
         _restored_column_identity(value.column_identity),
     )
     if any(
@@ -3210,16 +3335,17 @@ def _reprove_root_chart(
     query: SourceBoundaryQuery,
     /,
 ) -> LayerCurvingSourceEvidence:
-    from ._curving import _distortion_blocks, _sampled_quality
     from ._layer_curving import _rebind_chart_witness_geometry
     from ._model_codec import _same_model_content
+
     if type(stored) is not cls:
         raise TypeError("Layer evidence requires its canonical retained record.")
     if stored.source_surface_charts is not None:
-        raise ValueError("Root-chart evidence cannot replace a retained parametric atlas.")
-    if (
-        stored.layer_result_id != layers.result_id
-        or not _same_tree_content(stored.layer_evidence, layers.evidence)
+        raise ValueError(
+            "Root-chart evidence cannot replace a retained parametric atlas."
+        )
+    if stored.layer_result_id != layers.result_id or not _same_tree_content(
+        stored.layer_evidence, layers.evidence
     ):
         raise ValueError("Root-chart evidence changes its actual source or layer owner.")
     columns = _restored_column_identity(stored.chart_column_identity)
@@ -3262,7 +3388,10 @@ def _reprove_root_chart(
             raise ValueError("Implicit evidence requires its actual adaptive root trace.")
         adaptive = _adaptive_implicit_source_query(query)
         root_witness = _implicit_layer_root_witness(
-            query.source_id, query.source_revision, query, layers.source_wall,
+            query.source_id,
+            query.source_revision,
+            query,
+            layers.source_wall,
             CellGeometrySpec.affine(layers.source_wall),
         )
         authored_vertices = _restored_root_vertices(root_witness, layers.source_wall)
@@ -3275,15 +3404,23 @@ def _reprove_root_chart(
             or sorted(map(tuple, stored_vertices.tolist()))
             != sorted(map(tuple, authored_vertices.tolist()))
         ):
-            raise ValueError("Implicit root witness changes its actual source-wall cells.")
+            raise ValueError(
+                "Implicit root witness changes its actual source-wall cells."
+            )
         # The bank was emitted in canonical *target-face* order, which need
         # not be the source root-witness row order. Its full actual content is
         # still rederived above; retain its authored row order for identity.
         root_vertices = np.array(stored_vertices, copy=True)
         implicit_trace = _restored_implicit_trace(stored.implicit_root_trace)
-        implicit_rows = tuple(_restored_implicit_chart_row(row) for row in stored.implicit_chart_evidence)
+        implicit_rows = tuple(
+            _restored_implicit_chart_row(row) for row in stored.implicit_chart_evidence
+        )
         root_map = prepare_adaptive_implicit_root_charts(
-            mesh, geometry, adaptive, witness, frame_id=stored.frame_id,
+            mesh,
+            geometry,
+            adaptive,
+            witness,
+            frame_id=stored.frame_id,
             tolerance=stored.fidelity.tolerance,
             maximum_normal_deviation=stored.fidelity.maximum_normal_deviation,
         )
@@ -3293,26 +3430,37 @@ def _reprove_root_chart(
             or tuple(root_map.chart_evidence) != implicit_rows
             or implicit_trace.chart_evidence != implicit_rows
         ):
-            raise ValueError("Implicit root charts do not reproduce their actual source proof.")
+            raise ValueError(
+                "Implicit root charts do not reproduce their actual source proof."
+            )
     fidelity = certify_source_fidelity(
-        mesh, geometry, query, tolerance=stored.fidelity.tolerance,
+        mesh,
+        geometry,
+        query,
+        tolerance=stored.fidelity.tolerance,
         maximum_normal_deviation=stored.fidelity.maximum_normal_deviation,
-        witness=witness, root_charts=root_map,
+        witness=witness,
+        root_charts=root_map,
     )
     if not _same_model_content(fidelity, stored.fidelity):
         raise ValueError("Stored source fidelity does not reproduce its actual proof.")
     elements, _, _ = geometry.resolve(mesh)
     if not elements:
         raise ValueError("Layer evidence requires actual target coordinate elements.")
-    degree = max(int(getattr(element, "degree", 1)) for element in elements)
-    minimum, maximum = _sampled_quality(
-        _distortion_blocks(mesh, geometry, degree),
-        np.asarray(geometry.coordinates, dtype=np.float64),
-    )
+    # The sampled quality is stored evidence (generation does not gate on it).
     evidence = cls(
-        None, query, layers.result_id, layers.evidence, witness, fidelity,
-        minimum, maximum, chart_column_identity=columns, frame_id=stored.frame_id,
-        mapped_chart_trace=mapped_trace, mapped_reference_maps=stored.mapped_reference_maps,
+        None,
+        query,
+        layers.result_id,
+        layers.evidence,
+        witness,
+        fidelity,
+        stored.minimum_scaled_jacobian,
+        stored.maximum_distortion,
+        chart_column_identity=columns,
+        frame_id=stored.frame_id,
+        mapped_chart_trace=mapped_trace,
+        mapped_reference_maps=stored.mapped_reference_maps,
         implicit_root_trace=implicit_trace,
         implicit_map_witness_id=stored.implicit_map_witness_id,
         implicit_chart_evidence=implicit_rows,
@@ -3320,6 +3468,8 @@ def _reprove_root_chart(
         implicit_root_cell_vertex_global_ids=root_vertices,
     )
     if not _same_layer_evidence_fields(evidence, stored):
-        raise ValueError("Stored root-chart evidence does not reproduce its actual fields.")
+        raise ValueError(
+            "Stored root-chart evidence does not reproduce its actual fields."
+        )
     evidence.revalidate(mesh, geometry)
     return evidence

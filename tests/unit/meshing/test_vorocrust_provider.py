@@ -13,6 +13,10 @@ from phydrax.meshing.providers._vorocrust import _polyhedra
 
 
 _DIGEST = "a" * 64
+# NativeWorker refuses non-POSIX hosts; fake-worker tests skip at that boundary.
+posix_worker = pytest.mark.skipif(
+    os.name != "posix", reason="Persistent native workers require a POSIX host."
+)
 
 
 def _cube_surface() -> Any:
@@ -179,6 +183,7 @@ def test_vorocrust_contracts() -> None:
     assert failure.value.category is phx.meshing.MeshingFailureCategory.CONVERSION_FAILED
 
 
+@posix_worker
 def test_vorocrust_worker_startup_exit_is_an_execution_failure(tmp_path: Any) -> None:
     worker = _fake_worker(tmp_path, "sys.exit(7)\n")
     provider = phx.meshing.VoroCrustProvider(sys.executable, worker)
@@ -192,6 +197,7 @@ def test_vorocrust_worker_startup_exit_is_an_execution_failure(tmp_path: Any) ->
     )
 
 
+@posix_worker
 def test_vorocrust_worker_identity_is_reported_once_per_session(tmp_path: Any) -> None:
     identity = {
         "provider": "vorocrust",
@@ -210,6 +216,7 @@ def test_vorocrust_worker_identity_is_reported_once_per_session(tmp_path: Any) -
         assert provider.worker.launches == 1
 
 
+@posix_worker
 def test_vorocrust_worker_identity_requires_binary_identities(tmp_path: Any) -> None:
     identity = {
         "provider": "vorocrust",
@@ -222,7 +229,10 @@ def test_vorocrust_worker_identity_requires_binary_identities(tmp_path: Any) -> 
     with phx.meshing.VoroCrustProvider(
         sys.executable, _hello_worker(tmp_path, identity)
     ) as provider:
-        with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        with pytest.raises(
+            phx.meshing.MeshingFailure,
+            match="Unsupported phydrax-vorocrust-worker identity",
+        ) as failure:
             provider.info()
 
     assert (
@@ -230,6 +240,7 @@ def test_vorocrust_worker_identity_requires_binary_identities(tmp_path: Any) -> 
     )
 
 
+@posix_worker
 def test_vorocrust_worker_bounds_control_output_before_decoding(tmp_path: Any) -> None:
     worker = _fake_worker(
         tmp_path,
@@ -245,7 +256,6 @@ def test_vorocrust_worker_bounds_control_output_before_decoding(tmp_path: Any) -
     assert failure.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
-
 def _two_box_extraction(unwelded_corners: bool = False) -> Any:
     """Packed two-box output, optionally with un-welded provider vertex IDs."""
     grid = np.stack(
@@ -254,9 +264,7 @@ def _two_box_extraction(unwelded_corners: bool = False) -> Any:
     vertices = grid
     upper_corner, lower_corner = 7, 3
     if unwelded_corners:
-        vertices = np.concatenate(
-            (grid, grid[[7, 3]] + (1e-14, -1e-14, 1e-14))
-        )
+        vertices = np.concatenate((grid, grid[[7, 3]] + (1e-14, -1e-14, 1e-14)))
         upper_corner, lower_corner = 12, 13
     faces = (
         ((0, 2, 3, 1), (2, 0)),

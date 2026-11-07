@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._geometry_predicates import flush_safe_outward
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
@@ -218,19 +219,32 @@ def _unit_normal(plane_normal: Array, /) -> Array:
     return jnp.all(jnp.isfinite(plane_normal)) & (jnp.abs(squared - 1.0) <= tolerance)
 
 
+def _product_flush_error(first: Array, second: Array, /) -> Array:
+    """Absolute loss of a product whose subnormal factor is read as zero."""
+    tiny = jnp.finfo(first.dtype).tiny
+    return tiny * (1.0 + jnp.abs(first) + jnp.abs(second))
+
+
 def _directed_dot(points: Array, direction: Array, /) -> tuple[Array, Array]:
     """Directed lower/upper bounds of ``points @ direction`` in floating point.
 
     The rounding error of a length-three dot product is below ``1.5 eps`` times
-    ``|points| @ |direction|``; ``4 eps`` plus one outward ulp per operation is
-    used.
+    ``|points| @ |direction|``; ``4 eps`` plus one outward step per operation is
+    used. Under flush-to-zero each of the three products and two sums may lose
+    below ``tiny``, and a subnormal factor read as zero loses below ``tiny``
+    times the other factor; ``2 tiny (8 + sum|p| + sum|d|)`` bounds that loss.
     """
+    info = jnp.finfo(points.dtype)
     value = points @ direction
-    error = 4.0 * jnp.finfo(points.dtype).eps * (jnp.abs(points) @ jnp.abs(direction))
-    error = jnp.nextafter(error, jnp.full_like(error, jnp.inf))
+    flushed = info.tiny * (
+        8.0 + jnp.sum(jnp.abs(points), axis=-1) + jnp.sum(jnp.abs(direction))
+    )
+    error = flush_safe_outward(
+        4.0 * info.eps * (jnp.abs(points) @ jnp.abs(direction)) + 2.0 * flushed, "up"
+    )
     return (
-        jnp.nextafter(value - error, jnp.full_like(value, -jnp.inf)),
-        jnp.nextafter(value + error, jnp.full_like(value, jnp.inf)),
+        flush_safe_outward(value - error, "down"),
+        flush_safe_outward(value + error, "up"),
     )
 
 
@@ -239,7 +253,7 @@ def _plane_heights_lower(
 ) -> Array:
     """Directed lower bounds of ``n·x - d`` for each vertex."""
     lower, _ = _directed_dot(vertices, plane_normal)
-    return jnp.nextafter(lower - plane_offset, jnp.full_like(lower, -jnp.inf))
+    return flush_safe_outward(lower - plane_offset, "down")
 
 
 def _separating_axis_lower(
@@ -259,19 +273,14 @@ def _separating_axis_lower(
     _, right_upper = _directed_dot(
         vertices[jnp.asarray(right, dtype=jnp.int32)], direction
     )
-    separation = jnp.nextafter(
-        jnp.min(left_lower) - jnp.max(right_upper),
-        jnp.full((), -jnp.inf, dtype=vertices.dtype),
+    separation = flush_safe_outward(jnp.min(left_lower) - jnp.max(right_upper), "down")
+    # Flushed squares lose below tiny each; 8 tiny inside the root covers them.
+    squared = jnp.sum(direction * direction) + 8.0 * jnp.finfo(vertices.dtype).tiny
+    norm = flush_safe_outward(
+        jnp.sqrt(squared) * (1.0 + 4.0 * jnp.finfo(vertices.dtype).eps), "up"
     )
-    norm = jnp.sqrt(jnp.sum(direction * direction)) * (
-        1.0 + 4.0 * jnp.finfo(vertices.dtype).eps
-    )
-    norm = jnp.nextafter(norm, jnp.full_like(norm, jnp.inf))
     usable = jnp.isfinite(separation) & (separation > 0.0) & (norm > 0.0)
-    quotient = jnp.nextafter(
-        separation / jnp.where(usable, norm, 1.0),
-        jnp.full((), -jnp.inf, dtype=vertices.dtype),
-    )
+    quotient = flush_safe_outward(separation / jnp.where(usable, norm, 1.0), "down")
     return jnp.where(usable, quotient, 0.0)
 
 
@@ -351,17 +360,19 @@ def _stencil_distance(
 def _outward_bounds(
     start: Array, velocity: Array, lower_time: Array, upper_time: Array, /
 ) -> tuple[Array, Array]:
-    negative = jnp.full_like(start, -jnp.inf)
-    positive = jnp.full_like(start, jnp.inf)
-    velocity_lower = jnp.nextafter(velocity, negative)
-    velocity_upper = jnp.nextafter(velocity, positive)
+    velocity_lower = flush_safe_outward(velocity, "down")
+    velocity_upper = flush_safe_outward(velocity, "up")
 
     def endpoint(time: Array) -> tuple[Array, Array]:
-        product_lower = jnp.nextafter(time * velocity_lower, negative)
-        product_upper = jnp.nextafter(time * velocity_upper, positive)
+        product_lower = flush_safe_outward(
+            time * velocity_lower, "down", _product_flush_error(time, velocity_lower)
+        )
+        product_upper = flush_safe_outward(
+            time * velocity_upper, "up", _product_flush_error(time, velocity_upper)
+        )
         return (
-            jnp.nextafter(start + product_lower, negative),
-            jnp.nextafter(start + product_upper, positive),
+            flush_safe_outward(start + product_lower, "down"),
+            flush_safe_outward(start + product_upper, "up"),
         )
 
     first_lower, first_upper = endpoint(lower_time)
@@ -380,14 +391,14 @@ def _rounded_aabb_distance_squared(
     )
     for _ in range(4):
         separation = jnp.maximum(
-            jnp.zeros_like(separation),
-            jnp.nextafter(separation, jnp.full_like(separation, -jnp.inf)),
+            jnp.zeros_like(separation), flush_safe_outward(separation, "down")
         )
-    squared = jnp.nextafter(separation * separation, jnp.full_like(separation, -jnp.inf))
+    squared = flush_safe_outward(
+        separation * separation, "down", _product_flush_error(separation, separation)
+    )
 
     def add(result: Array, value: Array) -> tuple[Array, None]:
-        total = result + value
-        return jnp.nextafter(total, jnp.full_like(total, -jnp.inf)), None
+        return flush_safe_outward(result + value, "down"), None
 
     total, _ = jax.lax.scan(add, jnp.zeros((), dtype=separation.dtype), squared)
     return jnp.maximum(total, jnp.zeros_like(total))
@@ -397,17 +408,18 @@ def _rounded_plane_lower(
     lower: Array, upper: Array, plane_normal: Array, plane_offset: Array, /
 ) -> Array:
     """Directed lower bound of ``n·x - d`` over the union of vertex boxes."""
-    negative = jnp.full((), -jnp.inf, dtype=lower.dtype)
     corner = jnp.where(plane_normal >= 0.0, lower, upper)
-    products = jnp.nextafter(corner * plane_normal, negative)
+    products = flush_safe_outward(
+        corner * plane_normal, "down", _product_flush_error(corner, plane_normal)
+    )
 
     def add(result: Array, value: Array) -> tuple[Array, None]:
-        return jnp.nextafter(result + value, negative), None
+        return flush_safe_outward(result + value, "down"), None
 
     support, _ = jax.lax.scan(
         add, jnp.zeros(lower.shape[:-1], dtype=lower.dtype), jnp.moveaxis(products, -1, 0)
     )
-    return jnp.nextafter(jnp.min(support) - plane_offset, negative)
+    return flush_safe_outward(jnp.min(support) - plane_offset, "down")
 
 
 def _box_lower_distance(
@@ -432,7 +444,7 @@ def _box_lower_distance(
         lower[right_index].min(axis=0),
         upper[right_index].max(axis=0),
     )
-    return jnp.nextafter(jnp.sqrt(squared), jnp.full((), -jnp.inf, dtype=lower.dtype))
+    return flush_safe_outward(jnp.sqrt(squared), "down")
 
 
 def _ball_lower_distance(
@@ -451,7 +463,6 @@ def _ball_lower_distance(
     maximum vertex radius. Plane gaps are bounded vertexwise. All operations
     round toward the lower bound.
     """
-    negative = jnp.full((), -jnp.inf, dtype=centers.dtype)
     left, right = _partition_slots(kind)
     left_index = jnp.asarray(left, dtype=jnp.int32)
     distance, _, valid = _core_distance(
@@ -459,10 +470,10 @@ def _ball_lower_distance(
     )
     if kind in _PLANE_KINDS:
         heights = _plane_heights_lower(centers[left_index], plane_normal, plane_offset)
-        return jnp.min(jnp.nextafter(heights - radii[left_index], negative)), valid
+        return jnp.min(flush_safe_outward(heights - radii[left_index], "down")), valid
     right_index = jnp.asarray(right, dtype=jnp.int32)
-    bound = jnp.nextafter(distance - jnp.max(radii[left_index]), negative)
-    bound = jnp.nextafter(bound - jnp.max(radii[right_index]), negative)
+    bound = flush_safe_outward(distance - jnp.max(radii[left_index]), "down")
+    bound = flush_safe_outward(bound - jnp.max(radii[right_index]), "down")
     return bound, valid
 
 
@@ -494,7 +505,7 @@ def _interval_free(
                 plane_offset,
             )
             return _unit_normal(plane_normal) & (
-                height > jnp.nextafter(separation, jnp.full_like(separation, jnp.inf))
+                height > flush_safe_outward(separation, "up")
             )
         left_index = jnp.asarray(left, dtype=jnp.int32)
         right_index = jnp.asarray(right, dtype=jnp.int32)
@@ -507,8 +518,11 @@ def _interval_free(
         distance = _rounded_aabb_distance_squared(
             first_min, first_max, second_min, second_max
         )
-        threshold = separation * separation
-        threshold = jnp.nextafter(threshold, jnp.full_like(threshold, jnp.inf))
+        threshold = flush_safe_outward(
+            separation * separation,
+            "up",
+            _product_flush_error(separation, separation),
+        )
         return distance > threshold
     left, right = _partition_slots(kind)
     speeds = jnp.sqrt(jnp.sum(velocity * velocity, axis=-1))
@@ -576,15 +590,21 @@ def _enclosure_interval_free(
     """
     lower, upper, valid = action(lower_time, upper_time)
     box_bound = _box_lower_distance(kind, lower, upper, plane_normal, plane_offset)
+    info = jnp.finfo(lower.dtype)
     centers = 0.5 * (lower + upper)
     half = 0.5 * (upper - lower)
-    radii = jnp.sqrt(jnp.sum(half * half, axis=-1))
-    radii = radii * (1.0 + 8.0 * jnp.finfo(radii.dtype).eps)
+    # Under flush-to-zero a square below tiny is lost entirely; the triangle
+    # inequality adds that half-width back linearly. Each centre or half-width
+    # coordinate may also lose below 2 tiny (absolute term).
+    squares = half * half
+    lost = jnp.sum(jnp.where(squares == 0.0, jnp.abs(half), 0.0), axis=-1)
+    radii = (jnp.sqrt(jnp.sum(squares, axis=-1)) + lost) * (1.0 + 8.0 * info.eps)
+    radii = radii + 8.0 * info.tiny
     ball_bound, ball_valid = _ball_lower_distance(
         kind, centers, radii, plane_normal, plane_offset, 0.0
     )
-    ball_bound = ball_bound - 64.0 * jnp.finfo(radii.dtype).eps * (
-        jnp.max(jnp.abs(centers)) + jnp.max(radii)
+    ball_bound = ball_bound - (
+        64.0 * info.eps * (jnp.max(jnp.abs(centers)) + jnp.max(radii)) + 16.0 * info.tiny
     )
     bound = jnp.maximum(box_bound, jnp.where(ball_valid, ball_bound, -jnp.inf))
     if kind in _PLANE_KINDS:
@@ -592,7 +612,7 @@ def _enclosure_interval_free(
     threshold = separation
     if isinstance(plan, InclusionCCDPlan):
         threshold = threshold + plan.numerical_error
-    threshold = jnp.nextafter(threshold, jnp.full_like(threshold, jnp.inf))
+    threshold = flush_safe_outward(threshold, "up")
     return valid & (bound > threshold), valid
 
 
@@ -616,8 +636,8 @@ def _candidate_toi(
     infinity = jnp.full((), jnp.inf, dtype=dtype)
     initial_distance = _stencil_distance(kind, start, plane_normal, plane_offset)
     if isinstance(plan, CertifiedAABBCCDPlan):
-        initial_distance = jnp.nextafter(initial_distance, -infinity)
-        threshold = jnp.nextafter(minimum_separation, infinity)
+        initial_distance = flush_safe_outward(initial_distance, "down")
+        threshold = flush_safe_outward(minimum_separation, "up")
     else:
         threshold = minimum_separation + plan.numerical_error
     initial_invalid = initial_distance <= threshold
@@ -1124,7 +1144,6 @@ def _row_gaps(
         row_offsets = jnp.broadcast_to(offsets[0], (indices.shape[0],))
     left_radius = radius[jnp.maximum(batch.left_feature_indices, 0)]
     right_radius = radius[jnp.maximum(batch.right_feature_indices, 0)]
-    negative = jnp.full((), -jnp.inf, dtype=positions.dtype)
 
     def row(
         vertex_rows: Array, normal: Array, offset: Array
@@ -1147,8 +1166,8 @@ def _row_gaps(
 
     core_lower, core_witness, valid = jax.vmap(row)(indices, row_normals, row_offsets)
     primary = batch.valid & (batch.witness_slots == int(ContactWitnessSlot.FIRST))
-    lower_gap = jnp.nextafter(
-        jnp.nextafter(core_lower - left_radius, negative) - right_radius, negative
+    lower_gap = flush_safe_outward(
+        flush_safe_outward(core_lower - left_radius, "down") - right_radius, "down"
     )
     lower_gap = jnp.where(primary, lower_gap, jnp.inf)
     witness_gap = jnp.where(primary, core_witness - left_radius - right_radius, jnp.inf)

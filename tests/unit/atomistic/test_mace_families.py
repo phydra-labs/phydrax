@@ -553,13 +553,16 @@ def test_joint_embedding_matches_source_generic_joint_embedding() -> None:
 
     observed = embedding(conditioning, jnp.asarray(atom_cases), jnp.asarray(mask))
     np.testing.assert_allclose(observed, expected, rtol=1e-12, atol=1e-13)
-    assert [field.name for field in embedding.conditioning.fields] == [
+    # The specification orders its fields canonically by name; the embedding's
+    # concatenation order is the declared feature order (checked numerically).
+    spec = embedding.conditioning
+    assert [field.name for field in spec.fields] == sorted(
         feature.name for feature in FEATURES
-    ]
-    charge_field = embedding.conditioning.fields[0]
+    )
+    charge_field = spec.fields[spec.index("total_charge")]
     assert charge_field.port.port_id == TOTAL_CHARGE_PORT.port_id
     assert charge_field.categories == (-2, -1, 0, 1, 2)
-    assert embedding.conditioning.fields[1].categories == (1, 2, 3)
+    assert spec.fields[spec.index("total_spin")].categories == (1, 2, 3)
 
 
 def test_joint_embedding_feature_declarations_refuse_inadmissible_specs() -> None:
@@ -902,7 +905,7 @@ def test_family_constructs_validates_and_decomposes_its_energy(family: str) -> N
         case "joint-embedding":
             assert model.joint_embedding is not None
             assert model.embedding_readout is not None
-            assert model.conditioning.names == tuple(f.name for f in FEATURES)
+            assert model.conditioning.names == tuple(sorted(f.name for f in FEATURES))
         case _:
             pass
 

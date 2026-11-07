@@ -962,6 +962,68 @@ def _compose_layer_topology(
     return mesh, core_vertex_map, combined_regions, layer_cells, core_cell_ids
 
 
+def _rim_source_facets(
+    source: sources_owner.NativeLayerCoreSource,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    mapping: np.ndarray,
+    polygons: np.ndarray,
+    cap_ids: np.ndarray,
+    /,
+) -> dict[tuple[int, int], set[int]]:
+    """Map each open-wall rim edge to the fixed PLC facets above its columns.
+
+    An open wall also exposes layer side strips. A strip rising from rim edge
+    (a, b) joins the facet of the fixed PLC polygon that holds the tops of the
+    columns grown from wall vertices a and b.
+    """
+    layer_count = int(np.asarray(source.layers.mesh.coordinates).shape[0])
+    column_sources = np.asarray(source.layers.vertex_source_vertex_ids, dtype=np.int64)
+    cap_polygons = frozenset(np.asarray(cap_ids, dtype=np.int64).tolist())
+    rim_facets: dict[tuple[int, int], set[int]] = {}
+    for index, (polygon, facet_value) in enumerate(
+        zip(polygons, complex_.polygon_facets, strict=True)
+    ):
+        if index in cap_polygons:
+            continue
+        rows = mapping[polygon].tolist()
+        for corner, row in enumerate(rows):
+            following = rows[(corner + 1) % len(rows)]
+            if row >= layer_count or following >= layer_count:
+                continue
+            ends = (int(column_sources[row]), int(column_sources[following]))
+            if min(ends) >= 0 and ends[0] != ends[1]:
+                rim_facets.setdefault((min(ends), max(ends)), set()).add(int(facet_value))
+    return rim_facets
+
+
+def _source_facet_patches(
+    mesh: CellMesh,
+    source: sources_owner.NativeLayerCoreSource,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    faces_by_facet: dict[int, set[int]],
+    /,
+) -> tuple[organization_owner.MeshPatch, ...]:
+    """Publish one patch per authored PLC facet that owns accepted faces."""
+    return tuple(
+        organization_owner.MeshPatch(
+            "facet:"
+            + source_identity_owner.source_entity_id(
+                source.source_id,
+                source.source_revision,
+                "face",
+                complex_.facet_ids[facet],
+                occurrence_path=complex_.facet_occurrence_paths[facet],
+            ),
+            layer_topology.mesh_entity_scope(
+                mesh, 2, np.asarray(sorted(face_rows), dtype=np.int64)
+            ),
+            connected=False,
+        )
+        for facet, face_rows in sorted(faces_by_facet.items())
+        if face_rows
+    )
+
+
 def _compose_organization(
     mesh: CellMesh,
     regions: np.ndarray,
@@ -1083,29 +1145,10 @@ def _compose_organization(
             )
             faces_by_facet[facet_value].add(face_id(loop))
     cap_keys = {tuple(sorted(mapping[polygons[index]].tolist())) for index in cap_ids}
-    # An open wall also exposes layer side strips. The wall patch is only the
-    # exterior layer faces lying wholly on the wall; a strip rising from rim
-    # edge (a, b) joins the facet of the fixed PLC polygon that holds the tops
-    # of the columns grown from a and b.
-    layer_count = int(np.asarray(layers.layers.mesh.coordinates).shape[0])
     column_sources = np.asarray(layers.layers.vertex_source_vertex_ids, dtype=np.int64)
     wall_vertices = np.asarray(layers.layers.wall_vertices, dtype=np.int64)
     on_wall = frozenset(wall_vertices[wall_vertices >= 0].tolist())
-    cap_polygons = frozenset(np.asarray(cap_ids, dtype=np.int64).tolist())
-    rim_facets: dict[tuple[int, int], set[int]] = {}
-    for index, (polygon, facet_value) in enumerate(
-        zip(polygons, complex_.polygon_facets, strict=True)
-    ):
-        if index in cap_polygons:
-            continue
-        rows = mapping[polygon].tolist()
-        for corner, row in enumerate(rows):
-            following = rows[(corner + 1) % len(rows)]
-            if row >= layer_count or following >= layer_count:
-                continue
-            ends = (int(column_sources[row]), int(column_sources[following]))
-            if min(ends) >= 0 and ends[0] != ends[1]:
-                rim_facets.setdefault((min(ends), max(ends)), set()).add(int(facet_value))
+    rim_facets = _rim_source_facets(layers, complex_, mapping, polygons, cap_ids)
     wall_rows: list[int] = []
     side_rows: list[int] = []
     for key, incidents in layer_faces.items():
@@ -1120,24 +1163,7 @@ def _compose_organization(
             faces_by_facet[next(iter(facets))].add(face_id(key))
         else:
             side_rows.append(face_id(key))
-    patches: list[organization_owner.MeshPatch] = [
-        organization_owner.MeshPatch(
-            "facet:"
-            + source_identity_owner.source_entity_id(
-                layers.source_id,
-                layers.source_revision,
-                "face",
-                complex_.facet_ids[facet],
-                occurrence_path=complex_.facet_occurrence_paths[facet],
-            ),
-            layer_topology.mesh_entity_scope(
-                mesh, 2, np.asarray(sorted(face_rows), dtype=np.int64)
-            ),
-            connected=False,
-        )
-        for facet, face_rows in sorted(faces_by_facet.items())
-        if face_rows
-    ]
+    patches = list(_source_facet_patches(mesh, layers, complex_, faces_by_facet))
     if cap_keys:
         patches.append(
             organization_owner.MeshPatch(
@@ -1187,6 +1213,9 @@ def _compose_refined_organization(
     partition: subdivision_owner.NestedLayerPartition,
     columns: subdivision_owner.RefinedColumnCertification,
     core_cell_ids: np.ndarray,
+    execution: LayerCoreExecution,
+    carrier: volume_generation_owner.VolumeConstruction,
+    core_vertex_map: np.ndarray,
     /,
 ) -> tuple[
     tuple[organization_owner.MeshZone, ...],
@@ -1194,7 +1223,13 @@ def _compose_refined_organization(
     tuple[organization_owner.MeshLabel, ...],
     tuple[organization_owner.MeshAttribute, ...],
 ]:
-    """Organize refined layer cells without relabeling execution facets as source."""
+    """Organize refined layer cells under their authored source facets.
+
+    Execution facets are never published as source. A carrier boundary face
+    joins an authored facet patch only when every candidate source polygon of
+    its execution facet lies on that one facet; a refined side strip joins the
+    facet above its original rim edge exactly as in the fixed organization.
+    """
     cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
     layer_ids = np.asarray(partition.prism_ids, dtype=np.int64)
     core_ids = np.asarray(core_cell_ids, dtype=np.int64)
@@ -1265,6 +1300,40 @@ def _compose_refined_organization(
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     wall_ids = {column.target_vertices[0] for column in columns.columns}
     core_set, layer_set = set(core_ids.tolist()), set(layer_ids.tolist())
+    complex_ = source.complex
+    faces_by_facet: dict[int, set[int]] = {}
+    polygon_facets = np.asarray(complex_.polygon_facets, dtype=np.int64)
+    execution_owners = tuple(
+        frozenset(int(polygon_facets[row]) for row in candidates)
+        for candidates in execution.source_polygon_candidates
+    )
+    for face, facet in zip(
+        np.asarray(carrier.boundary_faces, dtype=np.int64),
+        np.asarray(carrier.face_source_facets, dtype=np.int64).tolist(),
+        strict=True,
+    ):
+        owners = execution_owners[int(facet)]
+        if len(owners) == 1:
+            key = tuple(sorted(int(value) for value in vertex_ids[core_vertex_map[face]]))
+            faces_by_facet.setdefault(next(iter(owners)), set()).add(face_keys[key])
+    mapping, cap_ids, polygons, _ = layer_topology.prepare_identity(
+        source.layers, complex_, source.vertex_layer_ids, source.cap_polygon_ids
+    )
+    rim_facets = _rim_source_facets(source, complex_, mapping, polygons, cap_ids)
+    original_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(
+            np.asarray(source.layers.mesh.vertex_global_ids, dtype=np.int64)
+        )
+    }
+    column_sources = np.asarray(source.layers.vertex_source_vertex_ids, dtype=np.int64)
+
+    def rim_sources(row: int, /) -> set[int]:
+        return {
+            int(column_sources[original_rows[identifier]])
+            for identifier, _ in partition.stencils[row]
+        }
+
     cap_faces, wall_faces, side_faces, material_faces = [], [], [], []
     for key, incident in layer_topology.faces(mesh, regions).items():
         global_vertices = tuple(sorted(int(vertex_ids[row]) for row in key))
@@ -1273,12 +1342,20 @@ def _compose_refined_organization(
         if len(incident) == 2 and owners & core_set and owners & layer_set:
             cap_faces.append(identifier)
         elif len(incident) == 1 and owners <= layer_set:
-            (wall_faces if set(global_vertices) <= wall_ids else side_faces).append(
-                identifier
+            if set(global_vertices) <= wall_ids:
+                wall_faces.append(identifier)
+                continue
+            ends = sorted(set().union(*(rim_sources(int(row)) for row in key)))
+            facets = (
+                rim_facets.get((ends[0], ends[-1]), set()) if len(ends) == 2 else set()
             )
+            if len(facets) == 1 and ends[0] >= 0:
+                faces_by_facet.setdefault(next(iter(facets)), set()).add(identifier)
+            else:
+                side_faces.append(identifier)
         if len(incident) == 2 and incident[0].region != incident[1].region:
             material_faces.append(identifier)
-    patches = tuple(
+    patches = _source_facet_patches(mesh, source, complex_, faces_by_facet) + tuple(
         organization_owner.MeshPatch(
             name,
             layer_topology.mesh_entity_scope(
@@ -1603,7 +1680,15 @@ def _generate_conforming_layer_core(
         source, mesh, geometry, specification, column_certification
     )
     zones, patches, labels, attributes = _compose_refined_organization(
-        mesh, regions, source, partition, column_certification, core_ids
+        mesh,
+        regions,
+        source,
+        partition,
+        column_certification,
+        core_ids,
+        execution,
+        carrier,
+        core_vertex_map,
     )
     requested, achieved = periodic_owner.core_periodic_constraint_evidence(
         source, specification

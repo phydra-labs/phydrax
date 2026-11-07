@@ -2390,8 +2390,8 @@ def _face_piece_steps(
     )
     if violated_requirement:
         detail = (
-            f"certified lower target-to-root deviation {lower_distance!r}; "
-            f"normal-angle lower bound {target_normal[0]!r}"
+            "certified lower target-to-root deviation or normal-angle lower bound "
+            "exceeds its limit"
         )
         return None, detail, False
     normal_unresolved = normal_limit is not None and target_normal[1] > normal_limit
@@ -2421,8 +2421,7 @@ def _face_piece_steps(
         elif narrowed_lower > tolerance:
             return (
                 None,
-                f"certified lower target-to-root deviation {narrowed_lower!r} "
-                f"exceeds tolerance {tolerance!r}",
+                "certified lower target-to-root deviation exceeds tolerance",
                 False,
             )
         elif (
@@ -2438,8 +2437,7 @@ def _face_piece_steps(
             # enclosure can no longer contract past the tolerance by splitting.
             return (
                 None,
-                f"certified target-to-root deviation [{narrowed_lower!r}, "
-                f"{narrowed_upper!r}] straddles tolerance {tolerance!r} at "
+                "certified target-to-root deviation straddles tolerance at "
                 "binary64 resolution",
                 False,
             )
@@ -5293,6 +5291,565 @@ def _source_to_mesh_bounds(
     return lower_bound, upper_bound
 
 
+# Sign-component region coverage cuts target triangles into dyadic pieces
+# ``a + s (b - a) + t (c - a)`` with parameter corners ``i / 2**k``. Parameters
+# with ``k`` up to this depth, and their midpoints, are exact in binary64, so
+# the four halves of a piece tile it exactly; a deeper piece is not split.
+_SIGN_COVER_PIECE_DEPTH = 52
+_SIGN_COVER_WHOLE_PIECE = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+# A band leaf no wider than this fraction of the band resolution is not halved:
+# its proved extent then stands.
+_SIGN_COVER_LEAF_FRACTION = 0.25
+
+
+@dataclass(frozen=True, slots=True)
+class ImplicitSignCoverage:
+    """Outcome of `certify_implicit_sign_coverage`.
+
+    ``certified`` proves that the target region ``M`` and the source region
+    ``{f < 0}`` agree everywhere outside a band of leaves meeting the target
+    boundary. Every band point lies within ``band_extent`` of the target
+    boundary and within ``distance_upper`` (``band_extent`` plus the certified
+    target-to-zero-set bound) of the zero set.
+    """
+
+    status: Literal["certified", "violated", "unresolved"]
+    detail: str
+    distance_upper: float
+    band_extent: float
+    band_leaf_count: int
+    far_leaf_count: int
+    component_count: int
+    evidence_id: str
+
+
+def _triangle_piece_boxes(
+    triangles: np.ndarray, rows: np.ndarray, parameters: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Outward boxes of flat pieces of target triangles.
+
+    Piece ``i`` of triangle ``rows[i]`` ``(a, b, c)`` is the hull of the exact
+    points ``a + s (b - a) + t (c - a)`` at its three nonnegative dyadic
+    parameter corners ``parameters[i]`` ``(3, 2)``. Each rounded difference,
+    product and sum moves outward by one step, so the hull of the corner
+    enclosures holds the piece.
+    """
+    chosen = np.asarray(triangles, dtype=np.float64)[rows]
+    origin = chosen[:, None, 0]
+    along_first = (chosen[:, 1] - chosen[:, 0])[:, None, :]
+    along_second = (chosen[:, 2] - chosen[:, 0])[:, None, :]
+    first = parameters[:, :, 0, None]
+    second = parameters[:, :, 1, None]
+
+    def corners(direction: float, /) -> np.ndarray:
+        return np.nextafter(
+            np.nextafter(
+                origin
+                + np.nextafter(first * np.nextafter(along_first, direction), direction),
+                direction,
+            )
+            + np.nextafter(second * np.nextafter(along_second, direction), direction),
+            direction,
+        )
+
+    return np.min(corners(-np.inf), axis=1), np.max(corners(np.inf), axis=1)
+
+
+def _split_triangle_pieces(
+    rows: np.ndarray, parameters: np.ndarray, depths: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The four exact midpoint halves of each piece, in piece-major order."""
+    first, second, third = parameters[:, 0], parameters[:, 1], parameters[:, 2]
+    first_second = 0.5 * first + 0.5 * second
+    second_third = 0.5 * second + 0.5 * third
+    third_first = 0.5 * third + 0.5 * first
+    children = np.stack(
+        (
+            np.stack((first, first_second, third_first), axis=1),
+            np.stack((first_second, second, second_third), axis=1),
+            np.stack((third_first, second_third, third), axis=1),
+            np.stack((second_third, third_first, first_second), axis=1),
+        ),
+        axis=1,
+    )
+    return (
+        np.repeat(rows, 4),
+        children.reshape((-1, 3, 2)),
+        np.repeat(depths + 1, 4),
+    )
+
+
+def _touching_rows(
+    pieces: PackedBVH, lower: np.ndarray, upper: np.ndarray, /
+) -> np.ndarray:
+    """Rows whose closed boxes meet a closed piece box."""
+    touching = np.zeros(lower.shape[0], dtype=np.bool_)
+    if lower.shape[0]:
+        query = prepare_bvh(lower, upper, dtype=np.float64)
+        for _pieces, rows in bvh_overlap_pair_blocks(
+            pieces, query, include_touching=True
+        ):
+            touching[rows] = True
+    return touching
+
+
+def _orientation(
+    first: Sequence[Fraction],
+    second: Sequence[Fraction],
+    third: Sequence[Fraction],
+    fourth: Sequence[Fraction],
+    /,
+) -> Fraction:
+    """Exact ``det[b - a, c - a, d - a]``."""
+    u = [second[axis] - first[axis] for axis in range(3)]
+    v = [third[axis] - first[axis] for axis in range(3)]
+    w = [fourth[axis] - first[axis] for axis in range(3)]
+    return (
+        u[0] * (v[1] * w[2] - v[2] * w[1])
+        - u[1] * (v[0] * w[2] - v[2] * w[0])
+        + u[2] * (v[0] * w[1] - v[1] * w[0])
+    )
+
+
+def _point_in_tetrahedra(point: np.ndarray, cells: np.ndarray, /) -> bool | None:
+    """Whether the exact point lies in a closed tetrahedron; ``None`` if degenerate."""
+    candidates = np.flatnonzero(
+        np.all(np.min(cells, axis=1) <= point, axis=1)
+        & np.all(point <= np.max(cells, axis=1), axis=1)
+    )
+    exact_point = [Fraction(float(value)) for value in point]
+    for row in candidates.tolist():
+        corners = [[Fraction(float(value)) for value in corner] for corner in cells[row]]
+        volume = _orientation(*corners)
+        if volume == 0:
+            return None
+        inside = True
+        for replaced in range(4):
+            moved = list(corners)
+            moved[replaced] = exact_point
+            part = _orientation(*moved)
+            if part != 0 and (part > 0) != (volume > 0):
+                inside = False
+                break
+        if inside:
+            return True
+    return False
+
+
+def certify_implicit_sign_coverage(
+    surface: AdaptiveImplicitSurface,
+    triangles: np.ndarray,
+    cells: np.ndarray,
+    /,
+    *,
+    mesh_to_source: float,
+    tolerance: float,
+) -> ImplicitSignCoverage:
+    """Prove region agreement of an affine target with ``{f < 0}`` off a boundary band.
+
+    ``triangles`` ``(t, 3, 3)`` are the exact corners of every boundary facet
+    of the target region ``M`` (the union of the exact affine tetrahedra
+    ``cells`` ``(m, 4, 3)``), and ``mesh_to_source`` a certified bound of
+    their distance to the zero set ``Z``. No chart, lift or field regularity
+    is used, so crease faces of a non-smooth field are covered like any
+    other face:
+
+    1. The band is the set of leaves of the discovery's complete cover
+       (refined further where needed) that touch the outward box of a
+       facet piece or whose value enclosure contains zero, so it holds the
+       topological boundaries of ``M`` and of ``{f < 0}``. The band
+       resolution is the larger of ``tolerance - mesh_to_source`` and the
+       diagonal of a target-level discovery cell: the band is not resolved
+       below the source's own certified resolution. A band leaf is halved
+       while some point of it may be farther than the band resolution from
+       every piece and it is wider than ``_SIGN_COVER_LEAF_FRACTION`` of
+       that resolution; its proved extent then stands. Pieces start as whole
+       facets and are halved (exact dyadic midpoints) while wider than a
+       leaf whose box they touch, so they follow the band instead of tiling
+       every facet at its finest scale; only binary64 parameter resolution
+       stops a piece earlier.
+    2. Every other leaf has one field sign and misses the target boundary,
+       so membership in ``M`` and in ``{f < 0}`` is constant on each
+       connected union of such closed leaves (touching leaves must agree in
+       sign).
+    3. A component touching the domain boundary joins the unbounded
+       exterior, outside both regions, so it must be positive. Any other
+       component is inside ``M`` when a cell corner, a cell centroid
+       enclosure or its largest leaf's center lies in a cell (exactly), and
+       outside when that center lies in none; its sign must agree.
+
+    Then ``M`` and ``{f < 0}`` differ only inside the band and inside
+    disagreeing components proved within ``tolerance`` of the zero set (each
+    leaf's farthest distance to a leaf of the opposite field sign); a farther
+    disagreeing component is a violation. The argument needs only the
+    discovery's enclosure-complete box cover, as the donor's possible-zero-box
+    distance bounds did, and applies it to regions.
+    """
+
+    def outcome(
+        status: Literal["certified", "violated", "unresolved"],
+        detail: str,
+        /,
+        *,
+        extent: float = math.inf,
+        band: int = 0,
+        far: int = 0,
+        components: int = 0,
+        absorbed: float = 0.0,
+    ) -> ImplicitSignCoverage:
+        distance = (
+            max(math.nextafter(mesh_to_source + extent, math.inf), absorbed)
+            if math.isfinite(extent)
+            else math.inf
+        )
+        evidence = canonical_fingerprint(
+            {
+                "kind": "implicit-sign-component-coverage",
+                "source": surface.source_id,
+                "cover": "" if surface.cover is None else surface.cover.cover_id,
+                "status": status,
+                "tolerance": repr(float(tolerance)),
+                "mesh_to_source": repr(float(mesh_to_source)),
+                "band_extent": repr(float(extent)),
+                "absorbed_distance": repr(float(absorbed)),
+                "distance_upper": repr(float(distance)),
+                "band_leaves": band,
+                "far_leaves": far,
+                "components": components,
+            }
+        )
+        return ImplicitSignCoverage(
+            status, detail, distance, extent, band, far, components, evidence
+        )
+
+    cover = surface.cover
+    if cover is None or not cover.complete or not cover.certified:
+        return outcome(
+            "unresolved", "The adaptive source has no complete certified cover."
+        )
+    triangles = np.asarray(triangles, dtype=np.float64).reshape((-1, 3, 3))
+    cells = np.asarray(cells, dtype=np.float64).reshape((-1, 4, 3))
+    if (
+        triangles.shape[0] == 0
+        or cells.shape[0] == 0
+        or not np.all(np.isfinite(triangles))
+        or not np.all(np.isfinite(cells))
+    ):
+        return outcome(
+            "unresolved", "Sign coverage needs finite target facets and cells."
+        )
+    if not (
+        math.isfinite(mesh_to_source)
+        and math.isfinite(tolerance)
+        and 0.0 <= mesh_to_source < tolerance
+    ):
+        return outcome(
+            "unresolved",
+            "Sign coverage needs a target-to-zero-set bound below the tolerance.",
+        )
+    domain = np.asarray(cover.domain, dtype=np.float64)
+    scaffold = surface.scaffold
+    source_cell = (
+        0.0
+        if scaffold is None
+        else float(
+            np.linalg.norm(
+                (np.asarray(scaffold.domain[1]) - np.asarray(scaffold.domain[0]))
+                / 2.0**scaffold.target_level
+            )
+        )
+    )
+    resolution = max(tolerance - mesh_to_source, source_cell)
+    leaf_floor = resolution * _SIGN_COVER_LEAF_FRACTION
+    # A triangle is the hull of its corners, so this decides it exactly.
+    if np.any(triangles <= domain[0]) or np.any(triangles >= domain[1]):
+        return outcome(
+            "unresolved", "The target boundary reaches the discovery domain boundary."
+        )
+    piece_rows = np.arange(triangles.shape[0], dtype=np.int64)
+    piece_parameters = np.repeat(
+        _SIGN_COVER_WHOLE_PIECE[None], triangles.shape[0], axis=0
+    )
+    piece_depths = np.zeros(triangles.shape[0], dtype=np.int64)
+    piece_lower, piece_upper = _triangle_piece_boxes(
+        triangles, piece_rows, piece_parameters
+    )
+    bounds = surface.volume.bounds
+    boxes = np.asarray(cover.boxes, dtype=np.float64)
+    lower, upper = boxes[:, 0].copy(), boxes[:, 1].copy()
+    signs = np.where(
+        np.asarray(cover.value_lower) > 0.0,
+        1,
+        np.where(np.asarray(cover.value_upper) < 0.0, -1, 0),
+    ).astype(np.int8)
+    far_lower: list[np.ndarray] = []
+    far_upper: list[np.ndarray] = []
+    far_signs: list[np.ndarray] = []
+    # Settled band leaves of one strict sign: opposite-sign evidence only.
+    signed_band_lower: list[np.ndarray] = []
+    signed_band_upper: list[np.ndarray] = []
+    signed_band_signs: list[np.ndarray] = []
+    extent_upper = 0.0
+    band_count = 0
+    while lower.shape[0]:
+        # Pieces touching a narrower leaf are halved first, so a leaf touches a
+        # piece box only near the target boundary at its own scale; pieces
+        # thus follow the band instead of tiling every facet at its finest.
+        leaf_bvh = prepare_bvh(lower, upper, dtype=np.float64)
+        leaf_widths = _distance_upper(lower, upper, lower, upper)
+        while True:
+            piece_bvh = prepare_bvh(piece_lower, piece_upper, dtype=np.float64)
+            widths = _distance_upper(piece_lower, piece_upper, piece_lower, piece_upper)
+            refine = np.zeros(piece_rows.shape[0], dtype=np.bool_)
+            for pieces, rows in bvh_overlap_pair_blocks(
+                piece_bvh, leaf_bvh, include_touching=True
+            ):
+                refine[pieces[widths[pieces] > leaf_widths[rows]]] = True
+            refine &= piece_depths < _SIGN_COVER_PIECE_DEPTH
+            if not np.any(refine):
+                break
+            rows, parameters, depths = _split_triangle_pieces(
+                piece_rows[refine], piece_parameters[refine], piece_depths[refine]
+            )
+            child_piece_lower, child_piece_upper = _triangle_piece_boxes(
+                triangles, rows, parameters
+            )
+            kept = ~refine
+            piece_rows = np.concatenate((piece_rows[kept], rows))
+            piece_parameters = np.concatenate((piece_parameters[kept], parameters))
+            piece_depths = np.concatenate((piece_depths[kept], depths))
+            piece_lower = np.concatenate((piece_lower[kept], child_piece_lower))
+            piece_upper = np.concatenate((piece_upper[kept], child_piece_upper))
+        del leaf_bvh
+        # Leaves that may hold a zero or a target boundary point form the band.
+        band = _touching_rows(piece_bvh, lower, upper) | (signs == 0)
+        # A band leaf farther than the resolution from every piece (in some
+        # coordinate) cannot be refined into the resolution: its extent is
+        # left unbounded rather than searched across the whole target.
+        near = band & _touching_rows(
+            piece_bvh,
+            np.nextafter(lower - resolution, -np.inf),
+            np.nextafter(upper + resolution, np.inf),
+        )
+        extent = np.where(band, np.inf, 0.0)
+        if np.any(near):
+            extent[near] = _box_witness_distance_upper(
+                piece_bvh,
+                piece_lower,
+                piece_upper,
+                lower[near],
+                upper[near],
+                resolution,
+            )
+        middle = 0.5 * lower + 0.5 * upper
+        # Halving a leaf no wider than the leaf floor cannot bring it much
+        # nearer the target boundary; its proved extent then stands.
+        splittable = np.all((lower < middle) & (middle < upper), axis=1) & (
+            leaf_widths > leaf_floor
+        )
+        split = near & (extent > resolution) & splittable
+        settled = band & ~split
+        if np.any(settled):
+            if np.any(lower[settled] <= domain[0]) or np.any(upper[settled] >= domain[1]):
+                return outcome(
+                    "unresolved",
+                    "The target boundary band reaches the discovery domain boundary.",
+                )
+            extent_upper = max(extent_upper, float(np.max(extent[settled])))
+            band_count += int(np.count_nonzero(settled))
+            signed = settled & (signs != 0)
+            signed_band_lower.append(lower[signed])
+            signed_band_upper.append(upper[signed])
+            signed_band_signs.append(signs[signed])
+        far = ~band & (signs != 0)
+        far_lower.append(lower[far])
+        far_upper.append(upper[far])
+        far_signs.append(signs[far])
+        parent_lower, parent_upper = lower[split], upper[split]
+        parent_middle, parent_signs = middle[split], signs[split]
+        child_lower: list[np.ndarray] = []
+        child_upper: list[np.ndarray] = []
+        for index in range(8):
+            choice = np.asarray(
+                [(index >> axis) & 1 for axis in range(3)], dtype=np.bool_
+            )
+            child_lower.append(np.where(choice, parent_middle, parent_lower))
+            child_upper.append(np.where(choice, parent_upper, parent_middle))
+        lower = np.concatenate(child_lower)
+        upper = np.concatenate(child_upper)
+        signs = np.tile(parent_signs, 8)
+        undecided = np.flatnonzero(signs == 0)
+        if undecided.shape[0]:
+            value_lower, value_upper = _box_value_bounds(
+                bounds, lower[undecided], upper[undecided]
+            )
+            signs[undecided] = np.where(
+                value_lower > 0.0, 1, np.where(value_upper < 0.0, -1, 0)
+            )
+    region_lower = np.concatenate(far_lower)
+    region_upper = np.concatenate(far_upper)
+    region_signs = np.concatenate(far_signs)
+    far_count = int(region_lower.shape[0])
+    if far_count == 0:
+        return outcome(
+            "unresolved", "No zero-free leaf lies away from the target boundary."
+        )
+    from scipy.sparse import coo_array
+    from scipy.sparse.csgraph import connected_components
+
+    region_bvh = prepare_bvh(region_lower, region_upper, dtype=np.float64)
+    first_rows: list[np.ndarray] = []
+    second_rows: list[np.ndarray] = []
+    for first, second in bvh_overlap_pair_blocks(
+        region_bvh, region_bvh, include_touching=True
+    ):
+        kept = first < second
+        first, second = first[kept], second[kept]
+        if np.any(region_signs[first] != region_signs[second]):
+            return outcome(
+                "unresolved",
+                "Touching zero-free leaves have opposite field signs; the field is "
+                "not continuous there.",
+            )
+        first_rows.append(first.astype(np.int64))
+        second_rows.append(second.astype(np.int64))
+    rows = np.concatenate(first_rows) if first_rows else np.empty(0, dtype=np.int64)
+    columns = np.concatenate(second_rows) if second_rows else np.empty(0, dtype=np.int64)
+    component_count, labels = connected_components(
+        coo_array(
+            (np.ones(rows.shape[0], dtype=np.int8), (rows, columns)),
+            shape=(far_count, far_count),
+        ),
+        directed=False,
+    )
+    component_count = int(component_count)
+    counts = {
+        "extent": extent_upper,
+        "band": band_count,
+        "far": far_count,
+        "components": component_count,
+    }
+    component_signs = np.zeros(component_count, dtype=np.int8)
+    component_signs[labels] = region_signs
+    exterior = np.zeros(component_count, dtype=np.bool_)
+    exterior[
+        labels[
+            np.any(region_lower <= domain[0], axis=1)
+            | np.any(region_upper >= domain[1], axis=1)
+        ]
+    ] = True
+    if np.any(exterior & (component_signs < 0)):
+        return outcome(
+            "unresolved",
+            "The source region reaches the discovery domain boundary.",
+            **counts,
+        )
+    corners = np.unique(cells.reshape((-1, 3)), axis=0)
+    centroid_lower = 0.25 * np.nextafter(
+        np.nextafter(cells[:, 0] + cells[:, 1], -np.inf)
+        + np.nextafter(cells[:, 2] + cells[:, 3], -np.inf),
+        -np.inf,
+    )
+    centroid_upper = 0.25 * np.nextafter(
+        np.nextafter(cells[:, 0] + cells[:, 1], np.inf)
+        + np.nextafter(cells[:, 2] + cells[:, 3], np.inf),
+        np.inf,
+    )
+    member_lower = np.concatenate((corners, centroid_lower))
+    member_upper = np.concatenate((corners, centroid_upper))
+    inside = np.zeros(component_count, dtype=np.bool_)
+    for leaves, points in bvh_overlap_pair_blocks(
+        region_bvh,
+        prepare_bvh(member_lower, member_upper, dtype=np.float64),
+        include_touching=True,
+    ):
+        contained = np.all(region_lower[leaves] <= member_lower[points], axis=1) & np.all(
+            member_upper[points] <= region_upper[leaves], axis=1
+        )
+        inside[labels[leaves[contained]]] = True
+    outside = exterior & ~inside
+    order = np.argsort(labels, kind="stable")
+    starts = np.searchsorted(labels[order], np.arange(component_count))
+    stops = np.append(starts[1:], far_count)
+    volumes = np.prod(region_upper - region_lower, axis=1)
+    for component in np.flatnonzero(~inside & ~outside).tolist():
+        rows_of = order[starts[component] : stops[component]]
+        largest = int(rows_of[int(np.argmax(volumes[rows_of]))])
+        center = 0.5 * region_lower[largest] + 0.5 * region_upper[largest]
+        decided = _point_in_tetrahedra(center, cells)
+        if decided is None:
+            return outcome("unresolved", "A target tetrahedron is degenerate.", **counts)
+        inside[component] = decided
+        outside[component] = not decided
+    # A disagreeing component is absorbed into the band when every point of it
+    # is proved within the tolerance of the zero set: each of its leaves has
+    # one strict sign, and every segment to a leaf of the opposite sign meets
+    # the zero set, so its farthest distance to the nearest such leaf bounds
+    # its distance to the zero set.
+    disagree = ((inside & (component_signs > 0)) | (outside & (component_signs < 0))) & ~(
+        inside & exterior
+    )
+    absorbed = 0.0
+    if np.any(disagree):
+        evidence_lower = np.concatenate((region_lower, *signed_band_lower))
+        evidence_upper = np.concatenate((region_upper, *signed_band_upper))
+        evidence_signs = np.concatenate((region_signs, *signed_band_signs))
+        for sign in (1, -1):
+            members = np.flatnonzero(disagree[labels] & (region_signs == sign))
+            opposite = np.flatnonzero(evidence_signs == -sign)
+            if not members.shape[0]:
+                continue
+            if not opposite.shape[0]:
+                absorbed = math.inf
+                break
+            nearest = _box_witness_distance_upper(
+                prepare_bvh(
+                    evidence_lower[opposite], evidence_upper[opposite], dtype=np.float64
+                ),
+                evidence_lower[opposite],
+                evidence_upper[opposite],
+                region_lower[members],
+                region_upper[members],
+                resolution,
+            )
+            absorbed = max(absorbed, float(np.max(nearest)))
+    if absorbed > tolerance:
+        if np.any(disagree & inside):
+            return outcome(
+                "violated",
+                "The target region contains a zero-free leaf outside the source region "
+                "farther than the tolerance from the zero set.",
+                **counts,
+            )
+        return outcome(
+            "violated",
+            "The target region misses a zero-free leaf inside the source region "
+            "farther than the tolerance from the zero set.",
+            **counts,
+        )
+    counts["absorbed"] = absorbed
+    if np.any(inside & exterior):
+        return outcome(
+            "violated",
+            "The target region reaches the unbounded exterior of the source.",
+            **counts,
+        )
+    if not math.isfinite(extent_upper):
+        return outcome(
+            "unresolved",
+            "A band leaf that may hold a zero lies farther than the resolution "
+            "from the target boundary.",
+            **counts,
+        )
+    return outcome(
+        "certified",
+        "The target and source regions agree on every zero-free leaf beyond the "
+        "target boundary band, except on components proved within the tolerance "
+        "of the zero set.",
+        **counts,
+    )
+
+
 def certify_adaptive_implicit_charts(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -5420,10 +5977,7 @@ def certify_adaptive_implicit_charts(
                     "violated",
                     "cell",
                     (evidence.target_cell_global_id,),
-                    detail=(
-                        "Continuous target-to-root lower bound "
-                        f"{evidence.target_to_root_lower_bound!r} exceeds tolerance {tolerance!r}."
-                    ),
+                    detail="Continuous target-to-root lower bound exceeds the tolerance.",
                 )
             )
         elif evidence.target_to_root_bound > tolerance:
@@ -5433,10 +5987,7 @@ def certify_adaptive_implicit_charts(
                     "unresolved",
                     "cell",
                     (evidence.target_cell_global_id,),
-                    detail=(
-                        "Continuous target-to-root upper bound "
-                        f"{evidence.target_to_root_bound!r} exceeds tolerance {tolerance!r}."
-                    ),
+                    detail="Continuous target-to-root upper bound exceeds the tolerance.",
                 )
             )
         if maximum_normal_deviation is not None and maximum_normal_deviation < math.pi:
@@ -5448,14 +5999,13 @@ def certify_adaptive_implicit_charts(
             if evidence.source_normal_deviation_bounds[1] > maximum_normal_deviation:
                 findings.append(
                     MeshCertificateFinding(
-                        "normal_deviation_range",
+                        "normal_deviation_limit",
                         normal_status,
                         "cell",
                         (evidence.target_cell_global_id,),
                         detail=(
-                            "Continuous implicit source-normal angle bound "
-                            f"{evidence.source_normal_deviation_bounds!r} exceeds "
-                            f"{maximum_normal_deviation!r}."
+                            "Continuous implicit source-normal angle bound exceeds "
+                            "the normal-deviation limit."
                         ),
                     )
                 )

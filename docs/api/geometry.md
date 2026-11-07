@@ -1084,6 +1084,64 @@ must record a discovery of exactly `source` (table, region, level, half-width,
 feature and cell); a mismatch is refused. An explicit `projection_policy`
 overrides the derived one.
 
+### Sheet thickness evidence
+
+A sheet `TrigonometricLevelSet` (`region="sheet"`) is the level band
+`{|F - c| <= tau}`. `TrigonometricSheetBand(tau)` requests the band directly;
+`TrigonometricWallThickness(t)` solves the smallest `tau` whose certified
+minimum wall meets `t`. `TrigonometricLevelSet.thickness_distribution()`
+returns `TrigonometricThicknessDistribution`, which reports two kinds of
+thickness evidence:
+
+- Certified: `uniform_minimum` is `2 tau / sup ||grad F||` over the band.
+  `certified_minimum` is the larger of `uniform_minimum` and the sharper
+  integral bound of `TrigonometricSheetThickness`.
+- Measured: the achieved band chords, with `minimum`, `maximum`, and
+  `quantiles` at `quantile_levels` (5, 25, 50, 75 and 95 percent).
+
+The sampling is documented and is measured, not certified:
+
+1. The mid-surface points are the roots of `F = c` on `3 n^2` lines in reduced
+   coordinates (`n = lines_per_axis`), each parallel to one lattice vector and
+   passing through `(i / n, j / n)` in the other two coordinates. Roots are
+   bracketed by sign changes at 32 samples per period and bisected to binary64.
+2. Each chord follows the unit normal through its point in both directions,
+   marched in steps of `uniform_minimum / 4` until the field leaves the band.
+   Each exit is bisected to binary64.
+
+Every measured chord is at least `certified_minimum`.
+
+### Finite lattice specimens
+
+A finite specimen is `Intersection(region, envelope)`: a smooth region (for
+example a `TrigonometricLevelSet` network) clipped by a `Box`, a full
+`Cylinder` or a `Sphere`. `SpecimenEnvelope` maps a parameter box onto the
+envelope, so the six box faces are the envelope's surface charts.
+
+`phydrax.geometry.implicit.discover_clipped_implicit_surface` is the explicit,
+opt-in open-boundary discovery. The box faces clip the zero set rather than
+enclose it. The default `discover_adaptive_implicit_surface` is unchanged and
+still refuses a zero set that crosses the domain boundary
+(`DOMAIN_BOUNDARY_CROSSING`).
+
+The crease on each face is the zero set of the field on that chart.
+`discover_parametric_chart_curve` certifies it cell by cell, and its root bank
+supplies every face crossing of the volume polygonization, bit for bit. When a
+chart cell fails the whole-cell tests, only that cell is subdivided:
+
+- the root count of each edge is proved by subdivision;
+- a directional derivative of one strict sign at every possible zero proves
+  that the cell holds one arc, or none.
+
+The common lattice level rises only when such a local proof fails, so one
+near-tangency no longer refines the whole specimen. A crease tangent to the
+envelope is a certified unresolved event: the discovery outcome is `tangency`,
+with the chart's event boxes, and nothing is meshed.
+
+`phydrax.meshing.construct_lattice_specimen_surface` and
+`mesh_lattice_specimen` build and fill the specimen boundary (see the meshing
+guide).
+
 
 `NeuralImplicitRegion` is the region `{x in B : phi(x; w) <= 0}` of a scalar
 network over declared axis-aligned bounds `B`. The network's PARAMETER arrays are
@@ -1361,6 +1419,30 @@ refused rather than assigned by geometric proximity or vertex stencils.
 ---
 
 ::: phydrax.geometry.ImplicitCurvePlan
+
+---
+
+::: phydrax.geometry.discover_parametric_chart_curve
+
+---
+
+::: phydrax.geometry.ParametricChartCurve
+
+---
+
+::: phydrax.geometry.discover_clipped_implicit_surface
+
+---
+
+::: phydrax.geometry.ClippedImplicitSurface
+
+---
+
+::: phydrax.geometry.SpecimenEnvelope
+
+---
+
+::: phydrax.geometry.TrigonometricThicknessDistribution
 
 ---
 

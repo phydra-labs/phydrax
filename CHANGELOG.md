@@ -3,6 +3,32 @@
 ## Unreleased
 
 ### Added
+- `linear_elasticity_form` has a structural sparse lowering. Its residual
+  kernel defines the isotropic stress once, and the sparse operator is that
+  stress's exact Jacobian, assembled as coupled `(cells, d·n, d·n)` vector
+  blocks in node-major `(node, component)` order. Constrained elasticity
+  reaches `linear_system(storage="sparse")` and native sparse Cholesky instead
+  of being densified, and the native TPMS specimen compression solves with
+  sparse SPD Cholesky under a declared factor budget.
+  `FiniteElementDiscretization.assemble_cell_operator` accepts
+  `coupled_components=True` for coupled vector cell matrices; existing
+  diffusion, mass and tensor-diffusion assemblies are bit-identical.
+- Omega_h adaptation results (`MeshAdaptationRoute.OMEGA_H`) archive and restore
+  without re-running Omega_h. `OmegaHAdaptationEvidence.record` keeps the
+  worker's result record in canonical form and `OmegaHFieldEvidence.field_id`
+  the source field identity, so restore recomputes every evidence, partition,
+  classification, field and result identity from stored inputs; identities are
+  unchanged. `OmegaHAdaptationEvidence` takes the record and the session values
+  (`session_id`, `identity_id`, `sequence`, `peak_rss_bytes`), and
+  `OmegaHFieldEvidence` takes its field's name, transfer, diffusion tolerance
+  and `field_id` instead of the field.
+- `certify_single_source_shell` certifies face pairs of coaxial straight
+  revolutions whose shared rims are stored as exact full-turn `CircleCurve`
+  edges, through `certify_revolution_rim_pair` when the retained-branch proof
+  refuses: each rim circle is proved exactly (center on the axis, frame
+  perpendicular to it, radius, full closed turn) and lifts exactly onto both
+  faces with opposed shell uses. Revolution cylinders with planar radial caps
+  get a rooted source shell.
 - Implicit root charts (`implicit_surface`, `implicit_adaptive_tetrahedral`)
   for non-smooth sources without an analytic profile: ellipsoids, sharp CSG
   unions and other piecewise fields. `PreparedIntervalFunction.evaluate_branches`
@@ -11,7 +37,12 @@
   stays on proved-smooth boxes keep interval root charts. Faces that meet a
   crease take a certified root-witness distance bound, named
   `ImplicitRootChartEvidence.bound == "root_witness"`. Fidelity is the maximum
-  over both kinds of face; coverage of crease faces stays unresolved.
+  over both kinds of face; coverage of crease faces stays unresolved. Host
+  interval evaluation of a program with min/max now tracks value identities.
+  A decided selection, or a selection between equal values, decides the
+  comparisons of JAX's min/max derivative rules. A reduction's attaining count
+  is at least one. Sharp-CSG gradient and Hessian enclosures therefore stay
+  finite, which adaptive discovery of unions also relies on.
 - `TrigonometricLevelSet` nodal TPMS sources with certified critical levels:
   `certify_trigonometric_critical_levels(table, value_resolution=...)` takes a
   declared cover resolution, and `TrigonometricCriticalLevels.separate(level)`
@@ -26,6 +57,28 @@
   is filled as a certified periodic tetrahedral mesh whose paired cell-face
   caps are exact lattice translates (interior cap edges are authored PLC
   segments) and which adapts through the orbit-locked periodic metric owners.
+- Finite lattice specimens: `construct_lattice_specimen_surface` and
+  `mesh_lattice_specimen` clip a lattice region by a `Box`, full `Cylinder` or
+  `Sphere` (`SpecimenEnvelope`) through the opt-in open-boundary discovery
+  `discover_clipped_implicit_surface`. Creases are certified by
+  `discover_parametric_chart_curve` on each envelope chart. Chart cells that
+  fail the whole-cell tests are proved locally (subdivision edge root counts
+  and a sign-definite directional derivative), so a near-tangency no longer
+  raises the whole specimen's lattice level. A crease tangent to the envelope
+  raises `LatticeSpecimenEventError` with the `tangency` evidence. Short
+  implicit-face edges are collapsed onto existing vertices before the fill.
+  The implicit-face fidelity bound is certified per triangle and is now
+  always finite. The gradient-flow bound takes the better of the
+  componentwise interval and a centred form about the triangle centroid as
+  its gradient-norm lower bound; the componentwise interval alone contains
+  zero wherever the normal turns across the box, which had left the bound
+  infinite. A triangle it does not prove is split at its edge midpoints,
+  only where the Taylor term still dominates. A triangle still unproved
+  takes the root-witness bound (`e/√3` plus the vertex root distance).
+  `TrigonometricLevelSet.thickness_distribution()` reports a sheet's measured
+  chord-thickness distribution beside its certified minimum.
+- Fixed: curvature edge proofs in chart crease discovery stop at a certified
+  dip instead of bisecting it exponentially, which had hung the tangency test.
 - Periodic cell homogenization: `PeriodicCellProblem` solves effective
   conductivity (three unit gradients) and linear elasticity (six unit Voigt
   strains) on a periodic tetrahedral quotient mesh. Unit cases are
@@ -45,6 +98,36 @@
   critical-gap exit, sign-pattern change, inverted cell or projection failure
   is a status event: it poisons derivatives, and
   `require_sensitivities()` raises `PeriodicImplicitRealizationEventError`.
+- Lattice solid export: `export_lattice_solid` writes a certified specimen, or
+  the closed boundary of one lifted periodic cell, as STL or 3MF through
+  `export_surface` and returns a `LatticeSolidExport`. Solid export requires a
+  closed, oriented 2-manifold certificate (`SurfaceValidityCertificate` from
+  an audit requiring closed, outward-oriented components); a failure raises
+  `SurfaceSolidCertificateError` with the audit. STL is declared lossy with
+  respect to the source (`stl_lossy_with_respect_to_source`) and needs
+  `allow_lossy=True`. `lattice_solid_surface` returns the exported
+  `SurfaceModel` and its fidelity bounds.
+- Native 3MF surface export (`SurfaceFileFormat.THREE_MF`, `.3mf`, catalog
+  profile `3mf`, write only): one closed model object with bit-exact binary64
+  coordinates, the 3MF unit, and source, provenance and certificate metadata,
+  in a deterministic package that is decoded and compared before publication.
+  Every 3MF write requires the closed, oriented 2-manifold certificate. The
+  STL catalog profile now lists `source-and-solid-certificate` among its
+  losses.
+- The `native-tpms` meshing qualification scenario has five profiles:
+  - a gyroid sheet cell (quotient topology, exact face pairing, the certified
+    volume fraction against an independent quadrature, and homogenized
+    conductivity with proved isotropy);
+  - a Schwarz P network (fraction 1/2 proved by symmetry, network and
+    complement components);
+  - certified singular refusals for Schwarz P;
+  - a diamond specimen clipped by a cylinder (creases and caps, a certified
+    solid, elastic compression with a discrete energy bound and a patch test,
+    and volume and porosity oracles);
+  - an independent-process cold restore of a periodic cell.
+
+  The change also adds `examples/native_tpms_lattice.py` and the
+  phase-separated `benchmarks/tpms_lattice.py`.
 - Registered T-spline CAD-to-analysis qualification now covers nonconstant
   weighted-field prolongation, fixed-route derivative oracles, manufactured
   surface Poisson analysis, and independent-process archive continuation.
@@ -116,6 +199,94 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Host interval enclosures of `exp`, `log`, `sin`, `cos`, `tan`, `atan`,
+  `tanh`, `asin` and `acos` come from rigorous native elementary kernels
+  without libm on both interval routes, so they are identical on every
+  platform. Native interval programs decide comparisons, track extremum
+  identities and report per-box branch evidence.
+- de Rham complexes assemble with bounded block-geometry worksets and deferred
+  Piola basis tables. The geometry workset is an explicit discretization input
+  that de Rham takes from `hodge_resources.workspace_bytes`, Hodge admission is
+  a declared budget, and `basis_tables` is a closed `FiniteElementBasisTables`
+  selector.
+- Dual-quad results restore by certifying the stored cross fields on the
+  canonical interval owners instead of re-solving them, and stored quad fields
+  and layouts are decided with generation's own acceptance.
+- Dense fractional Gaussian paths are drawn through the principal square root
+  of the grid covariance, so a key gives the same path with every LAPACK
+  (eigenvector signs no longer enter). Law and realization IDs are unchanged;
+  dense path values change for every key.
+- JAX 0.12.0.1 is qualified for ordered collectives.
+- Meshing qualification profiles declare their solve and archive budgets,
+  which enter the plan identity and are checked by cold readers; SPD history
+  solves use Cholesky. The reconstruction torus sampler evaluates `sin`/`cos`
+  correctly rounded (with a proven refinement ceiling), so its samples are
+  identical on every platform.
+- `linear_elasticity_form` refuses non-scalar Lamé moduli with `ValueError`.
+  Array-valued moduli never had a defined per-point meaning (they broadcast
+  against the stress axes), so this states the existing scalar contract.
+- Adaptive implicit history replay returns each attempt's tangency boxes and
+  evaluates each streamed block in one batch (about 15× faster);
+  `verify_discovery_history` reproduces the tangency-driven anchor schedule.
+- Implicit sign coverage no longer has a pieces-per-side limit: facet pieces
+  are exact dyadic halves refined only where they touch narrower band leaves.
+  The band is resolved to the larger of the remaining tolerance and the
+  source's target-level cell, so the reported band distance may exceed the
+  tolerance when the target bound nearly uses it up.
+- Periodic cell homogenization factors its SPD operator by the supernodal
+  Cholesky with nested-dissection ordering instead of reverse Cuthill–McKee.
+  `PeriodicCellProblem(..., factorization=...)` and
+  `PeriodicSimplexOperatorPattern(..., factorization=...)` declare the Cholesky
+  policy and its resource budget (the default keeps the library budget).
+  The policy enters `pattern_id`, so pattern identities change.
+- `SurfaceAuditReport.manifold` now also requires every vertex to join a
+  single fan of triangles, so surfaces that touch only at a vertex are no longer
+  reported as manifold. The non-manifold issue text names both conditions, so
+  the identities of non-manifold reports change; manifold surfaces are
+  unaffected.
+- Tetrahedral metric collapses move their survivor only when every long spoke
+  of the moved survivor keeps an exactly representable split; otherwise the
+  collapse stays in place. The close-edge coarsening case completes again, the
+  anisotropic Kuhn-box case completes in 30 passes instead of 46, and splits
+  refused for having no representable point drop sharply; the layer and graded
+  cases are unchanged.
+- The tetrahedral metric relocation search evaluates goal backtracking, the
+  band, orientation-floor and quality screens, and the band tangents in
+  batches, and caches located source supports once per adaptation. Results are
+  bit-identical; the relocation box tests run about 8× faster.
+- Native model archives store equal arrays under different parents once: the
+  first occurrence in canonical order is written and later equal arrays are
+  content-keyed `shared` references, admitted only after a byte-equality check
+  against the written payload. Readers refuse a repeated equal array, so each
+  archive has one canonical form; archives written before this change are not
+  read. Archive content, result and report identities are unchanged; a PLC
+  volume result archive is 9.7% smaller and a torus implicit volume archive
+  9.8% smaller.
+- Model archives no longer persist wall-clock telemetry:
+  `MeshAdaptationResult.elapsed_seconds` and `MmgSessionEvidence.elapsed_seconds`
+  are `float | None`, archived as `None`, and restored results carry `None`. An
+  archive that stores wall time is refused. Two runs of the same adaptation
+  now archive to identical bytes; timing stays in run receipts and benchmarks.
+- The model archive aggregate array-byte limit counts each stored owner once,
+  as the element limit already did: an immutable physical owner when writing
+  and an authenticated shared node when reading. Expanded per-occurrence
+  readers (`read_model_archive`) still charge every occurrence; the limit value
+  is unchanged. Restoring the torus implicit volume (281 MB stored, 2.25 GB
+  logical) leaves 202 MB of distinct array buffers, because owner constructors
+  reuse shared immutable arrays.
+- Model archives store `MeshingScope.unqualified_entity_ids` as an int64 array
+  column and `CellValidityCertificate.cell_map_digests` as a uint8 column of
+  32-byte rows instead of manifest JSON lists, through the existing archive
+  column records; archives written before this change are not read. Result
+  and report identities are unchanged. Manifests shrink from 1.94 MB to 90 KB
+  for a sphere implicit volume and from 20.9 MB to 91 KB for the torus implicit
+  volume, which now archives (288 MB) and restores under `MODEL_ARCHIVE_LIMITS`.
+- Krawczyk chart boxes for coaxial straight-profile revolution pairs pad the
+  second surface's angle by a quarter of the chart width instead of a fixed
+  `relative_resolution` margin, which had forced charts of about 1e-7 rad and
+  hours per rim; a cylinder rim now certifies with 344 charts in about 9 s. The
+  inclusion test, policy tolerances and refusals are unchanged; branch charts
+  of these pairs differ.
 - Native tetrahedral metric adaptation reuses host topology, metric and
   boundary tables per mesh snapshot, builds topology with NumPy grouping,
   caches replacement proposals until a commit touches their neighborhood,
@@ -227,6 +398,136 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Certified geometric bounds use per-operation rounding and exact predicates
+  throughout: B-Rep bounds and normal ranges (including conic-root revolution
+  poles); exact candidate distances in B-Rep projection instead of a fixed
+  epsilon filter, and certified distances for non-rational quadric frames;
+  exact disjoint, contact and overlap decisions for tetrahedron intersections;
+  exact distance, volume and area bounds in the geometry kernels; an exact
+  constructed Lipschitz bound for neural implicits; exact Jacobian-determinant
+  Bernstein coefficients for IGA certificates; underflow-aware discretization
+  certificate budgets, including periodic transfers and polyhedral stars;
+  flush-to-zero-safe outward steps for device certificates; and exact
+  straight-trim joins for native surface pole rings.
+- DXF import reads ellipse right-angle parameters as exact right angles and
+  binds single right-angle ellipse ends to their exact axis points; spline ends
+  are certified like conic ends at junctions, and profile B-spline ends may keep
+  certified gaps to their vertices. Out-of-range Sturm chains are reported as
+  certificate status, and unsupported curved profile loops are refused with a
+  typed reason.
+- Native curve quadrature terminates within a rigorous rounding bound.
+- Structural sparse operators of vector-valued fields act on the field's
+  `(dof, component)` space, so strong Dirichlet constraints on vector fields are
+  eliminated sparsely instead of being refused.
+- Implicit sign coverage absorbs a target/source disagreement component when
+  each of its leaves is proved within the tolerance of the zero set, by its
+  distance to a leaf of opposite certified sign, instead of reporting a
+  violation; a component farther than the tolerance is still violated, and the
+  absorbed distance is part of `distance_upper`.
+- Adaptive implicit discovery no longer refines without end when the zero set
+  touches or hugs a lattice face. Such a box is the new
+  `AdaptiveImplicitBoxIssue.TANGENCY`: all its possible zeros are proved to lie
+  within 2⁻⁸ of its width of one face. Discovery re-anchors to the first
+  lattice in its fixed sequence whose exact planes avoid every tangency face
+  found so far and never refines a tangency; a tangency left on the final
+  lattice is reported as an unresolved tangency event. Anchors increase through
+  a finite sequence and refinement is bounded by the root tolerance and
+  binary64, so discovery terminates.
+- Archives restore across operating systems. Source-fidelity certificates,
+  source chart covers and source chart witnesses are identified by exact
+  content only (`SourceFidelityCertificate.certificate_id`,
+  `SourceBoundaryChartCover.cover_id`, and `SourceBoundaryChartWitness.witness_id`,
+  which no longer hashes the CAD fidelity evidence carried in its CAD PLC);
+  certified float bounds and cover corners, which libm, XLA and BLAS round
+  differently per platform, are stored evidence. Restore recomputes each
+  certificate and requires equal exact content, overlapping certified intervals,
+  and claims derived exactly from the stored bounds; it keeps the stored bounds
+  and the bound-limit decisions made at generation, and a mismatch raises
+  `SourceFidelityReproofError` naming the bound and cell. Layer-core full-atlas
+  replay keeps sampled chord residuals as stored evidence. Certificate, cover,
+  witness, certification report, PLC, result and model identities change once;
+  earlier archives must be rewritten.
+- Source chart covers of meshing domains take their vertices from exact source
+  data or the centers of certified enclosures instead of XLA surface
+  evaluation, so cover vertices and bounds are identical on every platform;
+  generic-carrier cover bounds include each vertex's distance to its exact
+  source point. Stored cover simplices and bounds of meshing-domain results,
+  and identities that hash them, change once.
+- Implicit metric adaptation no longer fails with "Created implicit vertices
+  require exact source-stratum support" when an implicit-only collapse, move or
+  flip leaves a created vertex whose exact stencil spans no single source
+  simplex, as in the offset-ring torus epoch. A created zero-set vertex then
+  requires the validated target root-chart witness of a boundary face
+  containing it and records no mesh parent; a created interior vertex takes its
+  parent from the source-cell ancestry of its incident target cells. Vertices
+  without either support are still refused.
+- Native B-Rep solid location decides points exactly on a cylinder axis; a
+  point on a hole axis or a revolved solid's axis is no longer reported
+  unresolved.
+- Native face projection resolves points on a cylinder's periodic seam whose
+  rounded angle falls just inside the outward 2π chart bound: the undecidable
+  trim uses the certified seam-edge closest point, so P2 curving no longer sees
+  unbounded source residuals at such seams.
+- B-Rep solid location certifies containment through trimmed torus faces with
+  exact ray-torus crossings (isolated real roots of the exact quartic,
+  certified trim containment, tangent rays refused in favor of the next exactly
+  chosen direction).
+- Owner-local periodic motion refuses a cumulative coordinate stencil with
+  non-rational exact weights instead of building non-rational vertex
+  coordinates.
+- Restoring an accepted meshing result keeps the stored cell-quality samples and
+  float summaries in its quality, audit and certification reports instead of
+  replacing them with the restoring platform's XLA re-evaluation, which can
+  differ by a few ulps across platforms. Restore still recomputes the exact
+  quality identity and gate decisions and requires them to match, requires the
+  stored samples to describe exactly the recomputed cells (structure, shapes,
+  dtypes and cell IDs), and requires every stored copy of the quality report to
+  hold the same evidence. Result, certification, audit and quality identities
+  are unchanged.
+- `HybridMimeticDiffusion` accepts polyhedral cells with warped faces, such as
+  boundary-layer prisms whose side quadrilaterals are not planar; it previously
+  refused them with "Hybrid geometry fails the affine first-moment identity".
+  Each warped face contributes one trace facet per planar sub-triangle about
+  its vertex centroid, the same triangles the finite-volume geometry uses for
+  cell volumes, centroids and face area vectors, so the first-moment identity
+  and affine reproduction are exact and neighboring cells share each facet with
+  opposite orientation. Trace unknowns are indexed per facet (`facet_count`,
+  `cell_facets` replacing `cell_faces`, `facet_faces`, `facet_centers`,
+  `facet_shares`, `face_potentials`); boundary laws stay indexed by face.
+  Porous Richards and transport plans, which need one unknown per face, refuse
+  warped faces with an explicit error.
+- On a non-POSIX host a native meshing provider worker is refused as
+  `PROVIDER_UNAVAILABLE`: `NativeWorker` raises `NativeWorkerError` of kind
+  `"unavailable"` instead of a bare `OSError` that escaped the provider's
+  `MeshingFailure` boundary.
+- Projector Monte Carlo sums the post-annihilation norm, the committed and
+  initial populations, and the validator's population check in one ordered
+  compensated order, so inactive capacity padding is an exact no-op: resource
+  transport to larger group or support capacities stays bitwise and the
+  validator reproduces committed populations exactly on every platform.
+- `RowGramLinearOperator` plans the canonical storage of a sparse factor from
+  its concrete topology at construction, so its exact diagonal (and the
+  matrix-free Jacobi preconditioner of Craig solves) works again for sparse
+  operators built without a storage plan instead of refusing traced topology.
+- Finite-element mass and stiffness operators assembled by the discretization's
+  compiled program are rebound to their concrete topology on return, so sparse
+  cost estimation and `linalg.solve` accept them again (for example the FEM-BEM
+  volume-source mass operator).
+- `assemble_masked_finite_element` rebinds the mass and stiffness operators
+  leaving its compiled program to their concrete topology, keeping relation,
+  coefficients, properties and operator IDs, so sparse cost estimation and
+  `linalg.solve` accept them instead of refusing traced topology.
+- MACE sources with residual-nonlinear interactions
+  (`RealAgnosticResidualNonLinearInteractionBlock`) reconstruct natively: their
+  scalar density normalization `alpha`/`beta` keeps its rank instead of becoming
+  a one-element vector that the interaction refused.
+- MACE provider RECORD verification compares the open handle and the path each
+  with its own earlier `stat`, so unchanged provider files verify on Windows,
+  whose handle and path queries report different `st_ctime` values; replaced,
+  rewritten and touched files are still refused.
+- A MACE source equivariant-linear weight vector of the wrong length is refused
+  with the source contract error ("do not match the declared irreps") before it
+  is split, instead of surfacing as a NumPy reshape error.
 - Certified distance, chord, norm, frame and quality bounds round outward in
   directed binary64 arithmetic instead of padding round-to-nearest estimates:
   source distance sums, curve and surface chord, point and box bounds,
@@ -746,6 +1047,49 @@
   scenario names from the canonical registry, rejects missing, extra, failed,
   missing-dependency, and skipped results, and excludes warm bytecode while
   confirming qualification modules and Phydrax load from their isolated sources.
+- `LayerNormRadialMLP` evaluates batched edge features under
+  `NumericsConfig(rank_promotion="raise")`. Its biases and layer-normalization
+  scales and shifts are broadcast over the feature lead axes explicitly; under
+  that setting it previously refused every input with lead axes.
+- UMA domain owner partials (`case_sums`) keep the dtype of the summed values:
+  owned atom and species counts stay int32 with 64-bit JAX enabled, as the
+  slab path's `case_atom_counts` does, instead of widening to int64.
+- `convert_uma_checkpoint` no longer fails while forming its conversion
+  identity: `UMASourceProvenance.to_record` serializes the read-only admitted
+  declaration mapping as a plain object, so provenance records round-trip.
+- `AIMNet2SourceProvenance.from_record` restores provenance whose `model_yaml`
+  is the exact source text, including its trailing newline. It held the YAML to
+  the stripped form of identifiers and refused records whose YAML ends in
+  whitespace, as YAML documents do; it now applies the source admission rule
+  (text that is not blank).
+- `read_safetensors_tensors` refuses a tensor extent above
+  `max_tensor_elements` as exceeding the tensor limits, as it refuses an
+  element or byte count above them, rather than as malformed extents.
+- Cell-geometry validity again caches its Bernstein interpolation plans per
+  parameter domain and degree in the bounded host-table cache instead of
+  re-solving the conversion operator on every certification.
+- `posterior_problem_from_solver_objective` now refuses every derivative of a
+  likelihood whose component declares no admitted derivative route, at trace
+  time and in reverse mode as well as forward mode; reverse-mode gradients
+  previously returned silent zeros.
+- Exponential- and power-cone projections support reverse-mode
+  differentiation: the symmetric bordered-KKT tangent solve is owned by a
+  symmetric custom linear solve, so pullbacks (including
+  `conic_primal_vjp`) reuse the native dense solve instead of transposing it.
+- `PreparedFactorization.inverse_columns` accepts integer indices of any
+  dtype under strict dtype promotion; validated indices are converted to the
+  row-index dtype instead of being compared across integer widths.
+- Exact Gaussian-process covariance assembly and its conditioned score
+  derivative run under strict dtype promotion: the observation diagonal is
+  placed by a select on row indices in the column-index dtype instead of
+  comparing `int64` rows with `int32` columns and multiplying by a boolean
+  mask.
+- `guard_derivative_validity(..., failure="error")`, and every linear solve
+  under `FailurePolicy("error")`, refuse invalid derivatives in reverse mode as
+  well as forward mode. The check on the tangent was dropped when reverse
+  mode transposed it, so gradients and pullbacks through an invalid result
+  silently returned zeros; the transpose now applies the same check to the
+  cotangent. Primal values and valid derivatives are unchanged.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile

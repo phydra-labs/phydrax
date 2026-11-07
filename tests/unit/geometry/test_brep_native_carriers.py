@@ -582,3 +582,83 @@ def test_bspline_root_atlas_preserves_exact_control_and_weight_banks() -> None:
         exact_weight_rows[control_rows[anchor]] for anchor in element.anchor_ids
     )
     assert any(isinstance(value, RadicalElement) for value in element.exact_weights)
+
+
+def test_revolution_refuses_a_tilted_arc_whose_carrier_crosses_the_axis() -> None:
+    import mpmath
+
+    from phydrax.geometry.brep._constructors import (
+        brep_revolution,
+        PlanarProfile,
+        ProfileCurveUse,
+        ProfileLine,
+        ProfileLoop,
+        ProfilePlane,
+    )
+    from phydrax.geometry.brep._patches import CircleCurve
+
+    cosine = float.fromhex("-0x1.7699e7b502939p-1")
+    sine = float.fromhex("-0x1.5d0637202a2e8p-1")
+    radius = float.fromhex("0x1.9026fa0f05e0ap+0")
+    center = (radius, 0.25)
+    first = float.fromhex("-0x1.c0046a184d799p+0")
+    last = float.fromhex("0x1.ffdcaf3d94338p-3")
+    curve = CircleCurve(center, (cosine, sine), (-sine, cosine), radius)
+    # The axis is the chart y-axis, so the radial coordinate is x and the
+    # carrier's x is center_x + a cos(t) + b sin(t) on [first, last].
+    with mpmath.workprec(256):
+        a = mpmath.mpf(radius) * mpmath.mpf(cosine)
+        b = mpmath.mpf(radius) * mpmath.mpf(-sine)
+        minimizer = mpmath.atan2(-b, -a)
+        assert mpmath.mpf(first) < minimizer < mpmath.mpf(last)
+        assert mpmath.mpf(center[0]) - mpmath.sqrt(a * a + b * b) < 0
+    ends = np.asarray(curve.evaluate(jnp.asarray((first, last))), dtype=np.float64)
+    profile = PlanarProfile(
+        ProfilePlane(),
+        ProfileLoop(
+            (
+                (float(ends[0, 0]), float(ends[0, 1])),
+                (float(ends[1, 0]), float(ends[1, 1])),
+            ),
+            (ProfileCurveUse(curve, first, last), ProfileLine()),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="closed half-plane of its axis"):
+        brep_revolution(
+            profile,
+            (0.0, 0.0),
+            (0.0, 1.0),
+            coordinate_contract=SpatialCoordinateContract.si(),
+        )
+
+
+def test_planar_face_bounds_enclose_the_exact_arc_extreme() -> None:
+    from phydrax.geometry.brep._constructors import (
+        brep_planar_face,
+        PlanarProfile,
+        ProfileArc,
+        ProfileLine,
+        ProfileLoop,
+        ProfilePlane,
+    )
+
+    center = (
+        float.fromhex("0x1.bf1225296f2acp+0"),
+        float.fromhex("-0x1.42761c1d48a00p-7"),
+    )
+    radius = float.fromhex("0x1.7cd2a9b82b2d9p+0")
+    bottom, top = (center[0], center[1] - radius), (center[0], center[1] + radius)
+    # The counterclockwise arc from bottom to top passes through angle zero, so
+    # its largest x is its carrier's center x plus radius.
+    carrier_radius = float(np.linalg.norm(np.subtract(bottom, center)))
+    model = brep_planar_face(
+        PlanarProfile(
+            ProfilePlane(),
+            ProfileLoop((bottom, top), (ProfileArc(center), ProfileLine())),
+        ),
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+
+    bounds = np.asarray(model.parameter_bounds[0], dtype=np.float64)
+    assert Fraction(float(bounds[1, 0])) >= Fraction(center[0]) + Fraction(carrier_radius)
