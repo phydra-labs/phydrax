@@ -186,6 +186,28 @@ SPLINE
         decode_dxf_bytes(_drawing(malformed), DxfImportPolicy())
 
 
+def _spline_wedge(corner: tuple[float, float]) -> bytes:
+    # Quadratic SPLINE (2, 0) -> (0, 1) closed through the origin by two lines;
+    # the first line starts at ``corner``.
+    return _drawing(
+        "0\nSPLINE\n70\n0\n71\n2\n72\n6\n73\n3\n"
+        "40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n"
+        "10\n2.0\n20\n0.0\n10\n2.0\n20\n1.0\n10\n0.0\n20\n1.0\n"
+        f"0\nLINE\n10\n{corner[0]!r}\n20\n{corner[1]!r}\n30\n0.0\n"
+        "11\n0.0\n21\n0.0\n31\n0.0\n"
+        "0\nLINE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+    )
+
+
+def test_spline_end_at_its_vertex_joins_exactly() -> None:
+    imported = decode_dxf_bytes(_spline_wedge((0.0, 1.0)), DxfImportPolicy())
+    assert imported.report.losses == ()
+    assert imported.profile.endpoint_gap_bounds is None
+    assert any(
+        isinstance(segment, BSplineCurve) for segment in imported.profile.outer.segments
+    )
+
+
 # Exact axis points of the ellipse centered at 0 with major (2, 0), ratio 0.5.
 _AXIS_POINTS = ((2.0, 0.0), (0.0, 1.0), (-2.0, 0.0), (0.0, -1.0), (2.0, 0.0))
 

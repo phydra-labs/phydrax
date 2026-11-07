@@ -809,6 +809,12 @@ def _segment_gaps(
     loop: ProfileLoop, index: int, *, full_turn: bool
 ) -> tuple[float, float]:
     segment = loop.segments[index]
+    vertices = np.asarray(
+        (loop.vertices[index], loop.vertices[(index + 1) % len(loop.vertices)]),
+        dtype=np.float64,
+    )
+    if isinstance(segment, BSplineCurve):
+        return endpoint_gap_bounds(segment, segment.parameter_domain, vertices)
     if not isinstance(segment, ProfileCurveUse):
         return 0.0, 0.0
     # A closed periodic carrier ends on its exact native full turn.
@@ -821,11 +827,10 @@ def _segment_gaps(
         if full_turn
         else _quarter_roots(segment)
     )
-    vertices = (loop.vertices[index], loop.vertices[(index + 1) % len(loop.vertices)])
     return endpoint_gap_bounds(
         segment.curve,
         (segment.first, segment.last),
-        np.asarray(vertices, dtype=np.float64),
+        vertices,
         endpoint_roots=roots,
     )
 
@@ -904,11 +909,18 @@ def _reverse(edge: _Edge) -> _Edge:
 
 
 def _endpoint_bound(edge: _Edge, vertex: _Point, endpoint: int) -> float:
+    """Certified distance from a junction vertex to one source segment end.
+
+    Lines and circular arcs are defined by their vertices and join exactly;
+    conic uses and B-splines keep their source ends under a declared gap.
+    """
     segment = edge[2]
+    vertices = np.asarray((vertex, vertex), dtype=np.float64)
+    if isinstance(segment, BSplineCurve):
+        return endpoint_gap_bounds(segment, segment.parameter_domain, vertices)[endpoint]
     if not isinstance(segment, ProfileCurveUse):
         return 0.0 if edge[endpoint] == vertex else math.inf
     parameters = (segment.first, segment.last)
-    vertices = np.asarray((vertex, vertex), dtype=np.float64)
     return endpoint_gap_bounds(
         segment.curve, parameters, vertices, endpoint_roots=_quarter_roots(segment)
     )[endpoint]
@@ -920,7 +932,8 @@ def _join(
     limit: float,
     failed_bounds: list[tuple[float, float]] | None = None,
 ) -> _Point | None:
-    vertex = right[0] if isinstance(left[2], ProfileCurveUse) else left[1]
+    source_end = isinstance(left[2], (ProfileCurveUse, BSplineCurve))
+    vertex = right[0] if source_end else left[1]
     first = _endpoint_bound(left, vertex, 1)
     second = _endpoint_bound(right, vertex, 0)
     bound = max(first, second)
