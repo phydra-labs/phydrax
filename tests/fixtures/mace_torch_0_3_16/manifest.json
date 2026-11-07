@@ -32,7 +32,142 @@
       "interactions": 3,
       "normalize2mom_silu": 1.6791767923989418,
       "pair_repulsion": true,
+      "readout_scale": 1.6791767923989418,
       "rest": "RealAgnosticDensityResidualInteractionBlock"
+    },
+    "two_attention": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticAttResidualInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticAttResidualInteractionBlock"
+    },
+    "two_chebyshev_agnesi": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "Agnesi",
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "radial_type": "chebyshev",
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock"
+    },
+    "two_edge_irreps_first": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "edge_irreps": "3x0e+3x1o",
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock",
+      "use_edge_irreps_first": true
+    },
+    "two_gaussian_soft": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "Soft",
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "radial_type": "gaussian",
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock"
+    },
+    "two_joint_embedding": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "conditions": {
+        "total_charge": 1,
+        "total_spin": 2
+      },
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "embedding_specs": {
+        "total_charge": {
+          "emb_dim": 3,
+          "num_classes": 5,
+          "offset": 2,
+          "per": "graph",
+          "type": "categorical"
+        },
+        "total_spin": {
+          "emb_dim": 2,
+          "num_classes": 4,
+          "offset": 0,
+          "per": "graph",
+          "type": "categorical"
+        }
+      },
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock",
+      "use_embedding_readout": true
+    },
+    "two_keep_last_layer": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "keep_last_layer_irreps": true,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock"
     },
     "two_multihead_unscaled": {
       "apply_cutoff": false,
@@ -50,7 +185,31 @@
       "interactions": 2,
       "normalize2mom_silu": 1.6791767923989418,
       "pair_repulsion": true,
+      "readout_scale": 1.6791767923989418,
       "rest": "RealAgnosticResidualInteractionBlock"
+    },
+    "two_nonlinear_bias": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticResidualNonLinearInteractionBlock",
+      "gate_scales": [
+        1.6791767923989418,
+        1.8467055342154763
+      ],
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": null,
+      "pair_repulsion": false,
+      "readout_class": "NonLinearBiasReadoutBlock",
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualNonLinearInteractionBlock"
     },
     "two_scale_shift": {
       "apply_cutoff": true,
@@ -67,10 +226,50 @@
       "interactions": 2,
       "normalize2mom_silu": 1.6791767923989418,
       "pair_repulsion": true,
+      "readout_scale": 1.6791767923989418,
       "rest": "RealAgnosticResidualInteractionBlock"
+    },
+    "two_so3": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "hidden_irreps": "4x0e+4x1e",
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock",
+      "use_so3": true
     }
   },
+  "gates": {
+    "energy": [
+      1e-09,
+      1e-12
+    ],
+    "forces": [
+      1e-08,
+      1e-10
+    ],
+    "stress": [
+      1e-09,
+      1e-10
+    ]
+  },
   "generator": "tests/fixtures/mace_torch_0_3_16/generate.py",
+  "host": {
+    "machine": "AMD64",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.17"
+  },
   "provider": {
     "ase": "3.29.0",
     "e3nn": "0.4.4",
