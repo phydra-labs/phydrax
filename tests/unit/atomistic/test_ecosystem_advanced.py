@@ -1506,6 +1506,12 @@ def test_ipi_unix_and_tcp_roundtrip(tmp_path: Path, mode: str) -> None:
         plan = phx.atomistic.interchange.IPITransportPlan.unix(
             f"/tmp/phydrax-ipi-{os.getpid()}.sock", timeout=5.0, virial="optional"
         )
+        if os.name != "posix":
+            with pytest.raises(
+                OSError, match="Unix i-PI socket transport requires a POSIX"
+            ):
+                plan.listen()
+            return
     else:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.bind(("127.0.0.1", 0))
