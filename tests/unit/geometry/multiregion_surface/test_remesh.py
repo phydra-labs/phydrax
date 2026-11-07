@@ -321,7 +321,7 @@ def test_failed_transfer_rolls_back_and_small_topology_grows() -> None:
 
     roomy = seed.capacity_plan(resource_id="full", headroom=2.0)
     roomy_topology = seed.topology(roomy)
-    with pytest.raises(ValueError, match="capacity layout"):
+    with pytest.raises(ValueError, match="storage layout"):
         full_state.require_topology(roomy_topology)
     assert full_topology.topology_id == roomy_topology.topology_id
     assert full_topology.lineage_id == roomy_topology.lineage_id
