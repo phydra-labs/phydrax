@@ -62,6 +62,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._identity import IdentityWords
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
@@ -4253,6 +4254,16 @@ class PreparedAtomisticNeighborhoodBundle(StrictModule, NonTrainableState):
             accepted.geometry,
             self.prepared_identity,
         )
+
+
+# Potential requirements embed these in every stored atomistic model.
+for _artifact in (
+    AtomisticNeighborhoodRequirement,
+    AtomisticNeighborhoodRole,
+    AtomisticPairExclusions,
+):
+    register_artifact_value(f"phydrax.atomistic:{_artifact.__name__}", _artifact)
+del _artifact
 
 
 __all__ = [
