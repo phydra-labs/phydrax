@@ -23,13 +23,25 @@ namespace phx::mc {
 static_assert(std::endian::native == std::endian::little,
               "wide integer words are little-endian byte images");
 
-// a + b + carry as one limb; `carry` (0 or 1) receives the outgoing carry.
+// a + b + carry as one limb; `carry` (0 or 1) receives the outgoing carry. The
+// compiler's exact carry chain is used where one exists; all routes give identical bits.
 inline std::uint64_t add_with_carry(std::uint64_t a, std::uint64_t b,
                                     std::uint64_t& carry) noexcept {
+#if defined(__SIZEOF_INT128__)
+  __extension__ using Wide = unsigned __int128;
+  const Wide total = static_cast<Wide>(a) + b + carry;
+  carry = static_cast<std::uint64_t>(total >> 64);
+  return static_cast<std::uint64_t>(total);
+#elif defined(_MSC_VER) && defined(_M_X64)
+  unsigned long long sum = 0;
+  carry = _addcarry_u64(static_cast<unsigned char>(carry), a, b, &sum);
+  return sum;
+#else
   const std::uint64_t partial = a + b;
   const std::uint64_t sum = partial + carry;
   carry = static_cast<std::uint64_t>(partial < a) + static_cast<std::uint64_t>(sum < partial);
   return sum;
+#endif
 }
 
 // Exact 128-bit product a * b: returns the low limb and stores the high limb.

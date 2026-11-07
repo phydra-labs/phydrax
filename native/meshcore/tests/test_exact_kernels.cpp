@@ -187,6 +187,43 @@ std::array<std::uint64_t, 2> schoolbook_multiply_accumulate(std::uint64_t a, std
   return out;
 }
 
+// Reference a + b + carry from 32-bit halves: (sum limb, carry out).
+std::array<std::uint64_t, 2> halves_sum(std::uint64_t a, std::uint64_t b, std::uint64_t carry) {
+  const std::uint64_t low = (a & 0xFFFFFFFFu) + (b & 0xFFFFFFFFu) + carry;
+  const std::uint64_t high = (a >> 32) + (b >> 32) + (low >> 32);
+  return {(high << 32) | (low & 0xFFFFFFFFu), high >> 32};
+}
+
+// The compiled add_with_carry route (compiler carry chain or portable form) equals
+// the reference, including every carry out at the 2^64 - 1 boundaries.
+void test_add_with_carry_matches_reference() {
+  const std::vector<std::uint64_t> operands = {0, 1, 2, 0x7FFFFFFFFFFFFFFFu, 0x8000000000000000u,
+                                               0xFFFFFFFFu, 0x100000000u, ~std::uint64_t{0} - 1,
+                                               ~std::uint64_t{0}};
+  for (const std::uint64_t a : operands) {
+    for (const std::uint64_t b : operands) {
+      for (std::uint64_t carry_in = 0; carry_in < 2; ++carry_in) {
+        std::uint64_t carry = carry_in;
+        const std::uint64_t sum = phx::mc::add_with_carry(a, b, carry);
+        PHX_CHECK((std::array<std::uint64_t, 2>{sum, carry} == halves_sum(a, b, carry_in)));
+      }
+    }
+  }
+  std::uint64_t carry = 1;
+  PHX_CHECK(phx::mc::add_with_carry(~std::uint64_t{0}, ~std::uint64_t{0}, carry) ==
+                ~std::uint64_t{0} &&
+            carry == 1);
+  std::mt19937_64 random(43);
+  for (int trial = 0; trial < 100000; ++trial) {
+    const std::uint64_t a = random();
+    const std::uint64_t b = random();
+    const std::uint64_t carry_in = random() & 1u;
+    carry = carry_in;
+    const std::uint64_t sum = phx::mc::add_with_carry(a, b, carry);
+    PHX_CHECK((std::array<std::uint64_t, 2>{sum, carry} == halves_sum(a, b, carry_in)));
+  }
+}
+
 // The compiled multiply_wide and multiply_accumulate routes (compiler wide multiply
 // or portable split) equal the reference on boundary and random operands.
 void test_multiply_wide_matches_schoolbook() {
@@ -965,6 +1002,7 @@ void test_multichunk_exact() {
 int main() {
   test_wide_integer();
   test_wide_integer_carries();
+  test_add_with_carry_matches_reference();
   test_multiply_wide_matches_schoolbook();
   test_interval_restrict();
   test_bernstein_controls();
