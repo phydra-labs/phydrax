@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from fractions import Fraction
 from typing import final, Literal, NamedTuple
@@ -41,6 +40,7 @@ from ._mesh_certificates import (
 )
 from ._meshing_domain import MeshingDomain
 from ._planar_coverage import FacetOverlap, PlcSourcePoints, PlcSourcePointWitness
+from ._rational import fraction_up
 from ._source_boundary_records import SourceBoundaryDistanceWitness, SourceBoundaryQuery
 from ._source_fidelity import _AdaptiveImplicitBoundaryCarrier
 from ._source_fidelity_certificate import SourceFidelityCertificate
@@ -1442,8 +1442,7 @@ def _plc_source_points(
 
 
 def _upper_sum(first: float, second: float, /) -> float:
-    total = first + second
-    return total if total - first >= second else math.nextafter(total, math.inf)
+    return fraction_up(Fraction(first) + Fraction(second))
 
 
 def _prove_coverage(

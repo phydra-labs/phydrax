@@ -17,7 +17,7 @@ from phydrax._meshcore import (
     prepare_plc_source,
 )
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry._domain_certification import certify_domain_coverage
+from phydrax.geometry._domain_certification import _upper_sum, certify_domain_coverage
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._planar_coverage import PlcSourcePointWitness
 from phydrax.meshing._association import (
@@ -70,6 +70,27 @@ from phydrax.meshing.providers._native_volume import (
 
 
 pytestmark = pytest.mark.meshcore
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    (
+        (1e-20, 1.0),
+        (1e-17, 1.0),
+        (8.673617379884035e-19, 1.0),
+        (1.0, 1e-20),
+        (0.1, 3.0),
+    ),
+    ids=("win5-c4-1e-20", "win5-c4-1e-17", "win5-c4-2^-60", "ordered", "rounded"),
+)
+def test_source_distance_upper_sum_encloses_the_exact_sum(
+    first: float, second: float
+) -> None:
+    # WIN-5 C4: a Fast2Sum test without ordering returned 1.0 for 1e-20 + 1.0.
+    exact = Fraction(first) + Fraction(second)
+    total = _upper_sum(first, second)
+    assert Fraction(total) >= exact
+    assert Fraction(float(np.nextafter(total, -np.inf))) < exact
 
 
 def test_composed_plc_root_point_rounds_once_and_rejects_bad_stencils() -> None:
