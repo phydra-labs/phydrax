@@ -929,6 +929,18 @@ def _unit_tangent(curve: AbstractCurve, parameter: float, /) -> np.ndarray:
     return scaled / length
 
 
+class UnsupportedProfileLoop(NotImplementedError):
+    """A curved profile loop needs a proof route this owner does not provide.
+
+    ``feature`` names the missing proof. It stays a ``NotImplementedError`` so
+    callers that treat an unsupported route as such keep that meaning.
+    """
+
+    def __init__(self, feature: str, message: str, /) -> None:
+        super().__init__(message)
+        self.feature = feature
+
+
 def _conic_turning_number(loop: ProfileLoop, /) -> int:
     tangent_pairs = []
     intrinsic_turns = []
@@ -961,16 +973,18 @@ def _conic_turning_number(loop: ProfileLoop, /) -> int:
     total = float(sum(terms))
     tolerance = 2048.0 * np.finfo(np.float64).eps * max(1, len(loop.segments))
     if abs(abs(total) - _TWO_PI) > tolerance:
-        raise NotImplementedError(
-            "Curved profile loops must have one non-self-intersecting turn."
+        raise UnsupportedProfileLoop(
+            "curved-loop-turning-number",
+            "Curved profile loops must have one non-self-intersecting turn.",
         )
     direction = 1 if total > 0.0 else -1
     if any(
         direction * value < -tolerance for value in terms
     ) and not _curved_loop_is_simple(loop):
-        raise NotImplementedError(
+        raise UnsupportedProfileLoop(
+            "nonconvex-curved-loop-simplicity",
             "Curved profile loops must have one non-self-intersecting turn; "
-            "nonconvex loops require an exact line/circle simplicity proof."
+            "nonconvex loops require an exact line/circle simplicity proof.",
         )
     return direction
 

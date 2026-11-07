@@ -1698,3 +1698,24 @@ def test_endpoint_gap_bounds_honor_exact_quarter_turn_conic_roots(k: int) -> Non
         endpoint_gap_bounds(
             curve, (parameter, parameter), vertices, endpoint_roots=(other, None)
         )
+
+
+def test_nonconvex_ellipse_profile_refusal_names_its_missing_proof() -> None:
+    from phydrax.geometry.brep._constructors import (
+        PlanarProfile,
+        ProfileCurveUse,
+        ProfileLine,
+        ProfileLoop,
+        ProfilePlane,
+        UnsupportedProfileLoop,
+    )
+
+    curve = EllipseCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 2.0, 1.0)
+    loop = ProfileLoop(
+        ((2.0, 0.0), (0.0, -1.0), (0.0, 0.0)),
+        (ProfileCurveUse(curve, 0.0, 3 * np.pi / 2), ProfileLine(), ProfileLine()),
+    )
+    with pytest.raises(UnsupportedProfileLoop) as refusal:
+        PlanarProfile(ProfilePlane(), loop)
+    assert refusal.value.feature == "nonconvex-curved-loop-simplicity"
+    assert isinstance(refusal.value, NotImplementedError)

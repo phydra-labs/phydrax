@@ -351,6 +351,14 @@ def test_parameter_past_the_full_turn_is_out_of_period() -> None:
         decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-14))
 
 
+def test_nonconvex_analytic_ellipse_is_a_reported_refusal() -> None:
+    # A general-path three-quarter ellipse needs a non-convex conic simplicity
+    # proof that the profile owner does not have; it is refused as an import.
+    source = _wedge(0.0, math.nextafter(_right_angle(3), 0.0), 0, 3)
+    with pytest.raises(DxfImportError, match="nonconvex-curved-loop-simplicity"):
+        decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-14))
+
+
 def _mixed_right_angles() -> list[tuple[float, float, int, int]]:
     cases = []
     for k in (1, 2, 3):

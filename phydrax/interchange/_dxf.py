@@ -43,6 +43,7 @@ from ..geometry.brep._constructors import (
     ProfileLoop,
     ProfilePlane,
     ProfileSegment,
+    UnsupportedProfileLoop,
 )
 from ..geometry.brep._intersection import NativePeriodEndpoint
 from ..geometry.brep._patches import (
@@ -1027,6 +1028,8 @@ def _profile(
             )
         except ValueError as error:
             failures.append(str(error))
+        except UnsupportedProfileLoop as error:
+            failures.append(f"unsupported {error.feature}: {error}")
     raise _SourceRefusal(
         "DxfSource.geometry must satisfy its declared planar source contract; got "
         + "DXF loops do not form one certified planar region: "
