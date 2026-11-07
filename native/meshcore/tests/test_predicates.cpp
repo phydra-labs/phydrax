@@ -9,6 +9,7 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
+#include "wide_integer.hpp"
 
 namespace {
 
@@ -19,7 +20,16 @@ double uniform(std::uint64_t& state) {
   return static_cast<double>(state >> 11) * 0x1p-53;
 }
 
-int sign128(__int128 value) { return (value > 0) - (value < 0); }
+// Sign of p q - r s, from exact 256-bit integer products.
+int product_difference_sign(std::int64_t p, std::int64_t q, std::int64_t r, std::int64_t s) {
+  Int256 left;
+  Int256 right;
+  Int256 difference;
+  PHX_CHECK(checked_multiply(Int256::from_int64(p), Int256::from_int64(q), left));
+  PHX_CHECK(checked_multiply(Int256::from_int64(r), Int256::from_int64(s), right));
+  PHX_CHECK(checked_add(left, wrapping_negate(right), difference));
+  return compare(difference, Int256{});
+}
 
 // Near-degenerate grid around the line y = x (Kettner et al. classroom
 // example): a = (0.5 + i 2^-53, 0.5 + j 2^-53), b = (12, 12), c = (24, 24).
@@ -28,15 +38,15 @@ int sign128(__int128 value) { return (value > 0) - (value < 0); }
 void test_orient2d_near_degenerate_grid() {
   const double b[2] = {12.0, 12.0};
   const double c[2] = {24.0, 24.0};
-  const __int128 scale = static_cast<__int128>(1) << 53;
-  const __int128 bx = 12 * scale, by = 12 * scale, cx = 24 * scale, cy = 24 * scale;
+  const std::int64_t scale = std::int64_t{1} << 53;
+  const std::int64_t bx = 12 * scale, by = 12 * scale, cx = 24 * scale, cy = 24 * scale;
   int positive = 0, negative = 0, zero = 0;
   for (int i = 0; i < 128; ++i) {
     for (int j = 0; j < 128; ++j) {
       const double a[2] = {0.5 + std::ldexp(static_cast<double>(i), -53),
                            0.5 + std::ldexp(static_cast<double>(j), -53)};
-      const __int128 ax = scale / 2 + i, ay = scale / 2 + j;
-      const int expected = sign128((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
+      const std::int64_t ax = scale / 2 + i, ay = scale / 2 + j;
+      const int expected = product_difference_sign(bx - ax, cy - ay, by - ay, cx - ax);
       const int actual = orient2d(a, b, c);
       PHX_CHECK(actual == expected);
       PHX_CHECK(orient2d(b, a, c) == -expected);
