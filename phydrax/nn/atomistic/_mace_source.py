@@ -330,7 +330,9 @@ class _Reconstruction:
         self.maximum_entries = maximum_entries
 
     def cast(self, value: np.ndarray, /) -> np.ndarray:
-        return np.ascontiguousarray(value).astype(self.dtype)
+        # ``np.ascontiguousarray`` promotes 0-d values to shape (1,); source scalars
+        # (the nonlinear density alpha/beta) keep their rank.
+        return np.array(value, dtype=self.dtype, order="C")
 
     def linear(
         self, name: str, in_layout: O3IrrepLayout, out_layout: O3IrrepLayout, /
