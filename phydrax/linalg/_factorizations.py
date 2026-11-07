@@ -273,7 +273,10 @@ class PreparedFactorization(StrictModule):
             jnp.any(columns < 0) | jnp.any(columns >= size),
             "Inverse column indices are outside the operator domain.",
         )
-        right = (jnp.arange(size)[:, None] == columns[None, :]).astype(
+        # Validated indices lie in [0, size), so they convert losslessly to the
+        # row-index dtype whatever integer dtype the caller supplied.
+        rows = jnp.arange(size)
+        right = (rows[:, None] == columns.astype(rows.dtype)[None, :]).astype(
             self.operator.target.dtype
         )
         right = right.reshape(self.operator.target.shape + (columns.size,))
