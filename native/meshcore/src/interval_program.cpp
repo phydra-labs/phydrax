@@ -46,6 +46,33 @@ constexpr std::int64_t kMinimum = 16;
 // conventions of phx_mc_interval_elementary, as in the host interpreter.
 constexpr std::int64_t kExp = 17;
 constexpr std::int64_t kLog = 18;
+// Branch semantics of non-smooth programs, as the host interpreter's
+// comparisons, absolute value and value-identity decisions
+// (phydrax/geometry/_interval_enclosure.py, _ValueIdentity).
+// eq (aux 0) / ne (aux 1) as an indicator interval: eq is certainly true only
+// when both operands are the same point, certainly false when they are disjoint.
+constexpr std::int64_t kEqual = 19;
+// |x| with the host's outward rounding of both endpoints.
+constexpr std::int64_t kAbsolute = 20;
+// Winner flags of an elementwise min (aux 0) / max (aux 1) of two values with
+// distinct identities. Writes 2 * size flag pairs: [out, out + size) for
+// operand a and [out + size, out + 2 size) for operand b. A flag pair is not
+// an interval: lower = 1 where one operand strictly wins on the whole box
+// (decided), upper = 1 where this operand is that winner.
+constexpr std::int64_t kExtremumPair = 21;
+// Winner flags of a min (aux 0) / max (aux 1) reduction: size outputs, b lanes
+// each, operand element (k, l) at a + indices[a_index + k * b + l] (or
+// a + k * b + l when a_index is -1). b_index names b representative lanes
+// (lanes of equal identity share the first one), or is -1 when every lane is
+// its own. Writes size * b flag pairs at out + k * b + l.
+constexpr std::int64_t kExtremumReduce = 22;
+// eq (aux 0) / ne (aux 1) of a min/max operand against its result: where the
+// flag pair b is decided the result is the operand's winner flag (negated for
+// ne) exactly, else the comparison interval a.
+constexpr std::int64_t kDecide = 23;
+// A sum of a reduction's attainment indicators counts at least one element:
+// lower = maximum(lower, 1), upper unchanged.
+constexpr std::int64_t kAttain = 24;
 
 constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
@@ -56,7 +83,25 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare) |
     (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect) |
     (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
-    (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog);
+    (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
+    (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kAbsolute) |
+    (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
+    (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain);
+
+// Branch-evidence event rows: kind, test, size, a, a_index, boxes. Element k
+// is the workspace entry a + (a_index < 0 ? k : indices[a_index + k]); where
+// the test holds, the event clears the flags of box indices[boxes + k], or of
+// every box when that entry or `boxes` is -1. A kink clears smooth; a jump
+// clears smooth and continuous.
+constexpr std::int64_t kEventFields = 6;
+constexpr std::int64_t kKink = 0;
+constexpr std::int64_t kJump = 1;
+constexpr std::int64_t kMeetsZero = 0;       // !(lower > 0 || upper < 0)
+constexpr std::int64_t kNotPositive = 1;     // !(lower > 0)
+constexpr std::int64_t kNotNonnegative = 2;  // !(lower >= 0)
+constexpr std::int64_t kUndecided = 3;       // lower != upper
+constexpr std::int64_t kNonfinite = 4;       // !(isfinite(lower) && isfinite(upper))
+constexpr std::int64_t kAlways = 5;
 
 struct Row {
   std::int64_t opcode;
@@ -118,11 +163,43 @@ bool operand_valid(const std::int64_t* indices, std::int64_t index_count, std::i
   return true;
 }
 
+// Output entries of a row: 2 size flag pairs for kExtremumPair, size * b for
+// kExtremumReduce, else size. Only called on rows with a valid extent.
+std::int64_t row_extent(const Row& row) noexcept {
+  if (row.opcode == kExtremumPair) return 2 * row.size;
+  if (row.opcode == kExtremumReduce) return row.size * row.b;
+  return row.size;
+}
+
+// Representative lanes: rep[l] in [0, l] and every representative is its own.
+bool representatives_valid(const std::int64_t* indices, std::int64_t index_count,
+                           std::int64_t index, std::int64_t lanes) noexcept {
+  if (index == -1) return true;
+  if (index < 0 || index > index_count || lanes > index_count - index) return false;
+  for (std::int64_t lane = 0; lane < lanes; ++lane) {
+    const std::int64_t representative = indices[index + lane];
+    if (representative < 0 || representative > lane) return false;
+    if (indices[index + representative] != representative) return false;
+  }
+  return true;
+}
+
 bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* indices,
                std::int64_t index_count, const double* parameters, std::int64_t parameter_count,
                std::int64_t workspace_size) noexcept {
-  if (row.opcode < kGather || row.opcode > kLog) return false;
-  if (row.size < 0 || row.out < previous_end || row.out > workspace_size - row.size) return false;
+  if (row.opcode < kGather || row.opcode > kAttain) return false;
+  if (row.size < 0 || row.out < previous_end || row.out > workspace_size) return false;
+  const std::int64_t room = workspace_size - row.out;
+  switch (row.opcode) {
+    case kExtremumPair:
+      if (row.size > room / 2) return false;
+      break;
+    case kExtremumReduce:
+      if (row.b < 1 || row.size > room / row.b) return false;
+      break;
+    default:
+      if (row.size > room) return false;
+  }
   const auto operand = [&](std::int64_t offset, std::int64_t index) {
     return operand_valid(indices, index_count, offset, index, row.size, row.out);
   };
@@ -144,8 +221,17 @@ bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* in
     case kMinimum:
       return row.aux == 0 && operand(row.a, row.a_index) && operand(row.b, row.b_index);
     case kCompare:
+    case kEqual:
+    case kExtremumPair:
+    case kDecide:
       return (row.aux == 0 || row.aux == 1) && operand(row.a, row.a_index) &&
              operand(row.b, row.b_index);
+    case kExtremumReduce:
+      // size * b operand entries; the product fits since it fits the output room.
+      return (row.aux == 0 || row.aux == 1) &&
+             operand_valid(indices, index_count, row.a, row.a_index, row.size * row.b,
+                           row.out) &&
+             representatives_valid(indices, index_count, row.b_index, row.b);
     case kSelect:
       // Both case blocks are contiguous and precede the output.
       return row.b_index == -1 && row.aux >= 0 && row.b >= 0 && row.b <= row.out &&
@@ -168,7 +254,28 @@ bool program_valid(const std::int64_t* instructions, std::int64_t instruction_co
                    workspace_size)) {
       return false;
     }
-    previous_end = row.out + row.size;
+    previous_end = row.out + row_extent(row);
+  }
+  return true;
+}
+
+// Whether every event row reads valid workspace entries and names valid boxes.
+bool events_valid(const std::int64_t* events, std::int64_t event_count,
+                  const std::int64_t* indices, std::int64_t index_count,
+                  std::int64_t workspace_size, std::int64_t box_count) noexcept {
+  for (std::int64_t row = 0; row < event_count; ++row) {
+    const std::int64_t* fields = events + row * kEventFields;
+    const std::int64_t kind = fields[0], test = fields[1], size = fields[2];
+    const std::int64_t a = fields[3], a_index = fields[4], boxes = fields[5];
+    if ((kind != kKink && kind != kJump) || test < kMeetsZero || test > kAlways || size < 0)
+      return false;
+    if (!operand_valid(indices, index_count, a, a_index, size, workspace_size)) return false;
+    if (boxes == -1) continue;
+    if (boxes < 0 || boxes > index_count || size > index_count - boxes) return false;
+    for (std::int64_t k = 0; k < size; ++k) {
+      const std::int64_t box = indices[boxes + k];
+      if (box < -1 || box >= box_count) return false;
+    }
   }
   return true;
 }
@@ -179,11 +286,14 @@ inline std::int64_t address(const std::int64_t* indices, std::int64_t offset,
 }
 
 // In-order REDUCE_SUM accumulators for one element: lower and upper sums and
-// the scale sum of max(|lo|, |hi|), each initialized from +0.
+// the scale sum of max(|lo|, |hi|), each initialized from +0, and whether every
+// term's lower (upper) endpoint is nonnegative (nonpositive).
 struct Reduction {
   double lower = 0.0;
   double upper = 0.0;
   double scale = 0.0;
+  bool nonnegative = true;
+  bool nonpositive = true;
 };
 
 inline void accumulate(const double* lower, const double* upper, std::int64_t first,
@@ -191,16 +301,23 @@ inline void accumulate(const double* lower, const double* upper, std::int64_t fi
   double lower_sum = sum.lower;
   double upper_sum = sum.upper;
   double scale = sum.scale;
+  bool nonnegative = sum.nonnegative;
+  bool nonpositive = sum.nonpositive;
   for (std::int64_t term = first; term < last; ++term) {
     lower_sum += lower[term];
     upper_sum += upper[term];
   }
   for (std::int64_t term = first; term < last; ++term) {
     scale += maximum(std::fabs(lower[term]), std::fabs(upper[term]));
+    nonnegative = nonnegative && lower[term] >= 0.0;
+    nonpositive = nonpositive && upper[term] <= 0.0;
   }
-  sum = {lower_sum, upper_sum, scale};
+  sum = {lower_sum, upper_sum, scale, nonnegative, nonpositive};
 }
 
+// A sum of nonnegative (nonpositive) terms keeps its sign through outward
+// rounding, as the host interval sum's sign clamp: a sum of squares stays an
+// admissible base for roots and real powers.
 inline void store_reduction(const Reduction& sum, double gamma, double* lower, double* upper,
                             std::int64_t target) noexcept {
   const double low = sum.lower - gamma * sum.scale;
@@ -209,8 +326,8 @@ inline void store_reduction(const Reduction& sum, double gamma, double* lower, d
     lower[target] = -std::numeric_limits<double>::infinity();
     upper[target] = std::numeric_limits<double>::infinity();
   } else {
-    lower[target] = down(low);
-    upper[target] = up(high);
+    lower[target] = sum.nonnegative ? maximum(down(low), 0.0) : down(low);
+    upper[target] = sum.nonpositive ? minimum(up(high), 0.0) : up(high);
   }
 }
 
@@ -262,6 +379,106 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
         const bool certainly_false = strict ? upper[a] <= lower[b] : upper[a] < lower[b];
         lower[out + k] = certainly_true ? 1.0 : 0.0;
         upper[out + k] = certainly_false ? 0.0 : 1.0;
+      }
+      return;
+    case kEqual:
+      for (std::int64_t k = begin; k < end; ++k) {
+        const std::int64_t a = address(indices, row.a, row.a_index, k);
+        const std::int64_t b = address(indices, row.b, row.b_index, k);
+        const bool same_point =
+            lower[a] == upper[a] && lower[b] == upper[b] && lower[a] == lower[b];
+        const bool disjoint = upper[a] < lower[b] || upper[b] < lower[a];
+        const bool certainly_true = row.aux == 0 ? same_point : disjoint;
+        const bool certainly_false = row.aux == 0 ? disjoint : same_point;
+        lower[out + k] = certainly_true ? 1.0 : 0.0;
+        upper[out + k] = certainly_false ? 0.0 : 1.0;
+      }
+      return;
+    case kAbsolute:
+      for (std::int64_t k = begin; k < end; ++k) {
+        const std::int64_t input = address(indices, row.a, row.a_index, k);
+        const double low = lower[input];
+        const double high = upper[input];
+        const bool crosses = low <= 0.0 && high >= 0.0;
+        const double low_magnitude = std::fabs(low);
+        const double high_magnitude = std::fabs(high);
+        const double least = crosses ? 0.0 : minimum(low_magnitude, high_magnitude);
+        const double most = maximum(low_magnitude, high_magnitude);
+        if (std::isnan(least) || std::isnan(most)) {
+          lower[out + k] = -std::numeric_limits<double>::infinity();
+          upper[out + k] = std::numeric_limits<double>::infinity();
+        } else {
+          lower[out + k] = down(least);
+          upper[out + k] = up(most);
+        }
+      }
+      return;
+    case kExtremumPair:
+      for (std::int64_t k = begin; k < end; ++k) {
+        const std::int64_t a = address(indices, row.a, row.a_index, k);
+        const std::int64_t b = address(indices, row.b, row.b_index, k);
+        const bool first = row.aux == 0 ? upper[a] < lower[b] : lower[a] > upper[b];
+        const bool second = row.aux == 0 ? upper[b] < lower[a] : lower[b] > upper[a];
+        const double decided = first || second ? 1.0 : 0.0;
+        lower[out + k] = decided;
+        upper[out + k] = first ? 1.0 : 0.0;
+        lower[out + row.size + k] = decided;
+        upper[out + row.size + k] = second ? 1.0 : 0.0;
+      }
+      return;
+    case kExtremumReduce: {
+      const std::int64_t lanes = row.b;
+      const bool minimum_reduction = row.aux == 0;
+      const auto representative = [&](std::int64_t lane) {
+        return row.b_index < 0 ? lane : indices[row.b_index + lane];
+      };
+      for (std::int64_t k = begin; k < end; ++k) {
+        const auto entry = [&](std::int64_t lane) {
+          return address(indices, row.a, row.a_index, k * lanes + lane);
+        };
+        // NumPy min/max over the representatives: the first NaN propagates.
+        double bound = minimum_reduction ? upper[entry(0)] : lower[entry(0)];
+        for (std::int64_t lane = 1; lane < lanes && !std::isnan(bound); ++lane) {
+          if (representative(lane) != lane) continue;
+          const double value = minimum_reduction ? upper[entry(lane)] : lower[entry(lane)];
+          if (std::isnan(value) || (minimum_reduction ? value < bound : value > bound))
+            bound = value;
+        }
+        const auto candidate = [&](std::int64_t lane) {
+          return minimum_reduction ? lower[entry(lane)] <= bound : upper[entry(lane)] >= bound;
+        };
+        std::int64_t count = 0;
+        for (std::int64_t lane = 0; lane < lanes; ++lane)
+          if (representative(lane) == lane && candidate(lane)) ++count;
+        const bool decided = count == 1;
+        for (std::int64_t lane = 0; lane < lanes; ++lane) {
+          lower[out + k * lanes + lane] = decided ? 1.0 : 0.0;
+          upper[out + k * lanes + lane] = decided && candidate(representative(lane)) ? 1.0 : 0.0;
+        }
+      }
+      return;
+    }
+    case kDecide:
+      for (std::int64_t k = begin; k < end; ++k) {
+        const std::int64_t a = address(indices, row.a, row.a_index, k);
+        const std::int64_t b = address(indices, row.b, row.b_index, k);
+        if (lower[b] > 0.0) {
+          const bool winner = upper[b] > 0.0;
+          const double truth = (row.aux == 0 ? winner : !winner) ? 1.0 : 0.0;
+          lower[out + k] = truth;
+          upper[out + k] = truth;
+        } else {
+          lower[out + k] = lower[a];
+          upper[out + k] = upper[a];
+        }
+      }
+      return;
+    case kAttain:
+      for (std::int64_t k = begin; k < end; ++k) {
+        const std::int64_t input = address(indices, row.a, row.a_index, k);
+        const double high = upper[input];
+        lower[out + k] = maximum(lower[input], 1.0);
+        upper[out + k] = high;
       }
       return;
     case kExp:
@@ -352,8 +569,10 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
           low = -std::numeric_limits<double>::infinity();
           high = std::numeric_limits<double>::infinity();
         } else {
-          low = down(sum_lower);
-          high = up(sum_upper);
+          // The host interval sum's sign clamp: nonnegative (nonpositive)
+          // operands give a nonnegative (nonpositive) sum.
+          low = a_low >= 0.0 && b_low >= 0.0 ? maximum(down(sum_lower), 0.0) : down(sum_lower);
+          high = a_high <= 0.0 && b_high <= 0.0 ? minimum(up(sum_upper), 0.0) : up(sum_upper);
         }
         break;
       }
@@ -415,6 +634,45 @@ void execute_validated(const int64_t* instructions, int64_t instruction_count,
       }
     } else {
       execute_row(row, 0, row.size, indices, parameters, lower, upper);
+    }
+  }
+}
+
+bool event_holds(std::int64_t test, double low, double high) noexcept {
+  switch (test) {
+    case kMeetsZero:
+      return !(low > 0.0 || high < 0.0);
+    case kNotPositive:
+      return !(low > 0.0);
+    case kNotNonnegative:
+      return !(low >= 0.0);
+    case kUndecided:
+      return low != high;
+    case kNonfinite:
+      return !(std::isfinite(low) && std::isfinite(high));
+    default:  // kAlways
+      return true;
+  }
+}
+
+// Clear the flags of every box with a holding event over an executed workspace.
+void record_events(const int64_t* events, int64_t event_count, const int64_t* indices,
+                   const double* lower, const double* upper, int64_t box_count,
+                   std::uint8_t* smooth, std::uint8_t* continuous) noexcept {
+  for (int64_t box = 0; box < box_count; ++box) smooth[box] = continuous[box] = 1;
+  for (int64_t row = 0; row < event_count; ++row) {
+    const int64_t* fields = events + row * kEventFields;
+    const bool jump = fields[0] == kJump;
+    for (int64_t k = 0; k < fields[2]; ++k) {
+      const int64_t entry = address(indices, fields[3], fields[4], k);
+      if (!event_holds(fields[1], lower[entry], upper[entry])) continue;
+      const int64_t box = fields[5] == -1 ? -1 : indices[fields[5] + k];
+      const int64_t first = box == -1 ? 0 : box;
+      const int64_t last = box == -1 ? box_count : box + 1;
+      for (int64_t target = first; target < last; ++target) {
+        smooth[target] = 0;
+        if (jump) continuous[target] = 0;
+      }
     }
   }
 }
@@ -494,6 +752,41 @@ int32_t phx_mc_interval_program_execute(const int64_t* instructions, int64_t ins
       return PHX_MC_INVALID_INPUT;
     }
     execute_validated(instructions, instruction_count, indices, parameters, lower, upper);
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_interval_program_branches(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count, double* lower,
+    double* upper, int64_t workspace_size, const int64_t* events, int64_t event_count,
+    int64_t box_count, uint8_t* smooth, uint8_t* continuous) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (!phx::mc::addressable(instruction_count, kFields, sizeof(int64_t)) ||
+        !phx::mc::addressable(index_count, 1, sizeof(int64_t)) ||
+        !phx::mc::addressable(parameter_count, 1, sizeof(double)) ||
+        !phx::mc::addressable(workspace_size, 1, sizeof(double)) ||
+        !phx::mc::addressable(event_count, kEventFields, sizeof(int64_t)) ||
+        !phx::mc::addressable(box_count, 1, sizeof(uint8_t))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    if ((instruction_count > 0 && instructions == nullptr) ||
+        (index_count > 0 && indices == nullptr) ||
+        (parameter_count > 0 && parameters == nullptr) ||
+        (workspace_size > 0 && (lower == nullptr || upper == nullptr)) ||
+        (event_count > 0 && events == nullptr) ||
+        (box_count > 0 && (smooth == nullptr || continuous == nullptr))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    if (!program_valid(instructions, instruction_count, indices, index_count, parameters,
+                       parameter_count, workspace_size) ||
+        !events_valid(events, event_count, indices, index_count, workspace_size, box_count)) {
+      return PHX_MC_INVALID_INPUT;
+    }
+    execute_validated(instructions, instruction_count, indices, parameters, lower, upper);
+    record_events(events, event_count, indices, lower, upper, box_count, smooth, continuous);
     return PHX_MC_OK;
   });
 }
