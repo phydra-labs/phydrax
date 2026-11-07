@@ -269,6 +269,8 @@ def _linear_weights(
     inputs concatenated in input-layout order. Every output block must be
     matched; unmatched inputs carry no weights.
     """
+    if flat.size != _linear_count(in_layout, out_layout):
+        raise ValueError("Source linear weights do not match the declared irreps.")
     parts: list[list[np.ndarray]] = [[] for _ in out_layout.blocks]
     offset = 0
     for source in in_layout.blocks:
@@ -281,7 +283,7 @@ def _linear_weights(
             )
             parts[index].append(block.T)
             offset += size
-    if offset != flat.size or any(not blocks for blocks in parts):
+    if any(not blocks for blocks in parts):
         raise ValueError("Source linear weights do not match the declared irreps.")
     return tuple(np.concatenate(blocks, axis=1) for blocks in parts)
 

@@ -252,6 +252,9 @@
   with its own earlier `stat`, so unchanged provider files verify on Windows,
   whose handle and path queries report different `st_ctime` values; replaced,
   rewritten and touched files are still refused.
+- A MACE source equivariant-linear weight vector of the wrong length is refused
+  with the source contract error ("do not match the declared irreps") before it
+  is split, instead of surfacing as a NumPy reshape error.
 - Certified distance, chord, norm, frame and quality bounds round outward in
   directed binary64 arithmetic instead of padding round-to-nearest estimates:
   source distance sums, curve and surface chord, point and box bounds,
