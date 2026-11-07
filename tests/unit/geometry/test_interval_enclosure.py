@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from phydrax._interpolation import bspline_jet_stencil
-from phydrax._meshcore import load_meshcore
+from phydrax._meshcore import load_meshcore, meshcore_available
 from phydrax.geometry import _interval_enclosure as interval_enclosure, Superquadric
 from phydrax.geometry._interval_enclosure import (
     interval_multiply,
@@ -130,6 +130,112 @@ def test_interval_sum_encloses_exact_endpoints_and_preserves_signed_zero(
     )
     assert lower == upper == 0.0
     assert np.signbit(lower) and np.signbit(upper)
+
+
+def _bits(value: np.ndarray | np.generic) -> np.ndarray:
+    return np.asarray(value, dtype=np.float64).view(np.uint64)
+
+
+_FIRST_NAN = np.asarray(0x7FF8000000000001, dtype=np.uint64).view(np.float64)
+_SECOND_NAN = np.asarray(0x7FF8000000000002, dtype=np.uint64).view(np.float64)
+
+
+@pytest.mark.parametrize("swapped", (False, True), ids=("ordered", "swapped"))
+def test_interval_extrema_order_signed_zeros_and_return_the_first_nan(
+    swapped: bool,
+) -> None:
+    # IEEE 754-2019 minimum/maximum: -0 orders below +0 in both operand orders,
+    # and the first NaN operand is returned unchanged, as the native kernels do.
+    left = np.asarray((-0.0, 0.0, _FIRST_NAN, 1.0, _FIRST_NAN), dtype=np.float64)
+    right = np.asarray((0.0, -0.0, 2.0, _SECOND_NAN, _SECOND_NAN), dtype=np.float64)
+    first, second = (right, left) if swapped else (left, right)
+    leading_nan = _SECOND_NAN if swapped else _FIRST_NAN
+    nans = (_FIRST_NAN, _SECOND_NAN, leading_nan)
+    expected_minimum = np.asarray((-0.0, -0.0, *nans), dtype=np.float64)
+    expected_maximum = np.asarray((0.0, 0.0, *nans), dtype=np.float64)
+
+    minimum = interval_enclosure.interval_minimum((first, first), (second, second))
+    maximum = interval_enclosure.interval_maximum((first, first), (second, second))
+
+    for bound in minimum:
+        np.testing.assert_array_equal(_bits(bound), _bits(expected_minimum))
+    for bound in maximum:
+        np.testing.assert_array_equal(_bits(bound), _bits(expected_maximum))
+
+
+@pytest.mark.parametrize("swapped", (False, True), ids=("ordered", "swapped"))
+def test_host_interval_arithmetic_orders_tied_signed_zero_endpoints(
+    swapped: bool,
+) -> None:
+    # [-0, +0] * [-1, 1] ties its candidate products at -0 and +0: the hull is
+    # [-0, +0]. A sum of nonpositive operands keeps its exact -0 upper bound.
+    zero = (np.asarray(-0.0), np.asarray(0.0))
+    unit = (np.asarray(-1.0), np.asarray(1.0))
+    product = interval_enclosure._host_interval_multiply(
+        *((unit, zero) if swapped else (zero, unit))
+    )
+    nonpositive = (np.asarray(-1.0), np.asarray(-0.0))
+    origin = (np.asarray(-0.0), np.asarray(-0.0))
+    total = interval_enclosure._host_interval_add(
+        *((origin, nonpositive) if swapped else (nonpositive, origin))
+    )
+
+    assert _bits(product[0]) == _bits(np.float64(-0.0))
+    assert _bits(product[1]) == _bits(np.float64(0.0))
+    assert _bits(total[0]) == _bits(np.float64(-1.0))
+    assert _bits(total[1]) == _bits(np.float64(-0.0))
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+@pytest.mark.parametrize("operation", ("multiply", "add", "subtract"))
+def test_native_interval_arithmetic_matches_host_bits_on_signed_zero_ties(
+    operation: str,
+) -> None:
+    operations = {
+        "multiply": (
+            interval_enclosure.interval_multiply,
+            interval_enclosure._host_interval_multiply,
+        ),
+        "add": (interval_enclosure.interval_add, interval_enclosure._host_interval_add),
+        "subtract": (
+            interval_enclosure.interval_subtract,
+            interval_enclosure._host_interval_subtract,
+        ),
+    }
+    public, host = operations[operation]
+    endpoints = np.asarray((-1.0, -0.0, 0.0, 1.0), dtype=np.float64)
+    ordered = [
+        (lower, upper) for lower, upper in product(endpoints, endpoints) if lower <= upper
+    ]
+    cases = np.asarray(
+        [(*first, *second) for first, second in product(ordered, ordered)],
+        dtype=np.float64,
+    ).T
+    first = (cases[0], cases[1])
+    second = (cases[2], cases[3])
+
+    native = public(first, second)
+    reference = host(first, second)
+
+    for native_bound, host_bound in zip(native, reference, strict=True):
+        np.testing.assert_array_equal(_bits(native_bound), _bits(host_bound))
+
+
+def test_interval_reductions_order_signed_zero_endpoints() -> None:
+    def function(point: jax.Array) -> jax.Array:
+        return jnp.stack((jnp.max(point), jnp.min(point)))
+
+    prepared = prepare_interval_function(function, 4, execution="host")
+    lower = np.asarray(((-0.0, 0.0, -0.0, 0.0),), dtype=np.float64)
+    upper = np.asarray(((0.0, -0.0, -0.0, 0.0),), dtype=np.float64)
+
+    result_lower, result_upper = prepared.evaluate(lower, upper)
+
+    np.testing.assert_array_equal(_bits(result_lower), _bits(np.asarray(((0.0, -0.0),))))
+    np.testing.assert_array_equal(_bits(result_upper), _bits(np.asarray(((0.0, -0.0),))))
 
 
 def _assert_nested_enclosures(

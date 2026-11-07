@@ -9,6 +9,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
+from functools import reduce
 from typing import Any, cast, Literal, TYPE_CHECKING
 
 import jax
@@ -131,11 +132,57 @@ def _round_out_inexact(
     )
 
 
+def _ieee_minimum(first: HostArray, second: HostArray | float, /) -> NDArray:
+    """IEEE 754-2019 ``minimum``: -0 orders below +0 and the first NaN operand wins.
+
+    NumPy leaves the operand of a signed-zero tie unspecified (x86-64 returns
+    the second, aarch64 orders -0 first); exact comparisons and selects order
+    endpoints exactly as the native kernels do on every platform.
+    """
+    take_first = np.isnan(first) | (
+        ~np.isnan(second)
+        & (np.less(first, second) | (np.equal(first, second) & np.signbit(first)))
+    )
+    return np.asarray(np.where(take_first, first, second))
+
+
+def _ieee_maximum(first: HostArray, second: HostArray | float, /) -> NDArray:
+    """IEEE 754-2019 ``maximum``: +0 orders above -0 and the first NaN operand wins."""
+    take_first = np.isnan(first) | (
+        ~np.isnan(second)
+        & (np.greater(first, second) | (np.equal(first, second) & ~np.signbit(first)))
+    )
+    return np.asarray(np.where(take_first, first, second))
+
+
+type _IeeeExtremum = Callable[[HostArray, HostArray | float], NDArray]
+
+
+def _ieee_accumulate(extremum: _IeeeExtremum, value: HostArray, axis: int, /) -> NDArray:
+    """Running IEEE extremum along ``axis`` in ``ceil(log2(extent))`` select passes.
+
+    Each pass folds the adjacent earlier window into the later one, so every
+    prefix reduces in index order and its first NaN wins, as a native fold does.
+    """
+    running = np.moveaxis(np.asarray(value), axis, -1)
+    shift = 1
+    while shift < running.shape[-1]:
+        running = np.concatenate(
+            (
+                running[..., :shift],
+                extremum(running[..., :-shift], running[..., shift:]),
+            ),
+            axis=-1,
+        )
+        shift *= 2
+    return np.moveaxis(running, -1, axis)
+
+
 def _hull(values: Sequence[Interval], /) -> Interval:
     if not values:
         raise ValueError("interval hull requires at least one value.")
-    lower = np.minimum.reduce(tuple(np.asarray(value[0]) for value in values))
-    upper = np.maximum.reduce(tuple(np.asarray(value[1]) for value in values))
+    lower = reduce(_ieee_minimum, (np.asarray(value[0]) for value in values))
+    upper = reduce(_ieee_maximum, (np.asarray(value[1]) for value in values))
     return lower, upper
 
 
@@ -146,17 +193,18 @@ def _sign_clamped(
     # whose sign is fixed by its operand signs keeps that sign, so a sum of
     # squares remains an admissible base for even roots and real powers.
     return (
-        np.where(nonnegative, np.maximum(value[0], 0.0), value[0]),
-        np.where(nonpositive, np.minimum(value[1], 0.0), value[1]),
+        np.where(nonnegative, _ieee_maximum(value[0], 0.0), value[0]),
+        np.where(nonpositive, _ieee_minimum(value[1], 0.0), value[1]),
     )
 
 
 def _native_float64(first: Interval, second: Interval, /) -> bool:
     """Whether the native endpoint kernels apply: float64 endpoints and meshcore.
 
-    The kernels repeat the host operations below per element, so their
-    enclosures are bit-identical; they remove the per-call NumPy overhead that
-    dominates the interpreter's small batches.
+    The kernels repeat the host operations below per element, including the
+    IEEE 754-2019 endpoint ordering of ``_ieee_minimum``/``_ieee_maximum``, so
+    their enclosures are bit-identical on every platform; they remove the
+    per-call NumPy overhead that dominates the interpreter's small batches.
     """
     return (
         all(
@@ -263,8 +311,8 @@ def _host_interval_multiply(first: Interval, second: Interval, /) -> Interval:
         for product, flag in zip(products, exact, strict=True)
     )
     result = (
-        np.where(invalid, -np.inf, np.minimum.reduce(tuple(pair[0] for pair in bounds))),
-        np.where(invalid, np.inf, np.maximum.reduce(tuple(pair[1] for pair in bounds))),
+        np.where(invalid, -np.inf, reduce(_ieee_minimum, (pair[0] for pair in bounds))),
+        np.where(invalid, np.inf, reduce(_ieee_maximum, (pair[1] for pair in bounds))),
     )
     first_nonnegative = np.asarray(first[0]) >= 0.0
     first_nonpositive = np.asarray(first[1]) <= 0.0
@@ -338,16 +386,16 @@ def interval_square(value: Interval, /) -> Interval:
     with np.errstate(invalid="ignore", over="ignore"):
         first, second = np.square(lower), np.square(upper)
     crosses = (lower <= 0.0) & (upper >= 0.0)
-    low = np.where(crosses, 0.0, np.minimum(first, second))
-    high = np.maximum(first, second)
+    low = np.where(crosses, 0.0, _ieee_minimum(first, second))
+    high = _ieee_maximum(first, second)
     rounded = _round_out(low, high)
-    return np.maximum(rounded[0], 0.0), rounded[1]
+    return _ieee_maximum(rounded[0], 0.0), rounded[1]
 
 
 def interval_sqrt(value: Interval, /) -> Interval:
     lower, upper = np.asarray(value[0]), np.asarray(value[1])
     with np.errstate(invalid="ignore", over="ignore"):
-        low = np.sqrt(np.maximum(lower, 0.0))
+        low = np.sqrt(_ieee_maximum(lower, 0.0))
         high = np.sqrt(upper)
     low = np.where(lower < 0.0, 0.0, low)
     high = np.where(upper < 0.0, np.nan, high)
@@ -387,15 +435,15 @@ def _trigonometric_interval(value: Interval, kind: str, /) -> Interval:
     )
     with np.errstate(invalid="ignore", over="ignore"):
         if kind == "sin":
-            low = np.minimum(np.sin(lower), np.sin(upper))
-            high = np.maximum(np.sin(lower), np.sin(upper))
+            low = _ieee_minimum(np.sin(lower), np.sin(upper))
+            high = _ieee_maximum(np.sin(lower), np.sin(upper))
             maximum = np.ceil((lower - 0.5 * math.pi) / (2.0 * math.pi))
             minimum = np.ceil((lower + 0.5 * math.pi) / (2.0 * math.pi))
             high = np.where(0.5 * math.pi + maximum * (2.0 * math.pi) <= upper, 1.0, high)
             low = np.where(-0.5 * math.pi + minimum * (2.0 * math.pi) <= upper, -1.0, low)
         elif kind == "cos":
-            low = np.minimum(np.cos(lower), np.cos(upper))
-            high = np.maximum(np.cos(lower), np.cos(upper))
+            low = _ieee_minimum(np.cos(lower), np.cos(upper))
+            high = _ieee_maximum(np.cos(lower), np.cos(upper))
             maximum = np.ceil(lower / (2.0 * math.pi))
             minimum = np.ceil((lower - math.pi) / (2.0 * math.pi))
             high = np.where(maximum * (2.0 * math.pi) <= upper, 1.0, high)
@@ -438,17 +486,17 @@ def interval_tan(value: Interval, /) -> Interval:
 def interval_absolute(value: Interval, /) -> Interval:
     lower, upper = np.asarray(value[0]), np.asarray(value[1])
     crosses = (lower <= 0.0) & (upper >= 0.0)
-    low = np.where(crosses, 0.0, np.minimum(np.abs(lower), np.abs(upper)))
-    high = np.maximum(np.abs(lower), np.abs(upper))
+    low = np.where(crosses, 0.0, _ieee_minimum(np.abs(lower), np.abs(upper)))
+    high = _ieee_maximum(np.abs(lower), np.abs(upper))
     return _round_out(low, high)
 
 
 def interval_maximum(first: Interval, second: Interval, /) -> Interval:
-    return np.maximum(first[0], second[0]), np.maximum(first[1], second[1])
+    return _ieee_maximum(first[0], second[0]), _ieee_maximum(first[1], second[1])
 
 
 def interval_minimum(first: Interval, second: Interval, /) -> Interval:
-    return np.minimum(first[0], second[0]), np.minimum(first[1], second[1])
+    return _ieee_minimum(first[0], second[0]), _ieee_minimum(first[1], second[1])
 
 
 def _reduce_sum(value: Interval, axes: tuple[int, ...], /) -> Interval:
@@ -468,6 +516,23 @@ def _reduce_sum(value: Interval, axes: tuple[int, ...], /) -> Interval:
             )
         lower, upper = np.asarray(low), np.asarray(high)
     return lower, upper
+
+
+def _reduce_extremum(
+    value: Interval, axes: tuple[int, ...], extremum: _IeeeExtremum, /
+) -> Interval:
+    """Reduce both endpoints over ``axes`` in the native lane order (C order of ``axes``)."""
+
+    def endpoint(bound: HostArray, /) -> NDArray:
+        array = np.asarray(bound)
+        kept = array.ndim - len(axes)
+        moved = np.moveaxis(array, axes, tuple(range(kept, array.ndim)))
+        lanes = moved.reshape((*moved.shape[:kept], math.prod(moved.shape[kept:])))
+        if lanes.shape[-1] == 0:
+            raise IntervalExtensionError("interval extremum of an empty axis.")
+        return _ieee_accumulate(extremum, lanes, -1)[..., -1]
+
+    return endpoint(value[0]), endpoint(value[1])
 
 
 def _dot_general(
@@ -671,8 +736,8 @@ def _select_n(index: Interval, cases: tuple[Interval, ...], /) -> Interval:
     covered = np.zeros(shape, dtype=np.bool_)
     for number, case in enumerate(cases):
         selected = (lower_index <= number) & (number <= upper_index)
-        next_lower = np.where(covered, np.minimum(lower, case[0]), case[0])
-        next_upper = np.where(covered, np.maximum(upper, case[1]), case[1])
+        next_lower = np.where(covered, _ieee_minimum(lower, case[0]), case[0])
+        next_upper = np.where(covered, _ieee_maximum(upper, case[1]), case[1])
         lower = np.where(selected, next_lower, lower)
         upper = np.where(selected, next_upper, upper)
         covered |= selected
@@ -968,10 +1033,10 @@ def _gather_interval(
         active_mask = active.reshape(mask_shape)
         covered_mask = covered.reshape(mask_shape)
         next_lower = np.where(
-            covered_mask, np.minimum(result_lower, selected_lower), selected_lower
+            covered_mask, _ieee_minimum(result_lower, selected_lower), selected_lower
         )
         next_upper = np.where(
-            covered_mask, np.maximum(result_upper, selected_upper), selected_upper
+            covered_mask, _ieee_maximum(result_upper, selected_upper), selected_upper
         )
         result_lower = np.where(active_mask, next_lower, result_lower)
         result_upper = np.where(active_mask, next_upper, result_upper)
@@ -1120,8 +1185,8 @@ def _scatter_add_interval(
                     contribution = update_lower, update_upper
                 else:
                     contribution = (
-                        np.minimum(update_lower, 0.0),
-                        np.maximum(update_upper, 0.0),
+                        _ieee_minimum(update_lower, 0.0),
+                        _ieee_maximum(update_upper, 0.0),
                     )
                 selection: list[int | slice] = [slice(None)] * lane_result_lower.ndim
                 selection[lane_axis] = destination
@@ -1159,9 +1224,9 @@ def _searchsorted_interval(
     ):
         raise IntervalExtensionError("searchsorted requires non-NaN interval bounds.")
     axis = primitive.dimension
-    sorted_upper = np.maximum.accumulate(entry_upper, axis=axis)
+    sorted_upper = _ieee_accumulate(_ieee_maximum, entry_upper, axis)
     sorted_lower = np.flip(
-        np.minimum.accumulate(np.flip(entry_lower, axis=axis), axis=axis), axis=axis
+        _ieee_accumulate(_ieee_minimum, np.flip(entry_lower, axis=axis), axis), axis=axis
     )
     lower = np.asarray(primitive.expand(sorted_upper, query_lower))
     upper = np.asarray(primitive.expand(sorted_lower, query_upper))
@@ -1243,10 +1308,14 @@ def _bernstein_range(net: Interval, first: Interval, last: Interval, /) -> Inter
         value_lower = row_lower[..., 0]
         value_upper = row_upper[..., 0]
         result_lower = (
-            value_lower if result_lower is None else np.minimum(result_lower, value_lower)
+            value_lower
+            if result_lower is None
+            else _ieee_minimum(result_lower, value_lower)
         )
         result_upper = (
-            value_upper if result_upper is None else np.maximum(result_upper, value_upper)
+            value_upper
+            if result_upper is None
+            else _ieee_maximum(result_upper, value_upper)
         )
     if result_lower is None or result_upper is None:
         raise ValueError("a Bernstein range needs at least one coefficient.")
@@ -1334,8 +1403,8 @@ def _bspline_jet_interval(
         active = (first_span <= span) & (span <= last_span)
         left, right = float(knot_values[span]), float(knot_values[span + 1])
         if aligned:
-            first = np.maximum(lower, left)
-            last = np.minimum(upper, right)
+            first = _ieee_maximum(lower, left)
+            last = _ieee_minimum(upper, right)
             active &= first <= last
         else:
             first, last = lower, upper
@@ -1363,14 +1432,20 @@ def _bspline_jet_interval(
         )
         if aligned:
             # The clipped endpoints lie in the span: their local values lie in [0, 1].
-            start = (np.clip(start[0], 0.0, 1.0), np.clip(start[1], 0.0, 1.0))
-            stop = (np.clip(stop[0], 0.0, 1.0), np.clip(stop[1], 0.0, 1.0))
+            start = (
+                _ieee_minimum(_ieee_maximum(start[0], 0.0), 1.0),
+                _ieee_minimum(_ieee_maximum(start[1], 0.0), 1.0),
+            )
+            stop = (
+                _ieee_minimum(_ieee_maximum(stop[0], 0.0), 1.0),
+                _ieee_minimum(_ieee_maximum(stop[1], 0.0), 1.0),
+            )
         for order, net in enumerate(table):
             jet_lower, jet_upper = _bernstein_range(net, start, stop)
-            result_lower[active, order] = np.minimum(
+            result_lower[active, order] = _ieee_minimum(
                 result_lower[active, order], jet_lower
             )
-            result_upper[active, order] = np.maximum(
+            result_upper[active, order] = _ieee_maximum(
                 result_upper[active, order], jet_upper
             )
     if np.any(result_lower > result_upper):
@@ -1486,7 +1561,7 @@ def _primitive(
             # log extends 0 to -inf, so exp(y log x) encloses 0**y for every
             # exponent sign; a nonnegative base has a nonnegative real power.
             power = interval_exp(interval_multiply(exponent, interval_log(values[0])))
-            return ((np.maximum(power[0], 0.0), power[1]),)
+            return ((_ieee_maximum(power[0], 0.0), power[1]),)
         case "maximum" | "max":
             return (interval_maximum(values[0], values[1]),)
         case "minimum" | "min":
@@ -1629,13 +1704,10 @@ def _primitive(
             return (_scatter_add_interval(values[0], values[1], values[2], params),)
         case "reduce_sum":
             return (_reduce_sum(values[0], tuple(params["axes"])),)
-        case "reduce_max" | "reduce_min":
-            axes = tuple(params["axes"])
-            if name == "reduce_max":
-                return (
-                    (np.max(values[0][0], axis=axes), np.max(values[0][1], axis=axes)),
-                )
-            return ((np.min(values[0][0], axis=axes), np.min(values[0][1], axis=axes)),)
+        case "reduce_max":
+            return (_reduce_extremum(values[0], tuple(params["axes"]), _ieee_maximum),)
+        case "reduce_min":
+            return (_reduce_extremum(values[0], tuple(params["axes"]), _ieee_minimum),)
         case "argmin":
             return (_argmin_interval(values[0], params),)
         case "dot_general":
