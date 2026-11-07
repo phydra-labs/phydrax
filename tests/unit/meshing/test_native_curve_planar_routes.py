@@ -231,6 +231,190 @@ def test_curve_route_places_a_nonuniform_chart_by_physical_arc_length() -> None:
     assert construction.compliance.passed
 
 
+def _straight_arm_mesh(
+    monkeypatch: pytest.MonkeyPatch, *, perturb_coarse: bool
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mesh one straight arm at zero deviation under an integrand-call budget.
+
+    ``perturb_coarse`` moves every coarse Gauss sample, and so the coarse sum,
+    up by one unit in the last place; the fine sum is untouched.
+    """
+    from phydrax.meshing.providers import _native_curve
+
+    segments = SegmentMesh(
+        np.asarray(((0.0, 0.0), (1.0, 0.0)), dtype=np.float64),
+        np.asarray(((0, 1),), dtype=np.int32),
+        source_id="straight-arm",
+    )
+    source = NativeCurveSource(
+        segments,
+        "revision",
+        curve_entity_ids=np.asarray((11,), dtype=np.int64),
+        vertex_entity_ids=np.asarray((21, 22), dtype=np.int64),
+    )
+    scope = MeshingScope.whole(source, 1)
+    specification = CurveMeshingSpec(
+        CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.25, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=0.0,
+    )
+    construction = prepare_native_curve(
+        source,
+        specification,
+        NativeMeshingOptions("curve_arc_length"),
+        SpatialCoordinateContract.si(),
+    )
+    coarse_size = construction.prepared.schedule.quadrature_order
+    integrand = _native_curve._integrand
+    calls = [0]
+
+    def budgeted(prepared: Any, row: int, parameters: Any, /, *, density: bool) -> Any:
+        calls[0] += 1
+        if calls[0] > 4096:
+            raise AssertionError("curve quadrature exceeded its evaluation budget")
+        values = integrand(prepared, row, parameters, density=density)
+        if perturb_coarse and parameters.size == coarse_size:
+            return np.nextafter(values, np.inf)
+        return values
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_native_curve, "_integrand", budgeted)
+        result = construction.execute()
+    assert result.compliance.passed
+    return (
+        np.asarray(result.mesh.coordinates, dtype=np.float64),
+        np.concatenate(
+            tuple(
+                np.asarray(block.vertices, dtype=np.int64) for block in result.mesh.blocks
+            )
+        ),
+    )
+
+
+def test_curve_quadrature_terminates_on_a_straight_arm_at_zero_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinates, cells = _straight_arm_mesh(monkeypatch, perturb_coarse=False)
+    order = np.argsort(coordinates[:, 0])
+    np.testing.assert_array_equal(
+        coordinates[order],
+        np.asarray(((0.0, 0.0), (0.25, 0.0), (0.5, 0.0), (0.75, 0.0), (1.0, 0.0))),
+    )
+    assert cells.shape == (4, 2)
+
+
+def test_curve_quadrature_is_independent_of_one_ulp_in_the_coarse_sum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exact = _straight_arm_mesh(monkeypatch, perturb_coarse=False)
+    perturbed = _straight_arm_mesh(monkeypatch, perturb_coarse=True)
+    for expected, actual in zip(exact, perturbed, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+
+def test_gauss_rounding_bounds_the_attained_rounding_of_each_sum() -> None:
+    from phydrax.meshing.providers._native_curve import _gauss_rounding, _gauss_rule
+
+    generator = np.random.default_rng(20261107)
+    unit = Fraction(1, 2**53)
+    for order in (1, 2, 3, 5, 8, 16, 32):
+        rule = _gauss_rule(order)
+        weights = tuple(Fraction(value) for value in rule.weights.tolist())
+        for scale in (1.0, 3.0e-310, 1.0e-200, 1.0e200):
+            lower, upper = sorted(generator.random(2).tolist())
+            half = 0.5 * (upper - lower)
+            width = (Fraction(upper) - Fraction(lower)) / 2
+            for values in (
+                scale * generator.random(order),
+                np.full((order,), scale * float(generator.random())),
+            ):
+                total = float(np.dot(rule.weights, values))
+                computed = Fraction(half * total)
+                bound = _gauss_rounding(rule, half, total, values)
+                exact = width * sum(
+                    (w * Fraction(f) for w, f in zip(weights, values.tolist())),
+                    Fraction(0),
+                )
+                assert abs(computed - exact) <= bound
+                assert bound <= 8 * (order + 3) * unit * exact + Fraction(1, 2**1000)
+            # The exact rule integrates a constant exactly; the bound covers it.
+            assert abs(computed - 2 * width * Fraction(float(values[0]))) <= bound
+
+
+class _ParabolaArc(BoundaryMap):
+    @property
+    def num_charts(self) -> int:
+        return 1
+
+    @property
+    def reference_dimension(self) -> int:
+        return 1
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 2
+
+    def map(self, chart_indices: Any, reference: Any, /) -> Any:
+        del chart_indices
+        parameter = jnp.asarray(reference)[..., 0]
+        return jnp.stack((parameter, parameter**2), axis=-1)
+
+    def jacobian(self, chart_indices: Any, reference: Any, /) -> Any:
+        del chart_indices
+        parameter = jnp.asarray(reference)[..., 0]
+        tangent = jnp.stack((jnp.ones_like(parameter), 2.0 * parameter), axis=-1)
+        return tangent[..., :, None]
+
+
+def test_curve_quadrature_refines_a_real_error_down_to_the_rounding_floor() -> None:
+    from phydrax.meshing.providers._native_curve import _adaptive_integral
+
+    atlas = BoundaryAtlas(
+        _ParabolaArc(),
+        source_entity_ids=jnp.asarray((91,), dtype=jnp.int32),
+        source_id="parabola-arc",
+    )
+    source = NativeCurveSource(atlas, "revision")
+    scope = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        1,
+        source.scope_entity_set_id(1),
+        np.asarray(source.chart_scope_entity_ids, dtype=np.int64),
+    )
+    specification = CurveMeshingSpec(
+        CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.5, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=0.001,
+    )
+    prepared = prepare_native_curve(
+        source,
+        specification,
+        NativeMeshingOptions("curve_arc_length"),
+        SpatialCoordinateContract.si(),
+    ).prepared
+    first_estimate = _adaptive_integral(
+        prepared, 0, 0.0, 1.0, 1.0, density=False, intervals=1
+    )[1].estimates[-1]
+    length, table = _adaptive_integral(
+        prepared, 0, 0.0, 1.0, 0.0, density=False, intervals=1
+    )
+    # One order-8 panel misses sqrt(1 + 4 t^2) by far more than rounding.
+    assert first_estimate > 1000 * table.roundings[-1]
+    assert table.breaks.size > 2
+    assert table.estimates[-1] <= table.roundings[-1]
+    assert Fraction(table.error) >= table.estimates[-1] + 2 * table.roundings[-1]
+    exact = (2.0 * math.sqrt(5.0) + math.asinh(2.0)) / 4.0
+    assert abs(length - exact) <= 1.0e-14
+
+
 def test_curve_query_rejects_a_narrowed_authored_feature_range() -> None:
     segments = SegmentMesh(
         np.asarray(((0.0, 0.0), (1.0, 0.0)), dtype=np.float64),
