@@ -12,13 +12,14 @@ from typing import Any
 
 import pytest
 
-import phydrax._external_resource as resource_module
+import phydrax._host_io as host_io
 from phydrax._external_resource import (
     account_bounded_resource,
     read_bounded_resource,
     ResourceLimits,
     ResourceReadError,
 )
+from tests._support.filesystem import create_directory_link
 
 
 def _limits(*, max_bytes: int = 1024, max_depth: int = 8) -> ResourceLimits:
@@ -65,20 +66,27 @@ def test_symlink_roots_components_and_files_are_rejected(tmp_path: Path) -> None
     outside.mkdir()
     (outside / "resource.bin").write_bytes(b"outside")
     root_link = tmp_path / "root-link"
-    root_link.symlink_to(real_root, target_is_directory=True)
-    component_link = real_root / "component"
-    component_link.symlink_to(outside, target_is_directory=True)
-    file_link = real_root / "resource.bin"
-    file_link.symlink_to(outside / "resource.bin")
+    create_directory_link(root_link, real_root)
+    create_directory_link(real_root / "component", outside)
 
     for path, root in (
         ("resource.bin", root_link),
         ("component/resource.bin", real_root),
-        ("resource.bin", real_root),
     ):
         with pytest.raises(ResourceReadError) as caught:
             read_bounded_resource(path, trusted_root=root, limits=_limits())
         assert caught.value.reason == "policy"
+
+    file_link = real_root / "resource.bin"
+    try:
+        file_link.symlink_to(outside / "resource.bin")
+    except OSError as error:
+        if os.name == "nt" and error.winerror == 1314:
+            pytest.skip("File symlinks require Windows developer mode or privilege.")
+        raise
+    with pytest.raises(ResourceReadError) as caught:
+        read_bounded_resource("resource.bin", trusted_root=real_root, limits=_limits())
+    assert caught.value.reason == "policy"
 
 
 def test_special_file_and_oversize_resource_fail_closed(tmp_path: Path) -> None:
@@ -108,27 +116,39 @@ def test_component_path_swap_is_detected(tmp_path: Path, monkeypatch: Any) -> No
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "resource.bin").write_bytes(b"substituted")
-    real_open = resource_module.os.open
-    swapped = False
+    real_open_directory_at = host_io.open_directory_at
+    attempted = False
 
-    def swapping_open(
-        path: Any, flags: Any, mode: Any = 0o777, *, dir_fd: Any = None
-    ) -> Any:
-        nonlocal swapped
-        if dir_fd is None:
-            descriptor = real_open(path, flags, mode)
-        else:
-            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
-        if path == "nested" and not swapped:
-            nested.rename(held)
-            nested.symlink_to(outside, target_is_directory=True)
-            swapped = True
+    def swapping_open_directory_at(
+        parent: int, name: str, *, create: bool = False
+    ) -> int:
+        nonlocal attempted
+        descriptor = real_open_directory_at(parent, name, create=create)
+        if name == "nested" and not attempted:
+            attempted = True
+            if os.name == "nt":
+                # Windows holds traversed directories without FILE_SHARE_DELETE,
+                # so the held component cannot be renamed away.
+                with pytest.raises(PermissionError):
+                    nested.rename(held)
+            else:
+                nested.rename(held)
+                create_directory_link(nested, outside)
         return descriptor
 
-    monkeypatch.setattr(resource_module.os, "open", swapping_open)
+    monkeypatch.setattr(host_io, "open_directory_at", swapping_open_directory_at)
 
+    if os.name == "nt":
+        loaded = read_bounded_resource(
+            "nested/resource.bin", trusted_root=tmp_path, limits=_limits()
+        )
+        assert attempted
+        assert loaded.data == b"trusted"
+        assert not held.exists()
+        return
     with pytest.raises(ResourceReadError) as caught:
         read_bounded_resource(
             "nested/resource.bin", trusted_root=tmp_path, limits=_limits()
         )
     assert caught.value.reason == "inconsistent"
+    assert attempted
