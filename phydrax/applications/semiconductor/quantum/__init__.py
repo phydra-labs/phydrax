@@ -8,6 +8,7 @@ and transient lead memory retain their explicitly one-dimensional contracts.
 from ._basis import (
     ChainHamiltonian,
     EffectiveMass1D,
+    OmittedBoundStatus,
     QuantumResources,
     SchrodingerResult,
     selected_eigenpairs,
@@ -84,6 +85,7 @@ __all__ = [
     "DenseHamiltonianND",
     "EffectiveMassND",
     "EffectiveMass1D",
+    "OmittedBoundStatus",
     "OpticalPhononBath",
     "PhononEnergyGrid",
     "QuantumCapacitance",
