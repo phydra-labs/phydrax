@@ -62,6 +62,10 @@
       ],
       "distance_transform": "Agnesi",
       "first": "RealAgnosticInteractionBlock",
+      "force_reference": {
+        "method": "five-point central difference of the provider energy",
+        "step": 0.00025
+      },
       "heads": [
         "Default"
       ],
