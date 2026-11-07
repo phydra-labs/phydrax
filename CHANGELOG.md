@@ -746,6 +746,9 @@
   scenario names from the canonical registry, rejects missing, extra, failed,
   missing-dependency, and skipped results, and excludes warm bytecode while
   confirming qualification modules and Phydrax load from their isolated sources.
+- Cell-geometry validity again caches its Bernstein interpolation plans per
+  parameter domain and degree in the bounded host-table cache instead of
+  re-solving the conversion operator on every certification.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile

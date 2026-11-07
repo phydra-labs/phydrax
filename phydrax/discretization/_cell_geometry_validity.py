@@ -55,6 +55,7 @@ from .._geometry_predicates import (
     PredicateSign,
     resolve_host_predicate_mode,
 )
+from .._host_table_cache import host_table_cache, logical_table_bytes
 from .._strict import reconstruct_strict, register_strict_reconstruction, StrictModule
 from .._trainable import NonTrainableState
 from ..geometry._interval_enclosure import (
@@ -992,6 +993,21 @@ def _reference_subdivision(
     )
 
 
+@host_table_cache(
+    max_entries=256,
+    max_bytes=1048576,
+    # The degree-independent subdivision is retained by `_reference_subdivision`,
+    # so each entry charges only its degree-owned tables.
+    weight=lambda value: logical_table_bytes(
+        (
+            value.domain,
+            value.nodes,
+            value.coefficients_from_values,
+            value.conversion_norm,
+            value.vertex_indices,
+        )
+    ),
+)
 def _bernstein_plan(
     domain: BernsteinDomain, degrees: tuple[int, ...], /
 ) -> _BernsteinPlan:
