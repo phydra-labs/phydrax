@@ -4004,10 +4004,12 @@ def _integrate_pole_ring_parameters(
     """Add ring points lying on a loop's trims to those trims' parameters.
 
     A ring point on a straight trim (constant along one chart axis) is solved
-    for its trim parameter; when the trim's own chart point at that parameter
-    differs from the ring point only by the rounding of the p-curve evaluation,
-    the ring point is replaced by the trim's chart point so the pole spoke and
-    the trim segment share the vertex instead of overlapping collinearly.
+    for its trim parameter and joins the trim only when the trim's own chart
+    point at that parameter is the ring point exactly, so the pole spoke and the
+    trim segment share the vertex instead of overlapping collinearly. A trim
+    with exact rational line coefficients evaluates its chart point exactly, so
+    every ring point on its segment joins; a trim point that differs is another
+    vertex, and the ring point then keeps its ring coordinate.
     """
     for patch in selected_patches:
         for loop_index, loop in enumerate(domain.patches[patch].loops):
@@ -4018,7 +4020,6 @@ def _integrate_pole_ring_parameters(
             )
             if not poles:
                 continue
-            replaced: dict[tuple[Fraction, Fraction], tuple[Fraction, Fraction]] = {}
             for use in loop:
                 if not isinstance(use, domain_owner.PatchCurveUse):
                     continue
@@ -4036,7 +4037,7 @@ def _integrate_pole_ring_parameters(
                         *(point for ring in pole_chart.rings for _, point in ring),
                     )
                     for point in ring_points:
-                        if point in known or point in replaced:
+                        if point in known:
                             continue
                         for axis in range(2):
                             delta = last[axis] - first[axis]
@@ -4045,59 +4046,11 @@ def _integrate_pole_ring_parameters(
                             parameter = (point[axis] - first[axis]) / delta
                             if not 0 <= parameter <= 1:
                                 continue
-                            chart = _use_chart_point(use, parameter)
-                            if chart != point and not _rounded_straight_trim_point(
-                                first, last, axis, point, chart
-                            ):
+                            if _use_chart_point(use, parameter) != point:
                                 continue
                             parameters.add(parameter)
-                            known.add(chart)
-                            if chart != point:
-                                replaced[point] = chart
+                            known.add(point)
                             break
-            if replaced:
-                for pole_use_index, _pole_use in poles:
-                    key = (patch, loop_index, pole_use_index)
-                    pole_chart = pole_charts[key]
-                    pole_charts[key] = _PoleChart(
-                        tuple(
-                            _PoleChartSample(
-                                sample.parameter,
-                                sample.chart_point,
-                                replaced.get(sample.ring_point, sample.ring_point),
-                                sample.cap_bound,
-                            )
-                            for sample in pole_chart.samples
-                        ),
-                        tuple(
-                            tuple(
-                                (parameter, replaced.get(point, point))
-                                for parameter, point in ring
-                            )
-                            for ring in pole_chart.rings
-                        ),
-                    )
-
-
-def _rounded_straight_trim_point(
-    first: tuple[Fraction, Fraction],
-    last: tuple[Fraction, Fraction],
-    axis: int,
-    point: tuple[Fraction, Fraction],
-    chart: tuple[Fraction, Fraction],
-    /,
-) -> bool:
-    """Whether ``chart`` is ``point`` on a straight trim up to p-curve rounding.
-
-    The trim keeps the other chart coordinate constant and ``point`` lies on
-    it; the trim's evaluated coordinate along ``axis`` then differs from the
-    solved one only by the binary64 rounding of the p-curve evaluation.
-    """
-    other = 1 - axis
-    if not first[other] == last[other] == point[other] == chart[other]:
-        return False
-    value = float(point[axis])
-    return abs(float(chart[axis]) - value) <= 4.0 * math.ulp(value)
 
 
 def _global_vertex_key(

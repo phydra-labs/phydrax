@@ -2076,6 +2076,84 @@ def test_non_brep_seam_corner_is_the_exact_whole_turn_image() -> None:
         )
 
 
+def test_pole_ring_point_joins_a_straight_trim_only_at_its_exact_chart_point() -> None:
+    # The cap seam is re-authored as a straight degree-one p-curve whose interior
+    # control point lies one binary64 step past the chart midpoint. The ring
+    # point (0, 1/2) is on the seam line, but the seam's exact chart point at the
+    # linearly solved parameter 1/2 is that control point: the ring point is not
+    # the trim's vertex there and keeps its ring coordinate, while the rim point
+    # (0, 1) is the trim's exact end vertex and joins it.
+    from phydrax.meshing.providers._native_surface import (
+        _integrate_pole_ring_parameters,
+        _PoleChart,
+    )
+
+    contract = SpatialCoordinateContract.si()
+    original = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract)
+    )
+    cap = original.patches[0]
+    (loop,) = cap.loops
+    seam = loop[3]
+    assert isinstance(seam, PatchCurveUse)
+    assert seam.curve == 0
+    middle = 0.5 + 2.0**-53
+    straight = BSplineCurve(
+        np.asarray(((0.0, 0.0), (0.0, middle), (0.0, 1.0)), dtype=np.float64),
+        np.ones((3,), dtype=np.float64),
+        np.asarray((0.0, 0.0, 0.5, 1.0, 1.0), dtype=np.float64),
+        1,
+    )
+    domain = MeshingDomain(
+        (
+            MeshingSurfacePatch(
+                cap.surface,
+                (
+                    (
+                        *loop[:3],
+                        PatchCurveUse(
+                            seam.curve, straight, seam.first, seam.last, sense=seam.sense
+                        ),
+                    ),
+                ),
+                orientation=cap.orientation,
+            ),
+            *original.patches[1:],
+        ),
+        original.curves,
+        len(original.corner_points),
+        source_id="straight-seam",
+        source_revision="straight-seam-r1",
+        regions=original.regions,
+        corner_points=original.corner_points,
+    )
+
+    def exact_seam(parameter: Fraction, /) -> tuple[Fraction, Fraction]:
+        # The use maps its parameter to the knot range [0, 1] identically; the
+        # degree-one spline interpolates its control points on each knot span.
+        knot = Fraction(1, 2)
+        lower, upper = (
+            (Fraction(0), Fraction(middle))
+            if parameter <= knot
+            else (Fraction(middle), Fraction(1))
+        )
+        start = Fraction(0) if parameter <= knot else knot
+        return Fraction(0), lower + (parameter - start) / knot * (upper - lower)
+
+    on_seam = (Fraction(0), Fraction(1, 2))
+    rim = (Fraction(0), Fraction(1))
+    assert exact_seam(Fraction(1, 2)) != on_seam
+    assert exact_seam(Fraction(1)) == rim
+    rings = (((Fraction(0), on_seam),), ((Fraction(0), rim),))
+    pole_charts = {(0, 0, 0): _PoleChart((), rings)}
+    parameters_by_curve = {0: {Fraction(0)}}
+
+    _integrate_pole_ring_parameters(domain, (0,), pole_charts, parameters_by_curve)
+
+    assert parameters_by_curve == {0: {Fraction(0), Fraction(1)}}
+    assert pole_charts[(0, 0, 0)].rings == rings
+
+
 def test_curve_chord_endpoint_box_refusal_is_a_typed_meshing_failure() -> None:
     from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
     from phydrax.meshing.providers._native_surface import _CurveChordBounds
