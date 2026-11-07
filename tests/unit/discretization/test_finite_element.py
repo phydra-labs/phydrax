@@ -78,6 +78,27 @@ def test_moved_geometry_assembly_is_not_cached() -> None:
     np.testing.assert_allclose(moved_stiffness.mv(value), stiffness.mv(value), atol=2e-12)
 
 
+@pytest.mark.parametrize("runtime", ["default", "moved"])
+def test_assembled_field_operators_admit_sparse_cost_estimation_and_solves(
+    runtime: str,
+) -> None:
+    space = _square_discretization()
+    selected = (
+        space.default_runtime
+        if runtime == "default"
+        else space.prepare_runtime(2.0 * space.vertices, numeric_version="scaled")
+    )
+    mass, stiffness = space.assemble_field_operators("u", selected)
+    for operator in (mass, stiffness):
+        assert phx.linalg.estimate_operator_action_cost(operator).storage_bytes > 0
+    rhs = jnp.linspace(-0.4, 0.9, 5, dtype=jnp.float64)
+    solved = phx.linalg.solve(phx.linalg.LinearSystem(mass), rhs)
+    assert bool(solved.successful)
+    np.testing.assert_allclose(
+        np.asarray(mass.as_dense()) @ np.asarray(solved.value), rhs, atol=1e-10
+    )
+
+
 def test_finite_element_scenario_1() -> None:
     cases = (
         ("triangle", 1, jnp.asarray([[0.2, 0.3]])),
