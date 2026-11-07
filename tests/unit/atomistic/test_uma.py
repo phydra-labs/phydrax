@@ -59,6 +59,7 @@ from phydrax.nn.atomistic._uma_layers import (
     UMALinear,
     UMAMixtureLinear,
     UMANormalization,
+    UMASharedMixture,
     UMASO2Convolution,
 )
 from phydrax.nn.atomistic._uma_so3 import (
@@ -950,10 +951,16 @@ def test_moe_single_ties_gradients_to_one_shared_mixture() -> None:
     gradient = jax.grad(energy)(lane)
     shared = gradient.network.shared_mixtures[0].weights
     assert float(jnp.max(jnp.abs(shared))) > 0.0
-    # References carry no parameters; the shared leaf receives every use.
-    assert gradient.network.blocks[0].edgewise.first.orders[0].__class__.__name__ == (
-        "UMASharedMixture"
-    )
+
+    # References carry no parameters; the shared leaf receives every use. A
+    # reference is a terminal NonTrainableState node, so it sits whole in the
+    # fixed lane and leaves a None hole in the parameter (gradient) lane.
+    def first_order(tree: Any) -> Any:
+        return tree.network.blocks[0].edgewise.first.orders[0]
+
+    assert isinstance(first_order(model), UMASharedMixture)
+    assert first_order(gradient) is None
+    assert isinstance(first_order(fixed), UMASharedMixture)
 
 
 def test_mean_reduced_head_potential_is_the_differentiated_sum() -> None:
