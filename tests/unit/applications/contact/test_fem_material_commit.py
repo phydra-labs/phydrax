@@ -570,19 +570,7 @@ def test_rejected_native_newmark_preserves_pending_material_trial() -> None:
     mechanics = phx.applications.solid_mechanics
     policy = _plan(participant).policy
     valid_args = {"valid": jnp.asarray(True, dtype=jnp.bool_)}
-
-    # The direct Newmark step vetoes through its declared admissibility hook; the
-    # form's auxiliary evaluation is consumed by contact and static solves only.
-    def admissible(
-        time: Array,
-        displacement: Array,
-        velocity: Array,
-        acceleration: Array,
-        args: dict[str, Array],
-    ) -> Array:
-        del time, displacement, velocity, acceleration
-        return args["valid"]
-
+    # The form's auxiliary vetoes the direct Newmark step without a caller hook.
     plan = mechanics.prepare_finite_element_dynamics(
         problem,
         previous,
@@ -590,8 +578,6 @@ def test_rejected_native_newmark_preserves_pending_material_trial() -> None:
         args=valid_args,
         nonlinear_method=policy.method,
         nonlinear_termination=policy.termination,
-        admissibility_evaluator=admissible,
-        admissibility_id="valid-argument",
         material_update=plasticity.update,
         material_update_id="j2-trial",
     )
@@ -608,3 +594,88 @@ def test_rejected_native_newmark_preserves_pending_material_trial() -> None:
         assert restored.state_version == 7
         np.testing.assert_array_equal(restored.committed, original.committed)
         np.testing.assert_array_equal(restored.trial, pending)
+
+
+def _caller_admissible(
+    time: Array,
+    displacement: Array,
+    velocity: Array,
+    acceleration: Array,
+    args: dict[str, Array],
+) -> Array:
+    del time, displacement, velocity, acceleration
+    return args["caller"]
+
+
+def test_native_newmark_enforces_form_veto_without_caller_hook() -> None:
+    problem, participant, initial, plasticity = _case()
+    mechanics = phx.applications.solid_mechanics
+    policy = _plan(participant).policy
+    plan = mechanics.prepare_finite_element_dynamics(
+        problem,
+        initial,
+        0.05,
+        args={"valid": jnp.asarray(True, dtype=jnp.bool_)},
+        nonlinear_method=policy.method,
+        nonlinear_termination=policy.termination,
+        material_update=plasticity.update,
+        material_update_id="j2-trial",
+    )
+    assert plan.admissibility_evaluator is None
+    for valid in (False, True):
+        result = mechanics.solve_finite_element_dynamics_step(
+            mechanics.prepare_finite_element_dynamics_step(
+                plan,
+                initial,
+                0.05,
+                args={"valid": jnp.asarray(valid, dtype=jnp.bool_)},
+            )
+        )
+        assert bool(result.accepted) is valid
+        assert bool(result.rollback_applied) is not valid
+        evidence = result.candidate.admissibility
+        assert bool(evidence.form_valid) is valid
+        assert bool(evidence.custom_valid)
+        assert bool(evidence.admissible) is valid
+
+
+@pytest.mark.parametrize(
+    ("form_valid", "caller_valid"), ((True, True), (False, True), (True, False))
+)
+def test_native_newmark_ands_form_veto_with_caller_admissibility(
+    form_valid: bool, caller_valid: bool
+) -> None:
+    problem, participant, initial, plasticity = _case()
+    mechanics = phx.applications.solid_mechanics
+    policy = _plan(participant).policy
+
+    def arguments(form: bool, caller: bool) -> dict[str, Array]:
+        return {
+            "valid": jnp.asarray(form, dtype=jnp.bool_),
+            "caller": jnp.asarray(caller, dtype=jnp.bool_),
+        }
+
+    plan = mechanics.prepare_finite_element_dynamics(
+        problem,
+        initial,
+        0.05,
+        args=arguments(True, True),
+        nonlinear_method=policy.method,
+        nonlinear_termination=policy.termination,
+        admissibility_evaluator=_caller_admissible,
+        admissibility_id="caller-argument",
+        material_update=plasticity.update,
+        material_update_id="j2-trial",
+    )
+    result = mechanics.solve_finite_element_dynamics_step(
+        mechanics.prepare_finite_element_dynamics_step(
+            plan, initial, 0.05, args=arguments(form_valid, caller_valid)
+        )
+    )
+    expected = form_valid and caller_valid
+    assert bool(result.accepted) is expected
+    assert bool(result.rollback_applied) is not expected
+    evidence = result.candidate.admissibility
+    assert bool(evidence.form_valid) is form_valid
+    assert bool(evidence.custom_valid) is caller_valid
+    assert bool(evidence.admissible) is expected

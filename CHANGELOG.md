@@ -1093,6 +1093,15 @@
 - UMA slab reductions (`case_reduce`) keep the dtype of the summed values:
   per-case `species_counts` stay int32 with 64-bit JAX enabled, matching the
   owner partials and `case_atom_counts`, instead of widening to int64.
+- Implicit Newmark FE dynamics (`solve_finite_element_dynamics_step`) enforce
+  the form's declared auxiliary veto by default: a step whose form auxiliary
+  evaluation is not valid (successful and admissible, e.g. a CPFEM
+  inadmissible-slip flag) is refused and rolled back, inside the Newton
+  validity and in the step's acceptance, ANDed with any caller
+  `admissibility_evaluator`. Previously only contact and static solves read
+  the form auxiliary. `FiniteElementAdmissibilityEvidence` reports the veto as
+  `form_valid`. Plan IDs change only for forms that declare an auxiliary
+  evaluator; plans over forms without one keep their identity.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
