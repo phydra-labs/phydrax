@@ -31,7 +31,9 @@ from .typing import parse
 
 
 type BernsteinDomain = Literal["simplex", "prism", "box"]
-type ElementaryFunction = Literal["exp", "log", "sin", "cos", "tan", "atan", "tanh"]
+type ElementaryFunction = Literal[
+    "exp", "log", "sin", "cos", "tan", "atan", "tanh", "asin", "acos"
+]
 type HostTree = tuple[np.ndarray, ...]
 type _IntegerRows = tuple[tuple[int, ...], ...]
 
@@ -177,11 +179,13 @@ def float64_interval_elementary(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Rigorous enclosure of an elementary function over broadcastable float64 boxes.
 
-    ``function`` is one of ``exp``, ``log``, ``sin``, ``cos``, ``tan``, ``atan``
-    or ``tanh``. The native kernel uses no platform libm, so enclosures are
+    ``function`` is one of ``exp``, ``log``, ``sin``, ``cos``, ``tan``, ``atan``,
+    ``tanh``, ``asin`` or ``acos``. The native kernel uses no platform libm, so enclosures are
     bit-identical on every platform and for every ``parallelism``; endpoint
     conventions (NaN gives the whole line, log of a nonpositive endpoint gives
-    the matching infinity, sin/cos/tan full ranges, signed zeros) are those of
+    the matching infinity, asin/acos boxes clipped to [-1, 1] with an empty
+    intersection giving the whole line, sin/cos/tan full ranges, signed zeros)
+    are those of
     ``phx_mc_interval_elementary``.
 
     Inputs are converted to contiguous float64 buffers, as for the product.

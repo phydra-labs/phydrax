@@ -1,7 +1,8 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
-// Rigorous binary64 interval enclosures of exp, log, sin, cos, tan, atan and
-// tanh without a platform libm: binary64 basic operations in round-to-nearest
-// without contraction, correctly rounded std::fma, and double-word (DW)
+// Rigorous binary64 interval enclosures of exp, log, sin, cos, tan, atan, tanh,
+// asin and acos without a platform libm: binary64 basic operations and sqrt in
+// round-to-nearest without contraction, correctly rounded std::fma, and
+// double-word (DW)
 // arithmetic with published error bounds. Every function requires the
 // GradualNearestScope of floating_point_mode.hpp (RN, gradual underflow); the
 // error proofs live beside each kernel in elementary.cpp.
@@ -20,6 +21,8 @@ enum class Function : std::int32_t {
   kTan = 4,
   kAtan = 5,
   kTanh = 6,
+  kAsin = 7,
+  kAcos = 8,
 };
 
 struct Enclosure {
@@ -36,6 +39,8 @@ Enclosure cos(double lower, double upper) noexcept;
 Enclosure tan(double lower, double upper) noexcept;
 Enclosure atan(double lower, double upper) noexcept;
 Enclosure tanh(double lower, double upper) noexcept;
+Enclosure asin(double lower, double upper) noexcept;
+Enclosure acos(double lower, double upper) noexcept;
 Enclosure evaluate(Function function, double lower, double upper) noexcept;
 
 // Unevaluated sum high + low with high = RN(high + low).

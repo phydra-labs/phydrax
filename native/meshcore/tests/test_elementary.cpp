@@ -320,7 +320,7 @@ void c_abi_contract() {
                                       parallelism);
   };
   PHX_CHECK(call(-1, 3, lower.data(), out_lower.data(), 1) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(call(7, 3, lower.data(), out_lower.data(), 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(call(9, 3, lower.data(), out_lower.data(), 1) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(call(PHX_MC_ELEMENTARY_EXP, -1, lower.data(), out_lower.data(), 1) ==
             PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(call(PHX_MC_ELEMENTARY_EXP, 3, nullptr, out_lower.data(), 1) ==
@@ -345,7 +345,7 @@ void deterministic_across_parallelism() {
   const std::vector<double> lower = mixed_inputs(5000);
   std::vector<double> upper(lower.size());
   for (std::size_t item = 0; item < lower.size(); ++item) upper[item] = lower[item] + 0.25;
-  for (int32_t function = PHX_MC_ELEMENTARY_EXP; function <= PHX_MC_ELEMENTARY_TANH; ++function) {
+  for (int32_t function = PHX_MC_ELEMENTARY_EXP; function <= PHX_MC_ELEMENTARY_ACOS; ++function) {
     std::vector<double> serial_lower(lower.size()), serial_upper(lower.size());
     std::vector<double> parallel_lower(lower.size()), parallel_upper(lower.size());
     PHX_CHECK(phx_mc_interval_elementary(function, static_cast<int64_t>(lower.size()), lower.data(),
@@ -365,8 +365,8 @@ void independent_of_caller_mode() {
   const std::vector<double> lower = {0x1p-1060, -745.0, 0.5, 1e22, 3.0, 0.7};
   const std::vector<double> upper = {0x1p-1050, -744.0, 2.0, 1e22, 3.5, 1.3};
   const std::size_t count = lower.size();
-  std::vector<std::vector<double>> nearest(7, std::vector<double>(2 * count));
-  for (int32_t function = 0; function < 7; ++function) {
+  std::vector<std::vector<double>> nearest(9, std::vector<double>(2 * count));
+  for (int32_t function = 0; function < 9; ++function) {
     PHX_CHECK(phx_mc_interval_elementary(function, static_cast<int64_t>(count), lower.data(),
                                          upper.data(), nearest[function].data(),
                                          nearest[function].data() + count, 2) == PHX_MC_OK);
@@ -385,7 +385,7 @@ void independent_of_caller_mode() {
                                                   : phx::mc::kGradualNearestMode);
     PHX_CHECK(std::fesetround(hazard.rounding) == 0);
     const auto installed = phx::mc::floating_point_mode();
-    for (int32_t function = 0; function < 7; ++function) {
+    for (int32_t function = 0; function < 9; ++function) {
       std::vector<double> result(2 * count);
       PHX_CHECK(phx_mc_interval_elementary(function, static_cast<int64_t>(count), lower.data(),
                                            upper.data(), result.data(), result.data() + count,
@@ -412,6 +412,45 @@ void independent_of_caller_mode() {
   PHX_CHECK(std::fesetround(initial_rounding) == 0);
 }
 
+void inverse_sine_and_cosine() {
+  const Function asin = Function::kAsin;
+  const Function acos = Function::kAcos;
+  // Exact results and outward pi/2, pi brackets (RN(pi/2) < pi/2, RN(pi) < pi).
+  PHX_CHECK(exactly(point(asin, 0.0), 0.0, 0.0) && exactly(point(asin, -0.0), -0.0, -0.0));
+  PHX_CHECK(exactly(point(acos, 1.0), 0.0, 0.0));
+  PHX_CHECK(exactly(point(asin, 1.0), kHalfPiRounded, up(kHalfPiRounded)));
+  PHX_CHECK(exactly(point(asin, -1.0), down(-kHalfPiRounded), -kHalfPiRounded));
+  PHX_CHECK(exactly(point(acos, 0.0), kHalfPiRounded, up(kHalfPiRounded)));
+  PHX_CHECK(exactly(point(acos, -1.0), 2.0 * kHalfPiRounded, up(2.0 * kHalfPiRounded)));
+  PHX_CHECK(exactly(point(asin, 0x1p-40), 0x1p-40, up(0x1p-40)));
+  // asin(1/2) = pi/6, acos(1/2) = pi/3 (RN(pi/6) and RN(pi/3) lie below).
+  PHX_CHECK(exactly(point(asin, 0.5), 0x1.0c152382d7365p-1, 0x1.0c152382d7366p-1));
+  PHX_CHECK(exactly(point(acos, 0.5), 0x1.0c152382d7365p+0, 0x1.0c152382d7366p+0));
+  // Domain: clipped boxes, empty intersections and NaN give the whole line.
+  PHX_CHECK(exactly(elementary::asin(-3.0, 0.0), down(-kHalfPiRounded), 0.0));
+  PHX_CHECK(exactly(elementary::acos(0.0, kInfinity), 0.0, up(kHalfPiRounded)));
+  PHX_CHECK(exactly(elementary::asin(1.5, 2.0), -kInfinity, kInfinity));
+  PHX_CHECK(exactly(elementary::acos(-kInfinity, -1.5), -kInfinity, kInfinity));
+  PHX_CHECK(exactly(elementary::acos(kNaN, 0.0), -kInfinity, kInfinity));
+  // Identities against the other kernels: sin(asin x) contains x,
+  // asin x + acos x contains pi/2, cos(acos x) contains x.
+  std::mt19937_64 random(11);
+  std::uniform_real_distribution<double> unit(-1.0, 1.0);
+  for (int sample = 0; sample < 20000; ++sample) {
+    const double x = sample % 3 == 0 ? unit(random) * std::ldexp(1.0, -(sample % 60)) : unit(random);
+    const Enclosure arcsine = point(asin, x);
+    const Enclosure arccosine = point(acos, x);
+    PHX_CHECK(contains(elementary::sin(arcsine.lower, arcsine.upper), x));
+    PHX_CHECK(contains(elementary::cos(arccosine.lower, arccosine.upper), x));
+    PHX_CHECK(contains(sum(arcsine, arccosine), kHalfPiRounded));
+    PHX_CHECK(exactly(point(asin, -x), -arcsine.upper, -arcsine.lower));
+    PHX_CHECK(steps(arcsine) <= 2 && steps(arccosine) <= 2);
+    const double y = std::fmin(1.0, x + 0.25 * std::fabs(unit(random)));
+    const Enclosure box = elementary::acos(x, y);
+    PHX_CHECK(box.lower <= point(acos, y).lower && point(acos, x).upper <= box.upper);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -422,6 +461,7 @@ int main() {
   extremum_and_pole_decisions();
   identities_and_widths();
   interval_containment();
+  inverse_sine_and_cosine();
   c_abi_contract();
   deterministic_across_parallelism();
   independent_of_caller_mode();
