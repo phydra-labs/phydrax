@@ -16,7 +16,12 @@ from jax.core import ShapedArray
 from jax.extend import core as jax_core
 from numpy.typing import NDArray
 
-from ._interval_enclosure import IntervalExtensionError, IntervalOperandIdentity
+from ._interval_enclosure import (
+    _ieee_maximum,
+    _ieee_minimum,
+    IntervalExtensionError,
+    IntervalOperandIdentity,
+)
 
 
 if TYPE_CHECKING:
@@ -715,7 +720,8 @@ class _Builder:
         if name in ("max", "min"):
             first, second = values
             if first.exact is not None and second.exact is not None:
-                select = np.maximum if name == "max" else np.minimum
+                # IEEE 754-2019 ordering, as the _MAXIMUM/_MINIMUM opcodes.
+                select = _ieee_maximum if name == "max" else _ieee_minimum
                 exact = np.asarray(
                     select(
                         np.broadcast_to(first.exact, output_shape),
