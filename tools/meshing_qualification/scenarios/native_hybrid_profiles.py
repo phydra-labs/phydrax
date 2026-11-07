@@ -42,8 +42,9 @@ _VOLUME_TOLERANCE = 1.0e-10
 _GROWTH_RATE = 1.2
 # Declared symbolic work (ordering, elimination tree, counts) of every
 # harmonic-history Cholesky analysis: the refined archived-layer-core operator
-# (238,387 P2 DOFs) needs 111,319,274 under minimum degree, so 2**30 leaves ~10x.
-_SYMBOLIC_WORK_BUDGET = 1 << 30
+# (238,387 P2 DOFs) needs 1,111,891,428 under nested dissection, so 2**33
+# leaves ~7.7x.
+_SYMBOLIC_WORK_BUDGET = 1 << 33
 # Run envelope 24 GiB per layer/core profile (25.77 GB). One declared execution
 # budget serves every harmonic-history solve and every de Rham Hodge admission
 # factorization. Measured needs: the unit-box target's degree-1 Hodge factor
@@ -855,13 +856,12 @@ def _harmonic_history_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
     budget: all fields are static, so they enter plan_id, and the writer and
     the cold reader prepare under the same declaration. The factor's
     structural nonzeros are bounded by the same bytes (one float64 each).
-    Minimum degree is the ordering. Nested dissection is refused on the
-    unit-box refined target: its 3,690-vertex separator exceeds the library's
-    fixed 2,048 separator capacity, which the factorization policy cannot
-    declare. On the refined archived-layer-core operator (238,387 P2 DOFs)
-    minimum degree needs 88,052,378 factor nonzeros (1.25 GB) and 111 M
-    symbolic work, against 70,816,866 nonzeros and 1.11 G work for nested
-    dissection.
+    Nested dissection is the ordering. Its separator capacity follows the
+    declared factor nonzeros, so the unit-box target's 3,690-vertex separator
+    is admitted. On the refined archived-layer-core operator (238,387 P2 DOFs)
+    it needs 70,816,866 factor nonzeros (1.10 GB), 6.3e10 flops and a 14.1 s
+    symbolic analysis. Minimum degree needs 88,052,378 (1.25 GB), 1.0e11 flops
+    and 21.0 s.
     """
     return phx.linalg.LinearSolvePolicy(
         phx.linalg.PCG(),
@@ -870,7 +870,7 @@ def _harmonic_history_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
             phx.linalg.SparseFactorizationPreconditionerBuilder(
                 phx.linalg.SparseFactorizationPolicy(
                     "cholesky",
-                    ordering="approximate-minimum-degree",
+                    ordering="nested-dissection",
                     max_factor_nnz=budget // np.dtype(np.float64).itemsize,
                     max_factor_bytes=budget,
                     max_symbolic_work=_SYMBOLIC_WORK_BUDGET,
