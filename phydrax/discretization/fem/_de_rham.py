@@ -3399,8 +3399,10 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
     ``order`` specifies the top-form polynomial order.
     ``coordinate_spec`` binds the exact source/reference map used for Piola
     actions; nonlinear nested transfers require a bound CellGeometryTransition.
-    ``hodge_resources`` declares the byte budgets of the default metric Riesz
-    solves and of each Hodge's SPD admission factorization; ``None`` keeps the
+    ``hodge_resources`` declares the complex's byte budgets: its
+    ``factorization_bytes`` bound each Hodge's SPD admission factorization, its
+    ``workspace_bytes`` the per-chunk block-geometry and Hodge-assembly working
+    set, and it budgets the default metric Riesz solves. ``None`` keeps the
     documented library defaults. A caller-owned ``hodge_solve`` carries its own
     solve budgets, so the two are exclusive.
     Mapped basis tables are deferred (per-point Jacobians retained): the metric
@@ -3466,6 +3468,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 coefficient_dtype=coefficient_dtype,
             ),
             basis_tables="deferred",
+            geometry_workset_bytes=(
+                None if hodge_resources is None else hodge_resources.workspace_bytes
+            ),
         )
         hodges = tuple(
             _metric_hodge(discretization, degree, hodge_solve, hodge_resources)

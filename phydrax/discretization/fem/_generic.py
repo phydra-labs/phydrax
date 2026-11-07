@@ -1990,6 +1990,7 @@ class _MappedBasisTable(StrictModule):
     element: FiniteElementSpec
     reference_values: Array
     jacobian: Array
+    workset_bytes: int = eqx.field(static=True)
 
     def __call__(self) -> Array:
         return self.rows(0, self.jacobian.shape[0])
@@ -2004,7 +2005,7 @@ class _MappedBasisTable(StrictModule):
         return _row_chunked_map(self._map, self.jacobian[start:stop])
 
     def row_blocks(self, consumer_row_copies: int, /) -> tuple[tuple[int, int], ...]:
-        """Cell blocks whose mapped rows fit ``_GEOMETRY_WORKSET_BYTES``.
+        """Cell blocks whose mapped rows fit the table's declared ``workset_bytes``.
 
         One cell costs its mapped row twice (row-chunk parts and their
         concatenation) plus ``consumer_row_copies`` row-sized consumer
@@ -2014,7 +2015,7 @@ class _MappedBasisTable(StrictModule):
         chunk = _row_chunk(self._map, self.jacobian)
         row = jax.eval_shape(self._map, self.jacobian[:1])
         cell_bytes = (2 + consumer_row_copies) * prod(row.shape[1:]) * row.dtype.itemsize
-        size = chunk * max(1, _GEOMETRY_WORKSET_BYTES // (chunk * cell_bytes))
+        size = chunk * max(1, self.workset_bytes // (chunk * cell_bytes))
         return tuple((start, min(start + size, count)) for start in range(0, count, size))
 
 
@@ -2618,6 +2619,7 @@ def _prepare_finite_element_field(
     coordinate_measure: CoordinateMeasurePlan | None = None,
     source_surface: SurfaceFiniteElementGeometry | None = None,
     basis_tables: _BasisTables = "retained",
+    geometry_workset_bytes: int,
 ) -> tuple[
     tuple[FiniteElementSpec, ...],
     FiniteElementDofMap,
@@ -2675,6 +2677,7 @@ def _prepare_finite_element_field(
             source_surface=source_surface,
             source_block_index=block_index,
             basis_tables=basis_tables,
+            geometry_workset_bytes=geometry_workset_bytes,
         )
         for block_index, (block, element, coordinate_element, geometry_dofs) in enumerate(
             zip(mesh.blocks, elements, coordinate_elements, coordinate_dofs, strict=True)
@@ -2732,6 +2735,9 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     Jacobian instead and forms the table when read; owners whose consumers are
     one-pass assemblies (the FE de Rham Hodge and constitutive Grams) form it
     in bounded cell blocks. Both hold bit-identical values.
+    ``geometry_workset_bytes`` declares the per-chunk working set of block-geometry
+    preparation and of deferred-table assembly; ``None`` keeps the documented
+    64 MiB default. Chunking never changes values.
     """
 
     mesh: CellMesh
@@ -2767,9 +2773,17 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         *,
         numeric_version: str = "0",
         basis_tables: Literal["retained", "deferred"] = "retained",
+        geometry_workset_bytes: int | None = None,
     ) -> None:
         if basis_tables not in ("retained", "deferred"):
             raise ValueError("basis_tables must be 'retained' or 'deferred'.")
+        workset = (
+            _GEOMETRY_WORKSET_BYTES
+            if geometry_workset_bytes is None
+            else geometry_workset_bytes
+        )
+        if isinstance(workset, bool) or not isinstance(workset, int) or workset <= 0:
+            raise ValueError("geometry_workset_bytes must be a positive integer.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")
@@ -2791,6 +2805,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 plan.precision_policy,
                 coordinate_measure=plan.coordinate_measure,
                 basis_tables=basis_tables,
+                geometry_workset_bytes=workset,
                 source_surface=plan.source_surface,
             )
             all_elements.append(elements)
@@ -3724,13 +3739,13 @@ def _row_chunked_map(function: Callable[..., Array], *rows: Array) -> Array:
     return parts[0] if len(parts) == 1 else jnp.concatenate(parts, axis=0)
 
 
-# Declared working set of one cell chunk of block-geometry preparation and of
-# one cell block of a one-pass assembly over a deferred basis table. Chunk
-# sizes are derived from the bytes one cell contributes to that working set,
-# so transients stay within this bound whatever the block's cell count, while
-# 64 MiB still amortizes per-chunk dispatch over hundreds of order-2 3D cells.
-# Chunking never changes values: every cell's operations, inputs and order are
-# those of the unchunked block.
+# Documented default working set of one cell chunk of block-geometry preparation
+# and of one cell block of a one-pass assembly over a deferred basis table, for
+# discretizations that declare none. Chunk sizes are derived from the bytes one
+# cell contributes to that working set, so transients stay within the bound
+# whatever the block's cell count, while 64 MiB still amortizes per-chunk
+# dispatch over hundreds of order-2 3D cells. Chunking never changes values:
+# every cell's operations, inputs and order are those of the unchunked block.
 _GEOMETRY_WORKSET_BYTES = 64 * 1024 * 1024
 
 
@@ -3742,11 +3757,12 @@ def _block_coordinate_map(
     /,
     *,
     precision_policy: FiniteElementPrecisionPolicy,
+    workset_bytes: int,
 ) -> tuple[Array, Array, Array, Array]:
     """Points, Jacobians, inverse Jacobians and measures of one block's cells.
 
-    The coordinate map is evaluated in cell chunks within
-    ``_GEOMETRY_WORKSET_BYTES``. One cell costs its chart tabulation (values and
+    The coordinate map is evaluated in cell chunks within the declared
+    ``workset_bytes``. One cell costs its chart tabulation (values and
     gradients, stacked by distinct chart and then gathered), its nodes, and the
     eight per-point map outputs; only the four retained outputs span the block.
     """
@@ -3762,7 +3778,7 @@ def _block_coordinate_map(
         + 3
     )
     cell_bytes = itemsize * (point_count * per_point + local_count * ambient)
-    chunk = max(1, _GEOMETRY_WORKSET_BYTES // cell_bytes)
+    chunk = max(1, workset_bytes // cell_bytes)
     per_cell = isinstance(geometry_element, PerCellRestrictedCellGeometryElement)
     parts = []
     # An empty block still evaluates once, as the unchunked map did.
@@ -3975,6 +3991,7 @@ def _prepare_block_geometry(
     coordinate_measure: CoordinateMeasurePlan | None = None,
     source_surface: SurfaceFiniteElementGeometry | None = None,
     basis_tables: _BasisTables = "retained",
+    geometry_workset_bytes: int = _GEOMETRY_WORKSET_BYTES,
     source_block_index: int = 0,
 ) -> FiniteElementBlockGeometry:
     if (reference_points is None) != (reference_weights is None):
@@ -4058,6 +4075,7 @@ def _prepare_block_geometry(
                 coordinate_values,
                 reference_points,
                 precision_policy=precision_policy,
+                workset_bytes=geometry_workset_bytes,
             )
         )
         if identity_mapped:
@@ -4065,7 +4083,9 @@ def _prepare_block_geometry(
                 inverse_jacobian, reference_gradients
             )
         else:
-            mapped_basis = _MappedBasisTable(element, basis_values, jacobian)
+            mapped_basis = _MappedBasisTable(
+                element, basis_values, jacobian, geometry_workset_bytes
+            )
             # A retained table is formed now with the same bounded row-chunked
             # Piola map a deferred table applies when read.
             basis_table: _BlockBasisTable = (

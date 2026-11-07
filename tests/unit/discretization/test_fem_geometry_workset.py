@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-import phydrax.discretization.fem._generic as generic
 from phydrax.discretization.fem._de_rham import FiniteElementDeRhamComplex
 from phydrax.exterior._form_type import FormProxy
 from phydrax.linalg import LinearSolvePolicy, PCG, SolveResourcePolicy
@@ -91,17 +90,16 @@ def _mass_leaves(
     ]
 
 
-def test_chunked_geometry_and_deferred_basis_tables_are_bit_identical(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_chunked_geometry_and_deferred_basis_tables_are_bit_identical() -> None:
     # 162 tetrahedra exceed one Piola row chunk of the order-2 form tables, so a
     # one-byte workset forces per-cell geometry chunks and multi-block assembly.
     plan = _form_plan(_kuhn_cube(3))
     reference = plan.prepare()
-    monkeypatch.setattr(generic, "_GEOMETRY_WORKSET_BYTES", 1)
-    chunked = phx.discretization.FiniteElementDiscretization(plan)
+    chunked = phx.discretization.FiniteElementDiscretization(
+        plan, geometry_workset_bytes=1
+    )
     deferred = phx.discretization.FiniteElementDiscretization(
-        plan, basis_tables="deferred"
+        plan, basis_tables="deferred", geometry_workset_bytes=1
     )
 
     expected = _geometry_values(reference)
