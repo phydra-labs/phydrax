@@ -440,7 +440,20 @@ def test_fixed_cap_edge_obstruction_uses_exact_represented_coordinates() -> None
     assert height == Fraction(8646911284551351, 288230376151711744)
     assert lower_squared == 1 / (16 * height * height)
     assert lower_squared > 4
-    assert _fixed_cap_edge_obstruction(complex_, np.asarray((0,)), 9.0) is None
+    # The cap edge (1, 2) also bounds "side1" (1, 3, 2): its third vertex sits at
+    # exact offset (0, 0, height) from v1, orthogonal to the edge with L^2 = 2, so
+    # the exact witness is L^4 / (16 L^2 height^2) = 1 / (8 height^2) ~= 138.89,
+    # twice the "adjacent" witness (~= 69.44). No rounding enters: the function
+    # works on the exact represented coordinates. 12^2 = 144 exceeds the largest
+    # witness; 9^2 = 81 does not.
+    assert _fixed_cap_edge_obstruction(complex_, np.asarray((0,)), 9.0) == (
+        0,
+        2,
+        (1, 2),
+        1 / (8 * height * height),
+    )
+    assert 12 * 12 > 1 / (8 * height * height)
+    assert _fixed_cap_edge_obstruction(complex_, np.asarray((0,)), 12.0) is None
 
 
 @pytest.mark.skipif(
