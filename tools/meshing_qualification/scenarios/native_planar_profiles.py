@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import pi
-import resource
-import sys
 from time import perf_counter
 from typing import Any, NamedTuple
 
@@ -64,6 +62,7 @@ from phydrax.meshing.providers._native_sources import (
 
 from .._runtime import accepted_result_record, require_meshcore, runtime_identity
 from ._closed_surface_accuracy import closed_surface_accuracy
+from ._resources import peak_resident_bytes
 
 
 _TAU = 2.0 * pi
@@ -676,8 +675,7 @@ def _solve_manufactured_surface(
             "phase": name,
             "phase_seconds": now - phase_started,
             "elapsed_seconds": now - started,
-            "peak_rss": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
-            "peak_rss_unit": "bytes" if sys.platform == "darwin" else "kibibytes",
+            "peak_resident_bytes": peak_resident_bytes(),
         })
         phase_started = now
     if result.certification is None or result.certification.inputs.source is None:

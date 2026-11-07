@@ -31,6 +31,7 @@ from phydrax._bvh import (
     prepare_bvh,
     refit_packed_bvh_bounds,
 )
+from phydrax._execution_sampling import process_peak_memory
 from phydrax._jax_config import configuration_values, set_compilation_cache
 from phydrax._meshcore import PlcRecovery3D, TetMeshArrays
 from phydrax.discretization._cell_geometry_validity import (
@@ -4477,15 +4478,12 @@ def benchmark_periodic_power_selected(
         points, point_ids, weights, lattice, owned, repeats
     )
 
-    try:
-        import resource
-
-        maximum = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-        process_peak_bytes: int | None = (
-            maximum if platform.system() == "Darwin" else maximum * 1024
+    peak = process_peak_memory()
+    if peak.value_bytes is None:
+        raise RuntimeError(
+            f"Periodic power benchmark has no process peak memory: {peak.unavailable_reason}"
         )
-    except ImportError:
-        process_peak_bytes = None
+    process_peak_bytes = peak.value_bytes
     source_map = candidate["source_map"]
     local_mesh = candidate["mesh"]
     support_rows = int(np.asarray(candidate["candidate"]["point_ids"]).size)
