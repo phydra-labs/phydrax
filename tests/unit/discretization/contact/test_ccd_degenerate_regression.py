@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from fractions import Fraction
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -31,6 +33,7 @@ def _scene(
     *,
     edges: list[tuple[int, int]] | None = None,
     faces: list[tuple[int, int, int]] | None = None,
+    physical_radius: float = 0.0,
 ) -> PreparedCollisionScene:
     space = ArraySpace((vertex_count, 3), dtype=np.float64)
     topology = CollisionSurfacePlan(
@@ -40,6 +43,7 @@ def _scene(
         faces=None if faces is None else np.asarray(faces, dtype=np.int32),
         body_ids=0,
         allow_isolated_vertices=True,
+        physical_radius=physical_radius,
     )
     # A valid nondegenerate rest surface: vertices on the twisted cubic
     # (i, i^2, i^3) are distinct and no three are collinear. Degeneracy is
@@ -133,6 +137,36 @@ def test_sphere_routes_retain_true_separation(distance: float) -> None:
     result = collision_free_step_limit(InclusionCCDPlan(), scene, epoch, start, start)
     assert bool(result.successful) == (distance > 0.0)
     assert float(result.step_size) == (1.0 if distance > 0.0 else 0.0)
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [InclusionCCDPlan(numerical_error=0.0), CertifiedAABBCCDPlan()],
+    ids=["inclusion-exact", "rounding-aabb"],
+)
+def test_flushed_products_cannot_certify_a_violated_separation(
+    plan: InclusionCCDPlan | CertifiedAABBCCDPlan,
+) -> None:
+    # XLA flushes the product 0.75 * 2^-1022 of the right vertex to zero, so a
+    # bare nextafter pad once certified a lower distance 1.75x the exact one.
+    radius = 0.75 * 2.0**-511
+    left, right = float.fromhex("0x1.cp-511"), float.fromhex("0x1.8p-512")
+    assert Fraction(left) - Fraction(right) < 2 * Fraction(radius)
+    scene = _scene(2, physical_radius=radius)
+    start = jnp.asarray([[left, 0.0, 0.0], [right, 0.0, 0.0]], dtype=jnp.float64)
+    epoch = DenseContactSearchPlan(
+        edge_vertex_capacity=0,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        vertex_vertex_capacity=1,
+        activation_distance=2.0,
+        primitive_profile=ContactPrimitiveProfile.SPHERE_CAPSULE,
+    ).build(scene, start)
+    assert int(epoch.vertex_vertex.actual_count) == 1
+    result = eqx.filter_jit(collision_free_step_limit)(plan, scene, epoch, start, start)
+    assert int(result.status) == int(CCDStatus.INITIAL_DISTANCE_VIOLATION)
+    assert not bool(result.successful)
+    assert float(result.step_size) == 0.0
 
 
 def test_isolated_vertex_sweep_returns_complete_empty_fixed_capacity_epoch() -> None:

@@ -36,7 +36,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntEnum, StrEnum
 from types import ModuleType
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -594,6 +594,52 @@ def _device(spec: _Filter, values: tuple, /) -> PredicateResult:
     certain = certain & ~subnormal
     signs = jnp.where(certain, signs, jnp.int8(PredicateSign.UNCERTAIN)).astype(jnp.int8)
     return PredicateResult(signs, certain, PredicateMode.FILTERED_DEVICE)
+
+
+OutwardDirection: TypeAlias = Literal["down", "up"]
+
+
+def flush_safe_outward(
+    value: Array, direction: OutwardDirection, /, error: Array | None = None
+) -> Array:
+    """Directed bound of one rounded device operation, sound under flush-to-zero.
+
+    ``value`` is the result of one IEEE basic operation evaluated by JAX. XLA
+    CPU flushes subnormal results to zero and reads subnormal operands as zero,
+    in eager and compiled code alike, so a bare ``nextafter`` pad (often itself
+    subnormal) does not bound the exact result there. ``error`` bounds the
+    absolute difference between the exact results on the true and on the
+    flushed operands beyond the two flushed addends of a sum; a product
+    ``a * b`` passes ``tiny * (1 + |a| + |b|)``. ``error`` is zero or at least
+    ``tiny``, as every flushed result is.
+
+    Proof sketch for ``"down"`` (``"up"`` is symmetric). The exact result ``x``
+    satisfies ``x >= value - gap / 2 - 4 tiny - error``, where ``gap`` is the
+    spacing below ``value``: half a spacing or one flushed result (below
+    ``tiny``), two flushed addends, and one flushed read of ``value``. With
+    ``pad = RN(4 error + 8 tiny) >= 2 error + 8 tiny`` the returned
+    ``pred(RN(value - pad))`` is at most ``value - pad`` (``pred`` of a rounded
+    value never exceeds the rounded argument; if the argument flushes,
+    ``value >= 7 tiny`` and the result is not positive) and at most
+    ``pred(value) = value - gap`` (monotone rounding). The larger of ``pad`` and
+    ``gap`` dominates ``gap / 2 + 4 tiny + error`` in every binade. A subnormal
+    bound read as zero by a later operation is covered by that operation's own
+    flushed-operand term. Bounds of normal magnitude above roughly
+    ``2^52 * pad`` equal the plain ``nextafter`` step bit for bit. The pad is
+    capped at the largest finite value so that infinite endpoints keep the
+    plain ``nextafter`` semantics instead of becoming ``inf - inf``.
+    """
+    info = jnp.finfo(value.dtype)
+    tiny = jnp.asarray(info.tiny, dtype=value.dtype)
+    pad = 8.0 * tiny if error is None else 4.0 * error.astype(value.dtype) + 8.0 * tiny
+    pad = jnp.minimum(pad, jnp.asarray(info.max, dtype=value.dtype))
+    match direction:
+        case "down":
+            return jnp.nextafter(value - pad, jnp.asarray(-jnp.inf, dtype=value.dtype))
+        case "up":
+            return jnp.nextafter(value + pad, jnp.asarray(jnp.inf, dtype=value.dtype))
+        case _:
+            raise TypeError("direction must be 'down' or 'up'.")
 
 
 def _evaluate(spec: _Filter, values: tuple, mode: PredicateMode, /) -> PredicateResult:

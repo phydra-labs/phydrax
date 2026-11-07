@@ -37,6 +37,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import (
+    flush_safe_outward,
     orient2d,
     PredicateMode,
     PredicateSign,
@@ -2414,7 +2415,8 @@ def _optimal_constant_remainder(
 ) -> tuple[Array, Array, Array, Array, Array]:
     """Search an interior edge's constant-metric star at floating resolution.
 
-    Interval operations are rounded outwards; uncertain predicate and terminal
+    Interval operations are rounded outwards with flush-to-zero-safe steps
+    (XLA flushes subnormal results and operands); uncertain predicate and terminal
     boxes stay unresolved, rather than being treated as exclusions.  The stack
     bounds the depth of binary subdivision of the parameter format, including
     subnormals; it is not a work or scientific depth limit.
@@ -2438,15 +2440,22 @@ def _optimal_constant_remainder(
         ~present[:, None, None] | (work.metric[neighbor] == tensor)
     ) & jnp.all(work.metric[removed] == tensor)
 
-    def down(value: Array) -> Array:
-        return jnp.nextafter(value, jnp.asarray(-jnp.inf, dtype=dtype))
+    def down(value: Array, error: Array | None = None) -> Array:
+        return flush_safe_outward(value, "down", error)
 
-    def up(value: Array) -> Array:
-        return jnp.nextafter(value, jnp.asarray(jnp.inf, dtype=dtype))
+    def up(value: Array, error: Array | None = None) -> Array:
+        return flush_safe_outward(value, "up", error)
 
     def multiply(al: Array, ah: Array, bl: Array, bh: Array) -> tuple[Array, Array]:
         values = jnp.stack((al * bl, al * bh, ah * bl, ah * bh))
-        return down(jnp.min(values, axis=0)), up(jnp.max(values, axis=0))
+        # A flushed (subnormal) factor read as zero loses below tiny times the
+        # other factor.
+        error = info.tiny * (
+            1.0
+            + jnp.maximum(jnp.abs(al), jnp.abs(ah))
+            + jnp.maximum(jnp.abs(bl), jnp.abs(bh))
+        )
+        return down(jnp.min(values, axis=0), error), up(jnp.max(values, axis=0), error)
 
     def point_box(lo: Array, hi: Array) -> tuple[Array, Array]:
         # Enclose executed subtraction, multiplication and addition, including

@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from phydrax._geometry_precision import GeometryPrecisionPolicy
+from phydrax._geometry_predicates import flush_safe_outward
 from phydrax._meshcore import meshcore_available
 from phydrax.geometry import (
     incircle,
@@ -186,6 +187,36 @@ def test_predicates_scenario_1() -> None:
     assert int(orient3d(a, y, x, z, mode=mode).signs) == -1
     assert int(insphere(a, x, y, z, inside, mode=mode).signs) == 1
     assert int(incircle(a[:2], x[:2], y[:2], inside[:2], mode=mode).signs) == 1
+
+
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        (2.0**-511, 0.75 * 2.0**-511),  # normal operands, flushed product
+        (2.0**-1030, 2.0**40),  # subnormal operand read as zero
+        (1.0 + 2.0**-30, 1.0 - 2.0**-30),  # ordinary rounding
+        (2.0**-600, -(2.0**-430)),  # negative product just below tiny
+    ],
+)
+def test_flush_safe_outward_encloses_device_products_and_sums(
+    first: float, second: float
+) -> None:
+    a = jnp.asarray(first, dtype=jnp.float64)
+    b = jnp.asarray(second, dtype=jnp.float64)
+    tiny = jnp.finfo(jnp.float64).tiny
+    error = tiny * (1.0 + jnp.abs(a) + jnp.abs(b))
+    product = jax.jit(lambda x, y: x * y)(a, b)
+    exact = Fraction(first) * Fraction(second)
+    lower = flush_safe_outward(product, "down", error)
+    upper = flush_safe_outward(product, "up", error)
+    assert Fraction(float(lower)) <= exact <= Fraction(float(upper))
+    total = jax.jit(lambda x, y: x + y)(lower, -upper)
+    exact_total = Fraction(float(lower)) - Fraction(float(upper))
+    assert (
+        Fraction(float(flush_safe_outward(total, "down")))
+        <= exact_total
+        <= Fraction(float(flush_safe_outward(total, "up")))
+    )
 
 
 def test_exact_mode_matches_rational_reference() -> None:

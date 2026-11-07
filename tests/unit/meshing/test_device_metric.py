@@ -786,6 +786,72 @@ def test_device_optimal_remainder_searches_between_seed_parameters(
     assert np.all(lengths <= _UPPER)
 
 
+def test_device_optimal_remainder_flushed_products_do_not_prove_exclusion() -> None:
+    # Collapsed edge at P = (2^-1021, 0) whose star triangle (Q, P, R) has the
+    # exact orientation 2^-1023 + O(2^-1533) > 0, but its x difference P - Q =
+    # 2^-1024 is subnormal: XLA flushes it, and the bare nextafter pads once
+    # "proved" every point of the edge invalid.
+    center = -0.2 + 0.4 * (17.0 / 64.0)
+    mesh_points = np.asarray(
+        (
+            (center - 0.8 * 0.999, 0.6 * 0.999),
+            (-0.2, 0.0),
+            (0.2, 0.0),
+            (center + 0.8 * 0.999, -0.6 * 0.999),
+            (center, 0.65),
+            (center, -0.65),
+        )
+    )
+    cells = np.asarray(
+        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (1, 0, 5), (2, 1, 5), (3, 2, 5)),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_triangles(mesh_points, cells)
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    tensor = 2.0**-6 * np.eye(2)
+    prepared = prepare_device_metric_adaptation(
+        source, MetricMeshAdaptation(_metric(source, 2.0 * np.eye(2))), policy=_policy()
+    )
+    work = _work(prepared.state)
+    rows = [
+        int(np.flatnonzero(np.all(np.asarray(work.coordinates) == point, axis=1))[0])
+        for point in mesh_points
+    ]
+    p = (2.0**-1021, 0.0)
+    q = (float.fromhex("0x1.cp-1022"), -1.5 * 2.0**-511)
+    r = (2.0**-511, 8.0)
+    t = (1.0, -1.0)
+    s = (0.5, -2.0)
+    placed = (q, p, p, t, r, s)
+    coordinates = work.coordinates
+    for row, point in zip(rows, placed, strict=True):
+        coordinates = coordinates.at[row].set(jnp.asarray(point, dtype=jnp.float64))
+    work = work._replace(
+        coordinates=coordinates,
+        metric=jnp.broadcast_to(jnp.asarray(tensor), work.metric.shape),
+    )
+
+    def orientation(
+        a: tuple[float, float], b: tuple[float, float], c: tuple[float, float], /
+    ) -> Fraction:
+        a_x, a_y, b_x, b_y, c_x, c_y = (Fraction(value) for value in (*a, *b, *c))
+        return (b_x - a_x) * (c_y - a_y) - (b_y - a_y) * (c_x - a_x)
+
+    # Exact oracle: the collapsed point P keeps every star triangle positive and
+    # every ring spoke inside the metric band, so no exclusion proof exists.
+    for first, second, third in ((q, p, r), (p, t, r), (p, q, s), (t, p, s)):
+        assert orientation(first, second, third) > 0
+    for neighbor in (q, r, t, s):
+        spoke = [Fraction(neighbor[axis]) - Fraction(p[axis]) for axis in range(2)]
+        assert Fraction(tensor[0, 0]) * (spoke[0] ** 2 + spoke[1] ** 2) <= 2
+    topology = device_metric._topology(work, prepared.layout)
+    found, _, _, uncertain, overflow = eqx.filter_jit(
+        device_metric._optimal_constant_remainder
+    )(work, topology, jnp.int32(rows[1]), jnp.int32(rows[2]))
+    assert bool(found) or bool(uncertain)
+    assert not bool(overflow)
+
+
 @pytest.mark.parametrize("scale, feasible", [(0.999, True), (1.001, False)])
 def test_host_optimal_collapse_searches_between_seed_parameters(
     scale: float,
