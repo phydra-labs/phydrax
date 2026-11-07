@@ -174,8 +174,21 @@ std::array<std::uint64_t, 2> schoolbook_product(std::uint64_t a, std::uint64_t b
   return out;
 }
 
-// The compiled multiply_wide route (compiler wide multiply or portable split)
-// equals the reference on boundary and random operands.
+// Reference x * y + addend + carry_in: the schoolbook product plus two limbs with
+// explicit carries.
+std::array<std::uint64_t, 2> schoolbook_multiply_accumulate(std::uint64_t a, std::uint64_t b,
+                                                            std::uint64_t c, std::uint64_t d) {
+  std::array<std::uint64_t, 2> out = schoolbook_product(a, b);
+  for (const std::uint64_t addend : {c, d}) {
+    const std::uint64_t low = out[0] + addend;
+    out[1] += low < addend ? 1 : 0;
+    out[0] = low;
+  }
+  return out;
+}
+
+// The compiled multiply_wide and multiply_accumulate routes (compiler wide multiply
+// or portable split) equal the reference on boundary and random operands.
 void test_multiply_wide_matches_schoolbook() {
   std::vector<std::uint64_t> operands = {0, 1, 2, 0xFFFFFFFFu, 0x100000000u, 0xFFFFFFFF00000000u,
                                          0x8000000000000000u, 0x7FFFFFFFFFFFFFFFu,
@@ -185,15 +198,30 @@ void test_multiply_wide_matches_schoolbook() {
       std::uint64_t high = 0;
       const std::uint64_t low = phx::mc::multiply_wide(a, b, high);
       PHX_CHECK((std::array<std::uint64_t, 2>{low, high} == schoolbook_product(a, b)));
+      for (const std::uint64_t c : operands) {
+        const std::uint64_t d = ~c;
+        const std::uint64_t fused = phx::mc::multiply_accumulate(a, b, c, d, high);
+        PHX_CHECK((std::array<std::uint64_t, 2>{fused, high} ==
+                   schoolbook_multiply_accumulate(a, b, c, d)));
+      }
     }
   }
+  // (2^64 - 1)^2 + 2 (2^64 - 1) = 2^128 - 1 is the largest fused value.
+  constexpr std::uint64_t kOnes = ~std::uint64_t{0};
+  std::uint64_t high = 0;
+  PHX_CHECK(phx::mc::multiply_accumulate(kOnes, kOnes, kOnes, kOnes, high) == kOnes &&
+            high == kOnes);
   std::mt19937_64 random(41);
   for (int trial = 0; trial < 100000; ++trial) {
     const std::uint64_t a = random();
     const std::uint64_t b = random() >> (trial % 64);
-    std::uint64_t high = 0;
+    const std::uint64_t c = random();
+    const std::uint64_t d = random() >> (trial % 61);
     const std::uint64_t low = phx::mc::multiply_wide(a, b, high);
     PHX_CHECK((std::array<std::uint64_t, 2>{low, high} == schoolbook_product(a, b)));
+    const std::uint64_t fused = phx::mc::multiply_accumulate(a, b, c, d, high);
+    PHX_CHECK((std::array<std::uint64_t, 2>{fused, high} ==
+               schoolbook_multiply_accumulate(a, b, c, d)));
   }
 }
 
