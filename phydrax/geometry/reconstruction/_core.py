@@ -32,7 +32,7 @@ from ..._meshcore import delaunay_2d
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float, positive_integer
 from ...measurement.lidar import LidarPointProduct
-from ...typing import checked, parse, PRNGKey
+from ...typing import checked, ConvertibleToArray, parse, PRNGKey
 from .._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
@@ -50,6 +50,7 @@ from .._contracts import (
 )
 from .._cubature import CubatureAtlas, CubatureComponent
 from .._meshing_domain import MeshingDomain
+from .._rational import fraction_down, fraction_up
 from .._validity import GeometryValidityEvidence, representation_validity
 from ..brep._patches import AbstractSurfacePatch, LineCurve
 from ..design._schema import _ParameterCollector, DesignState
@@ -418,6 +419,37 @@ class _ReconstructedTrianglePatch(AbstractSurfacePatch, NonTrainableState):
             + first * self.corners[1]
             + second * self.corners[2]
         )
+
+    def bounding_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
+        """Enclose the exact affine source map on a validated UV rectangle.
+
+        Every coordinate of ``(1 - u - v) c0 + u c1 + v c2`` is affine in
+        ``(u, v)``, so its extrema over a rectangle lie at the rectangle's
+        corners. They are evaluated in exact rationals from the authored
+        corners and rounded outward.
+        """
+        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        origin, first, second = self.exact_corners
+        rectangle = tuple(
+            (
+                Fraction.from_float(float(box[u_end, 0])),
+                Fraction.from_float(float(box[v_end, 1])),
+            )
+            for u_end in range(2)
+            for v_end in range(2)
+        )
+        lower: list[float] = []
+        upper: list[float] = []
+        for axis in range(3):
+            values = tuple(
+                origin[axis]
+                + u * (first[axis] - origin[axis])
+                + v * (second[axis] - origin[axis])
+                for u, v in rectangle
+            )
+            lower.append(fraction_down(min(values)))
+            upper.append(fraction_up(max(values)))
+        return np.asarray((lower, upper), dtype=np.float64)
 
     @classmethod
     def evaluate_stacked(

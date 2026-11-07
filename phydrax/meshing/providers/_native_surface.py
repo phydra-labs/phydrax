@@ -2992,13 +2992,21 @@ class _CurveChordBounds:
                     )
                     self.use_point_bounds[key] = bounds
                     return bounds
-            _, bounds = _surface_mapped_curve_bounds(
-                self.domain.patches[patch].surface,
-                use.pcurve,
-                float(fraction_endpoint(native, upper=False)),
-                float(fraction_endpoint(native, upper=True)),
-                self.preparation,
-            )
+            try:
+                _, bounds = _surface_mapped_curve_bounds(
+                    self.domain.patches[patch].surface,
+                    use.pcurve,
+                    float(fraction_endpoint(native, upper=False)),
+                    float(fraction_endpoint(native, upper=True)),
+                    self.preparation,
+                )
+            except (ArithmeticError, NotImplementedError, TypeError, ValueError) as error:
+                raise _failure(
+                    "source p-curve endpoint has no finite mapped continuous point "
+                    f"enclosure on patch {patch} at native parameter {native}: {error}",
+                    category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    entity_ids=(int(use.curve),),
+                ) from error
             self.use_point_bounds[key] = bounds
         return bounds
 

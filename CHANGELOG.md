@@ -105,6 +105,18 @@
   with identical IDs.
 
 ### Fixed
+- Native meshcore C++ tests now build with GCC and MSVC: request designators
+  follow declaration order, and `std::minmax` results are compared component by
+  component instead of through a C++23 heterogeneous pair comparison.
+- Native surface routes certify shared line-revolution seams, rims and poles
+  exactly. The trace of each edge is matched as an exact harmonic-affine
+  function; a collapsed pole curve is proved from exact zero radial
+  coefficients. Shared spline trim edges are proved equal piece by piece from
+  exact rational samples bounded by the trace degree. Corners of non-B-Rep
+  surfaces reduce exact whole turns of a full-turn axis before comparison.
+  Reconstructed triangle patches report exact outward-rounded parameter boxes.
+- A refused curve endpoint box during native surface meshing raises a typed
+  `MeshingFailure` that names the curve, instead of a raw `ValueError`.
 - Adaptive implicit source-chart certification narrows each undecided piece's
   root interval with interval Newton before the tolerance test. Pieces near
   the tolerance band therefore certify or refuse as violated instead of

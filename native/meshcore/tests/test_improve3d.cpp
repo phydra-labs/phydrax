@@ -2646,7 +2646,8 @@ void boundary_point_insertion_splits_segment_and_fans() {
       for (int offset = 0; offset < 3; ++offset) {
         const std::uint64_t start = facet.vertices[static_cast<std::size_t>(offset)];
         const std::uint64_t end = facet.vertices[static_cast<std::size_t>((offset + 1) % 3)];
-        if (std::minmax(start, end) != std::pair<std::uint64_t, std::uint64_t>{0, 2}) continue;
+        const auto [low, high] = std::minmax(start, end);
+        if (low != 0 || high != 2) continue;
         const std::uint64_t third = facet.vertices[static_cast<std::size_t>((offset + 2) % 3)];
         halves.push_back(
             {facet_id++, {start, vertex.id, third}, facet.source, facet.orientation, false});

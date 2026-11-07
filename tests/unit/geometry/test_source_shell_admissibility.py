@@ -103,3 +103,58 @@ def test_original_step_source_pair_certificates_and_stale_refusal(tmp_path: Path
         circle.radius * 1.01,
     )
     assert certify_source_ring_face_pair(stale, 0, 1) is None
+
+
+def test_boolean_cut_washer_source_pair_certificates(tmp_path: Path) -> None:
+    import equinox as eqx
+
+    from phydrax.geometry.brep._intersection import ConicParameterEndpoint
+    from phydrax.geometry.brep._source_shell_admissibility import (
+        _shared_two_arc_circle,
+        certify_plane_torus_pair,
+        certify_retained_branch_pair,
+        certify_tangent_cylinder_torus_pair,
+    )
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _external_case
+
+    # The radial-hole difference rebinds every washer circle endpoint to its
+    # published carrier with the retained raw parameter; the tangent and planar
+    # torus circles must still certify through their exact conic roots.
+    model, _, _, _ = _external_case("external-combined", "step", tmp_path)
+    for certify, pairs in (
+        (certify_tangent_cylinder_torus_pair, ((0, 5), (2, 4))),
+        (certify_plane_torus_pair, ((3, 4), (3, 5))),
+    ):
+        for first, second in pairs:
+            proof = certify(model, first, second)
+            assert proof is not None
+            assert proof.replay(model)
+    # Each wall face meets both hole sides; the branch on the other side lies
+    # outside the hole face's full-turn trim and is excluded exactly.
+    for first, second in ((0, 6), (0, 7), (2, 6), (2, 7)):
+        common = set(model.geometry.topology.face_edges[first]) & set(
+            model.geometry.topology.face_edges[second]
+        )
+        proof = certify_retained_branch_pair(model, first, second)
+        assert proof is not None
+        assert set(proof.shared_edges) == common
+        assert len(proof.excluded_branches) == 1
+        assert proof.replay(model)
+
+    edge = 3
+    first_root, second_root = model.geometry.edge_endpoint_roots[edge]
+    assert isinstance(first_root, ConicParameterEndpoint)
+    assert first_root.parameter_exact is not None
+    moved = ConicParameterEndpoint(
+        first_root.root,
+        first_root.carrier,
+        Fraction(1, 1000),
+        first_root.point_exact,
+    )
+    roots = list(model.geometry.edge_endpoint_roots)
+    roots[edge] = (moved, second_root)
+    outside = eqx.tree_at(
+        lambda value: value.geometry.edge_endpoint_roots, model, tuple(roots)
+    )
+    assert _shared_two_arc_circle(model, 0, 5) is not None
+    assert _shared_two_arc_circle(outside, 0, 5) is None

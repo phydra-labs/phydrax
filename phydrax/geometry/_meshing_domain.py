@@ -117,6 +117,34 @@ def _pcurve_points(pcurve: AbstractCurve, parameters: np.ndarray, /) -> np.ndarr
     )
 
 
+_PERIOD_SHADOW = Fraction.from_float(math.tau)
+
+
+def _native_turn_reduced_chart(
+    surface: AbstractSurfacePatch, chart: np.ndarray, /
+) -> np.ndarray:
+    """``chart`` with every whole native ``2 pi`` turn coordinate replaced by zero.
+
+    On a declared ``two_pi`` axis a binary64 chart coordinate that is an exact
+    integer multiple of the period's binary shadow names that many exact turns,
+    the gauge `_lift_native_period_loop` uses. The source map is exactly
+    periodic on that axis, so the exact source point is the image at zero;
+    evaluating the rounded turn instead would move it by the shadow's error.
+    """
+    turn_axes = tuple(
+        axis
+        for axis, symbol in enumerate(surface.native_period_symbols())
+        if symbol == "two_pi"
+        and chart[axis] != 0.0
+        and (Fraction.from_float(float(chart[axis])) / _PERIOD_SHADOW).denominator == 1
+    )
+    if not turn_axes:
+        return chart
+    reduced = np.array(chart, dtype=np.float64, copy=True)
+    reduced[list(turn_axes)] = 0.0
+    return reduced
+
+
 def _surface_endpoint_images(
     patches: Sequence[MeshingSurfacePatch],
     rows: Sequence[int],
@@ -2294,7 +2322,10 @@ class MeshingDomain(StrictModule, NonTrainableState):
                             else (source_curve.end, source_curve.start)
                         )
                     image_patches.extend((patch_index, patch_index))
-                    image_charts.extend((uv_endpoints[0], uv_endpoints[1]))
+                    image_charts.extend(
+                        _native_turn_reduced_chart(patch.surface, endpoint)
+                        for endpoint in uv_endpoints
+                    )
         for corner, patch_index, point in zip(
             image_corners,
             image_patches,

@@ -1259,6 +1259,38 @@ def test_parametric_surface_route_adapts_exact_reconstructed_meshregion() -> Non
     }
 
 
+def test_reconstructed_triangle_chart_box_encloses_exact_affine_image() -> None:
+    from phydrax.geometry.reconstruction._core import _ReconstructedTrianglePatch
+
+    corners = np.asarray(
+        ((0.1, -0.3, 0.7), (1.3, 0.2, -0.1), (-0.4, 0.9, 0.3)), dtype=np.float64
+    )
+    patch = _ReconstructedTrianglePatch(corners)
+    parameter_box = np.asarray(((0.1, 0.2), (0.3, 0.7)), dtype=np.float64)
+    box = patch.bounding_box(parameter_box)
+    exact = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in corners
+    )
+    images = tuple(
+        tuple(
+            exact[0][axis]
+            + u * (exact[1][axis] - exact[0][axis])
+            + v * (exact[2][axis] - exact[0][axis])
+            for axis in range(3)
+        )
+        for u in (Fraction.from_float(0.1), Fraction.from_float(0.3))
+        for v in (Fraction.from_float(0.2), Fraction.from_float(0.7))
+    )
+    for axis in range(3):
+        lowest = min(image[axis] for image in images)
+        highest = max(image[axis] for image in images)
+        assert Fraction.from_float(float(box[0, axis])) <= lowest
+        assert highest <= Fraction.from_float(float(box[1, axis]))
+        # Outward rounding of the exact extremes, never a wider sampled box.
+        assert float(box[0, axis]) >= np.nextafter(float(lowest), -np.inf)
+        assert float(box[1, axis]) <= np.nextafter(float(highest), np.inf)
+
+
 def test_rational_surface_jacobian_uses_positive_source_spans() -> None:
     domain = _curved_trim_domain()
     surface = domain.patches[0].surface
@@ -1971,9 +2003,104 @@ def test_non_brep_surface_pole_ancestry_replays_exact_collapse() -> None:
     charts = construction.organization.surface_source
     assert charts is not None
     bindings = validate_surface_curve_ancestry(charts, 0.05)
-    assert {use.curve_row for uses in bindings.values() for use in uses} == set(
-        range(len(domain.curves))
+    # A collapsed pole side is a corner use, not a coedge: its degenerate
+    # source curve has no authored chart owner and no mesh edge to bind. Every
+    # other curve is bound, and every pole side was proved by the replay.
+    pole_corners = {
+        use.corner
+        for patch in domain.patches
+        for loop in patch.loops
+        for use in loop
+        if isinstance(use, PatchPoleUse)
+    }
+    unowned = {
+        row
+        for row in range(len(domain.curves))
+        if tuple(int(value) for value in domain.curve_owners[row]) == (-1, -1, -1)
+    }
+    assert unowned == {
+        row
+        for row, curve in enumerate(domain.curves)
+        if curve.start == curve.end and curve.start in pole_corners
+    }
+    assert unowned
+    assert {use.curve_row for uses in bindings.values() for use in uses} == (
+        set(range(len(domain.curves))) - unowned
     )
+    # The harmonic collapse proof refuses a ring side that does not collapse.
+    from phydrax.geometry._surface_source_support import _surface_pole_proven
+
+    pole_patch, pole = next(
+        (row, use)
+        for row, patch in enumerate(domain.patches)
+        for loop in patch.loops
+        for use in loop
+        if isinstance(use, PatchPoleUse)
+    )
+    assert _surface_pole_proven(charts, pole_patch, pole)
+    ring = next(
+        use
+        for loop in domain.patches[pole_patch].loops
+        for use in loop
+        if isinstance(use, PatchCurveUse)
+        and domain.curves[use.curve].start == domain.curves[use.curve].end
+    )
+    ring_corner = domain.curves[ring.curve].start
+    forged_pole = PatchPoleUse(ring_corner, ring.pcurve, ring.first, ring.last)
+    assert not _surface_pole_proven(charts, pole_patch, forged_pole)
+
+
+def test_non_brep_seam_corner_is_the_exact_whole_turn_image() -> None:
+    contract = SpatialCoordinateContract.si()
+    original = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract)
+    )
+    seam_end = original.patches[1].surface.evaluate(
+        jnp.asarray((2.0 * np.pi, 0.0), dtype=jnp.float64)
+    )
+    corner = 1
+    assert np.array_equal(original.corner_points[corner], (0.0, 0.5, 0.0))
+    # The rounded binary64 turn misses the seam corner; the exact turn does not.
+    assert not np.array_equal(np.asarray(seam_end), original.corner_points[corner])
+    forged = np.array(original.corner_points, copy=True)
+    forged[corner] = np.asarray(seam_end)
+    with pytest.raises(ValueError, match="endpoints disagree at corner 1"):
+        MeshingDomain(
+            original.patches,
+            original.curves,
+            len(original.corner_points),
+            source_id="surface-pole-proof",
+            source_revision="surface-pole-proof-r1",
+            regions=original.regions,
+            corner_points=forged,
+        )
+
+
+def test_curve_chord_endpoint_box_refusal_is_a_typed_meshing_failure() -> None:
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+    from phydrax.meshing.providers._native_surface import _CurveChordBounds
+
+    domain = _curved_trim_domain()
+    # A curved p-curve leaving the patch chart at its midpoint: its endpoint
+    # chart box cannot be admitted by the source surface.
+    escaping = PatchCurveUse(
+        0,
+        BSplineCurve(
+            np.asarray(((0.0, 0.0), (0.5, -0.4), (1.0, 0.0)), dtype=np.float64),
+            np.ones((3,), dtype=np.float64),
+            np.asarray((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), dtype=np.float64),
+            2,
+        ),
+        0.0,
+        1.0,
+    )
+    chords = _CurveChordBounds(SourcePreparation(domain))
+    with pytest.raises(MeshingFailure) as failure:
+        chords._point_bounds(0, escaping, Fraction(1, 2))
+    assert failure.value.category is MeshingFailureCategory.PROVIDER_EXECUTION_FAILED
+    assert failure.value.entity_ids == (0,)
+    assert "patch 0 at native parameter 1/2" in str(failure.value)
+    assert isinstance(failure.value.__cause__, ValueError)
 
 
 def test_hard_surface_angle_decides_represented_face_ratio_at_threshold() -> None:

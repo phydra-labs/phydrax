@@ -484,7 +484,18 @@ def _shared_two_arc_circle(
         ):
             return None
         roots = (first_root, second_root)
-        if any(root.parameter_exact is not None for root in roots):
+        # A Boolean-rebound endpoint retains its raw carrier parameter. Only the
+        # exact cosine/sine/turn root below is used, so that parameter is
+        # admissible solely as a representative inside the root's isolation.
+        if any(
+            root.parameter_exact is not None
+            and not (
+                root.root.parameter_lower
+                <= root.parameter_exact
+                <= root.root.parameter_upper
+            )
+            for root in roots
+        ):
             return None
         for root in roots:
             _validate_conic_parameter_root(root.root)
@@ -835,16 +846,44 @@ def _branch_outside_trim(
         (Fraction.from_float(float(box[0, 0])), Fraction.from_float(float(box[0, 1]))),
         (Fraction.from_float(float(box[1, 0])), Fraction.from_float(float(box[1, 1]))),
     )
-    if not any(
-        branch_box[1][axis] < trim[0][axis] or trim[1][axis] < branch_box[0][axis]
+    separated = tuple(
+        axis
         for axis in range(2)
-    ):
+        if branch_box[1][axis] < trim[0][axis] or trim[1][axis] < branch_box[0][axis]
+    )
+    if not separated:
         return False
     union: _IntervalBox = (
         (min(branch_box[0][0], trim[0][0]), min(branch_box[0][1], trim[0][1])),
         (max(branch_box[1][0], trim[1][0]), max(branch_box[1][1], trim[1][1])),
     )
-    return certify_source_embedding(region.patch, union) is not None
+    if certify_source_embedding(region.patch, union) is not None:
+        return True
+    # Outward-rounded full-turn trims exceed one period, so no rational box is
+    # an embedded sheet. Separation on the non-periodic axis holds at every
+    # periodic coordinate; the exact full-turn sheet with its declared deck
+    # pairing then separates the branch from the trim modulo the period.
+    from ._boolean_core import ChartScalar
+    from ._source_embedding import _TAU
+
+    periods = region.patch.native_period_symbols()
+    for axis in separated:
+        other = 1 - axis
+        if periods[axis] is not None or periods[other] != "two_pi":
+            continue
+        lower: list[ChartScalar] = [Fraction(0), Fraction(0)]
+        upper: list[ChartScalar] = [_TAU, _TAU]
+        lower[axis], upper[axis] = union[0][axis], union[1][axis]
+        if (
+            certify_source_embedding(
+                region.patch,
+                ((lower[0], lower[1]), (upper[0], upper[1])),
+                deck_axes=(other,),
+            )
+            is not None
+        ):
+            return True
+    return False
 
 
 def _shared_branch_edge(

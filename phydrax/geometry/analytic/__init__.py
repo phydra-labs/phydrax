@@ -31,6 +31,23 @@ from ._operations import (
 from ._primitives import Ball, Box, Circle, Cube, Orthotope, Sphere
 from ._superquadric import Superquadric
 from ._sweeps import Extrusion, Revolution
+from ._trigonometric_level_set import (
+    certify_trigonometric_critical_levels,
+    certify_trigonometric_sheet_thickness,
+    TrigonometricCriticalLevels,
+    TrigonometricFactor,
+    TrigonometricFamily,
+    TrigonometricLevelOutcome,
+    TrigonometricLevelSeparation,
+    TrigonometricLevelSet,
+    TrigonometricRegion,
+    TrigonometricSheetBand,
+    TrigonometricSheetThickness,
+    TrigonometricSingularLevelError,
+    TrigonometricTable,
+    TrigonometricTerm,
+    TrigonometricWallThickness,
+)
 
 
 __all__ = [
@@ -64,6 +81,21 @@ __all__ = [
     "Torus",
     "Translation",
     "Triangle",
+    "TrigonometricCriticalLevels",
+    "TrigonometricFactor",
+    "TrigonometricFamily",
+    "TrigonometricLevelOutcome",
+    "TrigonometricLevelSet",
+    "TrigonometricLevelSeparation",
+    "TrigonometricRegion",
+    "TrigonometricSheetBand",
+    "TrigonometricSheetThickness",
+    "TrigonometricSingularLevelError",
+    "TrigonometricTable",
+    "TrigonometricTerm",
+    "TrigonometricWallThickness",
+    "certify_trigonometric_critical_levels",
+    "certify_trigonometric_sheet_thickness",
     "Union",
     "Wedge",
 ]

@@ -5038,9 +5038,12 @@ def _resume_layer_core_cycle(
         limits=MODEL_ARCHIVE_LIMITS,
         expected_content_id=content_id,
     )
-    source = restore_layer_core_authoring(archive.value("source"))
     specification = phx.meshing.VolumeMeshingSpec.from_stored_fields(
         archive.value("specification")
+    )
+    # Charted (BRep) authoring replays its source atlas against the actual request.
+    source = restore_layer_core_authoring(
+        archive.value("source"), specification=specification
     )
     # One operation-local root proof binds both endpoints, the transition and
     # the association transfer to the same restored request owner.
