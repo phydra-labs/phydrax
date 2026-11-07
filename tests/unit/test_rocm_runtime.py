@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 import sys
 from importlib import metadata
 from pathlib import Path
@@ -13,6 +14,14 @@ from types import ModuleType, SimpleNamespace
 from typing import NoReturn, TypedDict
 
 import pytest
+
+
+# Owned ROCm activation is a Linux x86_64 provider; on any other host the
+# loader refuses before inspection (test_activation_refuses_unsupported_host).
+_requires_owned_rocm_host = pytest.mark.skipif(
+    sys.platform != "linux" or platform.machine() != "x86_64",
+    reason="Owned ROCm activation requires a Linux x86_64 host.",
+)
 
 
 class _PayloadEntry(TypedDict):
@@ -313,11 +322,19 @@ def test_foreign_distribution_is_refused(
         runtime.inspect_rocm_bundle()
 
 
+def test_activation_refuses_unsupported_host(
+    runtime: ModuleType, installed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime.platform, "machine", lambda: "aarch64")
+    with pytest.raises(runtime.RocmRuntimeError, match="requires Linux x86_64"):
+        runtime.activate_rocm_bundle()
+    assert runtime._HANDLES == []
+
+
+@_requires_owned_rocm_host
 def test_activation_uses_absolute_dependency_order_retains_handles_and_no_ld_path(
     runtime: ModuleType, installed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if sys.platform == "win32":
-        pytest.skip("ROCm preload activation requires POSIX RTLD loader flags.")
     expected_mode = os.RTLD_NOW | os.RTLD_GLOBAL
     calls = []
     handles = []
@@ -353,6 +370,7 @@ def test_activation_uses_absolute_dependency_order_retains_handles_and_no_ld_pat
     assert len(calls) == len(bundle.preload)
 
 
+@_requires_owned_rocm_host
 def test_foreign_loaded_runtime_is_refused_before_loading(
     runtime: ModuleType, installed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -364,6 +382,7 @@ def test_foreign_loaded_runtime_is_refused_before_loading(
     assert runtime._HANDLES == []
 
 
+@_requires_owned_rocm_host
 @pytest.mark.parametrize("kind", ["library", "linker", "gfx1250", "gfx942", "gfx950"])
 def test_same_size_payload_tampering_is_refused(
     runtime: ModuleType, installed: SimpleNamespace, kind: str
@@ -382,6 +401,7 @@ def test_same_size_payload_tampering_is_refused(
     assert runtime._HANDLES == []
 
 
+@_requires_owned_rocm_host
 def test_late_import_and_compiler_override_are_refused(
     runtime: ModuleType, installed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -391,6 +411,7 @@ def test_late_import_and_compiler_override_are_refused(
     assert runtime._HANDLES == []
 
 
+@_requires_owned_rocm_host
 def test_late_plugin_is_refused(
     runtime: ModuleType, installed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -459,6 +480,7 @@ def test_missing_architecture_payload_is_refused(
         runtime.inspect_rocm_bundle()
 
 
+@_requires_owned_rocm_host
 def test_partial_load_retains_handles_and_refuses_retry(
     runtime: ModuleType, installed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
