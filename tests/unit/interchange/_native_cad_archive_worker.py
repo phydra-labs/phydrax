@@ -8624,7 +8624,11 @@ def _source_coverage_archive_fixture() -> tuple[
         surface_source=organization.surface_source,
         region_boundary_evidence=organization.region_boundary_evidence,
         planar_embedding=construction.planar_embedding,
-        embedding=request.global_embedding,
+        embedding=(
+            None
+            if construction.validated_global_embedding is None
+            else construction.validated_global_embedding.certificate
+        ),
     )
     if result.certification is None:
         raise ValueError("Restricted coverage fixture lost computed certification.")

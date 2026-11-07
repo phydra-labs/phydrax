@@ -2710,9 +2710,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             if validity.all_certified
             else None
         )
-        embedding = (
-            None if validated_embedding is None else validated_embedding.certificate
-        )
         validate_restricted_delaunay_boundary_witness(
             mesh,
             geometry,
@@ -2741,7 +2738,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             fidelity_witness=fidelity_witness,
             feature_source=profile,
             source_coverage_witness=coverage_witness,
-            global_embedding=embedding,
         )
         return NativeMeshConstruction(
             mesh,

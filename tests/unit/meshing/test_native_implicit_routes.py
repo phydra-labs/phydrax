@@ -502,8 +502,9 @@ def test_native_implicit_volume_route_builds_region_mesh(
         assert proof.target_facet_count > 0
         assert proof.source_facet_count == proof.covered_source_facet_count == 0
         assert coverage_witness.distance_witness_id == distance_witness.witness_id
-        embedding = construction.certification.global_embedding
-        assert embedding is not None
+        validated_embedding = construction.validated_global_embedding
+        assert validated_embedding is not None
+        embedding = validated_embedding.certificate
         forged_embedding = eqx.tree_at(
             lambda value: value.validity.determinant_lower,
             embedding,
