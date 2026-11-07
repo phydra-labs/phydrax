@@ -496,6 +496,21 @@ def test_inverse_columns_use_target_rhs_and_source_solution_event_shapes() -> No
     assert jnp.allclose(result.value.reshape((4, 2)), expected)
 
 
+@pytest.mark.strict_jax
+def test_inverse_columns_accept_int32_indices_under_strict_promotion() -> None:
+    matrix = jnp.array(
+        [[3.0, 0.2, 0.0], [0.2, 2.0, 0.3], [0.0, 0.3, 1.5]], dtype=jnp.float64
+    )
+    factorization = phx.linalg.factorize(
+        phx.linalg.DenseLinearOperator(matrix), phx.linalg.FactorizationPolicy("lu")
+    )
+    columns = jnp.array([2, 0], dtype=jnp.int32)
+    result = factorization.inverse_columns(columns, max_workspace_bytes=64 * 1024)
+    expected = jnp.linalg.solve(matrix, jnp.eye(3, dtype=jnp.float64)[:, columns])
+    assert jnp.all(result.successful)
+    assert jnp.allclose(result.value, expected)
+
+
 def test_streamed_condition_score_uses_the_owner_gershgorin_tie_convention() -> None:
     points = jnp.eye(4, dtype=jnp.float64)
     observations = jnp.array([0.1, 0.3, -0.2, 0.4], dtype=jnp.float64)

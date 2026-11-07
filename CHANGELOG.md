@@ -775,6 +775,9 @@
   differentiation: the symmetric bordered-KKT tangent solve is owned by a
   symmetric custom linear solve, so pullbacks (including
   `conic_primal_vjp`) reuse the native dense solve instead of transposing it.
+- `PreparedFactorization.inverse_columns` accepts integer indices of any
+  dtype under strict dtype promotion; validated indices are converted to the
+  row-index dtype instead of being compared across integer widths.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
