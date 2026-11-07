@@ -38,6 +38,16 @@ _PREFIX = "native-hybrid-lifecycle:"
 _LAYER_TOLERANCE = 1.0e-9
 _VOLUME_TOLERANCE = 1.0e-10
 _GROWTH_RATE = 1.2
+# Declared symbolic work (ordering, elimination tree, counts) of every
+# harmonic-history Cholesky analysis: the original archived-layer-core
+# operator (41,403 P2 DOFs) needs 122,996,112 under nested dissection; its
+# refined target has 5.8x the DOFs, so 2**33 leaves ~10x beyond linear growth.
+_SYMBOLIC_WORK_BUDGET = 1 << 33
+# Run envelope 16 GiB (LIN archived-layer-core row). The history transition is
+# the measured resident peak, 11.67 GB at its solve; a Cholesky solve holds its
+# factor and preparation workspace, each within the budget, so twice the
+# budget must fit the remaining 5.51 GB: 2.5 GiB for every layer/core profile.
+_LAYER_CORE_SOLVE_BUDGET = 5 << 29
 
 
 class _ProfileFailure(RuntimeError):
@@ -50,7 +60,12 @@ class _ProfileFailure(RuntimeError):
 
 
 class _LayerCoreLifecycle(NamedTuple):
-    """Original per-profile material, manufactured-field and cycle controls."""
+    """Original per-profile material, manufactured-field and cycle controls.
+
+    ``solve_memory_bytes`` is the profile's declared execution-memory budget of
+    every harmonic-history solve and factorization, writer and cold reader
+    alike (MAC-20261107T1649Z); it enters plan_id and is never host-derived.
+    """
 
     densities: tuple[float, ...]
     site_id: str
@@ -58,6 +73,7 @@ class _LayerCoreLifecycle(NamedTuple):
     cycles: int
     semantics: str
     density_semantics: str
+    solve_memory_bytes: int
 
 
 # Material densities/sites are the original campaign controls; nonperiodic
@@ -70,6 +86,7 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-periodic-ridge",
         "two-material-cell-average-density",
+        _LAYER_CORE_SOLVE_BUDGET,
     ),
     "concave-box-core-lifecycle": _LayerCoreLifecycle(
         (2.0,),
@@ -78,6 +95,7 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-concave-closed-cap",
         "fluid-cell-average-density",
+        _LAYER_CORE_SOLVE_BUDGET,
     ),
     "concave-box-core-lifecycle:larger": _LayerCoreLifecycle(
         (2.0,),
@@ -86,6 +104,7 @@ _LAYER_CORE_LIFECYCLES = {
         2,
         "original-concave-closed-cap",
         "fluid-cell-average-density",
+        _LAYER_CORE_SOLVE_BUDGET,
     ),
     "unit-box": _LayerCoreLifecycle(
         (2.0,),
@@ -94,6 +113,7 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-unit-box",
         "fluid-cell-average-density",
+        _LAYER_CORE_SOLVE_BUDGET,
     ),
 }
 
@@ -768,6 +788,41 @@ def _layer_core_initial_history(
     return accepted, space, defect
 
 
+def _harmonic_history_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
+    """PCG on the exact supernodal Cholesky factor under one declared byte budget.
+
+    Every solve and factorization budget is the profile's declared execution
+    budget: all fields are static, so they enter plan_id, and the writer and
+    the cold reader prepare under the same declaration. The factor's
+    structural nonzeros are bounded by the same bytes (one float64 each).
+    Nested dissection is the ordering: on the original archived-layer-core
+    operator (41,403 P2 DOFs) it needs 6,393,403 factor nonzeros and 2.1
+    GFLOP, minimum degree 9,133,878 and 4.0 GFLOP.
+    """
+    return phx.linalg.LinearSolvePolicy(
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=1.0e-14),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.SparseFactorizationPreconditionerBuilder(
+                phx.linalg.SparseFactorizationPolicy(
+                    "cholesky",
+                    ordering="nested-dissection",
+                    max_factor_nnz=budget // np.dtype(np.float64).itemsize,
+                    max_factor_bytes=budget,
+                    max_symbolic_work=_SYMBOLIC_WORK_BUDGET,
+                )
+            )
+        ),
+        resources=phx.linalg.SolveResourcePolicy(
+            factorization_bytes=budget,
+            workspace_bytes=budget,
+            krylov_basis_bytes=budget,
+            preconditioner_bytes=budget,
+            recycling_state_bytes=budget,
+        ),
+    )
+
+
 def _layer_core_harmonic_history(
     result: Any,
     volume: Any,
@@ -807,6 +862,12 @@ def _layer_core_harmonic_history(
             "layer-core-harmonic-diffusion",
             "u",
             (phx.equations.DiffusionAction("u", 1.0),),
+            # The Dirichlet-constrained P2 Laplacian is symmetric positive definite.
+            properties=phx.linalg.OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={"positive_definite": "asserted"},
+            ),
         ),
         space,
         constraint=constraint,
@@ -823,10 +884,7 @@ def _layer_core_harmonic_history(
             for offset in offsets
         ),
     )
-    policy = phx.linalg.LinearSolvePolicy(
-        phx.linalg.GMRES(restart=40, stagnation_iterations=40),
-        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=1.0e-14),
-    )
+    policy = _harmonic_history_policy(controls.solve_memory_bytes)
     if offsets:
         solved = phx.linalg.solve(
             operator,
@@ -3163,7 +3221,7 @@ def _core_specification(source: NativeLayerCoreSource, /, *, target_size: float)
     )
 
 
-def _mimetic_affine_field(mesh: Any, /) -> dict[str, object]:
+def _mimetic_affine_field(mesh: Any, budget: int, /) -> dict[str, object]:
     from phydrax.discretization.finite_volume import (
         HybridDiffusionBoundary,
         HybridMimeticDiffusion,
@@ -3187,6 +3245,13 @@ def _mimetic_affine_field(mesh: Any, /) -> dict[str, object]:
         policy=phx.linalg.LinearSolvePolicy(
             phx.linalg.GMRES(restart=40, stagnation_iterations=40),
             tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=1.0e-14),
+            resources=phx.linalg.SolveResourcePolicy(
+                factorization_bytes=budget,
+                workspace_bytes=budget,
+                krylov_basis_bytes=budget,
+                preconditioner_bytes=budget,
+                recycling_state_bytes=budget,
+            ),
         ),
     )
     count = int(discretization.cell_volumes.shape[0])
@@ -3974,7 +4039,9 @@ def _complete_wall_attempt(
                     "The current native layer-core route did not publish independent source coverage certification.",
                     {"wall_layer": layer, "generated_result_id": generated.result_id},
                 )
-            field = _mimetic_affine_field(generated.mesh)
+            field = _mimetic_affine_field(
+                generated.mesh, _LAYER_CORE_LIFECYCLES[name].solve_memory_bytes
+            )
             core_measure = float(
                 np.sum(
                     np.asarray(generated.quality.evaluation.measures, dtype=np.float64)
@@ -4992,7 +5059,9 @@ def _run_unit_box() -> dict[str, object]:
                 "absolute_residual": volume_residual,
             },
         )
-    field = _mimetic_affine_field(generated.mesh)
+    field = _mimetic_affine_field(
+        generated.mesh, _LAYER_CORE_LIFECYCLES["unit-box"].solve_memory_bytes
+    )
     lifecycle = _run_layer_core_lifecycle(
         "unit-box", source, specification, options, generated
     )

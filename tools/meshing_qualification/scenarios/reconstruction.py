@@ -383,6 +383,11 @@ _INVENTORY_TOLERANCE = 1.0e-10
 _RESTORED_FIELD_TOLERANCE = 1.0e-12
 _PROCESS_STARTED = perf_counter()
 _STAGE_LOG = "PHYDRAX_RECONSTRUCTION_STAGE_LOG"
+# Declared symbolic work (ordering, elimination tree, counts) of every
+# manufactured Cholesky analysis: the largest measured reconstruction
+# operator (refined lobed-sphere-2, 18,665 DOFs) needs 4,607,569 under minimum
+# degree; 2**27 leaves ~29x for the larger unmeasured rows.
+_SYMBOLIC_WORK_BUDGET = 1 << 27
 
 
 def _stage(profile: str, stage: str, /) -> None:
@@ -526,6 +531,12 @@ def _manufactured_problem(
             phx.equations.DiffusionAction("u", 1.0),
             phx.equations.SourceAction("u", -6.0),
         ),
+        # The Dirichlet-constrained P1 Laplacian is symmetric positive definite.
+        properties=phx.linalg.OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={"positive_definite": "asserted"},
+        ),
     )
     problem = phx.equations.compile_finite_element_problem(
         form,
@@ -551,15 +562,54 @@ class _ManufacturedSolve:
     record: dict[str, object]
 
 
+def _manufactured_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
+    """PCG on the exact supernodal Cholesky factor under one declared byte budget.
+
+    Every solve and factorization budget is the profile's declared execution
+    budget: all fields are static, so they enter plan_id, and the writer and
+    the cold reader prepare under the same declaration. The factor's
+    structural nonzeros are bounded by the same bytes (one float64 each).
+    Minimum degree is the ordering: on the refined lobed-sphere-2 operator
+    (18,665 DOFs) it needs 2,346,552 factor nonzeros and 0.95 GFLOP, nested
+    dissection 6,647,037 and 8.9 GFLOP.
+    """
+    return phx.linalg.LinearSolvePolicy(
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-14, absolute=0.0),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.SparseFactorizationPreconditionerBuilder(
+                phx.linalg.SparseFactorizationPolicy(
+                    "cholesky",
+                    ordering="approximate-minimum-degree",
+                    max_factor_nnz=budget // np.dtype(np.float64).itemsize,
+                    max_factor_bytes=budget,
+                    max_symbolic_work=_SYMBOLIC_WORK_BUDGET,
+                )
+            )
+        ),
+        resources=phx.linalg.SolveResourcePolicy(
+            factorization_bytes=budget,
+            workspace_bytes=budget,
+            krylov_basis_bytes=budget,
+            preconditioner_bytes=budget,
+            recycling_state_bytes=budget,
+        ),
+    )
+
+
 def _manufactured_solve(
-    result: phx.meshing.CellMeshingResult, form_id: str, /
+    result: phx.meshing.CellMeshingResult, form_id: str, budget: int, /
 ) -> _ManufacturedSolve:
     """Fresh P1 solve with an independent exact L2 error against |x|^2."""
     space, problem, form = _manufactured_problem(result, form_id)
     operator, rhs = problem.linear_system(storage="sparse")
-    prepared = phx.linalg.prepare(
-        operator, phx.linalg.LinearSolvePolicy(phx.linalg.SparseLU(provider="jax-cpu"))
-    )
+    prepared = phx.linalg.prepare(operator, _manufactured_policy(budget))
+    state = prepared.preconditioning_state
+    if state is None or not isinstance(
+        state.action, phx.linalg.SparseFactorizationPreconditioner
+    ):
+        raise RuntimeError("The SPD solve did not retain its Cholesky factorization.")
+    factor = state.action.factorization.plan
     solved, check = phx.linalg.solve_checked(prepared, rhs)
     values = _vertex_values(space, result.mesh, np.asarray(problem.expand(solved.value)))
     residual = float(jnp.linalg.norm(operator.operator.mv(solved.value) - rhs))
@@ -590,6 +640,13 @@ def _manufactured_solve(
                 "backend": str(prepared.plan.backend),
                 "method": str(prepared.plan.method),
                 "status": int(np.asarray(solved.status)),
+                "iterations": int(np.asarray(solved.diagnostics.iterations)),
+                "plan_id": prepared.plan.plan_id,
+                "memory_budget_bytes": budget,
+                "factorization": "supernodal-cholesky",
+                "factor_nnz": factor.factor_nnz,
+                "factor_bytes": factor.factor_bytes,
+                "symbolic_work": factor.symbolic_work,
             },
         },
     )
@@ -723,6 +780,7 @@ def _transfer_accepted_state(
     source_solve: _ManufacturedSolve,
     adaptation: phx.meshing.MeshAdaptationResult,
     label: str,
+    budget: int,
     /,
 ) -> tuple[dict[str, object], phx.solver.FiniteElementTopologyResult, _ManufacturedSolve]:
     """Carry u/density/history atomically, then refresh u by physical reanalysis."""
@@ -772,7 +830,7 @@ def _transfer_accepted_state(
             candidate_mesh, np.asarray(fields[1], dtype=np.float64)
         )
         carried.transferred_l2_error = _quadratic_l2_error(candidate_mesh, u)
-        fresh = _manufactured_solve(target, f"{label}-reanalysis")
+        fresh = _manufactured_solve(target, f"{label}-reanalysis", budget)
         carried.fresh = fresh
         return phx.solver.FiniteElementReanalysisResult(
             fresh.problem,
@@ -1126,7 +1184,8 @@ def _volume_lifecycle(
     _stage(profile, "volume-acceptance")
     initial_acceptance = _volume_acceptance(plc, result)
     _stage(profile, "manufactured-solve-epoch-0")
-    initial = _manufactured_solve(result, f"{label}-epoch-0")
+    budget = _SOLVE_MEMORY_BUDGET_BYTES[profile]
+    initial = _manufactured_solve(result, f"{label}-epoch-0", budget)
     _stage(profile, "marked-refinement")
     adaptation = _refine_every_cell(plc, result)
     target = adaptation.target
@@ -1134,7 +1193,7 @@ def _volume_lifecycle(
     target_acceptance = _volume_acceptance(plc, target)
     _stage(profile, "all-field-transfer-reanalysis")
     transfer, staged, refreshed = _transfer_accepted_state(
-        result, initial, adaptation, label
+        result, initial, adaptation, label, budget
     )
     path = archive_directory / f"{label}.phx"
     _stage(profile, "archive-write")
@@ -1346,6 +1405,7 @@ def _write_accepted_archive(
         "fields_fingerprint": fingerprint,
         "profile": profile,
         "label": label,
+        "solve_memory_budget_bytes": _SOLVE_MEMORY_BUDGET_BYTES[profile],
     }
 
 
@@ -1397,7 +1457,14 @@ def _resume_accepted_archive(
     u, density, history = (np.asarray(value, dtype=np.float64) for value in fields)
     density_defect, history_defect = _auxiliary_defects(result.mesh, density, history)
     _stage(str(expected["profile"]), "cold-continued-solve")
-    continued = _manufactured_solve(result, f"{expected['label']}-cold")
+    # The cold reader prepares under the profile's own declaration, which must
+    # be the budget the writer solved under (it is part of plan identity).
+    budget = _SOLVE_MEMORY_BUDGET_BYTES[str(expected["profile"])]
+    if budget != expected["solve_memory_budget_bytes"]:
+        raise RuntimeError(
+            "Cold reader's declared solve budget differs from the writer's."
+        )
+    continued = _manufactured_solve(result, f"{expected['label']}-cold", budget)
     continued_error = continued.l2_error
     if (
         continued_error > _TARGET_L2_ERROR
@@ -1752,6 +1819,23 @@ def _actual_target_triangles(
 
 
 _ENVELOPE_PROFILE = "native-envelope-lifecycle"
+
+# MAC-20261107T1649Z: every profile declares the execution-memory budget of
+# all its manufactured solves and factorizations (epoch 0, reanalysis, cold).
+# Run envelope: 8 GiB per row (LIN guard). The largest measured resident peak
+# of any row is 5.24 GB (rotated-ellipsoid-1, archive-write; lobed-sphere-2
+# reaches its reanalysis at 4.35 GB). A Cholesky solve holds its factor and
+# its preparation workspace, each within the budget, so twice the budget must
+# fit the remaining 3.35 GB: 1.5 GiB. Measured need: the refined
+# lobed-sphere-2 factor is 40,886,178 bytes.
+_SOLVE_MEMORY_BUDGET_BYTES = {
+    **{
+        _profile_id(kind, scale): 3 << 29
+        for kind in ("lobed-sphere", "torus", "rotated-ellipsoid")
+        for scale in (1, 2)
+    },
+    _ENVELOPE_PROFILE: 3 << 29,
+}
 
 
 def _envelope_case(directory: str, /) -> dict[str, object]:
