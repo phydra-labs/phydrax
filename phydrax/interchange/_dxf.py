@@ -5,7 +5,9 @@ No fit-point interpolation, endpoint snapping, or inferred drawing units are
 performed. Input storage follows the caller-owned bytes or mapped source;
 counts are checked against present group-code payloads before coefficient
 construction. Angular source uses retain analytic carriers and certify their
-junction displacement against the caller's physical declaration.
+junction displacement against the caller's physical declaration. As DXF format
+semantics, an ELLIPSE parameter bit-equal to the binary64 nearest ``k pi / 2``
+denotes that exact right angle, and a full ellipse is written ``0 .. fl(2 pi)``.
 """
 
 from __future__ import annotations
@@ -575,14 +577,80 @@ def _spline(groups: _Groups, label: str) -> list[_Edge]:
 def _quadrant(degrees: float) -> tuple[float, float] | None:
     """Exact axis direction when ``degrees`` is exactly a multiple of 90.
 
-    The decision is exact in rationals. Radian multiples ``k pi / 2`` are
-    irrational for ``k != 0``, so no nonzero binary64 radian denotes an axis
-    direction; radian conics keep their analytic carriers instead.
+    The decision is exact in rationals; radian parameters use ``_right_angle``.
     """
     quotient = Fraction(degrees) / 90
     if quotient.denominator != 1:
         return None
     return ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0))[quotient.numerator % 4]
+
+
+# Binary64 values nearest ``k pi / 2`` for ``k = 0 .. 4``.
+_RIGHT_ANGLES = tuple(
+    float.fromhex(value)
+    for value in (
+        "0x0.0p+0",
+        "0x1.921fb54442d18p+0",
+        "0x1.921fb54442d18p+1",
+        "0x1.2d97c7f3321d2p+2",
+        "0x1.921fb54442d18p+2",
+    )
+)
+
+
+def _right_angle(radians: float) -> int | None:
+    """Index ``k`` when an ELLIPSE parameter is bit-equal to ``fl(k pi / 2)``.
+
+    No nonzero binary64 value equals an irrational right angle, so DXF format
+    semantics, not proximity, read these exact values as the right angles.
+    """
+    if math.copysign(1.0, radians) < 0.0 or radians not in _RIGHT_ANGLES:
+        return None
+    return _RIGHT_ANGLES.index(radians)
+
+
+def _exact_binary(value: Fraction) -> float | None:
+    if abs(value) > Fraction(float(np.finfo(np.float64).max)):
+        return None
+    result = float(value)
+    return result if Fraction(result) == value else None
+
+
+def _ellipse_quarters(
+    center: _Point, major: _Point, ratio: float, first: int, quarters: int
+) -> BSplineCurve | None:
+    """Exact rational quarter arcs of ``center + cos t major + sin t ratio major^perp``.
+
+    Returns ``None`` when a control point is not exactly binary64.
+    """
+    cx, cy = map(Fraction, center)
+    ux, uy = map(Fraction, major)
+    vx, vy = -uy * Fraction(ratio), ux * Fraction(ratio)
+    axes = ((1, 0), (0, 1), (-1, 0), (0, -1))
+    controls: list[_Point] = []
+    weights: list[float] = []
+    for i in range(quarters):
+        a, b = axes[(first + i) % 4], axes[(first + i + 1) % 4]
+        mapped: list[_Point] = []
+        for x, y in (a, (a[0] + b[0], a[1] + b[1]), b):
+            px = _exact_binary(cx + x * ux + y * vx)
+            py = _exact_binary(cy + x * uy + y * vy)
+            if px is None or py is None:
+                return None
+            mapped.append((px, py))
+        # Rational quadratic quarter arcs: w1^2 = w0 w2 / 2, doubling per arc.
+        factor = float(2**i)
+        if not controls:
+            controls.append(mapped[0])
+            weights.append(factor)
+        controls.extend(mapped[1:])
+        weights.extend((factor, 2 * factor))
+    knots = (
+        [0.0] * 3
+        + [float(i) for i in range(1, quarters) for _ in range(2)]
+        + [float(quarters)] * 3
+    )
+    return BSplineCurve(controls, weights, knots, 2)
 
 
 def _conic_angles(groups: _Groups, degrees: bool) -> tuple[float, float]:
@@ -639,6 +707,24 @@ def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
                 "DxfSource.geometry must satisfy its declared planar source contract; got "
                 + "DXF ellipse requires nonzero major axis and 0 < ratio <= 1."
             )
+        quarter_first = _right_angle(first)
+        quarter_last = _right_angle(_number(groups, 42))
+        # The full ellipse 0 .. fl(2 pi) stays the closed periodic carrier.
+        if (
+            quarter_first is not None
+            and quarter_last is not None
+            and (quarter_first, quarter_last) != (0, 4)
+        ):
+            spline = _ellipse_quarters(
+                center,
+                major,
+                ratio,
+                quarter_first,
+                (quarter_last - quarter_first) % 4 or 4,
+            )
+            if spline is not None:
+                points = np.asarray(spline.control_points)
+                return [(tuple(points[0]), tuple(points[-1]), spline, label)]
         axis = (major[0] / length, major[1] / length)
         curve = EllipseCurve(center, axis, (-axis[1], axis[0]), length, ratio * length)
     points = np.asarray(curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64)))
