@@ -2865,35 +2865,24 @@ def _names_each_scaffold_triangle_once(
     return True
 
 
-# Relative rounding slack of the binary64 face-distance lower bound.
-_DISTANCE_SLACK = 2.0**-30
-
-
 def _face_distance_lower(point: np.ndarray, triangle: np.ndarray, /) -> float:
-    """Lower bound on dist(point, triangle) from its plane and edge half-planes.
+    """Binary64 lower bound on dist(point, triangle) from the exact distance.
 
-    The triangle lies in its plane P and in each in-plane half-plane H_k behind
-    edge k, so dist^2 >= dist(point, P)^2 + max_k dist(point, H_k)^2 (the edge
-    normals are orthogonal to the plane normal). Rounding is absorbed by a
-    relative slack.
+    The squared distance is exact in Q over the binary64 coordinates (exact
+    closest-feature classification); the lower rational square-root endpoint is
+    rounded toward negative infinity.
     """
-    first, second, third = triangle
-    normal = np.cross(second - first, third - first)
-    length = float(np.linalg.norm(normal))
-    if not length > 0.0:
-        return 0.0
-    normal = normal / length
-    plane = abs(float(np.dot(point - first, normal)))
-    outside = 0.0
-    for start, end in ((first, second), (second, third), (third, first)):
-        edge_normal = np.cross(end - start, normal)
-        edge_length = float(np.linalg.norm(edge_normal))
-        if edge_length > 0.0:
-            outside = max(
-                outside, float(np.dot(point - start, edge_normal)) / edge_length
-            )
-    scale = float(np.max(np.abs(triangle))) + float(np.max(np.abs(point)))
-    return max(0.0, math.hypot(plane, outside) - _DISTANCE_SLACK * scale)
+    from ..linalg._hermitian_spectral import fraction_sqrt_interval
+    from ._domain_boundary import _point_triangle_squared
+    from ._rational import fraction_down, rational_vector
+
+    def exact(row: np.ndarray, /) -> tuple[Fraction, Fraction, Fraction]:
+        return rational_vector((float(row[0]), float(row[1]), float(row[2])))
+
+    squared = _point_triangle_squared(
+        exact(point), (exact(triangle[0]), exact(triangle[1]), exact(triangle[2]))
+    )
+    return fraction_down(fraction_sqrt_interval(squared)[0])
 
 
 def _single_sheet_preimages(

@@ -22,6 +22,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from fractions import Fraction
 from itertools import combinations
 from typing import Any, cast
 
@@ -29,6 +30,13 @@ import numpy as np
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._geometry_predicates import orient3d, PredicateMode, resolve_host_predicate_mode
+from ._rational import (
+    fraction_down,
+    fraction_up,
+    rational_cross,
+    rational_dot,
+    rational_vector,
+)
 
 
 class TetraIntersectionStatus(str, Enum):
@@ -418,36 +426,154 @@ def _face_order(
     return tuple(ordered)
 
 
-def _compensated_volume(
-    vertices: np.ndarray, faces: tuple[tuple[int, ...], ...]
+type _ExactPoint = tuple[Fraction, Fraction, Fraction]
+type _ExactTetrahedron = tuple[_ExactPoint, _ExactPoint, _ExactPoint, _ExactPoint]
+
+
+def _exact_difference(first: _ExactPoint, second: _ExactPoint, /) -> _ExactPoint:
+    return (first[0] - second[0], first[1] - second[1], first[2] - second[2])
+
+
+def _exact_halfspaces(
+    tetrahedron: _ExactTetrahedron, /
+) -> tuple[tuple[_ExactPoint, Fraction], ...]:
+    """Exact closed half-spaces ``normal . x + offset >= 0`` bounding a tetrahedron."""
+    halfspaces: list[tuple[_ExactPoint, Fraction]] = []
+    for opposite in range(4):
+        first, second, third = (
+            tetrahedron[index] for index in range(4) if index != opposite
+        )
+        normal = rational_cross(
+            _exact_difference(second, first), _exact_difference(third, first)
+        )
+        offset = -rational_dot(normal, first)
+        if rational_dot(normal, tetrahedron[opposite]) + offset < 0:
+            normal = (-normal[0], -normal[1], -normal[2])
+            offset = -offset
+        halfspaces.append((normal, offset))
+    return tuple(halfspaces)
+
+
+def _prism_tetrahedra(
+    bottom: tuple[_ExactPoint, _ExactPoint, _ExactPoint],
+    top: tuple[_ExactPoint, _ExactPoint, _ExactPoint],
+    /,
+) -> tuple[_ExactTetrahedron, _ExactTetrahedron, _ExactTetrahedron]:
+    """Staircase triangulation of a convex prism with lateral edges ``bottom[k]-top[k]``."""
+    return (
+        (bottom[0], bottom[1], bottom[2], top[2]),
+        (bottom[0], bottom[1], top[1], top[2]),
+        (bottom[0], top[0], top[1], top[2]),
+    )
+
+
+def _clip_exact_tetrahedron(
+    tetrahedron: _ExactTetrahedron, normal: _ExactPoint, offset: Fraction, /
+) -> tuple[_ExactTetrahedron, ...]:
+    """Tetrahedra tiling ``tetrahedron`` intersected with ``normal . x + offset >= 0``."""
+    values = tuple(rational_dot(normal, point) + offset for point in tetrahedron)
+    inside = tuple(index for index in range(4) if values[index] >= 0)
+    outside = tuple(index for index in range(4) if values[index] < 0)
+
+    def cut(kept: int, dropped: int, /) -> _ExactPoint:
+        weight = values[kept] / (values[kept] - values[dropped])
+        start, stop = tetrahedron[kept], tetrahedron[dropped]
+        return (
+            start[0] + weight * (stop[0] - start[0]),
+            start[1] + weight * (stop[1] - start[1]),
+            start[2] + weight * (stop[2] - start[2]),
+        )
+
+    match len(inside):
+        case 4:
+            return (tetrahedron,)
+        case 0:
+            return ()
+        case 1:
+            kept = inside[0]
+            return (
+                (
+                    tetrahedron[kept],
+                    cut(kept, outside[0]),
+                    cut(kept, outside[1]),
+                    cut(kept, outside[2]),
+                ),
+            )
+        case 2:
+            first, second = inside
+            return _prism_tetrahedra(
+                (
+                    tetrahedron[first],
+                    cut(first, outside[0]),
+                    cut(first, outside[1]),
+                ),
+                (
+                    tetrahedron[second],
+                    cut(second, outside[0]),
+                    cut(second, outside[1]),
+                ),
+            )
+        case 3:
+            dropped = outside[0]
+            return _prism_tetrahedra(
+                (tetrahedron[inside[0]], tetrahedron[inside[1]], tetrahedron[inside[2]]),
+                (
+                    cut(inside[0], dropped),
+                    cut(inside[1], dropped),
+                    cut(inside[2], dropped),
+                ),
+            )
+        case _:
+            raise RuntimeError("A tetrahedron has exactly four vertices.")
+
+
+def _exact_intersection_volume(
+    source: np.ndarray, target: np.ndarray, /
 ) -> tuple[float, float]:
-    if not faces:
-        return 0.0, 0.0
-    origin = np.mean(vertices, axis=0)
-    total = 0.0
-    correction = 0.0
-    scale = max(float(np.max(np.abs(vertices - origin))), 1.0)
-    terms: list[float] = []
-    for face in faces:
-        anchor = vertices[face[0]] - origin
-        for index in range(1, len(face) - 1):
-            first = vertices[face[index]] - origin
-            second = vertices[face[index + 1]] - origin
-            term = float(np.dot(anchor, np.cross(first, second))) / 6.0
-            terms.append(term)
-            updated = total + term
-            if abs(total) >= abs(term):
-                correction += (total - updated) + term
-            else:
-                correction += (term - updated) + total
-            total = updated
-    signed = total + correction
-    volume = abs(float(signed))
-    # The accumulated correction is an evidence bound, not a volume adjustment.
-    error = abs(float(correction)) + float(np.finfo(np.float64).eps) * max(
-        1.0, scale**3
-    ) * max(1, len(terms))
-    return volume, error
+    """Binary64 volume below the exact intersection volume and its rounding bound.
+
+    ``source`` is clipped by the four closed half-spaces of ``target`` in exact
+    rational arithmetic on the binary64 vertices.  Each clip tiles the kept part
+    of a tetrahedron by tetrahedra (itself, a corner tetrahedron, or a convex
+    prism with planar lateral faces split by the staircase triangulation), so the
+    absolute determinants sum to the exact volume; only the final rounding
+    toward negative infinity remains and is bounded upward exactly.
+    """
+
+    def exact_tetrahedron(vertices: np.ndarray, /) -> _ExactTetrahedron:
+        first, second, third, fourth = (
+            rational_vector((float(row[0]), float(row[1]), float(row[2])))
+            for row in vertices
+        )
+        return first, second, third, fourth
+
+    pieces: tuple[_ExactTetrahedron, ...] = (exact_tetrahedron(source),)
+    for normal, offset in _exact_halfspaces(exact_tetrahedron(target)):
+        pieces = tuple(
+            clipped
+            for piece in pieces
+            for clipped in _clip_exact_tetrahedron(piece, normal, offset)
+        )
+    exact = (
+        sum(
+            (
+                abs(
+                    rational_dot(
+                        _exact_difference(piece[1], piece[0]),
+                        rational_cross(
+                            _exact_difference(piece[2], piece[0]),
+                            _exact_difference(piece[3], piece[0]),
+                        ),
+                    )
+                )
+                for piece in pieces
+            ),
+            Fraction(0),
+        )
+        / 6
+    )
+    volume = fraction_down(exact)
+    return volume, fraction_up(exact - Fraction(volume))
 
 
 def _build_faces(
@@ -623,7 +749,7 @@ def intersect_tetrahedra(
             predicate_uncertain=True,
             predicate_mode=mode,
         )
-    volume, volume_error = _compensated_volume(vertices, faces)
+    volume, volume_error = _exact_intersection_volume(source, target)
     volume_tolerance = max(
         tolerance_.absolute, tolerance_.relative * max(scale**3, 1.0e-300)
     )
