@@ -20,6 +20,7 @@
 #include "exact_scalar.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
@@ -1716,6 +1717,8 @@ int32_t phx_mc_periodic_delaunay(int32_t dimension, int64_t point_count,
                                  double initial_margin,
                                  phx_mc_periodic_triangulation** triangulation) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (triangulation == nullptr) return PHX_MC_INVALID_ARGUMENT;
     *triangulation = nullptr;
     phx::mc::PeriodicDelaunayInput input;
@@ -1774,6 +1777,8 @@ void phx_mc_periodic_free(phx_mc_periodic_triangulation* triangulation) {
 int32_t phx_mc_periodic_delaunay_local(
     const phx_mc_periodic_local_delaunay_request* request) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (request == nullptr || request->result == nullptr) return PHX_MC_INVALID_ARGUMENT;
     *request->result = nullptr;
     const int32_t valid = validate_periodic_local_request(*request);
@@ -1887,6 +1892,8 @@ void phx_mc_periodic_local_delaunay_free(
 int32_t phx_mc_periodic_owner_support_query(
     const phx_mc_periodic_support_query_request* request) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (request == nullptr || request->result == nullptr) return PHX_MC_INVALID_ARGUMENT;
     *request->result = nullptr;
     const int32_t valid = validate_periodic_support_request(*request);
@@ -3259,6 +3266,8 @@ int32_t phx_mc_periodic_refine_2d(const phx_mc_periodic_refinement_input* input,
   if (refinement != nullptr) *refinement = nullptr;
   if (input == nullptr || refinement == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     phx::mc::PeriodicRefinementResult result;
     const int32_t status = phx::mc::periodic_refine_2d(*input, result);
     if (status == PHX_MC_OK || status == PHX_MC_UNRESOLVED) {

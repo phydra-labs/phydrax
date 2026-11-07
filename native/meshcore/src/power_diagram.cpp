@@ -46,6 +46,7 @@
 
 #include "capi_guard.hpp"
 #include "clip3d.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "topology_keys.hpp"
@@ -1396,6 +1397,8 @@ int32_t phx_mc_restricted_power_cells(
     const phx_mc_restricted_power_cells_request* request) {
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (request->result == nullptr) return PHX_MC_INVALID_ARGUMENT;
     *request->result = nullptr;
     const phx::mc::Input input{
@@ -1421,6 +1424,8 @@ int32_t phx_mc_restricted_power_cells_exact(
     const phx_mc_restricted_power_cells_exact_request* request) {
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     using namespace phx::mc;
     const auto& in = *request;
     if (in.result == nullptr || in.failed_image_coordinate == nullptr ||

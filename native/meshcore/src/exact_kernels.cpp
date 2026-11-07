@@ -1022,7 +1022,6 @@ struct phx_mc_bvh_pair_stream {
 
   // Advances to the next block; false when the traversal is complete.
   bool advance() {
-    const phx::mc::GradualNearestScope mode;
     while (true) {
       if (active) {
         if (leaf_offset < leaves_first.size()) {
@@ -1123,6 +1122,8 @@ int32_t phx_mc_interval_bernstein_restrict(int64_t count, int32_t degree, int64_
                                            double* out_lower, double* out_upper,
                                            int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     int64_t row_entries = 0;
     if (count < 0 || degree < 0 || width < 1 || parallelism < 1 ||
         !phx::mc::checked_multiply(int64_t{degree} + 1, width, row_entries) ||
@@ -1158,6 +1159,8 @@ int32_t phx_mc_interval_multiply(int64_t count, const double* first_lower,
                                  const double* first_upper, const double* second_lower,
                                  const double* second_upper, double* lower, double* upper) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (count < 0 || !phx::mc::addressable(count, 1, sizeof(double))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -1166,8 +1169,6 @@ int32_t phx_mc_interval_multiply(int64_t count, const double* first_lower,
                       upper == nullptr)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    const phx::mc::GradualNearestScope mode;
-    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     for (int64_t index = 0; index < count; ++index) {
       interval_product(first_lower[index], first_upper[index], second_lower[index],
                        second_upper[index], lower[index], upper[index]);
@@ -1180,6 +1181,8 @@ int32_t phx_mc_interval_sum(int64_t count, const double* first_lower, const doub
                             const double* second_lower, const double* second_upper,
                             int32_t subtract, double* lower, double* upper) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (count < 0 || (subtract != 0 && subtract != 1) ||
         !phx::mc::addressable(count, 1, sizeof(double))) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -1189,8 +1192,6 @@ int32_t phx_mc_interval_sum(int64_t count, const double* first_lower, const doub
                       upper == nullptr)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    const phx::mc::GradualNearestScope mode;
-    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     for (int64_t index = 0; index < count; ++index) {
       const double a_lo = first_lower[index];
       const double a_hi = first_upper[index];
@@ -1493,6 +1494,8 @@ int32_t phx_mc_separation_screen(int64_t count, int32_t dimension, const int64_t
                                  const double* second_upper, const double* normals,
                                  int8_t* decisions, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (count < 0 || dimension < 1 || parallelism < 1 || first_offsets == nullptr ||
         second_offsets == nullptr || !phx::mc::addressable(count, dimension, sizeof(double))) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -1531,6 +1534,8 @@ int32_t phx_mc_bvh_pair_stream_create(const phx_mc_bvh_tree_view* first,
                                       int64_t node_block, int32_t parallelism,
                                       phx_mc_bvh_pair_stream** stream) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (stream == nullptr) return PHX_MC_INVALID_ARGUMENT;
     *stream = nullptr;
     if (dimension < 1 || item_block < 1 || node_block < 1 || parallelism < 1 ||
@@ -1561,11 +1566,7 @@ int32_t phx_mc_bvh_pair_stream_create(const phx_mc_bvh_tree_view* first,
     }
     created->node_block = static_cast<std::size_t>(node_block);
     created->parallelism = parallelism;
-    {
-      const phx::mc::GradualNearestScope mode;
-      if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-      created->start();
-    }
+    created->start();
     *stream = created.release();
     return PHX_MC_OK;
   });
@@ -1576,6 +1577,8 @@ int32_t phx_mc_bvh_pair_stream_next(phx_mc_bvh_pair_stream* stream, int64_t pair
                                     int64_t* second_items, int64_t* block_ends, int64_t* blocks) {
   bool advancing = false;
   const int32_t status = phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (stream == nullptr || blocks == nullptr || block_capacity < 1 || first_items == nullptr ||
         second_items == nullptr || block_ends == nullptr ||
         !phx::mc::addressable(pair_capacity, 1, sizeof(int64_t)) ||

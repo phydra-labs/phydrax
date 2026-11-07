@@ -3,6 +3,7 @@
 //
 // Owned C boundary for persistent source-aware tetrahedral meshes.
 #include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "refine3d.hpp"
 #include "improve3d.hpp"
@@ -852,6 +853,8 @@ static int32_t create_tet_mesh(
   if (request != nullptr && request->result != nullptr) *request->result = nullptr;
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!valid_create_request(*request)) return PHX_MC_INVALID_ARGUMENT;
     const auto policy = static_cast<phx::mc::BoundaryPolicy>(request->boundary_policy);
     auto handle = std::make_unique<phx_mc_tet_mesh>(policy);
@@ -1398,6 +1401,8 @@ int32_t phx_mc_tet_mesh_apply_edit(phx_mc_tet_mesh* mesh,
   if (edit_status != nullptr) *edit_status = PHX_MC_TET_EDIT_REJECTED_TOPOLOGY;
   if (mesh == nullptr || request == nullptr || edit_status == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!valid_edit_request(*request)) return PHX_MC_INVALID_ARGUMENT;
     TetEdit operation;
     switch (request->kind) {
@@ -1642,6 +1647,8 @@ int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* mesh, uint64_t expected_generati
     return PHX_MC_OK;
   }
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const std::int32_t status = phx::mc::refine_mesh(
         mesh->state, radius_edge_bound,
         input_span(sizes, size_count), *inserted_count, *unmet_count);
@@ -1696,6 +1703,8 @@ int32_t phx_mc_tet_mesh_improve_quality(phx_mc_tet_mesh* mesh, uint64_t expected
     return PHX_MC_OK;
   }
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const phx::mc::TetQualityRequest request{radius_edge_bound, minimum_dihedral_degrees,
                                              minimum_relative_determinant};
     bool applied = false;
@@ -1729,6 +1738,8 @@ int32_t phx_mc_tet_mesh_evaluate_quality(
   *count = 0;
   if (expected_generation != mesh->state.generation()) return PHX_MC_STALE_GENERATION;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::vector<phx::mc::TetUnmetRecord> records;
     const int32_t status = phx::mc::evaluate_mesh_quality(
         mesh->state, {radius_edge_bound, minimum_dihedral_degrees, minimum_relative_determinant},
@@ -1770,6 +1781,8 @@ int32_t phx_mc_tet_mesh_evaluate_candidate_quality(
   *count = 0;
   if (expected_generation != mesh->state.generation()) return PHX_MC_STALE_GENERATION;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::vector<phx::mc::TetUnmetRecord> records;
     const int32_t status = phx::mc::evaluate_mesh_quality(
         mesh->state, {radius_edge_bound, minimum_dihedral_degrees, minimum_relative_determinant},
@@ -1884,6 +1897,8 @@ int32_t phx_mc_tet_mesh_bind_implicit(
     phx_mc_tet_mesh* mesh, const phx_mc_tet_implicit_source* source) {
   if (mesh == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::shared_ptr<phx::mc::TetImplicitSource> owned;
     const int32_t status = prepare_implicit_owner(source, owned);
     if (status != PHX_MC_OK) return status;

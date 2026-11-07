@@ -43,6 +43,7 @@
 #include "clip3d.hpp"
 #include "clip_common.hpp"
 #include "exact_scalar.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -1365,7 +1366,9 @@ extern "C" {
 int32_t phx_mc_tetrahedron_intersection_moments(int64_t count, const double* first,
                                                 const double* second, double* volumes,
                                                 double* first_moments, int32_t* item_status) {
-  return phx::mc::guarded([&] {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::tetrahedron_batch(count, first, second, 0, nullptr, nullptr, volumes,
                                       first_moments, item_status);
   });
@@ -1377,6 +1380,8 @@ int32_t phx_mc_tetrahedron_intersection_simplices(int64_t count, const double* f
                                                   double* volumes, double* first_moments,
                                                   int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (simplex_capacity < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -1394,6 +1399,8 @@ int32_t phx_mc_polyhedron_clip_moments(int64_t count, int32_t plane_capacity,
                                        double* volumes, double* first_moments,
                                        int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (count < 0 || plane_capacity < 0 ||
         !phx::mc::addressable(count, 3 * static_cast<int64_t>(plane_capacity), sizeof(double)) ||
         !phx::mc::addressable(count, 12, sizeof(double))) {
@@ -1441,6 +1448,8 @@ int32_t phx_mc_clip_box_halfspaces(int64_t count, const double* box_lower,
                                    int32_t* face_vertices, int32_t* face_counts, double* volumes,
                                    double* first_moments, int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (count < 0 || plane_capacity < 0 || vertex_capacity < 1 || face_capacity < 1 ||
         face_vertex_capacity < 1 ||
         !phx::mc::addressable(count, 3 * static_cast<int64_t>(plane_capacity), sizeof(double)) ||

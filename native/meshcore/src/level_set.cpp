@@ -30,6 +30,7 @@
 
 #include "capi_guard.hpp"
 #include "dyadic.hpp"
+#include "floating_point_mode.hpp"
 #include "geometry3.hpp"
 #include "tet_mesh.hpp"
 
@@ -426,6 +427,8 @@ extern "C" PHX_MC_API int32_t
 phx_mc_level_set_split_3d(const phx_mc_level_set_split_3d_request* request) {
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     int32_t status = validate_level_set_request(*request);
     if (status != PHX_MC_OK) return status;
     *request->failed_edge = -1;

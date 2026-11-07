@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "spatial_sort.hpp"
@@ -93,14 +94,20 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
 extern "C" {
 
 int32_t phx_mc_delaunay_3d(int64_t point_count, const double* points, phx_mc_mesh** mesh) {
-  return phx::mc::guarded(
-      [&] { return phx::mc::triangulate_3d(point_count, points, nullptr, false, mesh); });
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    return phx::mc::triangulate_3d(point_count, points, nullptr, false, mesh);
+  });
 }
 
 int32_t phx_mc_regular_3d(int64_t point_count, const double* points, const double* weights,
                           phx_mc_mesh** mesh) {
-  return phx::mc::guarded(
-      [&] { return phx::mc::triangulate_3d(point_count, points, weights, true, mesh); });
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    return phx::mc::triangulate_3d(point_count, points, weights, true, mesh);
+  });
 }
 
 }  // extern "C"
