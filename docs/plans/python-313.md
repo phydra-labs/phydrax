@@ -441,7 +441,7 @@ Environment: macOS 15 arm64, uv-managed CPython 3.13.11 (GIL enabled) and 3.12.8
 | Structural `AxisArray.__repr__` | Functional discretization bundle IDs fingerprint term representations, which embedded `AxisArray` object addresses; functional checkpoints could not resume in any new process, independent of the interpreter. Regression: fresh-subprocess bundle-ID equality in `tests/unit/solver/test_integral_functional.py`. |
 | Generator import spacing | The committed table had been formatted after generation; the generator now emits the canonical spacing, and 3.13 regeneration is byte-identical (SHA-256 `d6ab2949…818a`). |
 
-The root `uv.lock` is git-ignored local state; it was regenerated in the worktree (JAX/JAXlib unified at 0.12.0, s2fft 1.5.0, vtk 9.3.1 → 9.7.1 because 9.3.1 has no 3.13 wheel). The standalone generator lock is tracked and was regenerated.
+At the time of this change the root `uv.lock` was git-ignored local state; it was regenerated in the worktree (JAX/JAXlib unified at 0.12.0, s2fft 1.5.0, vtk 9.3.1 → 9.7.1 because 9.3.1 has no 3.13 wheel). The root lock is now tracked and checked with `uv lock --check`. The standalone generator lock is tracked and was regenerated.
 
 ### Evidence
 
