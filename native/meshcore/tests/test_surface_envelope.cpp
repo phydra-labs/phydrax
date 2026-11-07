@@ -7,12 +7,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <numbers>
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -364,11 +366,103 @@ void remeshed_tetrahedron_envelope() {
   phx_mc_surface_envelope_free(handle);
 }
 
+struct EnvelopeSnapshot {
+  int32_t create_status = PHX_MC_INTERNAL_ERROR;
+  int32_t remesh_status = PHX_MC_INTERNAL_ERROR;
+  std::array<double, 4> created{};
+  std::array<double, 4> remeshed{};
+  std::array<int64_t, 5> counters{};
+  std::array<int64_t, 4> sizes{};
+  std::array<int64_t, 4> remeshed_sizes{};
+  std::vector<double> surface_vertices, volume_vertices, remeshed_vertices;
+  std::vector<int64_t> triangles, tetrahedra, remeshed_triangles;
+
+  bool operator==(const EnvelopeSnapshot& other) const {
+    const auto same = [](const auto& first, const auto& second) {
+      return first.size() == second.size() &&
+             (first.empty() ||
+              std::memcmp(first.data(), second.data(), first.size() * sizeof(first[0])) == 0);
+    };
+    return create_status == other.create_status && remesh_status == other.remesh_status &&
+           same(created, other.created) && same(remeshed, other.remeshed) &&
+           counters == other.counters && sizes == other.sizes &&
+           remeshed_sizes == other.remeshed_sizes &&
+           same(surface_vertices, other.surface_vertices) &&
+           same(volume_vertices, other.volume_vertices) &&
+           same(remeshed_vertices, other.remeshed_vertices) && triangles == other.triangles &&
+           tetrahedra == other.tetrahedra && remeshed_triangles == other.remeshed_triangles;
+  }
+};
+
+// Creates the envelope, reads it, remeshes it in place and reads it again.
+EnvelopeSnapshot envelope_snapshot(const double* vertices, int64_t vertex_count,
+                                   const int64_t* faces, int64_t face_count, double offset,
+                                   double spacing) {
+  EnvelopeSnapshot snapshot;
+  void* handle = nullptr;
+  const phx_mc_surface_envelope_create_request request{
+      .vertices = vertices,
+      .vertex_count = vertex_count,
+      .faces = faces,
+      .face_count = face_count,
+      .offset = offset,
+      .spacing = spacing,
+      .certificate_spacing = spacing,
+      .result = &handle,
+      .bounds = snapshot.created.data(),
+  };
+  snapshot.create_status = phx_mc_surface_envelope_create(&request);
+  if (handle == nullptr) return snapshot;
+  const auto read = [&](std::array<int64_t, 4>& sizes, std::vector<double>& points,
+                        std::vector<int64_t>& triangles, std::vector<double>& volume,
+                        std::vector<int64_t>& cells) {
+    PHX_CHECK(phx_mc_surface_envelope_sizes(handle, sizes.data()) == PHX_MC_OK);
+    points.assign(static_cast<std::size_t>(3 * sizes[0]), 0.0);
+    triangles.assign(static_cast<std::size_t>(3 * sizes[1]), -1);
+    volume.assign(static_cast<std::size_t>(3 * sizes[2]), 0.0);
+    cells.assign(static_cast<std::size_t>(4 * std::max<int64_t>(sizes[3], 1)), -1);
+    PHX_CHECK(phx_mc_surface_envelope_arrays(handle, sizes[0], sizes[1], sizes[2], sizes[3],
+                                             points.data(), triangles.data(), volume.data(),
+                                             cells.data()) == PHX_MC_OK);
+  };
+  read(snapshot.sizes, snapshot.surface_vertices, snapshot.triangles, snapshot.volume_vertices,
+       snapshot.tetrahedra);
+  snapshot.remesh_status =
+      phx_mc_surface_envelope_remesh(handle, snapshot.remeshed.data(), snapshot.counters.data());
+  std::vector<double> remeshed_volume;
+  std::vector<int64_t> remeshed_cells;
+  read(snapshot.remeshed_sizes, snapshot.remeshed_vertices, snapshot.remeshed_triangles,
+       remeshed_volume, remeshed_cells);
+  phx_mc_surface_envelope_free(handle);
+  return snapshot;
+}
+
+// Create and remesh give their round-to-nearest, gradual-underflow results
+// under hazardous caller modes; a positive subnormal offset is not mistaken
+// for a nonpositive one under flush-to-zero.
+void floating_point_hazards() {
+  constexpr double vertices[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  constexpr int64_t faces[] = {0, 1, 2};
+  const EnvelopeSnapshot reference = envelope_snapshot(vertices, 3, faces, 1, 3.0, 0.5);
+  PHX_CHECK(reference.create_status == PHX_MC_OK && reference.remesh_status == PHX_MC_OK);
+  PHX_CHECK(reference.sizes[3] >= 1 && reference.remeshed_sizes[3] == 0);
+  PHX_CHECK(reference.remeshed[1] == reference.created[1]);
+  const EnvelopeSnapshot subnormal = envelope_snapshot(vertices, 3, faces, 1, 0x1p-1074, 0.5);
+  PHX_CHECK(subnormal.create_status != PHX_MC_OK &&
+            subnormal.create_status != PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(subnormal.sizes[0] == 0);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(envelope_snapshot(vertices, 3, faces, 1, 3.0, 0.5) == reference);
+    PHX_CHECK(envelope_snapshot(vertices, 3, faces, 1, 0x1p-1074, 0.5) == subnormal);
+  });
+}
+
 }  // namespace
 
 int main() {
   triangle_envelope();
   source_tetrahedron_envelope();
   remeshed_tetrahedron_envelope();
+  floating_point_hazards();
   return phx::mc::test::finish("test_surface_envelope");
 }

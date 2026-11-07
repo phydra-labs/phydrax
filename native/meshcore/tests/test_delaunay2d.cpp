@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
@@ -234,6 +235,49 @@ void test_degenerate_and_arguments() {
   PHX_CHECK(mesh == nullptr);
 }
 
+bool same_result(const Result& left, const Result& right) {
+  return left.status == right.status && left.points == right.points &&
+         left.cells == right.cells && left.vertex_map == right.vertex_map;
+}
+
+// Quarter-turn images of random points: every orbit is exactly cocircular
+// about the origin while coordinate differences are inexact.
+std::vector<double> rotated_orbits(std::size_t orbits, std::uint64_t seed) {
+  std::vector<double> points;
+  for (std::size_t orbit = 0; orbit < orbits; ++orbit) {
+    const double x = 2.0 * uniform(seed) - 1.0;
+    const double y = 2.0 * uniform(seed) - 1.0;
+    const double images[4][2] = {{x, y}, {-y, x}, {-x, -y}, {y, -x}};
+    for (const auto& image : images) points.insert(points.end(), image, image + 2);
+  }
+  return points;
+}
+
+// The Delaunay and regular triangulations of exactly cocircular orbits, and the
+// rejection of a subnormal coordinate or weight, do not depend on the caller's
+// floating-point mode.
+void test_floating_point_hazards() {
+  const std::vector<double> points = rotated_orbits(40, 2026);
+  const std::vector<double> zero_weights(points.size() / 2, 0.0);
+  const Result reference = delaunay(points);
+  PHX_CHECK(reference.status == PHX_MC_OK);
+  check_triangulation(points, reference);
+  check_empty_circles(points, reference);
+  const Result weighted = regular(points, zero_weights);
+  PHX_CHECK(weighted.status == PHX_MC_OK);
+  check_triangulation(points, weighted);
+  const std::vector<double> subnormal = {0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0x1p-1060, 0.5};
+  const std::vector<double> subnormal_weights = {0.0, 0.0, 0x1p-1060, 0.0};
+  const std::vector<double> square = {0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0};
+  PHX_CHECK(delaunay(subnormal).status == PHX_MC_RANGE_ERROR);
+  PHX_CHECK(regular(square, subnormal_weights).status == PHX_MC_RANGE_ERROR);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(same_result(delaunay(points), reference));
+    PHX_CHECK(same_result(regular(points, zero_weights), weighted));
+    PHX_CHECK(delaunay(subnormal).status == PHX_MC_RANGE_ERROR);
+    PHX_CHECK(regular(square, subnormal_weights).status == PHX_MC_RANGE_ERROR);
+  });
+}
 
 void test_duplicates() {
   std::vector<double> points = random_points(50, 3);
@@ -376,5 +420,6 @@ int main() {
   test_regular_redundant();
   test_regular_random();
   test_performance();
+  test_floating_point_hazards();
   return phx::mc::test::finish("test_delaunay2d");
 }

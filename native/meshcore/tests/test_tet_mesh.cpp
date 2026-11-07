@@ -3,11 +3,13 @@
 //
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <string_view>
 #include <vector>
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "facet_coverage.hpp"
 #include "predicates.hpp"
@@ -3786,10 +3788,411 @@ void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
   phx_mc_tet_mesh_free(mesh);
 }
 
+// A real bank compared by bit pattern, so undeclared (NaN) plane rows compare
+// equal to themselves and signed zeros stay distinct.
+struct ExactReals : std::vector<double> {
+  bool operator==(const ExactReals& other) const {
+    return std::equal(begin(), end(), other.begin(), other.end(), [](double a, double b) {
+      return std::bit_cast<uint64_t>(a) == std::bit_cast<uint64_t>(b);
+    });
+  }
+};
+
+// Every non-periodic snapshot bank of a mesh, compared exactly across modes.
+struct TetMeshBanks {
+  std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> sizes{};
+  uint64_t generation = 0;
+  std::vector<uint64_t> vertex_ids, cell_ids, cell_vertices, facet_ids, facet_vertices,
+      segment_ids, segment_vertices, edge_witness_endpoints, vertex_ancestor_ids,
+      cell_ancestor_ids;
+  ExactReals points, vertex_sizes, cell_sizes, witness_parameters, witness_deviations,
+      protection_radii, edge_parameters, vertex_ancestry_weights, source_points,
+      source_face_tolerances, source_face_planes, source_face_plane_tolerances,
+      source_segment_tolerances;
+  std::vector<int8_t> witness_strata, vertex_dimensions, protected_vertices,
+      edge_witness_present, facet_orientations, protected_facets, protected_segments;
+  std::vector<int32_t> witness_entities, cell_regions, cell_edit_kinds, facet_sources,
+      segment_sources, source_faces, source_face_groups, source_segments,
+      source_segment_groups;
+  std::vector<int64_t> vertex_ancestry_offsets, vertex_ancestor_winding, cell_ancestry_offsets,
+      source_face_ids, source_segment_ids;
+
+  bool operator==(const TetMeshBanks&) const = default;
+};
+
+TetMeshBanks capture_banks(const phx_mc_tet_mesh* mesh) {
+  TetMeshBanks banks;
+  PHX_CHECK(phx_mc_tet_mesh_snapshot_sizes(mesh, banks.sizes.data()) == PHX_MC_OK);
+  const auto rows = [&](int bank, int width) {
+    return static_cast<std::size_t>(banks.sizes[static_cast<std::size_t>(bank)] * width);
+  };
+  banks.vertex_ids.resize(rows(0, 1));
+  banks.points.resize(rows(0, 3));
+  banks.vertex_sizes.resize(rows(0, 1));
+  banks.witness_strata.resize(rows(0, 1));
+  banks.witness_entities.resize(rows(0, 1));
+  banks.witness_parameters.resize(rows(0, 2));
+  banks.witness_deviations.resize(rows(0, 1));
+  banks.vertex_dimensions.resize(rows(0, 1));
+  banks.protection_radii.resize(rows(0, 1));
+  banks.protected_vertices.resize(rows(0, 1));
+  banks.edge_witness_present.resize(rows(0, 1));
+  banks.edge_witness_endpoints.resize(rows(0, 2));
+  banks.edge_parameters.resize(rows(0, 1));
+  banks.vertex_ancestry_offsets.resize(rows(0, 1) + 1);
+  banks.vertex_ancestor_ids.resize(rows(17, 1));
+  banks.vertex_ancestor_winding.resize(rows(17, 3));
+  banks.vertex_ancestry_weights.resize(rows(17, 1));
+  banks.cell_ancestry_offsets.resize(rows(1, 1) + 1);
+  banks.cell_ancestor_ids.resize(rows(18, 1));
+  banks.cell_edit_kinds.resize(rows(1, 1));
+  banks.cell_ids.resize(rows(1, 1));
+  banks.cell_vertices.resize(rows(1, 4));
+  banks.cell_regions.resize(rows(1, 1));
+  banks.cell_sizes.resize(rows(1, 1));
+  banks.facet_ids.resize(rows(2, 1));
+  banks.facet_vertices.resize(rows(2, 3));
+  banks.facet_sources.resize(rows(2, 1));
+  banks.facet_orientations.resize(rows(2, 1));
+  banks.protected_facets.resize(rows(2, 1));
+  banks.segment_ids.resize(rows(3, 1));
+  banks.segment_vertices.resize(rows(3, 2));
+  banks.segment_sources.resize(rows(3, 1));
+  banks.protected_segments.resize(rows(3, 1));
+  banks.source_points.resize(rows(4, 3));
+  banks.source_faces.resize(rows(5, 3));
+  banks.source_face_groups.resize(rows(5, 1));
+  banks.source_face_ids.resize(rows(5, 1));
+  banks.source_face_tolerances.resize(rows(5, 1));
+  banks.source_face_planes.resize(rows(5, 9));
+  banks.source_face_plane_tolerances.resize(rows(5, 1));
+  banks.source_segments.resize(rows(6, 2));
+  banks.source_segment_groups.resize(rows(6, 1));
+  banks.source_segment_ids.resize(rows(6, 1));
+  banks.source_segment_tolerances.resize(rows(6, 1));
+  phx_mc_tet_mesh_snapshot_request snapshot{};
+  snapshot.vertex_capacity = banks.sizes[0];
+  snapshot.cell_capacity = banks.sizes[1];
+  snapshot.facet_capacity = banks.sizes[2];
+  snapshot.segment_capacity = banks.sizes[3];
+  snapshot.source_point_capacity = banks.sizes[4];
+  snapshot.source_face_capacity = banks.sizes[5];
+  snapshot.source_segment_capacity = banks.sizes[6];
+  snapshot.vertex_ancestry_capacity = banks.sizes[17];
+  snapshot.cell_ancestor_capacity = banks.sizes[18];
+  snapshot.vertex_ids = banks.vertex_ids.data();
+  snapshot.points = banks.points.data();
+  snapshot.vertex_size_targets = banks.vertex_sizes.data();
+  snapshot.witness_strata = banks.witness_strata.data();
+  snapshot.witness_entities = banks.witness_entities.data();
+  snapshot.witness_parameters = banks.witness_parameters.data();
+  snapshot.witness_deviations = banks.witness_deviations.data();
+  snapshot.vertex_dimensions = banks.vertex_dimensions.data();
+  snapshot.protection_radii = banks.protection_radii.data();
+  snapshot.protected_vertices = banks.protected_vertices.data();
+  snapshot.vertex_edge_witness_present = banks.edge_witness_present.data();
+  snapshot.vertex_edge_witness_endpoints = banks.edge_witness_endpoints.data();
+  snapshot.vertex_edge_parameters = banks.edge_parameters.data();
+  snapshot.vertex_ancestry_offsets = banks.vertex_ancestry_offsets.data();
+  snapshot.vertex_ancestor_ids = banks.vertex_ancestor_ids.data();
+  snapshot.vertex_ancestor_winding = banks.vertex_ancestor_winding.data();
+  snapshot.vertex_ancestry_weights = banks.vertex_ancestry_weights.data();
+  snapshot.cell_ancestry_offsets = banks.cell_ancestry_offsets.data();
+  snapshot.cell_ancestor_ids = banks.cell_ancestor_ids.data();
+  snapshot.cell_ancestry_edit_kinds = banks.cell_edit_kinds.data();
+  snapshot.cell_ids = banks.cell_ids.data();
+  snapshot.cell_vertices = banks.cell_vertices.data();
+  snapshot.cell_regions = banks.cell_regions.data();
+  snapshot.cell_size_targets = banks.cell_sizes.data();
+  snapshot.facet_ids = banks.facet_ids.data();
+  snapshot.facet_vertices = banks.facet_vertices.data();
+  snapshot.facet_sources = banks.facet_sources.data();
+  snapshot.facet_orientations = banks.facet_orientations.data();
+  snapshot.protected_facets = banks.protected_facets.data();
+  snapshot.segment_ids = banks.segment_ids.data();
+  snapshot.segment_vertices = banks.segment_vertices.data();
+  snapshot.segment_sources = banks.segment_sources.data();
+  snapshot.protected_segments = banks.protected_segments.data();
+  snapshot.source_points = banks.source_points.data();
+  snapshot.source_faces = banks.source_faces.data();
+  snapshot.source_face_groups = banks.source_face_groups.data();
+  snapshot.source_face_ids = banks.source_face_ids.data();
+  snapshot.source_face_tolerances = banks.source_face_tolerances.data();
+  snapshot.source_face_planes = banks.source_face_planes.data();
+  snapshot.source_face_plane_tolerances = banks.source_face_plane_tolerances.data();
+  snapshot.source_segments = banks.source_segments.data();
+  snapshot.source_segment_groups = banks.source_segment_groups.data();
+  snapshot.source_segment_ids = banks.source_segment_ids.data();
+  snapshot.source_segment_tolerances = banks.source_segment_tolerances.data();
+  snapshot.generation = &banks.generation;
+  PHX_CHECK(phx_mc_tet_mesh_snapshot(mesh, &snapshot) == PHX_MC_OK);
+  return banks;
+}
+
+// Statuses, quality rows, and published banks of one pass over the persistent
+// tetrahedral-mesh C API entries.
+struct TetHazardRun {
+  std::vector<int32_t> statuses;
+  std::vector<int64_t> counts;
+  std::vector<uint64_t> quality_cells;
+  std::vector<int32_t> quality_criteria;
+  std::vector<int32_t> quality_reasons;
+  ExactReals quality_values;
+  std::vector<TetMeshBanks> banks;
+  ExactReals reals;
+
+  bool operator==(const TetHazardRun&) const = default;
+};
+
+// Inputs of one pass, built before any hazard mode is installed.
+struct TetHazardInputs {
+  std::array<double, 15> star_points;
+  std::array<double, 15> candidate_points;
+  std::array<double, 3> relocated_point;
+  std::array<double, 12> corner_points;
+};
+
+void append_quality(TetHazardRun& run, const phx_mc_tet_mesh* mesh, uint64_t generation,
+                    const double* candidate) {
+  int64_t count = -1;
+  const auto evaluate = [&](int64_t capacity, uint64_t* cells, int32_t* criteria,
+                            int32_t* reasons, double* values) {
+    return candidate == nullptr
+               ? phx_mc_tet_mesh_evaluate_quality(mesh, generation, 0.5, 70.0, 0.9, capacity,
+                                                  &count, cells, criteria, reasons, values)
+               : phx_mc_tet_mesh_evaluate_candidate_quality(
+                     mesh, generation, 5, candidate, 0.5, 70.0, 0.9, capacity, &count, cells,
+                     criteria, reasons, values);
+  };
+  run.statuses.push_back(evaluate(0, nullptr, nullptr, nullptr, nullptr));
+  run.counts.push_back(count);
+  if (run.statuses.back() != PHX_MC_OK || count <= 0) {
+    run.statuses.push_back(-1);
+    return;
+  }
+  const std::size_t rows = static_cast<std::size_t>(count);
+  const std::size_t offset = run.quality_cells.size();
+  run.quality_cells.resize(offset + rows);
+  run.quality_criteria.resize(offset + rows);
+  run.quality_reasons.resize(offset + rows);
+  run.quality_values.resize(offset + rows);
+  run.statuses.push_back(evaluate(count, run.quality_cells.data() + offset,
+                                  run.quality_criteria.data() + offset,
+                                  run.quality_reasons.data() + offset,
+                                  run.quality_values.data() + offset));
+}
+
+// Creates the interior-vertex star of the unit corner (affine create too),
+// evaluates current and candidate quality, relocates the interior vertex,
+// refines, and improves; then creates and binds the z = 0 implicit source.
+TetHazardRun tet_hazard_run(const TetHazardInputs& inputs) {
+  constexpr std::array<int32_t, 16> tetrahedra{1, 3, 2, 4, 0, 2, 3, 4, 0, 3, 1, 4, 0, 1, 2, 4};
+  constexpr std::array<int32_t, 4> regions{0, 0, 0, 0};
+  constexpr std::array<int32_t, 12> faces{1, 3, 2, 0, 2, 3, 0, 3, 1, 0, 1, 2};
+  constexpr std::array<int32_t, 4> face_sources{0, 1, 2, 3};
+  constexpr std::array<uint64_t, 5> vertex_ids{101, 211, 307, 409, 500};
+  constexpr std::array<uint64_t, 4> cell_ids{9001, 9002, 9003, 9004};
+  constexpr std::array<double, 9> metric{-1, 0, 0, 0, 2, 0, 0, 0, 1};
+  constexpr std::array<double, 5> sizes{0.5, 0.5, 0.5, 0.5, 0.5};
+  TetHazardRun run;
+  phx_mc_tet_mesh* mesh = nullptr;
+  phx_mc_tet_mesh_create_request create{};
+  create.point_count = 5;
+  create.points = inputs.star_points.data();
+  create.vertex_ids = vertex_ids.data();
+  create.tetrahedron_count = 4;
+  create.tetrahedra = tetrahedra.data();
+  create.tetrahedron_regions = regions.data();
+  create.cell_ids = cell_ids.data();
+  create.face_count = 4;
+  create.faces = faces.data();
+  create.face_sources = face_sources.data();
+  create.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_CONFORMING;
+  create.result = &mesh;
+  run.statuses.push_back(phx_mc_tet_mesh_create_with_affine_metric(&create, metric.data()));
+  if (mesh != nullptr) {
+    run.banks.push_back(capture_banks(mesh));
+    phx_mc_tet_mesh_free(mesh);
+    mesh = nullptr;
+  }
+  run.statuses.push_back(phx_mc_tet_mesh_create(&create));
+  if (mesh != nullptr) {
+    run.banks.push_back(capture_banks(mesh));
+    append_quality(run, mesh, 0, nullptr);
+    append_quality(run, mesh, 0, inputs.candidate_points.data());
+    constexpr std::array<uint64_t, 1> moved_vertex{500};
+    phx_mc_tet_mesh_edit_request relocation{};
+    relocation.expected_generation = 0;
+    relocation.kind = PHX_MC_TET_EDIT_RELOCATE;
+    relocation.removed_cell_count = 4;
+    relocation.removed_cell_ids = cell_ids.data();
+    relocation.changed_vertex_count = 1;
+    relocation.changed_vertex_ids = moved_vertex.data();
+    relocation.changed_vertex_points = inputs.relocated_point.data();
+    int32_t edit_status = -1;
+    int32_t run_status = -1;
+    std::array<int64_t, 5> edits{-1, -1, -1, -1, -1};
+    double score_quantum = -1.0;
+    run.statuses.push_back(phx_mc_tet_mesh_apply_edit(mesh, &relocation, &edit_status));
+    run.statuses.push_back(edit_status);
+    run.banks.push_back(capture_banks(mesh));
+    run.statuses.push_back(phx_mc_tet_mesh_refine(
+        mesh, run.banks.back().generation, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+        2.0, static_cast<int64_t>(sizes.size()), sizes.data(), &edit_status, &run_status,
+        &edits[0], &edits[1]));
+    run.statuses.push_back(edit_status);
+    run.statuses.push_back(run_status);
+    run.banks.push_back(capture_banks(mesh));
+    run.statuses.push_back(phx_mc_tet_mesh_improve_quality(
+        mesh, run.banks.back().generation, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+        2.0, 0.0, 0.0, 0, 0, nullptr, 0, nullptr, &edit_status, &run_status, &edits[2],
+        &edits[3], &edits[4], &edits[1], &score_quantum));
+    run.statuses.push_back(edit_status);
+    run.statuses.push_back(run_status);
+    run.counts.insert(run.counts.end(), edits.begin(), edits.end());
+    run.reals.push_back(score_quantum);
+    run.banks.push_back(capture_banks(mesh));
+    phx_mc_tet_mesh_free(mesh);
+    mesh = nullptr;
+  }
+
+  // f(x,y,z) = z, grad f = (0,0,1) on the unit corner's z = 0 source facet.
+  constexpr std::array<int32_t, 4> corner_tetrahedron{0, 1, 2, 3};
+  constexpr char source_id[] = "implicit-source";
+  constexpr char binding[] = "binding";
+  constexpr char revision[] = "revision";
+  constexpr char frame[] = "world-frame";
+  phx_mc_tet_mesh_create_request corner{};
+  corner.point_count = 4;
+  corner.points = inputs.corner_points.data();
+  corner.tetrahedron_count = 1;
+  corner.tetrahedra = corner_tetrahedron.data();
+  corner.face_count = 4;
+  corner.faces = faces.data();
+  corner.face_sources = face_sources.data();
+  corner.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_CONFORMING;
+  corner.identity_bound = 1;
+  corner.source_id = source_id;
+  corner.source_id_length = sizeof(source_id) - 1;
+  corner.source_revision = revision;
+  corner.source_revision_length = sizeof(revision) - 1;
+  corner.source_map_id = binding;
+  corner.source_map_id_length = sizeof(binding) - 1;
+  corner.frame_id = frame;
+  corner.frame_id_length = sizeof(frame) - 1;
+  corner.result = &mesh;
+  const std::array<int64_t, 8> value_code{2, 4, 1, 2, -1, 3, -1, 0};
+  std::array<double, 5> value_workspace{0, 0, 0, 0, 0};
+  const std::array<int64_t, 1> value_outputs{4};
+  std::array<double, 6> gradient_workspace{0, 0, 0, 0, 0, 1};
+  const std::array<int64_t, 3> gradient_outputs{3, 4, 5};
+  const std::array<int32_t, 1> groups{3};
+  phx_mc_tet_implicit_source source{};
+  source.value = {value_code.data(), 1, nullptr, 0, nullptr, 0, value_workspace.data(),
+                  value_workspace.data(), 5, value_outputs.data(), 1, nullptr, 0};
+  source.gradient = {nullptr, 0, nullptr, 0, nullptr, 0, gradient_workspace.data(),
+                     gradient_workspace.data(), 6, gradient_outputs.data(), 3, nullptr, 0};
+  source.groups = groups.data();
+  source.group_count = 1;
+  source.tolerance = 0.01;
+  source.orientation = 1;
+  source.source_id = source_id;
+  source.source_id_length = sizeof(source_id) - 1;
+  source.source_revision = revision;
+  source.source_revision_length = sizeof(revision) - 1;
+  source.binding_id = binding;
+  source.binding_id_length = sizeof(binding) - 1;
+  source.frame_id = frame;
+  source.frame_id_length = sizeof(frame) - 1;
+  run.statuses.push_back(phx_mc_tet_mesh_create_with_implicit(&corner, &source));
+  if (mesh != nullptr) {
+    run.banks.push_back(capture_banks(mesh));
+    phx_mc_tet_mesh_free(mesh);
+    mesh = nullptr;
+  }
+  run.statuses.push_back(phx_mc_tet_mesh_create(&corner));
+  if (mesh != nullptr) {
+    source.orientation = 0;
+    run.statuses.push_back(phx_mc_tet_mesh_bind_implicit(mesh, &source));
+    phx_mc_tet_implicit_source bound{};
+    run.statuses.push_back(phx_mc_tet_mesh_implicit_source(mesh, &bound));
+    run.statuses.push_back(bound.orientation);
+    run.reals.push_back(bound.tolerance);
+    run.banks.push_back(capture_banks(mesh));
+    phx_mc_tet_mesh_free(mesh);
+  }
+  return run;
+}
+
+// The persistent mesh entries give their round-to-nearest statuses, quality
+// rows, and banks in every caller mode. A subnormal created point or relocation
+// target lies outside the exact domain; a subnormal candidate point is
+// evaluated as given.
+void persistent_entries_under_floating_point_hazards() {
+  TetHazardInputs regular{};
+  regular.star_points = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.25, 0.25, 0.25};
+  regular.candidate_points = regular.star_points;
+  regular.candidate_points[12] = 0.125;
+  regular.relocated_point = {0.125, 0.25, 0.25};
+  regular.corner_points = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  TetHazardInputs subnormal = regular;
+  subnormal.star_points[0] = 0x1p-1060;
+  subnormal.corner_points[0] = 0x1p-1060;
+  TetHazardInputs subnormal_motion = regular;
+  subnormal_motion.candidate_points[12] = 0x1p-1060;
+  subnormal_motion.relocated_point[0] = 0x1p-1060;
+
+  const TetHazardRun reference = tet_hazard_run(regular);
+  // [0] affine create, [1] create, [2..3] quality count/rows, [4..5] candidate
+  // count/rows, [6..7] edit and its status, [8..10] refine, [11..13] improve,
+  // [14] implicit create, [15] create, [16] bind, [17] implicit snapshot,
+  // [18] bound orientation.
+  PHX_CHECK(reference.statuses.size() == 19);
+  PHX_CHECK(reference.banks.size() == 7);
+  if (reference.statuses.size() == 19) {
+    PHX_CHECK(reference.statuses[0] == PHX_MC_OK && reference.statuses[1] == PHX_MC_OK);
+    PHX_CHECK(reference.statuses[2] == PHX_MC_OK && reference.statuses[3] == PHX_MC_OK);
+    PHX_CHECK(reference.statuses[4] == PHX_MC_OK && reference.statuses[5] == PHX_MC_OK);
+    PHX_CHECK(reference.statuses[6] == PHX_MC_OK &&
+              reference.statuses[7] == PHX_MC_TET_EDIT_APPLIED);
+    PHX_CHECK(reference.statuses[8] == PHX_MC_OK &&
+              reference.statuses[9] == PHX_MC_TET_EDIT_APPLIED);
+    PHX_CHECK(reference.statuses[11] == PHX_MC_OK &&
+              reference.statuses[12] == PHX_MC_TET_EDIT_APPLIED);
+    PHX_CHECK(reference.statuses[14] == PHX_MC_OK && reference.statuses[15] == PHX_MC_OK);
+    PHX_CHECK(reference.statuses[16] == PHX_MC_OK && reference.statuses[17] == PHX_MC_OK);
+    PHX_CHECK(reference.statuses[18] == 1);
+  }
+  PHX_CHECK(reference.counts.size() >= 2 && reference.counts[0] > 0 && reference.counts[1] > 0);
+  if (reference.banks.size() == 7) {
+    PHX_CHECK(std::equal(reference.banks[1].points.begin(), reference.banks[1].points.end(),
+                         regular.star_points.begin(), regular.star_points.end()));
+    PHX_CHECK(reference.banks[2].generation == 1 &&
+              reference.banks[2].points[12] == regular.relocated_point[0]);
+  }
+  const TetHazardRun subnormal_reference = tet_hazard_run(subnormal);
+  PHX_CHECK(subnormal_reference.statuses ==
+            (std::vector<int32_t>{PHX_MC_RANGE_ERROR, PHX_MC_RANGE_ERROR, PHX_MC_RANGE_ERROR,
+                                  PHX_MC_RANGE_ERROR}));
+  const TetHazardRun motion_reference = tet_hazard_run(subnormal_motion);
+  PHX_CHECK(motion_reference.statuses.size() == 19);
+  if (motion_reference.statuses.size() == 19) {
+    PHX_CHECK(motion_reference.statuses[4] == PHX_MC_OK);
+    PHX_CHECK(motion_reference.statuses[6] == PHX_MC_OK &&
+              motion_reference.statuses[7] == PHX_MC_TET_EDIT_INVALID_GEOMETRY);
+  }
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(tet_hazard_run(regular) == reference);
+    PHX_CHECK(tet_hazard_run(subnormal) == subnormal_reference);
+    PHX_CHECK(tet_hazard_run(subnormal_motion) == motion_reference);
+  });
+}
+
 }  // namespace
 
 int main() {
   implicit_source_binding_owns_programs_and_refuses_wrong_orientation();
+  persistent_entries_under_floating_point_hazards();
   selective_facet_protection_is_atomic_and_source_bound();
   affine_create_c_api_guards();
   persistent_create_snapshot_and_rejection();

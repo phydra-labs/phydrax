@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -100,10 +101,85 @@ void index_range_status() {
   PHX_CHECK(phx_mc_level_set_split_3d(&request) == PHX_MC_INDEX_RANGE_ERROR);
 }
 
+// Exact half-value roots and an exact vertex root must not depend on the
+// caller's mode. A subnormal coordinate, or a subnormal value whose roots lie
+// subnormally close to a vertex, is outside the exact coordinate domain.
+void floating_point_hazards() {
+  struct Split {
+    int32_t status = -1;
+    std::array<double, 21> points{};
+    std::array<int32_t, 16> cells{};
+    std::array<int32_t, 4> parents{};
+    std::array<int32_t, 14> sources{};
+    std::array<double, 14> weights{};
+    std::array<double, 7> deviations{};
+    int64_t point_count = -1;
+    int64_t cell_count = -1;
+    int64_t failed_edge = -2;
+
+    bool operator==(const Split&) const = default;
+  };
+  const auto split = [](double apex_x, double first_value, double last_value) -> Split {
+    const double source_points[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, apex_x, 0, 1};
+    const double values[] = {first_value, 0.5, 0.5, last_value};
+    constexpr int8_t protected_edges[] = {0, 0, 0, 0, 0, 0};
+    Split result;
+    const phx_mc_level_set_split_3d_request request{
+        .point_count = 4,
+        .points = source_points,
+        .values = values,
+        .cell_count = 1,
+        .cells = cell,
+        .face_count = 4,
+        .faces = faces,
+        .edge_count = 6,
+        .edges = edges,
+        .protected_edges = protected_edges,
+        .output_mode = PHX_MC_LEVEL_SET_FULL_CARRIERS,
+        .out_point_capacity = 7,
+        .out_cell_capacity = 4,
+        .out_points = result.points.data(),
+        .out_cells = result.cells.data(),
+        .out_parents = result.parents.data(),
+        .out_sources = result.sources.data(),
+        .out_weights = result.weights.data(),
+        .out_deviations = result.deviations.data(),
+        .out_point_count = &result.point_count,
+        .out_cell_count = &result.cell_count,
+        .failed_edge = &result.failed_edge,
+    };
+    result.status = phx_mc_level_set_split_3d(&request);
+    return result;
+  };
+  const Split reference = split(0.0, -0.5, 0.5);
+  PHX_CHECK(reference.status == PHX_MC_OK);
+  PHX_CHECK(reference.point_count == 7);
+  PHX_CHECK(reference.cell_count == 4);
+  PHX_CHECK(reference.failed_edge == -1);
+  for (int root = 0; root < 3; ++root) {
+    for (int axis = 0; axis < 3; ++axis) {
+      PHX_CHECK(reference.points[3 * (4 + root) + axis] == (axis == root ? 0.5 : 0.0));
+    }
+  }
+  const Split vertex_root = split(0.0, -0.5, 0.0);
+  PHX_CHECK(vertex_root.status == PHX_MC_OK);
+  PHX_CHECK(vertex_root.point_count == 6);
+  PHX_CHECK(vertex_root.cell_count == 3);
+  PHX_CHECK(split(0x1p-1060, -0.5, 0.5).status == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(split(0.0, -0x1p-1060, 0.5).status == PHX_MC_INVALID_INPUT);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(split(0.0, -0.5, 0.5) == reference);
+    PHX_CHECK(split(0.0, -0.5, 0.0) == vertex_root);
+    PHX_CHECK(split(0x1p-1060, -0.5, 0.5).status == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(split(0.0, -0x1p-1060, 0.5).status == PHX_MC_INVALID_INPUT);
+  });
+}
+
 }  // namespace
 
 int main() {
   exact_edge_roots_and_refusal();
   index_range_status();
+  floating_point_hazards();
   return phx::mc::test::finish("test_level_set");
 }

@@ -21,6 +21,7 @@
 #include "check.hpp"
 #include "dyadic.hpp"
 #include "exact_scalar.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "wide_integer.hpp"
 
@@ -751,6 +752,117 @@ void test_interval_containment() {
   PHX_CHECK(std::fesetround(original) == 0);
 }
 
+bool same_bits(const std::vector<double>& first, const std::vector<double>& second) {
+  return first.size() == second.size() &&
+         std::memcmp(first.data(), second.data(), first.size() * sizeof(double)) == 0;
+}
+
+// Every kernel entry gives its round-to-nearest, gradual-underflow result
+// under hazardous caller modes, and rejects a negative subnormal tolerance
+// before reading the caller's mode.
+void test_floating_point_hazards() {
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  const std::vector<double> a_lo = {0, -tiny, -tiny, .1, -3, 1e-300, 0x1p-1060};
+  const std::vector<double> a_hi = {tiny, 0, tiny, .2, -1, 2e-300, 0x1p-1059};
+  const std::vector<double> b_lo = {0, 0, -.5, .3, 2, .1, -0x1p-1060};
+  const std::vector<double> b_hi = {.5, .5, .5, .4, 7, .2, 0x1p-1061};
+  const int64_t intervals = static_cast<int64_t>(a_lo.size());
+  const auto multiply = [&](std::vector<double>& lo, std::vector<double>& hi) {
+    lo.assign(a_lo.size(), 9.0);
+    hi.assign(a_lo.size(), 9.0);
+    return phx_mc_interval_multiply(intervals, a_lo.data(), a_hi.data(), b_lo.data(),
+                                    b_hi.data(), lo.data(), hi.data());
+  };
+  const auto sum = [&](int32_t subtract, std::vector<double>& lo, std::vector<double>& hi) {
+    lo.assign(a_lo.size(), 9.0);
+    hi.assign(a_lo.size(), 9.0);
+    return phx_mc_interval_sum(intervals, a_lo.data(), a_hi.data(), b_lo.data(), b_hi.data(),
+                               subtract, lo.data(), hi.data());
+  };
+  std::vector<double> product_lo, product_hi, sum_lo, sum_hi, difference_lo, difference_hi;
+  PHX_CHECK(multiply(product_lo, product_hi) == PHX_MC_OK);
+  PHX_CHECK(sum(0, sum_lo, sum_hi) == PHX_MC_OK);
+  PHX_CHECK(sum(1, difference_lo, difference_hi) == PHX_MC_OK);
+  PHX_CHECK(product_lo[4] == -21.0 && product_hi[4] == -2.0);
+  PHX_CHECK(sum_lo[4] == -1.0 && sum_hi[4] == 6.0);
+  PHX_CHECK(difference_lo[4] == -10.0 && difference_hi[4] == -3.0);
+
+  const std::vector<double> net = {1.0, 1.0, 1.0, 0.5, 0.25, 0x1p-1060};
+  const std::vector<double> parameters = {0.5, 0.5, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0};
+  const std::vector<int32_t> sides = {1, 3};
+  const auto restrict_nets = [&](std::vector<double>& lo, std::vector<double>& hi) {
+    lo.assign(net.size(), 9.0);
+    hi.assign(net.size(), 9.0);
+    return phx_mc_interval_bernstein_restrict(2, 2, 1, net.data(), net.data(), parameters.data(),
+                                              sides.data(), lo.data(), hi.data(), 1);
+  };
+  std::vector<double> restricted_lo, restricted_hi;
+  PHX_CHECK(restrict_nets(restricted_lo, restricted_hi) == PHX_MC_OK);
+  PHX_CHECK(restricted_lo[0] == 1.0 && restricted_hi[0] == 1.0);
+
+  const std::vector<int64_t> offsets = {0, 2, 4, 5};
+  const std::vector<double> first = {0, 0, 2, 1, 1, 3, 0, 0, 0, 1, 1, 1, 0, 0, 1};
+  const std::vector<double> second = {0, 0, 0, 1, 1, 1, 0, 0, 0.5, 1, 1, 2, 0, 0, 1};
+  const std::vector<double> normals = {0, 0, 1, 0, 0, 1, 0, 0, 1};
+  const auto screen = [&](std::vector<int8_t>& decisions) {
+    decisions.assign(3, 9);
+    return phx_mc_separation_screen(3, 3, offsets.data(), first.data(), first.data(),
+                                    offsets.data(), second.data(), second.data(),
+                                    normals.data(), decisions.data(), 1);
+  };
+  std::vector<int8_t> screened;
+  PHX_CHECK(screen(screened) == PHX_MC_OK);
+  PHX_CHECK(screened == std::vector<int8_t>({PHX_MC_SEPARATION_SEPARATED,
+                                             PHX_MC_SEPARATION_NOT_SEPARATED,
+                                             PHX_MC_SEPARATION_UNDECIDED}));
+
+  std::mt19937_64 random(11);
+  std::uniform_real_distribution<double> position(0.0, 4.0);
+  std::vector<double> box_lo, box_hi;
+  for (int item = 0; item < 24; ++item) {
+    for (int axis = 0; axis < 2; ++axis) {
+      const double start = position(random);
+      box_lo.push_back(start);
+      box_hi.push_back(start + 0.75);
+    }
+  }
+  const Tree tree = build_tree(box_lo, box_hi);
+  std::vector<int64_t> pair_sizes;
+  const auto pairs = drain(tree, tree, 1, 8, 3, pair_sizes);
+  PHX_CHECK(pairs.size() >= 24);
+  const phx_mc_bvh_tree_view view = tree.view();
+  const auto create_negative = [&](double absolute, double relative) {
+    phx_mc_bvh_pair_stream* stream = nullptr;
+    const int32_t status = phx_mc_bvh_pair_stream_create(&view, &view, 2, 1, absolute, relative,
+                                                         8, 3, 1, &stream);
+    PHX_CHECK(stream == nullptr);
+    phx_mc_bvh_pair_stream_free(stream);
+    return status;
+  };
+  PHX_CHECK(create_negative(-0x1p-1074, 0.0) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(create_negative(0.0, -0x1p-1074) == PHX_MC_INVALID_ARGUMENT);
+
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    std::vector<double> lo, hi;
+    PHX_CHECK(multiply(lo, hi) == PHX_MC_OK);
+    PHX_CHECK(same_bits(lo, product_lo) && same_bits(hi, product_hi));
+    PHX_CHECK(sum(0, lo, hi) == PHX_MC_OK);
+    PHX_CHECK(same_bits(lo, sum_lo) && same_bits(hi, sum_hi));
+    PHX_CHECK(sum(1, lo, hi) == PHX_MC_OK);
+    PHX_CHECK(same_bits(lo, difference_lo) && same_bits(hi, difference_hi));
+    PHX_CHECK(restrict_nets(lo, hi) == PHX_MC_OK);
+    PHX_CHECK(same_bits(lo, restricted_lo) && same_bits(hi, restricted_hi));
+    std::vector<int8_t> decisions;
+    PHX_CHECK(screen(decisions) == PHX_MC_OK);
+    PHX_CHECK(decisions == screened);
+    std::vector<int64_t> sizes;
+    PHX_CHECK(drain(tree, tree, 1, 8, 3, sizes) == pairs);
+    PHX_CHECK(sizes == pair_sizes);
+    PHX_CHECK(create_negative(-0x1p-1074, 0.0) == PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(create_negative(0.0, -0x1p-1074) == PHX_MC_INVALID_ARGUMENT);
+  });
+}
+
 void test_boundary_sizes_and_exponents() {
   double output = 23;
   int32_t exponent = 23, status = 23;
@@ -947,6 +1059,7 @@ int main() {
   test_bvh_pair_stream();
   test_rounded_quotient_zero_sign();
   test_interval_containment();
+  test_floating_point_hazards();
   test_boundary_sizes_and_exponents();
   test_bvh_structure_and_failure();
   test_multichunk_exact<4>();

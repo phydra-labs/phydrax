@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
@@ -515,6 +516,64 @@ void test_arguments() {
   PHX_CHECK_NEAR(total_area(r), 12.0, 1e-12);
 }
 
+bool same_result(const Result& left, const Result& right) {
+  return left.status == right.status && left.points == right.points &&
+         left.cells == right.cells && left.segments == right.segments &&
+         left.vertex_map == right.vertex_map &&
+         left.constraint_sources == right.constraint_sources &&
+         left.constraint_parents == right.constraint_parents &&
+         left.constraint_ratios == right.constraint_ratios;
+}
+
+// Constrained triangulation and Ruppert refinement give their round-to-nearest,
+// gradual-underflow result in every caller mode: exactly cocircular interior
+// orbits, Steiner constructions (circumcenters, midpoints, concentric shells at
+// an acute corner), and the rejection of a subnormal coordinate.
+void test_floating_point_hazards() {
+  std::vector<Input> inputs;
+  Input l_shape;
+  l_shape.points = {0, 0, 2, 0, 2, 1, 1, 1, 1, 2, 0, 2};
+  l_shape.segments = {0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 0};
+  l_shape.min_angle = 20.7;
+  l_shape.max_area = 0.05;
+  inputs.push_back(l_shape);
+  Input acute;
+  acute.points = {0, 0, 2, 0, 2, 0.3};
+  acute.segments = {0, 1, 1, 2, 2, 0};
+  acute.min_angle = 20.0;
+  acute.max_area = 0.05;
+  inputs.push_back(acute);
+  Input orbits;
+  orbits.points = {-2, -2, 2, -2, 2, 2, -2, 2};
+  orbits.segments = {0, 1, 1, 2, 2, 3, 3, 0};
+  std::uint64_t seed = 2026;
+  for (int orbit = 0; orbit < 24; ++orbit) {
+    const double x = 2.0 * uniform(seed) - 1.0;
+    const double y = 2.0 * uniform(seed) - 1.0;
+    orbits.points.insert(orbits.points.end(), {x, y, -y, x, -x, -y, y, -x});
+  }
+  inputs.push_back(orbits);
+  orbits.min_angle = 25.0;
+  inputs.push_back(orbits);
+  std::vector<Result> references;
+  for (const Input& in : inputs) {
+    references.push_back(run(in));
+    const Result& r = references.back();
+    PHX_CHECK(r.status == PHX_MC_OK || r.status == PHX_MC_UNRESOLVED);
+    check_mesh(r);
+    check_segments(r, in);
+    check_constrained_delaunay(r);
+  }
+  Input subnormal = square_with_hole();
+  subnormal.points[16] = 0x1p-1060;
+  PHX_CHECK(run(subnormal).status == PHX_MC_RANGE_ERROR);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    for (std::size_t k = 0; k < inputs.size(); ++k) {
+      PHX_CHECK(same_result(run(inputs[k]), references[k]));
+    }
+    PHX_CHECK(run(subnormal).status == PHX_MC_RANGE_ERROR);
+  });
+}
 
 }  // namespace
 
@@ -531,5 +590,6 @@ int main() {
   test_distinct_nearby_constraint_vertices_remain_distinct();
   test_acute_input_corner_retains_its_constraints();
   test_arguments();
+  test_floating_point_hazards();
   return phx::mc::test::finish("test_cdt2d");
 }

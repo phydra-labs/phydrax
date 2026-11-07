@@ -7,12 +7,14 @@
 #include <set>
 #include <tuple>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -737,6 +739,184 @@ void empty_owner_returns_empty_local_mesh() {
   PHX_CHECK(result.cell_ids.empty());
   PHX_CHECK(result.certified_margin == 0.0);
 }
+
+bool same_doubles(const std::vector<double>& first, const std::vector<double>& second) {
+  return first.size() == second.size() &&
+         std::equal(first.begin(), first.end(), second.begin(), [](double a, double b) {
+           return std::bit_cast<uint64_t>(a) == std::bit_cast<uint64_t>(b);
+         });
+}
+
+bool same_local(const LocalMeshResult& a, const LocalMeshResult& b) {
+  return a.status == b.status &&
+         std::bit_cast<uint64_t>(a.certified_margin) ==
+             std::bit_cast<uint64_t>(b.certified_margin) &&
+         a.vertices == b.vertices && a.shifts == b.shifts && a.cell_ids == b.cell_ids &&
+         a.cell_key_ids == b.cell_key_ids &&
+         a.cell_key_relative_shifts == b.cell_key_relative_shifts &&
+         a.cell_owner_ranks == b.cell_owner_ranks && a.support_cell_mask == b.support_cell_mask &&
+         same_doubles(a.support_fractional_lower, b.support_fractional_lower) &&
+         same_doubles(a.support_fractional_upper, b.support_fractional_upper) &&
+         a.has_owned_sites == b.has_owned_sites &&
+         same_doubles(a.owner_fractional_lower, b.owner_fractional_lower) &&
+         same_doubles(a.owner_fractional_upper, b.owner_fractional_upper);
+}
+
+bool same_hits(const SupportHits& a, const SupportHits& b) {
+  return a.status == b.status && a.candidate_revision == b.candidate_revision &&
+         a.cell_rows == b.cell_rows && a.point_ids == b.point_ids && a.shifts == b.shifts &&
+         a.signs == b.signs;
+}
+
+struct RefinementSnapshot {
+  int32_t status = PHX_MC_INTERNAL_ERROR;
+  bool has_handle = false;
+  std::array<int64_t, 2> sizes{};
+  std::vector<double> points;
+  std::vector<int32_t> vertices;
+  std::vector<int32_t> shifts;
+
+  bool operator==(const RefinementSnapshot& other) const {
+    return status == other.status && has_handle == other.has_handle && sizes == other.sizes &&
+           same_doubles(points, other.points) && vertices == other.vertices &&
+           shifts == other.shifts;
+  }
+};
+
+RefinementSnapshot refine(const phx_mc_periodic_refinement_input& input) {
+  RefinementSnapshot result;
+  phx_mc_periodic_refinement* handle = nullptr;
+  result.status = phx_mc_periodic_refine_2d(&input, &handle);
+  result.has_handle = handle != nullptr;
+  if (handle == nullptr) return result;
+  PHX_CHECK(phx_mc_periodic_refinement_sizes(handle, result.sizes.data()) == PHX_MC_OK);
+  result.points.resize(static_cast<std::size_t>(2 * result.sizes[0]));
+  result.vertices.resize(static_cast<std::size_t>(3 * result.sizes[1]));
+  result.shifts.resize(static_cast<std::size_t>(6 * result.sizes[1]));
+  PHX_CHECK(phx_mc_periodic_refinement_copy_points(handle, result.sizes[0],
+                                                    result.points.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_periodic_refinement_copy_cells(handle, result.sizes[1],
+                                                   result.vertices.data(),
+                                                   result.shifts.data()) == PHX_MC_OK);
+  phx_mc_periodic_refinement_free(handle);
+  return result;
+}
+
+// The periodic entries give their round-to-nearest, gradual-underflow results
+// under hazardous caller modes, and refuse a subnormal coordinate (outside the
+// exact input domain) or a negative subnormal tolerance in every mode.
+void floating_point_hazards() {
+  constexpr double lattice[] = {1.0, 0.0, 0.0, 1.0};
+  constexpr double inverse[] = {1.0, 0.0, 0.0, 1.0};
+  // (c + (a, b)), (c + (-b, a)), (c - (a, b)), (c + (b, -a)) are exactly
+  // cocircular about c = (1/2, 1/2): every Delaunay choice is a tie.
+  const std::vector<double> square = {0.625, 0.75, 0.25, 0.625, 0.375, 0.25, 0.75, 0.375};
+  std::vector<double> subnormal_square = square;
+  subnormal_square[0] = 0x1p-1060;
+  const auto triangulate_points = [&](const std::vector<double>& points) {
+    phx_mc_periodic_triangulation* handle = nullptr;
+    PeriodicResult result;
+    result.status = phx_mc_periodic_delaunay(2, 4, points.data(), points.data(), lattice,
+                                              inverse, 1.0, &handle);
+    if (result.status == PHX_MC_OK) {
+      const int64_t cells = phx_mc_periodic_cell_count(handle);
+      result.vertices.resize(static_cast<std::size_t>(3 * cells));
+      result.shifts.resize(static_cast<std::size_t>(6 * cells));
+      PHX_CHECK(phx_mc_periodic_copy_cells(handle, cells, result.vertices.data(),
+                                           result.shifts.data()) == PHX_MC_OK);
+    } else {
+      PHX_CHECK(handle == nullptr);
+    }
+    phx_mc_periodic_free(handle);
+    return result;
+  };
+  const auto same_periodic = [](const PeriodicResult& a, const PeriodicResult& b) {
+    return a.status == b.status && a.vertices == b.vertices && a.shifts == b.shifts;
+  };
+  const PeriodicResult torus = triangulate();
+  const PeriodicResult tie = triangulate_points(square);
+  PHX_CHECK(torus.status == PHX_MC_OK && torus.vertices.size() == 6);
+  PHX_CHECK(tie.status == PHX_MC_OK && tie.vertices.size() == 3 * 8);
+  PHX_CHECK(triangulate_points(subnormal_square).status == PHX_MC_RANGE_ERROR);
+
+  const std::vector<int64_t> ids = {4, 17, 29, 43};
+  const std::vector<int32_t> owners = {0, 1, 0, 1};
+  const LocalMeshResult local =
+      local_delaunay(2, square, square, ids, owners, 0, lattice, inverse);
+  PHX_CHECK(local.status == PHX_MC_OK && local.has_owned_sites == 1);
+  PHX_CHECK(!local.cell_ids.empty());
+  const LocalMeshResult local_subnormal =
+      local_delaunay(2, subnormal_square, subnormal_square, ids, owners, 0, lattice, inverse);
+  PHX_CHECK(local_subnormal.status == PHX_MC_RANGE_ERROR);
+
+  constexpr double skew_lattice[] = {3.0, 1.0, 1.0, 2.0};
+  const std::vector<double> source_points{100000005.0, 100000000.0};
+  const std::vector<int64_t> source_ids{91};
+  const std::vector<double> cell_points{
+      100000004.0, 100000003.0, 100000002.0, 100000003.0, 100000004.0, 99999999.0};
+  std::vector<double> subnormal_cell_points = cell_points;
+  subnormal_cell_points[0] = 0x1p-1060;
+  const std::vector<int64_t> cell_point_ids{11, 23, 37};
+  const std::vector<int32_t> cell_shifts(6, 0);
+  const SupportHits hits = owner_support_query(2, cell_points, cell_point_ids, cell_shifts,
+                                               source_points, source_ids, skew_lattice, 7);
+  PHX_CHECK(hits.status == PHX_MC_OK && hits.point_ids.size() == 5);
+  const SupportHits subnormal_hits =
+      owner_support_query(2, subnormal_cell_points, cell_point_ids, cell_shifts,
+                          source_points, source_ids, skew_lattice, 7);
+  PHX_CHECK(subnormal_hits.status == PHX_MC_RANGE_ERROR);
+
+  constexpr double site[] = {0.23, 0.37};
+  constexpr double subnormal_site[] = {0x1p-1060, 0.37};
+  const double absent = std::numeric_limits<double>::quiet_NaN();
+  const double controls[] = {0.75, absent, absent, absent, 1.0};
+  constexpr double quantiles[] = {0.5};
+  phx_mc_periodic_refinement_input input{};
+  input.point_count = 1;
+  input.points = site;
+  input.lattice = lattice;
+  input.inverse = inverse;
+  input.cell_count = 2;
+  input.vertices = torus.vertices.data();
+  input.shifts = torus.shifts.data();
+  input.control_count = 1;
+  input.controls = controls;
+  input.statistic_count = 1;
+  input.quantiles = quantiles;
+  input.absolute_tolerance = 1.0e-12;
+  input.relative_tolerance = 1.0e-12;
+  phx_mc_periodic_refinement_input subnormal_input = input;
+  subnormal_input.points = subnormal_site;
+  phx_mc_periodic_refinement_input negative_tolerance = input;
+  negative_tolerance.relative_tolerance = -0x1p-1074;
+  const RefinementSnapshot refined = refine(input);
+  PHX_CHECK((refined.status == PHX_MC_OK || refined.status == PHX_MC_UNRESOLVED) &&
+            refined.has_handle && refined.sizes[1] == 2 * refined.sizes[0]);
+  const RefinementSnapshot refined_subnormal = refine(subnormal_input);
+  PHX_CHECK(refined_subnormal.status == PHX_MC_RANGE_ERROR && !refined_subnormal.has_handle);
+  const RefinementSnapshot refined_negative = refine(negative_tolerance);
+  PHX_CHECK(refined_negative.status == PHX_MC_INVALID_ARGUMENT &&
+            !refined_negative.has_handle);
+
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(same_periodic(triangulate(), torus));
+    PHX_CHECK(same_periodic(triangulate_points(square), tie));
+    PHX_CHECK(triangulate_points(subnormal_square).status == PHX_MC_RANGE_ERROR);
+    PHX_CHECK(same_local(local_delaunay(2, square, square, ids, owners, 0, lattice, inverse),
+                         local));
+    PHX_CHECK(local_delaunay(2, subnormal_square, subnormal_square, ids, owners, 0, lattice,
+                             inverse).status == PHX_MC_RANGE_ERROR);
+    PHX_CHECK(same_hits(owner_support_query(2, cell_points, cell_point_ids, cell_shifts,
+                                            source_points, source_ids, skew_lattice, 7),
+                        hits));
+    PHX_CHECK(owner_support_query(2, subnormal_cell_points, cell_point_ids, cell_shifts,
+                                  source_points, source_ids, skew_lattice, 7)
+                  .status == PHX_MC_RANGE_ERROR);
+    PHX_CHECK(refine(input) == refined);
+    PHX_CHECK(refine(subnormal_input) == refined_subnormal);
+    PHX_CHECK(refine(negative_tolerance) == refined_negative);
+  });
+}
 }  // namespace
 
 int main() {
@@ -748,5 +928,6 @@ int main() {
   non_dyadic_3d_lattice_boundary_tie_uses_exact_transform();
   owner_local_generation_expands_remote_support_and_matches_reference();
   empty_owner_returns_empty_local_mesh();
+  floating_point_hazards();
   return phx::mc::test::finish("test_periodic");
 }

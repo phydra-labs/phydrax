@@ -21,6 +21,7 @@
 
 #include "cavity.hpp"
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
 #include "plc3d.hpp"
@@ -3110,11 +3111,172 @@ void test_affine_recovery_c_api_guards() {
   }
 }
 
+// Every published bank of one PLC3D C API call, compared exactly across modes.
+struct Plc3dOutcome {
+  int32_t status = -1;
+  bool published = false;
+  std::array<int64_t, PHX_MC_PLC3D_SIZES> sizes{};
+  std::vector<double> points;
+  std::vector<int32_t> tetrahedra;
+  std::vector<int32_t> tetrahedron_regions;
+  std::vector<int32_t> faces;
+  std::vector<int32_t> face_sources;
+  std::vector<int8_t> face_orientations;
+  std::vector<int32_t> segments;
+  std::vector<int32_t> segment_sources;
+  std::vector<double> protection;
+  std::vector<int8_t> vertex_dimensions;
+  std::vector<int32_t> plc_edges;
+  std::vector<int32_t> input_triangles;
+  std::vector<int32_t> input_polygons;
+  std::vector<int8_t> strata;
+  std::vector<int32_t> entities;
+  std::vector<double> parameters;
+  std::vector<double> deviations;
+  std::array<int32_t, 3> failure_kinds{};
+  std::array<int64_t, 2> failure_entities{};
+  std::array<double, 2> failure_bounds{};
+
+  bool operator==(const Plc3dOutcome&) const = default;
+};
+
+enum class Plc3dEntry { kPrepareSource, kRecover, kRecoverWithAffineMetric, kRecoverProtected };
+
+Plc3dOutcome plc3d_outcome(Plc3dEntry entry, const std::vector<double>& points,
+                           const std::vector<int64_t>& offsets,
+                           const std::vector<int32_t>& vertices) {
+  const int64_t polygon_count = static_cast<int64_t>(offsets.size()) - 1;
+  std::vector<int32_t> facets(static_cast<std::size_t>(polygon_count));
+  std::vector<int32_t> regions(static_cast<std::size_t>(2 * polygon_count));
+  for (int64_t facet = 0; facet < polygon_count; ++facet) {
+    facets[static_cast<std::size_t>(facet)] = static_cast<int32_t>(facet);
+    regions[static_cast<std::size_t>(2 * facet)] = -1;
+    regions[static_cast<std::size_t>(2 * facet + 1)] = 1;
+  }
+  const std::vector<uint8_t> protected_facets(static_cast<std::size_t>(polygon_count), 1);
+  constexpr std::array<double, 9> metric{-1, 0, 0, 0, 2, 0, 0, 0, 1};
+  phx_mc_plc3d_result* result = nullptr;
+  phx_mc_plc3d_prepare_source_request request{};
+  request.point_count = static_cast<int64_t>(points.size() / 3);
+  request.points = points.data();
+  request.polygon_count = polygon_count;
+  request.polygon_vertex_count = static_cast<int64_t>(vertices.size());
+  request.polygon_offsets = offsets.data();
+  request.polygon_vertices = vertices.data();
+  request.polygon_facets = facets.data();
+  request.facet_count = polygon_count;
+  request.facet_regions = regions.data();
+  request.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_FIXED;
+  request.result = &result;
+  Plc3dOutcome outcome;
+  switch (entry) {
+    case Plc3dEntry::kPrepareSource:
+      outcome.status = phx_mc_plc3d_prepare_source(&request);
+      break;
+    case Plc3dEntry::kRecover:
+      outcome.status = phx_mc_plc3d_recover(&request);
+      break;
+    case Plc3dEntry::kRecoverWithAffineMetric:
+      outcome.status = phx_mc_plc3d_recover_with_affine_metric(&request, metric.data());
+      break;
+    case Plc3dEntry::kRecoverProtected:
+      outcome.status =
+          phx_mc_plc3d_recover_protected(&request, protected_facets.data(), nullptr);
+      break;
+  }
+  outcome.published = result != nullptr;
+  if (result == nullptr) return outcome;
+  PHX_CHECK(phx_mc_plc3d_sizes(result, outcome.sizes.data()) == PHX_MC_OK);
+  const auto rows = [&](int row, int width) {
+    return static_cast<std::size_t>(outcome.sizes[static_cast<std::size_t>(row)] * width);
+  };
+  outcome.points.resize(rows(0, 3));
+  outcome.tetrahedra.resize(rows(1, 4));
+  outcome.tetrahedron_regions.resize(rows(1, 1));
+  outcome.faces.resize(rows(2, 3));
+  outcome.face_sources.resize(rows(2, 1));
+  outcome.face_orientations.resize(rows(2, 1));
+  outcome.segments.resize(rows(3, 2));
+  outcome.segment_sources.resize(rows(3, 1));
+  outcome.protection.resize(rows(0, 1));
+  outcome.vertex_dimensions.resize(rows(0, 1));
+  outcome.plc_edges.resize(rows(4, 2));
+  outcome.input_triangles.resize(rows(5, 3));
+  outcome.input_polygons.resize(rows(5, 1));
+  PHX_CHECK(phx_mc_plc3d_export(
+                result, outcome.sizes[0], outcome.sizes[1], outcome.sizes[2], outcome.sizes[3],
+                outcome.sizes[4], outcome.sizes[5], outcome.points.data(),
+                outcome.tetrahedra.data(), outcome.tetrahedron_regions.data(),
+                outcome.faces.data(), outcome.face_sources.data(),
+                outcome.face_orientations.data(), outcome.segments.data(),
+                outcome.segment_sources.data(), outcome.protection.data(),
+                outcome.vertex_dimensions.data(), outcome.plc_edges.data(),
+                outcome.input_triangles.data(), outcome.input_polygons.data()) == PHX_MC_OK);
+  outcome.strata.resize(rows(0, 1));
+  outcome.entities.resize(rows(0, 1));
+  outcome.parameters.resize(rows(0, 2));
+  outcome.deviations.resize(rows(0, 1));
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(result, outcome.sizes[0], outcome.strata.data(),
+                                          outcome.entities.data(), outcome.parameters.data(),
+                                          outcome.deviations.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_plc3d_failure(result, &outcome.failure_kinds[0], &outcome.failure_kinds[1],
+                                 &outcome.failure_entities[0], &outcome.failure_kinds[2],
+                                 &outcome.failure_entities[1], &outcome.failure_bounds[0],
+                                 &outcome.failure_bounds[1]) == PHX_MC_OK);
+  phx_mc_plc3d_free(result);
+  return outcome;
+}
+
+// The unit corner tetrahedron and the exactly cospherical octahedron give their
+// round-to-nearest banks through every PLC3D entry in every caller mode; a
+// subnormal coordinate lies outside the exact coordinate domain.
+void test_plc3d_entries_under_floating_point_hazards() {
+  const std::vector<double> corner{0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  const std::vector<int64_t> corner_offsets{0, 3, 6, 9, 12};
+  const std::vector<int32_t> corner_vertices{1, 2, 3, 0, 3, 2, 0, 1, 3, 0, 2, 1};
+  const std::vector<double> octahedron{1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1};
+  const std::vector<int64_t> octahedron_offsets{0, 3, 6, 9, 12, 15, 18, 21, 24};
+  const std::vector<int32_t> octahedron_vertices{0, 2, 4, 1, 4, 2, 0, 4, 3, 1, 3, 4,
+                                                 0, 5, 2, 1, 2, 5, 0, 3, 5, 1, 5, 3};
+  std::vector<double> subnormal = corner;
+  subnormal[9] = 0x1p-1060;
+  for (const Plc3dEntry entry : {Plc3dEntry::kPrepareSource, Plc3dEntry::kRecover,
+                                 Plc3dEntry::kRecoverWithAffineMetric,
+                                 Plc3dEntry::kRecoverProtected}) {
+    const bool recovers = entry != Plc3dEntry::kPrepareSource;
+    const Plc3dOutcome corner_reference =
+        plc3d_outcome(entry, corner, corner_offsets, corner_vertices);
+    PHX_CHECK(corner_reference.status == PHX_MC_OK && corner_reference.published);
+    PHX_CHECK(corner_reference.sizes[0] == 4);
+    PHX_CHECK(corner_reference.sizes[1] == (recovers ? 1 : 0));
+    PHX_CHECK(corner_reference.points == corner);
+    const Plc3dOutcome octahedron_reference =
+        plc3d_outcome(entry, octahedron, octahedron_offsets, octahedron_vertices);
+    PHX_CHECK(octahedron_reference.status == PHX_MC_OK && octahedron_reference.published);
+    PHX_CHECK(octahedron_reference.sizes[0] == 6);
+    PHX_CHECK(octahedron_reference.sizes[1] == (recovers ? 4 : 0));
+    PHX_CHECK(octahedron_reference.points == octahedron);
+    const Plc3dOutcome subnormal_reference =
+        plc3d_outcome(entry, subnormal, corner_offsets, corner_vertices);
+    PHX_CHECK(subnormal_reference.status == PHX_MC_RANGE_ERROR);
+    PHX_CHECK(!subnormal_reference.published);
+    phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+      PHX_CHECK(plc3d_outcome(entry, corner, corner_offsets, corner_vertices) ==
+                corner_reference);
+      PHX_CHECK(plc3d_outcome(entry, octahedron, octahedron_offsets, octahedron_vertices) ==
+                octahedron_reference);
+      PHX_CHECK(plc3d_outcome(entry, subnormal, corner_offsets, corner_vertices) ==
+                subnormal_reference);
+    });
+  }
+}
+
 }  // namespace
 
 
 int main() {
   test_affine_recovery_c_api_guards();
+  test_plc3d_entries_under_floating_point_hazards();
   test_edge_candidates_include_touching_and_coplanar_constraints();
   test_adjacency_candidates_follow_accepted_cavity_edit();
   test_source_witness_carriers_report_exact_deviation();
