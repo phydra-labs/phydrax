@@ -25,6 +25,7 @@ from phydrax.discretization.iga._basis import (
     TensorSplineBasisSpec,
 )
 from phydrax.discretization.iga._certificate import (
+    _p_matrix_proved,
     _positive_power_interval,
     CertificateDisposition,
     certify_tensor_nurbs,
@@ -258,20 +259,21 @@ def test_weight_power_interval_encloses_exact_powers(
     assert math.isfinite(power.lower) and math.isfinite(power.upper)
 
 
-def test_tensor_nurbs_jacobian_enclosure_survives_cancellation() -> None:
-    # Affine map with integer Jacobian columns near 2^27 and exact determinant -1:
-    # the ~2^54 Bernstein products cancel completely in the measure coefficients.
-    first = (
-        float.fromhex("0x1.9b57240000000p+26"),
-        float.fromhex("0x1.7be7714000000p+26"),
-    )
-    second = (
-        float.fromhex("0x1.cee7334000000p+26"),
-        float.fromhex("0x1.ab86b30000000p+26"),
-    )
-    exact = Fraction(first[0]) * Fraction(second[1]) - Fraction(first[1]) * Fraction(
-        second[0]
-    )
+# Integer Jacobian columns near 2^27 whose determinant is exactly -1: the ~2^54
+# Bernstein products cancel completely in the measure coefficients.
+_CANCELLING_FIRST = (
+    float.fromhex("0x1.9b57240000000p+26"),
+    float.fromhex("0x1.7be7714000000p+26"),
+)
+_CANCELLING_SECOND = (
+    float.fromhex("0x1.cee7334000000p+26"),
+    float.fromhex("0x1.ab86b30000000p+26"),
+)
+
+
+def _affine_volume(
+    first: tuple[float, float], second: tuple[float, float]
+) -> TensorNURBSVolume:
     grid = BSplineGrid.open_uniform(1, 1, interval=(0.0, 1.0))
     control = np.zeros((2, 2, 2), dtype=np.float64)
     control[1, 0] = first
@@ -281,9 +283,22 @@ def test_tensor_nurbs_jacobian_enclosure_survives_cancellation() -> None:
     plan = IsogeometricPlan.isoparametric(
         (grid, grid), geometry, quadrature_policy=IsogeometricQuadraturePolicy(2)
     )
+    return TensorNURBSVolume("cancelling-affine", plan.basis, geometry)
+
+
+def _affine_determinant(
+    first: tuple[float, float], second: tuple[float, float]
+) -> Fraction:
+    return Fraction(first[0]) * Fraction(second[1]) - Fraction(first[1]) * Fraction(
+        second[0]
+    )
+
+
+def test_tensor_nurbs_jacobian_enclosure_survives_cancellation() -> None:
+    exact = _affine_determinant(_CANCELLING_FIRST, _CANCELLING_SECOND)
 
     certificate = certify_tensor_nurbs(
-        TensorNURBSVolume("cancelling-affine", plan.basis, geometry),
+        _affine_volume(_CANCELLING_FIRST, _CANCELLING_SECOND),
         policy=TensorNURBSCertificatePolicy(maximum_subdivision_depth=0),
     )
 
@@ -293,3 +308,33 @@ def test_tensor_nurbs_jacobian_enclosure_survives_cancellation() -> None:
     for cell in certificate.cells:
         measure = cell.jacobian_measure
         assert Fraction(measure.lower) <= exact <= Fraction(measure.upper)
+
+
+def test_tensor_nurbs_cancelling_jacobian_is_certified_negative() -> None:
+    exact = _affine_determinant(_CANCELLING_FIRST, _CANCELLING_SECOND)
+
+    certificate = certify_tensor_nurbs(
+        _affine_volume(_CANCELLING_FIRST, _CANCELLING_SECOND),
+        policy=TensorNURBSCertificatePolicy(maximum_subdivision_depth=0),
+    )
+
+    assert exact == -1
+    assert certificate.disposition is CertificateDisposition.COUNTEREXAMPLE
+    counterexample = certificate.counterexample
+    assert counterexample is not None
+    assert counterexample.code == "nonpositive-jacobian-measure"
+    assert counterexample.cell is not None
+    measure = counterexample.cell.jacobian_measure
+    assert Fraction(measure.lower) <= exact <= Fraction(measure.upper) < 0
+    assert Fraction(measure.upper) - Fraction(measure.lower) <= Fraction(1, 2**50)
+
+
+def test_p_matrix_minors_survive_cancellation() -> None:
+    # Swapping the columns makes the exact determinant +1 with positive diagonal.
+    volume = _affine_volume(_CANCELLING_SECOND, _CANCELLING_FIRST)
+
+    proved, diagnostic = _p_matrix_proved(volume, TensorNURBSCertificatePolicy())
+
+    assert _affine_determinant(_CANCELLING_SECOND, _CANCELLING_FIRST) == 1
+    assert proved
+    assert diagnostic is None
