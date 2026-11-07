@@ -112,7 +112,8 @@ class SparseOrderingPolicy(StrictModule):
     ``nested-dissection`` (defaults 64 and 2048); other methods refuse them.
     Parts with at most ``leaf_capacity`` vertices are ordered by approximate
     minimum degree. A separator with more than ``separator_capacity`` vertices
-    refuses: its clique alone would add ``s(s+1)/2`` factor entries.
+    refuses: its clique alone would add ``s(s+1)/2`` factor entries. Sparse
+    factorization derives the capacity from its declared ``max_factor_nnz``.
     ``max_ordering_work`` bounds standalone preparation; inside sparse
     factorization the work is charged to ``max_symbolic_work`` instead.
     """
