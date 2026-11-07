@@ -20,6 +20,7 @@ from phydrax.linalg import (
     HermitianFunctionResult,
     HermitianPrecisionPolicy,
     HermitianSpectralMapResult,
+    HermitianSpectrum,
 )
 from phydrax.nonlinear import LocalRootPlan, VectorLocalRootPlan
 
@@ -561,3 +562,20 @@ def test_rank_deficient_gram_square_root_value_and_evidence() -> None:
     rejected = hermitian_sqrt(jnp.diag(jnp.asarray((-1e-4, 1.0, 2.0))))
     assert not bool(rejected.valid)
     assert not bool(rejected.derivative_valid)
+
+
+def test_hermiticity_residual_measures_the_rounded_matrix() -> None:
+    # XLA CPU lowers a shared-scalar division to a reciprocal multiply. If the
+    # residual's subtraction is fused with it into an FMA, the unrounded
+    # recomputation reports the product's rounding, 100 * fl(1/100) - 1 =
+    # -0x1.8p-26 in float32, for an exactly symmetric materialized matrix.
+    stress = jnp.asarray(100.0 * np.eye(3, dtype=np.float32)[None], dtype=jnp.float32)
+    reference = jnp.asarray(100.0, dtype=jnp.float32)
+
+    def evidence(matrix: Array, scale: Array) -> tuple[Array, Array]:
+        spectrum = HermitianSpectrum(matrix / scale)
+        return spectrum.hermiticity_residual, spectrum.valid
+
+    residual, valid = jax.jit(jax.vmap(evidence, in_axes=(0, None)))(stress, reference)
+    assert float(residual[0]) == 0.0
+    assert bool(valid[0])
