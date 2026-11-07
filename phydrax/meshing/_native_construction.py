@@ -27,10 +27,7 @@ if TYPE_CHECKING:
     )
     from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
     from ..geometry._domain_certification import CoverageDomain, SourceCoverageWitness
-    from ..geometry._global_embedding import (
-        GlobalEmbeddingCertificate,
-        ValidatedGlobalEmbedding,
-    )
+    from ..geometry._global_embedding import ValidatedGlobalEmbedding
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._source_boundary_records import SourceBoundaryQuery
     from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
@@ -77,9 +74,6 @@ class NativeCertificationRequest:
     fidelity_witness: SourceFidelityWitness | None = None
     feature_source: _SourceEntityScopes | None = None
     source_coverage_witness: SourceCoverageWitness | None = None
-    # Global embedding the route already computed for exactly this mesh and
-    # coordinate map; acceptance checks its bound inputs and reuses it.
-    global_embedding: GlobalEmbeddingCertificate | None = None
     # Validity certificates the route already proved (e.g. its layer cells);
     # acceptance reuses their proofs of identical exact cell maps.
     validity_parent: tuple[CellValidityCertificate, ...] = ()

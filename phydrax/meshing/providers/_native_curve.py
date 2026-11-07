@@ -52,6 +52,7 @@ from ...geometry._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
+from ...geometry._rational import binary64_difference_magnitude, binary64_norm_upper
 from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
@@ -510,7 +511,7 @@ class _CurveEnclosure(StrictModule, NonTrainableState):
             np.asarray([[upper]], dtype=np.float64),
         )
         magnitude = np.maximum(np.abs(lower_values[0]), np.abs(upper_values[0]))
-        return float(np.nextafter(np.linalg.norm(magnitude), np.inf))
+        return float(binary64_norm_upper(magnitude))
 
     def point_error(self, parameter: float, published: np.ndarray, /) -> float:
         function = self._function(
@@ -524,10 +525,10 @@ class _CurveEnclosure(StrictModule, NonTrainableState):
             np.asarray([[parameter]], dtype=np.float64),
         )
         component = np.maximum(
-            np.abs(lower_values[0] - published),
-            np.abs(upper_values[0] - published),
+            binary64_difference_magnitude(lower_values[0], published)[1],
+            binary64_difference_magnitude(upper_values[0], published)[1],
         )
-        return float(np.nextafter(np.linalg.norm(component), np.inf))
+        return float(binary64_norm_upper(component))
 
 
 @final
@@ -1491,7 +1492,13 @@ def _chord_bound(
     endpoint_error = max(
         enclosure.point_error(lower, first), enclosure.point_error(upper, last)
     )
-    return endpoint_error + 0.125 * (upper - lower) ** 2 * acceleration
+    width = float(binary64_difference_magnitude(upper, lower)[1])
+    curvature = math.nextafter(
+        math.nextafter(0.125 * math.nextafter(width * width, math.inf), math.inf)
+        * acceleration,
+        math.inf,
+    )
+    return math.nextafter(endpoint_error + curvature, math.inf)
 
 
 def _sampled_deviation(

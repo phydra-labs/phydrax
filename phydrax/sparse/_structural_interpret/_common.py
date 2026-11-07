@@ -4,8 +4,10 @@ import itertools
 import math
 from collections.abc import Callable, Sequence
 
+import jax.numpy as jnp
 import numpy as np
 from jax._src.core import Jaxpr, JaxprEqn, Literal, Var
+from jax.core import ShapedArray
 
 
 IndexSet = set[int]
@@ -151,21 +153,45 @@ def _copy_index_sets(src: list[IndexSet]) -> list[IndexSet]:
     return [s.copy() for s in src]
 
 
+def _is_floating(value: np.ndarray) -> bool:
+    """Whether ``value`` holds real or complex floating-point data."""
+    return bool(jnp.issubdtype(value.dtype, jnp.inexact))
+
+
+def _is_backend_exact(value: np.ndarray) -> bool:
+    """Whether every XLA backend reads ``value`` with the host's exact value.
+
+    Integer and boolean data are exact. Floating data are exact unless they hold
+    nonzero subnormals, which denormals-are-zero backends read as zero.
+    """
+    if not _is_floating(value):
+        return True
+    smallest_normal = jnp.finfo(value.dtype).tiny
+    for part in (np.real(value), np.imag(value)):
+        magnitude = np.abs(part)
+        if np.any((magnitude != 0) & (magnitude < smallest_normal)):
+            return False
+    return True
+
+
 def _atom_const_val(atom: Atom, state_consts: StateConsts) -> np.ndarray | None:
-    """Get the concrete value of an atom, if statically known.
+    """Get the concrete value of an atom, if statically known on every backend.
 
     The value is known in two cases:
     - **Literals**: constants embedded directly in the jaxpr.
     - **Tracked vars**: variables in ``state_consts``, whose values were
-      computed from constants through earlier operations.
+      moved or folded from constants through earlier operations.
 
-    Returns ``None`` when the value depends on runtime inputs.
+    Returns ``None`` when the value depends on runtime inputs, or when a
+    backend may read it differently (see ``_is_backend_exact``).
     """
     if isinstance(atom, Literal):
-        return np.asarray(atom.val)
-    if isinstance(atom, Var) and atom in state_consts:
-        return state_consts[atom]
-    return None
+        value = np.asarray(atom.val)
+    elif isinstance(atom, Var) and atom in state_consts:
+        value = state_consts[atom]
+    else:
+        return None
+    return value if _is_backend_exact(value) else None
 
 
 def _atom_value_bounds(
@@ -178,6 +204,8 @@ def _atom_value_bounds(
     Returns exact ``(val, val)`` for constants,
     tracked bounds for bounded variables,
     or ``None`` when no information is available.
+    Floating bounds enclose the runtime value on every backend
+    (see ``_backend_bounds``).
     """
     val = _atom_const_val(atom, state_consts)
     if val is not None:
@@ -187,39 +215,113 @@ def _atom_value_bounds(
     return None
 
 
+def _backend_bounds(
+    eqn: JaxprEqn, lower: np.ndarray, upper: np.ndarray
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Bound one primitive's runtime result from host endpoint arithmetic.
+
+    Integer endpoints are exact. Real floating endpoints are host
+    round-to-nearest values: they are rounded outward to the result dtype and
+    widened by ``8 eps |x| + 2 tiny``. For one elementwise operation on
+    enclosed operands, that pad dominates any XLA backend's result: correct
+    rounding, multiply-add contraction, device division within four units in
+    the last place, flush-to-zero results, and denormals-are-zero operands
+    (the absolute pad makes every enclosure that reaches the subnormal range
+    contain zero). Complex or indeterminate endpoints carry no bounds.
+    """
+    aval = eqn.outvars[0].aval
+    if not isinstance(aval, ShapedArray):
+        return None
+    dtype = np.dtype(aval.dtype)
+    lower = np.asarray(lower)
+    upper = np.asarray(upper)
+    if not jnp.issubdtype(dtype, jnp.inexact):
+        return lower, upper
+    if jnp.issubdtype(dtype, jnp.complexfloating) or any(
+        jnp.issubdtype(end.dtype, jnp.complexfloating) for end in (lower, upper)
+    ):
+        return None
+    info = jnp.finfo(dtype)
+    with np.errstate(invalid="ignore", over="ignore", under="ignore"):
+        low = lower.astype(dtype)
+        high = upper.astype(dtype)
+        low = np.where(low > lower, np.nextafter(low, -np.inf), low)
+        high = np.where(high < upper, np.nextafter(high, np.inf), high)
+        low = np.nextafter(low - (8 * info.eps * np.abs(low) + 2 * info.tiny), -np.inf)
+        high = np.nextafter(high + (8 * info.eps * np.abs(high) + 2 * info.tiny), np.inf)
+    if np.any(np.isnan(low) | np.isnan(high)):
+        return None
+    return low, high
+
+
+def _store_bounds(
+    eqn: JaxprEqn, state_bounds: StateBounds, lower: np.ndarray, upper: np.ndarray
+) -> None:
+    """Record ``_backend_bounds`` of host endpoint results for the first output."""
+    bounds = _backend_bounds(eqn, lower, upper)
+    if bounds is not None:
+        state_bounds[eqn.outvars[0]] = bounds
+
+
+def _store_folded_const(state_consts: StateConsts, var: Var, value: np.ndarray) -> None:
+    """Record a host-evaluated arithmetic result unless it is floating point.
+
+    A compiled program need not reproduce host floating-point arithmetic: XLA
+    backends may flush subnormals to zero, contract multiply-adds, or
+    approximate transcendental functions. A folded comparison or known zero
+    taken from such a value can drop a runtime dependency, so only integer and
+    boolean results, which every backend computes exactly, are folded.
+    Floating results are represented by ``_backend_bounds`` enclosures
+    instead, and moved data (reshape, slice, broadcast, ...) keeps its exact
+    values.
+    """
+    if not _is_floating(value):
+        state_consts[var] = value
+
+
 def _propagate_const_unary(
     eqn: JaxprEqn,
     state_consts: StateConsts,
     transform: Callable[[np.ndarray], np.ndarray],
+    state_bounds: StateBounds | None = None,
 ) -> None:
-    """Propagate a const value through a unary op.
+    """Propagate a const value, or else its bounds, through a unary data-movement op.
 
     If the input is statically known,
     apply ``transform`` and store the result.
+    Otherwise, when ``state_bounds`` is given and the input is bounded,
+    apply ``transform`` to both endpoint arrays.
     Without this, downstream handlers (e.g. ``gather``, ``scatter``) cannot resolve
     static index arrays and fall back to conservative.
     """
     in_val = _atom_const_val(eqn.invars[0], state_consts)
     if in_val is not None:
         state_consts[eqn.outvars[0]] = transform(in_val)
+    elif state_bounds is not None:
+        bounds = _atom_value_bounds(eqn.invars[0], state_consts, state_bounds)
+        if bounds is not None:
+            state_bounds[eqn.outvars[0]] = (transform(bounds[0]), transform(bounds[1]))
 
 
 def _propagate_const_binary(
     eqn: JaxprEqn,
     state_consts: StateConsts,
-    transform: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    transform: Callable[[np.ndarray, np.ndarray], np.ndarray | None],
 ) -> None:
-    """Propagate a const value through a binary op.
+    """Propagate a const value through a binary arithmetic or comparison op.
 
     If both inputs are statically known,
-    apply ``transform`` and store the result.
+    apply ``transform`` and store a non-floating result
+    (see ``_store_folded_const``); ``transform`` returns ``None`` to decline.
     Without this, downstream handlers (e.g. ``gather``, ``scatter``) cannot resolve
     static index arrays and fall back to conservative.
     """
     in1 = _atom_const_val(eqn.invars[0], state_consts)
     in2 = _atom_const_val(eqn.invars[1], state_consts)
     if in1 is not None and in2 is not None:
-        state_consts[eqn.outvars[0]] = transform(in1, in2)
+        result = transform(in1, in2)
+        if result is not None:
+            _store_folded_const(state_consts, eqn.outvars[0], np.asarray(result))
 
 
 # Zero-skipping

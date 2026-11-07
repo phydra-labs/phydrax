@@ -18,7 +18,10 @@ from ..discretization import (
     CellMesh,
     CellValidityCertificate,
 )
-from ..discretization._cell_geometry_validity import cell_geometry_id, ComputedCellValidity
+from ..discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    ComputedCellValidity,
+)
 from ..discretization._coordinate_enclosure import (
     affine_map,
     compose_expression,
@@ -36,15 +39,15 @@ from ..discretization._nested_reference_types import (
     reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
     validate_nested_reference_witnesses,
-    validate_reference_cell_partition,
     validate_reference_cell_map_witnesses,
+    validate_reference_cell_partition,
 )
 from ..discretization.fem import lagrange_element
+from ..geometry._domain_boundary import MeshingDomainBoundarySource
 from ..geometry._global_embedding import (
     GlobalEmbeddingCertificate,
     ValidatedGlobalEmbedding,
 )
-from ..geometry._domain_boundary import MeshingDomainBoundarySource
 from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ..geometry._source_boundary_records import (
     rational_chart_tokens,
@@ -99,12 +102,12 @@ from ._layer_curving_records import (
     _reference_face_dofs,
     _require_reoriented_wall_side,
     _validate_parametric_chart_geometry,
-    parametric_wall_query,
     LayerColumnProjectionIdentity,
     LayerCurvingImplicitRootTrace,
     LayerCurvingMappedChartTrace,
     LayerCurvingProjectionTrace,
     LayerCurvingSourceEvidence,
+    parametric_wall_query,
 )
 from ._lineage import EntityLineageKind, MeshLineage
 from ._mixed_adaptation import (
@@ -2107,7 +2110,9 @@ def _curve_mapped_layer_core(
             ),
             exact_overrides=exact_nodes,
         )
-        from phydrax.discretization._source_geometry_realization import _displacement_bound
+        from phydrax.discretization._source_geometry_realization import (
+            _displacement_bound,
+        )
 
         if _displacement_bound(
             construction.mesh, construction.geometry, construction.mesh, candidate
@@ -3433,6 +3438,7 @@ def _renew_mapped_layer_source_evidence(
                     elements,
                     routes,
                     coordinates,
+                    target_geometry.exact_coordinate_bank,
                     block_row,
                     cell_row,
                     target_reference,
@@ -3753,6 +3759,7 @@ def renew_layer_curving_source_evidence(
                     elements,
                     routes,
                     coordinates,
+                    target_geometry.exact_coordinate_bank,
                     face.target_block_row,
                     face.target_cell_row,
                     reference,

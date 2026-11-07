@@ -5,6 +5,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 from phydrax._interpolation import TMesh2D
 from phydrax._interpolation._bspline_extraction import (
@@ -39,6 +40,7 @@ from phydrax.geometry.brep._assembly import (
     BRepAssemblyUse,
 )
 from phydrax.geometry.brep._boolean import boolean_brep
+from phydrax.geometry.brep._boolean_core import AffinePCurve
 from phydrax.geometry.brep._constructors import (
     assemble_brep_model,
     brep_extrusion,
@@ -926,22 +928,30 @@ def test_meshing_domain_currentness_rechecks_trim_pcurve(use_kind: str) -> None:
         )
     )
     domain = MeshingDomain.from_brep(model)
-    use_type = PatchPoleUse if use_kind == "pole" else PatchCurveUse
-    patch_index, loop_index, use_index, pcurve = next(
-        (
-            (patch_index, loop_index, use_index, use.pcurve)
-            for patch_index, patch in enumerate(domain.patches)
-            for loop_index, loop in enumerate(patch.loops)
-            for use_index, use in enumerate(loop)
-            if isinstance(use, use_type) and isinstance(use.pcurve, LineCurve)
-        )
+    # Since 077ec39e8 a pole latitude is its exact conic root, so a pole p-curve
+    # is the swapped affine chart image of a ConicRootLinePCurve, not a LineCurve.
+    use_type, pcurve_type = (
+        (PatchPoleUse, AffinePCurve) if use_kind == "pole" else (PatchCurveUse, LineCurve)
     )
+    patch_index, loop_index, use_index = next(
+        (patch_index, loop_index, use_index)
+        for patch_index, patch in enumerate(domain.patches)
+        for loop_index, loop in enumerate(patch.loops)
+        for use_index, use in enumerate(loop)
+        if isinstance(use, use_type) and isinstance(use.pcurve, pcurve_type)
+    )
+
+    def chart_origin(value: MeshingDomain) -> Array:
+        pcurve = value.patches[patch_index].loops[loop_index][use_index].pcurve
+        if isinstance(pcurve, AffinePCurve):
+            return pcurve.offset_value
+        assert isinstance(pcurve, LineCurve)
+        return pcurve.origin
+
     stale_domain = eqx.tree_at(
-        lambda value: (
-            value.patches[patch_index].loops[loop_index][use_index].pcurve.origin
-        ),
+        chart_origin,
         domain,
-        pcurve.origin + jnp.asarray((0.125, 0.0)),
+        replace_fn=lambda origin: origin + jnp.asarray((0.125, 0.0)),
     )
 
     with pytest.raises(ValueError):

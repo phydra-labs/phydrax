@@ -364,9 +364,31 @@ def test_embedded_wall_propagates_authored_periodicity_to_layer_and_cap(
         route=phx.meshing.BoundaryLayerRoute.ADVANCING,
     )
     layers = phx.meshing.prepare_boundary_layers(wall, control)
-    from phydrax.meshing._boundary_layer import _reprove_retained_boundary_layers
+    import equinox as eqx
+
+    from phydrax.meshing._boundary_layer import (
+        _reprove_retained_boundary_layers,
+        _reprove_retained_front,
+        BoundaryLayerPolicy,
+    )
 
     assert _reprove_retained_boundary_layers(layers, wall, control) is layers
+    # The stored stretch must be constant on every periodic column orbit, decided
+    # exactly on the stored array.
+    _, front, _ = _reprove_retained_front(
+        layers, wall, control, BoundaryLayerPolicy(), None
+    )
+    orbits = np.asarray(front.column_orbits)
+    column = next(
+        index
+        for index in range(orbits.size)
+        if np.count_nonzero(orbits == orbits[index]) > 1
+    )
+    stretch = np.array(layers.column_stretch)
+    stretch[column] = np.nextafter(stretch[column], np.inf)
+    forged = eqx.tree_at(lambda value: value.column_stretch, layers, stretch)
+    with pytest.raises(ValueError, match="stretch is not synchronized"):
+        _reprove_retained_boundary_layers(forged, wall, control)
     assert layers.cap is not None
     for mesh in (layers.mesh, layers.cap):
         quotient = mesh.periodic_topology

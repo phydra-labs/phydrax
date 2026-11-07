@@ -35,3 +35,20 @@ def trigonometric_sources(cell: phx.discretization.PeriodicCell) -> None:
     assert_type(table.symmetry_sign(((-1, 0, 0), (0, -1, 0), (0, 0, -1)), (0, 0, 0)), int)
     phx.geometry.TrigonometricLevelSet(table, cell, region="solid")  # ty: ignore[invalid-argument-type]
     phx.geometry.TrigonometricTable.family("diamond")  # ty: ignore[invalid-argument-type]
+
+
+def periodic_quotient_discovery(source: phx.geometry.TrigonometricLevelSet) -> None:
+    implicit = phx.geometry.implicit
+    surface = implicit.discover_periodic_trigonometric_surface(
+        source,
+        policy=implicit.AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.1),
+        source_id="gyroid-cell",
+    )
+    assert_type(surface, implicit.PeriodicImplicitSurface)
+    assert_type(surface.resolved, bool)
+    assert_type(surface.topology, implicit.PeriodicSurfaceTopology | None)
+    metrics = surface.lattice_metrics()
+    assert_type(metrics, implicit.PeriodicLatticeMetrics)
+    assert_type(metrics.porosity_lower, float)
+    assert_type(metrics.measured_solid_specific_surface, tuple[float, float])
+    implicit.discover_periodic_trigonometric_surface(source)  # ty: ignore[missing-argument]

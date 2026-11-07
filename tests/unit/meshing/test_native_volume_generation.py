@@ -17,7 +17,7 @@ from phydrax._meshcore import (
     prepare_plc_source,
 )
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry._domain_certification import certify_domain_coverage
+from phydrax.geometry._domain_certification import _upper_sum, certify_domain_coverage
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._planar_coverage import PlcSourcePointWitness
 from phydrax.meshing._association import (
@@ -70,6 +70,27 @@ from phydrax.meshing.providers._native_volume import (
 
 
 pytestmark = pytest.mark.meshcore
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    (
+        (1e-20, 1.0),
+        (1e-17, 1.0),
+        (8.673617379884035e-19, 1.0),
+        (1.0, 1e-20),
+        (0.1, 3.0),
+    ),
+    ids=("win5-c4-1e-20", "win5-c4-1e-17", "win5-c4-2^-60", "ordered", "rounded"),
+)
+def test_source_distance_upper_sum_encloses_the_exact_sum(
+    first: float, second: float
+) -> None:
+    # WIN-5 C4: a Fast2Sum test without ordering returned 1.0 for 1e-20 + 1.0.
+    exact = Fraction(first) + Fraction(second)
+    total = _upper_sum(first, second)
+    assert Fraction(total) >= exact
+    assert Fraction(float(np.nextafter(total, -np.inf))) < exact
 
 
 def test_composed_plc_root_point_rounds_once_and_rejects_bad_stencils() -> None:
@@ -473,6 +494,67 @@ def _construct(
     )
 
 
+def test_fill_size_convention_reads_hard_size_and_separates_fill_identity() -> None:
+    source = _grouped_cube_source("conforming", 0.0)
+    base = _request(source, region_seeds=_CUBE_SEED)
+    size = 0.12
+    specification = VolumeMeshingSpec(
+        base.target,
+        base.boundary_scope,
+        base.fill_strategy,
+        size_controls=(
+            UniformSizeControl(
+                base.boundary_scope,
+                size,
+                maximum_size=1.5 * size,
+                strength=SizeControlStrength.HARD,
+            ),
+        ),
+        region_seeds=base.region_seeds,
+    )
+
+    def construct(**convention: Any) -> VolumeConstruction:
+        return generate_plc_volume(
+            source.complex,
+            specification,
+            NativeVolumeSchedule(radius_edge_bound=2.0, minimum_dihedral_degrees=0.0),
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            source_map_id="",
+            frame_id=SpatialCoordinateContract.si().spatial_id,
+            **convention,
+        )
+
+    default = construct()
+    edge = construct(size_convention="edge-length")
+    circumradius = construct(size_convention="circumradius")
+    # The default is the edge-length convention, bit for bit and by identity.
+    assert default.size_convention == edge.size_convention == "edge-length"
+    np.testing.assert_array_equal(
+        np.asarray(edge.mesh.coordinates).view(np.uint64),
+        np.asarray(default.mesh.coordinates).view(np.uint64),
+    )
+    np.testing.assert_array_equal(
+        edge.mesh.blocks[0].vertices, default.mesh.blocks[0].vertices
+    )
+    assert [stage.report_id for stage in edge.stages] == [
+        stage.report_id for stage in default.stages
+    ]
+    assert default.stages[0].input_ids == (source.complex.complex_id,)
+    # Circumradius h refines less than circumradius sqrt(6)/4 h, and the
+    # convention joins the fill stage identity.
+    assert circumradius.size_convention == "circumradius"
+    assert circumradius.stages[0].input_ids[0] == source.complex.complex_id
+    assert len(circumradius.stages[0].input_ids) == 2
+    assert circumradius.stages[0].report_id != default.stages[0].report_id
+    assert (
+        circumradius.mesh.blocks[0].vertices.shape[0]
+        < default.mesh.blocks[0].vertices.shape[0]
+    )
+    with pytest.raises(ValueError, match="size_convention"):
+        construct(size_convention="edge")
+
+
 def test_original_plc_curve_witness_rejects_missing_chain_and_wrong_scope(
     tmp_path: Path,
 ) -> None:
@@ -704,9 +786,16 @@ def test_small_angle_wedge_exempts_only_input_forced_rows() -> None:
     source_input = scenario._input_for(profile)
     source = scenario._source_for(profile, source_input)
     specification, options, _ = scenario._request(profile, source, source_input)
-    schedule = options.volume_schedule
-    assert schedule is not None and schedule.minimum_dihedral_degrees == 10.0
-    assert schedule.radius_edge_bound == 2.0
+    declared = options.volume_schedule
+    assert declared is not None and declared.minimum_dihedral_degrees == 10.0
+    assert declared.radius_edge_bound == 2.0
+    # The scenario declares these shape targets soft; the input-forced
+    # exemptions are the acceptance rule of the same targets declared hard.
+    schedule = NativeVolumeSchedule(
+        radius_edge_bound=declared.radius_edge_bound,
+        minimum_dihedral_degrees=declared.minimum_dihedral_degrees,
+    )
+    assert schedule.shape_strength is SizeControlStrength.HARD
     construction = generate_plc_volume(
         source.complex,
         specification,
@@ -880,13 +969,13 @@ def test_small_angle_wedge_soft_shape_targets_publish_unmet_rows() -> None:
     source_input = scenario._input_for(profile)
     source = scenario._source_for(profile, source_input)
     specification, options, _ = scenario._request(profile, source, source_input)
-    hard = options.volume_schedule
-    assert hard is not None and hard.shape_strength is SizeControlStrength.HARD
-    soft = NativeVolumeSchedule(
-        radius_edge_bound=hard.radius_edge_bound,
-        minimum_dihedral_degrees=hard.minimum_dihedral_degrees,
-        shape_strength=SizeControlStrength.SOFT,
+    soft = options.volume_schedule
+    assert soft is not None and soft.shape_strength is SizeControlStrength.SOFT
+    hard = NativeVolumeSchedule(
+        radius_edge_bound=soft.radius_edge_bound,
+        minimum_dihedral_degrees=soft.minimum_dihedral_degrees,
     )
+    assert hard.shape_strength is SizeControlStrength.HARD
 
     def construct(schedule: NativeVolumeSchedule) -> VolumeConstruction:
         return generate_plc_volume(
@@ -2059,6 +2148,7 @@ def test_tampered_source_point_witness_is_refused(
         face_plane_tolerances=witness.face_plane_tolerances,
         domain_face_rows=witness.domain_face_rows,
         domain_id=witness.domain_id,
+        vertex_deviations=witness.vertex_deviations,
     )
     coverage = certify_domain_coverage(
         inputs.mesh,

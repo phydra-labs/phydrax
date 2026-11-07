@@ -254,6 +254,18 @@ _DEFERRED_EXPORTS = {
     "MeshMotionDecision": "._motion",
     "MeshMotionMonitor": "._motion",
     "MeshMotionMonitorPolicy": "._motion",
+    "PeriodicImplicitVolume": "._periodic_implicit_volume",
+    "mesh_periodic_trigonometric_region": "._periodic_implicit_volume",
+    "LatticeSpecimenVolume": "._lattice_specimen",
+    "mesh_lattice_specimen": "._lattice_specimen",
+    "LatticeSpecimenEventError": "._surface_construction",
+    "LatticeSpecimenSurface": "._surface_construction",
+    "construct_lattice_specimen_surface": "._surface_construction",
+    "PeriodicImplicitRealization": "._periodic_implicit_realization",
+    "PeriodicImplicitRealizationEventError": "._periodic_implicit_realization",
+    "PeriodicImplicitRealizationPlan": "._periodic_implicit_realization",
+    "PeriodicImplicitRealizationStatus": "._periodic_implicit_realization",
+    "prepare_periodic_implicit_realization": "._periodic_implicit_realization",
     "CellGeometryOptimizationResult": "._optimization",
     "MeshOptimizationResult": "._optimization",
     "MeshOptimizationStatus": "._optimization",
@@ -570,6 +582,7 @@ if TYPE_CHECKING:
         MeshInteropPolicy,
         read_mesh_array_artifact,
     )
+    from ._lattice_specimen import LatticeSpecimenVolume, mesh_lattice_specimen
     from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
     from ._layer_core_periodic import prepare_periodic_layer_core_source
     from ._layer_curving import (
@@ -699,6 +712,17 @@ if TYPE_CHECKING:
         PeriodicRefinementEdgeLock as PeriodicRefinementEdgeLock,
         prepare_periodic_refinement_edge_lock as prepare_periodic_refinement_edge_lock,
     )
+    from ._periodic_implicit_realization import (
+        PeriodicImplicitRealization,
+        PeriodicImplicitRealizationEventError,
+        PeriodicImplicitRealizationPlan,
+        PeriodicImplicitRealizationStatus,
+        prepare_periodic_implicit_realization,
+    )
+    from ._periodic_implicit_volume import (
+        mesh_periodic_trigonometric_region,
+        PeriodicImplicitVolume,
+    )
     from ._planar_bands import (
         PlanarBandControl,
         PlanarBandPlan,
@@ -772,6 +796,11 @@ if TYPE_CHECKING:
     )
     from ._structured import TransfiniteBlock
     from ._surface_association_transfer import SurfaceAssociationTransfer
+    from ._surface_construction import (
+        construct_lattice_specimen_surface,
+        LatticeSpecimenEventError,
+        LatticeSpecimenSurface,
+    )
     from ._surface_envelope import SurfaceEnvelopeSource as SurfaceEnvelopeSource
     from ._trace import (
         MeshingDiagnostic,
@@ -1018,6 +1047,18 @@ __all__ = [
     "MeshMotionDecision",
     "MeshMotionMonitor",
     "MeshMotionMonitorPolicy",
+    "PeriodicImplicitVolume",
+    "mesh_periodic_trigonometric_region",
+    "LatticeSpecimenVolume",
+    "mesh_lattice_specimen",
+    "LatticeSpecimenEventError",
+    "LatticeSpecimenSurface",
+    "construct_lattice_specimen_surface",
+    "PeriodicImplicitRealization",
+    "PeriodicImplicitRealizationEventError",
+    "PeriodicImplicitRealizationPlan",
+    "PeriodicImplicitRealizationStatus",
+    "prepare_periodic_implicit_realization",
     "NativePlanarMotionSource",
     "MeshOptimizationResult",
     "MeshOptimizationStatus",

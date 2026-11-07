@@ -702,9 +702,18 @@ candidate are committed or rolled back together.
 ## Unstructured hybrid diffusion
 
 `HybridMimeticDiffusion` is a separate three-dimensional unstructured cell/face
-operator for full SPD tensors. It retains shared face potentials and verifies its
-star-shaped geometric reconstruction. Its default solve uses GMRES; the
-matrix-free operator does not claim a certified positive-definite linalg
+operator for full SPD tensors. It retains shared trace potentials and verifies its
+star-shaped geometric reconstruction and first-moment identity. A planar face is one
+trace facet. A warped face, such as a boundary-layer prism side quadrilateral, adds
+one facet for each planar sub-triangle about its vertex centroid. These are the same
+triangles that the FV geometry integrates for cell volumes, centroids, and face area
+vectors, so the identity stays exact and both cells share each facet with opposite
+orientation. Solutions hold cell potentials followed by facet potentials.
+`face_potentials` returns each face's projected-area mean trace, and face rates are
+summed over facets. Boundary laws stay face indexed. A Dirichlet value is applied
+uniformly to every facet of its face. Integrated Neumann rates and Robin conductances
+are split over facets in proportion to projected area. Its default solve uses GMRES;
+the matrix-free operator does not claim a certified positive-definite linalg
 property. It is not an extension of the structured `ConservativeDiffusionPlan`
 and is not a TPFA shortcut. See
 [Porous-media flow, heat, and chemistry](guides_porous_media.md).

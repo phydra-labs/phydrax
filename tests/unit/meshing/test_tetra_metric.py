@@ -24,7 +24,6 @@ from phydrax.meshing._tetra_metric import (
     _collapse_phase,
     _entity_frame,
     _entity_weights,
-    _EntityFrame,
     _facet_group_map,
     _locate_source_weights,
     _metric_enclosing_center,
@@ -36,6 +35,7 @@ from phydrax.meshing._tetra_metric import (
     _relocation_proposals,
     _replacement_candidates,
     _source_metric_from_stencil,
+    _SourceSupport,
     _split_phase,
     _stencil_image,
     _topology,
@@ -496,8 +496,8 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
 
 def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> None:
     from phydrax._meshcore import IntervalBoxProgram, TetMeshImplicitSource
-    from phydrax.meshing._tetra_metric import _implicit_only_vertex, _survivor_moves
     from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from phydrax.meshing._tetra_metric import _implicit_only_vertex, _survivor_moves
 
     points = np.asarray(
         (
@@ -512,7 +512,10 @@ def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> No
     source = _mesh_result(points, cells)
     exact = tuple(tuple(Fraction(float(value)) for value in point) for point in points)
     bank = ExactPlcCellGeometrySource(
-        "plane", "revision", np.asarray(source.mesh.vertex_global_ids), exact,
+        "plane",
+        "revision",
+        np.asarray(source.mesh.vertex_global_ids),
+        exact,
         vertex_source_entity_ids=(None,) * len(points),
         vertex_occurrence_paths=((),) * len(points),
     )
@@ -520,7 +523,9 @@ def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> No
     geometry = phx.discretization.CellGeometrySpec(
         dict(zip(affine.block_names, affine.elements, strict=True)),
         dict(zip(affine.block_names, affine.geometry_dofs, strict=True)),
-        source.mesh.coordinates, source_map=bank, source_mesh=source.mesh,
+        source.mesh.coordinates,
+        source_map=bank,
+        source_mesh=source.mesh,
     )
     source = certify_cell_mesh(source.mesh, source.coordinate_contract, geometry=geometry)
     state = _state(source, np.eye(3))
@@ -928,7 +933,7 @@ def test_declared_plane_admits_a_rounded_relocation_on_a_slanted_facet() -> None
     quantized = _quantized_relocation(state, simplices, goal, current)
     assert quantized is not None
     stencil, carrier = quantized
-    frames: dict[tuple[int, ...], _EntityFrame] = {}
+    frames: dict[tuple[int, ...], _SourceSupport] = {}
     images: dict[Any, Any] = {}
     for factor in (0.5, 0.25, 0.125):
         trial = current + factor * (centroid - current)

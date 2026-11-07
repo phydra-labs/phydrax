@@ -44,8 +44,8 @@ from phydrax.meshing._contracts import (
 )
 from phydrax.meshing._quality import (
     _with_certified_mapped_measures,
-    CellQualityReport,
     evaluate_cell_quality,
+    summarize_cell_quality,
 )
 from phydrax.meshing._sizing import (
     SizeCompliancePolicy,
@@ -162,8 +162,10 @@ def test_mapped_quality_reports_certified_physical_area() -> None:
     value = float(np.asarray(quality.measures)[0])
     assert abs(value - math.pi / 2) <= error + 1e-15
     assert (
-        CellQualityReport(quality).report_id
-        != CellQualityReport(replace(quality, measure_exact=True)).report_id
+        summarize_cell_quality(atlas.mesh, quality).report_id
+        != summarize_cell_quality(
+            atlas.mesh, replace(quality, measure_exact=True)
+        ).report_id
     )
 
 

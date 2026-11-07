@@ -29,12 +29,19 @@ from phydrax.geometry._interval_enclosure import (
     IntervalExtensionError,
     PreparedIntervalFunction,
 )
-from phydrax.geometry._rational import fraction_endpoint
+from phydrax.geometry._rational import (
+    binary64_difference_magnitude,
+    binary64_norm_upper,
+    fraction_endpoint,
+    rational_dot,
+    rational_vector,
+)
 from phydrax.geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
 )
+from phydrax.geometry.brep._exact import fraction_norm_upper
 from phydrax.geometry.brep._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
@@ -2647,34 +2654,58 @@ def _box_chord_bound(
     last: np.ndarray,
     /,
 ) -> float:
+    """Upper bound of the distance from any box point to the chord segment.
+
+    The distance to a segment is convex, so a box corner attains its maximum.
+    Each corner projects exactly onto the segment in rational arithmetic, and
+    the exact distance rounds upward once.
+    """
     box = np.asarray(bounds, dtype=np.float64)
-    if box.shape != (2, 3) or np.any(~np.isfinite(box)) or np.any(box[0] > box[1]):
+    start = np.asarray(first, dtype=np.float64)
+    end = np.asarray(last, dtype=np.float64)
+    if (
+        box.shape != (2, 3)
+        or np.any(~np.isfinite(box))
+        or np.any(box[0] > box[1])
+        or np.any(~np.isfinite(start))
+        or np.any(~np.isfinite(end))
+    ):
         return math.inf
-    corners = np.asarray(
-        [
-            (x, y, z)
-            for x in (box[0, 0], box[1, 0])
-            for y in (box[0, 1], box[1, 1])
-            for z in (box[0, 2], box[1, 2])
-        ],
-        dtype=np.float64,
+    origin = rational_vector(start)
+    chord = tuple(
+        target - source
+        for source, target in zip(origin, rational_vector(end), strict=True)
     )
-    chord = np.asarray(last, dtype=np.float64) - np.asarray(first, dtype=np.float64)
-    squared_length = float(np.dot(chord, chord))
-    if squared_length == 0.0:
-        distances = np.linalg.norm(corners - np.asarray(first, dtype=np.float64), axis=1)
-    else:
-        ratios = np.clip(
-            (corners - np.asarray(first, dtype=np.float64)) @ chord / squared_length,
-            0.0,
-            1.0,
+    squared_length = rational_dot(chord, chord)
+    maximum = 0.0
+    for corner in (
+        (x, y, z)
+        for x in (box[0, 0], box[1, 0])
+        for y in (box[0, 1], box[1, 1])
+        for z in (box[0, 2], box[1, 2])
+    ):
+        offset = tuple(
+            value - source
+            for value, source in zip(rational_vector(corner), origin, strict=True)
         )
-        distances = np.linalg.norm(
-            corners - (np.asarray(first, dtype=np.float64) + ratios[:, None] * chord),
-            axis=1,
+        ratio = (
+            Fraction(0)
+            if squared_length == 0
+            else min(
+                max(rational_dot(offset, chord) / squared_length, Fraction(0)),
+                Fraction(1),
+            )
         )
-    maximum = float(np.max(distances, initial=0.0))
-    return float(np.nextafter(maximum, math.inf))
+        maximum = max(
+            maximum,
+            fraction_norm_upper(
+                tuple(
+                    value - ratio * axis
+                    for value, axis in zip(offset, chord, strict=True)
+                )
+            ),
+        )
+    return maximum
 
 
 def _box_point_distance_upper(
@@ -2692,17 +2723,11 @@ def _box_point_distance_upper(
         or np.any(box[0] > box[1])
     ):
         return math.inf
-    corners = np.asarray(
-        [
-            (x, y, z)
-            for x in (box[0, 0], box[1, 0])
-            for y in (box[0, 1], box[1, 1])
-            for z in (box[0, 2], box[1, 2])
-        ],
-        dtype=np.float64,
+    gap = np.maximum(
+        binary64_difference_magnitude(box[0], origin)[1],
+        binary64_difference_magnitude(box[1], origin)[1],
     )
-    maximum = float(np.max(np.linalg.norm(corners - origin, axis=1), initial=0.0))
-    return float(np.nextafter(maximum, math.inf))
+    return float(binary64_norm_upper(gap))
 
 
 def _positive_surface_parameter_box(
@@ -3091,8 +3116,12 @@ class _CurveChordBounds:
                     ),
                 )
             deviation = max(deviation, use_deviation)
-            diagonal = float(np.linalg.norm(bounds[1] - bounds[0]))
-            length = max(length, float(np.nextafter(diagonal, math.inf)))
+            diagonal = float(
+                binary64_norm_upper(
+                    binary64_difference_magnitude(bounds[1], bounds[0])[1]
+                )
+            )
+            length = max(length, diagonal)
         if not math.isfinite(deviation) or not math.isfinite(length):
             raise _failure(
                 "source p-curve continuous chord or length enclosure is nonfinite",
@@ -3755,8 +3784,12 @@ def _pole_sampling(
                         np.asarray((patch,), dtype=np.int64),
                         np.asarray((chart,), dtype=np.float64),
                     )[0]
-                    distance = float(np.linalg.norm(np.asarray(physical) - pole_point))
-                    return ring_value, float(np.nextafter(distance, math.inf))
+                    distance = float(
+                        binary64_norm_upper(
+                            binary64_difference_magnitude(physical, pole_point)[1]
+                        )
+                    )
+                    return ring_value, distance
 
                 lower_alpha = Fraction(0)
                 upper_alpha = Fraction(1)

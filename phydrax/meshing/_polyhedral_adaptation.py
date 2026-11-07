@@ -270,6 +270,8 @@ class _PolyhedralExactCoordinateSource(StrictModule, NonTrainableState):
     exact_vertices: tuple[tuple[Fraction, Fraction, Fraction], ...] = eqx.field(
         static=True
     )
+    parent_map_id: str = eqx.field(static=True)
+    vertex_ids: Array
 
     def __init__(
         self,
@@ -291,6 +293,8 @@ class _PolyhedralExactCoordinateSource(StrictModule, NonTrainableState):
         self.source_revision = source_revision
         self.exact_vertices = exact_vertices
         self.rounded_vertices = jnp.asarray(rounded)
+        self.parent_map_id = parent_map_id
+        self.vertex_ids = jnp.asarray(vertex_ids, dtype=jnp.int64)
         self.source_map_id = canonical_fingerprint(
             {
                 "kind": "polyhedral-exact-coordinate-restriction",
@@ -304,6 +308,37 @@ class _PolyhedralExactCoordinateSource(StrictModule, NonTrainableState):
                 ),
             }
         )
+
+    @classmethod
+    def from_stored_fields(
+        cls, value: _PolyhedralExactCoordinateSource, /, *, mesh: CellMesh
+    ) -> _PolyhedralExactCoordinateSource:
+        """Recompute the restriction identity from its stored exact inputs."""
+        if type(value) is not cls or any(
+            len(point) != 3 or any(type(item) is not Fraction for item in point)
+            for point in value.exact_vertices
+        ):
+            raise TypeError("Stored polyhedral coordinates must be exact rationals.")
+        vertex_ids = np.asarray(value.vertex_ids, dtype=np.int64)
+        rebuilt = cls(
+            value.source_id,
+            value.source_revision,
+            tuple(tuple(point) for point in value.exact_vertices),
+            parent_map_id=value.parent_map_id,
+            vertex_ids=vertex_ids,
+        )
+        if (
+            rebuilt.source_map_id != value.source_map_id
+            or not np.array_equal(
+                np.asarray(rebuilt.rounded_vertices), np.asarray(value.rounded_vertices)
+            )
+            or not np.array_equal(vertex_ids, np.asarray(mesh.vertex_global_ids))
+            or not np.array_equal(
+                np.asarray(rebuilt.rounded_vertices), np.asarray(mesh.coordinates)
+            )
+        ):
+            raise ValueError("Stored polyhedral exact coordinate source changed.")
+        return rebuilt
 
     def source_coordinates(
         self, indices: ArrayLike | None = None, /

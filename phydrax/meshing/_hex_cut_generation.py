@@ -63,7 +63,7 @@ from ..geometry._global_embedding import (
     GlobalEmbeddingCertificate,
 )
 from ..linalg._exact import solve_exact
-from ..meshing._quality import evaluate_cell_quality
+from ..meshing._quality import evaluate_cell_quality, exact_cell_gate_failures
 from ..typing import checked, ConvertibleToArray
 from ._dual_extraction import fresh_vertex_global_ids
 from ._hex_cut_preparation import (
@@ -435,19 +435,11 @@ def generate_orthogonal_plc_hexes(
             ],
             dtype=np.float64,
         )
-        aspect = float(np.max(lengths) / np.min(lengths))
-        mean = float(3.0 * np.prod(lengths) ** (2.0 / 3.0) / np.sum(lengths * lengths))
-        if (
-            1.0 < schedule.minimum_scaled_jacobian
-            or mean < schedule.minimum_mean_ratio
-            or aspect > schedule.maximum_aspect_ratio
-        ):
-            raise ValueError(
-                "Orthogonal grid cell fails the declared whole-cell quality schedule."
-            )
         quality_scaled.append(1.0)
-        quality_mean.append(mean)
-        quality_aspect.append(aspect)
+        quality_mean.append(
+            float(3.0 * np.prod(lengths) ** (2.0 / 3.0) / np.sum(lengths * lengths))
+        )
+        quality_aspect.append(float(np.max(lengths) / np.min(lengths)))
 
     coordinates = np.asarray(
         [
@@ -465,6 +457,13 @@ def generate_orthogonal_plc_hexes(
                 raise ValueError(
                     "Grid vertices must be exactly representable in binary64."
                 )
+    invalid, failed = _exact_cut_cell_failures(
+        coordinates, np.asarray(cells, dtype=np.int64), schedule
+    )
+    if np.any(invalid | failed):
+        raise ValueError(
+            "Orthogonal grid cell fails the declared whole-cell quality schedule."
+        )
     mesh = CellMesh(
         coordinates,
         (CellBlock("cells", "hexahedron", np.asarray(cells, dtype=np.int32)),),
@@ -1271,13 +1270,16 @@ class _CutCoordinateMap(StrictModule, NonTrainableState):
             raise ValueError(
                 "Stored balanced-grid plan does not replay from its exact inputs."
             )
-        replayed = generate_balanced_cut_hexes(
+        # The deterministic exact construction is replayed; relocated node images
+        # are evidence checked by the exact admission, never optimizer output.
+        replayed = _generate_balanced_cut_hexes(
             value.source_complex,
             value.source_mesh,
             value.cell_regions,
             renewed_plan,
             value.schedule,
-            source_geometry=value.source_geometry,
+            value.source_geometry,
+            value.exact_vertices,
         )
         replayed_map = replayed.geometry.source_map
         if (
@@ -1840,20 +1842,178 @@ def _cut_source_reference_point(
     )
 
 
-def _cut_quality_meets_schedule(quality: Any, schedule: NativeHexGridSchedule, /) -> bool:
-    if not np.all(np.asarray(quality.sampled_valid, dtype=np.bool_)):
-        return False
-    scaled = np.asarray(quality.scaled_jacobian, dtype=np.float64)
-    mean = np.asarray(quality.mean_ratios, dtype=np.float64)
-    aspect = np.asarray(quality.aspect_ratios, dtype=np.float64)
-    return bool(
-        scaled.size
-        and mean.size
-        and aspect.size
-        and float(np.min(scaled)) >= schedule.minimum_scaled_jacobian
-        and float(np.min(mean)) >= schedule.minimum_mean_ratio
-        and float(np.max(aspect)) <= schedule.maximum_aspect_ratio
+def _exact_cut_cell_failures(
+    coordinates: np.ndarray, cells: np.ndarray, schedule: NativeHexGridSchedule, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact invalid and schedule-failing hexahedra of binary64 coordinates.
+
+    ``invalid`` is the exact counterpart of ``sampled_valid``: a nonpositive
+    corner Jacobian determinant or trilinear measure. ``failed`` is a corner
+    scaled Jacobian, corner mean ratio, or edge aspect ratio outside the
+    schedule, decided with the sampled definitions on the represented vertices.
+    """
+    gates = exact_cell_gate_failures(
+        "hexahedron",
+        np.asarray(coordinates, dtype=np.float64)[np.asarray(cells, dtype=np.int64)],
+        minimum_measure=0.0,
+        minimum_scaled_jacobian=schedule.minimum_scaled_jacobian,
+        minimum_mean_ratio=schedule.minimum_mean_ratio,
+        maximum_aspect_ratio=schedule.maximum_aspect_ratio,
     )
+    return (
+        gates.nonpositive_corner | gates.measure,
+        gates.scaled_jacobian | gates.mean_ratio | gates.aspect_ratio,
+    )
+
+
+# Relocation keeps every degree-(2, 2, 2) Bernstein control of a parent reference
+# chart determinant at least 64 eps times the chart's largest control magnitude.
+_CUT_CHART_POSITIVE_MARGIN = Fraction(64) * Fraction(float(np.finfo(np.float64).eps))
+
+
+def _cut_chart_margin_state(
+    weights: Sequence[Weights],
+    cells: np.ndarray,
+    parents: Sequence[int],
+    source_cells: np.ndarray,
+    /,
+) -> tuple[bool, bool]:
+    """Exact (every chart determinant is nonzero, some chart lacks the margin)."""
+    deficient = False
+    for cell, parent in zip(cells.tolist(), parents, strict=True):
+        references = tuple(
+            _cut_source_reference_point(weights[int(vertex)], int(parent), source_cells)
+            for vertex in cell
+        )
+        determinant = _cut_chart_determinant(_cut_trilinear_chart(references))
+        if isinstance(determinant, RationalPolynomial):
+            raise ValueError("Cut reference charts require polynomial determinants.")
+        controls = tuple(
+            _require_fraction(
+                control, "Cut reference chart controls must remain rational."
+            )
+            for control in bernstein_coefficients(determinant, "box", 3, degree=(2, 2, 2))
+        )
+        scale = max(abs(control) for control in controls)
+        if not scale:
+            return False, deficient
+        deficient = deficient or min(controls) < _CUT_CHART_POSITIVE_MARGIN * scale
+    return True, deficient
+
+
+def _root_point(weights: Weights, root_vertices: dict[int, Point3], /) -> Point3:
+    return cast(
+        Point3,
+        tuple(
+            sum(
+                (weight * root_vertices[vertex][axis] for vertex, weight in weights),
+                Fraction(0),
+            )
+            for axis in range(3)
+        ),
+    )
+
+
+def _relocated_weights_failure(
+    weights: Sequence[Weights],
+    root_vertices: dict[int, Point3],
+    cells: np.ndarray,
+    parents: Sequence[int],
+    source_cells: np.ndarray,
+    schedule: NativeHexGridSchedule,
+    /,
+) -> str | None:
+    """Exact admission of relocated root weights, or the reason it fails.
+
+    The rounded root images must meet the whole-cell schedule with positive
+    corners and measure, and every parent reference chart the 64-eps margin.
+    """
+    coordinates = np.asarray(
+        [[float(value) for value in _root_point(row, root_vertices)] for row in weights],
+        dtype=np.float64,
+    )
+    invalid, failed = _exact_cut_cell_failures(coordinates, cells, schedule)
+    if np.any(invalid | failed):
+        return (
+            f"invalid_rows={tuple(int(row) for row in np.flatnonzero(invalid))},"
+            f"schedule_rows={tuple(int(row) for row in np.flatnonzero(failed))}"
+        )
+    nonzero, deficient = _cut_chart_margin_state(weights, cells, parents, source_cells)
+    if not nonzero or deficient:
+        return "source_chart_margin"
+    return None
+
+
+def _stored_root_weights(
+    node_bank: _CutNodeBank,
+    root_vertices: dict[int, Point3],
+    stored_vertices: Sequence[ExactPoint3],
+    /,
+) -> list[Weights]:
+    """Exact barycentric weights of stored node images over the authored supports.
+
+    A fixed node (one support vertex) keeps its authored weight; the caller
+    compares its stored image bit for bit. A movable node's stored image must be
+    a convex combination of its authored support, whose affine root images are
+    affinely independent, so the weights are unique and found by elimination.
+    """
+    if len(stored_vertices) != len(node_bank.weights):
+        raise ValueError("Stored cut nodes must match every constructed cut node.")
+    result: list[Weights] = []
+    for node_row, (weights, point) in enumerate(
+        zip(node_bank.weights, stored_vertices, strict=True)
+    ):
+        if len(weights) == 1:
+            result.append(weights)
+            continue
+        if len(point) != 3 or any(not isinstance(value, Fraction) for value in point):
+            raise ValueError(f"Stored relocated cut node {node_row} must be rational.")
+        support = tuple(vertex for vertex, _ in weights)
+        columns = [(*root_vertices[vertex], Fraction(1)) for vertex in support]
+        target = (*cast(Point3, point), Fraction(1))
+        gram = [
+            [
+                sum((a * b for a, b in zip(first, second)), Fraction(0))
+                for second in columns
+            ]
+            for first in columns
+        ]
+        right = [
+            [sum((a * b for a, b in zip(column, target)), Fraction(0))]
+            for column in columns
+        ]
+        values = tuple(row[0] for row in solve_exact(gram, right))
+        if any(value < 0 for value in values) or any(
+            sum(
+                (value * column[axis] for value, column in zip(values, columns)),
+                Fraction(0),
+            )
+            != target[axis]
+            for axis in range(4)
+        ):
+            raise ValueError(
+                f"Stored cut node {node_row} is not a convex combination of its "
+                "authored source support."
+            )
+        result.append(
+            tuple(
+                (vertex, value)
+                for vertex, value in zip(support, values, strict=True)
+                if value
+            )
+        )
+    return result
+
+
+def _commit_root_weights(
+    node_bank: _CutNodeBank,
+    weights: list[Weights],
+    root_vertices: dict[int, Point3],
+    /,
+) -> None:
+    node_bank.weights[:] = weights
+    node_bank.supports[:] = [tuple(vertex for vertex, _ in row) for row in weights]
+    node_bank.coordinates[:] = [_root_point(row, root_vertices) for row in weights]
 
 
 def _relocate_cut_nodes_in_root_coordinates(
@@ -1864,12 +2024,16 @@ def _relocate_cut_nodes_in_root_coordinates(
     hexes: list[list[int]],
     parents: list[int],
     schedule: NativeHexGridSchedule,
+    stored_vertices: Sequence[ExactPoint3] | None,
     /,
 ) -> tuple[bool, str]:
-    """Propose metric relocation in exact affine root-image space.
+    """Relocate cut nodes in exact affine root-image space when the exact trigger fires.
 
     Nodes remain convex combinations of their authored source-vertex support;
     the caller still rebuilds the exact charts and certifies final geometry.
+    Generation proposes the weights with the optimizer. Restore passes the
+    stored node images instead: their exact weights must pass the same exact
+    admission, so restore never replays the optimizer.
     """
     if (
         not len(source_cells)
@@ -1983,8 +2147,10 @@ def _relocate_cut_nodes_in_root_coordinates(
         vertex_global_ids=vertex_ids,
         numeric_version=source_mesh.numeric_version,
     )
-    initial_quality = evaluate_cell_quality(root_mesh)
-    if not np.all(np.asarray(initial_quality.sampled_valid, dtype=np.bool_)):
+    root_invalid, root_failed = _exact_cut_cell_failures(
+        root_coordinates, cells, schedule
+    )
+    if np.any(root_invalid):
         return False, "invalid_root_mesh_before_relocation"
     import jax
     import jax.numpy as jnp
@@ -1999,6 +2165,13 @@ def _relocate_cut_nodes_in_root_coordinates(
     )
     if bool(np.all(fixed)):
         return False, "no_movable_root_supports"
+    charts_nonzero, charts_deficient = _cut_chart_margin_state(
+        node_bank.weights, cells, parents, source_cells
+    )
+    if not charts_nonzero:
+        return False, "degenerate_initial_source_chart"
+    if not (np.any(root_failed) or charts_deficient):
+        return False, "quality_and_source_chart_bernstein_positive"
     support_points = np.zeros((root_coordinates.shape[0], 4, 3), dtype=np.float64)
     support_mask = np.zeros((root_coordinates.shape[0], 4), dtype=np.bool_)
     reference_vertices = tuple(
@@ -2043,6 +2216,19 @@ def _relocate_cut_nodes_in_root_coordinates(
                 initial_parameters.append(float(np.log(ratio)))
     if not initial_parameters:
         return False, "no_variable_source_support_weights"
+    if stored_vertices is not None:
+        stored = _stored_root_weights(node_bank, root_vertices, stored_vertices)
+        if stored == node_bank.weights:
+            return False, "stored_unrelocated_nodes"
+        failure = _relocated_weights_failure(
+            stored, root_vertices, cells, parents, source_cells, schedule
+        )
+        if failure is not None:
+            raise ValueError(
+                f"Stored relocated cut nodes fail the exact admission: {failure}."
+            )
+        _commit_root_weights(node_bank, stored, root_vertices)
+        return True, "stored_relocation"
 
     support_points_jax = jnp.asarray(support_points, dtype=jnp.float64)
     support_mask_jax = jnp.asarray(support_mask, dtype=jnp.bool_)
@@ -2144,10 +2330,8 @@ def _relocate_cut_nodes_in_root_coordinates(
         return jnp.where(admissible, aggregate, jnp.inf)
 
     initial_objective = float(np.asarray(quality_deficit(initial_parameters_jax)))
-    if not np.isfinite(initial_objective):
-        return False, "nonfinite_initial_quality_deficit"
-    if initial_objective <= 0.0:
-        return False, "quality_and_source_chart_bernstein_positive"
+    if not np.isfinite(initial_objective) or initial_objective <= 0.0:
+        return False, "unscalable_initial_quality_deficit"
     objective_scale = jnp.asarray(initial_objective, dtype=jnp.float64)
 
     def root_support_energy(parameters: Any, _args: Any, /) -> Any:
@@ -2176,8 +2360,6 @@ def _relocate_cut_nodes_in_root_coordinates(
         dtype=np.float64,
     )
     updated_weights: list[Weights] = []
-    updated_supports: list[tuple[int, ...]] = []
-    updated_coordinates: list[Point3] = []
     for node_row, source_weights in enumerate(node_bank.weights):
         exact_probabilities = tuple(
             Fraction.from_float(float(probabilities[node_row, local]))
@@ -2198,43 +2380,22 @@ def _relocate_cut_nodes_in_root_coordinates(
         )
         if sum((value for _, value in weights), Fraction(0)) != 1:
             return False, "non_partitioning_softmax_source_weights"
-        root_point = tuple(
-            sum(
-                (weight * root_vertices[vertex][axis] for vertex, weight in weights),
-                Fraction(0),
-            )
-            for axis in range(3)
-        )
         updated_weights.append(weights)
-        updated_supports.append(tuple(vertex for vertex, _ in weights))
-        updated_coordinates.append(cast(Point3, root_point))
-    if tuple(updated_weights) == tuple(node_bank.weights):
+    if updated_weights == node_bank.weights:
         return False, "root_support_optimizer_made_no_change"
-    candidate_coordinates = np.asarray(
-        [[float(value) for value in point] for point in updated_coordinates],
-        dtype=np.float64,
+    failure = _relocated_weights_failure(
+        updated_weights, root_vertices, cells, parents, source_cells, schedule
     )
-    candidate_mesh = root_mesh.with_coordinates(
-        candidate_coordinates,
-        numeric_version=source_mesh.numeric_version,
-    )
-    candidate_quality = evaluate_cell_quality(candidate_mesh)
-    if not _cut_quality_meets_schedule(candidate_quality, schedule):
-        candidate_aspect = np.asarray(candidate_quality.aspect_ratios, dtype=np.float64)
+    if failure is not None:
         return False, (
-            "softmax_candidate_quality_failed:"
-            f"scaled={float(np.min(np.asarray(candidate_quality.scaled_jacobian, dtype=np.float64))):.17g},"
-            f"mean={float(np.min(np.asarray(candidate_quality.mean_ratios, dtype=np.float64))):.17g},"
-            f"aspect={float(np.max(candidate_aspect)):.17g},"
+            f"softmax_candidate_quality_failed:{failure},"
             f"optimizer_status={int(np.asarray(minimization.status))},"
             f"optimizer_steps={int(np.asarray(minimization.diagnostics.iterations))},"
             f"optimizer_objective={float(np.asarray(minimization.objective)):.17g},"
             f"accepted_steps={int(np.asarray(minimization.diagnostics.accepted_steps))},"
             f"final_optimality={float(np.asarray(minimization.diagnostics.final_optimality_norm)):.17g}"
         )
-    node_bank.weights[:] = updated_weights
-    node_bank.supports[:] = updated_supports
-    node_bank.coordinates[:] = updated_coordinates
+    _commit_root_weights(node_bank, updated_weights, root_vertices)
     return True, "relocated"
 
 
@@ -2249,6 +2410,7 @@ def _compose_cut_hex_geometry(
     node_bank: _CutNodeBank,
     hexes: list[list[int]],
     parents: list[int],
+    stored_vertices: Sequence[ExactPoint3] | None,
     /,
 ) -> tuple[
     CellMesh,
@@ -2286,6 +2448,7 @@ def _compose_cut_hex_geometry(
         hexes,
         parents,
         schedule,
+        stored_vertices,
     )
 
     exact_vertices: list[ExactPoint3] = []
@@ -2939,6 +3102,26 @@ def generate_balanced_cut_hexes(
     source_geometry: CellGeometrySpec | None = None,
 ) -> BalancedCutHexConstruction:
     """Clip in exact affine carrier axes; certify curved maps when cuts stay affine or uncut."""
+    return _generate_balanced_cut_hexes(
+        source, source_mesh, cell_regions, plan, schedule, source_geometry, None
+    )
+
+
+def _generate_balanced_cut_hexes(
+    source: PiecewiseLinearComplex,
+    source_mesh: CellMesh,
+    cell_regions: ConvertibleToArray,
+    plan: BalancedCutGridPlan,
+    schedule: NativeHexGridSchedule,
+    source_geometry: CellGeometrySpec | None,
+    stored_vertices: Sequence[ExactPoint3] | None,
+    /,
+) -> BalancedCutHexConstruction:
+    """Generate, or with ``stored_vertices`` restore, one balanced cut-hex construction.
+
+    Restore adopts the stored node images as relocation evidence after the exact
+    trigger fires instead of replaying the optimizer.
+    """
     if not isinstance(source, PiecewiseLinearComplex) or not isinstance(
         source_mesh, CellMesh
     ):
@@ -3142,23 +3325,10 @@ def generate_balanced_cut_hexes(
     if target_cells.ndim != 2 or target_cells.shape[1] != 8:
         raise ValueError("Exact cut-polyhedron dualization produced no hexahedral cells.")
     if not used_tetrahedral_template:
-        direct_mesh = CellMesh(
-            coordinates,
-            (
-                CellBlock(
-                    "cut-quality",
-                    "hexahedron",
-                    target_cells,
-                    global_ids=np.arange(target_cells.shape[0], dtype=np.int64),
-                ),
-            ),
-            vertex_global_ids=np.arange(coordinates.shape[0], dtype=np.int64),
-            numeric_version=source_mesh.numeric_version,
-        )
-        direct_quality = evaluate_cell_quality(direct_mesh)
-        if not np.all(np.asarray(direct_quality.sampled_valid, dtype=np.bool_)):
-            # A negative sample rejects this topology; only the fully checked template
-            # candidate below can be accepted.
+        direct_invalid, _ = _exact_cut_cell_failures(coordinates, target_cells, schedule)
+        if np.any(direct_invalid):
+            # An exactly nonpositive corner or measure rejects this topology; only
+            # the fully checked template candidate below can be accepted.
             used_tetrahedral_template = True
             node_bank = _CutNodeBank(source_mesh)
             dual_polyhedra = _tetrahedralize_cut_polyhedra(
@@ -3205,32 +3375,32 @@ def generate_balanced_cut_hexes(
         node_bank,
         hexes,
         parents,
+        stored_vertices,
     )
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     quality = evaluate_cell_quality(mesh)
-    sampled_valid = np.asarray(quality.sampled_valid, dtype=np.bool_)
     scaled = np.asarray(quality.scaled_jacobian, dtype=np.float64)
     mean = np.asarray(quality.mean_ratios, dtype=np.float64)
     aspect = np.asarray(quality.aspect_ratios, dtype=np.float64)
-    if not np.all(sampled_valid):
-        invalid_rows = tuple(int(row) for row in np.flatnonzero(~sampled_valid))
+    invalid, failed = _exact_cut_cell_failures(
+        coordinates, np.asarray(mesh.blocks[0].vertices, dtype=np.int64), schedule
+    )
+    if np.any(invalid):
+        invalid_rows = tuple(int(row) for row in np.flatnonzero(invalid))
         invalid_cell_ids = tuple(
             int(mesh.blocks[0].global_ids[row]) for row in invalid_rows
         )
         raise ValueError(
-            "Cut-cell quality observations found a nonpositive reference Jacobian at "
+            "Cut-cell quality found a nonpositive corner Jacobian or measure at "
             f"output rows {invalid_rows} (cell IDs {invalid_cell_ids}); cut topology "
             f"used {'tetrahedral-template' if used_tetrahedral_template else 'direct-polyhedron-dual'}."
         )
-    if (
-        float(np.min(scaled)) < schedule.minimum_scaled_jacobian
-        or float(np.min(mean)) < schedule.minimum_mean_ratio
-        or float(np.max(aspect)) > schedule.maximum_aspect_ratio
-    ):
+    if np.any(failed):
         raise ValueError(
-            "Balanced cut-cell output fails the declared whole-cell quality schedule: "
-            f"after root-support relocation ({relocation_status}): "
-            f"minimum scaled Jacobian {float(np.min(scaled)):.17g} "
+            "Balanced cut-cell output fails the declared whole-cell quality schedule "
+            f"at output rows {tuple(int(row) for row in np.flatnonzero(failed))} "
+            f"after root-support relocation ({relocation_status}): sampled minimum "
+            f"scaled Jacobian {float(np.min(scaled)):.17g} "
             f"(required {schedule.minimum_scaled_jacobian:.17g}), minimum mean "
             f"ratio {float(np.min(mean)):.17g} (required "
             f"{schedule.minimum_mean_ratio:.17g}), maximum aspect ratio "

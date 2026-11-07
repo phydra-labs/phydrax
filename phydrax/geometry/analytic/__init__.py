@@ -29,6 +29,7 @@ from ._operations import (
     SharpCSG,
 )
 from ._primitives import Ball, Box, Circle, Cube, Orthotope, Sphere
+from ._specimen_envelope import SpecimenEnvelope, SpecimenEnvelopeKind
 from ._superquadric import Superquadric
 from ._sweeps import Extrusion, Revolution
 from ._trigonometric_level_set import (
@@ -46,6 +47,7 @@ from ._trigonometric_level_set import (
     TrigonometricSingularLevelError,
     TrigonometricTable,
     TrigonometricTerm,
+    TrigonometricThicknessDistribution,
     TrigonometricWallThickness,
 )
 
@@ -96,6 +98,9 @@ __all__ = [
     "TrigonometricWallThickness",
     "certify_trigonometric_critical_levels",
     "certify_trigonometric_sheet_thickness",
+    "SpecimenEnvelope",
+    "SpecimenEnvelopeKind",
+    "TrigonometricThicknessDistribution",
     "Union",
     "Wedge",
 ]

@@ -69,6 +69,7 @@ from .._model._structure import (
     model_structure_matches_recipe,
     model_structure_recipe,
     NativeImplicitBoundaryQueryArchiveRecipe,
+    NativeImplicitSourceArchiveRecipe,
     NativeLayerCoreAuthoringArchiveRecipe,
     NativeLayerMappedBoundaryArchiveRecipe,
     NativeMappedHexSourceArchiveRecipe,
@@ -189,6 +190,7 @@ def _register_model_archive_types() -> None:
     from .._identity import SemanticProvenance
     from .._model._artifacts import register_artifact_value
     from .._physical import SpatialCoordinateContract
+    from ..discretization._adaptive_simplex import AdaptiveSimplexStatus
     from ..discretization._axis import AxisDiscretization
     from ..discretization._axis_domain import AxisDomain
     from ..discretization._cell_complex import (
@@ -288,6 +290,10 @@ def _register_model_archive_types() -> None:
         OwnerLocalConservativeRemapEvidence,
         PreparedOwnerLocalConservativeRemap,
     )
+    from ..discretization.finite_volume._unstructured_remap import (
+        UnstructuredConservativeRemapPlan,
+        UnstructuredRemapReport,
+    )
     from ..equations._finite_element_material import (
         MaterialCheckpointPayload,
         MaterialSiteId,
@@ -347,6 +353,10 @@ def _register_model_archive_types() -> None:
         MeshingSurfacePatch,
         PatchCurveUse,
         PatchPoleUse,
+    )
+    from ..geometry._nested_restriction_embedding import (
+        NestedRestrictionEmbeddingEvidence,
+        NestedRestrictionPremise,
     )
     from ..geometry._periodic_mapped_restriction import PeriodicMappedRestrictionEvidence
     from ..geometry._periodic_restriction import PeriodicRestrictionPremise
@@ -491,6 +501,16 @@ def _register_model_archive_types() -> None:
         LabelOntology,
         VoxelReference,
     )
+    from ..interchange._report import (
+        AdapterCapability,
+        AdapterFormatProfile,
+        AdapterLoss,
+        AdapterNegotiationResult,
+        AdapterReport,
+        AdapterRequirement,
+        AdapterStatus,
+        AdapterWaiver,
+    )
     from ..lifecycle._composition_rebind import (
         Composition,
         CompositionDependency,
@@ -615,6 +635,7 @@ def _register_model_archive_types() -> None:
     )
     from ._assembly import MeshCarrierKind, MeshPart
     from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy, CellMeshAuditReport
+    from ._bisection import BisectionEvidence, BisectionHierarchy
     from ._boundary_layer import (
         BoundaryLayerEvidence,
         BoundaryLayerMesh,
@@ -641,8 +662,11 @@ def _register_model_archive_types() -> None:
         OwnerLocalPeriodicSizeEvidence,
         OwnerLocalPeriodicSizeStatistic,
     )
+    from ._device_metric import DeviceMetricEvidence
+    from ._device_tetra_metric import DeviceTetraMetricEvidence
     from ._distribution import (
         MeshDistribution,
+        MeshDistributionTransition,
         MeshPartitionEvidence,
         MeshPartitionKind,
         MeshPartitionPolicy,
@@ -686,6 +710,7 @@ def _register_model_archive_types() -> None:
         MeshTransitionKind,
         VertexInterpolationStencil,
     )
+    from ._local_metric import LocalMetricEvidence
     from ._mixed_adaptation import (
         _RetainedCoordinateBank,
         MixedActiveCell,
@@ -700,6 +725,12 @@ def _register_model_archive_types() -> None:
     from ._optimization import MeshQualityObjective
     from ._periodic import PeriodicPointOrbits, PeriodicQuotientHistory
     from ._plc_source import PiecewiseLinearComplex
+    from ._polyhedral_adaptation import (
+        _PolyhedralExactCoordinateSource,
+        PolyhedralAdaptationEvidence,
+        PolyhedralAdaptationHierarchy,
+        PolyhedralAdaptationOperation,
+    )
     from ._polyhedral_generation import NativePolyhedralSchedule
     from ._quality import (
         CellQualityEvaluation,
@@ -712,7 +743,28 @@ def _register_model_archive_types() -> None:
         MeshingRuntimeInfo,
     )
     from ._structured import TransfiniteBlock
+    from ._surface_metric import (
+        SurfaceMetricGeometryRelation,
+        SurfaceMetricGeometryWitness,
+        SurfaceMetricOutcome,
+        SurfaceMetricStatus,
+    )
     from ._sweep import SweepControl, SweepMapKind
+    from ._tetra_metric import (
+        TetraMetricEvidence,
+        TetraMetricStatus,
+        TetraMetricUnmetEdge,
+        TetraMetricUnmetKind,
+    )
+    from ._topology_edit import (
+        CellTopologyEdit,
+        EntityRelations,
+        PeriodicTopologyEditWitness,
+        PolyhedralTopologyEditBlock,
+        PrescribedEntityIds,
+        SharedFaceWitnesses,
+        TopologyEditBlock,
+    )
     from ._trace import (
         MeshingDiagnostic,
         MeshingDiagnosticSeverity,
@@ -722,6 +774,13 @@ def _register_model_archive_types() -> None:
         MeshingTrace,
     )
     from ._volume_generation import NativeVolumeSchedule
+    from .providers._mmg import (
+        MmgAdaptationResult,
+        MmgFieldTransfer,
+        MmgReference,
+        MmgReferenceRetention,
+        MmgSessionEvidence,
+    )
     from .providers._native_options import NativeMeshingOptions
     from .providers._native_periodic import NativePeriodicSource
     from .providers._native_schedules import NativeCurveSchedule, NativeSurfaceSchedule
@@ -790,6 +849,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", MeshingDomainArchiveRecipe),
         ("phydrax.model.archive", MeshingDomainBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", NativeImplicitBoundaryQueryArchiveRecipe),
+        ("phydrax.model.archive", NativeImplicitSourceArchiveRecipe),
         ("phydrax.model.archive", AnalyticImplicitProfileArchiveRecipe),
         ("phydrax.model.archive", ParametricCurveBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", ReconstructedTriangleBoundarySourceArchiveRecipe),
@@ -1041,6 +1101,8 @@ def _register_model_archive_types() -> None:
             PeriodicMappedRestrictionEvidence,
         ),
         ("phydrax.geometry", GlobalEmbeddingCertificate),
+        ("phydrax.geometry", NestedRestrictionEmbeddingEvidence),
+        ("phydrax.geometry", NestedRestrictionPremise),
         ("phydrax.geometry", MaterialMapActionEvidence),
         ("phydrax.geometry", MaterialReferenceDeclaration),
         ("phydrax.geometry", MaterialReferencePolicy),
@@ -1088,6 +1150,50 @@ def _register_model_archive_types() -> None:
         ("phydrax.discretization", ReferenceCellPartition),
         ("phydrax.meshing", MarkedMeshAdaptation),
         ("phydrax.meshing", MeshAdaptationStatus),
+        ("phydrax.meshing", BisectionEvidence),
+        ("phydrax.meshing", BisectionHierarchy),
+        ("phydrax.meshing", LocalMetricEvidence),
+        ("phydrax.meshing", DeviceMetricEvidence),
+        ("phydrax.discretization", AdaptiveSimplexStatus),
+        ("phydrax.meshing", TetraMetricEvidence),
+        ("phydrax.meshing", TetraMetricStatus),
+        ("phydrax.meshing", TetraMetricUnmetEdge),
+        ("phydrax.meshing", TetraMetricUnmetKind),
+        ("phydrax.meshing", DeviceTetraMetricEvidence),
+        ("phydrax.meshing", MeshDistributionTransition),
+        ("phydrax.meshing", MmgAdaptationResult),
+        ("phydrax.meshing", MmgFieldTransfer),
+        ("phydrax.meshing", MmgReference),
+        ("phydrax.meshing", MmgReferenceRetention),
+        ("phydrax.meshing", MmgSessionEvidence),
+        ("phydrax.meshing", SurfaceMetricOutcome),
+        ("phydrax.meshing", SurfaceMetricGeometryWitness),
+        ("phydrax.meshing", SurfaceMetricStatus),
+        ("phydrax.meshing", SurfaceMetricGeometryRelation),
+        ("phydrax.meshing", CellTopologyEdit),
+        ("phydrax.meshing", TopologyEditBlock),
+        ("phydrax.meshing", PolyhedralTopologyEditBlock),
+        ("phydrax.meshing", EntityRelations),
+        ("phydrax.meshing", PrescribedEntityIds),
+        ("phydrax.meshing", SharedFaceWitnesses),
+        ("phydrax.meshing", PeriodicTopologyEditWitness),
+        ("phydrax.interchange", AdapterReport),
+        ("phydrax.interchange", AdapterStatus),
+        ("phydrax.interchange", AdapterLoss),
+        ("phydrax.interchange", AdapterFormatProfile),
+        ("phydrax.interchange", AdapterRequirement),
+        ("phydrax.interchange", AdapterCapability),
+        ("phydrax.interchange", AdapterWaiver),
+        ("phydrax.interchange", AdapterNegotiationResult),
+        ("phydrax.meshing", PolyhedralAdaptationEvidence),
+        ("phydrax.meshing", PolyhedralAdaptationHierarchy),
+        ("phydrax.meshing", PolyhedralAdaptationOperation),
+        ("phydrax.meshing.internal", _PolyhedralExactCoordinateSource),
+        (
+            "phydrax.discretization.finite_volume",
+            UnstructuredConservativeRemapPlan,
+        ),
+        ("phydrax.discretization.finite_volume", UnstructuredRemapReport),
         ("phydrax.meshing", PeriodicQuotientHistory),
         ("phydrax.meshing.internal", OwnerLocalPeriodicAdaptiveResult),
         ("phydrax.meshing.internal", OwnerLocalPeriodicCellMetadata),
@@ -1513,7 +1619,7 @@ def restore_model_archive_value(
     from ..sparse._linear import SparseCoordinateOperator
     from ..sparse._relation import EdgeRelation
     from ..units._unit import UnitDefinition
-    from ._adaptation import MarkedMeshAdaptation
+    from ._adaptation import MarkedMeshAdaptation, MeshAdaptationResult
     from ._controls import (
         BlockInterfaceControl,
         LayerSchedule,
@@ -1821,6 +1927,42 @@ def restore_model_archive_value(
                 raise ValueError("Stored native implicit query changed.")
             query.require_current()
             return query
+        if type(item) is NativeImplicitSourceArchiveRecipe:
+            from ..discretization._tensor_support import PreparedTensorGrid
+            from .providers._native_sources import NativeImplicitSource
+
+            grid = item.grid
+            if grid is not None:
+                if type(grid) is not PreparedTensorGrid:
+                    raise TypeError("Native implicit source lost its tensor grid owner.")
+                grid = PreparedTensorGrid(
+                    grid.axes,
+                    axis_names=grid.axis_names,
+                    plan_id=grid.plan_id,
+                    prepared_id=grid.prepared_id,
+                )
+                if not _same_model_content(grid, item.grid):
+                    raise ValueError("Stored native implicit grid changed.")
+            if item.discovery is not None and (
+                type(item.discovery) is not AdaptiveImplicitSurfaceArchiveRecipe
+            ):
+                raise TypeError("Native implicit source lost its discovery recipe.")
+            if item.authoring_profile is not None and (
+                type(item.authoring_profile) is not AnalyticImplicitProfileArchiveRecipe
+            ):
+                raise TypeError("Native implicit source lost its authoring profile.")
+            discovery = restore(item.discovery)
+            source = NativeImplicitSource(
+                _rebuild_compiled_analytic_geometry(item.geometry),
+                item.source_id,
+                item.source_revision,
+                grid=grid,
+                discovery=discovery,
+                authoring_profile=restore(item.authoring_profile),
+            )
+            if source.binding_id != item.expected_binding_id:
+                raise ValueError("Stored native implicit source changed.")
+            return source
         if type(item) is LayerSchedule:
             return LayerSchedule.from_stored_fields(item)
         if type(item) is SweepControl:
@@ -1963,7 +2105,9 @@ def restore_model_archive_value(
         if type(item) is PlcCurveAuthorityArchiveRecipe:
             from .providers._native_plc_geometry import _PlcCurveAuthority
 
-            owner = _PlcCurveAuthority(restore(item.source), restore(item.reference_domain))
+            owner = _PlcCurveAuthority(
+                restore(item.source), restore(item.reference_domain)
+            )
             if owner.domain.domain_id != item.expected_domain_id:
                 raise ValueError("Stored PLC curve authority changed its exact domain.")
             return owner
@@ -2137,6 +2281,10 @@ def restore_model_archive_value(
             return rebuilt
         if type(item) is CellMeshingResult:
             return CellMeshingResult.from_stored_fields(restore_row_record_recipes(item))
+        if type(item) is MeshAdaptationResult:
+            return MeshAdaptationResult.from_stored_fields(
+                restore_row_record_recipes(item)
+            )
         if type(item) is ImageIndexAffineArchiveRecipe:
             contract = SpatialCoordinateContract.from_dict(
                 item.coordinate_contract.to_dict()
@@ -2418,6 +2566,7 @@ def restore_model_archive_value(
                 face_plane_tolerances=item.face_plane_tolerances,
                 domain_face_rows=item.domain_face_rows,
                 domain_id=item.domain_id,
+                vertex_deviations=item.vertex_deviations,
             )
             if witness.witness_id != item.witness_id:
                 raise ValueError("Stored PLC source-point witness identity changed.")
@@ -3104,7 +3253,9 @@ def restore_model_archive_value(
         if type(item) is ExactPeriodicAlgebraicSource:
             source = ExactPeriodicAlgebraicSource.from_stored_fields(item)
             if not _same_model_content(source, item):
-                raise ValueError("Stored exact periodic algebraic source differs from its constructor.")
+                raise ValueError(
+                    "Stored exact periodic algebraic source differs from its constructor."
+                )
             return source
         if type(item) is ExactPlcCellGeometrySource:
             source = ExactPlcCellGeometrySource.from_stored_fields(item)
@@ -4002,7 +4153,10 @@ def write_model_artifact(
             "Native model recipe does not identify its exact registered root type."
         )
     arrays = _pack_owned_model_array_tree(
-        model_archive_root_projection(archive_model), recipe, prefix=_MODEL_ARRAYS, limits=limits
+        model_archive_root_projection(archive_model),
+        recipe,
+        prefix=_MODEL_ARRAYS,
+        limits=limits,
     )
     # model_structure_recipe creates a distinct node for every occurrence;
     # unlike an expanded shared archive, it needs no unaliasing copy.
@@ -4366,7 +4520,10 @@ def layer_core_authoring_recipe(
             )
         ):
             raise ValueError("Mapped layer reference has different authoring controls.")
-    if source.layers.wall_association is None and source.source_boundary_charts is not None:
+    if (
+        source.layers.wall_association is None
+        and source.source_boundary_charts is not None
+    ):
         from ._layer_core_topology import validate_closed_boundary_source
 
         validate_closed_boundary_source(source)

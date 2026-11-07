@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from itertools import product
-from typing import final
+from typing import final, Literal
 
 import equinox as eqx
 import numpy as np
@@ -62,6 +62,14 @@ from ._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
 
 
 _VOLUME_VALIDITY_POLICY = CellValidityPolicy()
+
+# How the fill reads a hard uniform size h, declared by the route:
+# "edge-length" refines to circumradius sqrt(6)/4 h (the regular tetrahedron of
+# edge h) capped at half the maximum size, so h bounds the edge length (the PLC
+# routes); "circumradius" refines to circumradius h with no maximum-size cap and
+# leaves the maximum to acceptance (the implicit route, as the donor's
+# restricted implicit volume did).
+type FillSizeConvention = Literal["edge-length", "circumradius"]
 
 
 @final
@@ -231,6 +239,7 @@ class VolumeConstruction:
     boundary_quality_repair_unmet: tuple[tuple[str, str, int, float], ...] = ()
     boundary_quality_predecessor_identity: TetMeshIdentity | None = None
     reference_chart_controls: tuple[ExactReferenceChartControl, ...] = ()
+    size_convention: FillSizeConvention = "edge-length"
 
     @property
     def final_quality_schedule_unmet(self) -> tuple[tuple[str, str, int, float], ...]:
@@ -864,6 +873,7 @@ def _size_field(
     /,
     *,
     affine: np.ndarray | None = None,
+    size_convention: FillSizeConvention,
 ) -> np.ndarray | None:
     requested_controls = tuple(specification.size_controls)
     controls = tuple(
@@ -976,7 +986,17 @@ def _size_field(
             winner = winner_by_sample[triangle_rows[0]]
             source_supports[vertex].append((facet, float(value), winner))
 
-    radius_factor = np.sqrt(6.0) / 4.0
+    match size_convention:
+        case "edge-length":
+            # A regular tetrahedron of edge h has circumradius sqrt(6)/4 h; the
+            # maximum size caps the radius at half of it.
+            radius_factor, radius_cap = np.sqrt(6.0) / 4.0, 0.5
+        case "circumradius":
+            # The donor's implicit route: refine(sizes=target_size) bounds the
+            # circumradius by h itself, and the maximum is an acceptance bound.
+            radius_factor, radius_cap = 1.0, None
+        case invalid:
+            raise ValueError(f"Unknown PLC fill size convention {invalid!r}.")
     radii = np.zeros((recovery.points.shape[0],), dtype=np.float64)
     for vertex, supports in enumerate(source_supports):
         if not supports:
@@ -1032,10 +1052,8 @@ def _size_field(
             * (radius_factor if control.strength is SizeControlStrength.HARD else 1.0)
             for value, control in candidates
         ]
-        radii[vertex] = min(
-            max(min(candidate_radii), lower * radius_factor),
-            0.5 * upper,
-        )
+        radius = max(min(candidate_radii), lower * radius_factor)
+        radii[vertex] = radius if radius_cap is None else min(radius, radius_cap * upper)
     return radii
 
 
@@ -1294,6 +1312,8 @@ def _make_construction(
     root_exact_points: tuple[tuple[Fraction, Fraction, Fraction] | None, ...] = (),
     candidate_quality_id: str | None = None,
     historical_quality_identity: TetMeshIdentity | None = None,
+    *,
+    size_convention: FillSizeConvention,
 ) -> VolumeConstruction:
     cells = np.asarray(arrays.tetrahedra, dtype=np.int64)
     used = np.unique(
@@ -1460,11 +1480,20 @@ def _make_construction(
     )
     for value in arrays_out:
         value.setflags(write=False)
+    # A non-default size convention is a fill parameter: it joins the fill
+    # stage's inputs, so the default keeps its identity.
+    fill_inputs = (complex_.complex_id,)
+    if size_convention != "edge-length":
+        fill_inputs += (
+            canonical_fingerprint(
+                {"kind": "plc-fill-size-convention", "convention": size_convention}
+            ),
+        )
     stages = (
         MeshingStageReport(
             MeshingStageKind.VOLUME_FILL,
             MeshingStageStatus.PASSED,
-            input_ids=(complex_.complex_id,),
+            input_ids=fill_inputs,
             output_ids=(mesh.mesh_id,),
             created_count=tetrahedra.shape[0],
         ),
@@ -1552,6 +1581,7 @@ def _make_construction(
         candidate_quality_id=candidate_quality_id,
         historical_quality_identity=historical_quality_identity,
         reference_chart_controls=reference_chart_controls,
+        size_convention=size_convention,
     )
 
 
@@ -1839,13 +1869,21 @@ def generate_plc_volume(
     root_points: object | None = None,
     root_vertex_stencils: tuple[tuple[tuple[int, Fraction], ...], ...] | None = None,
     carrier: tuple[np.ndarray, np.ndarray] | None = None,
+    size_convention: FillSizeConvention = "edge-length",
 ) -> VolumeConstruction:
     """Recover constraints, classify every region, and refine the PLC fill.
 
     ``carrier`` replaces constraint recovery by a kept conforming
     tetrahedralization of a one-region triangle PLC (see
     ``_kept_carrier_recovery``), refined and improved in place.
+
+    ``size_convention`` is the route's declared reading of a hard uniform size
+    (see ``FillSizeConvention``); it enters the fill stage identity only when it
+    is not the default ``"edge-length"``.
     """
+    convention = parse(
+        size_convention, FillSizeConvention, "generate_plc_volume.size_convention"
+    )
     if carrier is not None and (
         source_domain is not None
         or global_affine is not None
@@ -2068,7 +2106,14 @@ def generate_plc_volume(
     face_sources = tables.facet_labels[face_rows]
     segments = np.asarray(recovery.segments, dtype=np.int64)
     segment_sources = tables.source_segment_labels[carrier_source_rows]
-    sizes = _size_field(complex_, specification, recovery, tables, affine=global_affine)
+    sizes = _size_field(
+        complex_,
+        specification,
+        recovery,
+        tables,
+        affine=global_affine,
+        size_convention=convention,
+    )
     state = TetMesh3D(
         recovery.points,
         recovery.tetrahedra,
@@ -2327,6 +2372,7 @@ def generate_plc_volume(
         root_exact,
         candidate_quality_id,
         historical_identity,
+        size_convention=convention,
     )
     if boundary_repair is not None:
         if boundary_predecessor is None:
@@ -2382,6 +2428,7 @@ def generate_plc_volume(
 
 
 __all__ = [
+    "FillSizeConvention",
     "NativeVolumeSchedule",
     "VolumeConstruction",
     "declared_plc_domain",

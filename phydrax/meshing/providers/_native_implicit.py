@@ -3342,6 +3342,22 @@ def _implicit_volume_compliance(
     if shape_gated and minimum_dihedral < schedule.minimum_dihedral_degrees:
         issues.append("minimum_dihedral_degrees")
     size_policy = specification.size_compliance
+    cell_edges = np.unique(
+        np.sort(
+            np.concatenate(
+                [tetrahedra[:, (i, j)] for i in range(4) for j in range(i + 1, 4)]
+            ),
+            axis=1,
+        ),
+        axis=0,
+    )
+    maximum_cell_edge = float(
+        np.max(
+            np.linalg.norm(
+                coordinates[cell_edges[:, 1]] - coordinates[cell_edges[:, 0]], axis=1
+            )
+        )
+    )
     for control in specification.size_controls:
         if not isinstance(control, UniformSizeControl):
             continue
@@ -3361,6 +3377,7 @@ def _implicit_volume_compliance(
             (
                 (f"{key}:minimum_edge", float(np.min(lengths))),
                 (f"{key}:maximum_edge", float(np.max(lengths))),
+                (f"{key}:maximum_cell_edge", maximum_cell_edge),
                 (f"{key}:size_field_growth_rate", 1.0),
             )
         )
@@ -3381,8 +3398,15 @@ def _implicit_volume_compliance(
                 control.minimum_size - tolerance
             ):
                 issues.append(f"minimum_size:{control.control_id}")
-            if control.maximum_size is not None and float(np.max(lengths)) > (
-                control.maximum_size + tolerance
+            # Donor acceptance (tools/meshing_qualification/scenarios/implicit.py
+            # lines 560-574 of feature/native-meshing-20260929): under the
+            # circumradius fill every tetrahedron edge, not only the carrier's,
+            # is at most the maximum size widened by the compliance tolerance on
+            # that maximum.
+            if control.maximum_size is not None and maximum_cell_edge > (
+                control.maximum_size
+                + size_policy.absolute_tolerance
+                + size_policy.relative_tolerance * control.maximum_size
             ):
                 issues.append(f"maximum_size:{control.control_id}")
             if np.any(lengths > control.target_size + tolerance):
@@ -3660,6 +3684,9 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
                 source_revision=self.carrier.source_revision,
                 source_map_id=source_map_id,
                 frame_id=self.coordinate_contract.spatial_id,
+                # The donor's implicit volume refined to circumradius h; the
+                # maximum size is checked at compliance, not capped in the fill.
+                size_convention="circumradius",
             )
         except (TypeError, ValueError, OverflowError) as error:
             raise _failure(

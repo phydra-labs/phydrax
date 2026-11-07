@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..discretization import TemporalMesh
+from ..linalg._forest_bounds import _up
 from ._markov_cubature import MarkovCubaturePlan, MarkovCubatureSolution
 
 
@@ -127,15 +128,32 @@ def markov_cubature_error_evidence(
     else:
         if not isinstance(envelope, WeakObservableEnvelope):
             raise TypeError("envelope must be WeakObservableEnvelope or None.")
-        coefficient = jnp.max(jnp.abs(envelope.derivative_bounds)) * jnp.abs(
-            envelope.stability_bound
+        # Each stage is rounded outward by the forest-bound operation model,
+        # which covers device rounding, contraction and flush-to-zero results.
+        # Denormals-are-zero devices read subnormal factors as zero; raising each
+        # factor to tiny keeps that loss from scaling through the products.
+        # Non-finite hypotheses or diagnostics yield no bound (NaN).
+        maxima = tuple(
+            jnp.max(jnp.abs(jnp.asarray(value)))
+            for value in (
+                envelope.derivative_bounds,
+                envelope.stability_bound,
+                signature,
+                recombination,
+                flow,
+                embedded,
+            )
         )
-        bound = coefficient * (
-            jnp.max(jnp.abs(signature))
-            + jnp.max(jnp.abs(recombination))
-            + jnp.max(jnp.abs(flow))
-            + jnp.max(jnp.abs(embedded))
+        dtype = jnp.result_type(float, *maxima)
+        derivative, stability, *errors = (value.astype(dtype) for value in maxima)
+        tiny = jnp.finfo(dtype).tiny
+        coefficient = _up(jnp.maximum(derivative, tiny) * jnp.maximum(stability, tiny), 1)
+        total = _up(errors[0] + errors[1] + errors[2] + errors[3], 3)
+        upper = _up(coefficient * jnp.maximum(total, tiny), 1)
+        finite_factors = jnp.all(
+            jnp.isfinite(jnp.stack((derivative, stability, *errors)))
         )
+        bound = jnp.where(finite_factors, upper, jnp.asarray(jnp.nan, dtype=dtype))
         hypotheses = (
             f"observable:{envelope.observable_id}",
             f"norm:{envelope.norm_kind}",

@@ -1717,6 +1717,18 @@ def _evidence_id(evidence: MeshAdaptationEvidence | None, /) -> Any:
             raise TypeError("Unsupported adaptation evidence.")
 
 
+class _StoredAdaptationBinding(NamedTuple):
+    """Route, recertified source, and stored prepared identity of a restored result.
+
+    The result does not retain its request or policy, so ``prepared_id`` is
+    hashed as stored; every other component is reproved by its owner.
+    """
+
+    route: MeshAdaptationRoute
+    source: CellMeshingResult
+    prepared_id: str
+
+
 @final
 class MeshAdaptationResult(StrictModule, NonTrainableState):
     """Certified target of one executed adaptation with lineage and evidence.
@@ -1762,14 +1774,22 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        prepared: PreparedMeshAdaptation,
+        prepared: PreparedMeshAdaptation | _StoredAdaptationBinding,
         outcome: _RouteOutcome,
         compliance: MeshingComplianceReport,
         distribution: MeshDistributionTransition | None,
         elapsed_seconds: float,
         /,
     ) -> None:
-        source_preserved = outcome.target.result_id == prepared.source.result_id
+        if isinstance(prepared, PreparedMeshAdaptation):
+            route, source, prepared_id = (
+                prepared.policy.route,
+                prepared.source,
+                prepared.prepared_id,
+            )
+        else:
+            route, source, prepared_id = prepared
+        source_preserved = outcome.target.result_id == source.result_id
         absent = (
             outcome.transition is None
             and outcome.lineage is None
@@ -1792,8 +1812,8 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         ):
             raise ValueError("The transition must describe the certified target.")
         self.status = outcome.status
-        self.route = prepared.policy.route
-        self.source = prepared.source
+        self.route = route
+        self.source = source
         self.target = outcome.target
         self.transition = outcome.transition
         self.lineage = outcome.lineage
@@ -1808,11 +1828,11 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         self.hierarchy = outcome.hierarchy
         self.distribution = distribution
         self.elapsed_seconds = float(elapsed_seconds)
-        self.prepared_id = prepared.prepared_id
+        self.prepared_id = prepared_id
         self.result_id = canonical_fingerprint(
             {
                 "kind": "mesh-adaptation-result",
-                "prepared": prepared.prepared_id,
+                "prepared": prepared_id,
                 "status": outcome.status.value,
                 "target": outcome.target.result_id,
                 "transition": None
@@ -1852,22 +1872,56 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         value: MeshAdaptationResult,
         /,
         *,
-        source: CellMeshingResult,
-        target: CellMeshingResult,
-        policy: MeshAdaptationPolicy,
-        request: MarkedMeshAdaptation,
-        geometry_transition: CellGeometryTransition,
-        hierarchy: MixedAdaptationHierarchy,
-        expected_result_id: str,
+        source: CellMeshingResult | None = None,
+        target: CellMeshingResult | None = None,
+        policy: MeshAdaptationPolicy | None = None,
+        request: MarkedMeshAdaptation | None = None,
+        geometry_transition: CellGeometryTransition | None = None,
+        hierarchy: MixedAdaptationHierarchy | None = None,
+        expected_result_id: str | None = None,
         _computed_layer_root: ComputedLayerCoreRoot | None = None,
     ) -> MeshAdaptationResult:
-        """Reprove a changed mixed result prepared without prior transition or seed.
+        """Reprove one stored adaptation through its route's restore owner.
 
-        Source and target must already be independently recertified. The trusted
-        expected ID binds the historical request and allocation choices.
+        A changed native mixed result was prepared without prior transition or
+        seed; it is replayed from independently recertified endpoints, its
+        request, policy, geometry transition, and hierarchy, and the trusted
+        expected ID that binds the historical request and allocation choices.
+        Native and device bisection and metric results restore from their
+        stored fields alone (see ``restore_route_adaptation_result``).
         """
-        from ._adaptation_restore import restore_mixed_adaptation_result
+        from ._adaptation_restore import (
+            restore_mixed_adaptation_result,
+            restore_route_adaptation_result,
+        )
 
+        if type(value) is not cls:
+            raise TypeError("value must be MeshAdaptationResult.")
+        if value.route is not MeshAdaptationRoute.NATIVE_MIXED:
+            if (
+                source is not None
+                or target is not None
+                or policy is not None
+                or request is not None
+                or geometry_transition is not None
+                or hierarchy is not None
+                or expected_result_id is not None
+                or _computed_layer_root is not None
+            ):
+                raise ValueError("Replay inputs apply only to native mixed adaptations.")
+            return restore_route_adaptation_result(value)
+        if (
+            source is None
+            or target is None
+            or policy is None
+            or request is None
+            or geometry_transition is None
+            or hierarchy is None
+            or expected_result_id is None
+        ):
+            raise ValueError(
+                "A native mixed adaptation restores only from its independent replay inputs."
+            )
         return restore_mixed_adaptation_result(
             value,
             source=source,
@@ -6844,12 +6898,34 @@ def _finish_certified_native_target(
         geometry_transition=transition_geometry,
         volume_material_chain=material_chain,
     )
+    transfer = _native_vertex_transfer(
+        source.mesh,
+        target.mesh,
+        lineage,
+        stencil,
+        conservative=conservative,
+        linear_transfer=linear_transfer,
+    )
+    return _NativeTarget(
+        target, transition, lineage, stencil, transfer, surface_chart_witness
+    )
+
+
+def _native_vertex_transfer(
+    source: CellMesh,
+    target: CellMesh,
+    lineage: MeshLineage,
+    stencil: VertexInterpolationStencil,
+    /,
+    *,
+    conservative: bool,
+    linear_transfer: bool,
+) -> FiniteElementTopologyTransfer | None:
+    """P1 vertex transfer of a stencil whose every target cell has source ancestry."""
     stencil_valid = np.asarray(stencil.valid, dtype=np.bool_)
-    cell_lineage = lineage.entity_lineage(target.mesh.topological_dimension)
+    cell_lineage = lineage.entity_lineage(target.topological_dimension)
     target_cell_ids = np.concatenate(
-        tuple(
-            np.asarray(block.global_ids, dtype=np.int64) for block in target.mesh.blocks
-        )
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in target.blocks)
     )
     related_target_cells = np.asarray(cell_lineage.target_global_ids, dtype=np.int64)
     created_target_cells = np.asarray(cell_lineage.created_target_ids, dtype=np.int64)
@@ -6857,38 +6933,31 @@ def _finish_certified_native_target(
         np.all(np.isin(target_cell_ids, related_target_cells))
         and not np.intersect1d(target_cell_ids, created_target_cells).size
     )
-    transfer = None
-    if (
+    if not (
         has_cell_ancestry
         and stencil.preserves_constants
         and np.all(np.any(stencil_valid, axis=1))
     ):
-        try:
-            transfer = stencil.as_transfer(
-                source.mesh.vertex_global_ids,
-                source_topology_id=source.mesh.topology_id,
-                target_topology_id=target.mesh.topology_id,
-                preserves_linear=linear_transfer,
-                conservative=conservative,
-                source_coordinates=source.mesh.coordinates,
-                target_coordinates=target.mesh.coordinates,
-                source_measures=(
-                    _p1_vertex_measures(source.mesh) if conservative else None
-                ),
-                target_measures=(
-                    _p1_vertex_measures(target.mesh) if conservative else None
-                ),
-            )
-        except ValueError as error:
-            if str(error) not in (
-                "Transfer claims linear preservation but moves coordinates.",
-                "Transfer claims conservation but changes DOF measures.",
-            ):
-                raise
-            transfer = None
-    return _NativeTarget(
-        target, transition, lineage, stencil, transfer, surface_chart_witness
-    )
+        return None
+    try:
+        return stencil.as_transfer(
+            source.vertex_global_ids,
+            source_topology_id=source.topology_id,
+            target_topology_id=target.topology_id,
+            preserves_linear=linear_transfer,
+            conservative=conservative,
+            source_coordinates=source.coordinates,
+            target_coordinates=target.coordinates,
+            source_measures=_p1_vertex_measures(source) if conservative else None,
+            target_measures=_p1_vertex_measures(target) if conservative else None,
+        )
+    except ValueError as error:
+        if str(error) not in (
+            "Transfer claims linear preservation but moves coordinates.",
+            "Transfer claims conservation but changes DOF measures.",
+        ):
+            raise
+        return None
 
 
 def _discard_exception_tracebacks(error: BaseException, /) -> None:
@@ -7918,7 +7987,9 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
 
 
 def _compliance(
-    prepared: PreparedMeshAdaptation, target: CellMeshingResult, /
+    prepared: PreparedMeshAdaptation | _StoredAdaptationBinding,
+    target: CellMeshingResult,
+    /,
 ) -> MeshingComplianceReport:
     """Bind the route's scientific findings to the adaptation request."""
     return MeshingComplianceReport(

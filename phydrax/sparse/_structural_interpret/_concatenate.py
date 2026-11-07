@@ -6,15 +6,20 @@ from jax._src.core import JaxprEqn
 from ._common import (
     _atom_const_val,
     _atom_shape,
+    _atom_value_bounds,
     _index_sets,
     IndexSet,
+    StateBounds,
     StateConsts,
     StateIndices,
 )
 
 
 def _prop_concatenate(
-    eqn: JaxprEqn, state_indices: StateIndices, state_consts: StateConsts
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
 ) -> None:
     """Concatenate joins arrays along a specified axis.
 
@@ -57,4 +62,13 @@ def _prop_concatenate(
     if all(v is not None for v in vals):
         state_consts[eqn.outvars[0]] = np.concatenate(
             [v for v in vals if v is not None], axis=dim
+        )
+        return
+    # Otherwise concatenate the bounds of every bounded input.
+    bounds = [_atom_value_bounds(v, state_consts, state_bounds) for v in eqn.invars]
+    known = [b for b in bounds if b is not None]
+    if len(known) == len(bounds):
+        state_bounds[eqn.outvars[0]] = (
+            np.concatenate([lower for lower, _ in known], axis=dim),
+            np.concatenate([upper for _, upper in known], axis=dim),
         )

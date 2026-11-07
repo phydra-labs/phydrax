@@ -474,6 +474,10 @@ _DEFERRED_EXPORTS = {
     "LoadCase": "._topology_design",
     "MaterialInterpolation": "._topology_design",
     "PeriodicHomogenizationCase": "._topology_design",
+    "isotropic_elastic_stiffness": "._periodic_homogenization",
+    "PeriodicCellPhysics": "._periodic_homogenization",
+    "PeriodicCellProblem": "._periodic_homogenization",
+    "PeriodicHomogenizationResult": "._periodic_homogenization",
     "DensityTransferCandidate": "._topology_reanalysis",
     "DensityTransferEvidence": "._topology_reanalysis",
     "FiniteElementReanalysisCandidate": "._topology_reanalysis",
@@ -724,6 +728,12 @@ if TYPE_CHECKING:
         finite_strain_j2_plane_stress_plan,
         FiniteStrainJ2MPMConstitutivePlan,
         FiniteStrainJ2Parameters,
+    )
+    from ._periodic_homogenization import (
+        isotropic_elastic_stiffness,
+        PeriodicCellPhysics,
+        PeriodicCellProblem,
+        PeriodicHomogenizationResult,
     )
     from ._plane_stress import (
         BlockDiagonalPlaneStressReductionPlan,
@@ -1359,6 +1369,10 @@ __all__ = [
     "NeuralVariationalRoot",
     "NeuralVariationalStateSolver",
     "PeriodicHomogenizationCase",
+    "PeriodicCellPhysics",
+    "PeriodicCellProblem",
+    "PeriodicHomogenizationResult",
+    "isotropic_elastic_stiffness",
     "PhysicalSelectionPolicy",
     "PlaneStressFailure",
     "PlaneStressFieldResponse",

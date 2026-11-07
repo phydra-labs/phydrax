@@ -386,6 +386,165 @@ def test_polyhedral_twisted_prism_uses_one_shared_warped_side_triangulation() ->
     )
 
 
+def _outward_prisms(coordinates: np.ndarray, prisms: np.ndarray) -> tuple:
+    """Outward face loops of ``(bottom 0-2, top 3-5)`` prisms."""
+    cells = []
+    for prism in prisms:
+        center = np.mean(coordinates[prism], axis=0)
+        loops = []
+        for local in ((0, 1, 2), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5)):
+            loop = prism[list(local)]
+            points = coordinates[loop]
+            normal = np.cross(points[2] - points[0], points[-1] - points[1])
+            if len(loop) == 3:
+                normal = np.cross(points[1] - points[0], points[2] - points[0])
+            outward = normal @ (np.mean(points, axis=0) - center) > 0
+            loops.append(tuple(int(v) for v in (loop if outward else loop[::-1])))
+        cells.append(tuple(loops))
+    return tuple(cells)
+
+
+def test_hybrid_mimetic_warped_prism_layer_is_affine_exact() -> None:
+    # A prism layer over a square fan: rim columns extrude vertically, so rim
+    # sides are planar rectangles, while the tilted center column warps every
+    # interior side quadrilateral, as in boundary layers at ridges.
+    base = np.asarray(
+        [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0.5, 0.5, 0)], dtype="float64"
+    )
+    lift = np.asarray([(0, 0, 0.25)] * 4 + [(0.08, -0.05, 0.3)], dtype="float64")
+    coordinates = np.concatenate((base, base + lift))
+    prisms = np.asarray(
+        [(i, (i + 1) % 4, 4, i + 5, (i + 1) % 4 + 5, 9) for i in range(4)]
+    )
+    mesh = CellMesh.from_polyhedra(coordinates, _outward_prisms(coordinates, prisms))
+    geometry = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
+    owner = np.asarray(geometry.owner_cells)
+    neighbor = np.asarray(geometry.neighbor_cells)
+    interior = neighbor >= 0
+    volumes = np.asarray(geometry.cell_volumes)
+    centers = np.asarray(geometry.cell_centers)
+    areas = np.asarray(geometry.area_vectors)
+    face_centers = np.asarray(geometry.face_centers)
+
+    # One centroid per face cannot carry a warped face's first moment.
+    single = np.zeros((volumes.size, 3, 3))
+    np.add.at(
+        single, owner, np.einsum("fi,fj->fij", areas, face_centers - centers[owner])
+    )
+    np.add.at(
+        single,
+        neighbor[interior],
+        -np.einsum(
+            "fi,fj->fij",
+            areas[interior],
+            face_centers[interior] - centers[neighbor[interior]],
+        ),
+    )
+    assert np.max(np.abs(single / volumes[:, None, None] - np.eye(3))) > 1.0e-3
+
+    diffusion = HybridMimeticDiffusion(geometry)
+    assert np.count_nonzero(interior) == 4
+    assert diffusion.facet_count == diffusion.face_count + 4 * 3
+    moment = np.einsum(
+        "cfi,cfj->cij",
+        np.asarray(diffusion.gradient_weights),
+        np.asarray(diffusion.displacements),
+    )
+    np.testing.assert_allclose(
+        moment, np.broadcast_to(np.eye(3), moment.shape), rtol=0, atol=1.0e-14
+    )
+    # Both incident cells see each shared facet with equal and opposite area.
+    facets = np.asarray(diffusion.cell_facets)
+    valid = np.asarray(diffusion.valid)
+    outward = np.asarray(diffusion.outward_areas)
+    closure = np.zeros((diffusion.facet_count, 3))
+    np.add.at(closure, facets[valid], outward[valid])
+    shared = interior[np.asarray(diffusion.facet_faces)]
+    np.testing.assert_array_equal(closure[shared], 0.0)
+    shares = np.zeros(diffusion.face_count)
+    np.add.at(
+        shares, np.asarray(diffusion.facet_faces), np.asarray(diffusion.facet_shares)
+    )
+    np.testing.assert_allclose(shares, 1.0, rtol=0, atol=1.0e-15)
+
+    gradient = jnp.asarray((0.3, -0.5, 0.9))
+    tensor = jnp.asarray(((2.0, 0.4, -0.2), (0.4, 1.5, 0.3), (-0.2, 0.3, 3.0)))
+    expected_cells = geometry.cell_centers @ gradient + 2.0
+    expected_facets = diffusion.facet_centers @ gradient + 2.0
+    expected_faces = geometry.face_centers @ gradient + 2.0
+    np.testing.assert_allclose(
+        diffusion.face_potentials(expected_facets), expected_faces, rtol=0, atol=1.0e-14
+    )
+    local = diffusion.local_fluxes(expected_cells, expected_facets, tensor)
+    np.testing.assert_allclose(
+        local,
+        jnp.where(valid, -jnp.einsum("cfi,ij,j->cf", outward, tensor, gradient), 0.0),
+        rtol=0,
+        atol=1.0e-14,
+    )
+    boundary = HybridDiffusionBoundary(
+        geometry,
+        dirichlet={
+            int(face): float(expected_faces[face]) for face in np.flatnonzero(~interior)
+        },
+    )
+    result = diffusion.solve(tensor, boundary, policy=LinearSolvePolicy(DenseLU()))
+    assert result.successful
+    count = diffusion.cell_count
+    np.testing.assert_allclose(result.value[:count], expected_cells, rtol=0, atol=1.0e-13)
+    np.testing.assert_allclose(
+        result.value[count:], expected_facets, rtol=0, atol=1.0e-13
+    )
+    np.testing.assert_allclose(
+        diffusion.face_fluxes(result.value[:count], result.value[count:], tensor),
+        -(geometry.area_vectors @ (tensor @ gradient)),
+        rtol=0,
+        atol=1.0e-12,
+    )
+
+
+def test_hybrid_mimetic_twisted_prism_splits_warped_boundary_faces() -> None:
+    angle = 0.2
+    base = np.asarray([(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)])
+    center = np.mean(base, axis=0)
+    rotation = np.asarray(
+        [(np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle))]
+    )
+    top = (base - center) @ rotation.T + center
+    coordinates = np.concatenate(
+        (np.column_stack((base, np.zeros(3))), np.column_stack((top, np.full(3, 0.5))))
+    )
+    mesh = CellMesh.from_polyhedra(
+        coordinates, _outward_prisms(coordinates, np.asarray([(0, 1, 2, 3, 4, 5)]))
+    )
+    geometry = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
+    diffusion = HybridMimeticDiffusion(geometry)
+    assert diffusion.facet_count == 2 + 3 * 4
+    gradient = jnp.asarray((0.3, -0.5, 0.9))
+    np.testing.assert_allclose(
+        diffusion.face_potentials(diffusion.facet_centers @ gradient),
+        geometry.face_centers @ gradient,
+        rtol=0,
+        atol=1.0e-15,
+    )
+    # A face Neumann rate splits over its facets by projected-area share, so
+    # the integrated face rate and global conservation are unchanged.
+    facets_per_face = np.bincount(np.asarray(diffusion.facet_faces))
+    caps = np.flatnonzero(facets_per_face == 1)
+    assert caps.size == 2
+    sides = np.setdiff1d(np.arange(geometry.face_measures.size), caps)
+    boundary = HybridDiffusionBoundary(
+        geometry,
+        dirichlet={int(face): 1.0 for face in caps},
+        neumann={int(face): 0.25 for face in sides},
+    )
+    result = diffusion.solve(1.0, boundary, policy=LinearSolvePolicy(DenseLU()))
+    assert result.successful
+    rates = diffusion.face_fluxes(result.value[:1], result.value[1:], 1.0)
+    np.testing.assert_allclose(rates[sides], 0.25, rtol=0, atol=1.0e-14)
+    np.testing.assert_allclose(jnp.sum(rates), 0.0, atol=1.0e-14)
+
+
 def test_fv_capability_closure_scenario_2() -> None:
     system = ShallowWaterSystem(2)
     plan = ShallowWaterHydrostaticHLLPlan()

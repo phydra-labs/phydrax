@@ -14,8 +14,8 @@ import numpy as np
 from .._model._structure import (
     _FiniteElementSpecArchiveProjection,
     MeshingDomainArchiveRecipe,
-    SurfaceSourceChartsArchiveRecipe,
     restore_row_record_recipes,
+    SurfaceSourceChartsArchiveRecipe,
 )
 from .._physical import SpatialCoordinateContract
 from ..discretization import CellGeometrySpec, CellMesh
@@ -439,6 +439,9 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
             AffinePlcGeometrySourceArchiveRecipe,
             model_archive_projection,
         )
+        from ..discretization._exact_algebraic_geometry import (
+            ExactPeriodicAlgebraicSource,
+        )
         from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
         from ..discretization._exact_power_geometry import ExactPowerCellGeometrySource
         from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
@@ -448,6 +451,7 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
         from ..meshing._hex_dominant import _HexDominantCoordinateMap
         from ..meshing._mixed_adaptation import _RetainedCoordinateBank
         from ..meshing._model_codec import restore_model_archive_value
+        from ..meshing._polyhedral_adaptation import _PolyhedralExactCoordinateSource
         from ._affine_plc_geometry import AffinePlcGeometrySource, map_affine_plc_mesh
 
         if type(source_map) in (
@@ -466,6 +470,8 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
             source_map = _ExactCoordinateBankMap.from_stored_fields(source_map, mesh=mesh)
         elif type(source_map) is ExactPlcCellGeometrySource:
             source_map = ExactPlcCellGeometrySource.from_stored_fields(source_map)
+        elif type(source_map) is ExactPeriodicAlgebraicSource:
+            source_map = ExactPeriodicAlgebraicSource.from_stored_fields(source_map)
         elif type(source_map) is _RetainedCoordinateBank:
             source_map = _RetainedCoordinateBank.from_stored_fields(
                 source_map, coordinates=value.coordinates
@@ -506,6 +512,10 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
                 )
             ):
                 raise ValueError("Stored hex-dominant coordinate source changed.")
+        elif type(source_map) is _PolyhedralExactCoordinateSource:
+            source_map = _PolyhedralExactCoordinateSource.from_stored_fields(
+                source_map, mesh=mesh
+            )
         else:
             raise TypeError(
                 f"No source chart coordinate-map owner for {type(source_map).__name__}."

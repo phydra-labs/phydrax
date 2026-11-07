@@ -1,5 +1,11 @@
 import dataclasses
+import json
+import os
+import platform
+import subprocess
+import sys
 from fractions import Fraction
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
@@ -42,6 +48,34 @@ from phydrax.meshing.providers import NativeMeshingProvider
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_schedules import NativeSurfaceSchedule
 
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+# OpenBLAS kernels without the native micro-architecture's blocking and FMA order.
+_GENERIC_OPENBLAS_CORES = {
+    "aarch64": "ARMV8",
+    "arm64": "ARMV8",
+    "x86_64": "PRESCOTT",
+    "AMD64": "PRESCOTT",
+}
+_IDENTITY_SCRIPT = """
+import json
+
+from tests.unit.geometry.test_tspline_brep import _tspline_surface_model
+
+model = _tspline_surface_model()
+patch = model.patches[0]
+print(
+    json.dumps(
+        {
+            "model_id": model.model_id,
+            "source_revision": model.source_revision,
+            "basis_certificate_id": patch.realization.basis_certificate.certificate_id,
+            "source_basis_certificate_id": patch.source_basis_certificate.certificate_id,
+            "realization_id": patch.realization.realization_id,
+        }
+    )
+)
+"""
 
 _CONTRACT = SpatialCoordinateContract.si()
 
@@ -165,6 +199,31 @@ def test_t_spline_projection_and_native_meshing_retain_source_geometry() -> None
     assert np.all(np.isfinite(mesh_coordinates))
     assert np.all(mesh_coordinates[:, 2] >= -1.0e-12)
     assert np.max(mesh_coordinates[:, 2]) <= 1.0 / 64.0 + 1.0e-12
+
+
+def _identities_under_openblas_core(core: str | None, /) -> dict[str, str]:
+    environment = {
+        name: value for name, value in os.environ.items() if name != "OPENBLAS_CORETYPE"
+    }
+    if core is not None:
+        environment["OPENBLAS_CORETYPE"] = core
+    completed = subprocess.run(
+        [sys.executable, "-c", _IDENTITY_SCRIPT],
+        cwd=_REPOSITORY_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout.splitlines()[-1])
+
+
+def test_t_spline_model_identities_do_not_depend_on_the_blas_kernel() -> None:
+    native = _identities_under_openblas_core(None)
+    generic = _identities_under_openblas_core(_GENERIC_OPENBLAS_CORES[platform.machine()])
+
+    assert generic == native
 
 
 def _nonuniform_transverse_patch() -> TSplineSurfacePatch:

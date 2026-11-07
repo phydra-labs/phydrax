@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import os
-import sys
-from collections.abc import Callable
-from time import perf_counter
 from typing import Any
 
 import jax
@@ -13,24 +9,11 @@ import numpy as np
 import phydrax as phx
 from phydrax._meshcore import meshcore_available
 
+from ._resources import measured as _measured
+
 
 def _contract() -> phx.SpatialCoordinateContract:
     return phx.SpatialCoordinateContract(phx.units.MILLIMETER)
-
-
-def _measured(call: Callable[[], object], /) -> tuple[object, dict[str, float]]:
-    """Run one stage; report wall seconds and the process peak resident bytes."""
-    if os.name != "posix":
-        raise RuntimeError("Meshing resource qualification requires a POSIX host.")
-    import resource
-
-    started = perf_counter()
-    value = call()
-    elapsed = perf_counter() - started
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # Darwin reports ru_maxrss in bytes, Linux in KiB.
-    scale = 1 if sys.platform == "darwin" else 1024
-    return value, {"wall_seconds": elapsed, "peak_resident_bytes": peak * scale}
 
 
 def _quality_summary(report: phx.meshing.CellQualityReport, /) -> dict[str, object]:
@@ -116,7 +99,9 @@ def _jittered_cube_tetrahedra(
 
     points, tetrahedra = _kuhn_tetrahedra(cells_per_axis)
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
-    jitter = np.random.default_rng(seed).uniform(-0.1, 0.1, points.shape)
+    # Separate NumPy operations never contract, unlike `Generator.uniform`'s
+    # platform-dependent fused `low + (high - low) * u`.
+    jitter = -0.1 + 0.2 * np.random.default_rng(seed).random(points.shape)
     points[interior] += jitter[interior] / cells_per_axis
     return phx.discretization.CellMesh.from_tetrahedra(points, tetrahedra)
 
@@ -1126,7 +1111,7 @@ def _jittered_unit_square_triangles(
     axis = np.linspace(0.0, 1.0, cells_per_axis + 1)
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
-    jitter = np.random.default_rng(seed).uniform(-0.2, 0.2, points.shape)
+    jitter = -0.2 + 0.4 * np.random.default_rng(seed).random(points.shape)
     points[interior] += jitter[interior] / cells_per_axis
     return phx.discretization.CellMesh.from_triangles(
         points, _planar_triangles(cells_per_axis)

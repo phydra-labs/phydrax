@@ -184,6 +184,35 @@ def test_tetrahedron_identity_and_conservation() -> None:
 
 @pytest.mark.meshcore
 @requires_meshcore
+def test_dimension_qualified_cell_kinds_refine_as_their_standard_families() -> None:
+    from phydrax.discretization import CellBlock, CellMesh
+    from phydrax.geometry import prepare_common_refinement
+    from tests.unit.geometry.test_supermesh import _hexahedra, _kuhn_tetrahedra
+
+    # Plain tetrahedral CellMeshes do not reach the FV CellMesh cutover; the
+    # remap consumes this same common refinement of its cell meshes.
+    def relabel(mesh: Any, kind: str) -> Any:
+        (block,) = mesh.blocks
+        return CellMesh(
+            np.asarray(mesh.coordinates),
+            (CellBlock(block.name, kind, np.asarray(block.vertices)),),
+        )
+
+    tetrahedra, hexahedra = _kuhn_tetrahedra(2), _hexahedra(3)
+    standard = prepare_common_refinement(tetrahedra, hexahedra)
+    qualified = prepare_common_refinement(
+        relabel(tetrahedra, "simplex:3"), relabel(hexahedra, "tensor:3")
+    )
+    assert standard.succeeded and qualified.succeeded
+    for name in ("source_cells", "target_cells", "volumes", "first_moments"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(qualified, name)), np.asarray(getattr(standard, name))
+        )
+    assert np.sum(np.asarray(qualified.volumes)) == pytest.approx(1.0, rel=1e-13)
+
+
+@pytest.mark.meshcore
+@requires_meshcore
 def test_coincident_faces_give_exact_complete_coverage() -> None:
     points = ((0.0, 0.0), (0.5, 0.0), (1.0, 0.0), (0.0, 1.0), (0.5, 1.0), (1.0, 1.0))
     source = _quad(points, ((0, 1, 4, 3), (1, 2, 5, 4)))

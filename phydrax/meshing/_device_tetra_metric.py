@@ -6,14 +6,17 @@
 
 The device evaluates the full tensor metric on every live edge. Its deterministically
 ordered, conflict-free split batches cross an owning-host exact-predicate barrier
-before the native tetra owner mutates. All accepted edits remain provisional in a
-source-local native owner until the complete adaptation is assembled and accepted;
-``_tetra_metric.execute_tetra_metric_adaptation`` remains the independent serial
-reference.
+before the native tetra owner mutates. Only that split-batch execution is
+route-specific: the phase schedule, native owner, and stable target-ID numbering are
+the shared ``_tetra_metric._execute_native_state``, so the device route realizes the
+native ``execute_tetra_metric_adaptation`` target exactly. All accepted edits remain
+provisional in a source-local native owner until the complete adaptation is
+assembled and accepted.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from itertools import combinations
 from typing import final, NamedTuple, TYPE_CHECKING
 
@@ -25,27 +28,21 @@ from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient3d, PredicateMode, PredicateSign
-from .._meshcore import TetMeshEditKind
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked
 from ._metric import metric_edge_lengths
 from ._tetra_metric import (
-    _assemble_native_edit,
-    _collapse_phase,
     _current_edge_controls,
     _disjoint_candidates,
+    _execute_native_state,
     _implicit_metric_source,
     _metric_midpoint,
     _NativeState,
     _periodic_edge_orbit_groups,
     _prepare_native_state,
-    _relocation_phase,
-    _replacement_phase,
-    _tetra_evidence,
     _topology,
     _try_split_batch,
-    _unit_metric_status,
     TetraMetricEvidence,
     TetraMetricStatus,
 )
@@ -169,18 +166,6 @@ class _DeviceSplitPlan(NamedTuple):
     long_edge_candidates: int
 
 
-class _DeviceSplitPhase(NamedTuple):
-    applied: int
-    status: TetraMetricStatus | None
-    invalid_batch: bool
-    evaluated_edges: int
-    long_edge_candidates: int
-    independent_split_candidates: int
-    candidate_edge_keys: tuple[tuple[int, int], ...]
-    exact_predicates_resolved: int
-    host_barriers: int
-
-
 def _compiled_edge_lengths(points: Array, metric: Array, edges: Array, /) -> Array:
     return metric_edge_lengths(metric, points, edges)
 
@@ -297,67 +282,75 @@ def _resolve_exact_split_batch(
     return bool(valid), children.shape[0]
 
 
-def _device_split_phase(
-    state: _NativeState, counters: dict[str, int], /
-) -> _DeviceSplitPhase:
-    applied = 0
-    blocked: set[tuple[int, int]] = set()
-    evaluated_edges = 0
-    long_edge_candidates = 0
-    independent_split_candidates = 0
-    candidate_edge_keys: tuple[tuple[int, int], ...] = ()
-    exact_predicates_resolved = 0
-    host_barriers = 0
-    first_evaluation = True
-    while True:
-        plan = _device_split_plan(state, blocked)
-        host_barriers += 1
-        if first_evaluation:
-            evaluated_edges = len(plan.edge_keys)
-            long_edge_candidates = plan.long_edge_candidates
-            candidate_edge_keys = tuple(edge for group in plan.groups for edge in group)
-            independent_split_candidates = len(candidate_edge_keys)
-            first_evaluation = False
-        if not plan.groups:
-            return _DeviceSplitPhase(
-                applied,
-                None,
-                False,
-                evaluated_edges,
-                long_edge_candidates,
-                independent_split_candidates,
-                candidate_edge_keys,
-                exact_predicates_resolved,
-                host_barriers,
+class _RejectedDeviceBatch(Exception):
+    """The exact host barrier refused a device-selected split batch."""
+
+
+@dataclass(slots=True)
+class _DeviceSplitBatches:
+    """Route-specific split execution of the shared schedule, with its evidence.
+
+    Each call mirrors ``_split_phase(..., one_batch=True)``: it applies at most one
+    disjoint split batch, re-planning with refused edges blocked until a batch
+    applies or no candidate remains.
+    """
+
+    evaluated: bool = False
+    evaluated_edges: int = 0
+    long_edge_candidates: int = 0
+    candidate_edge_keys: tuple[tuple[int, int], ...] = field(default=())
+    exact_predicates_resolved: int = 0
+    host_barriers: int = 0
+
+    def __call__(self, state: _NativeState, counters: dict[str, int], /) -> int:
+        blocked: set[tuple[int, int]] = set()
+        while True:
+            plan = _device_split_plan(state, blocked)
+            self.host_barriers += 1
+            if not self.evaluated:
+                self.evaluated = True
+                self.evaluated_edges = len(plan.edge_keys)
+                self.long_edge_candidates = plan.long_edge_candidates
+                self.candidate_edge_keys = tuple(
+                    edge for group in plan.groups for edge in group
+                )
+            if not plan.groups:
+                return 0
+            row_by_edge = {edge: row for row, edge in enumerate(plan.edge_keys)}
+            selected = tuple(row_by_edge[edge] for group in plan.groups for edge in group)
+            exact_valid, resolved = _resolve_exact_split_batch(
+                plan.points,
+                plan.metric,
+                plan.cells,
+                plan.edge_rows,
+                plan.cavities,
+                selected,
             )
-        row_by_edge = {edge: row for row, edge in enumerate(plan.edge_keys)}
-        selected_edges = tuple(edge for group in plan.groups for edge in group)
-        selected = tuple(row_by_edge[edge] for edge in selected_edges)
-        exact_valid, resolved = _resolve_exact_split_batch(
-            plan.points,
-            plan.metric,
-            plan.cells,
-            plan.edge_rows,
-            plan.cavities,
-            selected,
+            self.exact_predicates_resolved += resolved
+            if not exact_valid:
+                raise _RejectedDeviceBatch
+            changed = _try_split_batch(state, list(plan.groups), counters, blocked)
+            if changed:
+                return changed
+
+    def evidence(
+        self,
+        metric_evidence: TetraMetricEvidence | None,
+        status: TetraMetricStatus,
+        committed: bool,
+        /,
+    ) -> DeviceTetraMetricEvidence:
+        return DeviceTetraMetricEvidence(
+            metric_evidence,
+            status,
+            self.evaluated_edges,
+            self.long_edge_candidates,
+            len(self.candidate_edge_keys),
+            self.candidate_edge_keys,
+            self.exact_predicates_resolved,
+            self.host_barriers,
+            committed,
         )
-        exact_predicates_resolved += resolved
-        if not exact_valid:
-            return _DeviceSplitPhase(
-                applied,
-                TetraMetricStatus.NUMERICAL_STOP,
-                True,
-                evaluated_edges,
-                long_edge_candidates,
-                independent_split_candidates,
-                candidate_edge_keys,
-                exact_predicates_resolved,
-                host_barriers,
-            )
-        changed = _try_split_batch(state, list(plan.groups), counters, blocked)
-        applied += changed
-        if changed:
-            blocked.clear()
 
 
 def _execute_device_tetra_metric_route(
@@ -393,109 +386,51 @@ def _execute_device_tetra_metric_route(
         fixed_vertices=constraints.fixed_vertex_mask,
         implicit_source=_implicit_metric_source(source),
     )
-    counters = {
-        "splits": 0,
-        "collapses": 0,
-        "flips23": 0,
-        "flips32": 0,
-        "ring_reconnections": 0,
-        "relocations": 0,
-        "rejected_topology": 0,
-        "rejected_protected": 0,
-        "rejected_uncertain": 0,
-        "rejected_invalid": 0,
-    }
-    passes = 0
-    status = TetraMetricStatus.COMPLETE
-    total_applied = 0
-    evaluated_edges = 0
-    long_edge_candidates = 0
-    independent_split_candidates = 0
-    candidate_edge_keys: tuple[tuple[int, int], ...] = ()
-    exact_predicates_resolved = 0
-    host_barriers = 0
-    while True:
-        converged, _, _, _, _ = _unit_metric_status(state)
-        if converged:
-            status = TetraMetricStatus.COMPLETE
-            break
-        passes += 1
-        applied = 0
-        split = _device_split_phase(state, counters)
-        if evaluated_edges == 0:
-            evaluated_edges = split.evaluated_edges
-            long_edge_candidates = split.long_edge_candidates
-            independent_split_candidates = split.independent_split_candidates
-            candidate_edge_keys = split.candidate_edge_keys
-        exact_predicates_resolved += split.exact_predicates_resolved
-        host_barriers += split.host_barriers
-        if split.invalid_batch:
-            evidence = DeviceTetraMetricEvidence(
-                None,
-                TetraMetricStatus.NUMERICAL_STOP,
-                evaluated_edges,
-                long_edge_candidates,
-                independent_split_candidates,
-                candidate_edge_keys,
-                exact_predicates_resolved,
-                host_barriers,
-                False,
-            )
-            return _RouteOutcome(
-                MeshAdaptationStatus.NUMERICAL_STOP,
-                source,
-                None,
-                None,
-                None,
-                None,
-                None,
-                evidence,
-                None,
-            )
-        applied += split.applied
-        applied += _collapse_phase(state, counters)
-        for kind, name in (
-            (TetMeshEditKind.FLIP23, "flips23"),
-            (TetMeshEditKind.FLIP32, "flips32"),
-            (TetMeshEditKind.RECONNECT, "ring_reconnections"),
-        ):
-            applied += _replacement_phase(
-                state, kind, name, counters, PredicateMode.EXACT
-            )
-        if prepared.policy.relocation:
-            applied += _relocation_phase(state, counters)
-        total_applied += applied
-        if applied == 0:
-            status = TetraMetricStatus.STALLED
-            break
-
-    edit, target_metric = _assemble_native_edit(state)
-    metric_evidence = _tetra_evidence(state, counters, passes, status)
+    batches = _DeviceSplitBatches()
+    try:
+        outcome = _execute_native_state(
+            state,
+            PredicateMode.EXACT,
+            topology_operations=True,
+            relocation=prepared.policy.relocation,
+            split_batch=batches,
+        )
+    except _RejectedDeviceBatch:
+        return _RouteOutcome(
+            MeshAdaptationStatus.NUMERICAL_STOP,
+            source,
+            None,
+            None,
+            None,
+            None,
+            None,
+            batches.evidence(None, TetraMetricStatus.NUMERICAL_STOP, False),
+            None,
+        )
+    metric_evidence = outcome.evidence
     status = metric_evidence.status
     adaptation_status = {
         TetraMetricStatus.COMPLETE: MeshAdaptationStatus.COMPLETE,
         TetraMetricStatus.STALLED: MeshAdaptationStatus.STALLED,
         TetraMetricStatus.NUMERICAL_STOP: MeshAdaptationStatus.NUMERICAL_STOP,
     }[status]
-    evidence = DeviceTetraMetricEvidence(
-        metric_evidence,
-        status,
-        evaluated_edges,
-        long_edge_candidates,
-        independent_split_candidates,
-        candidate_edge_keys,
-        exact_predicates_resolved,
-        host_barriers,
-        total_applied > 0,
+    applied = (
+        metric_evidence.splits
+        + metric_evidence.collapses
+        + metric_evidence.flips23
+        + metric_evidence.flips32
+        + metric_evidence.ring_reconnections
+        + metric_evidence.relocations
     )
-    if total_applied == 0:
+    evidence = batches.evidence(metric_evidence, status, applied > 0)
+    if applied == 0:
         return _unchanged(prepared, evidence, None, status=adaptation_status)
     accepted = _finalize_native(
         prepared,
-        edit,
+        outcome.edit,
         MeshTransitionKind.REMESH,
         conservative=False,
-        exact_source_vertices=state.source_exact_points,
+        exact_source_vertices=outcome.exact_source_vertices,
     )
     return _RouteOutcome(
         adaptation_status,
@@ -504,7 +439,7 @@ def _execute_device_tetra_metric_route(
         accepted.lineage,
         accepted.stencil,
         accepted.transfer,
-        _target_metric(prepared.request.metric, accepted.target.mesh, target_metric),
+        _target_metric(prepared.request.metric, accepted.target.mesh, outcome.metric),
         evidence,
         None,
     )

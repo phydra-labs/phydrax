@@ -1482,8 +1482,8 @@ def _cylindrical_support_data(
         parameter = (dot(relative, axis) - height) / rate
     else:
         return None
-    if radial_squared <= 0:
-        return None
+    # A query on the axis keeps ``radial_squared == 0``: its support distance is
+    # exactly the radius, attained on a whole circle rather than one angle.
     return x, y, parameter, radial_squared, radius_squared
 
 
@@ -1591,6 +1591,10 @@ def _cylindrical_support_outside(
     )
     support_lower = max(0.0, _bounds(context.sqrt(radial_distance**2))[0])
     if distance_threshold is not None and support_lower > distance_threshold:
+        return support_lower, False
+    if radial_squared == 0:
+        # On the axis every angle at ``parameter`` is a support minimum; one
+        # angle lift cannot prove the face excludes that whole circle.
         return support_lower, False
     native = _native_chart_bounds(model, face, cache=angle_bounds)
     if native is None:
@@ -2094,7 +2098,18 @@ def _project_face(
                 or axial < bounds[0, 1]
                 or axial > bounds[1, 1]
             ):
-                return _unresolved(2, face, path)
+                return _cylindrical_trim_distance(
+                    model,
+                    face,
+                    point,
+                    path,
+                    policy,
+                    enclosures=enclosures,
+                    lifts=lifts,
+                    boxes=boxes,
+                    distance_threshold=distance_threshold,
+                    angle_bounds=angle_bounds,
+                ) or _unresolved(2, face, path)
             candidate = origin + radius * first + axial * axis
             lower, upper = _distance_bounds(point, candidate)
             return _Hit(
@@ -2778,9 +2793,21 @@ class _ExactCylinder:
     native_angle_bounds: tuple[float, float]
 
 
-# A containment ray carrier: an exact cylinder, or a plane frame with its normal.
+@dataclass(frozen=True, slots=True)
+class _ExactTorus:
+    center: tuple[Fraction, Fraction, Fraction]
+    first: tuple[Fraction, Fraction, Fraction]
+    second: tuple[Fraction, Fraction, Fraction]
+    axis: tuple[Fraction, Fraction, Fraction]
+    major: Fraction
+    minor: Fraction
+
+
+# A containment ray carrier: an exact cylinder or ring torus, or a plane frame
+# with its normal.
 type _RayCarrier = tuple[
-    int, _ExactCylinder | tuple[_AffineProjectionFrame, tuple[ExactScalar, ...]]
+    int,
+    _ExactCylinder | _ExactTorus | tuple[_AffineProjectionFrame, tuple[ExactScalar, ...]],
 ]
 
 
@@ -3061,6 +3088,264 @@ def _ray_cylinder_crossings(
             enclosures=enclosures,
         )
         if trim is None or trim < 0:
+            return None
+        crossings += trim
+    return crossings
+
+
+def _exact_torus(model: BRepModel, face: int, /) -> _ExactTorus | None:
+    """Exact rational orthonormal frame of a doubly periodic ring-torus face."""
+    patch = model.patches[face]
+    if not isinstance(patch, TorusPatch) or patch.native_period_symbols() != (
+        "two_pi",
+        "two_pi",
+    ):
+        return None
+    vectors = (
+        patch.center_exact,
+        patch.first_axis_exact,
+        patch.second_axis_exact,
+        patch.axis_exact,
+    )
+    major, minor = patch.major_radius_exact, patch.minor_radius_exact
+    if (
+        any(not all(isinstance(v, Fraction) for v in vector) for vector in vectors)
+        or not isinstance(major, Fraction)
+        or not isinstance(minor, Fraction)
+        or not major > minor > 0
+    ):
+        return None
+    center, first, second, axis = (
+        cast(tuple[Fraction, Fraction, Fraction], tuple(vector)) for vector in vectors
+    )
+    frame = (first, second, axis)
+    if any(
+        _rational_dot(left, right) != int(i == j)
+        for i, left in enumerate(frame)
+        for j, right in enumerate(frame)
+    ):
+        return None
+    domain = model.trim_domains[face]
+    if domain is None or domain.numeric_only:
+        return None
+    return _ExactTorus(center, first, second, axis, major, minor)
+
+
+def _torus_ray_quartic(
+    torus: _ExactTorus,
+    origin: tuple[Fraction, Fraction, Fraction],
+    direction: tuple[Fraction, Fraction, Fraction],
+    /,
+) -> tuple[Fraction, ...]:
+    """Ascending exact coefficients of the torus implicit along ``origin + t direction``.
+
+    ``(|w|^2 + R^2 - r^2)^2 - 4 R^2 (|w|^2 - (w.a)^2)`` with ``w = p(t) - c``.
+    """
+    offset = tuple(o - c for o, c in zip(origin, torus.center, strict=True))
+    norm = (
+        _rational_dot(offset, offset),
+        2 * _rational_dot(offset, direction),
+        _rational_dot(direction, direction),
+    )
+    height = (_rational_dot(offset, torus.axis), _rational_dot(direction, torus.axis))
+    shifted = (norm[0] + torus.major**2 - torus.minor**2, norm[1], norm[2])
+    four = 4 * torus.major**2
+    radial = (
+        norm[0] - height[0] ** 2,
+        norm[1] - 2 * height[0] * height[1],
+        norm[2] - height[1] ** 2,
+    )
+    square = [Fraction(0)] * 5
+    for i, left in enumerate(shifted):
+        for j, right in enumerate(shifted):
+            square[i + j] += left * right
+    for index, value in enumerate(radial):
+        square[index] -= four * value
+    return tuple(square)
+
+
+def _periodic_chart_lifts(
+    context: Any, angles: tuple[Any, Any], chart: np.ndarray, /
+) -> tuple[np.ndarray, ...] | None:
+    """All 2π lifts of a doubly periodic parameter enclosure inside ``chart``.
+
+    A lift straddling the chart boundary is undecidable here and refuses.
+    """
+    from ._intersection_projection import _bounds
+
+    period = 2 * pi
+    per_axis: list[list[tuple[float, float]]] = []
+    for axis, angle in enumerate(angles):
+        lower, upper = _bounds(angle)
+        if not np.isfinite(lower) or not np.isfinite(upper) or upper - lower >= pi:
+            return None
+        lifts: list[tuple[float, float]] = []
+        first_turn = floor((chart[0, axis] - upper) / period) - 1
+        last_turn = ceil((chart[1, axis] - lower) / period) + 1
+        for turn in range(first_turn, last_turn + 1):
+            lo, hi = _bounds(angle + turn * 2 * context.pi)
+            if hi < chart[0, axis] or lo > chart[1, axis]:
+                continue
+            if lo < chart[0, axis] or hi > chart[1, axis]:
+                return None
+            lifts.append((lo, hi))
+        per_axis.append(lifts)
+    return tuple(
+        np.asarray(((u[0], v[0]), (u[1], v[1])), dtype=np.float64)
+        for u in per_axis[0]
+        for v in per_axis[1]
+    )
+
+
+def _torus_trim_point(
+    model: BRepModel,
+    face: int,
+    torus: _ExactTorus,
+    context: Any,
+    point: tuple[Any, Any, Any],
+    /,
+    *,
+    enclosures: dict[int, TrimEnclosures] | None = None,
+) -> int | None:
+    """Classify a certified point enclosure on the torus against the face trim.
+
+    Returns ``1`` inside, ``0`` outside, ``None`` on or undecidably near the
+    trim boundary, a chart seam, or the torus axis.
+    """
+    from ._intersection_projection import _bounds, _scalar
+
+    try:
+        relative = tuple(
+            value - _scalar(context, c)
+            for value, c in zip(point, torus.center, strict=True)
+        )
+
+        def dot(vector: tuple[Fraction, Fraction, Fraction]) -> Any:
+            return sum(
+                (r * _scalar(context, v) for r, v in zip(relative, vector, strict=True)),
+                _scalar(context, Fraction(0)),
+            )
+
+        x, y, height = dot(torus.first), dot(torus.second), dot(torus.axis)
+        rho = context.sqrt(x * x + y * y)
+        if _bounds(rho)[0] <= 0.0:
+            return None
+        longitude = context.atan2(y, x)
+        tube = context.atan2(height, rho - _scalar(context, torus.major))
+        chart = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+        boxes = _periodic_chart_lifts(context, (longitude, tube), chart)
+        if boxes is None:
+            return None
+        domain = model.trim_domains[face]
+        if domain is None or domain.numeric_only:
+            return None
+        prepared = None
+        if enclosures is not None and domain.curve_loops:
+            prepared = enclosures.get(face)
+            if prepared is None:
+                prepared = domain.prepare_enclosures()
+                enclosures[face] = prepared
+        inside = False
+        for box in boxes:
+            decision = domain.classify_boxes(box[None], enclosures=prepared)
+            if not bool(np.asarray(decision.resolved[0])) or bool(
+                np.asarray(decision.boundary[0])
+            ):
+                return None
+            inside = inside or bool(np.asarray(decision.inside[0]))
+        return int(inside)
+    except (ValueError, OverflowError, ZeroDivisionError):
+        return None
+
+
+def _torus_contains_origin(
+    model: BRepModel,
+    face: int,
+    torus: _ExactTorus,
+    origin: tuple[Fraction, Fraction, Fraction],
+    /,
+    *,
+    enclosures: dict[int, TrimEnclosures] | None = None,
+) -> bool:
+    """Whether the exact origin lies on (or undecidably near) the trimmed torus face."""
+    from ._intersection_curve import interval_context
+    from ._intersection_projection import _scalar
+
+    if _torus_ray_quartic(torus, origin, (Fraction(0), Fraction(0), Fraction(1)))[0]:
+        return False
+    context = interval_context(80)
+    point = cast(tuple[Any, Any, Any], tuple(_scalar(context, value) for value in origin))
+    return (
+        _torus_trim_point(model, face, torus, context, point, enclosures=enclosures) != 0
+    )
+
+
+_TORUS_ROOT_TOLERANCE = Fraction(1, 1 << 80)
+
+
+def _ray_torus_crossings(
+    model: BRepModel,
+    face: int,
+    torus: _ExactTorus,
+    ray_origin: tuple[Fraction, Fraction, Fraction],
+    ray_direction: tuple[Fraction, Fraction, Fraction],
+    /,
+    *,
+    enclosures: dict[int, TrimEnclosures] | None = None,
+) -> int | None:
+    """Count transversal crossings of an exact ray with a trimmed ring-torus face.
+
+    The ray meets the torus at the real roots of an exact rational quartic in
+    the ray parameter. Roots are isolated exactly (square-free Sturm isolation
+    in ``phydrax.algebraic``); a repeated positive root is a tangency and
+    refuses the direction. The origin is off the trimmed face
+    (`_torus_contains_origin`), so a root ``t = 0`` is deflated and never
+    counted. Each simple positive root's certified point enclosure is
+    classified against the face trim on every chart lift.
+
+    Termination of the caller's direction sequence: for an origin off the
+    trimmed face, the directions with a repeated root (tangent lines through
+    the origin form an algebraic cone of codimension one) or a crossing on a
+    trim curve, chart seam or axis form a closed nowhere-dense set, so the
+    dense direction sequence reaches a decisive ray after finitely many tries.
+    """
+    from phydrax.algebraic._exact_univariate import RealRootIsolator
+
+    from ._intersection_curve import interval_context
+    from ._intersection_projection import _interval, _scalar
+
+    coefficients = list(_torus_ray_quartic(torus, ray_origin, ray_direction))
+    if coefficients[0] == 0:
+        coefficients.pop(0)
+        if coefficients[0] == 0:
+            # A tangent ray from an origin on the untrimmed torus.
+            return None
+    isolator = RealRootIsolator(tuple(coefficients))
+    tolerance = _TORUS_ROOT_TOLERANCE
+    while True:
+        roots = isolator.isolate(tolerance=tolerance)
+        # Zero is not a root after deflation, so refinement separates it.
+        if all(upper < 0 or lower > 0 for lower, upper, _ in roots):
+            break
+        tolerance /= 2
+    positive = [(lower, upper, m) for lower, upper, m in roots if lower > 0]
+    if any(multiplicity != 1 for _, _, multiplicity in positive):
+        return None
+    context = interval_context(80)
+    crossings = 0
+    for lower, upper, _ in positive:
+        parameter = _interval(context, lower, upper)
+        point = cast(
+            tuple[Any, Any, Any],
+            tuple(
+                _scalar(context, o) + parameter * _scalar(context, d)
+                for o, d in zip(ray_origin, ray_direction, strict=True)
+            ),
+        )
+        trim = _torus_trim_point(
+            model, face, torus, context, point, enclosures=enclosures
+        )
+        if trim is None:
             return None
         crossings += trim
     return crossings
@@ -4976,6 +5261,12 @@ class NativeBRepProjection(AbstractBRepProjection):
         origin_values = rational_vector(np.asarray(point, dtype=np.float64))
         ray_origin = (origin_values[0], origin_values[1], origin_values[2])
         for face, carrier in carriers:
+            if isinstance(carrier, _ExactTorus):
+                if _torus_contains_origin(
+                    self.model, face, carrier, ray_origin, enclosures=enclosures
+                ):
+                    return None
+                continue
             if isinstance(carrier, _ExactCylinder):
                 if _cylinder_contains_origin(
                     self.model, face, carrier, ray_origin, enclosures=enclosures
@@ -5013,6 +5304,12 @@ class NativeBRepProjection(AbstractBRepProjection):
             patch = self.model.patches[face]
             if _trim_classification(self.model, face, far) is None:
                 return None
+            if isinstance(patch, TorusPatch):
+                torus = _exact_torus(self.model, face)
+                if torus is None:
+                    return None
+                carriers.append((face, torus))
+                continue
             if isinstance(patch, (CylinderPatch, RevolutionSurface)):
                 domain = self.model.trim_domains[face]
                 if domain is None or domain.numeric_only:
@@ -5051,6 +5348,19 @@ class NativeBRepProjection(AbstractBRepProjection):
         """
         crossings = 0
         for face, carrier in carriers:
+            if isinstance(carrier, _ExactTorus):
+                torus_crossings = _ray_torus_crossings(
+                    self.model,
+                    face,
+                    carrier,
+                    ray_origin,
+                    ray_direction,
+                    enclosures=enclosures,
+                )
+                if torus_crossings is None:
+                    return None
+                crossings += torus_crossings
+                continue
             if isinstance(carrier, _ExactCylinder):
                 cylinder_crossings = _ray_cylinder_crossings(
                     self.model,

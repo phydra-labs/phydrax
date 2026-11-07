@@ -9,13 +9,17 @@ from ._common import (
     _index_sets,
     _propagate_const_unary,
     _transform_indices,
+    StateBounds,
     StateConsts,
     StateIndices,
 )
 
 
 def _prop_slice(
-    eqn: JaxprEqn, state_indices: StateIndices, state_consts: StateConsts
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
 ) -> None:
     """Slicing extracts a contiguous (possibly strided) subarray.
 
@@ -50,4 +54,4 @@ def _prop_slice(
         in_indices, in_shape, lambda p: p[slices]
     )
 
-    _propagate_const_unary(eqn, state_consts, itemgetter(slices))
+    _propagate_const_unary(eqn, state_consts, itemgetter(slices), state_bounds)

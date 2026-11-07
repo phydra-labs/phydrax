@@ -406,7 +406,12 @@ def _native_owner_local_fe_empty_rank_worker(owned_material: bool = False) -> No
             response_shape=(2,),
             model_id="linear-elastic:steel",
         )
-        from tests.unit.equations.test_learned_constitutive import _Cubic, _uniaxial_law
+        from tests.unit.equations.test_learned_constitutive import (
+            _Cubic,
+            _DIMENSIONLESS,
+            _port,
+            _uniaxial_law,
+        )
 
         stateless_law = _uniaxial_law(_Cubic(1.0, 0.0))
 
@@ -810,6 +815,49 @@ def _native_owner_local_fe_empty_rank_worker(owned_material: bool = False) -> No
             or refused_placement.state.accepted_id != state.accepted_id
         ):
             raise ValueError("Forged material placement changed accepted state.")
+        # The same declared law ID with a changed response port is a different
+        # constitutive law: the migrated stateless site must refuse it.
+        changed_stateless_law = phx.equations.LearnedConstitutiveModel(
+            _Cubic(1.0, 0.0),
+            _port("strain", 1, _DIMENSIONLESS),
+            _port("stress", 1, _DIMENSIONLESS),
+            lower=np.asarray((-0.2,), dtype=np.float64),
+            upper=np.asarray((0.2,), dtype=np.float64),
+            model_id="learned-uniaxial-law",
+        )
+        if changed_stateless_law.model_id == stateless_law.model_id:
+            raise ValueError("Changed stateless law kept its material model identity.")
+        changed_model_plan = phx.equations.MaterialIntegrationPlan(
+            tuple(
+                (
+                    item,
+                    changed_stateless_law
+                    if item.key == stateless_site.key
+                    else model_for_site(item),
+                )
+                for item in target_authority.for_owner(rank)
+            ),
+            ownership=target_authority,
+            owner_rank=rank,
+        )
+        refused_model = repartition(
+            target_history_layout,
+            changed_model_plan,
+            material_layouts(changed_model_plan),
+        )
+        if (
+            bool(np.asarray(refused_model.committed))
+            or refused_model.state.accepted_id != state.accepted_id
+            or (
+                rank == 2
+                and "Material state does not match integration plan layout."
+                not in refused_model.diagnostics
+            )
+        ):
+            raise ValueError(
+                "Changed stateless material model was not refused: "
+                f"{refused_model.diagnostics}"
+            )
 
     result = repartition(target_history_layout)
     if not bool(np.asarray(result.committed)) or result.rebind_receipt is None:
@@ -855,7 +903,7 @@ def _native_owner_local_fe_empty_rank_worker(owned_material: bool = False) -> No
             if material_state.state_version != 3 + cell % 5:
                 raise ValueError("Material version changed during migration.")
             if material_state.site_id.key == stateless_site.key:
-                if material_state.model_id != "learned-uniaxial-law":
+                if material_state.model_id != stateless_law.model_id:
                     raise ValueError("Stateless material model changed during migration.")
                 np.testing.assert_array_equal(material_state.committed, np.empty((0,)))
                 np.testing.assert_array_equal(material_state.trial, np.empty((0,)))

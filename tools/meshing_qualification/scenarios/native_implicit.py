@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
@@ -165,6 +166,50 @@ def _solve_physical_epoch(
     )
 
 
+def _ball_enclosure(radius: float, /) -> Callable[[float], tuple[float, float]]:
+    """Exact volumes of a ball's inner and outer parallel bodies at offset epsilon.
+
+    A closed carrier within epsilon of the sphere encloses a volume between
+    them while epsilon stays below the reach, the radius (donor
+    tools/meshing_qualification/scenarios/implicit.py lines 522-553).
+    """
+
+    def enclosure(epsilon: float) -> tuple[float, float]:
+        if not 0.0 <= epsilon < radius:
+            raise ValueError(
+                f"The ball enclosure requires 0 <= epsilon < {radius}; got {epsilon}."
+            )
+        return (
+            (4.0 / 3.0) * math.pi * (radius - epsilon) ** 3,
+            (4.0 / 3.0) * math.pi * (radius + epsilon) ** 3,
+        )
+
+    return enclosure
+
+
+def _ring_torus_enclosure(
+    minor: float, major: float, /
+) -> Callable[[float], tuple[float, float]]:
+    """Exact volumes of a ring torus's inner and outer parallel bodies.
+
+    The tube radius moves by epsilon below the reach min(minor, major - minor)
+    (Pappus: 2 pi^2 major (minor -/+ epsilon)^2).
+    """
+    reach = min(minor, major - minor)
+
+    def enclosure(epsilon: float) -> tuple[float, float]:
+        if not 0.0 <= epsilon < reach:
+            raise ValueError(
+                f"The torus enclosure requires 0 <= epsilon < {reach}; got {epsilon}."
+            )
+        return (
+            2.0 * math.pi**2 * major * (minor - epsilon) ** 2,
+            2.0 * math.pi**2 * major * (minor + epsilon) ** 2,
+        )
+
+    return enclosure
+
+
 def _volume_spec(
     source: AnalyticImplicitProfile | NativeImplicitSource,
     /,
@@ -210,17 +255,32 @@ def _volume_case(
     fidelity_levels: int = 1,
     required_genus: int = 0,
     witness: np.ndarray | None = None,
+    enclosure: Callable[[float], tuple[float, float]] | None = None,
+    policy: AdaptiveImplicitSurfacePolicy | None = None,
 ) -> dict[str, object]:
+    """Generate one implicit profile, its fidelity ladder, and metric epochs.
+
+    ``enclosure`` maps a certified mesh-to-source bound epsilon to the exact
+    volumes of the inner and outer parallel bodies at that offset; it is
+    required for a ladder and checked at every level. ``policy`` is the
+    route's discovery policy (root tolerance 1e-10 when omitted).
+    """
     if fidelity_levels < 1:
         raise ValueError("The fidelity ladder must contain at least one level.")
+    if fidelity_levels > 1 and enclosure is None:
+        raise ValueError("A fidelity ladder requires the certified volume enclosure.")
     ladder: list[dict[str, object]] = []
     ladder_errors: list[float] = []
+    fidelity_uppers: list[float] = []
+    enclosure_widths: list[float] = []
     for level in range(fidelity_levels):
         level_tolerance = tolerance * 2.0**-level
         plan = NativeMeshingProvider(
             NativeMeshingOptions(
                 "implicit_adaptive_tetrahedral",
-                implicit_policy=AdaptiveImplicitSurfacePolicy(root_tolerance=1.0e-10),
+                implicit_policy=AdaptiveImplicitSurfacePolicy(root_tolerance=1.0e-10)
+                if policy is None
+                else policy,
             )
         ).plan(
             profile,
@@ -237,21 +297,55 @@ def _volume_case(
             raise RuntimeError(
                 f"{name} fidelity level {level} exceeded the volume tolerance: {level_error}."
             )
-        ladder.append(
-            {
-                "fidelity_m": level_tolerance,
-                "measured_volume_m3": volume,
-                "relative_volume_error": level_error,
-                "accepted": accepted_result_record(result),
-            }
-        )
+        level_record: dict[str, object] = {
+            "fidelity_m": level_tolerance,
+            "measured_volume_m3": volume,
+            "relative_volume_error": level_error,
+        }
+        if enclosure is not None:
+            certificate = (
+                None if result.certification is None else result.certification.fidelity
+            )
+            if certificate is None:
+                raise RuntimeError(
+                    f"{name} fidelity level {level} lacks source-fidelity certification."
+                )
+            # The certified mesh-to-source bound plays the donor's projection
+            # bound: the exact volume must lie in V(r - epsilon) .. V(r + epsilon).
+            epsilon = float(certificate.mesh_to_source_upper)
+            lower, upper = enclosure(epsilon)
+            if not lower <= volume <= upper:
+                raise RuntimeError(
+                    f"{name} fidelity level {level} volume {volume} lies outside its "
+                    f"certified enclosure [{lower}, {upper}] at epsilon {epsilon}."
+                )
+            fidelity_uppers.append(epsilon)
+            enclosure_widths.append(upper - lower)
+            level_record.update(
+                certified_fidelity_upper_m=epsilon,
+                certified_volume_enclosure_m3=[lower, upper],
+                certified_enclosure_width_m3=upper - lower,
+                volume_inside_certified_enclosure=True,
+            )
+        level_record["accepted"] = accepted_result_record(result)
+        ladder.append(level_record)
         if level + 1 < fidelity_levels:
             # The accepted record retains the completed level's evidence; its
             # mesh and discovery are not inputs to the next cold fidelity run.
             del result, plan
-    if any(b >= a for a, b in zip(ladder_errors, ladder_errors[1:])):
+    # The sagitta-centered carrier's volume error is a near cancellation of
+    # outward and inward caps and is not monotone in the tolerance; the ladder
+    # instead requires the certified fidelity bound and the certified volume
+    # enclosure it implies to shrink strictly (docs/plans/native-cad-meshing.md
+    # section 10, "Approved certified implicit volume ladder").
+    fidelity_decreasing = all(b < a for a, b in zip(fidelity_uppers, fidelity_uppers[1:]))
+    enclosure_shrinking = all(
+        b < a for a, b in zip(enclosure_widths, enclosure_widths[1:])
+    )
+    if not (fidelity_decreasing and enclosure_shrinking):
         raise RuntimeError(
-            f"{name} fidelity ladder did not improve physical volume error."
+            f"{name} fidelity ladder did not strictly shrink its certified fidelity "
+            f"bounds {fidelity_uppers} and volume enclosures {enclosure_widths}."
         )
     accepted = accepted_result_record(result)
     measured_volume = float(
@@ -335,6 +429,14 @@ def _volume_case(
         "required_components": required_components,
         "accepted": accepted,
         "fidelity_ladder": ladder,
+        "fidelity_ladder_convergence": {
+            "relative_volume_errors": ladder_errors,
+            "certified_fidelity_uppers_m": fidelity_uppers,
+            "certified_enclosure_widths_m3": enclosure_widths,
+            "certified_fidelity_strictly_decreasing": fidelity_decreasing,
+            "certified_enclosure_strictly_shrinking": enclosure_shrinking,
+            "volume_inside_certified_enclosure_every_level": enclosure is not None,
+        },
     }
     del plan
     if adaptation_rounds:
@@ -533,6 +635,7 @@ def native_implicit_adaptation() -> dict[str, object]:
                 required_components=1,
                 adaptation_rounds=1,
                 witness=np.zeros(3),
+                enclosure=_ball_enclosure(sphere_radius),
             )
         )
     except Exception as error:
@@ -549,6 +652,7 @@ def native_implicit_adaptation() -> dict[str, object]:
                 adaptation_rounds=2,
                 fidelity_levels=3,
                 witness=np.zeros(3),
+                enclosure=_ball_enclosure(sphere_radius),
             )
         )
     except Exception as error:
@@ -581,6 +685,7 @@ def native_implicit_adaptation() -> dict[str, object]:
                 required_genus=1,
                 fidelity_levels=2,
                 witness=torus_center + np.asarray((torus_major, 0.0, 0.0)),
+                enclosure=_ring_torus_enclosure(torus_minor, torus_major),
             )
         )
     except Exception as error:
@@ -595,9 +700,13 @@ def native_implicit_adaptation() -> dict[str, object]:
         feature_id="hidden-two-component-union",
     ).compile()
     domain = np.asarray(((-1.2, -0.8, -0.8), (1.2, 0.8, 0.8)), dtype=np.float64)
+    # A sharp union is a NONSMOOTH field certificate, which adaptive discovery
+    # admits only on explicit request (AdaptiveImplicitSurfacePolicy
+    # .allow_nonsmooth_field); the route reuses this same policy.
     policy = AdaptiveImplicitSurfacePolicy(
         relative_cell_diameter=0.01 / float(np.linalg.norm(domain[1] - domain[0])),
         root_tolerance=1.0e-10,
+        allow_nonsmooth_field=True,
     )
     try:
         discovery = discover_adaptive_implicit_surface(
@@ -621,6 +730,7 @@ def native_implicit_adaptation() -> dict[str, object]:
                 tolerance=0.02,
                 required_components=2,
                 discovery=discovery,
+                policy=policy,
             )
         )
     except Exception as error:

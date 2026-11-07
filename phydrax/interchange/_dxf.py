@@ -42,6 +42,7 @@ from ..geometry.brep._constructors import (
     ProfilePlane,
     ProfileSegment,
 )
+from ..geometry.brep._intersection import NativePeriodEndpoint
 from ..geometry.brep._patches import BSplineCurve, CircleCurve, EllipseCurve
 from ..typing import checked, parse
 from ..units import (
@@ -571,51 +572,20 @@ def _spline(groups: _Groups, label: str) -> list[_Edge]:
     return [(points[0], points[-1], curve, label)]
 
 
-def _quadrant(angle: float, *, degrees: bool) -> tuple[float, float] | None:
-    step = 90.0 if degrees else math.pi / 2
-    quotient = angle / step
-    if quotient != int(quotient):
+def _quadrant(degrees: float) -> tuple[float, float] | None:
+    """Exact axis direction when ``degrees`` is exactly a multiple of 90.
+
+    The decision is exact in rationals. Radian multiples ``k pi / 2`` are
+    irrational for ``k != 0``, so no nonzero binary64 radian denotes an axis
+    direction; radian conics keep their analytic carriers instead.
+    """
+    quotient = Fraction(degrees) / 90
+    if quotient.denominator != 1:
         return None
-    return ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0))[int(quotient) % 4]
+    return ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0))[quotient.numerator % 4]
 
 
-def _ellipse_quarters(
-    center: _Point, major: _Point, ratio: float, first: int, quarters: int
-) -> BSplineCurve:
-    cx, cy = map(Fraction, center)
-    ux, uy = map(Fraction, major)
-    vx, vy = -uy * Fraction(ratio), ux * Fraction(ratio)
-    axes = (
-        (Fraction(1), Fraction(0)),
-        (Fraction(0), Fraction(1)),
-        (Fraction(-1), Fraction(0)),
-        (Fraction(0), Fraction(-1)),
-    )
-    controls: list[_Point] = []
-    weights: list[float] = []
-    for i in range(quarters):
-        a, b = axes[(first + i) % 4], axes[(first + i + 1) % 4]
-        raw = (a, (a[0] + b[0], a[1] + b[1]), b)
-        mapped = [
-            (_binary(cx + x * ux + y * vx), _binary(cy + x * uy + y * vy)) for x, y in raw
-        ]
-        factor = float(2**i)
-        if not controls:
-            controls.append(mapped[0])
-            weights.append(factor)
-        controls.extend(mapped[1:])
-        weights.extend((factor, 2 * factor))
-    knots = (
-        [0.0] * 3
-        + [float(i) for i in range(1, quarters) for _ in range(2)]
-        + [float(quarters)] * 3
-    )
-    return BSplineCurve(controls, weights, knots, 2)
-
-
-def _conic_angles(
-    groups: _Groups, degrees: bool
-) -> tuple[float, float, _Point | None, _Point | None]:
+def _conic_angles(groups: _Groups, degrees: bool) -> tuple[float, float]:
     first = _number(groups, 50 if degrees else 41)
     last = _number(groups, 51 if degrees else 42)
     period = 360.0 if degrees else 2 * math.pi
@@ -625,8 +595,7 @@ def _conic_angles(
         )
     if last <= first:
         last += period
-    a, b = _quadrant(first, degrees=degrees), _quadrant(last, degrees=degrees)
-    return first, last, a, b
+    return first, last
 
 
 def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
@@ -641,7 +610,7 @@ def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
         start = (_binary(Fraction(center[0]) + Fraction(radius)), center[1])
         return [(start, start, ProfileArc(center), label)]
     degrees = name == "ARC"
-    first, last, a, b = _conic_angles(groups, degrees)
+    first, last = _conic_angles(groups, degrees)
     if degrees:
         radius = _number(groups, 40)
         if radius <= 0.0:
@@ -649,6 +618,7 @@ def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
                 "DxfSource.geometry must satisfy its declared planar source contract; got "
                 + "DXF arc radius must be positive."
             )
+        a, b = _quadrant(first), _quadrant(last)
         if a is not None and b is not None:
             points = [
                 (
@@ -669,22 +639,74 @@ def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
                 "DxfSource.geometry must satisfy its declared planar source contract; got "
                 + "DXF ellipse requires nonzero major axis and 0 < ratio <= 1."
             )
-        if a is not None and b is not None:
-            spline = _ellipse_quarters(
-                center,
-                major,
-                ratio,
-                int(first / (math.pi / 2)),
-                int((last - first) / (math.pi / 2)),
-            )
-            points = np.asarray(spline.control_points)
-            return [(tuple(points[0]), tuple(points[-1]), spline, label)]
         axis = (major[0] / length, major[1] / length)
         curve = EllipseCurve(center, axis, (-axis[1], axis[0]), length, ratio * length)
     points = np.asarray(curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64)))
     return [
         (tuple(points[0]), tuple(points[1]), ProfileCurveUse(curve, first, last), label)
     ]
+
+
+def _closed_ellipse(groups: _Groups, edge: _Edge, limit: float) -> ProfileLoop | None:
+    """Closed periodic carrier for the DXF full-ellipse parameter convention.
+
+    The one-vertex loop closes on the carrier's exact native full turn, so no
+    junction is formed. Its vertex is the correctly rounded exact carrier point
+    at parameter 0; a nonzero rounding displacement needs a declared gap.
+    """
+    first, last = _number(groups, 41), _number(groups, 42)
+    # DXF writes a full ellipse as 0 .. fl(2 pi). Equality is bit-exact for the
+    # nonzero end; the sign test excludes -0.0 from the start.
+    if not (first == 0.0 and math.copysign(1.0, first) > 0.0 and last == 2 * math.pi):
+        return None
+    segment = edge[2]
+    if not isinstance(segment, ProfileCurveUse) or not isinstance(
+        segment.curve, EllipseCurve
+    ):
+        raise TypeError("A decoded DXF ellipse must be an analytic ellipse use.")
+    curve = segment.curve
+    center = np.asarray(curve.center).tolist()
+    axis = np.asarray(curve.first_axis).tolist()
+    radius = Fraction(float(np.asarray(curve.first_radius)))
+    vertex = (
+        float(Fraction(center[0]) + radius * Fraction(axis[0])),
+        float(Fraction(center[1]) + radius * Fraction(axis[1])),
+    )
+    loop = ProfileLoop((vertex,), (segment,))
+    gaps = _segment_gaps(loop, 0, full_turn=True)
+    if max(gaps) > limit:
+        raise _SourceRefusal(
+            "DxfSource.junctions must satisfy declared loop closure; got "
+            + f"DXF closed ellipse vertex gap {max(gaps):.17g} exceeds declared maximum_junction_gap {limit:.17g}.",
+            endpoints=(vertex,),
+            gaps=(gaps,),
+        )
+    return loop
+
+
+def _segment_gaps(
+    loop: ProfileLoop, index: int, *, full_turn: bool
+) -> tuple[float, float]:
+    segment = loop.segments[index]
+    if not isinstance(segment, ProfileCurveUse):
+        return 0.0, 0.0
+    # A closed periodic carrier ends on its exact native full turn.
+    rational = Fraction(segment.first)
+    roots = (
+        (
+            NativePeriodEndpoint(segment.curve, rational=rational, turns=0),
+            NativePeriodEndpoint(segment.curve, rational=rational, turns=1),
+        )
+        if full_turn
+        else (None, None)
+    )
+    vertices = (loop.vertices[index], loop.vertices[(index + 1) % len(loop.vertices)])
+    return endpoint_gap_bounds(
+        segment.curve,
+        (segment.first, segment.last),
+        np.asarray(vertices, dtype=np.float64),
+        endpoint_roots=roots,
+    )
 
 
 def _decode_entity(name: str, groups: _Groups, label: str) -> list[_Edge]:
@@ -841,23 +863,17 @@ def _loops(edges: list[_Edge], policy: DxfImportPolicy) -> tuple[ProfileLoop, ..
     return tuple(loops)
 
 
-def _profile(loops: tuple[ProfileLoop, ...]) -> PlanarProfile:
+def _profile(
+    joined: tuple[ProfileLoop, ...], closed: tuple[ProfileLoop, ...]
+) -> PlanarProfile:
+    loops = joined + closed
     rows = tuple(
         tuple(
-            endpoint_gap_bounds(
-                segment.curve,
-                (segment.first, segment.last),
-                np.asarray(
-                    (loop.vertices[i], loop.vertices[(i + 1) % len(loop.vertices)]),
-                    dtype=np.float64,
-                ),
-            )
-            if isinstance(segment, ProfileCurveUse)
-            else (0.0, 0.0)
-            for i, segment in enumerate(loop.segments)
+            _segment_gaps(loop, index, full_turn=False)
+            for index in range(len(loop.segments))
         )
-        for loop in loops
-    )
+        for loop in joined
+    ) + tuple((_segment_gaps(loop, 0, full_turn=True),) for loop in closed)
     gap_rows = rows if any(max(row) > 0.0 for loop in rows for row in loop) else None
     failures: list[str] = []
     for index, outer in enumerate(loops):
@@ -898,19 +914,28 @@ def _decode_dxf_source(
         labelled = _classify_entities(entities, refused, ignored)
         unit = _unit(header, source_length_unit)
         edges: list[_Edge] = []
+        closed: list[ProfileLoop] = []
         for name, groups, label in labelled:
             if name in _ANNOTATIONS:
                 continue
-            edges.extend(_decode_entity(name, groups, label))
+            decoded = _decode_entity(name, groups, label)
+            closed_loop = (
+                _closed_ellipse(groups, decoded[0], policy.maximum_junction_gap)
+                if name == "ELLIPSE"
+                else None
+            )
+            if closed_loop is None:
+                edges.extend(decoded)
+            else:
+                closed.append(closed_loop)
             refused.remove(label)
             consumed.append(label)
-        if not edges:
+        if not edges and not closed:
             raise _SourceRefusal(
                 "DxfSource.geometry must satisfy its declared planar source contract; got "
                 + "DXF contains no supported profile geometry."
             )
-        loops = _loops(edges, policy)
-        profile = _profile(loops)
+        profile = _profile(_loops(edges, policy), tuple(closed))
     except ValueError as error:
         endpoints = error.endpoints if isinstance(error, _SourceRefusal) else ()
         report = _report(
@@ -1204,6 +1229,8 @@ def _write_conic_use(segment: ProfileCurveUse) -> str:
         ]
     else:
         major, ratio = _ellipse_encoding(curve)
+        # A full turn is written as the DXF full-ellipse convention 0 .. fl(2 pi).
+        full_turn = first == 0.0 and last == 2 * math.pi
         groups = [
             (0, "ELLIPSE"),
             (10, float(center[0])),
@@ -1211,8 +1238,8 @@ def _write_conic_use(segment: ProfileCurveUse) -> str:
             (11, float(major[0])),
             (21, float(major[1])),
             (40, ratio),
-            (41, first % (2 * math.pi)),
-            (42, last % (2 * math.pi)),
+            (41, 0.0 if full_turn else first % (2 * math.pi)),
+            (42, last if full_turn else last % (2 * math.pi)),
         ]
     entity_name = groups[0][1]
     if not isinstance(entity_name, str):

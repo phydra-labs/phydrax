@@ -9865,7 +9865,9 @@ def _coaxial_revolution_line_intersection(
                 0.25 * float(profile_b[1] - profile_b[0]),
             ),
         )
-        angle_margin = policy.relative_resolution * max(1.0, abs(theta_upper), abs(phase))
+        resolution_margin = policy.relative_resolution * max(
+            1.0, abs(theta_upper), abs(phase)
+        )
         initial = [
             (
                 theta_lower + (theta_upper - theta_lower) * index / 4.0,
@@ -9879,6 +9881,11 @@ def _coaxial_revolution_line_intersection(
         ] = []
         while pending:
             lower_angle, upper_angle = pending.pop()
+            # The second angle follows the chart angle with unit slope, so a
+            # Krawczyk image wider than the chart by O(width * profile radius)
+            # fits a margin proportional to the chart, as in an angular branch;
+            # a fixed resolution margin would force charts of that order.
+            angle_margin = max(0.25 * (upper_angle - lower_angle), resolution_margin)
             start = np.asarray(
                 (
                     lower_angle,

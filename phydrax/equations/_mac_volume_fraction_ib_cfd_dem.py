@@ -162,31 +162,33 @@ class MACSDFCutFractionPlan(StrictModule, NonTrainableState):
             indexing="ij",
         )
         widths = np.stack(width_mesh, axis=-1).reshape(-1, dimension)
-        offsets = np.stack(
+        steps = np.stack(
             np.meshgrid(
                 *(np.arange(divisions, dtype=np.float64) for _ in axes), indexing="ij"
             ),
             axis=-1,
         ).reshape(boxes, dimension)
-        offsets = (offsets + 0.5) / divisions - 0.5
+        offsets = (steps + 0.5) / divisions - 0.5
         route = np.arange(capacity, dtype=np.int64)
         body_indices = route // (cell_count * boxes)
         cells = (route // boxes) % cell_count
         box_indices = route % boxes
         points = centers[cells] + widths[cells] * offsets[box_indices]
-        dtype = operators.pressure_space.dtype
-        quantized_points = np.asarray(points, dtype=np.dtype(dtype))
-        halfwidth = widths[cells] / (2.0 * divisions)
-        halfwidth = halfwidth + np.abs(quantized_points.astype(np.float64) - points)
-        radii = np.nextafter(np.sqrt(np.sum(halfwidth**2, axis=-1)), np.inf)
-        canonical_radii = jnp.asarray(radii, dtype=dtype)
+        dtype = np.dtype(operators.pressure_space.dtype)
+        quantized_points = np.asarray(points, dtype=dtype)
+        radii = _subbox_query_radii(
+            quantized_points.astype(np.float64),
+            centers[cells],
+            widths[cells],
+            steps[box_indices],
+            divisions,
+            dtype,
+        )
         self.operators = operators
         self.shape_query = shape_query
         self.query_body_indices = jnp.asarray(body_indices, dtype=jnp.int32)
         self.query_points = jnp.asarray(quantized_points, dtype=dtype)
-        self.query_radii = jnp.nextafter(
-            canonical_radii, jnp.asarray(jnp.inf, dtype=dtype)
-        )
+        self.query_radii = jnp.asarray(radii, dtype=dtype)
         self.subdivisions = divisions
         self.maximum_unresolved_fraction = maximum
         self.maximum_queries = capacity
@@ -291,12 +293,17 @@ class MACSDFCutFractionPlan(StrictModule, NonTrainableState):
                 & (query.evaluation_error >= 0.0)
             )
             reliable = query.successful & jnp.all(~enabled | lane_valid)
-            enclosure = query.lipschitz_bound * self.query_radii + query.evaluation_error
+            certified_solid, certified_fluid = _certified_signs(
+                query.value,
+                query.lipschitz_bound,
+                self.query_radii,
+                query.evaluation_error,
+            )
             solid = solid.at[: self.maximum_queries].set(
-                enabled & lane_valid & (query.value + enclosure < 0.0)
+                enabled & lane_valid & certified_solid
             )
             fluid = fluid.at[: self.maximum_queries].set(
-                enabled & lane_valid & (query.value - enclosure > 0.0)
+                enabled & lane_valid & certified_fluid
             )
         solid = solid.reshape(shape) & active_boxes
         fluid = fluid.reshape(shape) | ~active_boxes
@@ -328,6 +335,67 @@ class MACSDFCutFractionPlan(StrictModule, NonTrainableState):
             successful,
             self.plan_id,
         )
+
+
+def _subbox_query_radii(
+    points: np.ndarray,
+    centers: np.ndarray,
+    widths: np.ndarray,
+    steps: np.ndarray,
+    divisions: int,
+    dtype: np.dtype,
+    /,
+) -> np.ndarray:
+    """Upper bounds in ``dtype`` on each point's farthest exact subbox corner.
+
+    On each axis the subbox is exactly ``center + width * [2k - n, 2k + 2 - n] / 2n``
+    for the binary64 center and width. Host NumPy rounds every operation to nearest
+    without contraction and with gradual underflow, so one outward step per
+    operation encloses it. Radii stay normal, as denormals-are-zero devices read
+    subnormal radii as zero.
+    """
+
+    def down(value: np.ndarray) -> np.ndarray:
+        return np.nextafter(value, -np.inf)
+
+    def up(value: np.ndarray) -> np.ndarray:
+        return np.nextafter(value, np.inf)
+
+    scale = 2.0 * divisions
+    lower = down(centers + down(down(widths * (2.0 * steps - divisions)) / scale))
+    upper = up(centers + up(up(widths * (2.0 * steps + 2.0 - divisions)) / scale))
+    reach = np.maximum(up(points - lower), up(upper - points))
+    total = np.zeros(points.shape[0], dtype=np.float64)
+    for axis in range(points.shape[1]):
+        total = up(total + up(reach[:, axis] * reach[:, axis]))
+    radii = up(np.sqrt(total))
+    cast = radii.astype(dtype)
+    cast = np.where(
+        cast.astype(np.float64) < radii, np.nextafter(cast, dtype.type(np.inf)), cast
+    )
+    return np.maximum(cast, np.finfo(dtype).tiny)
+
+
+def _certified_signs(
+    value: Array, lipschitz: Array, radius: Array, error: Array, /
+) -> tuple[Array, Array]:
+    """Strict signs of ``value ± (lipschitz * radius + error)`` under device rounding.
+
+    Each operation returns ``x (1 + delta) + eta`` with ``|delta| <= u`` and
+    ``0 <= eta < tiny``: flush-to-zero results and denormals-are-zero inputs lose
+    less than ``tiny``. Raising the Lipschitz bound to ``tiny`` keeps a zeroed
+    subnormal factor from scaling that loss by the radius. The barrier keeps the
+    product a separate rounded epoch; contraction elsewhere only removes roundings.
+    For nonnegative data the exact sum is then at most ``s (1 + 3u) + 3 tiny``,
+    which the pad ``8 u s + 8 tiny`` dominates with its own roundings. Comparisons
+    are exact, and a denormal value reads as zero, which no bound above ``tiny``
+    certifies.
+    """
+    info = jnp.finfo(radius.dtype)
+    product = jax.lax.optimization_barrier(jnp.maximum(lipschitz, info.tiny) * radius)
+    total = product + error
+    bound = total + (4.0 * info.eps * total + 8.0 * info.tiny)
+    return value < -bound, value > bound
 
 
 def _enabled_shape_query(

@@ -18,7 +18,13 @@ from phydrax.discretization._coordinate_enclosure import axes
 from phydrax.discretization._hexahedral import HexahedralConnectivity
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import lagrange_element
-from phydrax.meshing._hex_generation import extract_volume_hexes
+from phydrax.meshing._hex_frame_map import prepare_source_hex_frame
+from phydrax.meshing._hex_frame_records import PreparedSourceHexFrame
+from phydrax.meshing._hex_generation import (
+    _mapped_root_quality,
+    extract_volume_hexes,
+    mapped_source_lipschitz_bound,
+)
 
 
 def _unit_tetrahedron() -> CellMesh:
@@ -79,6 +85,89 @@ def test_mapped_hex_quality_polynomial_and_rational_chart_agree() -> None:
         np.all(np.isfinite(values)) and np.all(values > 0)
         for values in polynomial_quality
     )
+
+
+def test_mapped_root_mean_ratio_lower_bound_holds_on_a_flat_affine_root() -> None:
+    # WIN-5 C7: ``nextafter(det ** (2/3), -inf)`` exceeds ``det**(2/3)`` near
+    # det = 1e-12 because fl(2/3) < 2/3; the published mean ratio escaped.
+    flat = float.fromhex("0x1.19799812dea16p-40")
+    reference = np.asarray(
+        reference_cell_topology("hexahedron").vertices, dtype=np.float64
+    )
+    mesh = CellMesh(
+        reference,
+        (
+            CellBlock(
+                "cells",
+                "hexahedron",
+                np.arange(8)[None, :],
+                global_ids=np.asarray((7,), dtype=np.int64),
+            ),
+        ),
+    )
+    root = lagrange_element("hexahedron", 1)
+    coefficients = np.asarray(root.reference_nodes, dtype=np.float64).copy()
+    coefficients[:, 0] *= flat
+    element = PerCellRestrictedCellGeometryElement(
+        root, "hexahedron", (7,), (3,), (axes(3),)
+    )
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(coefficients.shape[0], dtype=np.int64)[None, :]},
+        coefficients,
+    )
+    _, mean, _ = _mapped_root_quality(mesh, geometry)
+    # Jacobian diag(flat, 1, 1): mean ratio 3 flat**(2/3) / (flat**2 + 2), and
+    # ``m <= 3 d**(2/3) / f`` iff ``(m f / 3)**3 <= d**2`` for positive values.
+    determinant = Fraction(flat)
+    frobenius = determinant**2 + 2
+    published = Fraction(float(mean[0]))
+    assert published > 0
+    assert (published * frobenius / 3) ** 3 <= determinant**2
+
+
+def test_mapped_source_lipschitz_bound_encloses_the_recorded_axis_bounds() -> None:
+    # WIN-5 C5: the recorded per-axis bounds are exactly the counterexample
+    # vector, whose one-pad norm 0x1.70ce94b6672e0p+2 is below the exact norm.
+    axis_bounds = tuple(
+        float.fromhex(value)
+        for value in (
+            "0x1.43d55519530b8p-6",
+            "0x1.70abf9fc8c4c0p+2",
+            "0x1.3cecce40c6800p-3",
+        )
+    )
+    reference = np.asarray(
+        reference_cell_topology("hexahedron").vertices, dtype=np.float64
+    )
+    mesh = CellMesh(reference, (CellBlock("cells", "hexahedron", np.arange(8)[None, :]),))
+    element = lagrange_element("hexahedron", 1)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    frame = prepare_source_hex_frame(
+        mesh,
+        CellGeometrySpec(
+            {"cells": element},
+            {"cells": np.arange(nodes.shape[0], dtype=np.int64)[None, :]},
+            nodes,
+        ),
+    )
+    recorded = PreparedSourceHexFrame(
+        frame.reference_mesh,
+        frame.geometry,
+        frame.root_cells,
+        frame.root_block_indices,
+        frame.root_block_rows,
+        frame.root_cell_ids,
+        frame.corner_jacobians,
+        frame.center_frames,
+        np.asarray((axis_bounds,), dtype=np.float64),
+        frame.face_connections,
+        frame.face_permutations,
+        frame.boundary_faces,
+    )
+    exact = sum((Fraction(value) ** 2 for value in axis_bounds), Fraction(0))
+    bound = Fraction(mapped_source_lipschitz_bound(recorded))
+    assert exact <= bound * bound <= exact * (1 + Fraction(1, 2**47))
 
 
 def test_tetrahedral_dual_is_an_explicit_positive_hex_conversion() -> None:

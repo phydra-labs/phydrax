@@ -4334,6 +4334,7 @@ def _write_exact_tensor_quad_fidelity(directory: Path, /) -> None:
             {
                 "certificate_id": certificate.certificate_id,
                 "quality_id": result.quality.report_id,
+                "gate_thresholds": list(result.quality.gate_thresholds),
                 "measure_exact": result.quality.evaluation.measure_exact,
             }
         )
@@ -4363,8 +4364,8 @@ def _read_exact_tensor_quad_fidelity(path: Path, expected: dict[str, object], /)
     from phydrax.meshing._quality import (
         _with_certified_mapped_measures,
         CellQualityEvaluation,
-        CellQualityReport,
         evaluate_cell_quality,
+        summarize_cell_quality,
     )
 
     def rebuild_quality(value: object) -> CellQualityEvaluation:
@@ -4386,7 +4387,19 @@ def _read_exact_tensor_quad_fidelity(path: Path, expected: dict[str, object], /)
         restore=rebuild_quality,
         limits=None,
     )
-    quality = CellQualityReport(evaluation)
+    stored_thresholds = expected["gate_thresholds"]
+    if not isinstance(stored_thresholds, list) or len(stored_thresholds) != 3:
+        raise TypeError("Expected quality gate thresholds must be a three-item list.")
+    minimum_measure, minimum_mean_ratio, maximum_aspect_ratio = (
+        float(value) for value in stored_thresholds
+    )
+    quality = summarize_cell_quality(
+        certificate.binding.mesh,
+        evaluation,
+        minimum_measure=minimum_measure,
+        minimum_mean_ratio=minimum_mean_ratio,
+        maximum_aspect_ratio=maximum_aspect_ratio,
+    )
     if (
         quality.report_id != expected["quality_id"]
         or quality.evaluation.measure_exact is not expected["measure_exact"]
@@ -4397,6 +4410,7 @@ def _read_exact_tensor_quad_fidelity(path: Path, expected: dict[str, object], /)
             {
                 "certificate_id": certificate.certificate_id,
                 "quality_id": quality.report_id,
+                "gate_thresholds": list(quality.gate_thresholds),
                 "measure_exact": quality.evaluation.measure_exact,
             }
         )
@@ -8624,7 +8638,11 @@ def _source_coverage_archive_fixture() -> tuple[
         surface_source=organization.surface_source,
         region_boundary_evidence=organization.region_boundary_evidence,
         planar_embedding=construction.planar_embedding,
-        embedding=request.global_embedding,
+        embedding=(
+            None
+            if construction.validated_global_embedding is None
+            else construction.validated_global_embedding.certificate
+        ),
     )
     if result.certification is None:
         raise ValueError("Restricted coverage fixture lost computed certification.")
@@ -14218,7 +14236,10 @@ if __name__ == "__main__":
     if operation == "write":
         _write(archive_directory)
     elif operation == "read":
-        _read(archive_directory, json.loads(sys.argv[3]))
+        # The cold-restore oracle exceeds the per-argument process limit; it is a file.
+        _read(
+            archive_directory, json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+        )
     elif operation == "read-continuation":
         _read_continuation(archive_directory, json.loads(sys.argv[3]))
     elif operation == "read-implicit":

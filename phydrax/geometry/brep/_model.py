@@ -7,7 +7,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from fractions import Fraction
-from math import hypot
 from numbers import Integral, Real
 from typing import Any, final, TYPE_CHECKING
 
@@ -26,6 +25,7 @@ from ...discretization._exact_algebraic_geometry import ExactScalar
 from ...discretization._surface_chart_records import SurfaceChartWitness
 from ...typing import checked, ConvertibleToArray
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas, TrimDomain
+from .._rational import binary64_norm_upper
 from .._source_fidelity_certificate import SourceFidelityCertificate
 from ._assembly import (
     BRepAffinePlacement,
@@ -1140,7 +1140,7 @@ def _validate_root_bindings(
         coordinate_error = np.max(
             np.nextafter(np.abs(enclosure - points[vertex]), np.inf), axis=0
         )
-        error = float(np.nextafter(hypot(*coordinate_error), np.inf))
+        error = float(binary64_norm_upper(coordinate_error))
         if not np.isfinite(error):
             raise ValueError("A vertex root has no finite numeric realization bound.")
         errors[vertex] = error
@@ -1573,6 +1573,21 @@ def _validate_root_bindings(
                     raise ValueError(
                         "A conic endpoint exact parameter must equal its source edge endpoint."
                     )
+                if (
+                    coedge is None
+                    and root.parameter_exact is not None
+                    and isinstance(carrier, (CircleCurve, EllipseCurve))
+                ):
+                    # A nonzero rational phase has a transcendental point.
+                    from ._intersection_curve import exact_curve_parameter_point
+
+                    if (
+                        exact_curve_parameter_point(carrier, root.parameter_exact)
+                        != root.point_exact
+                    ):
+                        raise ValueError(
+                            "A conic edge endpoint exact parameter must reproduce its exact point."
+                        )
                 if (
                     coedge is None
                     and conic_endpoint_curve_point(

@@ -691,15 +691,38 @@ def _volume_block_pieces(
     return _BlockPieces(rows, coordinates[tetrahedra], None, invalid, uncertain)
 
 
+def _block_family(kind: str, /) -> str:
+    """Name the standard family whose canonical reference order ``kind`` shares.
+
+    Dimension-qualified kinds (for example ``simplex:3``) are admitted only when
+    their reference vertices and entities are exactly those of the family that
+    the decompositions below assume.
+    """
+    if kind in ("polygon", "polyhedron"):
+        return kind
+    from ..discretization._reference_cell import reference_cell_topology
+
+    topology = reference_cell_topology(kind)
+    family = topology.family
+    standard = reference_cell_topology(family)
+    if (topology.vertices, topology.entities) != (standard.vertices, standard.entities):
+        raise ValueError(
+            f"Unsupported cell kind {kind!r}: its reference order differs from "
+            f"{family!r}."
+        )
+    return family
+
+
 def _block_pieces(
     mesh: CellMesh, block: Any, first_cell: int, coordinates: np.ndarray, mode: Any, /
 ) -> _BlockPieces:
     cells = np.asarray(block.vertices, dtype=np.int64)
-    match block.cell_kind:
+    family = _block_family(block.cell_kind)
+    match family:
         case "triangle" | "quadrilateral" | "polygon":
             return _polygon_block_pieces(coordinates, cells, mode)
         case "tetrahedron" | "hexahedron" | "prism" | "pyramid":
-            triangles = _standard_face_triangles(cells, block.cell_kind)
+            triangles = _standard_face_triangles(cells, family)
             triangle_valid = np.ones(triangles.shape[:2], dtype=np.bool_)
         case "polyhedron":
             from ..discretization._cell_complex import PolyhedralConnectivity

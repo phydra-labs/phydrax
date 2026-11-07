@@ -3,6 +3,48 @@
 ## Unreleased
 
 ### Added
+- Implicit root charts (`implicit_surface`, `implicit_adaptive_tetrahedral`)
+  for non-smooth sources without an analytic profile: ellipsoids, sharp CSG
+  unions and other piecewise fields. `PreparedIntervalFunction.evaluate_branches`
+  returns, from the enclosure's own evaluation, per-box proofs that the traced
+  map is smooth (every branch decided) or continuous. Faces whose chart proof
+  stays on proved-smooth boxes keep interval root charts. Faces that meet a
+  crease take a certified root-witness distance bound, named
+  `ImplicitRootChartEvidence.bound == "root_witness"`. Fidelity is the maximum
+  over both kinds of face; coverage of crease faces stays unresolved.
+- `TrigonometricLevelSet` nodal TPMS sources with certified critical levels:
+  `certify_trigonometric_critical_levels(table, value_resolution=...)` takes a
+  declared cover resolution, and `TrigonometricCriticalLevels.separate(level)`
+  refines only the boxes meeting a requested level until it is separated, a
+  Krawczyk critical point or exact quarter-lattice critical value is proved, or
+  binary64 resolution is reached; `TrigonometricSingularLevelError` carries
+  that separation evidence.
+- Periodic quotient discovery of trigonometric (TPMS) level sets through
+  `discover_periodic_trigonometric_surface`, with quotient surface topology
+  (components, Euler characteristic, genus) and `PeriodicLatticeMetrics`
+  (enclosed solid fraction and porosity, measured area). The quotient region
+  is filled as a certified periodic tetrahedral mesh whose paired cell-face
+  caps are exact lattice translates (interior cap edges are authored PLC
+  segments) and which adapts through the orbit-locked periodic metric owners.
+- Periodic cell homogenization: `PeriodicCellProblem` solves effective
+  conductivity (three unit gradients) and linear elasticity (six unit Voigt
+  strains) on a periodic tetrahedral quotient mesh. Unit cases are
+  `PeriodicHomogenizationCase`s. P1 fluctuations live on the vertex orbits
+  (`PeriodicSimplexSpace`); each connected component is gauged by one pinned
+  DOF. The supernodal Cholesky is factored once for all cases.
+  `PeriodicHomogenizationResult` carries Hill–Mandel audits, the energy-form
+  and symmetry cross-checks, and a measured (not imposed) cubic-symmetry
+  defect.
+- Fixed-topology lattice design through `prepare_periodic_implicit_realization`.
+  It takes the certified periodic fill, refuses a fill discovered from another
+  source, and derives its projection root tolerance from the fill's recorded
+  contour root-error bound.
+  Level, sheet half-width and cell scale are `DesignState` parameters. The
+  realization gives JAX sensitivities of the volume fraction and of the
+  homogenized tensors (`PeriodicCellProblem.solve_realization`). A certified
+  critical-gap exit, sign-pattern change, inverted cell or projection failure
+  is a status event: it poisons derivatives, and
+  `require_sensitivities()` raises `PeriodicImplicitRealizationEventError`.
 - Registered T-spline CAD-to-analysis qualification now covers nonconstant
   weighted-field prolongation, fixed-route derivative oracles, manufactured
   surface Poisson analysis, and independent-process archive continuation.
@@ -74,6 +116,54 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral metric adaptation reuses host topology, metric and
+  boundary tables per mesh snapshot, builds topology with NumPy grouping,
+  caches replacement proposals until a commit touches their neighborhood,
+  batches ring-triangulation evaluation, and evaluates relocation carrier
+  quantization in exact integer arithmetic. Results are bit-identical; the
+  torus epoch replay runs about 2× faster and graded box cases 1.5–2× faster.
+  Periodic tetrahedral metric splits accept `simplex:3` blocks exactly like
+  `tetrahedron` blocks.
+- `CellMeshAuditReport` stores the `CellMeshAuditPolicy` that decided it, in
+  place of the free-standing `policy_id` field; `policy_id` is now a property
+  of the stored policy. `report_id` is unchanged because it already bound the
+  policy identity. The audit report's PyTree and archive representation
+  change: archives holding audit reports must be rewritten, with no
+  compatibility reads. Restore rebuilds the stored policy and refuses one that
+  does not reproduce its identity.
+- Cell-quality identities are platform independent. `CellQualityReport.report_id`
+  hashes only the mesh, the evaluation request, the gate thresholds and the
+  exactly decided failing cell IDs of each gate; the sampled XLA quality arrays
+  and float summaries remain unchanged diagnostics outside identity. The audit
+  `minimum_measure`, `minimum_mean_ratio` and `maximum_aspect_ratio` gates are
+  decided exactly on the binary64 coordinates (outward-rounded screen with an
+  exact rational fallback; algebraic ideal corners for polygons) instead of on
+  the sampled floats. `summarize_cell_quality` now takes the mesh and the gate
+  thresholds: `summarize_cell_quality(mesh, evaluation, *, minimum_measure=0.0,
+  minimum_mean_ratio=0.0, maximum_aspect_ratio=1e300)`. Quality report, audit,
+  certification and meshing result identities change once; stored quality
+  reports without the decided gate fields no longer restore.
+- Balanced cut-cell and orthogonal-grid hexahedral admissions are decided
+  exactly on the binary64 coordinates, so a stored cut map replays with the
+  same decisions on every platform. The direct-dual topology check, the
+  relocation trigger, the relocated-candidate check and the final whole-cell
+  schedule (minimum corner scaled Jacobian, minimum corner mean ratio, maximum
+  edge aspect ratio, positive corners and measure) use the outward-rounded
+  screen with an exact rational fallback; the relocation trigger decides the
+  64-eps chart margin on the exact degree-(2, 2, 2) Bernstein controls, and a
+  relocated candidate must also keep that margin. Restoring a cut map no longer
+  replays the relocation optimizer: when the exact trigger fires, the stored
+  node images are evidence. Each movable node must be an exact convex
+  combination of its authored source support, the result must pass the exact
+  admission, and fixed nodes must equal the exact construction bit for bit, so a
+  relocated result restores on every platform. The
+  sampled XLA arrays stay diagnostics. The audit `geometry_corner_binding`
+  issue certifies `|c - x| <= 2^-46 * scale` exactly for the bound geometry's
+  exact corner image `c` (vertex-owned nodal coefficients, or the exact
+  coordinate-map evaluation) instead of a float `allclose` on tabulated bases;
+  elements without an exact corner image report `unsupported_geometry_element`.
+  Identities change only where an exact decision differs from the former
+  float decision.
 - `AdaptiveImplicitSurfacePolicy.minimum_face_area` is removed. A contour
   triangle is degenerate only when its orientation cannot be certified against
   the root error bounds, so tiny valid corner-cut faces are no longer refused by
@@ -83,6 +173,23 @@
   that centers vertices within the fidelity band before short-edge collapse, so
   carrier size statistics reach their requested window. Envelope, layer, design
   and CAD surface routes do not request the pass and keep their outputs.
+- The adaptive implicit volume route reads a hard uniform size h as the
+  restricted implicit volume did: the PLC fill refines to circumradius h, with
+  no √6/4 edge-length conversion and no half-maximum radius cap. Compliance
+  bounds every tetrahedron edge by the maximum size widened by the compliance
+  tolerance on that maximum (2.25 h for the authored 1.5 h maximum), recorded as
+  `maximum_cell_edge`. `generate_plc_volume` takes the route-declared, closed
+  `size_convention` (`FillSizeConvention`: `"edge-length"` by default, or
+  `"circumradius"`). A non-default convention joins the fill stage identity, so
+  PLC outputs and identities are unchanged. Implicit volume results change
+  once: the saved torus carrier fills with 1766 instead of 5956 cells, and the
+  first metric epoch refines.
+- The implicit qualification fidelity ladder no longer requires the exact
+  volume error to fall strictly. The sagitta-centred carrier's error is a
+  near-cancellation of outward and inward caps and is not monotone in the
+  tolerance. Every level must instead hold the exact volume inside the certified
+  enclosure V(r ± ε) at its certified mesh-to-source bound ε. Both ε and the
+  enclosure width must strictly shrink, and receipts record them.
 - Selected periodic-power construction avoids repeated exact work without
   changing its outputs. Exact power-vertex resolution checks the required plane
   equality before the global minimum scan and reuses already-admitted exact
@@ -103,8 +210,221 @@
   call. Exact spline source bases are cached by full exact content in a bounded
   128-entry table. A curved-quarter cold read drops from about 66 s to 43 s
   with identical IDs.
+- Refining a PLC mesh whose boundary vertices are rounded source points keeps
+  exactly nested refinement. A created boundary vertex keeps its nested
+  binary64 carrier; its exact source point is the stencil combination of its
+  parents' source points in their lowest shared chart (segment before
+  triangle), at the nearest admissible binary64 parameters. The new required
+  `PlcSourcePointWitness.vertex_deviations` bank records an outward-rounded
+  bound on each carrier's distance to its source point (parent bounds weighted
+  by the stencil, plus the carrier and parameter rounding), or is `None` when
+  every carrier is correctly rounded. Coverage certification checks carriers
+  against the bound and refuses an excess as `source_point_deviation`,
+  reporting the measured distance and the bound. Unrefined meshes keep their
+  witness and result IDs. Refined witnesses change ID where a created vertex
+  needed a bound, since the bank is then part of the ID, and where a created
+  vertex now takes its segment chart instead of a rounded triangle point.
+  Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Certified distance, chord, norm, frame and quality bounds round outward in
+  directed binary64 arithmetic instead of padding round-to-nearest estimates:
+  source distance sums, curve and surface chord, point and box bounds,
+  implicit volume diameters, radius-edge and dihedral bounds, hexahedral frame
+  norms and the exact lower bound of det^(2/3). The bounds no longer depend on
+  libm accuracy or the platform's rounding of intermediate results.
+- Implicit volume certification receives its embedding proof through one
+  channel; computed surface acceptance no longer takes an unused embedding
+  argument.
+- T-spline basis identities bind only exact evidence, so a T-spline archive
+  restores with the same identity on every platform. Condition numbers and other
+  floating-point basis diagnostics are stored evidence, not identity.
+- Archived algebraic periodic source charts restore in an independent process,
+  and periodic vertex witnesses are transported through vertex reorders.
+- DXF conic angles snap to exact right-angle multiples only for exact degree
+  values. An ELLIPSE from parameter 0 to the binary64 value of 2π imports as a
+  closed periodic carrier, and full-turn ellipses export with that DXF
+  convention; other joins need a declared gap and report a transformed loss.
+- Cut-fraction query balls provably contain their exact subboxes, with exactly
+  rounded host radii and an isolated device sign test.
+- `ThermalJuttnerDistribution` tail support and tail-mass bounds use a rational
+  exponential enclosure and round the exact bound upward. The Markov cubature
+  weak error bound and omitted-population certificates round their exact values
+  upward, the latter certified on the host. Global-block fit evidence is
+  measured on the published rounded polynomials and documented as sampled
+  evidence, not a bound.
+- Endpoint jets are rounded once from their exact rationals.
+- Meshing qualification measures process resources on every operating system
+  and writes LF-terminated records; the remap fixture draws its jitter with
+  unfused NumPy operations, so its inputs are identical across platforms.
+- Owner-local cell-geometry restore rebuilds archived graph-migration evidence
+  and refuses an archive whose stored evidence identity does not match the
+  recomputed one; a forged migration evidence identity previously survived
+  restore.
+- `MeshAdaptationRoute.DEVICE_METRIC_3D` runs the native tetrahedral metric
+  phase schedule (one exact-checked split batch, then collapse, before flips and
+  ring reconnection) through the shared native state loop instead of a private
+  loop on the superseded schedule. Device and `NATIVE_METRIC_3D` targets now
+  agree in vertex IDs, cell global IDs, connectivity and coordinates; device
+  cell IDs were previously non-contiguous.
+- Periodic native tetra states orient each quotient cell by the exact
+  orientation of its representative lift. Sorted `simplex:3` connectivity rows
+  previously produced reversed quotient cells, and native tetra creation refused
+  them as invalid input.
+- `MeshAdaptationResult` archives of native and device bisection and metric
+  routes (`NATIVE_BISECTION`, `DEVICE_BISECTION`, `NATIVE_METRIC_2D`,
+  `DEVICE_METRIC_2D`, `NATIVE_METRIC_3D`, `DEVICE_METRIC_3D`) now write and
+  restore. Their evidence (`TetraMetricEvidence`, `DeviceTetraMetricEvidence`,
+  `LocalMetricEvidence`, `DeviceMetricEvidence`, `BisectionEvidence`) and
+  `BisectionHierarchy` have canonical archive registrations, and
+  `MeshAdaptationResult.from_stored_fields` restores these routes from stored
+  fields alone. It recertifies both endpoints and rebuilds lineage, stencil,
+  geometry and mesh transition, P1 transfer, target metric, hierarchy and
+  compliance through their owners. Change, status and transition kind are
+  decided exactly from the evidence. Floating-point evidence is hashed as
+  stored, and so is the prepared identity, because the result does not retain
+  its request. `NATIVE_POLYHEDRAL` results restore too: the polyhedral
+  hierarchy is rebuilt from its exact parent map, and the conservative remap
+  over restored finite-volume plans keeps its overlap measures as stored. The
+  exact coordinate source of an adapted polyhedral target now stores its
+  parent map identity and vertex IDs, so restore recomputes its identity. A
+  `MeshDistributionTransition` restores with its lineage routes and inherited
+  ownership recomputed exactly; rebalanced ownership is kept as stored.
+  `NATIVE_METRIC_SURFACE` results restore with their surface-metric outcome.
+  Its local evidence is rebuilt, the status and counts are decided from it,
+  the edit is reassembled against the restored lineage, the metric is rebound
+  to the target vertices, and the chart witness must be the one the restored
+  target certifies. `MMG` results restore as retained data; Mmg is never
+  re-run. The unknown lineage is recomputed, and the Mmg evidence and the
+  target's `AdapterReport` records are rebuilt by their constructors.
+  Transitions carrying a `VolumeMaterialChain` restore with every epoch map
+  revalidated: endpoints held only inside the chain are restored with their
+  coverage recomputed (`DomainCoverageCertificate.from_restored_inputs`).
+  `OMEGA_H` and `HP` results remain unregistered and are refused at write.
+  Native mixed results still restore only through their layer/core replay
+  inputs.
+- `CellMeshingResult.from_stored_fields` restores results that carry adapter
+  reports (provider targets such as Mmg and fTetWild). It rebuilds each
+  `AdapterReport` and its losses, profiles, requirements, capabilities,
+  waivers and stages by constructor, and requires the report identities to
+  reproduce.
+- The restricted-Delaunay implicit volume route (`implicit_restricted_delaunay`)
+  no longer refuses its own acceptance with "A validated embedding cannot be
+  combined with another in-hand proof". The route hands acceptance the
+  validated embedding and that embedding's own certificate. This is one proof,
+  so the validated embedding is used; any other in-hand embedding, premise or
+  validity is still refused alongside it.
+- Native implicit meshing results archive and restore. A `CellMeshingResult`
+  whose certification is bound to a `NativeImplicitSource` was refused at
+  write. The source now archives as its compiled geometry, sampling grid,
+  adaptive discovery and authoring profile, and restore rebuilds each through
+  its owner (the discovery recomputes its proof) and requires the source
+  binding identity to reproduce. A restored certification also rebuilds each
+  distinct owner once across its domain, fidelity query and feature source
+  roles. An analytic-profile volume (restricted Delaunay) therefore keeps the
+  profile as its own source query and no longer fails coverage with
+  `analytic_source_identity` on restore.
+- Certified results whose global embedding was proved by nested restriction
+  (adapted refinements of certified sources) now archive. Restore recomputes
+  the source validity and embedding over the restored source mesh and coordinate
+  map, rebuilds the transition, and re-proves the nested-restriction embedding
+  during acceptance.
+- `CellMeshingResult.from_stored_fields` accepts an uncertified result
+  (`certification` is `None`, as `certify_cell_mesh` without certification
+  inputs produces, e.g. overset registration parts), so such results no longer
+  write and then fail to restore. Restore re-audits the mesh under the audit
+  policy stored in its audit report, default or custom, and requires the
+  recomputed audit, quality and result identities to match.
+- `brep_defeature` again certifies plane-pair fillet removal when the source's
+  straight edges carry exact conic-root endpoints at the fillet contacts. An
+  edge extended to the restored sharp corner now drops its stale endpoint roots
+  at the coedge level as well as the edge level; the coedge check previously
+  looked up edge indices in the vertex replacement map.
+- A B-Rep Boolean no longer publishes a rounded angle as an exact conic
+  endpoint parameter. When an endpoint moves onto a new circle or ellipse
+  carrier, `parameter_exact` is kept only if the source endpoint already had it
+  or exact evaluation of the carrier reproduces the endpoint point; otherwise it
+  is `None` and the root keeps its outward enclosure. Exact line junction boxes
+  at such a root use the exact quarter-turn phase when the enclosure contains
+  one. B-Rep models now refuse a circle or ellipse endpoint whose
+  `parameter_exact` does not reproduce its `point_exact`. Boolean results that
+  moved such endpoints get new model and source identities.
+- CAD volume meshing of an exact B-Rep sphere certifies its collapsed poles and
+  periodic seam. Since sphere poles became rooted latitudes
+  (`AffinePCurve(ConicRootLinePCurve)`), the CAD pole-lens and pole-fan
+  incidence checks and the CAD chart vertex labels accepted only straight pole
+  lines, so curve ancestry raised on the u = 0 seam at a pole apex. All three
+  now also accept a rooted pole latitude under B-Rep authority, as the chart
+  partition already did; the exact side, collinearity and range checks are
+  unchanged. The B-Rep trim-sheet proof now covers a spherical revolution:
+  each pole use must replay its exact full-interval collapse and name the
+  latitude ±τ/4 exactly, seam latitudes come from their exact conic endpoint
+  roots, and the full-turn sheet declares both pole quotients. The CAD sheet
+  bounds a reference piece on such a use by those exact latitudes and its
+  chord instead of an outward box that crossed the pole. Any sphere sheet that
+  cannot be proved is still refused.
+- Layer/core source-chart validation evaluates restricted and composed target
+  maps on the geometry's exact coordinate bank when it has one. It previously
+  evaluated them on the binary64 execution coordinates, so a child of a curved
+  parent whose map node is non-binary (for example y = 7/160) carried that
+  node's rounding and was 1 ulp from its exact source-chart image. With the
+  exact 0.0 tolerance, renewal after the first mixed refinement of the
+  `unit-box` layer/core lifecycle refused with "Target coordinate map is
+  outside its exact source-chart tolerance." Mapped and adaptive-implicit
+  traces use the same evaluation, and the tolerance is unchanged.
+- `prepare_common_refinement` (and so `prepare_unstructured_conservative_remap`)
+  accepts dimension-qualified cell kinds such as `simplex:3` and `tensor:3`
+  whose reference vertex and entity order equals their standard family. It
+  previously raised "Unsupported cell kind 'simplex:3'", which stopped the
+  material history transition of the `archived-layer-core` lifecycle.
+  Refinements of standard-kind meshes are unchanged, bit for bit.
+- Mixed-kind finite-element meshes (blocks with different local DOF counts,
+  such as hexahedra, pyramids and tetrahedra) run matrix-free cell actions
+  through the same per-block quadrature and kernels as sparse structural
+  assembly. They previously fell back to an executor with higher-order default
+  rules, so on non-affine cells the sparse and matrix-free operators differed
+  (relative ~3e-5) and the sparse system failed the affine patch test.
+- `PlcAssociationTransfer` decides stratum membership exactly. A vertex lies in
+  its named vertex, segment or facet only if its source-point chart is that
+  stratum or one of its boundary strata, its carrier lies exactly in it, or the
+  stratum meets the carrier's rounding box. The float facet distance with a
+  slack scaled to the domain's bounding box is removed; it admitted any point
+  within the slack and refused facet corners whose exact orientation is zero
+  (measured 1.4e-14 to 3.6e-14 against a 1.42e-14 slack). Edge rows match
+  their segment by vertex pair, and `propagate` checks target rows against the
+  renewed source-point witness.
+- Results certified with a `SurfaceEnvelopeDistanceWitness` restore from model
+  archives again. Cold restore handed the stored witness, whose derived chart
+  source and witness are archive recipes, to fidelity validation unrestored,
+  and validation refused it; restore now rebuilds the witness through its
+  owners before validating it.
+- `phx.algebraic.krawczyk_certificate` no longer certifies boxes without a
+  root. `I - Y [J]` was formed from two endpoint products, which is not an
+  enclosure when the preconditioner has mixed signs, and nothing was rounded
+  outward. The certificate now encloses `f(center)` and the Jacobian range
+  exactly, splits interval products by sign with outward rounding of every
+  binary64 operation, and tests the image against the exact rational box
+  `[center - radius, center + radius]`. The reported image encloses the root.
+  Non-finite coefficients are refused with `ValueError`.
+- `phx.algebraic.smale_alpha_certificate` decides `alpha < (13 - 3 sqrt 17) / 4`
+  exactly; it previously accepted points whose exact alpha exceeds the
+  threshold. Derivatives are evaluated exactly at the binary64 point;
+  outward-rounded binary64 bounds of beta and the gamma bound, from a verified
+  linear solve, decide first against an exact bracket of the threshold, and
+  the exact rational solve runs only when they straddle it. `beta`,
+  `gamma_upper` and `alpha_upper` are binary64 upper bounds.
+- Structural sparsity tracing no longer folds decisions that depend on backend
+  floating-point behavior. Host-folded floating arithmetic (`pow`, `mul`, ...)
+  and subnormal constants could select the opposite `where` branch from XLA,
+  which flushes subnormals to zero, so the traced pattern missed runtime
+  Jacobian entries. Integer and boolean arithmetic and exact normal floating
+  data still fold. Floating `add`, `sub`, `mul`, `div`, `min`, `max` and
+  conversions of constants now carry outward enclosures padded for
+  multiply-add contraction, approximate device division and flush-to-zero, and
+  a comparison or `searchsorted` folds only when the enclosures decide it.
+  Other predicates keep both branches. Integer `div`/`rem` fold with `lax`
+  truncation semantics, `bitcast_convert_type` reinterprets bits, and
+  `reduce_precision` no longer passes unrounded constants through.
 - Native meshcore C++ tests now build with GCC and MSVC: request designators
   follow declaration order, `std::minmax` results are compared component by
   component instead of through a C++23 heterogeneous pair comparison, and the

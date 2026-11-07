@@ -6,6 +6,7 @@ from math import factorial
 
 import equinox as eqx
 import jax.numpy as jnp
+import mpmath
 import numpy as np
 import pytest
 from scipy import integrate, special
@@ -457,3 +458,35 @@ def test_free_free_coefficients_match_rybicki_lightman_with_born_gaunt() -> None
     cold = model.evaluate(electrons, ions, 1.0e4, 2.0 * np.pi * 1.0e14)
     assert not bool(cold.evidence.born_valid)
     assert not bool(cold.evidence.qualified)
+
+
+def test_thermal_tail_support_and_bound_dominate_the_exact_tail_bound() -> None:
+    # Measured counterexample: round-to-nearest selected T = 0x1.b6465d1c06c79p+3
+    # here, whose exact bound 0.000122263511208423289... exceeds the tolerance.
+    tolerance = 0.00012226351120842328
+    distribution = ThermalJuttnerDistribution(0.1, tail_tolerance=tolerance)
+    with mpmath.workdps(80):
+        exponent = mpmath.mpf(distribution.tail_exponent)
+        poly = mpmath.exp(-exponent) * (exponent * exponent + 2 * exponent + 2)
+        exact = poly / (2 - poly)
+        assert exact <= mpmath.mpf(tolerance)
+        assert mpmath.mpf(float(distribution.tail_mass_bound())) >= exact
+
+
+def test_bracketed_tail_search_selects_the_exact_bisection_exponent() -> None:
+    from phydrax.electromagnetics._magnetobremsstrahlung import _thermal_tail_bound
+
+    rng = np.random.default_rng(20261106)
+    tolerances = np.exp(rng.uniform(np.log(1e-16), np.log(0.4), 3000))[::150]
+    for tolerance in (*tolerances.tolist(), 5e-324, 0.00012226351120842328):
+        # Exact-only bisection of [1, 800] to adjacent floats.
+        lower, upper = 1.0, 800.0
+        middle = 0.5 * (lower + upper)
+        while lower < middle < upper:
+            if _thermal_tail_bound(middle) > tolerance:
+                lower = middle
+            else:
+                upper = middle
+            middle = 0.5 * (lower + upper)
+        distribution = ThermalJuttnerDistribution(0.1, tail_tolerance=tolerance)
+        assert distribution.tail_exponent == upper

@@ -2247,7 +2247,10 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
 
         from ..graph._partition import GraphPartitionPlan
         from ..meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
-        from ..meshing._distribution import _owner_group_fail_if_any
+        from ..meshing._distribution import (
+            _owner_group_fail_if_any,
+            OwnerLocalGraphMigrationEvidence,
+        )
         from ..meshing._model_codec import (
             _restore_owner_local_dependencies,
             restore_model_archive_value,
@@ -2580,6 +2583,12 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
         }
         record["_compact_restore_validation"] = _COMPACT_OWNER_LOCAL_RESTORE
         try:
+            if value.graph_migration_evidence is not None:
+                record["graph_migration_evidence"] = (
+                    OwnerLocalGraphMigrationEvidence.from_stored_fields(
+                        value.graph_migration_evidence
+                    )
+                )
             renewed = cls(record)
             if renewed.local_view_id != value.local_view_id:
                 raise ValueError("Reconstructed compact view changed its local identity.")
@@ -3697,6 +3706,11 @@ def _materialize_owner_local_periodic_target(
                     if source_point is None:
                         raise ValueError(
                             "Cumulative motion stencil references an unknown source site."
+                        )
+                    if not isinstance(weight, Fraction):
+                        # Exact periodic root coordinates are rational banks.
+                        raise TypeError(
+                            "Cumulative motion stencil weights must be rational."
                         )
                     active_ids.append(int(identifier))
                     for axis, value in enumerate(source_point):

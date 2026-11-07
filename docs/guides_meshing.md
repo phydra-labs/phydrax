@@ -1078,6 +1078,22 @@ radius-edge bound is a typed `QUALITY_REJECTED` refusal; carriers already within
 the bound keep the scaffold triangles and their one-to-one certificate. The
 compliance report records the carrier ratio and minimum angle before and after.
 
+The adaptive implicit route fills its carrier with the PLC tetrahedral fill but
+reads a hard uniform size h differently from the PLC routes. A PLC route bounds
+edge lengths by h: it refines to circumradius √6/4·h, the circumradius of the
+regular tetrahedron of edge h, capped at half the maximum size. The implicit
+route declares the `"circumradius"` fill size convention, as the restricted
+implicit volume did. It refines to circumradius h, with no conversion and no
+cap, so h is the target edge length that metric adaptation also uses for its
+unit metric length. The maximum size is enforced at compliance instead. Every
+tetrahedron edge must be at most the maximum widened by the compliance tolerance
+on that maximum (2.25·h for a 1.5·h maximum at relative tolerance 0.5), and the
+achieved value is recorded as `maximum_cell_edge`. The carrier's boundary-edge
+size statistics and the local bound of target plus tolerance on every boundary
+edge are unchanged. `generate_plc_volume(size_convention=...)` accepts only
+`"edge-length"` (the default) or `"circumradius"`. A non-default convention
+joins the fill stage identity.
+
 Without an explicit `implicit_policy`, a native implicit route resolves its
 adaptive discovery from the request: the relative cell diameter is the smallest
 of half the `maximum_deviation`, every hard `UniformSizeControl` allowance and
@@ -1157,8 +1173,32 @@ inverse or the transposed mean projected Jacobian is checked alongside, and
 its undecided pieces are refined too. The transposed form pairs each chord
 image with its mean image, which keeps rotating thin faces positive.
 
-A field that is not smooth needs an exact `AnalyticImplicitProfile` whose
-singular set is disjoint from the certified zero-set cover. Point lifts double a
+A smooth field needs nothing more. A sphere or ring torus with an exact
+`AnalyticImplicitProfile` whose singular set misses the certified zero-set
+cover keeps that exact route. Any other field — an ellipsoid, a sharp CSG
+union or intersection, a field with `abs` or a selection — proves smoothness
+box by box. The discovery's interval value program reports, from the same
+evaluation as its enclosure (`PreparedIntervalFunction.evaluate_branches`),
+whether every min/max, absolute value, extremum reduction, selection,
+comparison or index is decided on the box. It also checks that square roots,
+reciprocals, logarithms and fractional powers stay away from their singular
+points. Values that do not depend on the box are constants. Equations with the
+same primitive, static parameters and operands denote one value, so
+`primitive | primitive` ties no branch. A face whose proof only meets decided
+boxes keeps its root chart, since the Hessian program is then exact there.
+
+A face that meets a crease, such as the seam of overlapping spheres, takes the
+root-witness bound instead. Every retained root witness encloses a zero, so a
+face piece's distance to the zero set is at most its farthest distance to a
+witness box. Pieces split until that bound meets the tolerance, or until they
+are smaller than `2^-6` of it. The evidence row records `bound="root_witness"`
+and claims no Jacobian, normal or gradient bound. The forward fidelity is the
+maximum over both kinds of row. Such a face never projects or excludes a point,
+so a carrier with crease faces leaves the root-chart degree, and with it
+coverage, unresolved. Sharp CSG certificates are `NONSMOOTH`, so their
+discovery policy must set `allow_nonsmooth_field=True`.
+
+Point lifts double a
 bracket from the coordinate spacing, independently of the face, so faces
 sharing a node lift it to the same root. A remeshed carrier proves that each
 lifted point has one preimage by excluding it from every other face. Only the
@@ -1321,6 +1361,49 @@ authored the targets as aims, and each receipt cites that source.
   the largest corner distance to the plane plus the rounding bound. Unsplit
   boundaries (every `FIXED` route) retain no witness and certify exactly as
   before.
+- **Bounded carrier deviation after nested refinement.** Refining a PLC mesh
+  renews its witness (`renew_plc_source_point_witness`): retained vertices keep
+  their rows, and a created boundary vertex takes the lowest source chart
+  (segment, then triangle, then declared plane) shared by all of its exact
+  stencil parents. Nested refinement places the carrier at the rounded stencil
+  combination of its parents' carriers, and when the parents are themselves
+  rounded source points no point of that chart need round to it. Such a vertex
+  keeps its nested carrier. Its source point S is the exact stencil combination
+  of the parents' source points, which lies in the chart, at the nearest
+  admissible binary64 parameters. `PlcSourcePointWitness.vertex_deviations` then
+  records an outward-rounded bound on |carrier - S|: the stencil-weighted parent
+  bounds plus the carrier's own rounding plus the parameter rounding. The bound
+  covers both the binary64 carrier and the exact nested geometry corner that
+  certification measures. `vertex_deviations` is `None` exactly when every
+  carrier is its S correctly rounded; otherwise it holds one value per row,
+  positive for every row with a source point and zero for rows without one.
+  Construction refuses any other bank. With a bank present, coverage checks
+  each carrier against its recorded bound instead of the correct rounding and
+  refuses an excess as `source_point_deviation`, whose message reports the
+  outward-rounded measured distance and the recorded bound and whose entity is
+  the vertex. `source_point_parameter` still refuses a parameter outside its
+  chart, so stratum membership stays exact. A created boundary vertex with
+  neither an exactly rounded point nor a bounded point is refused by
+  `AssociationPropagationError` with its global ID. Model archives store the
+  bank with the witness; restore rebuilds the witness and refuses a changed
+  identity, so a tampered bound does not restore.
+- **Witness identity.** The bank enters `witness_id` only when present.
+  Unrefined meshes keep their witness and result IDs, as does a refinement in
+  which every created boundary vertex's carrier is the correctly rounded point
+  of its lowest shared chart. A refined witness in which any created vertex
+  needed a bound changes ID, because every row then carries its bound. A
+  created vertex that previously took an exactly rounded point of a higher
+  chart (a triangle) now takes its lowest shared chart (the segment), which
+  also changes the refined witness ID.
+- **Exact stratum membership in PLC association transfer.**
+  `PlcAssociationTransfer` admits a target vertex in the closed vertex, segment
+  or facet stratum its class names only by an exact test: its witness chart is
+  that stratum or one of its boundary strata (edge rows are matched to the
+  segment by their vertex pair), its carrier lies exactly in the stratum, or
+  the stratum meets the closed box of reals that round to the carrier. Facets
+  that are not one convex loop admit only exact carrier membership. There is no
+  tolerance scaled to the domain's bounding box, and `propagate` checks target
+  rows against the renewed witness.
 - **Improvement acceptance.** Each cell scores the worse of its dihedral-angle
   and radius-edge target fractions (1 when both hold), floored to multiples of
   `TetMeshRun.score_quantum` (2^-20); a cell below the determinant floor scores
@@ -2001,7 +2084,9 @@ bound to the source vertices). Routes:
   `collapse=hysteresis+inadmissible;optimal=long;flip=invalid`
   (`hysteresis`: endpoint collapse exceeds the split threshold and its escape
   did not lower the stall potential; host `optimal=long`: the searched segments
-  were excluded by bounds). `RelocationMeshAdaptation` moves vertices
+  were excluded by bounds; `optimal=periodic`: an endpoint orbit is not simple,
+  having several copies or a stabilizer, so optimal-point collapse is not
+  attempted on the periodic quotient). `RelocationMeshAdaptation` moves vertices
   only.
 - `DEVICE_BISECTION`: the marked bisection request executed as compiled
   fixed-capacity device passes (below); it commits the meshes, IDs, lineage,
@@ -2417,7 +2502,10 @@ owning host resolves every proposed child-cell orientation exactly as one batch
 barrier before the native edit owner mutates its provisional state. An invalid
 batch discards provisional edits and returns the unchanged source with
 `NUMERICAL_STOP`; accepted edits retain the serial route's metric and lineage
-semantics. `DeviceTetraMetricEvidence` exposes candidate ordering, exact-predicate
+semantics. Only split-batch selection and its exact barrier are
+device-specific; the phase schedule, native edit owner and stable target-ID
+numbering are shared with `NATIVE_METRIC_3D`, so both routes publish the same
+target mesh. `DeviceTetraMetricEvidence` exposes candidate ordering, exact-predicate
 and host-barrier counts, the native metric evidence, and whether edits committed.
 
 Tetrahedral relocation rounds located source barycentric weights to dyadic

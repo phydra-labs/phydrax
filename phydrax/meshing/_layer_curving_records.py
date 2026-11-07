@@ -23,6 +23,8 @@ from ..discretization._cell_geometry import (
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._coordinate_enclosure import (
     coordinate_map_expressions,
+    CoordinateCoefficients,
+    CoordinateSourceBank,
     derivative,
     evaluate_expression,
     Expression,
@@ -730,14 +732,23 @@ def _evaluate_cell_geometry_point(
     elements: Sequence[CellGeometryElement],
     routes: Sequence[ArrayLike],
     coordinates: ArrayLike,
+    exact_coordinate_bank: CoordinateSourceBank | None,
     block_row: int,
     cell_row: int,
     reference: _ExactReferencePoint3,
     /,
 ) -> NDArray[np.float64]:
+    """Round the exact image of one cell map at an exact reference point.
+
+    A map retaining an exact coefficient bank is evaluated on those exact
+    coefficients; its binary64 execution shadows are not the source operand.
+    """
     route = np.asarray(routes[block_row], dtype=np.int64)
-    coordinate_bank = np.asarray(coordinates, dtype=np.float64)
-    local = tuple(coordinate_bank[int(index)] for index in route[cell_row])
+    local: CoordinateCoefficients = (
+        np.asarray(coordinates, dtype=np.float64)[route[cell_row]]
+        if exact_coordinate_bank is None
+        else tuple(exact_coordinate_bank[int(index)] for index in route[cell_row])
+    )
     element = elements[block_row]
     if not isinstance(element, ScalarCoordinateElement):
         raise TypeError("Target geometry element has no exact scalar coordinate map.")
@@ -987,7 +998,13 @@ def _validate_parametric_chart_geometry(
                 # The synthesized target reference nodes do not index the
                 # coefficient bank of a composed/restricted coordinate map.
                 target_point = _evaluate_cell_geometry_point(
-                    elements, routes, coordinates, block_row, cell_row, reference
+                    elements,
+                    routes,
+                    coordinates,
+                    geometry.exact_coordinate_bank,
+                    block_row,
+                    cell_row,
+                    reference,
                 )
             else:
                 route = np.asarray(routes[block_row], dtype=np.int64)
@@ -996,7 +1013,13 @@ def _validate_parametric_chart_geometry(
                     target_point = np.asarray(coordinates[geometry_row], dtype=np.float64)
                 elif geometry_row == -1:
                     target_point = _evaluate_cell_geometry_point(
-                        elements, routes, coordinates, block_row, cell_row, reference
+                        elements,
+                        routes,
+                        coordinates,
+                        geometry.exact_coordinate_bank,
+                        block_row,
+                        cell_row,
+                        reference,
                     )
                 else:
                     raise ValueError(
@@ -2283,8 +2306,8 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
     ) -> LayerCurvingSourceEvidence:
         """Reconstruct and reprove actual parametric evidence from restored owners."""
         from ._curving import _distortion_blocks, _sampled_quality
-        from ._model_codec import _same_model_content
         from ._layer_curving import _rebind_chart_witness_geometry
+        from ._model_codec import _same_model_content
         if type(stored) is not cls:
             raise TypeError("Parametric layer evidence requires its canonical retained record.")
         if (
@@ -2935,6 +2958,7 @@ class LayerCurvingSourceEvidence(StrictModule, NonTrainableState):
                     elements,
                     routes,
                     coordinates,
+                    geometry.exact_coordinate_bank,
                     block_row,
                     cell_row,
                     reference,
@@ -3223,7 +3247,9 @@ def _reprove_root_chart(
         for mapping in stored.mapped_reference_maps:
             validate_reference_cell_map_witnesses(mapping)
     else:
-        from ..geometry.implicit._source_charts import prepare_adaptive_implicit_root_charts
+        from ..geometry.implicit._source_charts import (
+            prepare_adaptive_implicit_root_charts,
+        )
         from .providers._native_layer import _implicit_layer_root_witness
 
         if (

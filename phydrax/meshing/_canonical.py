@@ -818,7 +818,6 @@ def _accept_native_construction(
         certification = MeshCertificationReport(
             inputs,
             organization=organization,
-            embedding=request.global_embedding,
             validity_parent=request.validity_parent,
             computed_validity=construction.computed_validity,
             validated_embedding=construction.validated_global_embedding,
@@ -828,8 +827,10 @@ def _accept_native_construction(
         certification.require_passed()
     else:
         computed_surface = _ComputedSurfaceAcceptance(
-            inputs, organization, embedding=request.global_embedding,
-            validity_parent=request.validity_parent, validated=validated,
+            inputs,
+            organization,
+            validity_parent=request.validity_parent,
+            validated=validated,
             computed_validity=construction.computed_validity,
         )
         certification = computed_surface.report

@@ -8,7 +8,14 @@ from typing import Protocol, TYPE_CHECKING
 
 import numpy as np
 
-from ._adaptive_packed_polygon import _CHUNK, _Chunks, _records
+from ._adaptive_packed_polygon import (
+    _CHUNK,
+    _Chunks,
+    _records,
+    boundary_face_edges,
+    clipped_face_keys,
+    ClippedBoundary,
+)
 
 
 if TYPE_CHECKING:
@@ -22,7 +29,7 @@ if TYPE_CHECKING:
 
 class _ReplaySurface(Protocol):
     @property
-    def scaffold(self) -> AdaptiveImplicitScaffold: ...
+    def scaffold(self) -> AdaptiveImplicitScaffold | None: ...
     @property
     def mesh(self) -> TriangleMesh | None: ...
     @property
@@ -47,12 +54,54 @@ def _same_float_bits(first: np.ndarray | Array, second: np.ndarray | Array) -> b
     )
 
 
-def replay_polygon(surface: _ReplaySurface, bounds: _FieldEnclosures, /) -> bool:
+def _clipped_roots_match(
+    scaffold: AdaptiveImplicitScaffold, clipped: ClippedBoundary, /
+) -> bool:
+    """Whether every retained domain-face root is the crease bank's record."""
+    edges = np.ascontiguousarray(scaffold.root_edge_ids, dtype=np.int64)
+    rows = np.flatnonzero(boundary_face_edges(edges, 1 << scaffold.target_level))
+    if not rows.size:
+        return True
+    bank = _records(clipped.root_edge_ids.reshape(-1, 6))
+    wanted = _records(np.ascontiguousarray(edges[rows].reshape(-1, 6)))
+    found = np.searchsorted(bank, wanted)
+    if np.any(found >= len(bank)) or not np.array_equal(bank[found], wanted):
+        return False
+    return (
+        _same_float_bits(
+            np.asarray(scaffold.root_points)[rows],
+            np.asarray(clipped.root_points, dtype=np.float64)[found],
+        )
+        and _same_float_bits(
+            np.asarray(scaffold.root_errors)[rows],
+            np.asarray(clipped.root_errors, dtype=np.float64)[found],
+        )
+        and _same_float_bits(
+            np.asarray(scaffold.root_brackets)[rows],
+            np.asarray(clipped.root_brackets, dtype=np.float64)[found],
+        )
+        and np.array_equal(
+            np.asarray(scaffold.root_issues)[rows],
+            np.asarray(clipped.root_issues)[found],
+        )
+    )
+
+
+def replay_polygon(
+    surface: _ReplaySurface,
+    bounds: _FieldEnclosures,
+    /,
+    *,
+    clipped: ClippedBoundary | None = None,
+) -> bool:
     """Compare generated contours and vertex order without a second mesh.
 
     The independent lattice verifier must first validate corner coordinates,
     signs, root enclosures and cell metadata.  This replay additionally checks
     every required edge, cell refusal, triangle and mesh vertex in owner order.
+    ``clipped`` replays the declared open-boundary mode: the domain-face rule
+    is the crease certificate's, and every retained domain-face root must be
+    the crease root bank's record bit for bit.
     """
     from ._adaptive_discovery import (
         _Cell,
@@ -61,11 +110,18 @@ def replay_polygon(surface: _ReplaySurface, bounds: _FieldEnclosures, /) -> bool
         _domain_boundary_faces,
         _edge_key,
         _faces_exclude_zero,
+        _prove_constant_signs,
         _triangulate_cell_band,
         AdaptiveImplicitBoxIssue as Issue,
     )
 
     s = surface.scaffold
+    if s is None:
+        # A discovery that retained no polygonization has nothing to replay.
+        return False
+    unresolved_faces = None if clipped is None else clipped.unresolved_face_keys()
+    if clipped is not None and not _clipped_roots_match(s, clipped):
+        return False
     count = len(s.cell_indices)
     corner_ids = np.asarray(s.corner_ids)
     corner_records = _records(corner_ids)
@@ -190,13 +246,35 @@ def replay_polygon(surface: _ReplaySurface, bounds: _FieldEnclosures, /) -> bool
             preliminary[singular] = int(Issue.SINGULAR)
             preliminary[no_crossing & gradient] = int(Issue.EDGE)
             preliminary[no_crossing & ~gradient] = int(Issue.SINGULAR)
+            empty = np.zeros(stop - start, dtype=np.bool_)
+            candidates = np.flatnonzero(no_crossing)
+            if len(candidates):
+                proved = _prove_constant_signs(
+                    bounds,
+                    s.cell_boxes[start + candidates, 0],
+                    s.cell_boxes[start + candidates, 1],
+                    cell_signs[candidates, 0],
+                    s.cell_gradient_lower[start + candidates],
+                    s.cell_gradient_upper[start + candidates],
+                )
+                empty[candidates[proved]] = True
+                preliminary[candidates[proved]] = 0
             boundary_mask = np.any(
                 (s.cell_boxes[start:stop, 0] == s.domain[0])
                 | (s.cell_boxes[start:stop, 1] == s.domain[1]),
                 axis=1,
             )
-            for local in np.flatnonzero((preliminary == 0) & boundary_mask):
+            for local in np.flatnonzero((preliminary == 0) & ~empty & boundary_mask):
                 row = start + int(local)
+                if unresolved_faces is not None:
+                    if any(
+                        key in unresolved_faces
+                        for key in clipped_face_keys(
+                            s.cell_indices[row, 1:], int(s.cell_indices[row, 0])
+                        )
+                    ):
+                        preliminary[local] = int(Issue.DOMAIN_BOUNDARY)
+                    continue
                 cell = _Cell(
                     int(s.cell_indices[row, 0]),
                     (
@@ -218,9 +296,9 @@ def replay_polygon(surface: _ReplaySurface, bounds: _FieldEnclosures, /) -> bool
             rejected = preliminary != 0
             if not np.array_equal(
                 np.asarray(s.cell_issues[start:stop])[rejected], preliminary[rejected]
-            ):
+            ) or np.any(np.asarray(s.cell_issues[start:stop])[empty]):
                 return False
-            selected = np.flatnonzero(~rejected)
+            selected = np.flatnonzero(~rejected & ~empty)
             if not len(selected):
                 continue
             cell_rows = start + selected
@@ -433,16 +511,69 @@ def replay_polygon(surface: _ReplaySurface, bounds: _FieldEnclosures, /) -> bool
     return True
 
 
+type _RootRecord = tuple[np.ndarray, float, int, np.ndarray, np.ndarray, int, int]
+
+
+def _attempt_roots(
+    bounds: _FieldEnclosures,
+    edge_ids: np.ndarray,
+    endpoint_points: np.ndarray,
+    endpoint_signs: np.ndarray,
+    tolerance: float,
+    level: int,
+    clipped: ClippedBoundary | None,
+    /,
+) -> tuple[_RootRecord, ...]:
+    """Root records of one cell's crossing edges; clipped face edges from the bank."""
+    from ._adaptive_discovery import _root_on_edges
+
+    if clipped is None:
+        return _root_on_edges(bounds, endpoint_points, endpoint_signs, tolerance)
+    on_face = boundary_face_edges(edge_ids, 1 << level)
+    records: list[_RootRecord | None] = [None] * len(edge_ids)
+    interior = np.flatnonzero(~on_face)
+    if interior.size:
+        solved = _root_on_edges(
+            bounds, endpoint_points[interior], endpoint_signs[interior], tolerance
+        )
+        for row, record in zip(interior.tolist(), solved, strict=True):
+            records[row] = record
+    rows = np.flatnonzero(on_face)
+    if rows.size:
+        bank = _records(clipped.root_edge_ids.reshape(-1, 6))
+        wanted = _records(np.ascontiguousarray(edge_ids[rows].reshape(-1, 6)))
+        found = np.searchsorted(bank, wanted)
+        if np.any(found >= len(bank)) or not np.array_equal(bank[found], wanted):
+            raise ValueError(
+                "A clipped domain-face crossing is missing from the crease root bank."
+            )
+        for row, position in zip(rows.tolist(), found.tolist(), strict=True):
+            records[row] = (
+                np.asarray(clipped.root_points[position], dtype=np.float64),
+                float(clipped.root_errors[position]),
+                int(clipped.root_issues[position]),
+                np.asarray(clipped.root_brackets[position, 0], dtype=np.float64),
+                np.asarray(clipped.root_brackets[position, 1], dtype=np.float64),
+                int(clipped.root_signs[position, 0]),
+                int(clipped.root_signs[position, 1]),
+            )
+    return tuple(record for record in records if record is not None)
+
+
 def replay_history_attempt(
     geometry: CompiledGeometry,
     domain: np.ndarray,
     policy: AdaptiveImplicitSurfacePolicy,
     /,
+    *,
+    clipped: ClippedBoundary | None = None,
 ) -> tuple[bool, bool]:
     """Stream a rejected attempt's retry and lattice-coincidence predicates.
 
     The disk-backed index retains only shared face decisions and vertex order;
     no cover, mesh, scaffold, or prior discovery object is materialized.
+    ``clipped`` replays the declared open-boundary mode with that attempt's
+    crease certificate: domain-face roots are its bank records.
     """
     from ._adaptive_discovery import (
         _Cell,
@@ -455,7 +586,7 @@ def replay_history_attempt(
         _faces_exclude_zero,
         _FieldEnclosures,
         _GridEdge,
-        _root_on_edges,
+        _prove_constant_signs,
         _ROOT_PROBE_OFFSETS,
         _ROOT_PROBE_SCALE,
         _target_level,
@@ -484,6 +615,7 @@ def replay_history_attempt(
     vertex_count = 0
     boundary_crossing = False
     face_order = (0, 1, 2, 3, 4, 5, 6, 7, 9, 8, 10, 11)
+    unresolved_faces = frozenset() if clipped is None else clipped.unresolved_face_keys()
 
     def key_bytes(key: tuple[tuple[int, int, int], ...]) -> bytes:
         return np.asarray(key, dtype=np.int64).tobytes()
@@ -588,11 +720,29 @@ def replay_history_attempt(
                 if len(zero):
                     issue = int(Issue.SINGULAR)
                 elif not (np.any(signs < 0) and np.any(signs > 0)):
+                    if bool(
+                        _prove_constant_signs(
+                            bounds,
+                            boxes[row : row + 1, 0],
+                            boxes[row : row + 1, 1],
+                            signs[:1],
+                            grad_lower[row : row + 1],
+                            grad_upper[row : row + 1],
+                        )[0]
+                    ):
+                        # Proved free of the zero set: no contour, no issue.
+                        continue
                     gradient = np.any((grad_lower[row] > 0) | (grad_upper[row] < 0))
                     issue = int(Issue.EDGE if gradient else Issue.SINGULAR)
                 else:
                     issue = 0
-                if not issue:
+                if not issue and clipped is not None:
+                    if any(
+                        key in unresolved_faces
+                        for key in clipped_face_keys(indices[row], level)
+                    ):
+                        issue = int(Issue.DOMAIN_BOUNDARY)
+                elif not issue:
                     faces = _domain_boundary_faces(cell, domain)
                     if faces and not _faces_exclude_zero(bounds, faces):
                         issue = int(Issue.DOMAIN_BOUNDARY)
@@ -612,8 +762,14 @@ def replay_history_attempt(
                         [[sign_by_key[a], sign_by_key[b]] for a, b in sorted_keys],
                         dtype=np.int8,
                     )
-                    records = _root_on_edges(
-                        bounds, endpoint_points, endpoint_signs, policy.root_tolerance
+                    records = _attempt_roots(
+                        bounds,
+                        endpoints.reshape(-1, 2, 3),
+                        endpoint_points,
+                        endpoint_signs,
+                        policy.root_tolerance,
+                        level,
+                        clipped,
                     )
                     root_cache = dict(zip(sorted_keys, records, strict=True))
                     vertices = {}
@@ -705,7 +861,7 @@ def replay_history_attempt(
         retry = (
             unresolved
             and refinable
-            and source_in_domain
+            and (source_in_domain or clipped is not None)
             and not boundary_crossing
             and not (status & ~retryable_status)
             and max_diagonal > policy.root_tolerance

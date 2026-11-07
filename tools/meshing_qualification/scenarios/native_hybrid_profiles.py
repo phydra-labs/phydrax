@@ -5,6 +5,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast, Literal, NamedTuple
 
+import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
@@ -759,10 +760,29 @@ def _layer_core_initial_history(
     density: np.ndarray,
     controls: _LayerCoreLifecycle,
     /,
-    *,
-    boundary_offset: float = 0.0,
 ) -> tuple[Any, Any, float]:
     """Solve the original harmonic state and commit its material/damage inputs."""
+    accepted, space, defect, _ = _layer_core_harmonic_history(
+        result, volume, density, controls, ()
+    )
+    return accepted, space, defect
+
+
+def _layer_core_harmonic_history(
+    result: Any,
+    volume: Any,
+    density: np.ndarray,
+    controls: _LayerCoreLifecycle,
+    offsets: tuple[float, ...],
+    /,
+) -> tuple[Any, Any, float, tuple[Any, ...]]:
+    """Solve the harmonic state and its affine Dirichlet ``offsets`` on one operator.
+
+    The space, the compiled problem and its sparse operator are prepared once; the
+    accepted state (offset 0) and every offset state are one multi-RHS solve that
+    differs only in the Dirichlet lift. Returns the accepted state, its space, the
+    largest affine-oracle defect and the expanded ``u`` values of each offset.
+    """
     a, b, c = (float(value) for value in controls.harmonic)
     elements = {
         block.name: phx.discretization.lagrange_element(block.cell_kind, 2)
@@ -775,6 +795,13 @@ def _layer_core_initial_history(
     space = phx.discretization.FiniteElementPlan(
         result.mesh, fields, coordinate_spec=result.geometry
     ).prepare()
+
+    def affine(offset: float) -> Any:
+        return lambda points: (
+            a * points[..., 0] + b * points[..., 1] + c * points[..., 2] + offset
+        )
+
+    constraint = phx.discretization.dirichlet_constraint(space, "u")
     problem = phx.equations.compile_finite_element_problem(
         phx.equations.FiniteElementForm(
             "layer-core-harmonic-diffusion",
@@ -782,42 +809,58 @@ def _layer_core_initial_history(
             (phx.equations.DiffusionAction("u", 1.0),),
         ),
         space,
-        constraint=phx.discretization.dirichlet_constraint(space, "u"),
-        dirichlet_values=lambda points: (
-            a * points[..., 0] + b * points[..., 1] + c * points[..., 2] + boundary_offset
-        ),
+        constraint=constraint,
+        dirichlet_values=affine(0.0),
         execution_policy=phx.equations.FiniteElementExecutionPolicy(realization="sparse"),
     )
     operator, rhs = problem.linear_system(storage="sparse")
-    solved = phx.linalg.solve(
-        operator,
-        rhs,
-        policy=phx.linalg.LinearSolvePolicy(
-            phx.linalg.GMRES(restart=40, stagnation_iterations=40),
-            tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=1.0e-14),
+    contexts = (
+        None,
+        *(
+            phx.equations.FiniteElementExecutionContext(
+                space.default_runtime, lift=constraint.lift(affine(offset))
+            )
+            for offset in offsets
         ),
     )
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.GMRES(restart=40, stagnation_iterations=40),
+        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=1.0e-14),
+    )
+    if offsets:
+        solved = phx.linalg.solve(
+            operator,
+            jnp.stack(
+                (rhs, *(problem.right_hand_side(context) for context in contexts[1:])),
+                axis=-1,
+            ),
+            policy=policy,
+            rhs_layout=phx.linalg.RHSLayout((len(contexts),)),
+        )
+        states = tuple(solved.value[:, index] for index in range(len(contexts)))
+    else:
+        solved = phx.linalg.solve(operator, rhs, policy=policy)
+        states = (solved.value,)
     if not bool(np.all(np.asarray(solved.successful))):
         raise ValueError("The original layer/core harmonic solve did not converge.")
-    values = problem.expand(solved.value)
+    del solved, rhs
     points = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
-    defect = float(
-        np.max(
-            np.abs(
-                np.asarray(values, dtype=np.float64)
-                - (
-                    a * points[:, 0]
-                    + b * points[:, 1]
-                    + c * points[:, 2]
-                    + boundary_offset
-                )
+    oracle = a * points[:, 0] + b * points[:, 1] + c * points[:, 2]
+    solutions = []
+    defect = 0.0
+    for state, offset, context in zip(states, (0.0, *offsets), contexts, strict=True):
+        expanded = problem.expand(state, context)
+        column_defect = float(
+            np.max(np.abs(np.asarray(expanded, dtype=np.float64) - (oracle + offset)))
+        )
+        if not np.isfinite(column_defect) or column_defect > 1.0e-9:
+            raise ValueError(
+                "The original layer/core harmonic solution failed its affine oracle."
             )
-        )
-    )
-    if not np.isfinite(defect) or defect > 1.0e-9:
-        raise ValueError(
-            "The original layer/core harmonic solution failed its affine oracle."
-        )
+        defect = max(defect, column_defect)
+        solutions.append(expanded)
+    del states
+    values = solutions[0]
     damage = space.project(
         "damage-history",
         lambda point, _: 0.5 + 0.125 * point[..., 1] + 0.1 * point[..., 2],
@@ -869,7 +912,7 @@ def _layer_core_initial_history(
         field_layouts=layouts,
         materials=material,
     )
-    return accepted, space, defect
+    return accepted, space, defect, tuple(solutions[1:])
 
 
 def _layer_core_history_transition(
@@ -892,15 +935,8 @@ def _layer_core_history_transition(
     target_volume, target_declared_density, _ = _layer_core_density(
         adaptation.target, controls
     )
-    expected, target_space, _ = _layer_core_initial_history(
-        adaptation.target, target_volume, target_declared_density, controls
-    )
-    changed, _, _ = _layer_core_initial_history(
-        adaptation.target,
-        target_volume,
-        target_declared_density,
-        controls,
-        boundary_offset=0.1,
+    expected, target_space, _, (changed_values,) = _layer_core_harmonic_history(
+        adaptation.target, target_volume, target_declared_density, controls, (0.1,)
     )
     source_certificate = adaptation.source.certification
     target_certificate = adaptation.target.certification
@@ -966,9 +1002,9 @@ def _layer_core_history_transition(
     )
     inventory_defect = float(np.max(np.abs(target_inventory - source_inventory)))
     arbitrary_content = (
-        np.random.default_rng(53).uniform(1.0, 4.0, size=(len(source_measures), 1))
-        * source_measures[:, None]
-    )
+        1.0
+        + (4.0 - 1.0) * np.random.default_rng(53).random(size=(len(source_measures), 1))
+    ) * source_measures[:, None]
     arbitrary_defect = float(
         abs(
             np.sum(np.asarray(remap.plan.apply_content(arbitrary_content)))
@@ -1043,7 +1079,7 @@ def _layer_core_history_transition(
             material_transfer=transfer_material,
         )
 
-    refused = transaction(changed.fields[0]).execute(
+    refused = transaction(changed_values).execute(
         accepted, adaptation.source.mesh, adaptation
     )
     if (
@@ -1829,7 +1865,7 @@ def _layer_initial_field_banks(result: Any, /) -> tuple[Any, Any, dict[str, np.n
             coordinates = np.asarray(dof_map.dof_coordinates, dtype=np.float64)
             banks[name] = 1.0 + coordinates[:, 1] + coordinates[:, 2]
         else:
-            banks[name] = np.random.default_rng(19).normal(
+            banks[name] = np.random.default_rng(19).standard_normal(
                 size=(dof_map.global_dof_count, 2)
             )[:, 0]
     return plan, space, banks
@@ -2201,7 +2237,7 @@ def _layer_form_transition(
         )
         if not np.allclose(compiled_values, target_values, rtol=2.0e-13, atol=2.0e-13):
             raise ValueError(f"{name} compiled transfer changed the actual coefficients.")
-        dual = np.random.default_rng(29).normal(size=target_values.shape)
+        dual = np.random.default_rng(29).standard_normal(size=target_values.shape)
         transpose = run_owned_program(
             action,
             "layer-form-transpose",
@@ -2246,7 +2282,9 @@ def _layer_form_transition(
             probe = (
                 source_values
                 if partition is None
-                else np.random.default_rng(47).normal(size=(source_values.size, 2))
+                else np.random.default_rng(47).standard_normal(
+                    size=(source_values.size, 2)
+                )
             )
             mapped_probe = np.asarray(
                 action.mv(jnp.asarray(probe))
@@ -2264,7 +2302,9 @@ def _layer_form_transition(
                 )
             )
         elif partition is not None:
-            probe = np.random.default_rng(47).normal(size=(source_values.size, 2))
+            probe = np.random.default_rng(47).standard_normal(
+                size=(source_values.size, 2)
+            )
             mapped_probe = np.asarray(action.mv_block(jnp.asarray(probe)))
             source_physical = physical_space(adaptation.source, source_spec)
             target_physical = physical_space(adaptation.target, target_spec)
@@ -2879,7 +2919,7 @@ def _layer_record(
     cells = _count_cells(result.mesh)
     independent = phx.discretization.certify_cell_geometry_validity(result.mesh)
     quality = phx.meshing.summarize_cell_quality(
-        phx.meshing.evaluate_cell_quality(result.mesh)
+        result.mesh, phx.meshing.evaluate_cell_quality(result.mesh)
     )
     if (
         result.validity.certified_valid_count != cells

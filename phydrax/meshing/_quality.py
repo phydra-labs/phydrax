@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import cache
+from math import prod
 from typing import Any, NamedTuple
 
 import equinox as eqx
@@ -42,6 +43,21 @@ from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._motion_validity import reference_corner_frames
 from ..discretization._reference_cell import reference_cell_topology
+from ..geometry._interval_enclosure import (
+    Interval,
+    interval_add,
+    interval_divide,
+    interval_multiply,
+    interval_square,
+    interval_subtract,
+)
+from ..geometry._rational import (
+    fraction_down,
+    fraction_up,
+    rational_cross,
+    rational_dot,
+    rational_vector,
+)
 from ..typing import checked
 from ._metric import interpolate_mesh_metric, MeshMetricField
 
@@ -98,21 +114,6 @@ def _triangle_minimum_sine_violations(
     undecided face is resolved over exact binary64 rationals; no uncertain
     screen result is accepted as a proof.
     """
-    from ..geometry._interval_enclosure import (
-        Interval,
-        interval_add,
-        interval_multiply,
-        interval_square,
-        interval_subtract,
-    )
-    from ..geometry._rational import (
-        fraction_down,
-        fraction_up,
-        rational_cross,
-        rational_dot,
-        rational_vector,
-    )
-
     if (
         coordinates.ndim != 2
         or coordinates.dtype != np.dtype(np.float64)
@@ -221,6 +222,16 @@ def _triangle_minimum_sine_violations(
 
 
 class CellQualityReport(StrictModule, NonTrainableState):
+    """Sampled quality diagnostics with exact threshold decisions.
+
+    The evaluation arrays and float summaries are diagnostics: XLA computes them
+    and they may differ by rounding between platforms. ``report_id`` hashes only
+    exact content: the mesh, the evaluation request, the gate thresholds, and
+    the exactly decided failing cell IDs of each gate (see
+    :func:`summarize_cell_quality`). ``gate_thresholds`` is
+    ``(minimum_measure, minimum_mean_ratio, maximum_aspect_ratio)``.
+    """
+
     evaluation: CellQualityEvaluation
     minimum_measure: float = eqx.field(static=True)
     maximum_measure: float = eqx.field(static=True)
@@ -234,10 +245,25 @@ class CellQualityReport(StrictModule, NonTrainableState):
     minimum_metric_quality: float = eqx.field(static=True)
     sampled_invalid_count: int = eqx.field(static=True)
     worst_cell_global_ids: tuple[int, ...] = eqx.field(static=True)
+    mesh_id: str = eqx.field(static=True)
+    gate_thresholds: tuple[float, float, float] = eqx.field(static=True)
+    measure_failure_ids: tuple[int, ...] = eqx.field(static=True)
+    mean_ratio_failure_ids: tuple[int, ...] = eqx.field(static=True)
+    aspect_ratio_failure_ids: tuple[int, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
     @checked
-    def __init__(self, evaluation: CellQualityEvaluation, /) -> None:
+    def __init__(
+        self,
+        evaluation: CellQualityEvaluation,
+        /,
+        *,
+        mesh_id: str,
+        gate_thresholds: tuple[float, float, float],
+        measure_failure_ids: tuple[int, ...],
+        mean_ratio_failure_ids: tuple[int, ...],
+        aspect_ratio_failure_ids: tuple[int, ...],
+    ) -> None:
         measures = np.asarray(evaluation.measures, dtype=np.float64)
         ratios = np.asarray(evaluation.mean_ratios, dtype=np.float64)
         aspects = np.asarray(evaluation.aspect_ratios, dtype=np.float64)
@@ -289,36 +315,70 @@ class CellQualityReport(StrictModule, NonTrainableState):
         self.worst_cell_global_ids = tuple(
             int(identifiers[index]) for index in order[: min(10, order.size)]
         )
+        thresholds = tuple(float(value) for value in gate_thresholds)
+        if len(thresholds) != 3:
+            raise ValueError("Quality gate thresholds are (measure, mean ratio, aspect).")
+        _require_quality_thresholds(_GateThresholds(*thresholds))
+        if not isinstance(mesh_id, str) or not mesh_id:
+            raise ValueError("Quality report requires the summarized mesh identity.")
+        known = set(identifiers.tolist())
+        failure_sets = tuple(
+            tuple(int(value) for value in values)
+            for values in (
+                measure_failure_ids,
+                mean_ratio_failure_ids,
+                aspect_ratio_failure_ids,
+            )
+        )
+        if any(
+            list(values) != sorted(set(values)) or not set(values) <= known
+            for values in failure_sets
+        ):
+            raise ValueError(
+                "Quality gate failures must be sorted unique evaluated cell IDs."
+            )
+        self.mesh_id = mesh_id
+        self.gate_thresholds = (thresholds[0], thresholds[1], thresholds[2])
+        (
+            self.measure_failure_ids,
+            self.mean_ratio_failure_ids,
+            self.aspect_ratio_failure_ids,
+        ) = failure_sets
+        # Diagnostics are excluded: only the request and exact decisions identify.
         self.report_id = canonical_fingerprint(
             {
                 "kind": "cell-quality-report",
+                "mesh": mesh_id,
                 "evaluation": evaluation.evaluation_id,
                 **(
                     {"measure_exact": evaluation.measure_exact}
                     if evaluation.measure_exact is not None
                     else {}
                 ),
-                "fields": [
-                    array_tree_fingerprint(value)
-                    for value in (
-                        measures,
-                        ratios,
-                        aspects,
-                        scaled,
-                        condition,
-                        minimum_angle,
-                        maximum_angle,
-                        warpage,
-                        metric,
-                        valid,
-                        *(
-                            (errors,)
-                            if evaluation.measure_absolute_errors is not None
-                            else ()
-                        ),
-                    )
-                ],
+                "thresholds": {
+                    "minimum_measure": thresholds[0],
+                    "minimum_mean_ratio": thresholds[1],
+                    "maximum_aspect_ratio": thresholds[2],
+                },
+                "failures": {
+                    "minimum_measure": failure_sets[0],
+                    "minimum_mean_ratio": failure_sets[1],
+                    "maximum_aspect_ratio": failure_sets[2],
+                },
             }
+        )
+
+    @property
+    def failed_gates(self) -> tuple[str, ...]:
+        """Names of the threshold gates with at least one exactly failing cell."""
+        return tuple(
+            name
+            for name, failures in (
+                ("minimum_measure", self.measure_failure_ids),
+                ("minimum_mean_ratio", self.mean_ratio_failure_ids),
+                ("maximum_aspect_ratio", self.aspect_ratio_failure_ids),
+            )
+            if failures
         )
 
     @classmethod
@@ -333,7 +393,14 @@ class CellQualityReport(StrictModule, NonTrainableState):
             raise TypeError(
                 "value must be CellQualityReport or CellQualityReportArchiveRecipe."
             )
-        report = cls(stored.evaluation)
+        report = cls(
+            stored.evaluation,
+            mesh_id=stored.mesh_id,
+            gate_thresholds=stored.gate_thresholds,
+            measure_failure_ids=stored.measure_failure_ids,
+            mean_ratio_failure_ids=stored.mean_ratio_failure_ids,
+            aspect_ratio_failure_ids=stored.aspect_ratio_failure_ids,
+        )
         expected = CellQualityReportArchiveRecipe.from_report(report)
         expected_summary = (
             expected.minimum_measure,
@@ -417,6 +484,11 @@ class CellQualityReportArchiveRecipe(NamedTuple):
     minimum_metric_quality: float | None
     sampled_invalid_count: int
     worst_cell_global_ids: tuple[int, ...]
+    mesh_id: str
+    gate_thresholds: tuple[float, float, float]
+    measure_failure_ids: tuple[int, ...]
+    mean_ratio_failure_ids: tuple[int, ...]
+    aspect_ratio_failure_ids: tuple[int, ...]
     report_id: str
 
     @classmethod
@@ -449,6 +521,11 @@ class CellQualityReportArchiveRecipe(NamedTuple):
             ),
             value.sampled_invalid_count,
             value.worst_cell_global_ids,
+            value.mesh_id,
+            value.gate_thresholds,
+            value.measure_failure_ids,
+            value.mean_ratio_failure_ids,
+            value.aspect_ratio_failure_ids,
             value.report_id,
         )
 
@@ -1286,8 +1363,1035 @@ def _polyhedral_cell_metric(
     return interpolate_mesh_metric(values[rows], jnp.asarray(weights, dtype=values.dtype))
 
 
-def summarize_cell_quality(evaluation: CellQualityEvaluation, /) -> CellQualityReport:
-    return CellQualityReport(evaluation)
+# Exact quality gates ---------------------------------------------------------------
+#
+# Acceptance thresholds are decided on the represented binary64 coordinates, never
+# on the sampled XLA diagnostics. Every gate is the sign of a polynomial in the
+# coordinates (and, for polygons, in the algebraic cosine of the ideal corner). An
+# outward-rounded host enclosure decides almost every cell; a cell it cannot
+# decide is evaluated over exact binary64 rationals with the same formula.
+
+_GATE_BATCH = 32768
+
+
+@dataclass(frozen=True)
+class _Enclosure:
+    """Outward-rounded binary64 enclosure of one real per row."""
+
+    lower: np.ndarray
+    upper: np.ndarray
+
+    @classmethod
+    def full(cls, value: float, shape: tuple[int, ...], /) -> _Enclosure:
+        array = np.full(shape, value, dtype=np.float64)
+        return cls(array, array)
+
+    def _operand(self, other: _Enclosure | int | float, /) -> Interval:
+        if isinstance(other, _Enclosure):
+            return other.lower, other.upper
+        value = np.full(self.lower.shape, float(other), dtype=np.float64)
+        return value, value
+
+    def __add__(self, other: _Enclosure | int | float, /) -> _Enclosure:
+        lower, upper = interval_add((self.lower, self.upper), self._operand(other))
+        return _Enclosure(np.asarray(lower), np.asarray(upper))
+
+    def __radd__(self, other: int | float, /) -> _Enclosure:
+        return self + other
+
+    def __sub__(self, other: _Enclosure | int | float, /) -> _Enclosure:
+        lower, upper = interval_subtract((self.lower, self.upper), self._operand(other))
+        return _Enclosure(np.asarray(lower), np.asarray(upper))
+
+    def __rsub__(self, other: int | float, /) -> _Enclosure:
+        lower, upper = interval_subtract(self._operand(other), (self.lower, self.upper))
+        return _Enclosure(np.asarray(lower), np.asarray(upper))
+
+    def __mul__(self, other: _Enclosure | int | float, /) -> _Enclosure:
+        lower, upper = interval_multiply((self.lower, self.upper), self._operand(other))
+        return _Enclosure(np.asarray(lower), np.asarray(upper))
+
+    def __rmul__(self, other: int | float, /) -> _Enclosure:
+        return self * other
+
+    def __neg__(self) -> _Enclosure:
+        return _Enclosure(-self.upper, -self.lower)
+
+    def take(self, index: np.ndarray, /) -> _Enclosure:
+        return _Enclosure(self.lower[index], self.upper[index])
+
+
+def _total(values: Any, /) -> Any:
+    iterator = iter(values)
+    total = next(iterator)
+    for value in iterator:
+        total = total + value
+    return total
+
+
+def _power(value: Any, exponent: int, /) -> Any:
+    result = value
+    for _ in range(exponent - 1):
+        result = result * value
+    return result
+
+
+def _difference(first: Any, second: Any, /) -> tuple[Any, ...]:
+    return tuple(a - b for a, b in zip(first, second, strict=True))
+
+
+def _dot(first: Any, second: Any, /) -> Any:
+    return _total(a * b for a, b in zip(first, second, strict=True))
+
+
+def _cross(first: Any, second: Any, /) -> tuple[Any, Any, Any]:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _determinant(frames: Any, /) -> Any:
+    if len(frames) == 2:
+        return frames[0][0] * frames[1][1] - frames[0][1] * frames[1][0]
+    return _dot(frames[0], _cross(frames[1], frames[2]))
+
+
+@dataclass(frozen=True)
+class _GateTable:
+    """Exact corner, edge, and boundary data of one standard cell kind.
+
+    ``grams`` are twice the ideal corner Gram matrices: every non-polygon ideal
+    cell has integral squared vertex distances, so they are integral. Simplices
+    keep one corner: their Jacobian relative to the regular simplex is the same
+    affine map at every corner. ``faces`` are the outward boundary cycles of
+    the multilinear solids. ``frames`` keep every sampled corner, because the
+    scaled Jacobian differs between simplex corners; ``scaled_ideals`` are the
+    squared ideal scaled Jacobians ``det(K) / prod(diag K)`` of their ideal
+    Gram matrices ``K``.
+    """
+
+    corners: tuple[tuple[int, tuple[int, ...]], ...]
+    grams: tuple[tuple[tuple[int, ...], ...], ...]
+    edges: tuple[tuple[int, int], ...]
+    faces: tuple[tuple[int, ...], ...]
+    frames: tuple[tuple[int, tuple[int, ...]], ...]
+    scaled_ideals: tuple[Fraction, ...]
+
+
+def _ideal_corner_grams(
+    kind: str, arity: int, corners: tuple[tuple[int, tuple[int, ...]], ...], /
+) -> tuple[tuple[tuple[int, ...], ...], ...]:
+    ideal = _ideal_vertices(kind, arity)
+    squared = np.sum((ideal[:, None, :] - ideal[None, :, :]) ** 2, axis=-1)
+    distances = np.rint(squared)
+    if np.any(np.abs(squared - distances) > 1.0e-12):
+        raise ValueError(f"Ideal {kind!r} vertex distances are not integral.")
+    integral = distances.astype(np.int64)
+    return tuple(
+        tuple(
+            tuple(
+                int(
+                    integral[vertex, first]
+                    + integral[vertex, second]
+                    - integral[first, second]
+                )
+                for second in neighbors
+            )
+            for first in neighbors
+        )
+        for vertex, neighbors in corners
+    )
+
+
+@cache
+def _gate_table(kind: str, arity: int, /) -> _GateTable:
+    if kind == "interval":
+        return _GateTable((), (), _edges(kind, arity), (), (), ())
+    table = _corner_table(kind, arity)
+    frames = tuple(
+        (int(vertex), tuple(int(value) for value in neighbors))
+        for vertex, neighbors in zip(table.vertices, table.neighbors, strict=True)
+    )
+    corners = frames[:1] if kind in ("triangle", "tetrahedron") else frames
+    grams: tuple[tuple[tuple[int, ...], ...], ...] = ()
+    scaled_ideals: tuple[Fraction, ...] = ()
+    if kind != "polygon":
+        frame_grams = _ideal_corner_grams(kind, arity, frames)
+        grams = frame_grams[: len(corners)]
+        scaled_ideals = tuple(
+            Fraction(
+                _determinant(gram), prod(gram[axis][axis] for axis in range(len(gram)))
+            )
+            for gram in frame_grams
+        )
+    faces: tuple[tuple[int, ...], ...] = ()
+    if kind in ("hexahedron", "prism", "pyramid"):
+        reference = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
+        centroid = np.mean(reference, axis=0)
+        oriented = []
+        for face in _faces(kind, arity):
+            points = reference[np.asarray(face)]
+            normal = np.sum(
+                np.cross(points[1:-1] - points[0], points[2:] - points[0]), axis=0
+            )
+            outward = float(np.dot(normal, np.mean(points, axis=0) - centroid)) > 0.0
+            cycle = tuple(int(value) for value in face)
+            oriented.append(cycle if outward else (cycle[0], *cycle[:0:-1]))
+        faces = tuple(oriented)
+    return _GateTable(corners, grams, _edges(kind, arity), faces, frames, scaled_ideals)
+
+
+def _surface_normal(q: Any, /) -> tuple[Any, ...]:
+    """Doubled Newell vector area of a cyclic 2-cell translated by vertex 0."""
+    terms = [_cross(q[index], q[index + 1]) for index in range(1, len(q) - 1)]
+    return tuple(_total(term[axis] for term in terms) for axis in range(3))
+
+
+def _face_flux(points: tuple[Any, ...], /) -> Any:
+    """Twelve times the flux of ``x`` through a planar triangle or bilinear quad.
+
+    The bilinear patch ``a + b u + c v + d u v`` over the unit square carries
+    ``a.(B + P/2 + Q/2) + det(b, d, c)/4`` with ``B = b x c``, ``P = b x d`` and
+    ``Q = d x c``; a triangle carries ``det(p0, p1, p2)/2``.
+    """
+    if len(points) == 3:
+        return 6 * _determinant(points)
+    a = points[0]
+    b = _difference(points[1], points[0])
+    c = _difference(points[3], points[0])
+    d = _difference(_difference(points[0], points[1]), _difference(points[3], points[2]))
+    dc = _cross(d, c)
+    return (
+        12 * _dot(a, _cross(b, c))
+        + 6 * (_dot(a, _cross(b, d)) + _dot(a, dc))
+        + 3 * _dot(b, dc)
+    )
+
+
+def _scaled_measure(kind: str, ambient: int, table: _GateTable, q: Any, /) -> Any:
+    """Measure times 2 (2-D cells), 6 (tetrahedra), or 36 (multilinear solids).
+
+    Intervals return the squared length and cells embedded in 3-D the squared
+    doubled vector area. ``q`` holds the vertices translated by vertex 0, which
+    leaves every closed-boundary flux unchanged.
+    """
+    match kind:
+        case "interval":
+            return _dot(q[1], q[1])
+        case "triangle" | "quadrilateral" | "polygon":
+            if ambient == 2:
+                return _total(
+                    _determinant((q[index], q[index + 1]))
+                    for index in range(1, len(q) - 1)
+                )
+            area = _surface_normal(q)
+            return _dot(area, area)
+        case "tetrahedron":
+            return _determinant((q[1], q[2], q[3]))
+        case _:
+            return _total(
+                _face_flux(tuple(q[index] for index in face)) for face in table.faces
+            )
+
+
+def _corner_terms(
+    q: Any, corner: tuple[int, tuple[int, ...]], ambient: int, normal: Any, /
+) -> tuple[Any, tuple[tuple[Any, ...], ...], Any]:
+    """Orientation, physical frame Gram matrix, and its determinant at a corner."""
+    vertex, neighbors = corner
+    frames = tuple(_difference(q[index], q[vertex]) for index in neighbors)
+    dimension = len(frames)
+    rows: list[list[Any]] = [[None] * dimension for _ in range(dimension)]
+    for first in range(dimension):
+        for second in range(first, dimension):
+            value = _dot(frames[first], frames[second])
+            rows[first][second] = value
+            rows[second][first] = value
+    gram = tuple(tuple(row) for row in rows)
+    if ambient == dimension:
+        determinant = _determinant(frames)
+        return determinant, gram, determinant * determinant
+    cross = _cross(frames[0], frames[1])
+    return _dot(cross, normal), gram, _dot(cross, cross)
+
+
+def _ratio_margin(
+    gram: tuple[tuple[Any, ...], ...], determinant: Any, ideal: Any, threshold: Any, /
+) -> Any:
+    """``r^d tr(C adj K)^d - d^d det(C) det(K)^(d-1)``: positive iff ratio < r.
+
+    At a positive corner the mean ratio relative to the ideal Gram matrix ``K``
+    is ``d (det C / det K)^(1/d) / tr(C K^-1)`` for the physical frame Gram
+    matrix ``C``; it is invariant under scaling ``K``.
+    """
+    dimension = len(gram)
+    if dimension == 2:
+        adjugate = ((ideal[1][1], -ideal[0][1]), (-ideal[1][0], ideal[0][0]))
+    else:
+        adjugate = tuple(
+            tuple(
+                ideal[(column + 1) % 3][(row + 1) % 3]
+                * ideal[(column + 2) % 3][(row + 2) % 3]
+                - ideal[(column + 1) % 3][(row + 2) % 3]
+                * ideal[(column + 2) % 3][(row + 1) % 3]
+                for column in range(3)
+            )
+            for row in range(3)
+        )
+    trace = _total(
+        gram[row][column] * adjugate[column][row]
+        for row in range(dimension)
+        for column in range(dimension)
+        if not (type(adjugate[column][row]) is int and adjugate[column][row] == 0)
+    )
+    return _power(threshold, dimension) * _power(trace, dimension) - (
+        dimension**dimension
+    ) * determinant * _power(_determinant(ideal), dimension - 1)
+
+
+# Algebraic ideal polygon corners ----------------------------------------------------
+
+# Minimal polynomials (c^2, c, 1) of c = -cos(2 pi / n) where c is a quadratic
+# irrational (Euler phi(n) = 4); c is rational exactly for phi(n) = 2.
+_QUADRATIC_POLYGON_COSINES = {
+    5: (4, -2, -1),
+    8: (2, 0, -1),
+    10: (4, 2, -1),
+    12: (4, 0, -3),
+}
+_RATIONAL_POLYGON_COSINES = {3: Fraction(1, 2), 4: Fraction(0), 6: Fraction(-1, 2)}
+
+
+def _inverse_arctangent(denominator: int, bits: int, /) -> tuple[Fraction, Fraction]:
+    """Rational enclosure of ``atan(1 / denominator)`` by its alternating series."""
+    square = Fraction(1, denominator * denominator)
+    tolerance = Fraction(1, 1 << bits)
+    power = Fraction(1, denominator)
+    total = Fraction(0)
+    order = 0
+    while True:
+        term = power / (2 * order + 1)
+        following = total + term if order % 2 == 0 else total - term
+        if term < tolerance:
+            return min(total, following), max(total, following)
+        total = following
+        power *= square
+        order += 1
+
+
+def _cosine_point(value: Fraction, bits: int, /) -> tuple[Fraction, Fraction]:
+    """Rational enclosure of ``cos(value)`` with the Lagrange Taylor remainder."""
+    square = value * value
+    tolerance = Fraction(1, 1 << bits)
+    term = Fraction(1)
+    total = Fraction(0)
+    order = 0
+    while True:
+        total += term if order % 2 == 0 else -term
+        term = term * square / ((2 * order + 1) * (2 * order + 2))
+        order += 1
+        if term < tolerance:
+            return total - term, total + term
+
+
+@cache
+def _polygon_cosine(arity: int, bits: int, /) -> tuple[Fraction, Fraction]:
+    """Rational enclosure of ``c = -cos(2 pi / n)``, the ideal corner cosine."""
+    if arity in _RATIONAL_POLYGON_COSINES:
+        value = _RATIONAL_POLYGON_COSINES[arity]
+        return value, value
+    # Machin: pi = 16 atan(1/5) - 4 atan(1/239).
+    fifth = _inverse_arctangent(5, bits + 8)
+    large = _inverse_arctangent(239, bits + 8)
+    pi_lower = 16 * fifth[0] - 4 * large[1]
+    pi_upper = 16 * fifth[1] - 4 * large[0]
+    # cos decreases on [0, pi], which contains 2 pi / n for n >= 2.
+    upper_cosine = _cosine_point(2 * pi_lower / arity, bits + 8)[1]
+    lower_cosine = _cosine_point(2 * pi_upper / arity, bits + 8)[0]
+    return -upper_cosine, -lower_cosine
+
+
+def _euler_phi(value: int, /) -> int:
+    result = value
+    remaining = value
+    factor = 2
+    while factor * factor <= remaining:
+        if remaining % factor == 0:
+            while remaining % factor == 0:
+                remaining //= factor
+            result -= result // factor
+        factor += 1
+    if remaining > 1:
+        result -= result // remaining
+    return result
+
+
+def _polygon_ratio_fails(
+    gram: tuple[tuple[Fraction, ...], ...],
+    determinant: Fraction,
+    threshold: Fraction,
+    arity: int,
+    /,
+) -> bool:
+    """Exact ``ratio < r`` at a positive corner of an ``n``-gon.
+
+    With ideal corner cosine ``c`` the margin is the quadratic
+    ``P(c) = r^2 (C00 + C11 - 2 c C01)^2 - 4 det(C) (1 - c^2)`` with rational
+    coefficients. ``c`` has degree ``phi(n)/2``, so a zero of ``P`` is decided
+    algebraically; a nonzero sign by rational enclosures refined until they
+    exclude zero.
+    """
+    trace = gram[0][0] + gram[1][1]
+    mixed = gram[0][1]
+    squared = threshold * threshold
+    coefficients = (
+        4 * squared * mixed * mixed + 4 * determinant,
+        -4 * squared * trace * mixed,
+        squared * trace * trace - 4 * determinant,
+    )
+    if arity in _RATIONAL_POLYGON_COSINES:
+        cosine = _RATIONAL_POLYGON_COSINES[arity]
+        return (
+            coefficients[0] * cosine * cosine + coefficients[1] * cosine + coefficients[2]
+            > 0
+        )
+    if arity in _QUADRATIC_POLYGON_COSINES:
+        minimal = _QUADRATIC_POLYGON_COSINES[arity]
+        if all(
+            coefficients[first] * minimal[second] == coefficients[second] * minimal[first]
+            for first, second in ((0, 1), (0, 2), (1, 2))
+        ):
+            return False
+    elif _euler_phi(arity) <= 4:
+        raise ValueError(f"Unclassified ideal polygon corner of arity {arity}.")
+    elif not any(coefficients):
+        return False
+    bits = 64
+    while True:
+        lower, upper = _polygon_cosine(arity, bits)
+        squares = (lower * lower, upper * upper)
+        square = (
+            Fraction(0) if lower <= 0 <= upper else min(squares),
+            max(squares),
+        )
+        quadratic = sorted(coefficients[0] * value for value in square)
+        linear = sorted(coefficients[1] * value for value in (lower, upper))
+        if quadratic[0] + linear[0] + coefficients[2] > 0:
+            return True
+        if quadratic[1] + linear[1] + coefficients[2] < 0:
+            return False
+        bits *= 2
+
+
+# Gate evaluation --------------------------------------------------------------------
+
+
+class _GateThresholds(NamedTuple):
+    measure: float | None
+    mean_ratio: float
+    aspect_ratio: float
+
+
+def _require_quality_thresholds(thresholds: _GateThresholds, /) -> None:
+    measure, ratio, aspect = thresholds
+    if measure is None or not np.isfinite(measure) or measure < 0.0:
+        raise ValueError("minimum_measure must be finite and non-negative.")
+    if not np.isfinite(ratio) or ratio < 0.0 or ratio > 1.0:
+        raise ValueError("minimum_mean_ratio must lie in [0, 1].")
+    if np.isnan(aspect) or aspect < 1.0:
+        raise ValueError("maximum_aspect_ratio must be at least one.")
+
+
+_MEASURE_SCALES = {
+    "interval": 1,
+    "tetrahedron": 6,
+    "hexahedron": 36,
+    "prism": 36,
+    "pyramid": 36,
+}
+
+
+def _standard_gate_failures(
+    kind: str,
+    arity: int,
+    ambient: int,
+    points: np.ndarray,
+    thresholds: _GateThresholds,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact per-cell gate failures of one standard block of vertex coordinates."""
+    table = _gate_table(kind, arity)
+    count = points.shape[0]
+    measure_active = thresholds.measure is not None
+    ratio_active = thresholds.mean_ratio > 0.0 and bool(table.corners)
+    aspect_active = bool(np.isfinite(thresholds.aspect_ratio)) and len(table.edges) > 1
+    embedded = ambient == 3 and kind in ("triangle", "quadrilateral", "polygon")
+    squared_measure = kind == "interval" or embedded
+    scale = _MEASURE_SCALES.get(kind, 2)
+    failures = (
+        np.zeros((count,), dtype=np.bool_),
+        np.zeros((count,), dtype=np.bool_),
+        np.zeros((count,), dtype=np.bool_),
+    )
+
+    def margins(
+        q: Any, measure: Any, ratio: Any, cosine: Any, /
+    ) -> tuple[Any, list[tuple[Any, Any]], Any]:
+        measure_margin = None
+        if measure_active:
+            value = _scaled_measure(kind, ambient, table, q)
+            bound = scale * measure
+            measure_margin = value - bound * bound if squared_measure else value - bound
+        corners: list[tuple[Any, Any]] = []
+        if ratio_active:
+            normal = _surface_normal(q) if embedded else None
+            for index, corner in enumerate(table.corners):
+                orientation, gram, determinant = _corner_terms(q, corner, ambient, normal)
+                if kind != "polygon":
+                    ideal = table.grams[index]
+                elif cosine is None:
+                    corners.append((orientation, (gram, determinant)))
+                    continue
+                else:
+                    ideal = ((1, cosine), (cosine, 1))
+                corners.append(
+                    (orientation, _ratio_margin(gram, determinant, ideal, ratio))
+                )
+        lengths = None
+        if aspect_active:
+            lengths = [
+                _dot(edge, edge)
+                for edge in (
+                    _difference(q[stop], q[start]) for start, stop in table.edges
+                )
+            ]
+        return measure_margin, corners, lengths
+
+    polygon_cosine = None
+    if kind == "polygon" and ratio_active:
+        cosine = _polygon_cosine(arity, 64)
+        polygon_cosine = (fraction_down(cosine[0]), fraction_up(cosine[1]))
+    for start in range(0, count, _GATE_BATCH):
+        stop = min(start + _GATE_BATCH, count)
+        block = points[start:stop]
+        shape = (stop - start,)
+        lower, upper = interval_subtract((block, block), (block[:, :1], block[:, :1]))
+        lower, upper = np.asarray(lower), np.asarray(upper)
+        q = [
+            tuple(
+                _Enclosure(lower[:, vertex, axis], upper[:, vertex, axis])
+                for axis in range(ambient)
+            )
+            for vertex in range(arity)
+        ]
+        aspect_bound = _Enclosure.full(thresholds.aspect_ratio, shape)
+        measure_margin, corners, lengths = margins(
+            q,
+            _Enclosure.full(thresholds.measure, shape) if measure_active else None,
+            _Enclosure.full(thresholds.mean_ratio, shape),
+            None
+            if polygon_cosine is None
+            else _Enclosure(
+                np.full(shape, polygon_cosine[0]), np.full(shape, polygon_cosine[1])
+            ),
+        )
+        undecided = np.zeros(shape, dtype=np.bool_)
+        if measure_margin is not None:
+            fail = measure_margin.upper <= 0.0
+            failures[0][start:stop] = fail
+            undecided |= ~(fail | (measure_margin.lower > 0.0))
+        if corners:
+            fail = np.zeros(shape, dtype=np.bool_)
+            passed = np.ones(shape, dtype=np.bool_)
+            for orientation, margin in corners:
+                positive = orientation.lower > 0.0
+                fail |= (orientation.upper <= 0.0) | (positive & (margin.lower > 0.0))
+                passed &= positive & (margin.upper <= 0.0)
+            failures[1][start:stop] = fail
+            undecided |= ~(fail | passed)
+        if lengths is not None:
+            longest = (
+                np.maximum.reduce([value.lower for value in lengths]),
+                np.maximum.reduce([value.upper for value in lengths]),
+            )
+            bound = (
+                aspect_bound
+                * aspect_bound
+                * _Enclosure(
+                    np.minimum.reduce([value.lower for value in lengths]),
+                    np.minimum.reduce([value.upper for value in lengths]),
+                )
+            )
+            fail = longest[0] > bound.upper
+            failures[2][start:stop] = fail
+            undecided |= ~(fail | (longest[1] <= bound.lower))
+        ratio = Fraction(thresholds.mean_ratio)
+        for row in np.flatnonzero(undecided):
+            origin = block[row, 0]
+            exact = [
+                tuple(
+                    Fraction(float(value)) - Fraction(float(base))
+                    for value, base in zip(vertex, origin, strict=True)
+                )
+                for vertex in block[row]
+            ]
+            measure_exact, corners_exact, lengths_exact = margins(
+                exact,
+                None if thresholds.measure is None else Fraction(thresholds.measure),
+                ratio,
+                None,
+            )
+            index = start + row
+            if measure_exact is not None:
+                failures[0][index] = measure_exact <= 0
+            if corners_exact:
+                failures[1][index] = any(
+                    orientation <= 0
+                    or (
+                        _polygon_ratio_fails(margin[0], margin[1], ratio, arity)
+                        if kind == "polygon"
+                        else margin > 0
+                    )
+                    for orientation, margin in corners_exact
+                )
+            if lengths_exact is not None:
+                failures[2][index] = max(lengths_exact) > Fraction(
+                    thresholds.aspect_ratio
+                ) ** 2 * min(lengths_exact)
+    return failures
+
+
+def _jacobian_gate_failures(
+    kind: str, arity: int, points: np.ndarray, threshold: float, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact per-cell nonpositive corner Jacobians and scaled-Jacobian failures.
+
+    The sampled corner scaled Jacobian is ``det(F) / (|f_1| ... |f_d| s_K)`` for
+    the ideal corner value ``s_K``, ``s_K^2 = a / b``. For a positive threshold
+    ``s`` it is below ``s`` iff ``det(F) <= 0`` or
+    ``s^2 a |f_1|^2 ... |f_d|^2 - b det(F)^2 > 0``.
+    """
+    table = _gate_table(kind, arity)
+    dimension = points.shape[-1]
+    if not table.scaled_ideals or any(
+        len(neighbors) != dimension for _, neighbors in table.frames
+    ):
+        raise ValueError(
+            f"Exact scaled-Jacobian gates require full-dimensional {kind!r} cells."
+        )
+    count = points.shape[0]
+    nonpositive = np.zeros((count,), dtype=np.bool_)
+    below = np.zeros((count,), dtype=np.bool_)
+    square = Fraction(threshold) ** 2
+    factors = tuple(square * ideal.numerator for ideal in table.scaled_ideals)
+
+    def margins(q: Any, weights: tuple[Any, ...], /) -> list[tuple[Any, Any]]:
+        result = []
+        for (vertex, neighbors), weight, ideal in zip(
+            table.frames, weights, table.scaled_ideals, strict=True
+        ):
+            frames = tuple(_difference(q[index], q[vertex]) for index in neighbors)
+            determinant = _determinant(frames)
+            lengths = _dot(frames[0], frames[0])
+            for frame in frames[1:]:
+                lengths = lengths * _dot(frame, frame)
+            result.append(
+                (
+                    determinant,
+                    weight * lengths - ideal.denominator * (determinant * determinant),
+                )
+            )
+        return result
+
+    for start in range(0, count, _GATE_BATCH):
+        stop = min(start + _GATE_BATCH, count)
+        block = points[start:stop]
+        shape = (stop - start,)
+        lower, upper = interval_subtract((block, block), (block[:, :1], block[:, :1]))
+        lower, upper = np.asarray(lower), np.asarray(upper)
+        q = [
+            tuple(
+                _Enclosure(lower[:, vertex, axis], upper[:, vertex, axis])
+                for axis in range(dimension)
+            )
+            for vertex in range(arity)
+        ]
+        corners = margins(
+            q,
+            tuple(
+                _Enclosure(
+                    np.full(shape, fraction_down(factor)),
+                    np.full(shape, fraction_up(factor)),
+                )
+                for factor in factors
+            ),
+        )
+        sign_fail = np.zeros(shape, dtype=np.bool_)
+        sign_pass = np.ones(shape, dtype=np.bool_)
+        scaled_fail = np.zeros(shape, dtype=np.bool_)
+        scaled_pass = np.ones(shape, dtype=np.bool_)
+        for determinant, margin in corners:
+            positive = determinant.lower > 0.0
+            negative = determinant.upper <= 0.0
+            sign_fail |= negative
+            sign_pass &= positive
+            scaled_fail |= negative | (positive & (margin.lower > 0.0))
+            scaled_pass &= positive & (margin.upper <= 0.0)
+        nonpositive[start:stop] = sign_fail
+        below[start:stop] = scaled_fail
+        undecided = ~(sign_fail | sign_pass) | ~(scaled_fail | scaled_pass)
+        for row in np.flatnonzero(undecided):
+            origin = block[row, 0]
+            exact = [
+                tuple(
+                    Fraction(float(value)) - Fraction(float(base))
+                    for value, base in zip(vertex, origin, strict=True)
+                )
+                for vertex in block[row]
+            ]
+            exact_corners = margins(exact, factors)
+            nonpositive[start + row] = any(value <= 0 for value, _ in exact_corners)
+            below[start + row] = any(
+                value <= 0 or margin > 0 for value, margin in exact_corners
+            )
+    return nonpositive, below
+
+
+class ExactCellGateFailures(NamedTuple):
+    """Per-cell exact gate failures of one standard cell block, in row order."""
+
+    nonpositive_corner: np.ndarray
+    measure: np.ndarray
+    scaled_jacobian: np.ndarray
+    mean_ratio: np.ndarray
+    aspect_ratio: np.ndarray
+
+
+def exact_cell_gate_failures(
+    kind: str,
+    points: np.ndarray,
+    /,
+    *,
+    minimum_measure: float,
+    minimum_scaled_jacobian: float,
+    minimum_mean_ratio: float,
+    maximum_aspect_ratio: float,
+) -> ExactCellGateFailures:
+    """Decide the sampled corner-quality gates exactly on binary64 vertices.
+
+    ``points`` holds one row of reference-ordered vertices per full-dimensional
+    standard cell. Every gate keeps the sampled definition of
+    `evaluate_cell_quality`, decided by the outward-rounded screen with an exact
+    binary64-rational fallback: ``nonpositive_corner`` is a corner Jacobian
+    determinant ``<= 0``; ``measure`` is ``measure <= minimum_measure``;
+    ``scaled_jacobian`` and ``mean_ratio`` are corner minima below their
+    thresholds; ``aspect_ratio`` is a longest-to-shortest edge ratio above its
+    bound.
+    """
+    family = reference_cell_topology(kind).family
+    values = np.asarray(points, dtype=np.float64)
+    arity = len(reference_cell_topology(family).vertices)
+    if values.ndim != 3 or values.shape[1] != arity:
+        raise ValueError(f"Exact {family!r} gates require (cells, {arity}, d) vertices.")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Exact quality gates require finite cell vertices.")
+    thresholds = _GateThresholds(
+        float(minimum_measure), float(minimum_mean_ratio), float(maximum_aspect_ratio)
+    )
+    _require_quality_thresholds(thresholds)
+    scaled = float(minimum_scaled_jacobian)
+    if not np.isfinite(scaled) or scaled <= 0.0:
+        raise ValueError("minimum_scaled_jacobian must be finite and positive.")
+    nonpositive, scaled_failures = _jacobian_gate_failures(family, arity, values, scaled)
+    measure, ratio, aspect = _standard_gate_failures(
+        family, arity, values.shape[-1], values, thresholds
+    )
+    return ExactCellGateFailures(nonpositive, measure, scaled_failures, ratio, aspect)
+
+
+def _padded_sum(values: _Enclosure, owners: np.ndarray, count: int, /) -> _Enclosure:
+    """Enclosure of per-owner sums accumulated in stable row order."""
+    order = np.argsort(owners, kind="stable")
+    sorted_owners = owners[order]
+    counts = np.bincount(sorted_owners, minlength=count)
+    rank = np.arange(sorted_owners.size) - np.repeat(np.cumsum(counts) - counts, counts)
+    width = int(np.max(counts, initial=0))
+    lower = np.zeros((count, width), dtype=np.float64)
+    upper = np.zeros((count, width), dtype=np.float64)
+    lower[sorted_owners, rank] = values.lower[order]
+    upper[sorted_owners, rank] = values.upper[order]
+    total = _Enclosure.full(0.0, (count,))
+    for column in range(width):
+        total = total + _Enclosure(lower[:, column], upper[:, column])
+    return total
+
+
+def _polyhedral_gate_failures(
+    tables: PolyhedralStarTables,
+    cells: np.ndarray,
+    coordinates: np.ndarray,
+    thresholds: _GateThresholds,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact gate failures of polyhedra through their star tetrahedra.
+
+    Each star tetrahedron joins the cell vertex mean, a face vertex mean, and
+    one oriented face edge, as in the sampled evaluation.
+    """
+    count = cells.size
+    tetrahedron = _gate_table("tetrahedron", 4)
+    corner, ideal = tetrahedron.corners[0], tetrahedron.grams[0]
+    ratio_active = thresholds.mean_ratio > 0.0
+    aspect_active = bool(np.isfinite(thresholds.aspect_ratio))
+    selected = np.flatnonzero(np.isin(tables.star_cell, cells))
+    stars = selected.size
+    local = np.searchsorted(cells, tables.star_cell[selected])
+    member = np.isin(tables.cell_vertex_cell, cells)
+    vertex_owner = np.searchsorted(cells, tables.cell_vertex_cell[member])
+    vertex_rows = tables.cell_vertex_values[member]
+    faces = np.unique(tables.star_face[selected])
+    corner_member = np.isin(tables.face_corner_face, faces)
+    corner_owner = np.searchsorted(faces, tables.face_corner_face[corner_member])
+    corner_rows = tables.face_corner_vertex[corner_member]
+    star_face = np.searchsorted(faces, tables.star_face[selected])
+    first = coordinates[tables.star_first[selected]]
+    second = coordinates[tables.star_second[selected]]
+
+    def mean(rows: np.ndarray, owners: np.ndarray, total: int, /) -> tuple[Any, ...]:
+        divisor = np.asarray(np.bincount(owners, minlength=total), dtype=np.float64)
+        means = []
+        for axis in range(3):
+            values = coordinates[rows, axis]
+            sums = _padded_sum(_Enclosure(values, values), owners, total)
+            lower, upper = interval_divide((sums.lower, sums.upper), (divisor, divisor))
+            means.append(_Enclosure(np.asarray(lower), np.asarray(upper)))
+        return tuple(means)
+
+    def star_margins(
+        zero: Any, center: Any, face: Any, first_: Any, second_: Any, ratio: Any, /
+    ) -> tuple[Any, Any, Any]:
+        q = (
+            (zero, zero, zero),
+            _difference(face, center),
+            _difference(first_, center),
+            _difference(second_, center),
+        )
+        volume = _determinant(q[1:])
+        if not ratio_active:
+            return volume, None, None
+        orientation, gram, determinant = _corner_terms(q, corner, 3, None)
+        return volume, orientation, _ratio_margin(gram, determinant, ideal, ratio)
+
+    center = mean(vertex_rows, vertex_owner, count)
+    face_center = mean(corner_rows, corner_owner, faces.size)
+    volume, orientation, ratio_margin = star_margins(
+        _Enclosure.full(0.0, (stars,)),
+        tuple(axis.take(local) for axis in center),
+        tuple(axis.take(star_face) for axis in face_center),
+        tuple(_Enclosure(first[:, axis], first[:, axis]) for axis in range(3)),
+        tuple(_Enclosure(second[:, axis], second[:, axis]) for axis in range(3)),
+        _Enclosure.full(thresholds.mean_ratio, (stars,)),
+    )
+    undecided = np.zeros((count,), dtype=np.bool_)
+    measure_failures = np.zeros((count,), dtype=np.bool_)
+    if thresholds.measure is not None:
+        measure = _padded_sum(volume, local, count) - 6 * _Enclosure.full(
+            thresholds.measure, (count,)
+        )
+        measure_failures = measure.upper <= 0.0
+        undecided |= ~(measure_failures | (measure.lower > 0.0))
+    ratio_failures = np.zeros((count,), dtype=np.bool_)
+    if ratio_active:
+        positive = orientation.lower > 0.0
+        star_fail = (orientation.upper <= 0.0) | (positive & (ratio_margin.lower > 0.0))
+        star_pass = positive & (ratio_margin.upper <= 0.0)
+        ratio_failures = np.bincount(local[star_fail], minlength=count) > 0
+        passed = np.bincount(local[~star_pass], minlength=count) == 0
+        undecided |= ~(ratio_failures | passed)
+    aspect_failures = np.zeros((count,), dtype=np.bool_)
+    if aspect_active:
+        lower, upper = interval_subtract((second, second), (first, first))
+        lower, upper = np.asarray(lower), np.asarray(upper)
+        edge = tuple(_Enclosure(lower[:, axis], upper[:, axis]) for axis in range(3))
+        lengths = _dot(edge, edge)
+        longest = (np.full((count,), -np.inf), np.full((count,), -np.inf))
+        shortest = (np.full((count,), np.inf), np.full((count,), np.inf))
+        np.maximum.at(longest[0], local, lengths.lower)
+        np.maximum.at(longest[1], local, lengths.upper)
+        np.minimum.at(shortest[0], local, lengths.lower)
+        np.minimum.at(shortest[1], local, lengths.upper)
+        bound = _Enclosure.full(thresholds.aspect_ratio, (count,))
+        bound = bound * bound * _Enclosure(*shortest)
+        aspect_failures = longest[0] > bound.upper
+        undecided |= ~(aspect_failures | (longest[1] <= bound.lower))
+
+    def exact_mean(rows: np.ndarray, /) -> tuple[Fraction, ...]:
+        return tuple(
+            sum(
+                (Fraction(float(value)) for value in coordinates[rows, axis]), Fraction(0)
+            )
+            / rows.size
+            for axis in range(3)
+        )
+
+    ratio = Fraction(thresholds.mean_ratio)
+    for row in np.flatnonzero(undecided):
+        exact_center = exact_mean(vertex_rows[vertex_owner == row])
+        volume_total = Fraction(0)
+        ratio_fail = False
+        lengths_exact = []
+        for star in np.flatnonzero(local == row):
+            first_exact = tuple(Fraction(float(value)) for value in first[star])
+            second_exact = tuple(Fraction(float(value)) for value in second[star])
+            star_volume, star_orientation, star_margin = star_margins(
+                Fraction(0),
+                exact_center,
+                exact_mean(corner_rows[corner_owner == star_face[star]]),
+                first_exact,
+                second_exact,
+                ratio,
+            )
+            volume_total += star_volume
+            if ratio_active:
+                ratio_fail = ratio_fail or star_orientation <= 0 or star_margin > 0
+            edge_exact = _difference(second_exact, first_exact)
+            lengths_exact.append(_dot(edge_exact, edge_exact))
+        if thresholds.measure is not None:
+            measure_failures[row] = volume_total <= 6 * Fraction(thresholds.measure)
+        ratio_failures[row] = ratio_fail
+        if aspect_active:
+            aspect_failures[row] = max(lengths_exact) > Fraction(
+                thresholds.aspect_ratio
+            ) ** 2 * min(lengths_exact)
+    return measure_failures, ratio_failures, aspect_failures
+
+
+def _certified_measure_failures(
+    evaluation: CellQualityEvaluation, threshold: float, /
+) -> np.ndarray:
+    """Exact ``value - error <= threshold`` on certified mapped measure enclosures."""
+    values = np.asarray(evaluation.measures, dtype=np.float64)
+    errors = np.asarray(evaluation.measure_absolute_errors, dtype=np.float64)
+    bound = np.full(values.shape, threshold, dtype=np.float64)
+    lower, upper = interval_subtract((values, values), (errors, errors))
+    lower, upper = interval_subtract(
+        (np.asarray(lower), np.asarray(upper)), (bound, bound)
+    )
+    lower, upper = np.asarray(lower), np.asarray(upper)
+    failures = upper <= 0.0
+    for row in np.flatnonzero(~(failures | (lower > 0.0))):
+        failures[row] = Fraction(float(values[row])) - Fraction(
+            float(errors[row])
+        ) <= Fraction(threshold)
+    return failures
+
+
+def _decide_quality_gates(
+    mesh: CellMesh, evaluation: CellQualityEvaluation, thresholds: _GateThresholds, /
+) -> tuple[np.ndarray, ...]:
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    if not np.all(np.isfinite(coordinates)):
+        raise ValueError("Exact quality gates require finite mesh coordinates.")
+    mapped = evaluation.measure_absolute_errors is not None
+    block_thresholds = thresholds._replace(measure=None) if mapped else thresholds
+    parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    start = 0
+    for block in mesh.blocks:
+        stop = start + block.cell_count
+        if block.cell_kind == "polyhedron":
+            parts.append(
+                _polyhedral_gate_failures(
+                    # ty: ignore[invalid-argument-type]
+                    polyhedral_star_tables(mesh.connectivity),
+                    np.arange(start, stop),
+                    coordinates,
+                    block_thresholds,
+                )
+            )
+        else:
+            rows = np.asarray(block.vertices, dtype=np.int64)
+            kind = (
+                "polygon"
+                if block.cell_kind == "polygon"
+                else reference_cell_topology(block.cell_kind).family
+            )
+            parts.append(
+                _standard_gate_failures(
+                    kind,
+                    rows.shape[1],
+                    coordinates.shape[1],
+                    coordinates[rows],
+                    block_thresholds,
+                )
+            )
+        start = stop
+    measure, ratio, aspect = (
+        np.concatenate(values) for values in zip(*parts, strict=True)
+    )
+    if mapped:
+        measure = _certified_measure_failures(
+            evaluation,
+            thresholds.measure,  # ty: ignore[invalid-argument-type]
+        )
+    return measure, ratio, aspect
+
+
+def summarize_cell_quality(
+    mesh: CellMesh,
+    evaluation: CellQualityEvaluation,
+    /,
+    *,
+    minimum_measure: float = 0.0,
+    minimum_mean_ratio: float = 0.0,
+    maximum_aspect_ratio: float = 1.0e300,
+) -> CellQualityReport:
+    """Summarize sampled diagnostics and decide the quality thresholds exactly.
+
+    A cell fails ``minimum_measure`` when its measure (the certified enclosure
+    lower bound for mapped evaluations) is at most the threshold,
+    ``minimum_mean_ratio`` when a corner mean ratio is below it (zero at a
+    non-positive corner), and ``maximum_aspect_ratio`` when its longest edge
+    exceeds the threshold times its shortest. Decisions are exact on the
+    represented binary64 mesh coordinates and never read the sampled floats.
+    """
+    if not isinstance(mesh, CellMesh):
+        raise TypeError("mesh must be CellMesh.")
+    if not isinstance(evaluation, CellQualityEvaluation):
+        raise TypeError("evaluation must be CellQualityEvaluation.")
+    identifiers = np.asarray(evaluation.cell_global_ids, dtype=np.int64)
+    if (
+        evaluation.topology_id != mesh.topology_id
+        or evaluation.block_names != tuple(block.name for block in mesh.blocks)
+        or not np.array_equal(
+            identifiers,
+            np.concatenate(
+                [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+            ),
+        )
+    ):
+        raise ValueError("Quality evaluation is not bound to the summarized mesh.")
+    thresholds = _GateThresholds(
+        float(minimum_measure), float(minimum_mean_ratio), float(maximum_aspect_ratio)
+    )
+    _require_quality_thresholds(thresholds)
+    measure_ids, ratio_ids, aspect_ids = (
+        tuple(int(value) for value in np.sort(identifiers[mask]))
+        for mask in _decide_quality_gates(mesh, evaluation, thresholds)
+    )
+    return CellQualityReport(
+        evaluation,
+        mesh_id=mesh.mesh_id,
+        gate_thresholds=(
+            float(minimum_measure),
+            thresholds.mean_ratio,
+            thresholds.aspect_ratio,
+        ),
+        measure_failure_ids=measure_ids,
+        mean_ratio_failure_ids=ratio_ids,
+        aspect_ratio_failure_ids=aspect_ids,
+    )
 
 
 # Straight sweep layers -------------------------------------------------------------

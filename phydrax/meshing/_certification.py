@@ -522,7 +522,6 @@ class _ComputedSurfaceAcceptance:
         organization: NativeMeshOrganization,
         /,
         *,
-        embedding: GlobalEmbeddingCertificate | None,
         validity_parent: CellValidityCertificate
         | ValidatedCellValidityParent
         | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
@@ -531,14 +530,12 @@ class _ComputedSurfaceAcceptance:
         computed_validity: ComputedCellValidity | None = None,
     ) -> None:
         self.inputs = inputs
-        self.reusable = embedding is None and (
-            validity_parent is None
-            or (type(validity_parent) is tuple and len(validity_parent) == 0)
+        self.reusable = validity_parent is None or (
+            type(validity_parent) is tuple and len(validity_parent) == 0
         )
         self.report = MeshCertificationReport(
             inputs,
             organization=organization,
-            embedding=embedding,
             validity_parent=validity_parent,
             computed_validity=computed_validity,
             validated=validated,
@@ -712,8 +709,13 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 raise TypeError(
                     "validated_embedding must be ValidatedGlobalEmbedding or None."
                 )
+            # The route may also hand over the validated embedding's own
+            # certificate; that is the same proof, not another one.
             if (
-                embedding is not None
+                (
+                    embedding is not None
+                    and embedding is not validated_embedding.certificate
+                )
                 or embedding_premise is not None
                 or validity is not None
             ):

@@ -403,6 +403,7 @@ def _exact_line_junction_box(
 ) -> np.ndarray | None:
     """Prove an exact rational/native-period line junction on one source vertex."""
     from .brep._boolean_core import (
+        _cardinal_conic_phase,
         chart_add,
         chart_parts,
         chart_scale,
@@ -481,13 +482,21 @@ def _exact_line_junction_box(
             exact_parameter = endpoint.exact_parameter
         elif isinstance(endpoint, ConicParameterEndpoint):
             if (
-                endpoint.parameter_exact is None
-                or root is None
+                root is None
                 or not root.supports_endpoint(endpoint)
                 or not _same_parameter_source(endpoint.carrier, geometry.pcurves[coedge])
             ):
                 return None
-            exact_parameter = endpoint.parameter_exact
+            if endpoint.parameter_exact is not None:
+                exact_parameter = endpoint.parameter_exact
+            else:
+                # Without an exact carrier parameter the carrier parameter is
+                # the conic phase; only a cardinal phase is an exact chart value.
+                lower, upper = endpoint.parameter_enclosure()
+                phase = _cardinal_conic_phase(endpoint.root)
+                if phase is None or not lower <= parameter <= upper:
+                    return None
+                exact_parameter = phase
         elif (
             endpoint is None
             and root is None

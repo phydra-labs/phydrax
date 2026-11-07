@@ -1,5 +1,8 @@
 """Propagation rules for element-wise operations."""
 
+from collections.abc import Callable
+
+import jax.numpy as jnp
 import numpy as np
 from jax._src.core import JaxprEqn
 from jax.core import ShapedArray
@@ -9,12 +12,16 @@ from ._common import (
     _atom_numel,
     _atom_shape,
     _atom_value_bounds,
+    _backend_bounds,
     _clear_where_zero,
     _copy_index_sets,
     _empty_index_sets,
     _index_sets,
+    _is_floating,
     _numel,
     _propagate_const_binary,
+    _store_bounds,
+    _store_folded_const,
     _union_elementwise,
     StateBounds,
     StateConsts,
@@ -22,21 +29,44 @@ from ._common import (
 )
 
 
-# Ufuncs for evaluating constant values during tracing.
-# Used to propagate static index values through arithmetic to gather/scatter.
-_BINARY_CONST_UFUNCS: dict[str, np.ufunc] = {
+def _integer_division_defined(dividend: np.ndarray, divisor: np.ndarray) -> bool:
+    """Whether integer ``lax.div``/``lax.rem`` have one specified result everywhere.
+
+    XLA leaves division by zero and the signed ``min // -1`` overflow
+    implementation defined, so such operands are never folded.
+    """
+    if not (
+        jnp.issubdtype(dividend.dtype, jnp.integer)
+        and jnp.issubdtype(divisor.dtype, jnp.integer)
+    ):
+        return False
+    if np.any(divisor == 0):
+        return False
+    if jnp.issubdtype(dividend.dtype, jnp.signedinteger):
+        smallest = np.iinfo(dividend.dtype).min
+        return not np.any((dividend == smallest) & (divisor == -1))
+    return True
+
+
+def _integer_remainder(dividend: np.ndarray, divisor: np.ndarray) -> np.ndarray | None:
+    """Integer ``lax.rem``: the remainder takes the dividend's sign (C ``%``)."""
+    if not _integer_division_defined(dividend, divisor):
+        return None
+    return np.fmod(dividend, divisor)
+
+
+# Host evaluators for constant values during tracing. Used to propagate static
+# index values through integer arithmetic to gather/scatter; floating results
+# are never folded (see ``_store_folded_const``).
+_BINARY_CONST_UFUNCS: dict[str, Callable[[np.ndarray, np.ndarray], np.ndarray | None]] = {
     # arithmetic
     "add": np.add,
     "add_any": np.add,
     "sub": np.subtract,
     "mul": np.multiply,
-    "div": np.divide,
-    "pow": np.power,
     "max": np.maximum,
     "min": np.minimum,
-    "atan2": np.arctan2,
-    "rem": np.remainder,
-    "nextafter": np.nextafter,
+    "rem": _integer_remainder,
     # comparison
     "eq": np.equal,
     "ne": np.not_equal,
@@ -51,13 +81,13 @@ def _propagate_const(eqn: JaxprEqn, state_consts: StateConsts) -> None:
     """Propagate a const value through a binary elementwise op.
 
     If both inputs are statically known,
-    apply the matching numpy ufunc and store the result.
+    apply the matching host evaluator and store a non-floating result.
     Without this, downstream handlers (e.g. ``gather``, ``scatter``) cannot resolve
     static index arrays and fall back to conservative.
     """
-    ufunc = _BINARY_CONST_UFUNCS.get(eqn.primitive.name)
-    if ufunc is not None:
-        _propagate_const_binary(eqn, state_consts, ufunc)
+    evaluate = _BINARY_CONST_UFUNCS.get(eqn.primitive.name)
+    if evaluate is not None:
+        _propagate_const_binary(eqn, state_consts, evaluate)
 
 
 # Building blocks (private)
@@ -164,7 +194,7 @@ def _propagate_bounds_add(
         return
     lo1, hi1 = b1
     lo2, hi2 = b2
-    state_bounds[eqn.outvars[0]] = (lo1 + lo2, hi1 + hi2)
+    _store_bounds(eqn, state_bounds, lo1 + lo2, hi1 + hi2)
 
 
 def _propagate_bounds_sub(
@@ -179,7 +209,7 @@ def _propagate_bounds_sub(
         return
     lo1, hi1 = b1
     lo2, hi2 = b2
-    state_bounds[eqn.outvars[0]] = (lo1 - hi2, hi1 - lo2)
+    _store_bounds(eqn, state_bounds, lo1 - hi2, hi1 - lo2)
 
 
 def _propagate_bounds_min_max(
@@ -198,7 +228,7 @@ def _propagate_bounds_min_max(
     if b1 is None or b2 is None:
         return
     extremum = np.minimum if eqn.primitive.name == "min" else np.maximum
-    state_bounds[eqn.outvars[0]] = (extremum(b1[0], b2[0]), extremum(b1[1], b2[1]))
+    _store_bounds(eqn, state_bounds, extremum(b1[0], b2[0]), extremum(b1[1], b2[1]))
 
 
 # Composite handlers (public)
@@ -380,7 +410,7 @@ def _prop_integer_pow(
     if state_consts is not None:
         in_val = _atom_const_val(eqn.invars[0], state_consts)
         if in_val is not None:
-            state_consts[eqn.outvars[0]] = np.power(in_val, y)
+            _store_folded_const(state_consts, eqn.outvars[0], np.power(in_val, y))
 
     # Zero-skipping: d(0^n)/dx = n * 0^(n-1) = 0 for n > 1.
     # For n = 1, d(x)/dx = 1 even at x = 0, so no skipping.
@@ -398,18 +428,23 @@ def _propagate_bounds_integer_pow(
     state_consts: StateConsts,
     state_bounds: StateBounds,
 ) -> None:
-    """Propagate value bounds through ``integer_pow``.
+    """Propagate integer value bounds through ``integer_pow``.
 
     - n == 0: bounds are (1, 1).
     - n even: [0, max(|a|,|b|)^n] if interval spans zero,
       else [min(|a|,|b|)^n, max(|a|,|b|)^n].
     - n odd (monotone): [a^n, b^n].
+
+    Floating powers are evaluated by backend-specific multiplication chains, so
+    their host values are not bounds and none are recorded.
     """
     in_bounds = _atom_value_bounds(eqn.invars[0], state_consts, state_bounds)
     if in_bounds is None:
         return
 
     lo, hi = in_bounds
+    if _is_floating(lo) or _is_floating(hi):
+        return
 
     if y == 0:
         ones = np.ones_like(lo)
@@ -522,26 +557,99 @@ def _prop_convert_element_type(
 
     in_val = _atom_const_val(eqn.invars[0], state_consts)
     if in_val is not None:
-        new_dtype = eqn.params.get("new_dtype")
-        if new_dtype is not None:
-            state_consts[eqn.outvars[0]] = in_val.astype(new_dtype)
-        else:
-            # stop_gradient, bitcast_convert_type, etc. — pass through as-is.
-            state_consts[eqn.outvars[0]] = in_val
+        converted = _converted_const(eqn, in_val)
+        if converted is not None:
+            state_consts[eqn.outvars[0]] = converted
 
-    # Propagate value bounds with dtype cast.
-    if state_bounds is not None:
+    # Propagate value bounds through value conversions.
+    if state_bounds is not None and eqn.primitive.name in (
+        "convert_element_type",
+        "stop_gradient",
+    ):
         bounds = _atom_value_bounds(eqn.invars[0], state_consts, state_bounds)
         if bounds is not None:
-            lo, hi = bounds
             new_dtype = eqn.params.get("new_dtype")
-            if new_dtype is not None:
-                state_bounds[eqn.outvars[0]] = (
-                    lo.astype(new_dtype),
-                    hi.astype(new_dtype),
-                )
-            else:
-                state_bounds[eqn.outvars[0]] = (lo, hi)
+            converted = (
+                bounds
+                if new_dtype is None
+                else _converted_bounds(eqn, *bounds, np.dtype(new_dtype))
+            )
+            if converted is not None:
+                state_bounds[eqn.outvars[0]] = converted
+
+
+def _converted_bounds(
+    eqn: JaxprEqn, lower: np.ndarray, upper: np.ndarray, new_dtype: np.dtype
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Bounds after ``convert_element_type``; conversions are monotone.
+
+    Floating targets round, so they are widened like arithmetic results.
+    Floating-to-integer truncation is bounded for finite in-range endpoints;
+    integer narrowing is bounded only when both endpoints are preserved.
+    """
+    if any(jnp.issubdtype(end.dtype, jnp.complexfloating) for end in (lower, upper)):
+        return None
+    if jnp.issubdtype(new_dtype, jnp.inexact):
+        return _backend_bounds(eqn, lower, upper)
+    if not jnp.issubdtype(new_dtype, jnp.integer):
+        return None
+    if _is_floating(lower) or _is_floating(upper):
+        low, high = np.trunc(lower), np.trunc(upper)
+        if not (
+            _truncates_in_range(low, new_dtype) and _truncates_in_range(high, new_dtype)
+        ):
+            return None
+        return low.astype(new_dtype), high.astype(new_dtype)
+    if all(
+        np.array_equal(end.astype(new_dtype).astype(end.dtype), end)
+        for end in (lower, upper)
+    ):
+        return lower.astype(new_dtype), upper.astype(new_dtype)
+    return None
+
+
+def _converted_const(eqn: JaxprEqn, value: np.ndarray) -> np.ndarray | None:
+    """Host value of a conversion that every backend computes identically.
+
+    ``stop_gradient`` keeps the value and ``bitcast_convert_type`` reinterprets
+    its bits. ``reduce_precision`` rounds floating data, so it is not folded.
+    Floating-to-integer conversion truncates toward zero and is folded only for
+    finite values in the target range, where XLA and NumPy agree.
+    """
+    match eqn.primitive.name:
+        case "stop_gradient":
+            return value
+        case "bitcast_convert_type":
+            new_dtype = np.dtype(eqn.params["new_dtype"])
+            if new_dtype.itemsize != value.dtype.itemsize:
+                return None
+            return np.ascontiguousarray(value).view(new_dtype)
+        case "convert_element_type":
+            new_dtype = np.dtype(eqn.params["new_dtype"])
+            if (
+                jnp.issubdtype(new_dtype, jnp.integer)
+                and _is_floating(value)
+                and not _truncates_in_range(np.trunc(np.real(value)), new_dtype)
+            ):
+                return None
+            return value.astype(new_dtype)
+        case _:
+            return None
+
+
+def _truncates_in_range(truncated: np.ndarray, new_dtype: np.dtype) -> bool:
+    """Whether truncated floating values are finite and representable in ``new_dtype``.
+
+    XLA and NumPy disagree on non-finite and out-of-range conversions.
+    """
+    limits = jnp.iinfo(new_dtype)
+    return bool(
+        np.all(
+            np.isfinite(truncated)
+            & (truncated >= float(limits.min))
+            & (truncated < float(limits.max) + 1.0)
+        )
+    )
 
 
 def _prop_clamp(eqn: JaxprEqn, state_indices: StateIndices) -> None:

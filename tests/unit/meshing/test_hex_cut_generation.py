@@ -1,5 +1,7 @@
+from dataclasses import replace
 from fractions import Fraction
 from itertools import product
+from typing import Any
 
 import numpy as np
 import pytest
@@ -10,11 +12,15 @@ from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import SimplicialConnectivity
 from phydrax.discretization._coordinate_enclosure import Polynomial
 from phydrax.discretization._hexahedral import HexahedralConnectivity
+from phydrax.discretization._motion_validity import reference_corner_frames
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import lagrange_element
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.meshing import _hex_cut_generation as hex_cut_generation
 from phydrax.meshing._hex_cut_generation import (
     _CutCoordinateMap,
+    _exact_cut_cell_failures,
+    BalancedCutHexConstruction,
     generate_balanced_cut_hexes,
 )
 from phydrax.meshing._hex_cut_preparation import (
@@ -638,3 +644,212 @@ def test_balanced_cut_all_hex_closure_covers_a_nonsweepable_tetrahedral_cavity()
     )
     assert _hex_volume(result.mesh) == pytest.approx(expected_volume, rel=5.0e-12)
     assert result.source_complex_id == source.complex_id
+
+
+def _scaled_jacobian_below(points: np.ndarray, threshold: float, /) -> bool:
+    """Independent oracle: some unit-ideal corner has det(F) < s |f1| |f2| |f3|."""
+    vertices, neighbors = reference_corner_frames("hexahedron")
+    exact = [tuple(Fraction(float(value)) for value in row) for row in points]
+    square = Fraction(threshold) ** 2
+    for vertex, row in zip(vertices.tolist(), neighbors.tolist(), strict=True):
+        f = [
+            tuple(a - b for a, b in zip(exact[other], exact[vertex], strict=True))
+            for other in row
+        ]
+        determinant = (
+            f[0][0] * (f[1][1] * f[2][2] - f[1][2] * f[2][1])
+            - f[0][1] * (f[1][0] * f[2][2] - f[1][2] * f[2][0])
+            + f[0][2] * (f[1][0] * f[2][1] - f[1][1] * f[2][0])
+        )
+        lengths = Fraction(1)
+        for frame in f:
+            lengths *= sum((value * value for value in frame), Fraction(0))
+        if determinant <= 0 or determinant * determinant < square * lengths:
+            return True
+    return False
+
+
+def test_cut_admission_is_exact_under_ulp_perturbed_quality_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, fill = _simplex_plc_and_fill()
+
+    def generate(minimum_scaled_jacobian: float, /) -> BalancedCutHexConstruction:
+        schedule = NativeHexGridSchedule(
+            "balanced_grid",
+            minimum_scaled_jacobian=minimum_scaled_jacobian,
+            minimum_mean_ratio=1.0e-6,
+            maximum_aspect_ratio=1.0e6,
+        )
+        plan = prepare_balanced_cut_grid(
+            source,
+            fill,
+            schedule,
+            0.6,
+            source_id="cut-simplex",
+            source_revision="cut-simplex-r1",
+        )
+        return generate_balanced_cut_hexes(
+            source, fill, np.asarray((0,), dtype=np.int64), plan, schedule
+        )
+
+    permissive = generate(1.0e-6)
+    cells = np.asarray(permissive.mesh.blocks[0].vertices, dtype=np.int64)
+    points = np.asarray(permissive.mesh.coordinates, dtype=np.float64)[cells]
+
+    def admitted(threshold: float, /) -> bool:
+        return not any(_scaled_jacobian_below(cell, threshold) for cell in points)
+
+    # The largest binary64 threshold that the exact cell minimum still meets.
+    threshold = float(np.min(permissive.scaled_jacobian_sample_min))
+    while not admitted(threshold):
+        threshold = float(np.nextafter(threshold, 0.0))
+    while admitted(float(np.nextafter(threshold, np.inf))):
+        threshold = float(np.nextafter(threshold, np.inf))
+    reference = generate(threshold)
+    assert reference.mesh.mesh_id == permissive.mesh.mesh_id
+    above = NativeHexGridSchedule(
+        "balanced_grid",
+        minimum_scaled_jacobian=float(np.nextafter(threshold, np.inf)),
+        minimum_mean_ratio=1.0e-6,
+        maximum_aspect_ratio=1.0e6,
+    )
+    coordinates = np.asarray(reference.mesh.coordinates, dtype=np.float64)
+    _, failed = _exact_cut_cell_failures(coordinates, cells, above)
+    assert failed.tolist() == [
+        _scaled_jacobian_below(cell, above.minimum_scaled_jacobian) for cell in points
+    ]
+    assert np.any(failed)
+
+    # Another platform's sampled minimum one ulp below the exactly met threshold:
+    # the former float schedule rejected it; the exact admission replays.
+    evaluate = hex_cut_generation.evaluate_cell_quality
+
+    def perturbed(mesh: CellMesh, *args: Any, **kwargs: Any) -> Any:
+        evaluation = evaluate(mesh, *args, **kwargs)
+        if args or kwargs:
+            return evaluation
+        scaled = np.array(evaluation.scaled_jacobian, dtype=np.float64)
+        scaled[np.argmin(scaled)] = np.nextafter(threshold, -np.inf)
+        return replace(evaluation, scaled_jacobian=scaled)
+
+    monkeypatch.setattr(hex_cut_generation, "evaluate_cell_quality", perturbed)
+    replayed = generate(threshold)
+    assert float(np.min(replayed.scaled_jacobian_sample_min)) < threshold
+    assert replayed.mesh.mesh_id == reference.mesh.mesh_id
+    cut_map = reference.geometry.source_map
+    assert isinstance(cut_map, _CutCoordinateMap)
+    replayed_map = replayed.geometry.source_map
+    assert isinstance(replayed_map, _CutCoordinateMap)
+    assert replayed_map.source_map_id == cut_map.source_map_id
+    restored = _CutCoordinateMap.from_stored_fields(cut_map, reference.mesh)
+    assert restored.source_map_id == cut_map.source_map_id
+
+
+def _simplex_cut(minimum_mean_ratio: float, /) -> BalancedCutHexConstruction:
+    source, fill = _simplex_plc_and_fill()
+    schedule = NativeHexGridSchedule(
+        "balanced_grid",
+        minimum_scaled_jacobian=1.0e-6,
+        minimum_mean_ratio=minimum_mean_ratio,
+        maximum_aspect_ratio=1.0e6,
+    )
+    plan = prepare_balanced_cut_grid(
+        source,
+        fill,
+        schedule,
+        0.6,
+        source_id="relocated-simplex",
+        source_revision="relocated-simplex-r1",
+    )
+    return generate_balanced_cut_hexes(
+        source, fill, np.asarray((0,), dtype=np.int64), plan, schedule
+    )
+
+
+def test_relocated_cut_restore_verifies_stored_nodes_without_the_optimizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.optim
+
+    # The unrelocated cut has a corner mean ratio near 0.087, so a 0.1 schedule
+    # makes the exact trigger fire and the optimizer move the cut nodes.
+    unrelocated = _simplex_cut(1.0e-6)
+    result = _simplex_cut(0.1)
+    cut_map = result.geometry.source_map
+    assert isinstance(cut_map, _CutCoordinateMap)
+    base = unrelocated.geometry.source_map
+    assert isinstance(base, _CutCoordinateMap)
+    assert base.node_keys == cut_map.node_keys
+    fixed = np.sum(result.vertex_supports >= 0, axis=1) == 1
+    moved = np.asarray(
+        [
+            stored != authored
+            for stored, authored in zip(
+                cut_map.exact_vertices, base.exact_vertices, strict=True
+            )
+        ]
+    )
+    assert np.any(moved) and not np.any(moved & fixed)
+    assert float(np.min(unrelocated.mean_ratio_sample_min)) < 0.1
+
+    def no_optimizer(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Restore must not replay the relocation optimizer.")
+
+    monkeypatch.setattr(phydrax.optim, "minimize", no_optimizer)
+    restored = _CutCoordinateMap.from_stored_fields(cut_map, result.mesh)
+    assert restored.source_map_id == cut_map.source_map_id
+
+    fill = np.asarray(cut_map.source_mesh.coordinates, dtype=np.float64)
+
+    def restore(row: int, point: tuple[Fraction, ...], /) -> _CutCoordinateMap:
+        """Restore a stored map whose node ``row`` was replaced by ``point``."""
+        vertices = list(cut_map.exact_vertices)
+        vertices[row] = (point[0], point[1], point[2])
+        coordinates = np.array(result.mesh.coordinates, dtype=np.float64)
+        coordinates[row] = [float(value) for value in point]
+        mesh = result.mesh.with_coordinates(
+            coordinates, numeric_version=result.mesh.numeric_version
+        )
+        stored = _CutCoordinateMap(
+            cut_map.source_id,
+            cut_map.source_revision,
+            cut_map.source_complex,
+            cut_map.plan,
+            cut_map.schedule,
+            cut_map.source_mesh,
+            cut_map.source_geometry,
+            cut_map.cell_regions,
+            mesh,
+            cut_map.node_keys,
+            tuple(vertices),
+        )
+        restored = _CutCoordinateMap.from_stored_fields(stored, mesh)
+        assert restored.source_map_id == stored.source_map_id
+        return restored
+
+    def rational(row: int, /) -> tuple[Fraction, ...]:
+        point = cut_map.exact_vertices[row]
+        assert all(isinstance(value, Fraction) for value in point)
+        return tuple(value for value in point if isinstance(value, Fraction))
+
+    def toward_support(row: int, step: Fraction, /) -> tuple[Fraction, ...]:
+        """Move a node exactly toward its first source support vertex."""
+        corner = fill[int(result.vertex_supports[row, 0])]
+        return tuple(
+            (1 - step) * value + step * Fraction(float(target))
+            for value, target in zip(rational(row), corner, strict=True)
+        )
+
+    row = int(np.flatnonzero(moved)[0])
+    # Within the admissible set: accepted, with the identity of the new nodes.
+    accepted = restore(row, toward_support(row, Fraction(1, 2**20)))
+    assert accepted.source_map_id != cut_map.source_map_id
+    # Into an exact gate failure: refused.
+    with pytest.raises(ValueError, match="fail the exact admission"):
+        restore(row, toward_support(row, 1 - Fraction(1, 2**30)))
+    # A fixed node one ulp away: refused bit for bit.
+    origin = int(np.flatnonzero(fixed)[0])
+    x, y, z = rational(origin)
+    with pytest.raises(ValueError, match="do not reproduce"):
+        restore(origin, (Fraction(float(np.nextafter(float(x), np.inf))), y, z))

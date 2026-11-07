@@ -35,14 +35,14 @@ from ..discretization._periodic_cell import PeriodicCell
 from ..discretization._periodic_exact import (
     apply_periodic,
     exact_periodic_element,
-    identification_id,
     exact_periodic_generators,
+    identification_id,
     identification_orders,
     reduce_periodic_exponents,
 )
 from ..discretization._periodic_topology import (
-    _canonical_unordered_form,
     _canonical_forms,
+    _canonical_unordered_form,
     _entity_vertex_rows,
     _interleaved_keys,
     _orientation_orders,
@@ -3045,11 +3045,29 @@ def stage_periodic_topology_edit(
                 global_ids=block.cell_ids,
             )
         )
+    from ..discretization._reference_cell import reference_cell_topology
+
     target_kind = {2: "triangle", 3: "tetrahedron"}.get(source.topological_dimension)
+
+    def full_dimensional(kind: str, /) -> bool:
+        # A dimension-qualified kind (``simplex:3``) is the standard simplex
+        # exactly when its reference vertices and entities are the family's.
+        if target_kind is None:
+            return False
+        try:
+            topology = reference_cell_topology(kind)
+        except KeyError:
+            return False
+        standard = reference_cell_topology(target_kind)
+        return topology.family == target_kind and (
+            topology.vertices,
+            topology.entities,
+        ) == (standard.vertices, standard.entities)
+
     if (
         target_kind is None
         or not blocks
-        or any(block.cell_kind != target_kind for block in blocks)
+        or not all(full_dimensional(block.cell_kind) for block in blocks)
     ):
         raise ValueError(
             "Periodic topology edits require a full-dimensional triangle or tetrahedron target."

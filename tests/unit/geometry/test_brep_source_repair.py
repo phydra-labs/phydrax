@@ -4,7 +4,9 @@ import json
 import subprocess
 import sys
 from collections import defaultdict
+from collections.abc import Iterator
 from fractions import Fraction
+from itertools import chain
 from pathlib import Path
 from typing import cast
 
@@ -19,7 +21,8 @@ from phydrax.discretization._exact_algebraic_geometry import (
 )
 from phydrax.geometry._interval_enclosure import prepare_interval_function
 from phydrax.geometry._meshing_domain import MeshingDomain
-from phydrax.geometry._rational import fraction_down, fraction_up
+from phydrax.geometry._rational import fraction_down, fraction_up, rational_vector
+from phydrax.geometry.brep import _projection as projection_module
 from phydrax.geometry.brep._boolean_core import AffinePCurve, PeriodicPCurve
 from phydrax.geometry.brep._constructors import (
     assemble_brep_model,
@@ -91,6 +94,7 @@ from phydrax.interchange import CadImportPolicy, CadImportResult, read_step
 from phydrax.interchange._cad_archive import _register_brep_types, save_brep_archive
 from phydrax.meshing._model_codec import write_model_artifact
 from tools.meshing_qualification.scenarios.native_cad_profiles import (
+    _external_case,
     _external_raw,
     _quadric_case,
     _require_geometric_losslessness,
@@ -367,6 +371,123 @@ def test_repaired_donor_projection_distinguishes_containment_and_uncertainty(
     )
     with pytest.raises(ValueError, match="no solids"):
         prepare_brep_projection(sheet).locate_solids(inside[None, :])
+
+
+@pytest.fixture(scope="module")
+def combined_washer(tmp_path_factory: pytest.TempPathFactory) -> BRepModel:
+    # The repaired NIST washer (torus beads) minus a radial hole: the hole
+    # breaks the revolution profile, so containment uses exact ray parity
+    # across trimmed torus, cylinder and plane faces.
+    model, _, _, _ = _external_case(
+        "external-combined", "step", tmp_path_factory.mktemp("combined")
+    )
+    return model
+
+
+def _located(
+    model: BRepModel, points: list[tuple[float, float, float]]
+) -> list[tuple[int, int]]:
+    result = prepare_brep_projection(model).locate_solids(
+        np.asarray(points, dtype=np.float64)
+    )
+    return list(
+        zip(
+            np.asarray(result.status).tolist(),
+            np.asarray(result.dimensions).tolist(),
+            strict=True,
+        )
+    )
+
+
+def test_combined_washer_ray_parity_locates_bead_slab_and_hole_points(
+    combined_washer: BRepModel,
+) -> None:
+    # Profile (mm): slab 16 <= r <= 31.5, -1.5 <= z <= 0; torus beads of
+    # minor radius 1.5 about r = 17.5 and r = 30; flat top z = 0.425; radial
+    # hole of radius 0.4 along x at z = -0.75.
+    interior = [
+        (0.0, 0.024, -0.0005),  # slab
+        (0.0, -0.020, -0.001),  # slab
+        (0.0, 0.0175, 0.0008),  # inner bead
+        (-0.030, 0.0005, 0.0009),  # outer bead
+        (0.0175, 0.0003, 0.00145),  # just inside the inner bead
+        (0.024, 0.0, -0.0002),  # beside the hole
+    ]
+    exterior = [
+        (0.0175, 0.0003, 0.00155),  # just outside the inner bead
+        (0.0, 0.023, 0.001),  # above the flat top
+        (0.024, 0.000013, -0.000739),  # in the hole
+        (-0.020, 0.0001, -0.0008),  # in the hole
+        (0.000011, 0.000007, -0.0005),  # central void
+        (0.0, 0.033, -0.0005),  # past the rim
+    ]
+    assert _located(combined_washer, interior + exterior) == [
+        (BRepProjectionStatus.UNIQUE, 3)
+    ] * len(interior) + [(BRepProjectionStatus.FAILED, -1)] * len(exterior)
+    # The top of the inner bead lies on its trimmed torus face.
+    assert _located(combined_washer, [(0.0, 0.0175, 0.0015)]) == [
+        (BRepProjectionStatus.AMBIGUOUS, 3)
+    ]
+
+
+def test_combined_washer_points_on_cylinder_axes_are_decided(
+    combined_washer: BRepModel,
+) -> None:
+    # On a cylinder axis the face lies a full radius away: the hole axis, the
+    # washer (z) axis and their crossing are all outside the solid.
+    on_axes = [(0.024, 0.0, -0.00075), (0.0, 0.0, -0.0005), (0.0, 0.0, -0.00075)]
+    assert _located(combined_washer, on_axes) == [
+        (BRepProjectionStatus.FAILED, -1)
+    ] * len(on_axes)
+
+
+def test_combined_washer_refuses_tangent_ray_and_next_direction_decides(
+    combined_washer: BRepModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The inner bead's inner equator is the circle r = 16 mm, z = 0, shared
+    # with the inner cylinder. The ray (1, 0, 1) from this slab point touches
+    # it at (0, 16 mm, 0), where the torus has a repeated root.
+    point = (-0.001, 0.016, -0.001)
+    tangent = (Fraction(1), Fraction(0), Fraction(1))
+    origin_values = rational_vector(np.asarray(point, dtype=np.float64))
+    origin = (origin_values[0], origin_values[1], origin_values[2])
+    tori = [
+        (face, torus)
+        for face in range(combined_washer.topology.num_faces)
+        if (torus := projection_module._exact_torus(combined_washer, face)) is not None
+    ]
+    inner = [
+        (face, torus)
+        for face, torus in tori
+        if torus.major - torus.minor == Fraction(0.016)
+    ]
+    assert len(inner) == 1
+    face, torus = inner[0]
+    assert (
+        projection_module._ray_torus_crossings(
+            combined_washer, face, torus, origin, tangent
+        )
+        is None
+    )
+    generic = next(projection_module._containment_ray_directions())
+    assert isinstance(
+        projection_module._ray_torus_crossings(
+            combined_washer, face, torus, origin, generic
+        ),
+        int,
+    )
+
+    drawn: list[tuple[Fraction, Fraction, Fraction]] = []
+    sequence = projection_module._containment_ray_directions
+
+    def tangent_first() -> Iterator[tuple[Fraction, Fraction, Fraction]]:
+        for direction in chain((tangent,), sequence()):
+            drawn.append(direction)
+            yield direction
+
+    monkeypatch.setattr(projection_module, "_containment_ray_directions", tangent_first)
+    assert _located(combined_washer, [point]) == [(BRepProjectionStatus.UNIQUE, 3)]
+    assert drawn[0] == tangent and len(drawn) >= 2
 
 
 def test_repair_refuses_insufficient_displacement_budget(donor: BRepModel) -> None:

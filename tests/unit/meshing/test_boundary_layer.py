@@ -707,6 +707,44 @@ def test_retained_column_state_is_reproved_without_growth(collision: Any) -> Non
         _reprove_retained_boundary_layers(forged, wall, control)
 
 
+def test_retained_column_stretch_is_stored_evidence_not_a_float_rederivation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import equinox as eqx
+
+    from phydrax.meshing import _boundary_layer
+
+    wall = _channel(0.5)
+    control = _control(wall, collision=phx.meshing.BoundaryLayerCollisionPolicy.FAIL)
+    layers = phx.meshing.prepare_boundary_layers(wall, control)
+    probe = _boundary_layer._probe_stretch
+    # A host whose distance kernel rounds the probe differently must still
+    # restore: the stored stretch, not a recomputed probe, is the restore operand.
+    monkeypatch.setattr(
+        _boundary_layer,
+        "_probe_stretch",
+        lambda front_wall, front: np.nextafter(probe(front_wall, front), np.inf),
+    )
+    assert (
+        _boundary_layer._reprove_retained_boundary_layers(layers, wall, control) is layers
+    )
+    monkeypatch.undo()
+    stretch = np.array(layers.column_stretch)
+    above = stretch.copy()
+    above[0] = np.nextafter(control.maximum_corner_stretch, np.inf)
+    forged = eqx.tree_at(lambda value: value.column_stretch, layers, above)
+    with pytest.raises(ValueError, match="maximum_corner_stretch"):
+        _boundary_layer._reprove_retained_boundary_layers(forged, wall, control)
+    moved = stretch.copy()
+    moved[0] *= 1.0 + 1.0e-6
+    forged = eqx.tree_at(lambda value: value.column_stretch, layers, moved)
+    with pytest.raises(ValueError, match="column coordinates"):
+        _boundary_layer._reprove_retained_boundary_layers(forged, wall, control)
+    forged = eqx.tree_at(lambda value: value.column_stretch, layers, stretch[:-1])
+    with pytest.raises(ValueError, match="does not match the source front"):
+        _boundary_layer._reprove_retained_boundary_layers(forged, wall, control)
+
+
 def test_retained_quad_cap_and_obstacle_reproof() -> None:
     import equinox as eqx
 

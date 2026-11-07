@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -33,6 +35,7 @@ from phydrax.meshing._periodic import (
     PeriodicPointOrbits,
     stage_periodic_topology_edit,
 )
+from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import SizeCompliancePolicy, UniformSizeControl
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
@@ -262,8 +265,10 @@ def test_native_periodic_route_adapts_skew_winding_orbits_to_size(
 
     # The skew orbits adapt until one short birth edge remains whose collapse
     # would create an edge above the split threshold in either direction (the
-    # classic split/collapse hysteresis) and whose flip is invalid: an honest
-    # stall, reported as such rather than published as a size-compliant mesh.
+    # classic split/collapse hysteresis), whose optimal-point collapse is refused
+    # because its orbits are not simple (3b03c7873 added this stall field), and
+    # whose flip is invalid: an honest stall, reported as such rather than
+    # published as a size-compliant mesh.
     mesh, outcome, failure = _stalled_periodic_adaptation(
         monkeypatch,
         lambda: prepare_native_periodic(
@@ -277,7 +282,12 @@ def test_native_periodic_route_adapts_skew_winding_orbits_to_size(
         failure,
         mesh,
         outcome,
-        ((0.6532, "collapse=hysteresis+hysteresis;flip=invalid"),),
+        (
+            (
+                0.6532,
+                "collapse=hysteresis+hysteresis;optimal=periodic;flip=invalid",
+            ),
+        ),
     )
     vertex_map = periodic_entity_orbit_map(target, 0)
     assert vertex_map.quotient_entity_ids.size > source_orbits.point_ids.size
@@ -859,3 +869,156 @@ def test_periodic_transfer_rejects_rehashed_false_claims(
     )
     with pytest.raises(ValueError):
         _require_owner_local_periodic_transfer(changed, source, altered)
+
+
+@pytest.fixture(scope="module")
+def algebraic_periodic_result() -> CellMeshingResult:
+    # Four seeds exhausting one coset of the half-unit lattice with a hard,
+    # zero-tolerance target admit the exact equilateral orbit-band carrier.
+    cell = PeriodicCell(np.eye(2, dtype=np.float64))
+    points = np.asarray(
+        ((0.125, 0.125), (0.625, 0.125), (0.125, 0.625), (0.625, 0.625)),
+        dtype=np.float64,
+    )
+    orbits = PeriodicPointOrbits(cell, points, np.asarray((7, 3, 11, 5), dtype=np.int64))
+    source_id, revision = "algebraic-sites", "algebraic-sites-revision-1"
+    source = NativePeriodicSource(orbits, source_id, revision)
+    vertex_scope = MeshingScope(
+        source_id,
+        revision,
+        MeshingEntityKind.GEOMETRY,
+        0,
+        source.scope_entity_set_id(0),
+        source.scope_entity_ids(0),
+    )
+    domain_scope = MeshingScope(
+        source_id,
+        revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        source.scope_entity_ids(2),
+    )
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 2, CellFamilyPolicy(required=("triangle",))),
+        domain_scope,
+        size_controls=(UniformSizeControl(vertex_scope, 0.5),),
+        size_compliance=SizeCompliancePolicy(),
+    )
+    return (
+        phx.meshing.NativeMeshingProvider(NativeMeshingOptions("periodic_delaunay"))
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
+
+
+def test_algebraic_periodic_delaunay_result_restores_from_archive(
+    algebraic_periodic_result: CellMeshingResult,
+    tmp_path: Path,
+) -> None:
+    from phydrax.discretization._exact_algebraic_geometry import (
+        ExactPeriodicAlgebraicSource,
+    )
+    from phydrax.geometry._surface_source_archive import _geometry
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    result = algebraic_periodic_result
+    witness = result.geometry.source_map
+    assert type(witness) is ExactPeriodicAlgebraicSource
+
+    path = tmp_path / "algebraic-periodic-result.phx"
+    write_model_artifact(path, result, limits=None)
+    restored = read_model_artifact(
+        path,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.result_id == result.result_id
+    assert restored.mesh.mesh_id == result.mesh.mesh_id
+    assert restored.geometry.source_mesh_id == result.geometry.source_mesh_id
+    restored_witness = restored.geometry.source_map
+    assert type(restored_witness) is ExactPeriodicAlgebraicSource
+    assert restored_witness.source_map_id == witness.source_map_id
+    assert restored_witness.coefficients == witness.coefficients
+
+    # The stored witness is rebuilt from its exact leaves, never trusted as stored.
+    forged = copy.copy(witness)
+    object.__setattr__(forged, "source_map_id", "forged")
+    with pytest.raises(ValueError, match="does not reproduce its source leaves"):
+        _geometry(
+            eqx.tree_at(lambda value: value.source_map, result.geometry, forged),
+            result.mesh,
+        )
+
+
+def test_algebraic_periodic_witness_rebinds_through_vertex_reorder(
+    algebraic_periodic_result: CellMeshingResult,
+) -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.discretization._cell_mesh import CellBlock
+    from phydrax.discretization._exact_algebraic_geometry import (
+        ExactPeriodicAlgebraicSource,
+    )
+    from phydrax.meshing._topology_edit import (
+        _rebind_periodic_topology,
+        _reorder_periodic_coordinate_source,
+    )
+
+    mesh = algebraic_periodic_result.mesh
+    topology = mesh.periodic_topology
+    assert topology is not None
+    witness = topology.exact_coordinate_source
+    assert type(witness) is ExactPeriodicAlgebraicSource
+    ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    permutation = np.arange(ids.size - 1, -1, -1, dtype=np.int64)
+    inverse = np.empty_like(permutation)
+    inverse[permutation] = np.arange(ids.size, dtype=np.int64)
+    blocks = tuple(
+        CellBlock(
+            block.name,
+            block.cell_kind,
+            inverse[np.asarray(block.vertices, dtype=np.int64)],
+            global_ids=block.global_ids,
+        )
+        for block in mesh.blocks
+    )
+    target = CellMesh(points[permutation], blocks, vertex_global_ids=ids[permutation])
+
+    # Rebinding the quotient to the reordered rows transports the exact witness.
+    rebound = _rebind_periodic_topology(target, topology)
+    rebound_topology = rebound.periodic_topology
+    assert rebound_topology is not None
+    reordered = rebound_topology.exact_coordinate_source
+    assert type(reordered) is ExactPeriodicAlgebraicSource
+    assert reordered.source_id == witness.source_id
+    assert reordered.source_revision == witness.source_revision
+    np.testing.assert_array_equal(reordered.vertex_global_ids, ids[permutation])
+    assert reordered.coefficients == tuple(
+        witness.coefficients[int(row)] for row in permutation
+    )
+    assert reordered.source_map_id != witness.source_map_id
+    assert rebound_topology.coordinate_source_map_id == reordered.source_map_id
+    affine = CellGeometrySpec.affine(rebound)
+    geometry = CellGeometrySpec(
+        dict(zip(affine.block_names, affine.elements, strict=True)),
+        dict(zip(affine.block_names, affine.geometry_dofs, strict=True)),
+        rebound.coordinates,
+        source_map=reordered,
+        source_mesh=rebound,
+    )
+    rebound_topology.require_exact_geometry(rebound, geometry)
+    # A witness whose rows are not the claimed candidate rows is refused.
+    with pytest.raises(ValueError, match="different source vertex rows"):
+        _reorder_periodic_coordinate_source(
+            witness, ids[permutation], ids[permutation], np.arange(ids.size)
+        )

@@ -176,6 +176,64 @@ Contact-search changes, crack initiation/growth, and undeclared branch changes
 invalidate an ordinary reduced gradient. Learned operators remain proposal-only
 at every design.
 
+## Periodic cell homogenization
+
+`PeriodicCellProblem(mesh, physics="conductivity" | "elasticity")` solves cell
+problems on a periodic tetrahedral quotient mesh (a `CellMesh` with
+`PeriodicMeshTopology` over a fully periodic `PeriodicCell`, for example the
+certified TPMS quotient fill). The unknown is a P1 fluctuation on the vertex
+orbits (`phydrax.discretization.fem.PeriodicSimplexSpace`), so lifted copies
+share one coordinate exactly and the fluctuation is periodic by construction.
+The unit macroscopic loads are `PeriodicHomogenizationCase`s: three unit
+gradients for conductivity, and six unit Voigt strains (engineering shear) for
+elasticity. Unmeshed pores carry zero flux.
+
+The stiffness is assembled on the fixed quotient pattern
+(`PeriodicSimplexOperatorPattern`), whose supernodal Cholesky plan is computed
+once. Each `solve` refreshes the numeric factor once and solves every case as
+one multi-column right-hand side. The constant (rigid-translation) null space of
+each connected quotient component is removed by pinning that component's lowest
+orbit DOF to zero. Effective tensors do not depend on this gauge. Elasticity
+refuses a component that winds along fewer than two lattice directions: its
+periodic rigid rotations would be further null modes.
+
+`PeriodicHomogenizationResult` carries:
+
+- the averaged-flux effective tensor, `(3, 3)` or Voigt `(6, 6)`;
+- the energy-form tensor, with their disagreement (`energy_defect`) and the
+  tensor asymmetry (`symmetry_defect`), both relative to the Voigt average of
+  the material;
+- one `hill_mandel_evidence` audit per case, where the cell-averaged
+  microscopic power must equal the macroscopic power and the relative periodic
+  equilibrium residual must vanish;
+- the solve status.
+
+`cubic_symmetry_defect` measures the distance to the cubic form, and to the
+isotropic form for conductivity. It is reported, never imposed.
+
+The oracle tests check:
+
+- a homogeneous cell returns its material;
+- two-phase laminates match the series/parallel conductivities and the exact
+  layered stiffness, strictly inside the Voigt–Reuss bounds;
+- symmetric Schwarz P composites are cubic and lie inside the
+  Hashin–Shtrikman bounds.
+
+Permeability is not provided: no periodic Stokes cell-problem owner exists.
+
+`PeriodicCellProblem.solve_realization(material, realization)` consumes a
+fixed-topology lattice design realization
+(`phydrax.meshing.prepare_periodic_implicit_realization`). Its level, sheet
+half-width and per-axis cell scale are `DesignState` parameters, and
+`jax.grad`/`jax.jacfwd` of the effective tensor and volume fraction
+differentiate through the factored operator.
+
+Each realization returns its `status`, and consumers must check it. A
+certified critical-gap exit, a sign-pattern change, an inverted cell, or a
+projection failure is an event: it sets `refresh_required` and poisons every
+derivative with NaN. On the host, `realization.require_sensitivities()` raises
+`PeriodicImplicitRealizationEventError` for such a realization.
+
 ## Accepted-step boundary
 
 `FiniteElementAcceptedStepSchedule` promotes fields and material trials exactly

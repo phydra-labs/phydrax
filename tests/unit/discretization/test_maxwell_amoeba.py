@@ -205,7 +205,7 @@ def test_maxwell_amoeba_scenario_2() -> None:
     mesh = phx.discretization.CellMesh.from_tetrahedra(vertices, tetrahedra)
     quality = phx.meshing.evaluate_cell_quality(mesh)
     np.testing.assert_allclose(quality.measures, jnp.asarray((1.0 / 6.0,)), atol=1e-12)
-    quality_report = phx.meshing.summarize_cell_quality(quality)
+    quality_report = phx.meshing.summarize_cell_quality(mesh, quality)
     assert quality_report.sampled_invalid_count == 0
     axis = jnp.linspace(-1.0, 1.0, 5)
     x, y = jnp.meshgrid(axis, axis, indexing="ij")

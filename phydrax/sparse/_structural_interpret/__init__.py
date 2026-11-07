@@ -354,17 +354,17 @@ def _prop_dispatch(
         case "jit" | "pjit" | "xla_call" | "named_call" | "remat2":
             _prop_nested_jaxpr(eqn, state_indices, state_consts, state_bounds, "jaxpr")
         case "slice":
-            _prop_slice(eqn, state_indices, state_consts)
+            _prop_slice(eqn, state_indices, state_consts, state_bounds)
         case "pad":
             _prop_pad(eqn, state_indices)
         case "squeeze":
-            _prop_squeeze(eqn, state_indices, state_consts)
+            _prop_squeeze(eqn, state_indices, state_consts, state_bounds)
         case "broadcast_in_dim":
             _prop_broadcast_in_dim(eqn, state_indices, state_consts, state_bounds)
         case "concatenate":
-            _prop_concatenate(eqn, state_indices, state_consts)
+            _prop_concatenate(eqn, state_indices, state_consts, state_bounds)
         case "reshape":
-            _prop_reshape(eqn, state_indices, state_consts)
+            _prop_reshape(eqn, state_indices, state_consts, state_bounds)
         case "transpose":
             _prop_transpose(eqn, state_indices, state_consts)
         case "rev":

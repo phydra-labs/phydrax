@@ -9,6 +9,8 @@ energies, including reservoir chemical potentials, share ``energy_reference``.
 
 from __future__ import annotations
 
+from fractions import Fraction
+from functools import partial
 from typing import Self, TYPE_CHECKING
 
 import equinox as eqx
@@ -357,60 +359,118 @@ def selected_eigenpairs(
     )
 
 
-def _sturm_eigenvalue_lower_bound(hamiltonian: ChainHamiltonian, index: int) -> Array:
-    """Conservative lower endpoint for one ordered tridiagonal eigenvalue."""
-    diagonal = hamiltonian.diagonal / Q
-    off_diagonal = hamiltonian.off_diagonal / Q
-    radius = jnp.zeros_like(diagonal)
-    radius = radius.at[:-1].add(jnp.abs(off_diagonal))
-    radius = radius.at[1:].add(jnp.abs(off_diagonal))
-    lower = jnp.min(diagonal - radius)
-    upper = jnp.max(diagonal + radius)
-    scale = jnp.maximum(1.0, jnp.maximum(jnp.max(jnp.abs(diagonal)), jnp.max(radius)))
-    pivot_floor = 32 * jnp.finfo(diagonal.dtype).eps * scale
+_UNIT_ROUNDOFF = Fraction(1, 2**53)
+_STURM_MAXIMUM_SCALE = 2.0**500
 
-    def count_below(value: Array) -> Array:
-        first = diagonal[0] - value
-        first_safe = jnp.where(
-            jnp.abs(first) > pivot_floor,
-            first,
-            jnp.where(first < 0, -pivot_floor, pivot_floor),
+
+def _sturm_count_below(
+    diagonal: list[float], couplings: list[float], shift: float, pivot_floor: float
+) -> int:
+    """Negative LDL^T pivots of ``T - shift`` in host binary64 arithmetic."""
+    pivot = diagonal[0] - shift
+    count = int(pivot < 0)
+    for row, coupling in zip(diagonal[1:], couplings, strict=True):
+        if abs(pivot) <= pivot_floor:
+            pivot = -pivot_floor if pivot < 0 else pivot_floor
+        pivot = row - shift - coupling / pivot
+        count += pivot < 0
+    return count
+
+
+def _sturm_eigenvalue_lower_bound(
+    hamiltonian_diagonal: np.ndarray, hamiltonian_off_diagonal: np.ndarray, index: int
+) -> float:
+    """Certified binary64 lower bound, in J, on ascending eigenvalue ``index``.
+
+    The count runs on the host in Python binary64 (one round-to-nearest per
+    operation, gradual underflow, no contraction), never under XLA. With
+    ``u = 2^-53``, ``A = fl(H / Q)``, and a subnormal absolute error at most
+    ``2^-1075`` on each product and quotient, the counted signs are exactly the
+    LDL^T inertia of a symmetric tridiagonal ``T'`` with, per row,
+    ``|a' - a| <= u |a - shift| + (1 + 2u) pivot_floor + 2^-1020`` and
+    ``|b' - b| <= 2u |b|``: each pivot absorbs its subtraction rounding and
+    floor replacement into ``a'``, and its quotient, square, and the previous
+    pivot's rounding into ``b'^2``. Weyl with the row-sum norm gives
+    ``|lambda(T') - lambda(A)| <= u |shift| + 68 u scale + 2^-1020``. The
+    scaling ``A - H / Q`` adds ``3u scale``; the unverified Gershgorin start
+    errs by at most ``4u scale``. ``128 u (|shift| + scale) + 2^-1000``
+    dominates both cases, and the conversion to J rounds downward exactly.
+    """
+    from ....geometry._rational import fraction_down
+
+    diagonal = np.asarray(hamiltonian_diagonal, dtype=np.float64) / Q
+    off_diagonal = np.asarray(hamiltonian_off_diagonal, dtype=np.float64) / Q
+    radius = np.zeros_like(diagonal)
+    radius[:-1] += np.abs(off_diagonal)
+    radius[1:] += np.abs(off_diagonal)
+    scale = max(1.0, float(np.max(np.abs(diagonal))), float(np.max(radius)))
+    if not scale <= _STURM_MAXIMUM_SCALE:
+        raise ValueError(
+            "Sturm certification requires finite Hamiltonian entries below 2^500 eV."
         )
+    pivot_floor = 32 * float(np.finfo(np.float64).eps) * scale
+    rows = diagonal.tolist()
+    couplings = (off_diagonal * off_diagonal).tolist()
+    lower = float(np.min(diagonal - radius))
+    upper = float(np.max(diagonal + radius))
+    for _ in range(64):
+        middle = 0.5 * (lower + upper)
+        if _sturm_count_below(rows, couplings, middle, pivot_floor) <= index:
+            lower = middle
+        else:
+            upper = middle
+    padding = 128 * _UNIT_ROUNDOFF * (abs(Fraction(lower)) + Fraction(scale))
+    return fraction_down((Fraction(lower) - padding - Fraction(1, 2**1000)) * Fraction(Q))
 
-        def step(
-            carry: tuple[Array, Array], data: tuple[Array, Array]
-        ) -> tuple[tuple[Array, Array], None]:
-            pivot, count = carry
-            diagonal_value, coupling = data
-            next_pivot = diagonal_value - value - coupling**2 / pivot
-            next_safe = jnp.where(
-                jnp.abs(next_pivot) > pivot_floor,
-                next_pivot,
-                jnp.where(next_pivot < 0, -pivot_floor, pivot_floor),
-            )
-            return (next_safe, count + (next_pivot < 0)), None
 
-        (_, count), _ = jax.lax.scan(
-            step,
-            (first_safe, jnp.asarray(first < 0, dtype=jnp.int32)),
-            (diagonal[1:], off_diagonal),
-        )
-        return count
+def _omitted_population_upper_bound(
+    offsets: np.ndarray,
+    degeneracies: np.ndarray,
+    omitted_states: int,
+    energy: float,
+    mu: float,
+    temperature: float,
+) -> float:
+    """Upward-rounded ``omitted_states`` times the transverse-mode occupation."""
+    from mpmath.libmp import to_rational
 
-    def bisect(_: Array, interval: tuple[Array, Array]) -> tuple[Array, Array]:
-        left, right = interval
-        middle = 0.5 * (left + right)
-        below = count_below(middle)
-        return jax.lax.cond(
-            below <= index,
-            lambda pair: (middle, pair[1]),
-            lambda pair: (pair[0], middle),
-            (left, right),
-        )
+    from ....geometry._rational import fraction_up
+    from ....geometry.brep._intersection_curve import interval_context
 
-    lower, _ = jax.lax.fori_loop(0, 64, bisect, (lower, upper))
-    padding = 256 * jnp.finfo(diagonal.dtype).eps * (scale + jnp.abs(lower))
-    return (lower - padding) * Q
+    context = interval_context(40)
+    thermal = Fraction(KB) * Fraction(temperature)
+    total = Fraction(0)
+    for offset, degeneracy in zip(
+        np.asarray(offsets).tolist(), np.asarray(degeneracies).tolist(), strict=True
+    ):
+        argument = (Fraction(mu) - Fraction(energy) - Fraction(offset)) / thermal
+        exponent = -(context.mpf(argument.numerator) / context.mpf(argument.denominator))
+        fermi = 1 / (1 + context.exp(exponent))
+        total += Fraction(degeneracy) * Fraction(*to_rational(fermi._mpi_[1]))
+    return fraction_up(omitted_states * total)
+
+
+def _omitted_population_host(
+    diagonal: np.ndarray,
+    off_diagonal: np.ndarray,
+    offsets: np.ndarray,
+    degeneracies: np.ndarray,
+    mu: np.ndarray,
+    temperature: np.ndarray,
+    *,
+    retained: int,
+) -> np.ndarray:
+    """Host certificate of the omitted population for one concrete chain."""
+    energy = _sturm_eigenvalue_lower_bound(diagonal, off_diagonal, retained)
+    bound = _omitted_population_upper_bound(
+        offsets,
+        degeneracies,
+        diagonal.shape[0] - retained,
+        energy,
+        float(mu),
+        float(temperature),
+    )
+    return np.asarray(bound, dtype=np.float64)
 
 
 def solve_schrodinger(
@@ -454,10 +514,27 @@ def solve_schrodinger(
     if retained == hamiltonian.size:
         omitted = jnp.asarray(0.0, dtype=energies.dtype)
     elif isinstance(hamiltonian, ChainHamiltonian):
-        omitted_energy = _sturm_eigenvalue_lower_bound(hamiltonian, retained)
-        omitted = (hamiltonian.size - retained) * modes.occupation(
-            omitted_energy, chemical_potential_, temperature_
+        # The certificate runs on the host in binary64 even under tracing; it
+        # gates success and carries no derivative.
+        host_inputs = tuple(
+            jax.lax.stop_gradient(value)
+            for value in (
+                hamiltonian.diagonal,
+                hamiltonian.off_diagonal,
+                modes.offsets,
+                modes.degeneracies,
+                chemical_potential_,
+                temperature_,
+            )
         )
+        omitted = jax.lax.stop_gradient(
+            jax.pure_callback(
+                partial(_omitted_population_host, retained=retained),
+                jax.ShapeDtypeStruct((), jnp.float64),
+                *host_inputs,
+                vmap_method="sequential",
+            )
+        ).astype(energies.dtype)
     else:
         raise ValueError(
             "DenseHamiltonianND confinement requires the complete declared finite "

@@ -19,7 +19,12 @@ _BLOCK_THRESHOLD = 2 * _BLOCK_SIZE
 
 
 def two_sum(left: Array, right: Array, /) -> tuple[Array, Array]:
-    """Return a rounded sum and its error-free residual."""
+    """Return a rounded sum and its residual.
+
+    The residual is error-free only in the normal range: XLA CPU flushes
+    subnormal operands and results to zero, so a subnormal operand, sum, or
+    residual loses the exact error. Use it as an accuracy aid, not a certificate.
+    """
     total = left + right
     virtual_right = total - left
     error = (left - (total - virtual_right)) + (right - virtual_right)

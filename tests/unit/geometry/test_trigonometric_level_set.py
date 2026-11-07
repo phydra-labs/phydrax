@@ -12,6 +12,12 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization import PeriodicCell
+from phydrax.geometry.implicit import (
+    AdaptiveImplicitBoxIssue,
+    AdaptiveImplicitSurfacePolicy,
+    AdaptiveImplicitSurfaceStatus,
+    discover_adaptive_implicit_surface,
+)
 
 
 _G = phx.geometry
@@ -258,3 +264,39 @@ def test_sheet_thickness_bound_increases_and_solved_half_width_meets_the_target(
     assert source.half_width >= solved * (1.0 - 1.0e-9)
     assert source.sheet_thickness is not None
     assert source.sheet_thickness.minimum_thickness(source.half_width) >= target
+
+
+def test_adaptive_discovery_encloses_a_gyroid_cell_and_its_half_volume_fraction(
+    gyroid_levels: _G.TrigonometricCriticalLevels,
+) -> None:
+    table = _G.TrigonometricTable.family("gyroid")
+    source = _G.TrigonometricLevelSet(
+        table, PeriodicCell(np.eye(3)), critical_levels=gyroid_levels
+    )
+    domain = np.asarray(((0.03, 0.05, 0.07), (1.03, 1.05, 1.07)), dtype=np.float64)
+
+    surface = discover_adaptive_implicit_surface(
+        source.compile(),
+        domain=domain,
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.1, root_tolerance=1.0e-8
+        ),
+        source_id="gyroid-cell",
+    )
+
+    assert surface.evidence.accuracy == "enclosed"
+    assert surface.evidence.lattice_anchor == 0
+    assert (
+        surface.evidence.status_flags
+        & AdaptiveImplicitSurfaceStatus.DOMAIN_BOUNDARY_CROSSING
+    )
+    resolvable = int(
+        AdaptiveImplicitBoxIssue.EDGE | AdaptiveImplicitBoxIssue.DOMAIN_BOUNDARY
+    )
+    assert not np.any(surface.evidence.unresolved_issues & ~resolvable)
+    assert surface.cover is not None and surface.cover.certified
+    np.testing.assert_array_equal(surface.cover.domain, domain)
+    volume = surface.cover.volume_enclosure()
+    assert volume.fraction_lower <= 0.5 <= volume.fraction_upper
+    assert volume.fraction_upper - volume.fraction_lower < 0.35
+    assert volume.inside_lower + volume.outside_lower <= volume.domain_volume

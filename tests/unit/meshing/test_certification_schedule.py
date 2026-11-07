@@ -214,6 +214,37 @@ def test_operation_local_embedding_reuse_rejects_foreign_and_serialization() -> 
         MeshCertificationReport(inputs, validated_embedding=other)
 
 
+def test_validated_embedding_accepts_only_its_own_certificate_in_hand() -> None:
+    mesh, geometry, domain = _planar_inputs()
+    inputs = MeshCertificationInputs(
+        mesh,
+        geometry,
+        MeshCertificationSchedule("planar"),
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        domain=domain,
+        cell_regions=np.asarray((0,), dtype=np.int64),
+        junction_vertices=np.asarray((), dtype=np.int64),
+        protected_features=(),
+    )
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    proof = ValidatedGlobalEmbedding(mesh, geometry, validity)
+    # A route that hands over the same proof twice keeps one validated proof.
+    report = MeshCertificationReport(
+        inputs, embedding=proof.certificate, validated_embedding=proof
+    )
+    assert report.passed
+    assert report.embedding is proof.certificate
+    assert report.report_id == MeshCertificationReport(inputs).report_id
+    # Any other in-hand proof is still refused next to a validated embedding.
+    other = certify_global_embedding(mesh, geometry, validity)
+    assert other is not proof.certificate
+    with pytest.raises(ValueError, match="cannot be combined"):
+        MeshCertificationReport(inputs, embedding=other, validated_embedding=proof)
+    with pytest.raises(ValueError, match="cannot be combined"):
+        MeshCertificationReport(inputs, validity=validity, validated_embedding=proof)
+
+
 def test_local_mesh_validity_does_not_replace_source_domain_coverage() -> None:
     source_mesh, _, domain = _planar_inputs()
     mesh = CellMesh(source_mesh.coordinates * 0.5, source_mesh.blocks)
@@ -368,7 +399,6 @@ def test_live_surface_proof_retains_exact_control_identity() -> None:
     computed = _ComputedSurfaceAcceptance(
         original,
         construction.organization,
-        embedding=None,
         validity_parent=None,
         validated=(),
     )

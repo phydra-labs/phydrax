@@ -1173,10 +1173,18 @@ def _reorder_periodic_coordinate_source(
         or not np.array_equal(candidate_vertex_ids[target_to_candidate], target_vertex_ids)
     ):
         raise ValueError("Periodic witness reorder must preserve all stable vertex identities.")
+    from ..discretization._exact_algebraic_geometry import ExactPeriodicAlgebraicSource
+
     if isinstance(source, ExactPlcCellGeometrySource) and not np.array_equal(
         np.asarray(source.vertex_global_ids, dtype=np.int64), candidate_vertex_ids
     ):
         raise ValueError("Exact periodic PLC witness has different source vertex rows.")
+    if isinstance(source, ExactPeriodicAlgebraicSource) and not np.array_equal(
+        np.asarray(source.vertex_global_ids, dtype=np.int64), candidate_vertex_ids
+    ):
+        raise ValueError(
+            "Exact periodic algebraic witness has different source vertex rows."
+        )
     if np.array_equal(candidate_vertex_ids, target_vertex_ids):
         return source
     if isinstance(source, ExactPlcCellGeometrySource):
@@ -1189,7 +1197,17 @@ def _reorder_periodic_coordinate_source(
             vertex_source_entity_ids=tuple(source.vertex_source_entity_ids[row] for row in rows),
             vertex_occurrence_paths=tuple(source.vertex_occurrence_paths[row] for row in rows),
         )
+    if isinstance(source, ExactPeriodicAlgebraicSource):
+        source = ExactPeriodicAlgebraicSource.from_stored_fields(source)
+        coefficients = source.coefficients
+        return ExactPeriodicAlgebraicSource(
+            tuple(coefficients[int(row)] for row in target_to_candidate),
+            target_vertex_ids,
+            source.source_id,
+            source.source_revision,
+        )
     from types import SimpleNamespace
+
     from ..discretization._exact_power_geometry import ExactPowerCellGeometrySource
 
     if not isinstance(source, ExactPowerCellGeometrySource):

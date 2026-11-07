@@ -51,9 +51,10 @@ def _periodic_tetra_source() -> CellMeshingResult:
             tetrahedron = np.asarray(
                 [vertex_rows[tuple(row)] for row in path], dtype=np.int32
             )
-            if np.linalg.det(
-                coordinates[tetrahedron[1:]] - coordinates[tetrahedron[0]]
-            ) < 0.0:
+            if (
+                np.linalg.det(coordinates[tetrahedron[1:]] - coordinates[tetrahedron[0]])
+                < 0.0
+            ):
                 tetrahedron[[1, 2]] = tetrahedron[[2, 1]]
             tetrahedra.append(tetrahedron)
     vertex_ids = np.arange(shape**3, dtype=np.int64)
@@ -79,9 +80,7 @@ def _periodic_tetra_source() -> CellMeshingResult:
     return certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _execute(
-    source: CellMeshingResult, metric: np.ndarray
-) -> TetraMetricOutcome:
+def _execute(source: CellMeshingResult, metric: np.ndarray) -> TetraMetricOutcome:
     mesh = source.mesh
     return execute_tetra_metric_adaptation(
         source,
@@ -131,9 +130,7 @@ def test_native_tetra_metric_commits_complete_periodic_split_orbits() -> None:
     target = stage_periodic_topology_edit(source.mesh, outcome.edit)
     assert target is not None and target.periodic_topology is not None
     assert all(isinstance(block, CellBlock) for block in target.blocks)
-    cell_blocks = tuple(
-        block for block in target.blocks if isinstance(block, CellBlock)
-    )
+    cell_blocks = tuple(block for block in target.blocks if isinstance(block, CellBlock))
     target.periodic_topology.require_lifted(
         target.topology, target.lifted_topology_id, cell_blocks
     )
@@ -236,15 +233,103 @@ def test_periodic_tet_provider_accepts_simplex_3_cell_mesh() -> None:
     assert state.quotient_cells
 
 
+def test_native_tetra_metric_orients_sorted_simplex_3_quotient_cells() -> None:
+    source_mesh = _periodic_tetra_source().mesh
+    source_topology = source_mesh.periodic_topology
+    assert source_topology is not None
+    block = source_mesh.blocks[0]
+    lifted = CellMesh.from_simplices(
+        source_mesh.coordinates,
+        block.vertices,
+        dimension=3,
+        vertex_global_ids=source_mesh.vertex_global_ids,
+        cell_global_ids=block.global_ids,
+    )
+    mesh = CellMesh(
+        lifted.coordinates,
+        lifted.blocks,
+        vertex_global_ids=lifted.vertex_global_ids,
+        periodic_topology=PeriodicMeshTopology(
+            lifted,
+            source_topology.cell,
+            source_topology.vertex_representatives,
+            source_topology.vertex_shifts,
+        ),
+    )
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+
+    def volumes(cells: np.ndarray, /) -> np.ndarray:
+        corners = coordinates[cells]
+        return np.linalg.det(corners[:, 1:] - corners[:, :1])
+
+    # Precondition: the canonical simplicial rows are sorted, and sorting
+    # reverses some positively oriented lifted cells.
+    assert np.all(volumes(np.asarray(block.vertices, dtype=np.int64)) > 0.0)
+    assert np.any(volumes(np.sort(np.asarray(block.vertices, dtype=np.int64))) < 0.0)
+
+    state = tet_mesh_periodic_state(mesh, None)
+    row_of = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(mesh.vertex_global_ids).tolist())
+    }
+    members = {
+        (int(orbit.representative_vertex_id), tuple(member.winding.tolist())): row_of[
+            int(member.vertex_id)
+        ]
+        for orbit in state.orbits
+        for member in orbit.members
+    }
+    corners = np.asarray(
+        [
+            [
+                members[(int(vertex), tuple(winding))]
+                for vertex, winding in zip(
+                    cell.representative_vertices.tolist(),
+                    cell.winding.tolist(),
+                    strict=True,
+                )
+            ]
+            for cell in state.quotient_cells
+        ],
+        dtype=np.int64,
+    )
+    assert np.all(volumes(corners) > 0.0)
+    metric = np.broadcast_to(
+        np.diag((16.0, 9.0, 4.0)), (mesh.vertex_global_ids.size, 3, 3)
+    ).copy()
+    # The native kernel admits the oriented quotient cells; it refused the
+    # sorted-row orientation as invalid input before. ``simplex:3`` has the
+    # tetrahedron's reference order, so the same operations commit as on
+    # identical ``tetrahedron`` blocks.
+    outcome = _execute(
+        certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si()), metric
+    )
+    reference = _execute(_periodic_tetra_source(), metric)
+
+    assert outcome.evidence.passes >= 1
+    assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
+    assert reference.evidence.splits > 0
+    for name in (
+        "status",
+        "passes",
+        "splits",
+        "collapses",
+        "flips23",
+        "flips32",
+        "ring_reconnections",
+        "relocations",
+        "rejected_topology",
+    ):
+        assert getattr(outcome.evidence, name) == getattr(reference.evidence, name)
+
+
 def test_native_periodic_volume_route_adapts_metric_over_tetra_orbits() -> None:
     source_mesh = _periodic_tetra_source().mesh
     source_topology = source_mesh.periodic_topology
     assert source_topology is not None
     source_id = "periodic-tetra-adaptation"
     source_revision = "revision-1"
-    source = phx.meshing.NativePeriodicSource(
-        source_mesh, source_id, source_revision
-    )
+    source = phx.meshing.NativePeriodicSource(source_mesh, source_id, source_revision)
     volume_scope = phx.meshing.MeshingScope(
         source_id,
         source_revision,
@@ -276,13 +361,17 @@ def test_native_periodic_volume_route_adapts_metric_over_tetra_orbits() -> None:
         # [target / sqrt(2), target * sqrt(2)], i.e. relative deviation below 0.5.
         size_compliance=phx.meshing.SizeCompliancePolicy(relative_tolerance=0.5),
     )
-    result = phx.meshing.NativeMeshingProvider(
-        phx.meshing.NativeMeshingOptions("periodic_delaunay")
-    ).plan(
-        source,
-        specification,
-        coordinate_contract=phx.SpatialCoordinateContract.si(),
-    ).execute()
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            phx.meshing.NativeMeshingOptions("periodic_delaunay")
+        )
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
 
     target = result.mesh
     target_topology = target.periodic_topology
@@ -306,5 +395,3 @@ def test_native_periodic_volume_route_adapts_metric_over_tetra_orbits() -> None:
         assert target_topology.allocator_next_ids[degree] > int(
             np.max(np.asarray(entities.entity_ids))
         )
-
-

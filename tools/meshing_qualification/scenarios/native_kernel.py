@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import os
-import sys
-from collections.abc import Callable
-from time import perf_counter
 from typing import Any
 
 import jax
@@ -14,24 +10,11 @@ import phydrax as phx
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._meshcore import meshcore_available
 
+from ._resources import measured as _measured
+
 
 def _contract() -> phx.SpatialCoordinateContract:
     return phx.SpatialCoordinateContract(phx.units.MILLIMETER)
-
-
-def _measured(call: Callable[[], object], /) -> tuple[object, dict[str, float]]:
-    """Run one stage; report wall seconds and the process peak resident bytes."""
-    if os.name != "posix":
-        raise RuntimeError("Meshing resource qualification requires a POSIX host.")
-    import resource
-
-    started = perf_counter()
-    value = call()
-    elapsed = perf_counter() - started
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # Darwin reports ru_maxrss in bytes, Linux in KiB.
-    scale = 1 if sys.platform == "darwin" else 1024
-    return value, {"wall_seconds": elapsed, "peak_resident_bytes": peak * scale}
 
 
 def _quality_summary(report: phx.meshing.CellQualityReport, /) -> dict[str, object]:

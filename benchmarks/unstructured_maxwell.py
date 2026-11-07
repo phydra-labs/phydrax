@@ -186,7 +186,7 @@ def _case(subdivisions: int, repeats: int, steps: int) -> dict[str, object]:
         raise ValueError(
             "FE Maxwell admission must retain canonical meshing quality evidence."
         )
-    quality = summarize_cell_quality(runtime.mesh_quality)
+    quality = summarize_cell_quality(complex_.mesh, runtime.mesh_quality)
     initial = _initial(runtime)
     current = 0.01 * jnp.cos(jnp.arange(complex_.cell_counts[1], dtype=jnp.float64))
     dt = 0.05 * runtime.stable_dt

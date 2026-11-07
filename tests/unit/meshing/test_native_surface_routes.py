@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from itertools import product
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -71,9 +72,83 @@ from phydrax.meshing.providers._native_schedules import (
     NativeSurfaceSchedule,
 )
 from phydrax.meshing.providers._native_surface import (
+    _box_chord_bound,
+    _box_point_distance_upper,
     _domain_curve_source_query,
     prepare_native_surface,
 )
+
+
+def _binary64_rows(rows: tuple[tuple[str, str, str], ...], /) -> np.ndarray:
+    return np.asarray(
+        [[float.fromhex(value) for value in row] for row in rows], dtype=np.float64
+    )
+
+
+def test_box_point_distance_bound_encloses_the_farthest_exact_corner() -> None:
+    # LIN counterexample: one ``nextafter`` after ``numpy.linalg.norm`` of
+    # rounded corner differences was below the exact farthest-corner distance.
+    box = _binary64_rows(
+        (
+            ("0x1.5b5d5f6a3b8eep-1", "0x1.f2e9263d44448p-2", "0x1.262a0cf46c596p-1"),
+            ("0x1.611e6a3d8bd45p-1", "0x1.006f3637ee322p-1", "0x1.3165cd8c7bbb9p-1"),
+        )
+    )
+    (point,) = _binary64_rows(
+        (("0x1.7400d40603820p-1", "0x1.c82710343b7f0p-2", "-0x1.2b99012b14fdcp+0"),)
+    )
+    exact = sum(
+        (
+            max(
+                (Fraction(float(box[row, axis])) - Fraction(float(point[axis]))) ** 2
+                for row in range(2)
+            )
+            for axis in range(3)
+        ),
+        Fraction(0),
+    )
+    bound = Fraction(_box_point_distance_upper(box, point))
+    assert exact <= bound * bound <= exact * (1 + Fraction(1, 2**47))
+
+
+def test_box_chord_bound_encloses_the_exact_corner_segment_distance() -> None:
+    # LIN counterexample: the rounded projection onto the chord and one
+    # ``nextafter`` gave a bound below the exact farthest-corner distance.
+    box = _binary64_rows(
+        (
+            ("0x1.629f10fb660a6p-1", "-0x1.2ed9cb79be208p-1", "0x1.3cbbee892a222p-1"),
+            ("0x1.631d42387f4f0p-1", "-0x1.2ed6e7a3960c9p-1", "0x1.3cbc07ad2753ap-1"),
+        )
+    )
+    first, last = _binary64_rows(
+        (
+            ("0x1.4d6f8747f9154p-2", "-0x1.8fe88349da9dep-1", "0x1.75d598b62d6c6p-1"),
+            ("0x1.8e2af61634d05p-1", "0x1.8bbae6c8f990cp-2", "0x1.39136be609723p-1"),
+        )
+    )
+    start = [Fraction(float(value)) for value in first]
+    chord = [Fraction(float(b)) - a for a, b in zip(start, last, strict=True)]
+    chord_squared = sum((value * value for value in chord), Fraction(0))
+    exact = Fraction(0)
+    for corner in product(*(box[:, axis] for axis in range(3))):
+        offset = [Fraction(float(c)) - a for c, a in zip(corner, start, strict=True)]
+        ratio = min(
+            max(
+                sum((o * d for o, d in zip(offset, chord, strict=True)), Fraction(0))
+                / chord_squared,
+                Fraction(0),
+            ),
+            Fraction(1),
+        )
+        exact = max(
+            exact,
+            sum(
+                ((o - ratio * d) ** 2 for o, d in zip(offset, chord, strict=True)),
+                Fraction(0),
+            ),
+        )
+    bound = Fraction(_box_chord_bound(box, first, last))
+    assert exact <= bound * bound <= exact * (1 + Fraction(1, 2**47))
 
 
 def test_curve_interval_expands_intersected_inward_root_bracket() -> None:

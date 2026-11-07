@@ -9,6 +9,7 @@ from itertools import product
 
 import equinox as eqx
 import jax.numpy as jnp
+import mpmath
 import numpy as np
 import pytest
 from jax import Array
@@ -65,7 +66,9 @@ from phydrax.meshing._implicit_volume import (
     _inside_seed_rows,
     _root_edge_bank,
     _strict_region_site_mask,
+    _tetra_quality,
     _topology_matches,
+    _triangle_diameter_upper,
 )
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
@@ -502,8 +505,9 @@ def test_native_implicit_volume_route_builds_region_mesh(
         assert proof.target_facet_count > 0
         assert proof.source_facet_count == proof.covered_source_facet_count == 0
         assert coverage_witness.distance_witness_id == distance_witness.witness_id
-        embedding = construction.certification.global_embedding
-        assert embedding is not None
+        validated_embedding = construction.validated_global_embedding
+        assert validated_embedding is not None
+        embedding = validated_embedding.certificate
         forged_embedding = eqx.tree_at(
             lambda value: value.validity.determinant_lower,
             embedding,
@@ -1282,3 +1286,161 @@ def test_restricted_implicit_volume_refuses_soft_shape_strength() -> None:
             NativeMeshingOptions("implicit_restricted_delaunay", volume_schedule=soft),
             contract,
         )
+
+
+def _binary64_rows(rows: tuple[tuple[str, str, str], ...], /) -> np.ndarray:
+    return np.asarray(
+        [[float.fromhex(value) for value in row] for row in rows], dtype=np.float64
+    )
+
+
+def _exact_circumcenter(vertices: np.ndarray, /) -> tuple[Fraction, ...]:
+    points = [[Fraction(float(value)) for value in row] for row in vertices]
+    matrix = [[2 * (points[k][j] - points[0][j]) for j in range(3)] for k in (1, 2, 3)]
+    rhs = [
+        sum(
+            (points[k][j] ** 2 - points[0][j] ** 2 for j in range(3)),
+            Fraction(0),
+        )
+        for k in (1, 2, 3)
+    ]
+
+    def determinant(rows: list[list[Fraction]], /) -> Fraction:
+        return (
+            rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
+            - rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
+            + rows[0][2] * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0])
+        )
+
+    denominator = determinant(matrix)
+    return tuple(
+        determinant(
+            [
+                [rhs[k] if j == column else matrix[k][j] for j in range(3)]
+                for k in range(3)
+            ]
+        )
+        / denominator
+        for column in range(3)
+    )
+
+
+def test_restricted_tetra_radius_edge_bounds_the_exact_circumradius_ratio() -> None:
+    # LIN counterexample: per-axis maxima against the box midpoint missed the
+    # farthest box corner and gave a radius-edge ratio below the exact one.
+    vertices = _binary64_rows(
+        (
+            ("-0x1.0f6f9200fbda4p-2", "-0x1.769daa60f5baap-1", "0x1.512387e8bf764p-2"),
+            ("0x1.090416b2e0a50p-3", "-0x1.ccecfbf14a9a8p-3", "-0x1.cc2746e2a2d2cp-1"),
+            ("-0x1.7eb7f48721164p-2", "-0x1.fc48c50dd92f2p-1", "0x1.718abda9319ecp-1"),
+            ("-0x1.55b66c1792d00p-3", "-0x1.01fb751def2d6p-1", "-0x1.d54fb09bdf930p-1"),
+        )
+    )
+    center_box = _binary64_rows(
+        (
+            ("0x1.d4f3f03538956p+1", "-0x1.14ff391547e52p+2", "-0x1.597bc8a8cfebap-1"),
+            ("0x1.d7f258166139ep+1", "-0x1.11148a13b501ep+2", "-0x1.37c6292aec438p-1"),
+        )
+    )
+    center = _exact_circumcenter(vertices)
+    assert all(
+        Fraction(float(center_box[0, axis]))
+        <= center[axis]
+        <= Fraction(float(center_box[1, axis]))
+        for axis in range(3)
+    )
+    radius_edge, _ = _tetra_quality(
+        vertices, np.asarray(((0, 1, 2, 3),), dtype=np.int64), center_box[None]
+    )
+    exact_points = [[Fraction(float(value)) for value in row] for row in vertices]
+    radius_squared = sum(
+        ((center[axis] - exact_points[0][axis]) ** 2 for axis in range(3)), Fraction(0)
+    )
+    edge_squared = min(
+        sum(
+            ((exact_points[i][axis] - exact_points[j][axis]) ** 2 for axis in range(3)),
+            Fraction(0),
+        )
+        for i in range(4)
+        for j in range(i + 1, 4)
+    )
+    assert Fraction(float(radius_edge[0])) ** 2 * edge_squared >= radius_squared
+
+
+def test_restricted_tetra_minimum_dihedral_is_a_lower_bound() -> None:
+    # LIN counterexample: the round-to-nearest arccos estimate published
+    # 9.858257410430951 degrees above the exact minimum 9.85825741043092873...
+    vertices = _binary64_rows(
+        (
+            ("-0x1.3a60b06fe380cp-2", "0x1.7ed014d8791d4p-1", "-0x1.ba55e34ca6b00p-4"),
+            ("0x1.1fff288168c58p-3", "-0x1.a550c4951489cp-2", "0x1.147b417c09fdep-1"),
+            ("-0x1.6afb014635b1cp-1", "-0x1.6f6c6135b2280p-1", "0x1.49f89d844745cp-1"),
+            ("0x1.877272ae95a10p-2", "-0x1.a552c30cd75bcp-1", "0x1.21b0e9e3d49e0p-1"),
+        )
+    )
+    center_box = _binary64_rows(
+        (
+            ("-0x1.41aa192e6874dp-1", "-0x1.8eaf3facb09c6p+0", "-0x1.25a6a5154d26cp+1"),
+            ("-0x1.42277a889fc3fp-8", "-0x1.c92cf1fa291cap-1", "-0x1.9cf5b5a42c34cp+0"),
+        )
+    )
+    _, minimum_dihedral = _tetra_quality(
+        vertices, np.asarray(((0, 1, 2, 3),), dtype=np.int64), center_box[None]
+    )
+    with mpmath.workprec(256):
+        points = [[mpmath.mpf(float(value)) for value in row] for row in vertices]
+        normals = []
+        for face in ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)):
+            origin, first, second = (points[index] for index in face)
+            u = [first[axis] - origin[axis] for axis in range(3)]
+            v = [second[axis] - origin[axis] for axis in range(3)]
+            normals.append(
+                (
+                    u[1] * v[2] - u[2] * v[1],
+                    u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0],
+                )
+            )
+        exact = min(
+            180
+            - mpmath.degrees(
+                mpmath.acos(
+                    mpmath.fdot(normals[i], normals[j])
+                    / mpmath.sqrt(
+                        mpmath.fdot(normals[i], normals[i])
+                        * mpmath.fdot(normals[j], normals[j])
+                    )
+                )
+            )
+            for i in range(4)
+            for j in range(i + 1, 4)
+        )
+        assert 0.0 < minimum_dihedral
+        assert mpmath.mpf(minimum_dihedral) <= exact
+        assert exact - mpmath.mpf(minimum_dihedral) < mpmath.mpf(2) ** -30
+
+
+def test_restricted_facet_diameter_bound_encloses_negative_differences() -> None:
+    # WIN-5 C6: ``nextafter(p - q, +inf)`` shrinks negative components, so the
+    # edge-length bound 0x1.81cde9998a48ap-9 was below the exact length. The
+    # third vertex lies near the midpoint, so ``p - q`` is the longest edge.
+    first, second = _binary64_rows(
+        (
+            ("-0x1.48456c21b0cf2p-1", "0x1.9b4987011ef3ep-1", "-0x1.2773cb11b4cdep-1"),
+            ("-0x1.4770d3afb54ebp-1", "0x1.9b32525efa419p-1", "-0x1.2632afb2e198ap-1"),
+        )
+    )
+    triangle = np.stack((first, second, first + 0.5 * (second - first)))
+    diameter = _triangle_diameter_upper(triangle[None])
+    exact = max(
+        sum(
+            (
+                (Fraction(float(a)) - Fraction(float(b))) ** 2
+                for a, b in zip(triangle[row], triangle[(row + 1) % 3], strict=True)
+            ),
+            Fraction(0),
+        )
+        for row in range(3)
+    )
+    bound = Fraction(float(diameter[0]))
+    assert exact <= bound * bound <= exact * (1 + Fraction(1, 2**47))

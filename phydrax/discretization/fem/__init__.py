@@ -75,7 +75,6 @@ from ._fast_diagonalization import (
     TensorFastDiagonalizationPreconditioner,
 )
 from ._form_elements import DofLabel, form_element, FormBasis, FormElementFamily
-from ._source_surface import SurfaceFiniteElementGeometry
 from ._form_reconstruction import FormFieldReconstructionKernel
 from ._generic import (
     assemble_masked_finite_element,
@@ -232,6 +231,7 @@ from ._patch_preconditioning import (
     FiniteElementPatchPreconditionerBuilder,
     one_ring_patch_plan,
 )
+from ._periodic_cell import PeriodicSimplexOperatorPattern, PeriodicSimplexSpace
 from ._point_interpolation import (
     FiniteElementFieldReconstructionKernel,
     prepare_finite_element_field_reconstruction,
@@ -284,6 +284,7 @@ from ._sbp import (
     TensorGLLSBPPlan,
 )
 from ._simplicial_whitney_chains import SimplicialWhitneyKernel
+from ._source_surface import SurfaceFiniteElementGeometry
 from ._spectral_hp_completion import (
     AnisotropicHPattern,
     compact_hp_forest,
@@ -497,6 +498,8 @@ __all__ = [
     "PLevelOrder",
     "PTransferRole",
     "PartitionedFiniteElementDofMap",
+    "PeriodicSimplexOperatorPattern",
+    "PeriodicSimplexSpace",
     "PersistentSemanticCache",
     "PreparedFiniteElementCellMap",
     "PreparedFiniteElementImmersedMarkerMap",

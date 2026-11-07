@@ -116,6 +116,11 @@ class RichardsPlan(StrictModule):
         if boundaries.geometry_id != discretization.geometry_id:
             raise ValueError("Richards boundary geometry must match the discretization.")
         diffusion = HybridMimeticDiffusion(discretization, stabilization=stabilization)
+        if diffusion.facet_count != diffusion.face_count:
+            raise ValueError(
+                "Richards face pressures require one hybrid trace facet per FV face; "
+                "got warped faces split into sub-facets."
+            )
         gravity = _finite(gravity_m_s2, "gravity")
         if gravity.shape != (3,):
             raise ValueError(
@@ -249,7 +254,7 @@ class RichardsPlan(StrictModule):
         mobility = self.retention.relative_permeability(
             pressure
         ) / self.material.viscosity(temperature)
-        difference = face_pressure[self.diffusion.cell_faces] - pressure[:, None]
+        difference = face_pressure[self.diffusion.cell_facets] - pressure[:, None]
         local = -contract("cfg,cg->cf", self.intrinsic_matrices, difference)
         local = local + contract(
             "cfi,cij,cj->cf",
@@ -258,7 +263,7 @@ class RichardsPlan(StrictModule):
             density[:, None] * self.gravity_m_s2,
         )
         local = jnp.where(self.diffusion.valid, local * mobility[:, None], 0.0)
-        face = self.diffusion.cell_faces
+        face = self.diffusion.cell_facets
         owner, neighbor = (
             self.discretization.owner_cells,
             self.discretization.neighbor_cells,

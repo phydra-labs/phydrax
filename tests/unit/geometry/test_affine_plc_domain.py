@@ -137,6 +137,7 @@ def test_affine_geometry_uses_exact_reference_source_points() -> None:
         face_plane_tolerances=np.zeros(4),
         domain_face_rows=np.arange(4),
         domain_id=domain.domain_id,
+        vertex_deviations=None,
     )
     physical, geometry = map_affine_plc_mesh(domain, mesh, witness=witness)
     expected = domain.transform_point((1 - t, t, Fraction(0)))

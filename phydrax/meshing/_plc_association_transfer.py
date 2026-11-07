@@ -23,7 +23,7 @@ from ..discretization import CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..geometry._affine_plc_domain import AffinePlcDomain
 from ..geometry._domain_coverage import PiecewiseLinearDomain
-from ..geometry._planar_coverage import PlcSourcePointWitness
+from ..geometry._planar_coverage import _sqrt_upper, PlcSourcePointWitness
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -63,13 +63,12 @@ _ROLES = (
 )
 _ROLE_DIMENSIONS = {role: dimension for dimension, role in enumerate(_ROLES)}
 _TETRAHEDRA = ("tetrahedron", "simplex:3")
-# Coordinate rounding admitted beyond a recorded residual, relative to the
-# source bounding scale. Every comparison is against an explicit stratum.
-_ROUNDING_ULPS = 64.0
 # Local faces opposite vertices 0..3; row ``k`` omits vertex ``k``.
 _OPPOSITE_TETRAHEDRON_FACES = np.asarray(
     ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2)), dtype=np.int64
 )
+
+type _ExactPoint = tuple[Fraction, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,21 +83,25 @@ class _Classified:
 
 @dataclass(frozen=True, slots=True)
 class _PlcStrata:
-    """Physical geometry and identity banks of one bound PLC source."""
+    """Physical geometry and identity banks of one bound PLC source.
+
+    ``vertices`` are the binary64 physical vertices and ``exact_vertices``
+    the exact points they realize (equal for an untransformed PLC).
+    """
 
     rows: tuple[dict[tuple[str, tuple[str, ...]], int], ...]
     names: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...]
     vertices: np.ndarray
+    exact_vertices: tuple[_ExactPoint, ...]
     edges: np.ndarray
-    facet_origins: np.ndarray
+    edge_by_pair: dict[tuple[int, int], int]
     facet_normals: np.ndarray
-    facet_axes: np.ndarray
     facet_loops: tuple[tuple[np.ndarray, ...], ...]
+    facet_vertices: tuple[frozenset[int], ...]
     facet_sides: tuple[tuple[str | None, str | None], ...]
     edge_regions: tuple[frozenset[int], ...]
     vertex_regions: tuple[frozenset[int], ...]
     facet_regions: np.ndarray
-    slack: float
 
     @property
     def offsets(self) -> np.ndarray:
@@ -106,7 +109,9 @@ class _PlcStrata:
         return np.concatenate(([0], np.cumsum(counts)[:-1]))
 
 
-def _plc_strata(source: NativePlcSource, physical: np.ndarray, /) -> _PlcStrata:
+def _plc_strata(
+    source: NativePlcSource, domain: PiecewiseLinearDomain | AffinePlcDomain, /
+) -> _PlcStrata:
     complex_ = source.complex
     names = (
         tuple(zip(complex_.vertex_ids, complex_.vertex_occurrence_paths, strict=True)),
@@ -119,8 +124,17 @@ def _plc_strata(source: NativePlcSource, physical: np.ndarray, /) -> _PlcStrata:
     rows = tuple({key: row for row, key in enumerate(bank)} for bank in names)
     if any(len(lookup) != len(bank) for lookup, bank in zip(rows, names, strict=True)):
         raise ValueError("PLC identity banks must name each source entity once.")
-    vertices = np.asarray(physical, dtype=np.float64)
+    vertices = np.asarray(domain.vertices, dtype=np.float64)
+    exact_vertices = (
+        tuple(domain.exact_vertices)
+        if isinstance(domain, AffinePlcDomain)
+        else tuple(tuple(Fraction(value) for value in row) for row in vertices.tolist())
+    )
     edges = np.asarray(complex_.plc_edge_vertices, dtype=np.int64).reshape((-1, 2))
+    edge_by_pair = {
+        (min(first, second), max(first, second)): row
+        for row, (first, second) in enumerate(edges.tolist())
+    }
     offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
     loops = np.asarray(complex_.polygon_vertices, dtype=np.int64)
     polygon_facets = np.asarray(complex_.polygon_facets, dtype=np.int64)
@@ -128,33 +142,22 @@ def _plc_strata(source: NativePlcSource, physical: np.ndarray, /) -> _PlcStrata:
     by_facet: list[list[np.ndarray]] = [[] for _ in range(facet_count)]
     for polygon, facet in enumerate(polygon_facets.tolist()):
         by_facet[facet].append(loops[offsets[polygon] : offsets[polygon + 1]])
-    origins = np.zeros((facet_count, 3), dtype=np.float64)
     normals = np.zeros((facet_count, 3), dtype=np.float64)
-    axes = np.zeros((facet_count, 2, 3), dtype=np.float64)
     for facet, facet_loops in enumerate(by_facet):
         if not facet_loops:
             raise ValueError("Every PLC facet must own at least one polygon loop.")
         # The Newell sum over all loops is the right-hand facet normal; hole
-        # loops are oppositely wound and subtract their own area.
+        # loops are oppositely wound and subtract their own area. It orients
+        # rows only; stratum membership is decided exactly.
         normal = np.zeros(3, dtype=np.float64)
         for loop in facet_loops:
-            points = vertices[loop]
+            points = vertices[loop] - vertices[facet_loops[0][0]]
             following = np.roll(points, -1, axis=0)
             normal += np.sum(np.cross(points, following), axis=0)
         length = float(np.linalg.norm(normal))
         if not np.isfinite(length) or length == 0.0:
             raise ValueError("A PLC facet has no oriented area.")
-        normal /= length
-        anchor = int(np.argmax(np.abs(normal)))
-        first = np.zeros(3, dtype=np.float64)
-        first[(anchor + 1) % 3] = 1.0
-        first -= normal * float(first @ normal)
-        first /= np.linalg.norm(first)
-        normals[facet] = normal
-        axes[facet] = (first, np.cross(normal, first))
-        origins[facet] = np.mean(
-            np.concatenate([vertices[loop] for loop in facet_loops]), axis=0
-        )
+        normals[facet] = normal / length
     facet_regions = np.asarray(complex_.facet_regions, dtype=np.int64)
     region_names = names[3]
     facet_sides = tuple(
@@ -176,96 +179,318 @@ def _plc_strata(source: NativePlcSource, physical: np.ndarray, /) -> _PlcStrata:
         for loop in facet_loops:
             for vertex in loop.tolist():
                 vertex_facets[vertex].add(facet)
-    scale = max(1.0, float(np.max(np.abs(vertices), initial=0.0)))
     return _PlcStrata(
         rows,
         names,
         vertices,
+        exact_vertices,
         edges,
-        origins,
+        edge_by_pair,
         normals,
-        axes,
         tuple(tuple(value) for value in by_facet),
+        tuple(
+            frozenset(int(vertex) for loop in facet_loops for vertex in loop.tolist())
+            for facet_loops in by_facet
+        ),
         tuple((first, second) for first, second in facet_sides),
         edge_regions,
         tuple(regions_of(facets) for facets in vertex_facets),
         facet_regions,
-        _ROUNDING_ULPS * float(np.finfo(np.float64).eps) * scale,
     )
 
 
-def _segment_distances(
-    points: np.ndarray, starts: np.ndarray, ends: np.ndarray
-) -> np.ndarray:
-    direction = ends - starts
-    length = np.einsum("ij,ij->i", direction, direction)
-    parameter = np.clip(
-        np.einsum("ij,ij->i", points - starts, direction)
-        / np.where(length > 0, length, 1.0),
-        0.0,
-        1.0,
+def _subtract(first: _ExactPoint, second: _ExactPoint, /) -> _ExactPoint:
+    return tuple(a - b for a, b in zip(first, second, strict=True))
+
+
+def _dot(first: _ExactPoint, second: _ExactPoint, /) -> Fraction:
+    return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+
+def _cross(first: _ExactPoint, second: _ExactPoint, /) -> _ExactPoint:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
     )
-    return np.linalg.norm(points - (starts + parameter[:, None] * direction), axis=1)
 
 
-def _facet_distances(
-    strata: _PlcStrata, points: np.ndarray, facets: np.ndarray, /
-) -> np.ndarray:
-    """Distance to the closed facet polygon: plane offset and in-plane exclusion."""
-    output = np.empty(points.shape[0], dtype=np.float64)
-    for facet in np.unique(facets).tolist():
-        selected = np.flatnonzero(facets == facet)
-        relative = points[selected] - strata.facet_origins[facet]
-        height = relative @ strata.facet_normals[facet]
-        planar = relative @ strata.facet_axes[facet].T
-        inside = np.zeros(selected.size, dtype=np.bool_)
-        outside = np.full(selected.size, np.inf, dtype=np.float64)
-        for loop in strata.facet_loops[facet]:
-            corners = (
-                strata.vertices[loop] - strata.facet_origins[facet]
-            ) @ strata.facet_axes[facet].T
-            following = np.roll(corners, -1, axis=0)
-            for start, end in zip(corners, following, strict=True):
-                crosses = (start[1] > planar[:, 1]) != (end[1] > planar[:, 1])
-                denominator = end[1] - start[1]
-                safe = np.where(denominator != 0.0, denominator, 1.0)
-                abscissa = (
-                    start[0] + (planar[:, 1] - start[1]) * (end[0] - start[0]) / safe
+def _on_closed_segment(
+    point: _ExactPoint, start: _ExactPoint, stop: _ExactPoint, /
+) -> bool:
+    direction = _subtract(stop, start)
+    relative = _subtract(point, start)
+    if any(_cross(direction, relative)):
+        return False
+    projection = _dot(relative, direction)
+    return 0 <= projection <= _dot(direction, direction)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExactFacet:
+    """Exact plane and dominant-axis projection of one planar PLC facet."""
+
+    origin: _ExactPoint
+    normal: _ExactPoint
+    axes: tuple[int, int]
+    loops: tuple[tuple[tuple[Fraction, Fraction], ...], ...]
+
+
+def _exact_facet(strata: _PlcStrata, facet: int, /) -> _ExactFacet | None:
+    """Exact facet plane, or ``None`` when the authored loops are not exactly planar."""
+    loops = tuple(
+        tuple(strata.exact_vertices[int(vertex)] for vertex in loop.tolist())
+        for loop in strata.facet_loops[facet]
+    )
+    origin = loops[0][0]
+    normal = (Fraction(0), Fraction(0), Fraction(0))
+    for loop in loops:
+        for index, corner in enumerate(loop):
+            following = loop[(index + 1) % len(loop)]
+            term = _cross(_subtract(corner, origin), _subtract(following, origin))
+            normal = tuple(a + b for a, b in zip(normal, term, strict=True))
+    if not any(normal) or any(
+        _dot(normal, _subtract(corner, origin)) for loop in loops for corner in loop
+    ):
+        return None
+    dropped = max(range(3), key=lambda axis: abs(normal[axis]))
+    kept = tuple(axis for axis in range(3) if axis != dropped)
+    first, second = kept
+    return _ExactFacet(
+        origin,
+        normal,
+        (first, second),
+        tuple(
+            tuple((corner[first], corner[second]) for corner in loop) for loop in loops
+        ),
+    )
+
+
+def _in_closed_facet(facet: _ExactFacet, point: _ExactPoint, /) -> bool:
+    """Exact closed-polygon membership: on the facet plane and inside or on a loop."""
+    if _dot(facet.normal, _subtract(point, facet.origin)):
+        return False
+    x, y = point[facet.axes[0]], point[facet.axes[1]]
+    inside = False
+    for loop in facet.loops:
+        for index, (ax, ay) in enumerate(loop):
+            bx, by = loop[(index + 1) % len(loop)]
+            if (
+                (bx - ax) * (y - ay) == (by - ay) * (x - ax)
+                and min(ax, bx) <= x <= max(ax, bx)
+                and min(ay, by) <= y <= max(ay, by)
+            ):
+                return True
+            if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay):
+                inside = not inside
+    return inside
+
+
+@dataclass(frozen=True, slots=True)
+class _SourcePoints:
+    """Exact source chart of every mesh vertex row whose carrier realizes one.
+
+    ``kinds`` follow :class:`PlcSourcePointWitness` (``-1`` none, ``0`` PLC
+    vertex, ``1`` witness segment, ``2`` witness triangle, ``3`` declared
+    plane of a witness triangle). ``residuals`` are the exact carrier
+    distances to those source points, rounded once.
+    """
+
+    kinds: np.ndarray
+    entities: np.ndarray
+    residuals: np.ndarray
+    segment_pairs: tuple[tuple[int, int], ...]
+    face_groups: np.ndarray
+    facet_pairs: dict[int, frozenset[tuple[int, int]]]
+
+
+def _source_points(
+    strata: _PlcStrata,
+    domain: PiecewiseLinearDomain | AffinePlcDomain,
+    mesh: CellMesh,
+    witness: PlcSourcePointWitness | None,
+    /,
+) -> _SourcePoints:
+    """Bind exact source points to mesh vertices from the construction witness.
+
+    Without a witness only carriers equal to a PLC vertex carry a source
+    point. A witnessed point whose exact value the carrier does not round is
+    discarded; such a vertex then needs exact membership of its carrier.
+    """
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    count = coordinates.shape[0]
+    kinds = np.full(count, -1, dtype=np.int64)
+    entities = np.full(count, -1, dtype=np.int64)
+    residuals = np.zeros(count, dtype=np.float64)
+    if witness is None:
+        lookup = {
+            tuple(row): vertex for vertex, row in enumerate(strata.vertices.tolist())
+        }
+        for row, carrier in enumerate(coordinates.tolist()):
+            vertex = lookup.get(tuple(carrier))
+            if vertex is not None:
+                kinds[row], entities[row] = 0, vertex
+        segment_pairs: tuple[tuple[int, int], ...] = ()
+        face_groups = np.zeros((0,), dtype=np.int64)
+        facet_pairs: dict[int, frozenset[tuple[int, int]]] = {}
+        exact = isinstance(domain, PiecewiseLinearDomain)
+        if not exact:
+            for row in np.flatnonzero(kinds == 0).tolist():
+                residuals[row] = _carrier_distance(
+                    coordinates[row], strata.exact_vertices[int(entities[row])]
                 )
-                inside ^= crosses & (planar[:, 0] < abscissa)
-                outside = np.minimum(
-                    outside,
-                    _segment_distances(
-                        planar,
-                        np.broadcast_to(start, planar.shape),
-                        np.broadcast_to(end, planar.shape),
-                    ),
-                )
-        exclusion = np.where(inside, 0.0, outside)
-        output[selected] = np.hypot(height, exclusion)
-    return output
-
-
-def _stratum_distances(
-    strata: _PlcStrata, points: np.ndarray, dimensions: np.ndarray, indices: np.ndarray, /
-) -> np.ndarray:
-    distances = np.zeros(points.shape[0], dtype=np.float64)
-    vertex = dimensions == 0
-    distances[vertex] = np.linalg.norm(
-        points[vertex] - strata.vertices[indices[vertex]], axis=1
-    )
-    edge = dimensions == 1
-    if np.any(edge):
-        endpoints = strata.edges[indices[edge]]
-        distances[edge] = _segment_distances(
-            points[edge],
-            strata.vertices[endpoints[:, 0]],
-            strata.vertices[endpoints[:, 1]],
+        return _SourcePoints(
+            kinds, entities, residuals, segment_pairs, face_groups, facet_pairs
         )
-    facet = dimensions == 2
-    if np.any(facet):
-        distances[facet] = _facet_distances(strata, points[facet], indices[facet])
-    return distances
+    if witness.domain_id != domain.domain_id or not np.array_equal(
+        np.asarray(witness.vertex_global_ids, dtype=np.int64),
+        np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+    ):
+        raise ValueError(
+            "The PLC source-point witness binds another domain or mesh vertex bank."
+        )
+    segments = np.asarray(witness.segments, dtype=np.int64).reshape((-1, 2))
+    faces = np.asarray(witness.faces, dtype=np.int64).reshape((-1, 3))
+    face_groups = np.asarray(witness.face_groups, dtype=np.int64)
+    planes = np.asarray(witness.face_planes, dtype=np.float64)
+    pairs: dict[int, set[tuple[int, int]]] = {}
+    for corners, group in zip(faces.tolist(), face_groups.tolist(), strict=True):
+        for index, corner in enumerate(corners):
+            following = corners[(index + 1) % 3]
+            pairs.setdefault(int(group), set()).add(
+                (min(corner, following), max(corner, following))
+            )
+    witness_kinds = np.asarray(witness.vertex_kinds, dtype=np.int64)
+    witness_entities = np.asarray(witness.vertex_entities, dtype=np.int64)
+    parameters = np.asarray(witness.vertex_parameters, dtype=np.float64)
+    vertices = strata.exact_vertices
+    untransformed = isinstance(domain, PiecewiseLinearDomain)
+    deviations = witness.vertex_deviations
+    for row in np.flatnonzero(witness_kinds >= 0).tolist():
+        kind, entity = int(witness_kinds[row]), int(witness_entities[row])
+        carrier = coordinates[row]
+        if kind == 0 and untransformed:
+            if np.array_equal(carrier, strata.vertices[entity]):
+                kinds[row], entities[row] = 0, entity
+            continue
+        first, second = (Fraction(float(value)) for value in parameters[row])
+        if kind == 0:
+            point = vertices[entity]
+        elif kind == 1:
+            start, stop = (vertices[int(value)] for value in segments[entity])
+            point = tuple(a + first * (b - a) for a, b in zip(start, stop, strict=True))
+        elif kind == 2:
+            a, b, c = (vertices[int(value)] for value in faces[entity])
+            point = tuple(
+                (1 - first - second) * x + first * y + second * z
+                for x, y, z in zip(a, b, c, strict=True)
+            )
+        elif untransformed:
+            origin, axis, other = (
+                tuple(Fraction(float(value)) for value in plane_row)
+                for plane_row in planes[entity]
+            )
+            point = tuple(
+                o + first * u + second * v
+                for o, u, v in zip(origin, axis, other, strict=True)
+            )
+        else:
+            continue
+        if deviations is None:
+            if tuple(float(value) for value in point) != tuple(carrier.tolist()):
+                continue
+        else:
+            offset = _subtract(tuple(Fraction(float(v)) for v in carrier), point)
+            if _dot(offset, offset) > Fraction(float(deviations[row])) ** 2:
+                continue
+        kinds[row], entities[row] = kind, entity
+        residuals[row] = _carrier_distance(carrier, point)
+    return _SourcePoints(
+        kinds,
+        entities,
+        residuals,
+        tuple((min(pair), max(pair)) for pair in segments.tolist()),
+        face_groups,
+        {group: frozenset(value) for group, value in pairs.items()},
+    )
+
+
+def _rounding_box(carrier: tuple[float, ...], /) -> tuple[tuple[Fraction, Fraction], ...]:
+    """Closed box of reals that round to a binary64 carrier (ties included)."""
+    return tuple(
+        (
+            (Fraction(value) + Fraction(math.nextafter(value, -math.inf))) / 2,
+            (Fraction(value) + Fraction(math.nextafter(value, math.inf))) / 2,
+        )
+        for value in carrier
+    )
+
+
+def _clip_polygon_to_box(
+    corners: tuple[_ExactPoint, ...],
+    box: tuple[tuple[Fraction, Fraction], ...],
+    /,
+) -> bool:
+    """Whether a convex polygon (or a segment, as two corners) meets a closed box."""
+    polygon = list(corners)
+    for axis, (low, high) in enumerate(box):
+        for sign, limit in ((1, low), (-1, high)):
+            clipped: list[_ExactPoint] = []
+            for index, current in enumerate(polygon):
+                following = polygon[(index + 1) % len(polygon)]
+                inside = sign * (current[axis] - limit) >= 0
+                ahead = sign * (following[axis] - limit) >= 0
+                if inside:
+                    clipped.append(current)
+                if inside != ahead:
+                    t = (limit - current[axis]) / (following[axis] - current[axis])
+                    clipped.append(
+                        tuple(a + t * (b - a) for a, b in zip(current, following))
+                    )
+            polygon = clipped
+            if not polygon:
+                return False
+    return True
+
+
+def _convex_loop(facet: _ExactFacet, /) -> bool:
+    """Whether the single projected facet loop turns one way at every corner."""
+    (loop,) = facet.loops
+    turns = set()
+    for index, (ax, ay) in enumerate(loop):
+        bx, by = loop[(index + 1) % len(loop)]
+        cx, cy = loop[(index + 2) % len(loop)]
+        turn = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+        if turn:
+            turns.add(turn > 0)
+    return len(turns) == 1
+
+
+def _carrier_distance(carrier: np.ndarray, point: _ExactPoint, /) -> float:
+    offset = _subtract(tuple(Fraction(float(value)) for value in carrier), point)
+    return math.sqrt(float(_dot(offset, offset)))
+
+
+def _chart_in_stratum(
+    strata: _PlcStrata, points: _SourcePoints, row: int, stratum: int, index: int, /
+) -> bool:
+    """Whether a vertex's exact source chart lies in one closed PLC stratum."""
+    kind = int(points.kinds[row])
+    entity = int(points.entities[row])
+    if kind == 0:
+        if stratum == 0:
+            return entity == index
+        if stratum == 1:
+            return entity in strata.edges[index].tolist()
+        return entity in strata.facet_vertices[index]
+    if kind == 1:
+        pair = points.segment_pairs[entity]
+        if stratum == 1:
+            return strata.edge_by_pair.get(pair) == index
+        return stratum == 2 and pair in points.facet_pairs.get(index, frozenset())
+    if kind in (2, 3):
+        return stratum == 2 and int(points.face_groups[entity]) == index
+    return False
 
 
 @final
@@ -275,11 +500,14 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
     Every target entity inherits the vertex, edge, facet or region class of the
     lowest-dimensional source mesh entity that contains it in the exact
     topology lineage; coordinates never select a class. Each class is then
-    checked against the source stratum it names: the entity's vertices lie on
-    that vertex, segment or closed facet polygon within the recorded residual
-    plus binary64 rounding, facet sides and incident material regions agree,
-    and oriented edge/face rows follow the authored segment and right-hand
-    facet directions.
+    checked against the source stratum it names: every vertex of the entity
+    lies exactly in that closed vertex, segment or facet polygon, either as
+    the correctly rounded carrier of its native construction source point
+    (whose chart is that stratum or one of its boundary strata) or by exact
+    rational membership of its carrier; facet sides and incident material
+    regions agree, and oriented edge/face rows follow the authored segment
+    and right-hand facet directions. Recorded residuals are the exact
+    carrier distances to those source points, rounded once.
     """
 
     source: NativePlcSource
@@ -300,7 +528,9 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
     def source_namespaces(self) -> tuple[tuple[str, str], ...]:
         return ((self.source.source_id, self.source.source_revision),)
 
-    def _physical_vertices(self, result: CellMeshingResult, /) -> np.ndarray:
+    def _domain(
+        self, result: CellMeshingResult, /
+    ) -> PiecewiseLinearDomain | AffinePlcDomain:
         certification = result.certification
         domain = None if certification is None else certification.inputs.domain
         if not isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain)):
@@ -330,7 +560,21 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 "Accepted PLC domain does not declare this transfer's source complex."
             )
-        return np.asarray(domain.vertices, dtype=np.float64)
+        return domain
+
+    @staticmethod
+    def _witness(result: CellMeshingResult, /) -> PlcSourcePointWitness | None:
+        certification = result.certification
+        witness = (
+            None
+            if certification is None
+            else certification.inputs.source_coverage_witness
+        )
+        if witness is not None and not isinstance(witness, PlcSourcePointWitness):
+            raise ValueError(
+                "PLC association transfer requires PLC source-point coverage evidence."
+            )
+        return witness
 
     def _tables(self, source: CellMeshingResult, /) -> dict[int, GeometryAssociation]:
         mesh = source.mesh
@@ -366,13 +610,14 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         mesh: CellMesh,
         tables: dict[int, GeometryAssociation],
         strata: _PlcStrata,
+        points: _SourcePoints,
         /,
-        *,
-        residual_bounds: dict[int, np.ndarray] | None,
     ) -> tuple[_Classified, ...]:
         """Resolve and verify every row against its named source stratum."""
         coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
         classified: list[_Classified] = []
+        members: dict[tuple[int, int, int], float | None] = {}
+        facets: dict[int, _ExactFacet | None] = {}
         for dimension in range(4):
             table = tables[dimension]
             count = mesh.entity_set(dimension).count
@@ -421,18 +666,25 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 pairs = incidence_pairs(mesh, 0, dimension)
                 order = np.lexsort((pairs[:, 0], pairs[:, 1]))
                 vertex_rows = pairs[order, 0].reshape((count, dimension + 1))
-            points = coordinates[vertex_rows].reshape((-1, 3))
-            repeated = np.repeat(np.arange(count), vertex_rows.shape[1])
-            distances = _stratum_distances(
-                strata, points, dimensions[repeated], indices[repeated]
-            )
-            residuals = np.max(distances.reshape(vertex_rows.shape), axis=1)
-            bound = (
-                np.asarray(table.residuals, dtype=np.float64)[np.argsort(rows)]
-                if residual_bounds is None
-                else residual_bounds[dimension]
-            )
-            violated = residuals > bound + strata.slack
+            residuals = np.zeros(count, dtype=np.float64)
+            violated = np.zeros(count, dtype=np.bool_)
+            for mesh_row in np.flatnonzero(dimensions < 3).tolist():
+                stratum, index = int(dimensions[mesh_row]), int(indices[mesh_row])
+                for vertex in vertex_rows[mesh_row].tolist():
+                    key = (vertex, stratum, index)
+                    if key not in members:
+                        members[key] = (
+                            float(points.residuals[vertex])
+                            if _chart_in_stratum(strata, points, vertex, stratum, index)
+                            else self._exact_member(
+                                strata, facets, coordinates[vertex], stratum, index
+                            )
+                        )
+                    member = members[key]
+                    if member is None:
+                        violated[mesh_row] = True
+                        break
+                    residuals[mesh_row] = max(residuals[mesh_row], member)
             if np.any(violated):
                 raise AssociationPropagationError(
                     "PLC association rows lie off the source strata they name.",
@@ -446,6 +698,49 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             classified.append(_Classified(dimensions, indices, residuals, orientations))
         self._check_regions(mesh, strata, classified)
         return tuple(classified)
+
+    @staticmethod
+    def _exact_member(
+        strata: _PlcStrata,
+        facets: dict[int, _ExactFacet | None],
+        carrier: np.ndarray,
+        stratum: int,
+        index: int,
+        /,
+    ) -> float | None:
+        """Whether an unwitnessed carrier rounds a point of the closed stratum.
+
+        Decided exactly: the carrier itself lies in the stratum (residual
+        zero), or the stratum meets the carrier's closed rounding box, whose
+        outward-rounded half diagonal is then the residual. ``None`` refuses.
+        """
+        values = tuple(float(value) for value in carrier)
+        point = tuple(Fraction(value) for value in values)
+        box = _rounding_box(values)
+        if stratum == 0:
+            vertex = strata.exact_vertices[index]
+            if point == vertex:
+                return 0.0
+            inside = all(low <= x <= high for x, (low, high) in zip(vertex, box))
+            return _rounding_bound(values) if inside else None
+        if stratum == 1:
+            start, stop = (strata.exact_vertices[int(v)] for v in strata.edges[index])
+            if _on_closed_segment(point, start, stop):
+                return 0.0
+            meets = _clip_polygon_to_box((start, stop), box)
+            return _rounding_bound(values) if meets else None
+        if index not in facets:
+            facets[index] = _exact_facet(strata, index)
+        facet = facets[index]
+        if facet is None:
+            return None
+        if _in_closed_facet(facet, point):
+            return 0.0
+        loops = strata.facet_loops[index]
+        if len(loops) != 1 or not _convex_loop(facet):
+            return None
+        corners = tuple(strata.exact_vertices[int(v)] for v in loops[0].tolist())
+        return _rounding_bound(values) if _clip_polygon_to_box(corners, box) else None
 
     def _orientations(
         self,
@@ -534,9 +829,11 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
     ) -> tuple[dict[int, GeometryAssociation], _PlcStrata, tuple[_Classified, ...]]:
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
-        strata = _plc_strata(self.source, self._physical_vertices(source))
+        domain = self._domain(source)
+        strata = _plc_strata(self.source, domain)
         tables = self._tables(source)
-        classified = self._classify(source.mesh, tables, strata, residual_bounds=None)
+        points = _source_points(strata, domain, source.mesh, self._witness(source))
+        classified = self._classify(source.mesh, tables, strata, points)
         for dimension, level in enumerate(classified):
             table = tables[dimension]
             rows = entity_rows(
@@ -709,7 +1006,7 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
-        del vertex_stencil, geometry_transition, target_fidelity_witness
+        del geometry_transition, target_fidelity_witness
         del target_scoped_fidelity, validated_fidelity
         tables, strata, classified = self._source_state(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):
@@ -738,7 +1035,6 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         namespace = self.source_namespaces[0]
         output: list[GeometryAssociation] = []
         target_tables: dict[int, GeometryAssociation] = {}
-        bounds: dict[int, np.ndarray] = {}
         for dimension in range(4):
             parent_dimensions, parent_ids = parents[dimension]
             identifiers = np.asarray(
@@ -755,7 +1051,6 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             )
             stratum = np.empty(identifiers.size, dtype=np.int64)
             index = np.empty(identifiers.size, dtype=np.int64)
-            residual_bound = np.empty(identifiers.size, dtype=np.float64)
             for d in range(4):
                 selected = np.flatnonzero(parent_dimensions == d)
                 if not selected.size:
@@ -763,7 +1058,6 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 level = classified[d]
                 stratum[selected] = level.dimensions[source_mesh_rows[selected]]
                 index[selected] = level.indices[source_mesh_rows[selected]]
-                residual_bound[selected] = level.residuals[source_mesh_rows[selected]]
             if np.any(stratum < dimension):
                 raise AssociationPropagationError(
                     "A target entity inherits a source stratum of lower dimension.",
@@ -773,7 +1067,6 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 strata.names[int(s)][int(i)]
                 for s, i in zip(stratum.tolist(), index.tolist(), strict=True)
             )
-            bounds[dimension] = residual_bound
             table = tables[dimension]
             association = GeometryAssociation(
                 GeometryAssociationKind.PIECEWISE_LINEAR,
@@ -796,7 +1089,20 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 parent_association_id=table.association_id,
             )
             target_tables[dimension] = association
-        verified = self._classify(target, target_tables, strata, residual_bounds=bounds)
+        # Target carriers are checked against the canonical renewal of the
+        # construction's exact source points, the same evidence the target
+        # certification recomputes.
+        domain = self._domain(source)
+        witness = self._witness(source)
+        target_points = _source_points(
+            strata,
+            domain,
+            target,
+            None
+            if witness is None
+            else renew_plc_source_point_witness(witness, domain, target, vertex_stencil),
+        )
+        verified = self._classify(target, target_tables, strata, target_points)
         for dimension in range(4):
             draft = target_tables[dimension]
             level = verified[dimension]
@@ -1054,8 +1360,17 @@ def renew_plc_source_point_witness(
     plane) shared by all of its exact stencil parents. Its parameters are
     binary64 values whose exact source point the actual carrier is, or rounds
     to; the exact stencil combination and the exact carrier projection are
-    tried with their nearest binary64 neighbours. Certification recomputes
-    every point. A boundary vertex with no such source point is refused.
+    tried with their nearest binary64 neighbours.
+
+    Nested refinement places a created carrier at the rounded combination of
+    its parents' carriers; between rounded source points no chart point need
+    round to it. Such a vertex takes the exact stencil combination of its
+    parents' source points, which lies in their common chart, at the nearest
+    admissible binary64 parameters, and records an outward-rounded deviation
+    bound: the weighted parent bounds, its own carrier rounding and the
+    parameter rounding. The witness then bounds every row (see
+    :class:`PlcSourcePointWitness`). Certification recomputes every point and
+    bound. A boundary vertex with neither is refused.
     """
     if not isinstance(witness, PlcSourcePointWitness):
         raise TypeError("witness must be PlcSourcePointWitness.")
@@ -1082,6 +1397,7 @@ def renew_plc_source_point_witness(
         {key: tuple(value) for key, value in vertex_segments.items()},
         {key: tuple(value) for key, value in vertex_faces.items()},
     )
+    source_deviations = witness.vertex_deviations
     source_rows = {
         int(identifier): row
         for row, identifier in enumerate(np.asarray(witness.vertex_global_ids).tolist())
@@ -1108,6 +1424,13 @@ def renew_plc_source_point_witness(
     entities = np.full(identifiers.size, -1, dtype=np.int64)
     parameters = np.zeros((identifiers.size, 2), dtype=np.float64)
     refused: list[int] = []
+    bounded: dict[int, float] = {}
+
+    def parent_bound(parent_row: int, point: tuple[Fraction, ...], /) -> Fraction:
+        if source_deviations is not None:
+            return Fraction(float(source_deviations[parent_row]))
+        return Fraction(_rounding_bound(tuple(float(value) for value in point)))
+
     for row, identifier in enumerate(identifiers.tolist()):
         source_row = source_rows.get(identifier)
         if source_row is not None:
@@ -1166,7 +1489,8 @@ def renew_plc_source_point_witness(
             for axis in range(len(points[0]))
         )
         carrier = tuple(Fraction(float(value)) for value in coordinates[row])
-        chosen = None
+        chosen: tuple[_Space, tuple[float, float]] | None = None
+        rounded = False
         for space in sorted(candidates):
             bases = [
                 value
@@ -1195,16 +1519,68 @@ def renew_plc_source_point_witness(
                 if chosen is not None:
                     break
             if chosen is not None:
+                rounded = True
+                break
+            # The lowest chart holding the exact parent combination wins over
+            # an exactly rounded point of a higher chart.
+            nested = _nested_source_point(tables, (space,), combined)
+            if nested is not None:
+                chosen = (nested[0], nested[1])
                 break
         if chosen is None:
             refused.append(identifier)
             continue
+        point = tables.point(chosen[0], (Fraction(chosen[1][0]), Fraction(chosen[1][1])))
+        # The exact nested geometry corner of a created vertex is the stencil
+        # combination of its parents' exact corners. Parents of a correctly
+        # rounded witness have binary64 corners, the rounded source points.
+        corner = (
+            None
+            if source_deviations is not None
+            else tuple(
+                sum(
+                    (
+                        weight * Fraction(float(parent_point[axis]))
+                        for (_, weight), parent_point in zip(terms, points, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(3)
+            )
+        )
+        if not rounded or corner != carrier:
+            total = sum(
+                (
+                    abs(weight) * parent_bound(source_rows[parent], parent_point)
+                    for (parent, weight), parent_point in zip(terms, points, strict=True)
+                ),
+                Fraction(0),
+            ) + Fraction(_rounding_bound(tuple(coordinates[row].tolist())))
+            offset = _subtract(combined, point)
+            total += Fraction(_sqrt_upper(_dot(offset, offset)))
+            bound = _float_upper(total)
+            carrier_offset = _subtract(carrier, point)
+            if _dot(carrier_offset, carrier_offset) > Fraction(bound) ** 2:
+                refused.append(identifier)
+                continue
+            bounded[row] = bound
         (kinds[row], entities[row]), parameters[row] = chosen[0], chosen[1]
     if refused:
         raise AssociationPropagationError(
-            "Refined PLC boundary vertices have no exactly rounded source point.",
+            "Refined PLC boundary vertices have no exactly rounded or bounded source point.",
             np.asarray(refused, dtype=np.int64),
         )
+    deviations = None
+    if bounded or source_deviations is not None:
+        deviations = np.zeros(identifiers.size, dtype=np.float64)
+        for row in np.flatnonzero(kinds >= 0).tolist():
+            source_row = source_rows.get(int(identifiers[row]))
+            if row in bounded:
+                deviations[row] = bounded[row]
+            elif source_row is not None and source_deviations is not None:
+                deviations[row] = source_deviations[source_row]
+            else:
+                deviations[row] = _rounding_bound(tuple(coordinates[row].tolist()))
     return PlcSourcePointWitness(
         identifiers,
         kinds,
@@ -1217,4 +1593,46 @@ def renew_plc_source_point_witness(
         face_plane_tolerances=witness.face_plane_tolerances,
         domain_face_rows=witness.domain_face_rows,
         domain_id=witness.domain_id,
+        vertex_deviations=deviations,
     )
+
+
+def _rounding_bound(carrier: tuple[float, ...], /) -> float:
+    """Outward bound on the distance from a carrier to any point rounding to it."""
+    squared = Fraction(0)
+    for value in carrier:
+        gap = max(
+            Fraction(math.nextafter(value, math.inf)) - Fraction(value),
+            Fraction(value) - Fraction(math.nextafter(value, -math.inf)),
+        )
+        squared += (gap / 2) ** 2
+    return _sqrt_upper(squared)
+
+
+def _float_upper(value: Fraction, /) -> float:
+    result = float(value)
+    return result if Fraction(result) >= value else math.nextafter(result, math.inf)
+
+
+def _nested_source_point(
+    tables: _WitnessTables,
+    candidates: Iterable[_Space],
+    combined: tuple[Fraction, ...],
+    /,
+) -> tuple[_Space, tuple[float, float], tuple[Fraction, ...]] | None:
+    """Nearest admissible binary64 chart point to an exact combination in that chart."""
+    for space in sorted(candidates):
+        base = tables.projection(space, combined)
+        if (
+            base is None
+            or not tables.admissible(space, base)
+            or tables.point(space, base) != combined
+        ):
+            continue
+        for first in _float_neighbours(base[0]):
+            seconds = (0.0,) if space[0] == 1 else _float_neighbours(base[1])
+            for second in seconds:
+                candidate = (Fraction(first), Fraction(second))
+                if tables.admissible(space, candidate):
+                    return space, (first, second), tables.point(space, candidate)
+    return None

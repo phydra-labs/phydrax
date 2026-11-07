@@ -36,6 +36,7 @@ from phydrax.geometry.brep._constructors import (
     brep_sphere,
     BRepTessellationPolicy,
 )
+from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._projection_contracts import brep_entity_id
 from phydrax.meshing._association import (
     GeometryAssociation,
@@ -483,10 +484,8 @@ def test_exact_plane_trim_does_not_use_authored_chart_junctions(
         _domain_boundary._patch_chart_polygon(domain, patch)
 
 
-@pytest.fixture(scope="module")
-def cylinder_charts() -> SurfaceSourceCharts:
+def _parametric_surface_charts(model: BRepModel, /) -> SurfaceSourceCharts:
     contract = phx.SpatialCoordinateContract.si()
-    model = brep_cylinder(0.5, 1.0, coordinate_contract=contract)
     domain = MeshingDomain.from_brep(model)
     scope = MeshingScope.whole(model, 2)
     specification = phx.meshing.SurfaceMeshingSpec(
@@ -504,15 +503,37 @@ def cylinder_charts() -> SurfaceSourceCharts:
     return result.surface_source
 
 
+@pytest.fixture(scope="module")
+def cylinder_charts() -> SurfaceSourceCharts:
+    contract = phx.SpatialCoordinateContract.si()
+    return _parametric_surface_charts(
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract)
+    )
+
+
+@pytest.fixture(scope="module")
+def sphere_charts() -> SurfaceSourceCharts:
+    # Each pole side is the rooted latitude AffinePCurve(ConicRootLinePCurve),
+    # not a straight chart line.
+    contract = phx.SpatialCoordinateContract.si()
+    return _parametric_surface_charts(brep_sphere(0.5, coordinate_contract=contract))
+
+
+@pytest.mark.parametrize("charts_fixture", ("cylinder_charts", "sphere_charts"))
 def test_cad_pole_lens_uses_exact_collapsed_corner_only(
-    cylinder_charts: SurfaceSourceCharts,
+    charts_fixture: str, request: pytest.FixtureRequest
 ) -> None:
-    from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
+    from phydrax.geometry._domain_boundary import (
+        _is_rooted_pole_line,
+        _rooted_patch_chart_endpoints,
+    )
     from phydrax.geometry._meshing_domain import PatchCurveUse, PatchPoleUse
     from phydrax.geometry._surface_source_support import _cad_pole_lens_endpoint
+    from phydrax.geometry.brep._patches import ExactLineCurve, LineCurve
     from phydrax.geometry.brep._source_shell_admissibility import _single_shell_topology
 
-    charts = cylinder_charts
+    charts = request.getfixturevalue(charts_fixture)
+    assert isinstance(charts, SurfaceSourceCharts)
     domain = charts.domain
     assert domain.brep_authority is not None
     assert _single_shell_topology(domain.brep_authority, domain)
@@ -522,8 +543,13 @@ def test_cad_pole_lens_uses_exact_collapsed_corner_only(
                 if not isinstance(use, PatchCurveUse):
                     continue
                 previous = (index - 1) % len(uses)
-                if not isinstance(uses[previous], PatchPoleUse):
+                pole = uses[previous]
+                if not isinstance(pole, PatchPoleUse):
                     continue
+                assert (charts_fixture == "sphere_charts") is (
+                    _is_rooted_pole_line(pole)
+                    and not isinstance(pole.pcurve, (ExactLineCurve, LineCurve))
+                )
                 endpoints = _rooted_patch_chart_endpoints(domain, patch)[loop_index]
                 start, stop = endpoints[previous]
                 midpoint = ((start[0] + stop[0]) / 2, (start[1] + stop[1]) / 2)
@@ -568,7 +594,7 @@ def test_cad_pole_lens_uses_exact_collapsed_corner_only(
                     == midpoint
                 )
                 return
-    pytest.fail("Cylinder has no regular coedge following a pole side.")
+    pytest.fail("The source has no regular coedge following a pole side.")
 
 
 @pytest.mark.parametrize("reverse", (False, True))
@@ -631,8 +657,9 @@ def test_cad_plane_seam_side_uses_oriented_source_chart(reverse: bool) -> None:
     )
 
 
+@pytest.mark.parametrize("charts_fixture", ("cylinder_charts", "sphere_charts"))
 def test_cad_pole_fan_interior_edge_requires_exact_common_fiber(
-    cylinder_charts: SurfaceSourceCharts,
+    charts_fixture: str, request: pytest.FixtureRequest
 ) -> None:
     from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
     from phydrax.geometry._meshing_domain import PatchPoleUse
@@ -640,7 +667,8 @@ def test_cad_pole_fan_interior_edge_requires_exact_common_fiber(
         _validate_cad_chart_edge_incidence,
     )
 
-    charts = cylinder_charts
+    charts = request.getfixturevalue(charts_fixture)
+    assert isinstance(charts, SurfaceSourceCharts)
     domain = charts.domain
     for patch, surface in enumerate(domain.patches):
         for loop_index, loop in enumerate(surface.loops):
@@ -695,7 +723,7 @@ def test_cad_pole_fan_interior_edge_requires_exact_common_fiber(
                 with pytest.raises(ValueError, match="unbound or unproved"):
                     _validate_cad_chart_edge_incidence(charts, forged, set())
                 return
-    pytest.fail("Cylinder has no pole side.")
+    pytest.fail("The source has no pole side.")
 
 
 def test_cad_periodic_coedge_pair_requires_both_occurrences_and_opposite_sense(

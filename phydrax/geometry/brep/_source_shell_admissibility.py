@@ -484,15 +484,15 @@ def _shared_two_arc_circle(
         ):
             return None
         roots = (first_root, second_root)
-        # A Boolean-rebound endpoint retains its raw carrier parameter. Only the
-        # exact cosine/sine/turn root below is used, so that parameter is
-        # admissible solely as a representative inside the root's isolation.
+        # An angle-parameterized circle has a rational parameter only at the
+        # exact phase-zero root; every other endpoint must carry its exact
+        # cosine/sine/turn root alone, never a rounded parameter.
         if any(
             root.parameter_exact is not None
             and not (
-                root.root.parameter_lower
-                <= root.parameter_exact
-                <= root.root.parameter_upper
+                root.parameter_exact == 0
+                and (root.root.cosine_exact, root.root.sine_exact, root.root.turns)
+                == (1, 0, 0)
             )
             for root in roots
         ):

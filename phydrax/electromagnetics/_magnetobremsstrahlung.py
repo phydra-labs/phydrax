@@ -47,7 +47,8 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from enum import IntFlag
-from math import exp, isfinite, log, pi
+from fractions import Fraction
+from math import exp, floor, isfinite, log, pi
 from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
@@ -62,6 +63,8 @@ from .._interpolation import apply_gather_stencil, rectilinear_stencil
 from .._numerics._quadrature_rules import gauss_kronrod_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry._rational import fraction_up
+from ..linalg._hermitian_spectral import _scalar_exp_enclosure
 from ..special import jv, kve
 from ..typing import (
     as_host_array,
@@ -235,10 +238,41 @@ class AbstractGyrotropicDistribution(StrictModule):
         )
 
 
-def _thermal_tail_bound(exponent: float, /) -> float:
-    """Upper bound of the Jüttner mass beyond ``(γ − 1)/θ = T``, uniform in ``θ``."""
+def _thermal_tail_estimate(exponent: float, /) -> float:
+    """Round-to-nearest value of the tail bound below; it only brackets the search."""
     poly = exp(-exponent) * (exponent * exponent + 2.0 * exponent + 2.0)
     return poly / (2.0 - poly)
+
+
+def _first_within(
+    lower: float, upper: float, exceeds: Callable[[float], bool], /
+) -> float:
+    """Bisect to adjacent floats; ``exceeds`` holds at ``lower`` and fails at ``upper``."""
+    middle = 0.5 * (lower + upper)
+    while lower < middle < upper:
+        if exceeds(middle):
+            lower = middle
+        else:
+            upper = middle
+        middle = 0.5 * (lower + upper)
+    return upper
+
+
+def _thermal_tail_bound(exponent: float, /) -> Fraction:
+    """Upper bound of the Jüttner mass beyond ``(γ − 1)/θ = T ≥ 1``, uniform in ``θ``.
+
+    The exact value ``P/(2 − P)``, ``P = e^{−T}(T² + 2T + 2) < 2``, increases with
+    ``P``. ``P`` is bounded above through the rational lower bound
+    ``e^T ≥ (e¹)ₗ^⌊T⌋ (e^{T−⌊T⌋})ₗ`` from lower exponential enclosures, which keeps
+    the exact series short for large ``T``.
+    """
+    value = Fraction(exponent)
+    whole = floor(value)
+    one, one_tail = _scalar_exp_enclosure(Fraction(1))
+    part, part_tail = _scalar_exp_enclosure(value - whole)
+    growth = (one - one_tail) ** whole * (part - part_tail)
+    poly = (value * value + 2 * value + 2) / growth
+    return poly / (2 - poly)
 
 
 class ThermalJuttnerDistribution(AbstractGyrotropicDistribution):
@@ -261,13 +295,27 @@ class ThermalJuttnerDistribution(AbstractGyrotropicDistribution):
         tolerance = _host_positive(tail_tolerance, "tail_tolerance")
         if tolerance >= 0.5:
             raise ValueError("tail_tolerance must be below 1/2.")
-        lower, upper = 1.0, 800.0
-        for _ in range(200):
-            middle = 0.5 * (lower + upper)
-            if _thermal_tail_bound(middle) > tolerance:
-                lower = middle
-            else:
-                upper = middle
+
+        # The bound decreases in T and is below 2^-1074 at T = 800, so exact
+        # bisection of [1, 800] ends at the first float whose bound meets the
+        # tolerance. That float is unique, so the exact bisection may start from
+        # any verified bracket; the round-to-nearest estimate supplies a narrow one.
+        def exceeds(exponent: float) -> bool:
+            return _thermal_tail_bound(exponent) > tolerance
+
+        estimate = _first_within(
+            1.0, 800.0, lambda exponent: _thermal_tail_estimate(exponent) > tolerance
+        )
+        width = 2.0**-46
+        while True:
+            lower = max(1.0, estimate * (1.0 - width))
+            upper = min(800.0, estimate * (1.0 + width))
+            if (lower == 1.0 or exceeds(lower)) and (
+                upper == 800.0 or not exceeds(upper)
+            ):
+                break
+            width *= 16.0
+        upper = _first_within(lower, upper, exceeds)
         self.temperature = jnp.asarray(theta, dtype=jnp.float64)
         self.tail_exponent = upper
 
@@ -285,7 +333,9 @@ class ThermalJuttnerDistribution(AbstractGyrotropicDistribution):
         return jnp.zeros((), dtype=jnp.float64), jnp.sqrt(kinetic * (kinetic + 2.0))
 
     def tail_mass_bound(self) -> Array:
-        return jnp.asarray(_thermal_tail_bound(self.tail_exponent), dtype=jnp.float64)
+        return jnp.asarray(
+            fraction_up(_thermal_tail_bound(self.tail_exponent)), dtype=jnp.float64
+        )
 
 
 class PowerLawDistribution(AbstractGyrotropicDistribution):

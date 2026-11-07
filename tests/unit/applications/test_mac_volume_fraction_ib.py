@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,6 +21,7 @@ from phydrax.discretization.finite_volume._incompressible import (
 )
 from phydrax.discretization.particle._rigid_body import RigidBodyKinematics
 from phydrax.equations._mac_volume_fraction_ib_cfd_dem import (
+    _certified_signs,
     MACSDFCutFractionPlan,
     MACVolumeFractionIBCFDEMCouplingPlan,
 )
@@ -317,6 +320,86 @@ def test_superquadric_is_refused_before_cut_fraction_preparation() -> None:
     ).prepare(particles)
     with pytest.raises(ValueError, match="[Ss]uperquadric|bound"):
         MACSDFCutFractionPlan(operators, shape)
+
+
+def test_query_balls_contain_exact_subboxes_on_non_dyadic_grids() -> None:
+    # Measured counterexample: before outward rounding every one of these 32768
+    # routes missed a corner, e.g. farthest corner 0.008118988243654479 against
+    # radius 0.008118988161739348.
+    origin, extent, divisions = 1.0e6 + 0.1, 0.3, 8
+    grid = phx.discretization.TensorGridPlan(
+        tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)),
+        axis_names=("x", "y", "z"),
+    ).prepare(np.asarray(((origin,) * 3, (origin + extent,) * 3), dtype=np.float64))
+    operators = phx.discretization.MACOperatorPlan(
+        phx.discretization.FiniteVolumePlan(grid).prepare()
+    ).prepare()
+    particles = phx.discretization.ParticleSetPlan(
+        np.asarray((0,), dtype=np.int64),
+        np.ones(1, dtype=np.float64),
+        ambient_dimension=3,
+    ).prepare()
+    shape = phx.discretization.RigidSphereSetPlan(
+        np.full(1, 0.01, dtype=np.float64), np.zeros(1, dtype=np.int32)
+    ).prepare(particles)
+    plan = MACSDFCutFractionPlan(
+        operators, shape, subdivisions=divisions, maximum_unresolved_fraction=1.0
+    )
+    centers = np.asarray(operators.discretization.cell_centers, dtype=np.float64).reshape(
+        -1, 3
+    )
+    widths = np.stack(
+        np.meshgrid(
+            *(
+                np.asarray(axis.interval_widths, dtype=np.float64)
+                for axis in operators.discretization.grid.structured_axes
+            ),
+            indexing="ij",
+        ),
+        axis=-1,
+    ).reshape(-1, 3)
+    steps = np.indices((divisions,) * 3).reshape(3, -1).T
+    points = np.asarray(plan.query_points, dtype=np.float64)
+    radii = np.asarray(plan.query_radii, dtype=np.float64)
+    reach: dict[tuple[float, float, float, int], Fraction] = {}
+    misses = 0
+    for route in range(points.shape[0]):
+        cell, box = divmod(route, divisions**3)
+        farthest = Fraction(0)
+        for axis in range(3):
+            key = (
+                float(points[route, axis]),
+                float(centers[cell, axis]),
+                float(widths[cell, axis]),
+                int(steps[box, axis]),
+            )
+            if key not in reach:
+                point, center, width = (Fraction(item) for item in key[:3])
+                step = key[3]
+                lower = center + width * Fraction(2 * step - divisions, 2 * divisions)
+                upper = center + width * Fraction(2 * step + 2 - divisions, 2 * divisions)
+                reach[key] = max(point - lower, upper - point) ** 2
+            farthest += reach[key]
+        misses += farthest > Fraction(float(radii[route])) ** 2
+    assert points.shape[0] == 32768
+    assert misses == 0
+
+
+def test_signed_field_signs_survive_denormals_are_zero() -> None:
+    # Measured on XLA CPU: the subnormal Lipschitz bound 2**-1070 reads as zero,
+    # so the unpadded test certified value -2**-1011 solid although the exact
+    # upper bound -2**-1011 + 2**-1070 * 2**60 is positive.
+    value, lipschitz, radius, error = (
+        jnp.asarray((item,), dtype=jnp.float64)
+        for item in (-(2.0**-1011), 2.0**-1070, 2.0**60, 0.0)
+    )
+    upper = Fraction(2) ** -1070 * Fraction(2) ** 60 - Fraction(2) ** -1011
+    assert upper > 0
+    solid, fluid = jax.jit(_certified_signs)(value, lipschitz, radius, error)
+    assert not bool(solid[0]) and not bool(fluid[0])
+    one = jnp.ones((1,), dtype=jnp.float64)
+    solid, fluid = jax.jit(_certified_signs)(-one, one, 0.5 * one, 0.0 * one)
+    assert bool(solid[0]) and not bool(fluid[0])
 
 
 def test_mixture_mass_and_mass_fraction_follow_intrinsic_density_formula() -> None:

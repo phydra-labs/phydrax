@@ -386,6 +386,64 @@ certificate identities may change; regenerate affected certificates, archive
 evidence, and qualification records. Do not imitate historical proof payloads or
 describe this as identity-preserving optimization.
 
+**Approved cross-platform identity policy (exact IDs only):** identities and
+decisions that archive restore or acceptance recomputes use only exact or
+decided data: meshes, topology, exact witnesses, policies and pass/fail
+decisions together with their exact evidence. Floating-point diagnostics
+(quality metrics, condition numbers, sampled minima, residuals) that such
+recomputation would re-derive through platform arithmetic are recorded as
+non-identity evidence. Values that are only hashed as given are stored with the
+archive and restore unchanged. Acceptance gates that restore recomputes decide
+exactly, so a stored result is accepted or refused identically on every platform
+and archives restore across operating systems. The gate is a cross-OS restore
+matrix over every result family; any cross-OS refusal is a required fix.
+Certified enclosures are sound on every platform without relying on libm, XLA
+or BLAS accuracy. Generation is deterministic on each platform but need not be
+byte-identical across operating systems. Each platform produces a valid,
+certified mesh, and cross-platform qualification compares certificates,
+decisions and exact data rather than mesh bytes. Affected certificate, result
+and model identities change once as a clean cutover: archives are rewritten and
+there are no compatibility reads. The user first approved a stronger policy
+requiring byte-identical generation across operating systems, then replaced it
+with this one. Evidence that prompted the decision: XLA quality diagnostics
+fingerprinted into result identities, BLAS-dependent SVD condition numbers in
+T-spline certificate identities, and a Linux-written archive refused on macOS
+at an identical native build.
+
+**Approved self-contained audit reports:** `CellMeshAuditReport` stores its
+`CellMeshAuditPolicy`, not only the policy identity, so an uncertified meshing
+result made under any audit policy restores in an independent process by
+recomputing its audit under that stored policy. `report_id` is unchanged
+because it already binds the policy identity; restore verifies the stored
+policy against that identity. The audit report's PyTree and archive
+representation change once as a clean cutover: archives holding audit reports
+are rewritten, with no compatibility reads. The user chose this over refusing
+to archive such results, which would have left a valid public result without
+lossless persistence.
+
+**Approved implicit-route fill size semantics:** the implicit route's volume
+fill interprets a requested hard size h as the donor did: the cell circumradius
+target is h itself, with no edge-length conversion (√6/4) and no 0.5·maximum
+radius cap, and the maximum size is enforced at acceptance (the donor's
+tolerance on the maximum). The PLC route keeps its edge-length convention. The
+convention is an explicit, closed fill parameter declared by the route, part of
+the fill identity, never inferred. Implicit result identities change once.
+Measured on saved carriers: torus L0 fills drop from 5956 to 1766 cells, median
+edge from 0.84h to 1.15h, maximum edge at most 1.96h within the donor's 2.25h
+acceptance, and the first metric epoch refines as the donor designed.
+
+**Approved certified implicit volume ladder:** the native zero-set remesher keeps
+its sagitta-centered carrier vertices, which have 3–8× smaller absolute volume
+error than inscribed carriers because the outward and inward caps nearly
+cancel. Since that cancellation is not monotone in the tolerance, the ladder
+replaces the original "|V − V_exact| strictly decreases" test with a certified
+one: at every level the exact volume error lies inside the certified enclosure
+V(r ± ε) the donor already computes, and the enclosure strictly shrinks. The
+certified fidelity bound must still strictly decrease. The user chose this over
+donor-faithful inscribed carriers, which kept the original test but had larger
+errors and two further defects (sphere L2 boundary-edge median, torus L1 fill
+quality).
+
 ## 11. Geometry and field transitions, periodicity, distribution and consumers
 
 ### 11.1 Coordinate and field transfer

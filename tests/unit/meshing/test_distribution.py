@@ -918,6 +918,83 @@ def test_owner_local_periodic_source_entry_is_stable_under_coordinate_motion() -
     assert bindings[0] != bindings[2]
 
 
+def test_owner_local_graph_migration_evidence_restore_refuses_forged_identity(
+    tmp_path: Path,
+) -> None:
+    import copy
+
+    from phydrax._array_archive import ArrayArchiveCorruptionError
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        write_model_artifact,
+    )
+
+    if jax.process_count() != 1:
+        pytest.skip("This migration evidence contract uses one local process group.")
+
+    process = jax.process_index()
+    device = next(device for device in jax.devices() if device.process_index == process)
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "single-owner-graph-evidence-restore",
+            (process,),
+            ((process, device.id),),
+            mesh_axes=(("graph_evidence", 1),),
+        ),
+        (device,),
+    )
+    cell_ids = np.asarray((10, 20), dtype=np.int64)
+    graph = DistributedWeightedCSRGraph(
+        np.asarray((0, 0, 0), dtype=np.int64),
+        np.empty((0,), dtype=np.int64),
+        entity_ids=cell_ids,
+        owner_ranks=np.zeros((2,), dtype=np.int32),
+        neighbor_owner_ranks=np.empty((0,), dtype=np.int32),
+        vertex_weights=np.ones((2,), dtype=np.int64),
+    )
+    result = partition_graph_distributed(
+        graph,
+        GraphPartitionPlan(1, maximum_imbalance=1.0),
+        group,
+        axis_name="graph_evidence_partition",
+    )
+    evidence = OwnerLocalGraphMigrationEvidence(
+        result,
+        "graph-evidence-candidate",
+        "source-part",
+        "periodic-face-coverage",
+        "source-directory",
+        "target-part",
+        "target-directory",
+        group.spec.group_id,
+        0,
+        1,
+        cell_ids,
+    )
+    path = tmp_path / "graph-migration-evidence.phx"
+    write_model_artifact(path, evidence, limits=MODEL_ARCHIVE_LIMITS)
+    restored = read_model_artifact(
+        path,
+        expected_type=OwnerLocalGraphMigrationEvidence,
+        restore=OwnerLocalGraphMigrationEvidence.from_stored_fields,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.evidence_id == evidence.evidence_id
+
+    forged = copy.copy(evidence)
+    object.__setattr__(forged, "evidence_id", "0" * 64)
+    write_model_artifact(path, forged, limits=MODEL_ARCHIVE_LIMITS)
+    with pytest.raises(ArrayArchiveCorruptionError) as refusal:
+        read_model_artifact(
+            path,
+            expected_type=OwnerLocalGraphMigrationEvidence,
+            restore=OwnerLocalGraphMigrationEvidence.from_stored_fields,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+    assert "differs from its recomputed identity" in str(refusal.value.__cause__)
+
+
 def test_owner_local_graph_keyed_state_transfer_preserves_exact_rows() -> None:
     if jax.process_count() != 1:
         pytest.skip("This keyed-row transfer contract uses one local process group.")

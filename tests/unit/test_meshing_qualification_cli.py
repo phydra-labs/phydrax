@@ -71,7 +71,9 @@ def test_family_checkpoint_survives_later_profile_failure(
 
     monkeypatch.setattr(native_family_matrix, "_profile_ids", lambda: ("first", "second"))
 
-    def run_profile(profile_id: str, *, checkpoint: object) -> dict[str, object]:
+    def run_profile(
+        profile_id: str, *, checkpoint: object, capture_result: object
+    ) -> dict[str, object]:
         if profile_id == "second":
             raise RuntimeError("later profile interrupted")
         return {"profile_id": profile_id, "status": "passed"}
@@ -92,6 +94,29 @@ def test_family_checkpoint_survives_later_profile_failure(
             "record": {"profile_id": "first", "status": "passed"},
         }
     ]
+
+
+def test_records_and_checkpoints_are_byte_identical_line_feed_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools.meshing_qualification.scenarios import native_family_matrix
+
+    monkeypatch.setattr(native_family_matrix, "_profile_ids", lambda: ("first",))
+
+    def run_profile(
+        profile_id: str, *, checkpoint: object, capture_result: object
+    ) -> dict[str, object]:
+        return {"profile_id": profile_id, "status": "passed"}
+
+    monkeypatch.setattr(native_family_matrix, "_run_profile", run_profile)
+    monkeypatch.setattr(cli, "runtime_identity", lambda: {"engine": "unit-test"})
+    output = tmp_path / "result.json"
+    status = cli.main(["--scenario", "native-general-families", "--output", str(output)])
+    assert status == 0
+    for path in (output, tmp_path / "result.json.profiles.jsonl"):
+        payload = path.read_bytes()
+        assert payload.endswith(b"\n")
+        assert b"\r" not in payload
 
 
 def test_run_rejects_empty_scenario_selection() -> None:
@@ -856,7 +881,7 @@ def test_native_surface_profiles_preserve_complete_source_and_fidelity(
     if geometry in ("sphere", "capped_cylinder"):
         assert association["collapsed_pole_edge_count"] == 2
         poles = association["collapsed_pole_edges"]
-        assert isinstance(poles, list)
+        assert isinstance(poles, tuple)
         assert all(
             isinstance(pole, dict) and pole["proved_coedge_uses"] > 0 for pole in poles
         )
@@ -910,7 +935,9 @@ def test_cylinder_pole_proof_rejects_a_forged_coedge() -> None:
     )
 
 
-@pytest.mark.parametrize("failed", (None, "serial_fe", "owner_fe", "serial_fv", "owner_fv"))
+@pytest.mark.parametrize(
+    "failed", (None, "serial_fe", "owner_fe", "serial_fv", "owner_fv")
+)
 def test_combined_cold_continuation_requires_each_component(
     monkeypatch: pytest.MonkeyPatch, failed: str | None
 ) -> None:

@@ -9,6 +9,9 @@ calculus, sparse operators, and field transfers remain in their existing modules
 
 `HybridMimeticDiffusion` adds the missing unstructured scalar/tensor diffusion
 operator. It retains one potential per cell and one shared global potential per face.
+Porous plans require planar faces, with one trace facet per face. They refuse warped
+faces, which the operator splits into sub-facets; see
+[Unstructured hybrid diffusion](guides_finite_volume.md#unstructured-hybrid-diffusion).
 For each admissible star-shaped polyhedral or tetrahedral cell it combines:
 
 - an affine-consistent reconstructed gradient;

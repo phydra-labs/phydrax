@@ -1160,6 +1160,7 @@ def _plc_source_point_witness(
         face_plane_tolerances=tolerances,
         domain_face_rows=np.flatnonzero(sides[:, 0] != sides[:, 1]),
         domain_id=domain.domain_id,
+        vertex_deviations=None,
     )
 
 

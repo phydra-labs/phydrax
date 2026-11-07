@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import mmap
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,160 @@ class PackedPolygon:
     witness_errors: np.ndarray
     status: int
     max_surface_diagonal: float
+    quotient: QuotientContour | None = None
+    clipped: ClippedContour | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QuotientContour:
+    """Lifted contour of a quotient discovery over a fully periodic domain box.
+
+    Vertices on opposite domain faces are distinct lifted rows. ``vertex_orbits``
+    names each vertex's canonical root edge, and ``vertex_windings`` (0 or 1
+    per axis) its translate by whole domain extents: a vertex with winding
+    ``w`` is its orbit's canonical root moved by ``w * (upper - lower)``,
+    with the shifted coordinates set to the upper domain face exactly.
+    """
+
+    points: np.ndarray
+    faces: np.ndarray
+    vertex_orbits: np.ndarray
+    vertex_windings: np.ndarray
+
+
+def _strictly_increasing_rows(rows: np.ndarray, /) -> bool:
+    """Whether integer rows are strictly increasing in lexicographic order."""
+    steps = rows[1:] - rows[:-1]
+    nonzero = steps != 0
+    if not np.all(np.any(nonzero, axis=1)):
+        return False
+    first = np.argmax(nonzero, axis=1)
+    return bool(np.all(steps[np.arange(steps.shape[0]), first] > 0))
+
+
+@dataclass(frozen=True, slots=True)
+class ClippedBoundary:
+    """Declared open-boundary polygonization of a clipped discovery domain.
+
+    Clipped mode is explicit and opt-in: the domain box is a clipping set,
+    so the zero set may cross its faces. The boundary trace is supplied by
+    the parametric-chart crease discovery of every domain face at the same
+    target level: ``root_edge_ids`` (sorted corner-id pairs, lexicographic
+    rows) with their root records name every boundary-face grid edge with a
+    certified sign change, and these records are used verbatim, so contour
+    edges in a domain face coincide exactly with the crease segments.
+    ``unresolved_faces`` rows ``(axis, side, first, second)`` name the
+    target-level face cells whose crease the chart discovery did not
+    certify (a tangential or unresolved boundary contact); a band cell on
+    such a face keeps the ``DOMAIN_BOUNDARY`` issue.
+    """
+
+    root_edge_ids: np.ndarray
+    root_points: np.ndarray
+    root_errors: np.ndarray
+    root_issues: np.ndarray
+    root_brackets: np.ndarray
+    root_signs: np.ndarray
+    unresolved_faces: np.ndarray
+
+    def __post_init__(self) -> None:
+        ids = np.ascontiguousarray(self.root_edge_ids, dtype=np.int64)
+        count = ids.shape[0] if ids.ndim == 3 else -1
+        unresolved = np.ascontiguousarray(self.unresolved_faces, dtype=np.int64)
+        if (
+            ids.shape != (count, 2, 3)
+            or np.asarray(self.root_points).shape != (count, 3)
+            or np.asarray(self.root_errors).shape != (count,)
+            or np.asarray(self.root_issues).shape != (count,)
+            or np.asarray(self.root_brackets).shape != (count, 2, 3)
+            or np.asarray(self.root_signs).shape != (count, 2)
+            or unresolved.ndim != 2
+            or unresolved.shape[1] != 4
+        ):
+            raise ValueError("Clipped boundary root records must align.")
+        flat = ids.reshape(-1, 6)
+        if count > 1 and not _strictly_increasing_rows(flat):
+            raise ValueError("Clipped boundary root edges must be sorted and unique.")
+        object.__setattr__(self, "root_edge_ids", ids)
+        object.__setattr__(self, "unresolved_faces", unresolved)
+
+    def unresolved_face_keys(self) -> frozenset[tuple[int, int, int, int]]:
+        return frozenset(
+            (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
+            for row in self.unresolved_faces
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ClippedContour:
+    """Open contour of a clipped discovery, bounded by its domain-face trace.
+
+    ``vertex_root_rows`` names each vertex's root-edge row in the scaffold;
+    a vertex on a domain face carries the clipped boundary's root record.
+    """
+
+    points: np.ndarray
+    faces: np.ndarray
+    vertex_root_rows: np.ndarray
+
+
+def clipped_face_keys(
+    cell_index: np.ndarray, target_level: int, /
+) -> tuple[tuple[int, int, int, int], ...]:
+    """``(axis, side, first, second)`` keys of a target-level cell's domain faces."""
+    last = (1 << target_level) - 1
+    keys: list[tuple[int, int, int, int]] = []
+    for axis in range(3):
+        first, second = (other for other in range(3) if other != axis)
+        for side, index in ((0, 0), (1, last)):
+            if int(cell_index[axis]) == index:
+                keys.append((axis, side, int(cell_index[first]), int(cell_index[second])))
+    return tuple(keys)
+
+
+def _grid_points(ids: np.ndarray, target_level: int, domain: np.ndarray, /) -> np.ndarray:
+    """Exact dyadic grid coordinates of corner ids (rounded once, per axis)."""
+    from ._adaptive_discovery import _grid_coordinate
+
+    points = np.empty(ids.shape, dtype=np.float64)
+    for axis in range(3):
+        axis_ids, inverse = np.unique(ids[:, axis], return_inverse=True)
+        coords = np.asarray(
+            [
+                _grid_coordinate(int(i), target_level, domain[0, axis], domain[1, axis])
+                for i in axis_ids
+            ],
+            dtype=np.float64,
+        )
+        points[:, axis] = coords[inverse.reshape(-1)]
+    return points
+
+
+def _unique_point_values(
+    bounds: _FieldEnclosures, points: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Evaluate each distinct point once, so equal points get identical evidence."""
+    unique, inverse = np.unique(points, axis=0, return_inverse=True)
+    inverse = inverse.reshape(-1)
+    lower = np.empty(len(unique), dtype=np.float64)
+    upper = np.empty_like(lower)
+    values = np.empty_like(lower)
+    for start in range(0, len(unique), _CHUNK):
+        stop = min(start + _CHUNK, len(unique))
+        lower[start:stop], upper[start:stop] = bounds.point_values(unique[start:stop])
+        values[start:stop] = bounds.field_values(unique[start:stop])
+    return lower[inverse], upper[inverse], values[inverse]
+
+
+class _PairPoints:
+    """Chunk-sliced endpoint coordinates of root pairs without a full copy."""
+
+    def __init__(self, points: np.ndarray, pairs: np.ndarray, /) -> None:
+        self._points = points
+        self._pairs = pairs
+
+    def __getitem__(self, rows: slice, /) -> np.ndarray:
+        return self._points[self._pairs[rows]]
 
 
 def _records(array: np.ndarray) -> np.ndarray:
@@ -120,6 +275,72 @@ class _Chunks:
         return result
 
 
+type _RootArrays = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+
+
+def boundary_face_edges(edge_ids: np.ndarray, span: int, /) -> np.ndarray:
+    """Whether each ``(n, 2, 3)`` corner-id edge lies in a domain face."""
+    ends = np.asarray(edge_ids, dtype=np.int64)
+    same = ends[:, 0] == ends[:, 1]
+    on_face = same & ((ends[:, 0] == 0) | (ends[:, 0] == span))
+    return np.any(on_face, axis=1)
+
+
+def _clipped_roots(
+    clipped: ClippedBoundary,
+    corner_ids: np.ndarray,
+    pairs: np.ndarray,
+    point_signs: np.ndarray,
+    span: int,
+    solve: Callable[[np.ndarray | _PairPoints, np.ndarray], _RootArrays],
+    corner_points: np.ndarray,
+    /,
+) -> _RootArrays:
+    """Roots of crossing edges: boundary-face edges from the crease root bank.
+
+    A domain-face edge takes the declared record verbatim; every other edge is
+    solved by the ordinary root kernel. A crossing face edge missing from the
+    bank, or a bank record whose endpoint signs differ from the corner signs,
+    is an inconsistent declaration and is refused.
+    """
+    count = len(pairs)
+    points = np.empty((count, 3), dtype=np.float64)
+    errors = np.empty(count, dtype=np.float64)
+    issues = np.empty(count, dtype=np.int64)
+    brackets = np.empty((count, 2, 3), dtype=np.float64)
+    signs = np.empty((count, 2), dtype=np.int8)
+    edges = np.ascontiguousarray(corner_ids[pairs], dtype=np.int64)
+    on_boundary = boundary_face_edges(edges, span)
+    boundary_rows = np.flatnonzero(on_boundary)
+    if boundary_rows.size:
+        bank = _records(clipped.root_edge_ids.reshape(-1, 6))
+        wanted = _records(np.ascontiguousarray(edges[boundary_rows].reshape(-1, 6)))
+        found = np.searchsorted(bank, wanted)
+        if np.any(found >= len(bank)) or not np.array_equal(bank[found], wanted):
+            raise ValueError(
+                "A clipped domain-face crossing is missing from the crease root bank."
+            )
+        declared_signs = np.asarray(clipped.root_signs, dtype=np.int8)[found]
+        if not np.array_equal(declared_signs, point_signs[pairs[boundary_rows]]):
+            raise ValueError("A crease root record disagrees with the corner signs.")
+        points[boundary_rows] = np.asarray(clipped.root_points)[found]
+        errors[boundary_rows] = np.asarray(clipped.root_errors)[found]
+        issues[boundary_rows] = np.asarray(clipped.root_issues)[found]
+        brackets[boundary_rows] = np.asarray(clipped.root_brackets)[found]
+        signs[boundary_rows] = declared_signs
+    interior_rows = np.flatnonzero(~on_boundary)
+    if interior_rows.size:
+        solved = solve(
+            _PairPoints(corner_points, pairs[interior_rows]),
+            point_signs[pairs[interior_rows]],
+        )
+        for target, values in zip(
+            (points, errors, issues, brackets, signs), solved, strict=True
+        ):
+            target[interior_rows] = values
+    return points, errors, issues, brackets, signs
+
+
 def polygonize(
     bounds: _FieldEnclosures,
     domain: np.ndarray,
@@ -129,7 +350,26 @@ def polygonize(
     source_id: str,
     source_in_domain: bool | np.bool_,
     /,
+    *,
+    periodic: bool = False,
+    clipped: ClippedBoundary | None = None,
 ) -> PackedPolygon:
+    """Polygonize band leaves; ``periodic`` identifies opposite domain faces.
+
+    In quotient mode the domain box is a fundamental cell of a fully periodic
+    field. Every evaluation is made once at the canonical representative of
+    its lattice orbit (corners, root edges and ambiguous face centres on an
+    upper domain face move to the lower one), so identified entities carry
+    bitwise-identical signs and roots, and there is no domain boundary.
+
+    ``clipped`` declares the open-boundary mode (see ``ClippedBoundary``):
+    the domain faces clip the zero set, their crossing roots come from the
+    declared crease root bank, and only a band cell on an uncertified face
+    cell keeps the ``DOMAIN_BOUNDARY`` issue. Without it the closed-domain
+    behavior is unchanged.
+    """
+    if periodic and clipped is not None:
+        raise ValueError("A quotient discovery has no clipped domain boundary.")
     # Imports are deferred because the owning discovery module calls this function.
     from ._adaptive_discovery import (
         _Cell,
@@ -141,6 +381,7 @@ def polygonize(
         _faces_exclude_zero,
         _grid_coordinate,
         _norm_upper_rows,
+        _prove_constant_signs,
         _root_on_edges,
         _TETRAHEDRA,
         _triangulate_cell_band,
@@ -214,20 +455,28 @@ def polygonize(
                 ]
             )
             corner_points[start:stop, axis] = coords[inverse]
-    point_lower = np.empty(len(corner_ids), dtype=np.float64)
-    point_upper = np.empty_like(point_lower)
-    point_values = np.empty_like(point_lower)
-    for start in range(0, len(corner_ids), _CHUNK):
-        stop = min(start + _CHUNK, len(corner_ids))
-        point_lower[start:stop], point_upper[start:stop] = bounds.point_values(
-            corner_points[start:stop]
+    span = 1 << target_level
+    if periodic:
+        point_lower, point_upper, point_values = _unique_point_values(
+            bounds, _grid_points(corner_ids % span, target_level, domain)
         )
-        point_values[start:stop] = bounds.field_values(corner_points[start:stop])
+    else:
+        point_lower = np.empty(len(corner_ids), dtype=np.float64)
+        point_upper = np.empty_like(point_lower)
+        point_values = np.empty_like(point_lower)
+        for start in range(0, len(corner_ids), _CHUNK):
+            stop = min(start + _CHUNK, len(corner_ids))
+            point_lower[start:stop], point_upper[start:stop] = bounds.point_values(
+                corner_points[start:stop]
+            )
+            point_values[start:stop] = bounds.field_values(corner_points[start:stop])
     point_signs = np.zeros(len(corner_ids), dtype=np.int8)
     point_signs[point_lower > 0] = 1
     point_signs[point_upper < 0] = -1
 
     cell_issue = np.zeros(count, dtype=np.int64)
+    # Band cells proved free of the zero set: no contour, no issue.
+    empty = np.zeros(count, dtype=np.bool_)
     status = 0
     # Classify cells before collecting any crossing edge, as in the original.
     for start in range(0, count, _CHUNK):
@@ -243,12 +492,33 @@ def polygonize(
         cell_issue[start:stop][singular] = int(Issue.SINGULAR)
         cell_issue[start:stop][no_crossing & gradient] = int(Issue.EDGE)
         cell_issue[start:stop][no_crossing & ~gradient] = int(Issue.SINGULAR)
+        candidates = np.flatnonzero(no_crossing)
+        if len(candidates):
+            leaf_rows = mesh_rows[start + candidates]
+            proved = _prove_constant_signs(
+                bounds,
+                cell_boxes[start + candidates, 0],
+                cell_boxes[start + candidates, 1],
+                signs[candidates, 0],
+                leaves.gradient_lower[leaf_rows],
+                leaves.gradient_upper[leaf_rows],
+            )
+            empty[start + candidates[proved]] = True
+            cell_issue[start + candidates[proved]] = 0
+    unresolved_faces = None if clipped is None else clipped.unresolved_face_keys()
     for row in range(count):
-        if cell_issue[row]:
+        if periodic or cell_issue[row] or empty[row]:
             continue
         if not np.any(
             (cell_boxes[row, 0] == domain[0]) | (cell_boxes[row, 1] == domain[1])
         ):
+            continue
+        if unresolved_faces is not None:
+            if any(
+                key in unresolved_faces
+                for key in clipped_face_keys(cell_indices[row, 1:], target_level)
+            ):
+                cell_issue[row] = int(Issue.DOMAIN_BOUNDARY)
             continue
         leaf = mesh_rows[row]
         cell = _Cell(
@@ -310,23 +580,65 @@ def polygonize(
     pairs = unique_pairs
     pair_records = _records(pairs)
     root_count = len(pairs)
-    root_points = np.empty((root_count, 3), dtype=np.float64)
-    root_errors = np.empty(root_count, dtype=np.float64)
-    root_issues = np.empty(root_count, dtype=np.int64)
-    root_brackets = np.empty((root_count, 2, 3), dtype=np.float64)
-    root_signs = np.empty((root_count, 2), dtype=np.int8)
-    for start in range(0, root_count, _CHUNK):
-        stop = min(start + _CHUNK, root_count)
-        records = _root_on_edges(
-            bounds,
-            corner_points[pairs[start:stop]],
-            point_signs[pairs[start:stop]],
-            policy.root_tolerance,
+
+    def solve_roots(
+        edge_points: np.ndarray | _PairPoints, edge_signs: np.ndarray, /
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        count = len(edge_signs)
+        points = np.empty((count, 3), dtype=np.float64)
+        errors = np.empty(count, dtype=np.float64)
+        issues = np.empty(count, dtype=np.int64)
+        brackets = np.empty((count, 2, 3), dtype=np.float64)
+        signs = np.empty((count, 2), dtype=np.int8)
+        for start in range(0, count, _CHUNK):
+            stop = min(start + _CHUNK, count)
+            records = _root_on_edges(
+                bounds,
+                edge_points[start:stop],
+                edge_signs[start:stop],
+                policy.root_tolerance,
+            )
+            for j, record in enumerate(records, start):
+                points[j], errors[j], issues[j] = record[:3]
+                brackets[j, 0], brackets[j, 1] = record[3:5]
+                signs[j] = record[5:7]
+        return points, errors, issues, brackets, signs
+
+    root_windings = np.zeros((root_count, 3), dtype=np.int64)
+    if periodic:
+        # An edge lying in an upper domain face is the translate of its
+        # canonical edge in the lower face; solve each canonical edge once.
+        ends = corner_ids[pairs]
+        root_windings = np.all(ends == span, axis=1).astype(np.int64)
+        canonical = ends - span * root_windings[:, None, :]
+        edges, first, root_orbits = np.unique(
+            canonical.reshape(-1, 6), axis=0, return_index=True, return_inverse=True
         )
-        for j, record in enumerate(records, start):
-            root_points[j], root_errors[j], root_issues[j] = record[:3]
-            root_brackets[j, 0], root_brackets[j, 1] = record[3:5]
-            root_signs[j] = record[5:7]
+        root_orbits = root_orbits.reshape(-1)
+        solved = solve_roots(
+            _grid_points(edges.reshape(-1, 3), target_level, domain).reshape(-1, 2, 3),
+            point_signs[pairs[first]],
+        )
+        root_points, root_errors, root_issues, root_brackets, root_signs = (
+            values[root_orbits] for values in solved
+        )
+        del solved, ends, canonical, edges, first
+        for axis in range(3):
+            # A canonical root on a lower-face edge keeps that face coordinate
+            # exactly, so its translate is the upper-face coordinate exactly.
+            moved = root_windings[:, axis] == 1
+            root_points[moved, axis] = domain[1, axis]
+            root_brackets[moved, :, axis] = domain[1, axis]
+    elif clipped is not None:
+        root_orbits = np.arange(root_count, dtype=np.int64)
+        root_points, root_errors, root_issues, root_brackets, root_signs = _clipped_roots(
+            clipped, corner_ids, pairs, point_signs, span, solve_roots, corner_points
+        )
+    else:
+        root_orbits = np.arange(root_count, dtype=np.int64)
+        root_points, root_errors, root_issues, root_brackets, root_signs = solve_roots(
+            _PairPoints(corner_points, pairs), point_signs[pairs]
+        )
 
     # Ambiguous faces are sparse. Store sorted corner rows and the earliest
     # (cell, face) occurrence so mean summation uses the original face ordering.
@@ -359,13 +671,28 @@ def polygonize(
     amb_signs = np.empty(len(amb), dtype=np.int8)
     for start in range(0, len(amb), _CHUNK):
         stop = min(start + _CHUNK, len(amb))
-        points = np.empty((stop - start, 3), dtype=np.float64)
-        for j, entry in enumerate(amb[start:stop]):
-            points[j] = np.mean(
-                corner_points[cell_corner_rows[entry[4], list(_CUBE_FACES[entry[5]])]],
-                axis=0,
+        if periodic:
+            face_ids = np.stack(
+                [
+                    corner_ids[cell_corner_rows[entry[4], list(_CUBE_FACES[entry[5]])]]
+                    for entry in amb[start:stop]
+                ]
             )
-        lo, hi = bounds.point_values(points)
+            # A face lying in an upper domain face moves to the lower one.
+            face_ids = face_ids - span * np.all(face_ids == span, axis=1)[:, None, :]
+            corners = _grid_points(face_ids.reshape(-1, 3), target_level, domain)
+            points = np.mean(corners.reshape(-1, 4, 3), axis=1)
+            lo, hi, _ = _unique_point_values(bounds, points)
+        else:
+            points = np.empty((stop - start, 3), dtype=np.float64)
+            for j, entry in enumerate(amb[start:stop]):
+                points[j] = np.mean(
+                    corner_points[
+                        cell_corner_rows[entry[4], list(_CUBE_FACES[entry[5]])]
+                    ],
+                    axis=0,
+                )
+            lo, hi = bounds.point_values(points)
         amb_signs[start:stop] = np.where(hi < 0, -1, np.where(lo > 0, 1, 0))
     del amb
 
@@ -426,7 +753,7 @@ def polygonize(
     face_edge_order = np.asarray((0, 1, 2, 3, 4, 5, 6, 7, 9, 8, 10, 11))
     for start in range(0, count, _CHUNK):
         stop = min(start + _CHUNK, count)
-        selected = np.flatnonzero(cell_issue[start:stop] == 0)
+        selected = np.flatnonzero((cell_issue[start:stop] == 0) & ~empty[start:stop])
         if not len(selected):
             continue
         cell_rows = start + selected
@@ -572,7 +899,24 @@ def polygonize(
     face_array = faces.take_array()
     vertex_roots = vertex_root_rows.take_array()
     mesh = None
-    if len(face_array) and not len(unresolved_issues) and source_in_domain:
+    quotient = None
+    clipped_contour = None
+    if periodic:
+        if len(face_array) and not len(unresolved_issues):
+            quotient = QuotientContour(
+                root_points[vertex_roots],
+                face_array.astype(np.int64, copy=False),
+                root_orbits[vertex_roots],
+                root_windings[vertex_roots],
+            )
+    elif clipped is not None:
+        if len(face_array) and not len(unresolved_issues):
+            clipped_contour = ClippedContour(
+                root_points[vertex_roots],
+                face_array.astype(np.int64, copy=False),
+                vertex_roots.astype(np.int64, copy=True),
+            )
+    elif len(face_array) and not len(unresolved_issues) and source_in_domain:
         if len(vertex_roots) > np.iinfo(np.int32).max:
             status |= int(Status.DEGENERATE_EXTRACTION)
         else:
@@ -645,4 +989,6 @@ def polygonize(
         witness_errors,
         status,
         max_diagonal,
+        quotient,
+        clipped_contour,
     )

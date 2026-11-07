@@ -99,7 +99,7 @@ def _surface_samples(kind: str, resolution: int, rng: np.random.Generator) -> np
         accepted: list[np.ndarray] = []
         total = 0
         while total < count:
-            u, v, keep = rng.uniform(0.0, 1.0, size=(3, 4 * count))
+            u, v, keep = rng.random(size=(3, 4 * count))
             u, v = 2.0 * np.pi * u, 2.0 * np.pi * v
             ring = major + minor * np.cos(v)
             selected = keep < ring / (major + minor)
@@ -114,12 +114,12 @@ def _surface_samples(kind: str, resolution: int, rng: np.random.Generator) -> np
         accepted = []
         total = 0
         while total < count:
-            direction = rng.normal(size=(2 * count, 3))
+            direction = rng.standard_normal(size=(2 * count, 3))
             direction /= np.linalg.norm(direction, axis=1, keepdims=True)
             weight = np.min(_ELLIPSOID_AXES) * np.linalg.norm(
                 direction / _ELLIPSOID_AXES, axis=1
             )
-            chosen = rng.uniform(size=weight.shape) < weight
+            chosen = rng.random(size=weight.shape) < weight
             block = (direction[chosen] * _ELLIPSOID_AXES) @ rotation.T
             accepted.append(block)
             total += block.shape[0]
@@ -130,10 +130,13 @@ def _surface_samples(kind: str, resolution: int, rng: np.random.Generator) -> np
 def _defective_samples(
     kind: str, resolution: int, seed: int
 ) -> tuple[np.ndarray, dict[str, object]]:
+    # Draws use random/standard_normal with separate NumPy arithmetic:
+    # Generator.uniform/normal fuse their affine map on macOS, which changes
+    # samples by an ulp across operating systems.
     rng = np.random.default_rng(seed)
     local = _surface_samples(kind, resolution, rng)
     count = local.shape[0]
-    noisy = local + rng.normal(0.0, 0.0008, size=local.shape) + _CENTER
+    noisy = local + 0.0008 * rng.standard_normal(size=local.shape) + _CENTER
     cap_center = local[int(np.argmax(local @ _CAP_DIRECTION))]
     cap = np.linalg.norm(local - cap_center, axis=1) <= 0.2
     kept = ~cap
@@ -143,12 +146,11 @@ def _defective_samples(
     kept &= ~low_density | alternating
     observed = noisy[kept]
     outlier_count = max(8, count // 32)
-    directions = rng.normal(size=(outlier_count, 3))
+    directions = rng.standard_normal(size=(outlier_count, 3))
     directions /= np.linalg.norm(directions, axis=1, keepdims=True)
     maximum_radius = float(np.max(np.linalg.norm(local, axis=1)))
-    radii = rng.uniform(
-        maximum_radius + 0.35, maximum_radius + 0.55, size=(outlier_count, 1)
-    )
+    low, high = maximum_radius + 0.35, maximum_radius + 0.55
+    radii = low + (high - low) * rng.random(size=(outlier_count, 1))
     outliers = _CENTER + directions * radii
     return np.concatenate((observed, outliers)), {
         "seed": seed,
@@ -1120,6 +1122,7 @@ def _volume_lifecycle(
     /,
 ) -> dict[str, object]:
     """Accept, solve, refine every cell, transfer all fields, reanalyse and archive."""
+    _capture_accepted_volume(plc, archived_source, result, profile, label)
     _stage(profile, "volume-acceptance")
     initial_acceptance = _volume_acceptance(plc, result)
     _stage(profile, "manufactured-solve-epoch-0")
@@ -1173,6 +1176,72 @@ def _volume_lifecycle(
         ],
         "archive": {"path": str(path), "content_id": content_id, "expected": expected},
     }
+
+
+def _capture_accepted_volume(
+    plc: NativePlcSource,
+    archived_source: NativePlcSource | phx.meshing.SurfaceEnvelopeSource,
+    result: phx.meshing.CellMeshingResult,
+    profile: str,
+    label: str,
+    /,
+) -> None:
+    """Durable model archive of the accepted volume before acceptance and refinement.
+
+    Written only into a declared capture directory, so a failing downstream
+    stage replays from these genuine operands instead of a whole producer run.
+    """
+    directory = os.environ.get("PHYDRAX_RECONSTRUCTION_CAPTURE_DIR")
+    if not directory:
+        return
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        write_model_artifact,
+    )
+
+    _stage(profile, "pre-refinement-capture")
+    _, source_revision_id, source_semantics = _archived_source_identity(archived_source)
+    source_entry = CompositionEntry(
+        archived_source,
+        entry_id="source",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=plc.complex.complex_id,
+        revision_id=source_revision_id,
+        semantics_id=source_semantics,
+    )
+    result_entry = CompositionEntry(
+        result,
+        entry_id="result/accepted",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=result.mesh.topology_id,
+        revision_id=result.result_id,
+        semantics_id="accepted-volume-before-refinement",
+        dependencies=(source_entry.binding("revision"),),
+    )
+    path = Path(directory) / f"{label}-pre-refinement.phx"
+    write_model_artifact(
+        path,
+        Composition((source_entry, result_entry), boundary_id=f"{label}-pre-refinement"),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "path": str(path),
+                "content_id": model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS),
+                "profile": profile,
+                "label": label,
+                "source_type": type(archived_source).__name__,
+                "plc_binding_id": plc.binding_id,
+                "result_id": result.result_id,
+            },
+            indent=1,
+        )
+    )
 
 
 def _archived_source_identity(

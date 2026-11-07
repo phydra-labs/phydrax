@@ -10,6 +10,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
+from fractions import Fraction
 from itertools import pairwise
 from typing import Literal, TypeAlias
 
@@ -100,7 +101,18 @@ class GlobalBlockPMPPlan(StrictModule):
 
 
 class GlobalBlockPMPFitEvidence(StrictModule):
+    """Sampled fit evidence for the published polynomials; not an error bound.
+
+    ``maximum_relative_errors`` holds, per spin, the exact residual of the
+    published decimal polynomials against the block table at the fit nodes,
+    relative to ``max(1, |block|)`` and rounded upward. Off-node block error is
+    not measured. ``maximum_publication_deviations`` holds, per spin, an exact
+    Bernstein-range bound on ``|published - unrounded fit|`` over the whole gap
+    interval, rounded upward.
+    """
+
     maximum_relative_errors: Array
+    maximum_publication_deviations: Array
     sample_dimensions: Array
     finite: Array
     accepted: Array
@@ -115,12 +127,19 @@ class CompiledGlobalBlockPMP(StrictModule):
 
 
 def compile_global_blocks_to_pmp(plan: GlobalBlockPMPPlan, /) -> CompiledGlobalBlockPMP:
-    """Fit each prepared derivative component on a declared compact gap interval."""
+    """Fit each prepared derivative component on a declared compact gap interval.
+
+    The fit evidence is sampled at the fit nodes; a certified bootstrap result
+    still requires a caller-supplied ``block_error_bound``.
+    """
+    from ...discretization._coordinate_enclosure import polynomial_bounds
+    from ...geometry._rational import fraction_up
 
     if not isinstance(plan, GlobalBlockPMPPlan):
         raise TypeError("plan must be GlobalBlockPMPPlan.")
     blocks: list[PolynomialMatrixBlock] = []
     errors: list[float] = []
+    deviations: list[float] = []
     dimensions_by_spin: list[np.ndarray] = []
     functional_count = (
         len(plan.blocks.plan.derivative_orders)
@@ -147,27 +166,46 @@ def compile_global_blocks_to_pmp(plan: GlobalBlockPMPPlan, /) -> CompiledGlobalB
         )
         if table.shape != (plan.sample_count, functional_count):
             raise ValueError("Prepared block derivative table changed frontend shape.")
+        if not np.all(np.isfinite(table)):
+            raise ValueError("Global-block derivative table is not finite.")
         polynomials: list[tuple[str, ...]] = []
-        fitted = np.empty_like(table)
+        offsets = tuple(Fraction(value) - Fraction(minimum) for value in dimensions)
+        width = Fraction(maximum) - Fraction(minimum)
+        residual = Fraction(0)
+        deviation = Fraction(0)
         for functional in range(functional_count):
             coefficients = np.polynomial.polynomial.polyfit(
                 coordinate,
                 table[:, functional],
                 plan.polynomial_degree,
             )
-            fitted[:, functional] = np.polynomial.polynomial.polyval(
-                coordinate,
-                coefficients,
+            published = tuple(
+                format(float(value), f".{plan.significant_digits}g")
+                for value in coefficients
             )
-            polynomials.append(
-                tuple(
-                    format(float(value), f".{plan.significant_digits}g")
-                    for value in coefficients
-                )
+            polynomials.append(published)
+            exact = tuple(Fraction(value) for value in published)
+            for offset, sample in zip(
+                offsets, table[:, functional].tolist(), strict=True
+            ):
+                value = Fraction(0)
+                for coefficient in reversed(exact):
+                    value = value * offset + coefficient
+                target = Fraction(sample)
+                residual = max(residual, abs(target - value) / max(1, abs(target)))
+            lower, upper = polynomial_bounds(
+                {
+                    (power,): (coefficient - Fraction(fitted)) * width**power
+                    for power, (coefficient, fitted) in enumerate(
+                        zip(exact, coefficients.tolist(), strict=True)
+                    )
+                },
+                "box",
+                1,
             )
-        scale = np.maximum(1.0, np.abs(table))
-        error = float(np.max(np.abs(table - fitted) / scale))
-        errors.append(error)
+            deviation = max(deviation, Fraction(-lower), Fraction(upper))
+        errors.append(fraction_up(residual))
+        deviations.append(fraction_up(deviation))
         dimensions_by_spin.append(dimensions)
         blocks.append(
             PolynomialMatrixBlock(
@@ -199,11 +237,13 @@ def compile_global_blocks_to_pmp(plan: GlobalBlockPMPPlan, /) -> CompiledGlobalB
             "kind": "global-block-pmp-fit-evidence",
             "plan": plan.plan_id,
             "errors": errors,
+            "publication_deviations": deviations,
             "sample_dimensions": array_tree_fingerprint(sample_table),
         }
     )
     evidence = GlobalBlockPMPFitEvidence(
         maximum_relative_errors=jnp.asarray(errors),
+        maximum_publication_deviations=jnp.asarray(deviations),
         sample_dimensions=jnp.asarray(sample_table),
         finite=jnp.asarray(np.all(np.isfinite(sample_table))),
         accepted=jnp.asarray(accepted),

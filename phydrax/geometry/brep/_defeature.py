@@ -1699,7 +1699,9 @@ def _stage_sharp_loop(
                 replacements,
                 builder.curves[builder.edge_curves[target]],
             )
-            if edge in replacements:
+            if any(vertex in replacements for vertex in geometry.edge_vertices[edge]):
+                # The edge was extended to a sharp vertex (_stage_retained_edge), so
+                # its source endpoint roots name a vertex that no longer exists.
                 endpoint_roots = (None, None)
             elif pcurve is geometry.pcurves[coedge]:
                 endpoint_roots = geometry.coedge_endpoint_roots[coedge]

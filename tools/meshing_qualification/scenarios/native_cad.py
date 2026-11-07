@@ -87,6 +87,7 @@ def qualify_cad_partition() -> dict[str, object]:
     if not result.association_graph.graph_id or not result.revision.revision_id:
         raise RuntimeError("CAD partition omitted revision association evidence.")
     return {
+        "status": "passed",
         "coordinate_contract": result.model.coordinate_contract.spatial_id,
         "revision": result.revision.revision_id,
         "association_graph": result.association_graph.graph_id,
@@ -105,6 +106,7 @@ def qualify_planar_semantic() -> dict[str, object]:
     ):
         raise RuntimeError("Planar partition did not preserve two-dimensional semantics.")
     return {
+        "status": "passed",
         "embedding": embedding.embedding_id,
         "revision": result.revision.revision_id,
         "association_graph": result.association_graph.graph_id,

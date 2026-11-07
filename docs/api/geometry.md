@@ -1023,6 +1023,67 @@ reach, topology, and certified boundary-distance/cover facts; those facts are
 not inferred for arbitrary implicit fields. Native restricted-Delaunay and
 general adaptive implicit tetrahedral routes therefore remain separate.
 
+`discover_periodic_trigonometric_surface` discovers a `TrigonometricLevelSet` on
+the three-torus quotient of its `PeriodicCell`, not on a finite box. Identified
+cell faces share one canonical sign and root evaluation, so the lifted contour
+on the fundamental cell has bit-identical paired faces and no domain boundary.
+`PeriodicImplicitSurface.topology` (`PeriodicSurfaceTopology`) reports the
+quotient surface's components, Euler characteristic, genus per component and
+closed/orientable flags, cross-checked against the canonical
+`PeriodicMeshTopology`. `PeriodicImplicitSurface.lattice_metrics()`
+(`PeriodicLatticeMetrics`) encloses the solid fraction and porosity from the
+certified cover; surface area and specific surface are measured on the contour
+and reported with a vertex-to-root distance bound, never as certified values.
+A level that meets a critical value is refused before discovery with the
+`TrigonometricSingularLevelError` separation evidence.
+
+The quotient region of a resolved discovery is filled by the native
+fixed-boundary PLC route: planar caps on the lower cell faces carry the region's
+trace, the upper faces carry their exact lattice translates (each interior cap
+edge is an authored segment, so recovery cannot flip a cocircular grid
+diagonal), and the lifted mesh is bound to `PeriodicMeshTopology` and certified
+with the periodic quotient-contact proof. Tetrahedral shape targets on the fixed
+lattice contour are soft by default and their unmet count is reported in the
+construction's compliance. The certified mesh adapts through the existing
+orbit-locked periodic tetrahedral metric owners.
+
+`phydrax.meshing.prepare_periodic_implicit_realization(volume, source)` freezes
+such a periodic mesh as a topology. It accepts the `PeriodicImplicitVolume` fill,
+or a bare periodic `CellMesh`. A two-phase mesh names its region blocks
+with `region_blocks`. The lattice parameters become `DesignState` parameters
+of the source feature: `level`, `half_width` (sheets only) and the positive
+per-axis `cell_scale` of the lattice vectors.
+`PeriodicImplicitRealizationPlan.realize(state)` projects the interface vertex
+orbits onto the design's boundary levels with the canonical normal-gauge
+`ImplicitPointProjectionPlan`. It works in reduced coordinates, where the field
+does not depend on the scale, and maps the cell scale linearly. Volume fraction
+and every consumer (for example `PeriodicCellProblem.solve_realization`) are
+differentiable in the parameters.
+
+Every realization returns a `status`, and consumers must check it. These
+status bits are events:
+
+- `CRITICAL_GAP_EXIT`: a boundary level leaves the open interval between the
+  source's certified critical-value enclosures that holds its base value.
+  Within that interval, Morse theory fixes the quotient topology.
+- `SIGN_PATTERN_CHANGED`: a non-interface vertex changes side.
+- `INVERTED_CELL`: a cell inverts.
+- `PROJECTION_FAILED`: the projection fails.
+
+An event sets `refresh_required` and poisons derivatives with NaN.
+`require_sensitivities()` raises `PeriodicImplicitRealizationEventError` on
+the host. `assess(realization)` certifies the realized mesh with
+`MeshMotionMonitor`.
+
+Interface vertices must be roots within the projection policy's field
+tolerance. Given a fill, the default policy derives that tolerance from the
+fill's recorded contour root-error bound `e` (reduced distance): `L e` for a
+level, or `L e (1 + L e / (2 tau))` for a sheet, where `L` is the table's
+reduced gradient bound. The default 1e-8 is kept when it is larger. The fill
+must record a discovery of exactly `source` (table, region, level, half-width,
+feature and cell); a mismatch is refused. An explicit `projection_policy`
+overrides the derived one.
+
 
 `NeuralImplicitRegion` is the region `{x in B : phi(x; w) <= 0}` of a scalar
 network over declared axis-aligned bounds `B`. The network's PARAMETER arrays are

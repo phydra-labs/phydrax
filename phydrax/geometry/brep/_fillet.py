@@ -16,10 +16,10 @@ from jax import Array
 
 from ..._strict import StrictModule
 from ..._validation import positive_finite_float
-from ...typing import checked, parse
-from ._assembly import BRepAffinePlacement
-from .._rational import rational_vector
 from ...discretization._exact_algebraic_geometry import ExactScalar
+from ...typing import checked, parse
+from .._rational import binary64_norm_upper, rational_vector
+from ._assembly import BRepAffinePlacement
 from ._constructors import BRepTessellationPolicy
 from ._differentiable import FixedTopologyBRepSource
 from ._edge_classification import brep_edge_classification
@@ -35,8 +35,8 @@ from ._patches import (
     ExactLineCurve,
     LineCurve,
     PlanePatch,
-    RevolutionSurface,
     RevolutionQuadricWitness,
+    RevolutionSurface,
     SpherePatch,
 )
 
@@ -713,9 +713,7 @@ def _g1_bounds(
             certificate = closed_seam_tangency_certificate(source, edge_index, radius)
             differences = np.asarray(certificate.normal_difference_bounds)
             magnitudes = np.max(np.abs(differences), axis=-1)
-            lengths = np.nextafter(
-                np.sqrt(np.sum(np.nextafter(magnitudes**2, np.inf), axis=-1)), np.inf
-            )
+            lengths = binary64_norm_upper(magnitudes)
             upper = np.nextafter(2 * np.arcsin(np.minimum(1.0, lengths / 2)), np.inf)
             return jnp.asarray(
                 np.stack((np.zeros_like(upper), upper), axis=-1), dtype=jnp.float64

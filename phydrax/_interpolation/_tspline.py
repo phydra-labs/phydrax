@@ -17,7 +17,7 @@ from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from math import comb, isfinite
+from math import comb, isfinite, lcm
 from typing import cast, Literal, overload
 
 import equinox as eqx
@@ -1208,7 +1208,6 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
     extraction_operator: Array
     maximum_conversion_error: float = eqx.field(static=True)
     rank: int = eqx.field(static=True)
-    condition_number: float = eqx.field(static=True)
     extraction_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1222,6 +1221,8 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
         *,
         piece_id: int | None = None,
     ) -> None:
+        from ..linalg._exact import factor_exact_sparse
+
         cell_id_ = int(cell_id)
         piece_id_ = cell_id_ if piece_id is None else int(piece_id)
         if cell_id_ < 0 or piece_id_ < 0:
@@ -1267,13 +1268,13 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
         conversion_error = float(maximum_conversion_error)
         if Fraction.from_float(conversion_error) < maximum_conversion_error:
             conversion_error = float(np.nextafter(conversion_error, np.inf))
-        rank = int(np.linalg.matrix_rank(operator))
-        singular_values = np.linalg.svd(operator, compute_uv=False)
-        condition = (
-            float(singular_values[0] / singular_values[-1])
-            if singular_values.size and singular_values[-1] > 0.0
-            else float("inf")
-        )
+        rank = factor_exact_sparse(
+            [
+                {column: value for column, value in enumerate(coefficients) if value}
+                for coefficients in exact
+            ],
+            16,
+        ).evidence.rank
         self.cell_id = cell_id_
         self.piece_id = int(piece_id_)
         self.parameter_bounds = bounds
@@ -1284,7 +1285,6 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
         self.extraction_operator = jnp.asarray(operator)
         self.maximum_conversion_error = conversion_error
         self.rank = rank
-        self.condition_number = condition
         self.extraction_id = canonical_fingerprint(
             {
                 "kind": "asts2d-local-extraction",
@@ -1304,6 +1304,20 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
     @property
     def local_width(self) -> int:
         return len(self.anchor_ids)
+
+    @property
+    def condition_number(self) -> float:
+        """Spectral condition number of the binary64 operator, a diagnostic only.
+
+        LAPACK and BLAS kernels set its last bits, so it varies across platforms
+        and is never part of an extraction, realization, or certificate identity.
+        """
+        singular_values = np.linalg.svd(
+            np.asarray(self.extraction_operator), compute_uv=False
+        )
+        if singular_values.size and singular_values[-1] > 0.0:
+            return float(singular_values[0] / singular_values[-1])
+        return float("inf")
 
     def evaluate_reference(
         self,
@@ -1378,7 +1392,6 @@ class LocalExtractedBernsteinRealization(StrictModule, NonTrainableState):
     piece_extraction_operators: Array
     piece_local_widths: Array
     piece_ranks: Array
-    piece_condition_numbers: Array
     realization_id: str = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
     global_coefficient_count: int = eqx.field(static=True)
@@ -1483,9 +1496,6 @@ class LocalExtractedBernsteinRealization(StrictModule, NonTrainableState):
         self.piece_ranks = jnp.asarray(
             [item.rank for item in extractions_], dtype=jnp.int32
         )
-        self.piece_condition_numbers = jnp.asarray(
-            [item.condition_number for item in extractions_]
-        )
         self.basis_id = mesh.mesh_id
         self.global_coefficient_count = mesh.coefficient_count
         self.local_width = local_width
@@ -1496,6 +1506,13 @@ class LocalExtractedBernsteinRealization(StrictModule, NonTrainableState):
                 "basis_certificate": basis_certificate.certificate_id,
                 "extractions": [item.extraction_id for item in extractions_],
             }
+        )
+
+    @property
+    def piece_condition_numbers(self) -> Array:
+        """Per-piece binary64 condition numbers; platform-dependent diagnostics."""
+        return jnp.asarray(
+            [item.condition_number for item in self.extractions], dtype=jnp.float64
         )
 
     def extraction_piece(self, piece_id: int, /) -> ExtractedBernstein:
@@ -2128,7 +2145,6 @@ class ASTSCertificate(StrictModule, NonTrainableState):
     minimum_basis_value: float | None = eqx.field(static=True)
     minimum_extraction_rank: int | None = eqx.field(static=True)
     minimum_rank_margin: int | None = eqx.field(static=True)
-    maximum_extraction_condition: float | None = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     failure_reasons: tuple[str, ...] = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
@@ -2168,7 +2184,6 @@ class ASTSCertificate(StrictModule, NonTrainableState):
                 "minimum_basis_value": self.minimum_basis_value,
                 "minimum_extraction_rank": self.minimum_extraction_rank,
                 "minimum_rank_margin": self.minimum_rank_margin,
-                "maximum_extraction_condition": self.maximum_extraction_condition,
                 "tolerance": self.tolerance,
             },
             "failure_reasons": list(self.failure_reasons),
@@ -2329,25 +2344,38 @@ def certify_asts(
     extraction_complete = extraction_valid and len(extractions) == len(pieces)
     exact_partition = extraction_complete
     exact_nonnegative = extraction_complete
-    sample = np.asarray(
-        (
+    # Exact tensor Bernstein values at the binary64 Gauss-Legendre nodes, scaled
+    # by one common denominator; rows follow the extraction column order.
+    univariate = tuple(
+        _exact_bernstein_values(Fraction.from_float(coordinate))
+        for coordinate in (
             0.06943184420297371,
             0.33000947820757187,
             0.6699905217924281,
             0.9305681557970262,
-        ),
-        dtype=np.float64,
+        )
     )
-    tensor_points = np.asarray([(u, v) for u in sample for v in sample])
+    tensor_points = tuple(
+        tuple(first * second for first in values_u for second in values_v)
+        for values_u in univariate
+        for values_v in univariate
+    )
+    sample_denominator = lcm(
+        *(value.denominator for point in tensor_points for value in point)
+    )
+    sample_numerators = tuple(
+        tuple(
+            value.numerator * (sample_denominator // value.denominator) for value in point
+        )
+        for point in tensor_points
+    )
     minimum_basis_value: float | None = None
     minimum_rank: int | None = None
     minimum_rank_margin: int | None = None
-    maximum_condition: float | None = None
     if extraction_complete:
-        minima: list[float] = []
+        minima: list[Fraction] = []
         ranks: list[int] = []
         margins: list[int] = []
-        conditions: list[float] = []
         for extraction in extractions:
             exact_rows = extraction.exact_extraction_operator
             sums = tuple(
@@ -2361,16 +2389,31 @@ def certify_asts(
             exact_nonnegative = exact_nonnegative and all(
                 value >= 0 for row in exact_rows for value in row
             )
-            sampled_values = np.asarray(extraction.evaluate_reference(tensor_points))
-            minima.append(float(np.min(sampled_values)))
+            for row in exact_rows:
+                row_denominator = lcm(*(value.denominator for value in row))
+                row_numerators = tuple(
+                    value.numerator * (row_denominator // value.denominator)
+                    for value in row
+                )
+                minima.append(
+                    Fraction(
+                        min(
+                            sum(
+                                coefficient * basis
+                                for coefficient, basis in zip(
+                                    row_numerators, point, strict=True
+                                )
+                            )
+                            for point in sample_numerators
+                        ),
+                        row_denominator * sample_denominator,
+                    )
+                )
             ranks.append(extraction.rank)
             margins.append(extraction.rank - extraction.local_width)
-            conditions.append(extraction.condition_number)
-        minimum_basis_value = min(minima)
+        minimum_basis_value = float(min(minima))
         minimum_rank = min(ranks)
         minimum_rank_margin = min(margins)
-        condition_bound = max(conditions)
-        maximum_condition = condition_bound if isfinite(condition_bound) else None
     maximum_partition_error: float | None = None
     if extraction_complete:
         try:
@@ -2433,7 +2476,6 @@ def certify_asts(
         minimum_basis_value,
         minimum_rank,
         minimum_rank_margin,
-        maximum_condition,
         tolerance_,
         failure_reasons,
         _asts_certificate_id(
@@ -2443,7 +2485,6 @@ def certify_asts(
             minimum_basis_value,
             minimum_rank,
             minimum_rank_margin,
-            maximum_condition,
             full_rank,
             continuity_order,
             tolerance_,
@@ -2471,7 +2512,6 @@ def _asts_certificate_id(
     minimum_basis_value: float | None,
     minimum_rank: int | None,
     minimum_rank_margin: int | None,
-    maximum_condition: float | None,
     full_rank: bool,
     continuity_order: int,
     tolerance: float,
@@ -2488,7 +2528,6 @@ def _asts_certificate_id(
                 "minimum_sampled_basis_value": minimum_basis_value,
                 "minimum_extraction_rank": minimum_rank,
                 "minimum_rank_margin": minimum_rank_margin,
-                "maximum_extraction_condition": maximum_condition,
                 "local_full_rank_diagnostic": full_rank,
                 "continuity_order": continuity_order,
             },
@@ -2503,9 +2542,10 @@ def _validated_asts_certificate(
     """Check a retained basis certificate against the identity its proof issued.
 
     `certify_asts` proves once; its identity binds the mesh content identity,
-    every check and diagnostic, and the tolerance. A certificate whose fields
-    no longer reproduce that identity (an edited copy) is refused; an intact
-    one is the proof for exactly this mesh and is not proved again.
+    every check, the exact rank and sampled-value diagnostics, and the
+    tolerance. Binary64 conditioning is not part of it. A certificate whose
+    fields no longer reproduce that identity (an edited copy) is refused; an
+    intact one is the proof for exactly this mesh and is not proved again.
     """
     if (
         not isinstance(certificate, ASTSCertificate)
@@ -2536,7 +2576,6 @@ def _validated_asts_certificate(
         certificate.minimum_basis_value,
         certificate.minimum_extraction_rank,
         certificate.minimum_rank_margin,
-        certificate.maximum_extraction_condition,
         certificate.extraction_full_rank,
         certificate.continuity_order,
         certificate.tolerance,

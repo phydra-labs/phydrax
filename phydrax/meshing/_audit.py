@@ -7,14 +7,13 @@ from __future__ import annotations
 import json
 from collections import Counter
 from enum import StrEnum
+from fractions import Fraction
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-
-import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -27,6 +26,7 @@ from ..discretization._cell_complex import (
 )
 from ..discretization._cell_geometry import (
     CellVertexGeometryElement,
+    coordinate_source_basis,
     ScalarCoordinateElement,
 )
 from ..discretization._cell_geometry_validity import (
@@ -36,15 +36,21 @@ from ..discretization._cell_geometry_validity import (
     certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import SimplicialConnectivity
+from ..discretization._coordinate_enclosure import evaluate_expression
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
-from ..discretization.fem._reference import FiniteElementSpec
-from ..geometry.surface import SurfaceModel
+from ..discretization.fem._reference import (
+    FiniteElementSpec,
+    lagrange_reference_node_data,
+)
+from ..geometry._interval_enclosure import interval_subtract
+from ..geometry._rational import fraction_down, fraction_up
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
 )
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
+from ..geometry.surface import SurfaceModel
 from ._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -307,6 +313,8 @@ class CellMeshAuditReport(StrictModule, NonTrainableState):
     finding count in deterministic order; ``unresolved`` names checks that could
     not be decided. ``manifold_scope`` is the declared vertex scope of the
     manifold checks (``None``: every vertex of the mesh was checked).
+    ``policy`` is the audit policy that decided the report; ``report_id`` binds
+    its identity, so the report is recomputed from itself.
     """
 
     mesh_id: str = eqx.field(static=True)
@@ -329,8 +337,12 @@ class CellMeshAuditReport(StrictModule, NonTrainableState):
     manifold_scope: CellMeshManifoldScope | None
     quality: CellQualityReport
     validity: CellValidityCertificate
-    policy_id: str = eqx.field(static=True)
+    policy: CellMeshAuditPolicy
     report_id: str = eqx.field(static=True)
+
+    @property
+    def policy_id(self, /) -> str:
+        return self.policy.policy_id
 
     def require_passed(self, /) -> None:
         if not self.passed:
@@ -390,6 +402,149 @@ def _evidence_id(
     )
 
 
+# Corner binding certifies |c - x| <= 64 eps * scale for every corner coordinate:
+# c is the bound geometry's exact image of a reference cell corner, x the mesh
+# vertex coordinate, and scale the block's largest vertex coordinate magnitude
+# (at least the smallest normal binary64). The tolerance is exact: 2^-46 * scale.
+_CORNER_BINDING_TOLERANCE = Fraction(64) * Fraction(float(np.finfo(np.float64).eps))
+_CORNER_DOFS: dict[str, tuple[int, ...] | None] = {}
+
+
+def _vertex_dofs(element: FiniteElementSpec, arity: int, /) -> tuple[int, ...] | None:
+    """Local DOFs equal to the geometry map at each reference corner, if any.
+
+    A nodal basis is dual to its point functionals, so the map takes exactly
+    the coefficient of a vertex-owned node at that vertex. Other elements use
+    their exact source basis when it selects one coefficient per corner.
+    """
+    key = element.element_id
+    if key not in _CORNER_DOFS:
+        dofs: tuple[int, ...] | None = None
+        if element.form_basis is None and element.representation == "point_value":
+            try:
+                nodes = lagrange_reference_node_data(element)
+            except ValueError:
+                nodes = ()
+            owners = {
+                node.entity_vertices[0]: node.local_dof
+                for node in nodes
+                if node.entity_dimension == 0 and len(node.entity_vertices) == 1
+            }
+            if set(owners) == set(range(arity)):
+                dofs = tuple(owners[vertex] for vertex in range(arity))
+        if dofs is None:
+            corners = tuple(
+                tuple(Fraction(float(value)) for value in point)
+                for point in reference_cell_topology(element.cell_kind).vertices
+            )
+            try:
+                basis = coordinate_source_basis(element)
+                values = tuple(
+                    tuple(evaluate_expression(function, corner) for function in basis)
+                    for corner in corners
+                )
+            except (TypeError, ValueError, ZeroDivisionError):
+                values = ()
+            selected = tuple(
+                tuple(index for index, value in enumerate(row) if value != 0)
+                for row in values
+            )
+            if len(selected) == arity and all(
+                len(indices) == 1 and row[indices[0]] == 1
+                for indices, row in zip(selected, values, strict=True)
+            ):
+                dofs = tuple(indices[0] for indices in selected)
+        _CORNER_DOFS[key] = dofs
+    return _CORNER_DOFS[key]
+
+
+def _within_tolerance(
+    first: np.ndarray, second: np.ndarray, tolerance: Fraction, /
+) -> bool:
+    """Exact ``|first - second| <= tolerance`` for binary64 arrays."""
+    lower, upper = interval_subtract((first, first), (second, second))
+    lower, upper = np.asarray(lower), np.asarray(upper)
+    inner, outer = fraction_down(tolerance), fraction_up(tolerance)
+    if np.any((lower > outer) | (upper < -outer)):
+        return False
+    undecided = ~((lower >= -inner) & (upper <= inner))
+    return all(
+        abs(Fraction(float(first[index])) - Fraction(float(second[index]))) <= tolerance
+        for index in zip(*np.nonzero(undecided), strict=True)
+    )
+
+
+def _corner_binding_holds(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    block: Any,
+    element: Any,
+    route: np.ndarray,
+    points: np.ndarray,
+    /,
+) -> bool | None:
+    """Exact corner binding of one block; ``None`` without exact corner images."""
+    vertices = np.asarray(block.vertices, dtype=np.int64)
+    expected = np.asarray(mesh.coordinates, dtype=np.float64)[vertices]
+    scale = max(float(np.max(np.abs(expected), initial=0.0)), np.finfo(np.float64).tiny)
+    tolerance = _CORNER_BINDING_TOLERANCE * Fraction(scale)
+    exact_bank = geometry.exact_coordinate_bank is not None
+    dofs: tuple[int, ...] | None = None
+    if isinstance(element, CellVertexGeometryElement):
+        dofs = tuple(range(route.shape[-1])) if route.ndim == 2 else None
+    elif isinstance(element, FiniteElementSpec) and (
+        exact_bank or mesh.periodic_topology is None
+    ):
+        dofs = _vertex_dofs(element, vertices.shape[1])
+    if dofs is not None:
+        if route.ndim != 2 or max(dofs) >= route.shape[1]:
+            return False
+        rows = route[:, np.asarray(dofs, dtype=np.int64)]
+        if rows.shape != vertices.shape:
+            return False
+        pairs = np.unique(
+            np.stack((rows.reshape(-1), vertices.reshape(-1)), axis=1), axis=0
+        )
+        targets = np.asarray(mesh.coordinates, dtype=np.float64)[pairs[:, 1]]
+        if not exact_bank:
+            return _within_tolerance(
+                np.asarray(points, dtype=np.float64)[pairs[:, 0]], targets, tolerance
+            )
+        bank = geometry.source_coordinates(pairs[:, 0])
+        return all(
+            abs(value - Fraction(float(target))) <= tolerance
+            for exact_row, target_row in zip(bank, targets, strict=True)
+            for value, target in zip(exact_row, target_row, strict=True)
+        )
+    if not isinstance(element, ScalarCoordinateElement):
+        return None
+    reference = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in np.asarray(
+            reference_cell_topology(block.cell_kind).vertices, dtype=np.float64
+        )
+    )
+    identifiers = np.asarray(block.global_ids, dtype=np.int64)
+    try:
+        images = geometry.evaluate_exact(
+            mesh, identifiers, tuple(reference for _ in range(identifiers.size))
+        )
+    except (TypeError, ValueError):
+        return None
+    if len(images) != expected.shape[0] or any(
+        len(cell) != expected.shape[1]
+        or any(len(corner) != expected.shape[2] for corner in cell)
+        for cell in images
+    ):
+        return False
+    return all(
+        abs(value - Fraction(float(target))) <= tolerance
+        for cell, cell_targets in zip(images, expected, strict=True)
+        for corner, corner_targets in zip(cell, cell_targets, strict=True)
+        for value, target in zip(corner, corner_targets, strict=True)
+    )
+
+
 def _geometry_binding(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[str, tuple[str, ...]]:
@@ -402,33 +557,16 @@ def _geometry_binding(
         if isinstance(element, FiniteElementSpec):
             if element.degree != 1:
                 scope = "corner_cells"
-            basis, _ = element.tabulate(
-                jnp.asarray(reference_cell_topology(block.cell_kind).vertices)
-            )
-            corners = ein.contract(
-                "vi,cia->cva", np.asarray(basis), points[np.asarray(route)]
-            )
-        elif isinstance(element, CellVertexGeometryElement):
-            corners = points[np.asarray(route)]
-        elif isinstance(element, ScalarCoordinateElement):
+        elif not isinstance(element, CellVertexGeometryElement):
+            if not isinstance(element, ScalarCoordinateElement):
+                return "unsupported", ("unsupported_geometry_element",)
             scope = "corner_cells"
-            reference = np.asarray(
-                reference_cell_topology(block.cell_kind).vertices, dtype=np.float64
-            )
-            corners = geometry.evaluate(
-                mesh,
-                block.global_ids,
-                np.broadcast_to(reference, (block.global_ids.size, *reference.shape)),
-            )
-        else:
-            return "unsupported", ("unsupported_geometry_element",)
-        expected = np.asarray(mesh.coordinates)[np.asarray(block.vertices)]
-        scale = max(
-            float(np.max(np.abs(expected), initial=0.0)), np.finfo(np.float64).tiny
+        bound = _corner_binding_holds(
+            mesh, geometry, block, element, np.asarray(route), points
         )
-        if corners.shape != expected.shape or not np.allclose(
-            corners, expected, rtol=0.0, atol=64.0 * np.finfo(np.float64).eps * scale
-        ):
+        if bound is None:
+            return "unsupported", ("unsupported_geometry_element",)
+        if not bound:
             return scope, ("geometry_corner_binding",)
     return scope, ()
 
@@ -1080,7 +1218,9 @@ def _validated_partial_face_coverage(
                 wall_association_ids.update(checked_wall)
             elif isinstance(witness, SourceBoundaryFaceImageWitness):
                 from ._certification_inputs import MeshCertificationInputs
-                from ._layer_core_boundary_replay import _validate_partial_image_association_rows
+                from ._layer_core_boundary_replay import (
+                    _validate_partial_image_association_rows,
+                )
 
                 if (
                     type(certification_inputs) is not MeshCertificationInputs
@@ -1112,7 +1252,9 @@ def _validated_partial_face_coverage(
                     if _semantic_rows(mesh, tuple(group)) != _semantic_rows(mesh, expected_associations):
                         raise ValueError("Sweep source face support, sides or orientation changed.")
                 else:
-                    from ._layer_core_boundary_replay import validate_partial_association_rows
+                    from ._layer_core_boundary_replay import (
+                        validate_partial_association_rows,
+                    )
 
                     validate_partial_association_rows(
                         mesh, geometry, token, associations, association_source
@@ -1846,13 +1988,14 @@ def audit_cell_mesh(
         if disposition != CellMeshAuditDisposition.SKIP
     )
     issues.extend(rejected)
-    quality_report = summarize_cell_quality(quality_evaluation)
-    if quality_report.minimum_measure <= audit_policy.minimum_measure:
-        issues.append("minimum_measure")
-    if quality_report.minimum_mean_ratio < audit_policy.minimum_mean_ratio:
-        issues.append("minimum_mean_ratio")
-    if quality_report.maximum_aspect_ratio > audit_policy.maximum_aspect_ratio:
-        issues.append("maximum_aspect_ratio")
+    quality_report = summarize_cell_quality(
+        mesh,
+        quality_evaluation,
+        minimum_measure=audit_policy.minimum_measure,
+        minimum_mean_ratio=audit_policy.minimum_mean_ratio,
+        maximum_aspect_ratio=audit_policy.maximum_aspect_ratio,
+    )
+    issues.extend(quality_report.failed_gates)
     if audit_policy.require_complete_association and not _complete_association_coverage(
         mesh, boundary, patches, associations, support_coverage
     ):
@@ -1891,7 +2034,7 @@ def audit_cell_mesh(
         manifold_scope=manifold_scope,
         quality=quality_report,
         validity=validity_,
-        policy_id=audit_policy.policy_id,
+        policy=audit_policy,
         report_id=canonical_fingerprint(
             {
                 "kind": "cell-mesh-audit-report",

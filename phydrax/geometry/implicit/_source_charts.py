@@ -10,7 +10,7 @@ from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from functools import cache, partial
-from typing import Protocol, runtime_checkable, TYPE_CHECKING
+from typing import Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -190,9 +190,20 @@ type _PieceOutcome = tuple[_PieceProof | None, str, bool]
 type _PieceProver = Callable[[Sequence[TriangleReference]], tuple[_PieceSteps, ...]]
 
 
+# How one face's target-to-zero-set distance is bounded: by its interval
+# root chart over boxes the field program proves smooth, or, where the face
+# meets a crease of a non-smooth field, by the retained root witnesses.
+type ImplicitChartBound = Literal["root_chart", "root_witness"]
+
+
 @dataclass(frozen=True, slots=True)
 class ImplicitRootChartEvidence:
-    """Recomputable whole-face evidence for one adaptive implicit root chart."""
+    """Recomputable whole-face evidence for one adaptive implicit root chart.
+
+    ``bound`` names the region kind: a ``root_witness`` face carries a
+    certified upper distance bound from root witnesses but no chart, so its
+    Jacobian, injectivity, gradient and normal fields prove nothing.
+    """
 
     row: int
     target_cell_global_id: int
@@ -209,6 +220,7 @@ class ImplicitRootChartEvidence:
     chart_injectivity_margin: float
     source_gradient_lower: float
     detail: str
+    bound: ImplicitChartBound = "root_chart"
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +283,7 @@ class AdaptiveImplicitRootChartMap:
         maximum_normal_deviation: float | None,
         surface: AdaptiveImplicitSurface,
         hessian_program: PreparedIntervalFunction,
+        branches: bool,
         /,
     ) -> None:
         self.mesh = mesh
@@ -288,6 +301,8 @@ class AdaptiveImplicitRootChartMap:
         self._bounds = bounds
         self._surface = surface
         self._hessian_program = hessian_program
+        # Whether proofs must decide every branch of a non-smooth field.
+        self._branches = branches
         # Set by the preparation: every row's own proof evidence, and how many
         # rows took a parent's evidence by identity.
         self.chart_rows: ImplicitChartRows | None = None
@@ -313,6 +328,7 @@ class AdaptiveImplicitRootChartMap:
                         row.chart_jacobian_lower,
                         row.chart_injectivity_margin,
                         row.source_gradient_lower,
+                        *(() if row.bound == "root_chart" else (row.bound,)),
                     )
                     for row in self.chart_evidence
                 ),
@@ -390,16 +406,21 @@ class AdaptiveImplicitRootChartMap:
         if not math.isfinite(error_) or error_ < 0.0:
             raise ValueError("error must be finite and nonnegative.")
         faces = [self._faces[int(row)] for row in rows]
-        if any(face.evidence.status != "certified" for face in faces):
-            raise ValueError("Only certified implicit charts can exclude a point.")
+        if any(
+            face.evidence.status != "certified" or face.evidence.bound != "root_chart"
+            for face in faces
+        ):
+            raise ValueError("Only certified implicit root charts can exclude a point.")
         return tuple(
-            _run_faces(
+            result is True
+            for result in _run_faces(
                 self._bounds,
                 self._hessian_program,
                 [
                     _point_exclusion_steps(self._surface, face, target, error_)
                     for face in faces
                 ],
+                self._branches,
             )
         )
 
@@ -1522,29 +1543,75 @@ def _interval_vector3(lower: np.ndarray, upper: np.ndarray, /) -> IntervalVector
     )
 
 
+def _branch_box_bounds(
+    bounds: _FieldEnclosures, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Field value and gradient enclosures with each box's smoothness evidence.
+
+    The value enclosure and the smoothness decision are one evaluation of the
+    discovery's interval value program; the gradient program encloses the
+    true gradient exactly on the boxes that evaluation proves smooth.
+    """
+    program = bounds._values
+    if bounds.selector != "interval" or program is None:
+        raise ValueError(
+            "Branch-decided implicit charts require interval field programs."
+        )
+    value_lower, value_upper, smooth, _ = program.evaluate_branches(lower, upper)
+    gradient_program = bounds._gradients
+    if gradient_program is None:
+        gradient_lower = np.full((lower.shape[0], 3), -np.inf, dtype=np.float64)
+        gradient_upper = np.full((lower.shape[0], 3), np.inf, dtype=np.float64)
+    else:
+        gradient_lower, gradient_upper = gradient_program.evaluate(lower, upper)
+    return (
+        np.asarray(value_lower, dtype=np.float64).reshape((-1,)),
+        np.asarray(value_upper, dtype=np.float64).reshape((-1,)),
+        np.asarray(gradient_lower, dtype=np.float64).reshape((-1, 3)),
+        np.asarray(gradient_upper, dtype=np.float64).reshape((-1, 3)),
+        np.asarray(smooth, dtype=np.bool_),
+    )
+
+
 def _evaluate_box_requests(
     bounds: _FieldEnclosures,
     hessian_program: PreparedIntervalFunction,
     requests: Sequence[_BoxRequests],
     /,
-) -> list[_BoxResults]:
-    """Enclose every requested box of all pieces in one batched evaluation."""
+    branches: bool = False,
+) -> list[_BoxResults | None]:
+    """Enclose every requested box of all pieces in one batched evaluation.
+
+    With ``branches`` a request is answered only when the field program is
+    proved smooth on every box it names (field and Hessian boxes alike);
+    otherwise its result is ``None``, a crease the root chart cannot cross.
+    """
     field_boxes = [box for request in requests for box in request.field]
     hessian_boxes = [box for request in requests for box in request.hessian]
     field_values: list[_FieldBox] = []
+    field_smooth = np.ones((len(field_boxes),), dtype=np.bool_)
+    hessian_smooth = np.ones((len(hessian_boxes),), dtype=np.bool_)
     if field_boxes:
-        result = bounds.boxes(
-            np.stack([low for low, _ in field_boxes]),
-            np.stack([high for _, high in field_boxes]),
-        )
-        value_lower = np.asarray(result.value_lower, dtype=np.float64).reshape((-1,))
-        value_upper = np.asarray(result.value_upper, dtype=np.float64).reshape((-1,))
-        gradient_lower = np.asarray(result.gradient_lower, dtype=np.float64).reshape(
-            (-1, 3)
-        )
-        gradient_upper = np.asarray(result.gradient_upper, dtype=np.float64).reshape(
-            (-1, 3)
-        )
+        field_lower = np.stack([low for low, _ in field_boxes])
+        field_upper = np.stack([high for _, high in field_boxes])
+        if branches:
+            (
+                value_lower,
+                value_upper,
+                gradient_lower,
+                gradient_upper,
+                field_smooth,
+            ) = _branch_box_bounds(bounds, field_lower, field_upper)
+        else:
+            result = bounds.boxes(field_lower, field_upper)
+            value_lower = np.asarray(result.value_lower, dtype=np.float64).reshape((-1,))
+            value_upper = np.asarray(result.value_upper, dtype=np.float64).reshape((-1,))
+            gradient_lower = np.asarray(result.gradient_lower, dtype=np.float64).reshape(
+                (-1, 3)
+            )
+            gradient_upper = np.asarray(result.gradient_upper, dtype=np.float64).reshape(
+                (-1, 3)
+            )
         field_values = [
             (
                 (float(value_lower[row]), float(value_upper[row])),
@@ -1554,10 +1621,13 @@ def _evaluate_box_requests(
         ]
     hessian_values: list[IntervalMatrix3] = []
     if hessian_boxes:
-        lower, upper = hessian_program.evaluate(
-            np.stack([low for low, _ in hessian_boxes]),
-            np.stack([high for _, high in hessian_boxes]),
-        )
+        hessian_box_lower = np.stack([low for low, _ in hessian_boxes])
+        hessian_box_upper = np.stack([high for _, high in hessian_boxes])
+        if branches:
+            hessian_smooth = _branch_box_bounds(
+                bounds, hessian_box_lower, hessian_box_upper
+            )[4]
+        lower, upper = hessian_program.evaluate(hessian_box_lower, hessian_box_upper)
         hessian_lower = np.asarray(lower, dtype=np.float64).reshape((-1, 3, 3))
         hessian_upper = np.asarray(upper, dtype=np.float64).reshape((-1, 3, 3))
         hessian_values = [
@@ -1568,19 +1638,32 @@ def _evaluate_box_requests(
             )
             for row in range(len(hessian_boxes))
         ]
-    results: list[_BoxResults] = []
+    results: list[_BoxResults | None] = []
     field_start = hessian_start = 0
     for request in requests:
         field_stop = field_start + len(request.field)
         hessian_stop = hessian_start + len(request.hessian)
-        results.append(
-            (
-                tuple(field_values[field_start:field_stop]),
-                tuple(hessian_values[hessian_start:hessian_stop]),
+        if bool(np.all(field_smooth[field_start:field_stop])) and bool(
+            np.all(hessian_smooth[hessian_start:hessian_stop])
+        ):
+            results.append(
+                (
+                    tuple(field_values[field_start:field_stop]),
+                    tuple(hessian_values[hessian_start:hessian_stop]),
+                )
             )
-        )
+        else:
+            results.append(None)
         field_start, hessian_start = field_stop, hessian_stop
     return results
+
+
+# A piece proof that met a box its field program does not prove smooth.
+_CREASE_OUTCOME: _PieceOutcome = (
+    None,
+    "implicit root-chart piece meets a non-smooth branch of its source field",
+    False,
+)
 
 
 def _run_piece_steps(
@@ -1589,10 +1672,13 @@ def _run_piece_steps(
     steps: Sequence[_PieceSteps],
     queries: Sequence[_BoxRequests] = (),
     /,
-) -> tuple[list[_PieceOutcome], list[_BoxResults]]:
+    branches: bool = False,
+) -> tuple[list[_PieceOutcome], list[_BoxResults | None]]:
     """Advance all piece proofs together, batching each round of box queries.
 
-    Standalone ``queries`` join the first round's evaluation.
+    Standalone ``queries`` join the first round's evaluation. With
+    ``branches`` a piece whose request meets a non-smooth box stops with
+    `_CREASE_OUTCOME` and a crease query answers ``None``.
     """
     outcomes: list[_PieceOutcome | None] = [None] * len(steps)
     pending: dict[int, _BoxRequests] = {}
@@ -1601,12 +1687,15 @@ def _run_piece_steps(
             pending[index] = next(step)
         except StopIteration as stop:
             outcomes[index] = stop.value
-    query_results: list[_BoxResults] = []
+    query_results: list[_BoxResults | None] = []
     while pending or len(query_results) < len(queries):
         indices = tuple(pending)
         extra = list(queries) if len(query_results) < len(queries) else []
         results = _evaluate_box_requests(
-            bounds, hessian_program, [pending[index] for index in indices] + extra
+            bounds,
+            hessian_program,
+            [pending[index] for index in indices] + extra,
+            branches,
         )
         query_results.extend(results[len(indices) :])
         pending = {}
@@ -1615,6 +1704,10 @@ def _run_piece_steps(
             # Each response is consumed exactly once. Release it before the
             # next proof allocates its next-round boxes.
             results[offset] = ((), ())
+            if result is None:
+                steps[index].close()
+                outcomes[index] = _CREASE_OUTCOME
+                continue
             try:
                 pending[index] = steps[index].send(result)
             except StopIteration as stop:
@@ -1632,20 +1725,25 @@ def _run_faces[T](
     hessian_program: PreparedIntervalFunction,
     faces: Sequence[_FaceSteps[T]],
     /,
-) -> list[T]:
+    branches: bool = False,
+) -> list[T | None]:
     """Advance every face proof together, one batched round of piece proofs at a time.
 
     Each face yields its next round independently of the others; every round
     evaluates the field and Hessian boxes of all faces' pending pieces at once,
-    which leaves each face's proof unchanged.
+    which leaves each face's proof unchanged. With ``branches`` a face whose
+    round meets a box the field program does not prove smooth is closed and
+    answers ``None``: its root chart would cross a crease of the field.
     """
     results: list[T | None] = [None] * len(faces)
+    finished_rows = [False] * len(faces)
     active: dict[int, _FaceRound] = {}
     for index, face in enumerate(faces):
         try:
             active[index] = next(face)
         except StopIteration as stop:
             results[index] = stop.value
+            finished_rows[index] = True
     while active:
         order = tuple(active)
         outcomes, query_results = _run_piece_steps(
@@ -1653,6 +1751,7 @@ def _run_faces[T](
             hessian_program,
             [step for index in order for step in active[index].pieces],
             [query for index in order for query in active[index].queries],
+            branches,
         )
         following: dict[int, _FaceRound] = {}
         piece_start = query_start = 0
@@ -1660,22 +1759,25 @@ def _run_faces[T](
             round_ = active[index]
             piece_stop = piece_start + len(round_.pieces)
             query_stop = query_start + len(round_.queries)
-            reply: _FaceReply = (
-                outcomes[piece_start:piece_stop],
-                query_results[query_start:query_stop],
-            )
+            face_outcomes = outcomes[piece_start:piece_stop]
+            face_queries = query_results[query_start:query_stop]
             piece_start, query_start = piece_stop, query_stop
+            answered = [result for result in face_queries if result is not None]
+            if len(answered) != len(face_queries) or any(
+                outcome is _CREASE_OUTCOME for outcome in face_outcomes
+            ):
+                faces[index].close()
+                finished_rows[index] = True
+                continue
             try:
-                following[index] = faces[index].send(reply)
+                following[index] = faces[index].send((face_outcomes, answered))
             except StopIteration as stop:
                 results[index] = stop.value
+                finished_rows[index] = True
         active = following
-    finished: list[T] = []
-    for result in results:
-        if result is None:
-            raise RuntimeError("An implicit root-chart face proof did not finish.")
-        finished.append(result)
-    return finished
+    if not all(finished_rows):
+        raise RuntimeError("An implicit root-chart face proof did not finish.")
+    return results
 
 
 def _intersect_intervals(first: Interval, second: Interval, /) -> Interval:
@@ -3715,6 +3817,192 @@ def _reused_face(
     )
 
 
+# A root-witness piece splits until its bound meets the target resolution or
+# its box is finer than this fraction of that resolution; its bound is then
+# certified as it stands.
+_ROOT_WITNESS_FLOOR = 2.0**-6
+# Initial witness search reach as a fraction of the target resolution.
+_ROOT_WITNESS_REACH = 2.0**-6
+
+
+def _box_witness_distance_upper(
+    witnesses: PackedBVH,
+    witness_lower: np.ndarray,
+    witness_upper: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    reach: float,
+    /,
+) -> np.ndarray:
+    """Per box, ``min_w max_{x in box, z in w} |x - z|`` over the witness boxes.
+
+    Witness boxes beyond a reach ``r`` are farther than ``r`` from the whole
+    box, so a box is settled once its least upper distance is at most ``r``;
+    the reach doubles until every box is settled.
+    """
+    nearest = np.full((lower.shape[0],), np.inf, dtype=np.float64)
+    pending = np.arange(lower.shape[0])
+    while pending.shape[0]:
+        reached = prepare_bvh(
+            np.nextafter(lower[pending] - reach, -np.inf),
+            np.nextafter(upper[pending] + reach, np.inf),
+            dtype=np.float64,
+        )
+        for witness_rows, rows in bvh_overlap_pair_blocks(
+            witnesses, reached, include_touching=True
+        ):
+            boxes = pending[rows]
+            np.minimum.at(
+                nearest,
+                boxes,
+                _distance_upper(
+                    lower[boxes],
+                    upper[boxes],
+                    witness_lower[witness_rows],
+                    witness_upper[witness_rows],
+                ),
+            )
+        pending = pending[nearest[pending] > reach]
+        reach = math.nextafter(2.0 * reach, math.inf)
+        if not math.isfinite(reach):
+            raise ValueError("Implicit root witnesses are not within a finite reach.")
+    return nearest
+
+
+def _root_witness_bounds(
+    surface: AdaptiveImplicitSurface,
+    faces: Sequence[_FaceEnclosure],
+    target: float,
+    /,
+) -> list[tuple[float, float]]:
+    """Certified upper bounds of ``sup_x d(x, Z)`` and ``|f|`` over each face.
+
+    Every retained root witness encloses a zero of the field within its
+    error, so a face piece's distance to the zero set is at most its farthest
+    distance to any witness box: the possible-zero-box bound of adaptive
+    discovery, which needs no field regularity. Pieces split until their
+    bound is at most ``target`` or they reach the root-witness floor.
+    """
+    points = np.asarray(surface.boundary_witnesses, dtype=np.float64).reshape((-1, 3))
+    errors = np.asarray(surface.boundary_errors, dtype=np.float64).reshape((-1,))
+    if (
+        points.shape[0] == 0
+        or errors.shape != (points.shape[0],)
+        or not np.all(np.isfinite(points))
+        or not np.all(np.isfinite(errors))
+        or np.any(errors < 0.0)
+    ):
+        raise ValueError(
+            "Crease faces require finite retained root witnesses of the source."
+        )
+    witness_lower = np.nextafter(points - errors[:, None], -np.inf)
+    witness_upper = np.nextafter(points + errors[:, None], np.inf)
+    witnesses = prepare_bvh(witness_lower, witness_upper, dtype=np.float64)
+    distances = [0.0] * len(faces)
+    residuals = [0.0] * len(faces)
+    floor = target * _ROOT_WITNESS_FLOOR
+    pending: list[tuple[int, TriangleReference]] = [
+        (index, _STANDARD_TRIANGLE) for index in range(len(faces))
+    ]
+    while pending:
+        boxes = [_enclosed_box(faces[index], triangle) for index, triangle in pending]
+        lower = np.stack([low for low, _ in boxes])
+        upper = np.stack([high for _, high in boxes])
+        nearest = _box_witness_distance_upper(
+            witnesses,
+            witness_lower,
+            witness_upper,
+            lower,
+            upper,
+            target * _ROOT_WITNESS_REACH,
+        )
+        diagonals = _distance_upper(lower, upper, lower, upper)
+        value_lower, value_upper = _box_value_bounds(surface.volume.bounds, lower, upper)
+        following: list[tuple[int, TriangleReference]] = []
+        for row, (index, triangle) in enumerate(pending):
+            if nearest[row] > target and diagonals[row] > floor:
+                split = _split_triangle(triangle)
+                if split is not None:
+                    following.extend((index, child) for child in split)
+                    continue
+            distances[index] = max(distances[index], float(nearest[row]))
+            residuals[index] = max(
+                residuals[index],
+                _absolute_residual_interval(
+                    (float(value_lower[row]), float(value_upper[row]))
+                )[1],
+            )
+        pending = following
+    return list(zip(distances, residuals, strict=True))
+
+
+def _root_witness_faces(
+    setups: Sequence[_FaceSetup],
+    witness: SourceBoundaryChartWitness,
+    surface: AdaptiveImplicitSurface,
+    root_rows: _SourceRootRows,
+    root_by_point: _RootRowsByPoint,
+    /,
+    *,
+    tolerance: float | None,
+) -> list[_PreparedFace]:
+    """Faces whose root chart meets a crease, bounded by the root witnesses.
+
+    The bound is resolved to the fidelity tolerance, else to the discovery's
+    largest surface box. No chart is claimed: such a face carries no pieces,
+    so it never projects or excludes a point and proves no Jacobian, normal
+    or gradient bound.
+    """
+    if not setups:
+        return []
+    target = (
+        tolerance
+        if tolerance is not None and tolerance > 0.0
+        else float(surface.evidence.maximum_surface_box_diagonal)
+    )
+    if not math.isfinite(target) or target <= 0.0:
+        raise ValueError("Crease faces require a positive bound resolution.")
+    enclosures = [_enclose_face(setup.target_expressions) for setup in setups]
+    faces: list[_PreparedFace] = []
+    for setup, enclosure, (distance, residual) in zip(
+        setups,
+        enclosures,
+        _root_witness_bounds(surface, enclosures, target),
+        strict=True,
+    ):
+        row = setup.row
+        evidence = ImplicitRootChartEvidence(
+            row,
+            int(witness.cell_global_ids[row]),
+            int(witness.entity_global_ids[row]),
+            int(witness.local_entity_indices[row]),
+            setup.cell_key,
+            setup.root_edges,
+            "certified",
+            math.nextafter(residual, math.inf),
+            0.0,
+            math.nextafter(distance, math.inf),
+            (0.0, math.pi),
+            0.0,
+            0.0,
+            0.0,
+            "Face meets a crease of the source field; its distance is bounded by "
+            "root witnesses, not a root chart.",
+            "root_witness",
+        )
+        faces.append(
+            _prepared_face(
+                setup,
+                evidence,
+                enclosure,
+                (),
+                _face_root_corners(setup, root_rows, root_by_point),
+                0.0,
+            )
+        )
+    return faces
+
+
 def _edge_polynomial(
     expression: Polynomial, start: TrianglePoint, stop: TrianglePoint, /
 ) -> Expression:
@@ -3965,17 +4253,17 @@ def _prepare_root_charts(
             "Adaptive implicit root charts require a bound source coordinate frame."
         )
     surface = adaptive.surface
-    if surface.geometry.field_certificate.regularity is not FieldRegularity.SMOOTH:
-        if (
-            surface.geometry.field_certificate.regularity
-            is not FieldRegularity.PIECEWISE_SMOOTH
-            or not _profile_covers_singularities_away_from_zero_set(
-                source, surface, selected_frame
-            )
-        ):
-            raise ValueError(
-                "Implicit root charts require a smooth field or an exact profile singular set disjoint from the certified zero-set cover."
-            )
+    regularity = surface.geometry.field_certificate.regularity
+    # A smooth field, or an exact profile whose singular set misses every
+    # possible-zero box, proves the Hessian sound everywhere. Any other field
+    # proves smoothness box by box from its interval program's branch
+    # decisions; faces meeting a crease take the root-witness bound instead.
+    branches = regularity is not FieldRegularity.SMOOTH and not (
+        regularity is FieldRegularity.PIECEWISE_SMOOTH
+        and _profile_covers_singularities_away_from_zero_set(
+            source, surface, selected_frame
+        )
+    )
     if target_rows is None:
         validate_source_fidelity_witness(mesh, geometry, source, witness)
     if (
@@ -3991,6 +4279,18 @@ def _prepare_root_charts(
         raise ValueError(
             "Implicit root charts require a complete interval source cover and regular root scaffold."
         )
+    if branches:
+        values = surface.volume.bounds._values
+        try:
+            if values is None:
+                raise IntervalExtensionError("The field has no interval value program.")
+            empty = np.empty((0, 3), dtype=np.float64)
+            values.evaluate_branches(empty, empty)
+        except IntervalExtensionError as error:
+            raise ValueError(
+                "Implicit root charts of a non-smooth field require per-box branch "
+                f"evidence from its interval program: {error}"
+            ) from error
     tolerance_ = None if tolerance is None else float(tolerance)
     normal_ = (
         None if maximum_normal_deviation is None else float(maximum_normal_deviation)
@@ -4113,6 +4413,7 @@ def _prepare_root_charts(
         capability = capability.ancestor
     proved = [setup.row for setup in setups if prepared[setup.row] is None]
     del candidates
+    creases: list[int] = []
     for row, face in zip(
         proved,
         _run_faces(
@@ -4130,6 +4431,23 @@ def _prepare_root_charts(
                 )
                 for row in proved
             ],
+            branches,
+        ),
+        strict=True,
+    ):
+        if face is None:
+            creases.append(row)
+        else:
+            prepared[row] = face
+    for row, face in zip(
+        creases,
+        _root_witness_faces(
+            [setups[row] for row in creases],
+            witness,
+            surface,
+            root_rows,
+            root_by_point,
+            tolerance=tolerance_,
         ),
         strict=True,
     ):
@@ -4154,6 +4472,7 @@ def _prepare_root_charts(
         normal_,
         surface,
         hessian_program,
+        branches,
     )
     root_map.chart_rows = rows
     root_map.reused_row_count = len(setups) - len(proved)
@@ -4168,7 +4487,11 @@ def _chart_rows(faces: Sequence[_PreparedFace], /) -> ImplicitChartRows:
     values = np.zeros((count, len(CHART_ROW_COLUMNS)), dtype=np.float64)
     for row, face in enumerate(faces):
         evidence = face.evidence
-        if face.identity_key is None or evidence.status != "certified":
+        if (
+            face.identity_key is None
+            or evidence.status != "certified"
+            or evidence.bound != "root_chart"
+        ):
             continue
         keys[row] = np.frombuffer(face.identity_key, dtype=np.uint8)
         reusable[row] = True

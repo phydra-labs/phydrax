@@ -9,13 +9,17 @@ from ._common import (
     _numel,
     _propagate_const_unary,
     _transform_indices,
+    StateBounds,
     StateConsts,
     StateIndices,
 )
 
 
 def _prop_reshape(
-    eqn: JaxprEqn, state_indices: StateIndices, state_consts: StateConsts
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
 ) -> None:
     """Reshape changes array shape without changing data or element count.
 
@@ -71,4 +75,4 @@ def _prop_reshape(
             return v.transpose(dimensions).reshape(new_sizes)
         return v.reshape(new_sizes)
 
-    _propagate_const_unary(eqn, state_consts, _reshape_val)
+    _propagate_const_unary(eqn, state_consts, _reshape_val, state_bounds)

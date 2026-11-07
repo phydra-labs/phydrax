@@ -859,3 +859,82 @@ def test_boolean_failure_does_not_mutate_sources_and_policy_has_no_work_quotas()
     assert not hasattr(policy.intersection, "maximum_boxes")
     assert not hasattr(policy.intersection, "maximum_march_steps")
     assert not hasattr(policy.sewing, "maximum_coedges")
+
+
+def test_boolean_rebound_conic_endpoint_keeps_exact_root_enclosure(
+    tmp_path: Path,
+) -> None:
+    import mpmath
+
+    from phydrax.geometry._domain_boundary import _exact_line_junction_box
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from phydrax.geometry.brep._intersection import ConicParameterEndpoint
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _external_case
+
+    def contains(lower: float, upper: float) -> bool:
+        with mpmath.workprec(256):
+            return mpmath.mpf(lower) <= mpmath.pi / 2 <= mpmath.mpf(upper)
+
+    def quarter(root: ConicParameterEndpoint) -> bool:
+        return (root.root.cosine_exact, root.root.sine_exact, root.root.turns) == (
+            Fraction(0),
+            Fraction(1),
+            0,
+        )
+
+    # The radial-hole difference rebinds each washer circle endpoint from its
+    # source p-curve to the published circle edge. Its raw binary angle is no
+    # exact parameter: the rebound root keeps the outward conic enclosure.
+    model, _, _, _ = _external_case("external-combined", "step", tmp_path)
+    geometry = model.geometry
+    rebound = [
+        root
+        for pair in geometry.edge_endpoint_roots
+        for root in pair
+        if isinstance(root, ConicParameterEndpoint)
+        and isinstance(root.carrier, CircleCurve)
+        and quarter(root)
+    ]
+    assert rebound
+    for root in rebound:
+        assert root.parameter_exact is None
+        assert contains(*root.parameter_enclosure())
+    for pair in (*geometry.edge_endpoint_roots, *geometry.coedge_endpoint_roots):
+        for root in pair:
+            if isinstance(root, ConicParameterEndpoint) and isinstance(
+                root.carrier, CircleCurve
+            ):
+                assert root.parameter_exact in (None, Fraction(0))
+
+    # A line junction at that root is the exact quarter-turn chart point.
+    domain = MeshingDomain.from_brep(model)
+    boxes = []
+    for patch, source in enumerate(domain.patches):
+        face = domain.source_indices[2][patch]
+        for uses, coedges in zip(source.loops, geometry.face_loops[face], strict=True):
+            if len(uses) != len(coedges):
+                continue
+            for slot, (use, coedge) in enumerate(zip(uses, coedges, strict=True)):
+                following = (slot + 1) % len(uses)
+                end = 1 if use.sense > 0 else 0
+                start = 0 if uses[following].sense > 0 else 1
+                roots = (
+                    geometry.coedge_endpoint_roots[coedge][end],
+                    geometry.coedge_endpoint_roots[coedges[following]][start],
+                )
+                if not all(
+                    isinstance(root, ConicParameterEndpoint)
+                    and root.parameter_exact is None
+                    and quarter(root)
+                    for root in roots
+                ):
+                    continue
+                box = _exact_line_junction_box(
+                    model, face, coedge, coedges[following], use, uses[following]
+                )
+                if box is not None:
+                    boxes.append(np.asarray(box))
+    assert boxes
+    for box in boxes:
+        assert contains(box[0, 0], box[1, 0])
+        assert box[0, 0] < box[1, 0]

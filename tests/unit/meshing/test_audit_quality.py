@@ -1,3 +1,4 @@
+from fractions import Fraction
 from typing import Any
 
 import jax
@@ -636,7 +637,7 @@ def test_non_applicable_metric_quality_is_nan_at_every_mesh_size() -> None:
     )
     evaluation = phx.meshing.evaluate_cell_quality(mesh)
     assert bool(jnp.all(jnp.isnan(evaluation.metric_quality)))
-    report = phx.meshing.summarize_cell_quality(evaluation)
+    report = phx.meshing.summarize_cell_quality(mesh, evaluation)
     assert np.isnan(report.minimum_metric_quality)
     assert (
         CellQualityReportArchiveRecipe.from_report(report).minimum_metric_quality is None
@@ -951,3 +952,100 @@ def test_owned_star_manifold_scope_certifies_declared_complete_stars() -> None:
             geometry,
             manifold_scope=CellMeshManifoldScope("owned-star", np.asarray((9,))),
         )
+
+
+_UNIT_TETRAHEDRON = np.asarray(
+    ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+)
+
+
+def _corner_geometry(mesh: Any, x: float, /) -> Any:
+    """P1 geometry whose vertex 1 has first coordinate ``x`` (the mesh keeps 1)."""
+    coordinates = np.array(mesh.coordinates, dtype=np.float64)
+    coordinates[1, 0] = x
+    return phx.discretization.CellGeometrySpec(
+        {"volume": phx.discretization.fem.lagrange_element("tetrahedron", 1)},
+        {"volume": np.asarray(mesh.blocks[0].vertices)},
+        coordinates,
+    )
+
+
+def test_geometry_corner_binding_is_decided_exactly_at_64_eps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization.fem._reference import FiniteElementSpec
+    from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+    from phydrax.meshing import _audit
+    from phydrax.meshing._certification_inputs import MeshCertificationInputs
+    from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+
+    mesh = phx.discretization.CellMesh(
+        _UNIT_TETRAHEDRON,
+        (
+            phx.discretization.CellBlock(
+                "volume", "tetrahedron", np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+            ),
+        ),
+    )
+    # The block coordinate scale is 1, so the certified bound is 64 eps = 2^-46.
+    edge = 1.0 - 2.0**-46
+    beyond = float(np.nextafter(edge, 0.0))
+    assert Fraction(1) - Fraction(edge) == Fraction(1, 2**46)
+    assert Fraction(1) - Fraction(beyond) > Fraction(1, 2**46)
+    bound, outside = _corner_geometry(mesh, edge), _corner_geometry(mesh, beyond)
+    assert _audit._geometry_binding(mesh, bound) == ("vertex_geometry", ())
+    assert _audit._geometry_binding(mesh, outside) == (
+        "vertex_geometry",
+        ("geometry_corner_binding",),
+    )
+
+    # The former rule contracted the tabulated basis with the coefficients and
+    # compared by float allclose: one ulp of tabulation flipped it at this edge.
+    element = phx.discretization.fem.lagrange_element("tetrahedron", 1)
+    basis = np.asarray(element.tabulate(jnp.asarray(_UNIT_TETRAHEDRON))[0])
+    rows = np.asarray(mesh.blocks[0].vertices)
+    controls = np.asarray(bound.coordinates)[rows]
+    expected = np.asarray(mesh.coordinates)[rows]
+    atol = 64.0 * np.finfo(np.float64).eps
+    one_low = np.where(basis == 1.0, np.nextafter(1.0, 0.0), basis)
+    assert np.allclose(
+        np.einsum("vi,cia->cva", basis, controls), expected, rtol=0.0, atol=atol
+    )
+    assert not np.allclose(
+        np.einsum("vi,cia->cva", one_low, controls), expected, rtol=0.0, atol=atol
+    )
+
+    domain = PiecewiseLinearDomain(
+        np.asarray(bound.coordinates),
+        np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64),
+        np.tile(np.asarray((0, -1), dtype=np.int64), (4, 1)),
+        ("solid",),
+        source_id="corner-binding-source",
+    )
+    result = phx.meshing.certify_cell_mesh(
+        mesh,
+        phx.SpatialCoordinateContract.si(),
+        geometry=bound,
+        certification_inputs=MeshCertificationInputs(
+            mesh,
+            bound,
+            MeshCertificationSchedule("volume_plc"),
+            source_id=domain.source_id,
+            source_revision=domain.source_revision,
+            domain=domain,
+            cell_regions=np.zeros(1, dtype=np.int64),
+        ),
+    )
+    assert result.audit.passed
+    tabulate = FiniteElementSpec.tabulate
+
+    def one_ulp_low(self: Any, points: Any, *args: Any, **kwargs: Any) -> Any:
+        values, *rest = tabulate(self, points, *args, **kwargs)
+        return (jnp.where(values == 1.0, np.nextafter(1.0, 0.0), values), *rest)
+
+    # Restore under another platform's tabulation keeps the exact verdict.
+    monkeypatch.setattr(FiniteElementSpec, "tabulate", one_ulp_low)
+    assert _audit._geometry_binding(mesh, bound) == ("vertex_geometry", ())
+    restored = phx.meshing.CellMeshingResult.from_stored_fields(result)
+    assert restored.audit.report_id == result.audit.report_id
+    assert restored.result_id == result.result_id

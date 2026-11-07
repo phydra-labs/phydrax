@@ -199,11 +199,11 @@ class CoupledWaterHeatPlan(StrictModule):
             self.saturated_matrices - self.dry_matrices
         )
         difference = (
-            state.face_temperature_K[diffusion.cell_faces] - state.temperature_K[:, None]
+            state.face_temperature_K[diffusion.cell_facets] - state.temperature_K[:, None]
         )
         conduction = -contract("cfg,cg->cf", matrices, difference)
         conduction = jnp.where(diffusion.valid, conduction, 0.0)
-        face = diffusion.cell_faces
+        face = diffusion.cell_facets
         owner, neighbor = (
             self.discretization.owner_cells,
             self.discretization.neighbor_cells,

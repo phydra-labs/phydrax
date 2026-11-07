@@ -813,8 +813,13 @@ def core_source_associations(
 ) -> tuple[association_owner.GeometryAssociation, ...]:
     """Compose exact PLC ancestry onto the mixed layer/core mesh."""
     internal_cap: frozenset[int] = frozenset()
+    # Boundary-only atlases (``closed_fixed_core_source``) declare the closed cap
+    # itself as the source boundary and carry no authored wall association. A
+    # closed layer grown on an authored source wall (a whole BRep boundary) keeps
+    # that wall's association and is proved by its own wall replay instead.
     if (
         source.layers.closed_cap
+        and source.layers.wall_association is None
         and source.source_boundary_charts is not None
         and any(value is None for value in source.core_facet_source_ids)
     ):

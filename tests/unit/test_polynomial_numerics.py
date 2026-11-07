@@ -5,6 +5,7 @@
 
 import math
 from collections.abc import Callable
+from fractions import Fraction
 from typing import Any
 
 import equinox as eqx
@@ -312,6 +313,27 @@ def test_endpoint_jets_are_bound_to_the_prepared_interval() -> None:
     basis = EndpointJetBasis(2, 2.0)
     with pytest.raises(ValueError, match="prepared interval length"):
         basis.endpoint_jets(4.0)
+
+
+def test_endpoint_jets_are_correctly_rounded_exact_rationals() -> None:
+    length = float.fromhex("0x1.8fda90dc6f991p+1")
+    basis = EndpointJetBasis(6, length)
+    jets = basis.endpoint_jets(length)
+    # q_6(0) = (B_6 / 6!) L^5 rounds to ...6ccp-7; float-power evaluation gave ...6cdp-7.
+    assert jets[0, 0, 6] == float.fromhex("0x1.4258f5053d6ccp-7")
+    numbers = [Fraction(1), Fraction(-1, 2), Fraction(1, 6), Fraction(0)]
+    numbers += [Fraction(-1, 30), Fraction(0), Fraction(1, 42), Fraction(0)]
+    for side in (0, 1):
+        for order in range(7):
+            for degree in range(max(order, 1), 8):
+                reduced = degree - order
+                value = numbers[reduced] + (side == 1 and reduced == 1)
+                exact = (
+                    value
+                    / math.factorial(reduced)
+                    * Fraction(length) ** (degree - 1 - order)
+                )
+                assert jets[side, order, degree] == float(exact)
 
 
 def test_endpoint_basis_refuses_boolean_coordinates() -> None:

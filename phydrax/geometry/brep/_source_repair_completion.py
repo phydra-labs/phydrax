@@ -156,8 +156,14 @@ def _endpoint_interval(
                 )
             return parameter, parameter
         if isinstance(curve, CircleCurve):
+            # A circle parameter is rational only at the exact phase-zero root.
+            phase_zero = root.parameter_exact == 0 and (
+                root.root.cosine_exact,
+                root.root.sine_exact,
+                root.root.turns,
+            ) == (1, 0, 0)
             if (
-                root.parameter_exact is not None
+                (root.parameter_exact is not None and not phase_zero)
                 or carrier_payload(root.root.conic) != carrier_payload(curve)
                 or root.root.exact_point() != root.point_exact
             ):

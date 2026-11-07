@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import math
-from fractions import Fraction
-from pathlib import Path
 import subprocess
 import sys
+from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import jax.numpy as jnp
@@ -33,6 +33,7 @@ from phydrax.meshing._association import (
     GeometryAssociationKind,
     GeometrySourceEntityRole,
 )
+from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -42,22 +43,103 @@ from phydrax.meshing._contracts import (
     SurfaceMeshingSpec,
 )
 from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+from phydrax.meshing._motion import advance_mesh_motion, MeshMotionMonitor
+from phydrax.meshing._motion_source import NativePlanarMotionSource
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import (
     SizeCompliancePolicy,
     SizeControlStrength,
     UniformSizeControl,
 )
-from phydrax.meshing.providers._native_curve import prepare_native_curve
+from phydrax.meshing.providers._native_curve import _chord_bound, prepare_native_curve
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_planar import prepare_native_planar
 from phydrax.meshing.providers._native_sources import (
     NativeCurveSource,
     NativePlanarSource,
 )
-from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
-from phydrax.meshing._motion import MeshMotionMonitor, advance_mesh_motion
-from phydrax.meshing._motion_source import NativePlanarMotionSource
+
+
+# LIN aarch64 counterexample: ``nextafter(numpy.linalg.norm(a), +inf)`` squares
+# below the exact ``a[0]**2 + a[1]**2``.
+_ACCELERATION = (
+    float.fromhex("0x1.03a8e6c503eccp-1"),
+    float.fromhex("0x1.77da20fd1661bp+1"),
+)
+
+
+class _ConstantAccelerationArc(BoundaryMap):
+    @property
+    def num_charts(self) -> int:
+        return 1
+
+    @property
+    def reference_dimension(self) -> int:
+        return 1
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 2
+
+    def map(self, chart_indices: Any, reference: Any, /) -> Any:
+        del chart_indices
+        parameter = jnp.asarray(reference)[..., 0]
+        return jnp.stack(
+            tuple(0.5 * value * parameter**2 for value in _ACCELERATION), axis=-1
+        )
+
+    def jacobian(self, chart_indices: Any, reference: Any, /) -> Any:
+        del chart_indices
+        parameter = jnp.asarray(reference)[..., 0]
+        tangent = jnp.stack(tuple(value * parameter for value in _ACCELERATION), axis=-1)
+        return tangent[..., :, None]
+
+
+def test_curve_chord_and_point_bounds_enclose_exact_parabola_deviation() -> None:
+    atlas = BoundaryAtlas(
+        _ConstantAccelerationArc(),
+        source_entity_ids=jnp.asarray((79,), dtype=jnp.int32),
+        source_id="constant-acceleration-arc",
+    )
+    source = NativeCurveSource(atlas, "revision")
+    scope = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        1,
+        source.scope_entity_set_id(1),
+        np.asarray(source.chart_scope_entity_ids, dtype=np.int64),
+    )
+    specification = CurveMeshingSpec(
+        CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.5, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=0.001,
+    )
+    prepared = prepare_native_curve(
+        source,
+        specification,
+        NativeMeshingOptions("curve_arc_length"),
+        SpatialCoordinateContract.si(),
+    ).prepared
+    enclosure = prepared.enclosures[0]
+    assert enclosure.rigorous
+    squared = sum((Fraction(value) ** 2 for value in _ACCELERATION), Fraction(0))
+    acceleration = Fraction(enclosure.acceleration_upper(0.0, 1.0))
+    assert squared <= acceleration**2 <= squared * (1 + Fraction(1, 2**47))
+    # The chart point at 0 is the origin, so the published point -a is |a| away.
+    published = -np.asarray(_ACCELERATION, dtype=np.float64)
+    point_error = Fraction(enclosure.point_error(0.0, published))
+    assert squared <= point_error**2 <= squared * (1 + Fraction(1, 2**47))
+    # The chord of x(t) = a t**2 / 2 over [0, 1] deviates by exactly |a| / 8.
+    ends = (
+        np.zeros(2, dtype=np.float64),
+        0.5 * np.asarray(_ACCELERATION, dtype=np.float64),
+    )
+    chord = Fraction(_chord_bound(prepared, 0, 0.0, 1.0, *ends))
+    assert squared <= (8 * chord) ** 2 <= squared * (1 + Fraction(1, 2**40))
 
 
 class _VariableSpeedLine(BoundaryMap):
@@ -622,8 +704,8 @@ def test_planar_motion_composition_cold_replay_and_tampering(tmp_path: Path) -> 
     from phydrax._model._structure import model_archive_projection
     from phydrax.lifecycle import Composition, CompositionEntry
     from phydrax.meshing._model_codec import (
-        MODEL_ARCHIVE_LIMITS,
         model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
         planar_motion_advance_recipe,
         read_model_artifact,
         restore_model_archive_value,

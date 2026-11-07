@@ -62,14 +62,29 @@ def _root_key(root: ConicParameterRoot) -> tuple[ExactScalar, ExactScalar, int]:
     return root.cosine_exact, root.sine_exact, root.turns
 
 
+def _root_only_parameter(endpoint: ConicParameterEndpoint, /) -> bool:
+    """Whether the endpoint's parameter is exactly its conic root's angle.
+
+    An angle-parameterized conic has a rational parameter only at the exact
+    phase-zero root; there the stored value must be exactly zero. Elsewhere
+    the exact cosine/sine/turn root is the sole parameter authority.
+    """
+    value = endpoint.parameter_exact
+    return value is None or (value == 0 and _root_key(endpoint.root) == (1, 0, 0))
+
+
 def _bound_endpoint(endpoint: object, curve: BRepCurve, edge_root: object) -> bool:
     """Check the coedge parameter root is transported from its exact edge root."""
     if isinstance(endpoint, ConicParameterEndpoint) and isinstance(
         edge_root, ConicParameterEndpoint
     ):
+        # Equal exact parameters, or both determined by the same exact root.
+        same_parameter = endpoint.parameter_exact == edge_root.parameter_exact or (
+            _root_only_parameter(endpoint) and _root_only_parameter(edge_root)
+        )
         return (
             carrier_payload(endpoint.carrier) == carrier_payload(curve)
-            and endpoint.parameter_exact == edge_root.parameter_exact
+            and same_parameter
             and endpoint.point_exact == edge_root.point_exact
             and endpoint.root.identity_payload() == edge_root.root.identity_payload()
         )
@@ -190,7 +205,7 @@ def recognize_torus_strip(model: BRepModel, face: int, /) -> TorusStrip | None:
         for root, vertex in zip(seam_roots, geometry.edge_vertices[seam], strict=True):
             if isinstance(root, ConicParameterEndpoint):
                 if (
-                    root.parameter_exact is not None
+                    not _root_only_parameter(root)
                     or carrier_payload(root.carrier) != carrier_payload(meridian)
                     or carrier_payload(root.root.conic) != carrier_payload(meridian)
                     or root.root.exact_point() != root.point_exact

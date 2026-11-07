@@ -1228,10 +1228,16 @@ def _cad_pole_lens_endpoint(
     """Represent an authenticated collapsed pole by its coedge junction.
 
     Only an exact point on a declared straight pole side may be replaced, and
-    only at the matching end of the named coedge. Both UV representatives
-    denote the same source corner; no physical mesh point is changed.
+    only at the matching end of the named coedge. A B-Rep pole side is either a
+    straight chart line or the source-rooted latitude of a revolution pole.
+    Both UV representatives denote the same source corner; no physical mesh
+    point is changed.
     """
-    from ._domain_boundary import _line_endpoints, _rooted_patch_chart_endpoints
+    from ._domain_boundary import (
+        _is_rooted_pole_line,
+        _line_endpoints,
+        _rooted_patch_chart_endpoints,
+    )
     from ._meshing_domain import PatchCurveUse, PatchPoleUse
     from .brep._patches import ExactLineCurve, LineCurve
 
@@ -1260,7 +1266,12 @@ def _cad_pole_lens_endpoint(
             charts.domain.brep_authority is None
             and not _surface_pole_proven(charts, patch, pole)
         )
-        or not isinstance(pole.pcurve, (ExactLineCurve, LineCurve))
+        or (
+            not isinstance(pole.pcurve, (ExactLineCurve, LineCurve))
+            and not (
+                charts.domain.brep_authority is not None and _is_rooted_pole_line(pole)
+            )
+        )
     ):
         return point
     start, stop = endpoints[neighbor]
@@ -1713,7 +1724,11 @@ def _validate_cad_chart_edge_incidence(
     /,
 ) -> None:
     """Prove which root-chart edges are interior instead of trusting sentinels."""
-    from ._domain_boundary import _line_endpoints, _rooted_patch_chart_endpoints
+    from ._domain_boundary import (
+        _is_rooted_pole_line,
+        _line_endpoints,
+        _rooted_patch_chart_endpoints,
+    )
     from ._meshing_domain import PatchPoleUse
     from .brep._patches import ExactLineCurve, LineCurve
 
@@ -1740,7 +1755,13 @@ def _validate_cad_chart_edge_incidence(
                 for use, side in zip(loop, loop_endpoints, strict=True):
                     if (
                         isinstance(use, PatchPoleUse)
-                        and isinstance(use.pcurve, (ExactLineCurve, LineCurve))
+                        and (
+                            isinstance(use.pcurve, (ExactLineCurve, LineCurve))
+                            or (
+                                charts.domain.brep_authority is not None
+                                and _is_rooted_pole_line(use)
+                            )
+                        )
                         and side == _line_endpoints(use)
                         and (
                             charts.domain.brep_authority is not None

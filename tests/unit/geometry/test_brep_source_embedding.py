@@ -2,6 +2,7 @@ from fractions import Fraction as F
 from math import pi, tau
 from pathlib import Path
 
+import jax.numpy as jnp
 import numpy as np
 
 from phydrax.geometry._meshing_domain import _PlacedSurfacePatch
@@ -145,6 +146,78 @@ def test_sphere_requires_explicit_actual_pole_quotients() -> None:
         is None
     )
     assert certify_source_embedding(SpherePatch(O, X, Y, X, 1), BOX) is None
+
+
+def test_sphere_revolution_requires_radial_meridian_frame() -> None:
+    # A meridian centred on the axis with a radial first axis revolves to the
+    # latitude chart, whose collapsed poles are exactly the sides ±τ/4.
+    box = ((F(0), NQ), (T, Q))
+    sphere = RevolutionSurface(CircleCurve(O, X, Z, 2), O, Z)
+    proof = certify_source_embedding(sphere, box, deck_axes=(0,), pole_roots=(NQ, Q))
+    assert proof is not None and proof.family == "sphere"
+    assert proof.replay(sphere, box, deck_axes=(0,), pole_roots=(NQ, Q))
+    assert certify_source_embedding(sphere, box, deck_axes=(0,)) is None
+    assert certify_source_embedding(sphere, box, deck_axes=(0,), pole_roots=(NQ,)) is None
+    # An axial first axis folds the same box over the axis: no sheet.
+    folded = RevolutionSurface(CircleCurve(O, Z, X, 2), O, Z)
+    assert (
+        certify_source_embedding(folded, box, deck_axes=(0,), pole_roots=(NQ, Q)) is None
+    )
+    assert certify_source_embedding(folded, BOX) is None
+
+
+def test_brep_sphere_trim_sheet_declares_exact_poles_and_seam() -> None:
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry._meshing_domain import MeshingDomain, PatchCurveUse
+    from phydrax.geometry.brep._constructors import brep_sphere
+
+    radius = F(1, 2)
+    model = brep_sphere(
+        float(radius),
+        coordinate_contract=SpatialCoordinateContract.si(),
+        source_id="sheet-sphere",
+    )
+    domain = MeshingDomain.from_brep(model)
+    proof = certify_brep_trim_sheet(domain, 0)
+    assert proof is not None and proof.replay(domain, 0)
+    embedding = proof.embedding
+    assert embedding.family == "sphere" and embedding.deck_axes == (0,)
+    geometry = model.geometry
+    (loop,) = geometry.face_loops[0]
+    # Independent pole oracle: a pole vertex at axial height h = ±r over the
+    # centre has latitude asin(h / r) = ±π/2 = ±τ/4 exactly.
+    poles = []
+    for coedge in loop:
+        edge = geometry.coedge_edges[coedge]
+        if geometry.edge_curves[edge] < 0:
+            point = geometry.vertex_exact_points[geometry.edge_vertices[edge][0]]
+            assert point is not None
+            height = point[2]
+            assert isinstance(height, F) and height / radius in (-1, 1)
+            poles.append(PeriodOffset(F(0), height / radius / 4))
+    assert sorted(poles, key=lambda pole: pole.turns) == [NQ, Q]
+    assert embedding.pole_roots == (NQ, Q)
+    assert embedding.bounds == ((F(0), NQ), (T, Q))
+    # Independent seam oracle: the u = 0 and u = τ chart lines are the two
+    # opposite uses of the meridian edge, and the carrier maps both onto it.
+    seams = []
+    for use, coedge in zip(domain.patches[0].loops[0], loop, strict=True):
+        if isinstance(use, PatchCurveUse):
+            line = _constant_chart_line(use.pcurve, 0)
+            assert line is not None
+            seams.append((line[0], geometry.coedge_edges[coedge], use.sense))
+    assert sorted(seam[0] == T for seam in seams) == [False, True]
+    assert any(seam[0] == F(0) for seam in seams)
+    assert seams[0][1] == seams[1][1] and seams[0][2] == -seams[1][2]
+    meridian = geometry.curves[geometry.edge_curves[seams[0][1]]]
+    latitudes = jnp.linspace(-pi / 2, pi / 2, 7)
+    surface = model.patches[0]
+    for u in (0.0, tau):
+        np.testing.assert_allclose(
+            surface.evaluate(jnp.column_stack((jnp.full_like(latitudes, u), latitudes))),
+            meridian.evaluate(latitudes),
+            atol=1e-14,
+        )
 
 
 def test_ring_torus_double_deck_and_strict_radii() -> None:

@@ -30,10 +30,10 @@ from ..discretization._cell_geometry import (
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
-    CellValidityStatus,
     CellValidityPolicy,
-    ComputedCellValidity,
+    CellValidityStatus,
     certify_cell_geometry_validity,
+    ComputedCellValidity,
 )
 from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._coordinate_enclosure import (
@@ -57,6 +57,7 @@ from ..discretization._nested_reference_types import (
 )
 from ..discretization._reference_cell import reference_cell_topology
 from ..geometry._mapped_reference_domain import MappedReferenceDomain
+from ..geometry._rational import binary64_norm_upper
 from ..linalg._exact import solve_exact
 from ..typing import checked
 from ._dual_extraction import (
@@ -1170,10 +1171,10 @@ def mapped_source_lipschitz_bound(frame: PreparedSourceHexFrame, /) -> float:
     if not isinstance(frame, PreparedSourceHexFrame):
         raise TypeError("frame must be PreparedSourceHexFrame.")
     axis_bounds = np.asarray(frame.axis_jacobian_bounds, dtype=np.float64)
-    value = math.sqrt(float(np.sum(np.max(axis_bounds, axis=0) ** 2)))
+    value = float(binary64_norm_upper(np.max(axis_bounds, axis=0)))
     if not math.isfinite(value) or value <= 0.0:
         raise ValueError("Mapped source Lipschitz bound must be positive and finite.")
-    return float(np.nextafter(value, np.inf))
+    return value
 
 
 def _equalize_root_axis_counts(
@@ -1817,6 +1818,21 @@ def _exact_binary64_interval(
     )
 
 
+def _two_thirds_power_lower(value: float, /) -> float:
+    """Binary64 lower bound of ``value ** (2/3)`` for a nonnegative ``value``.
+
+    ``y <= value ** (2/3)`` holds exactly when ``y**3 <= value**2``; the platform
+    ``pow`` estimate steps down until that exact comparison holds.
+    """
+    if value == 0.0:
+        return 0.0
+    squared = Fraction(value) ** 2
+    result = math.pow(value, 2.0 / 3.0)
+    while Fraction(result) ** 3 > squared:
+        result = math.nextafter(result, -math.inf)
+    return result
+
+
 def _mapped_root_quality(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1931,9 +1947,7 @@ def _mapped_root_quality(
                 np.nextafter(float(frobenius_square_exact), np.inf)
             )
             scaled_lower = float(np.nextafter(determinant_lower / product_upper, -np.inf))
-            determinant_power_lower = float(
-                np.nextafter(determinant_lower ** (2.0 / 3.0), -np.inf)
-            )
+            determinant_power_lower = _two_thirds_power_lower(determinant_lower)
             mean_numerator_lower = float(
                 np.nextafter(3.0 * determinant_power_lower, -np.inf)
             )

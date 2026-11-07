@@ -10,8 +10,10 @@ Only the stock operation types are admitted; any other payload fails closed.
 from typing import assert_never
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 from jax._src.core import JaxprEqn
+from jax.core import ShapedArray
 from jax.extend.core import jaxpr_as_fun
 
 from ..._jax_program import stock_high_expansion, stock_high_operation
@@ -23,6 +25,7 @@ from ._common import (
     _copy_index_sets,
     _empty_index_sets,
     _index_sets,
+    _store_folded_const,
     StateBounds,
     StateConsts,
     StateIndices,
@@ -58,7 +61,7 @@ def _prop_stock_high(
     match kind:
         case "searchsorted":
             _zero_derivative(eqn, state_indices)
-            _searchsorted_bounds(eqn, state_bounds)
+            _searchsorted_bounds(eqn, state_consts, state_bounds)
         case "nonzero":
             _zero_derivative(eqn, state_indices)
             _nonzero_bounds(eqn, state_consts, state_bounds)
@@ -77,7 +80,11 @@ def _prop_stock_high(
 
 
 def _propagate_const_stock_high(eqn: JaxprEqn, state_consts: StateConsts) -> None:
-    """Evaluate the operation's executed program on statically known operands."""
+    """Evaluate the operation's executed program on statically known operands.
+
+    Floating results (``ldexp``, the ``frexp`` mantissa) are not folded; see
+    ``_store_folded_const``.
+    """
     values = [_atom_const_val(invar, state_consts) for invar in eqn.invars]
     if any(value is None for value in values):
         return
@@ -85,16 +92,56 @@ def _propagate_const_stock_high(eqn: JaxprEqn, state_consts: StateConsts) -> Non
     with jax.ensure_compile_time_eval():
         results = expansion(*values)
     for outvar, result in zip(eqn.outvars, results, strict=True):
-        state_consts[outvar] = np.asarray(result)
+        _store_folded_const(state_consts, outvar, np.asarray(result))
 
 
-def _searchsorted_bounds(eqn: JaxprEqn, state_bounds: StateBounds) -> None:
-    """Insertion points lie in ``[0, n]`` for ``n`` sorted entries."""
-    length = _atom_shape(eqn.invars[0])[eqn.params["_prim"].dimension]
+def _searchsorted_bounds(
+    eqn: JaxprEqn, state_consts: StateConsts, state_bounds: StateBounds
+) -> None:
+    """Insertion points lie in ``[0, n]`` for ``n`` sorted entries.
+
+    An unbatched one-dimensional sorted operand whose entry enclosures are
+    strictly increasing is strictly sorted at runtime. Each query enclosure
+    then narrows the count: at least the entries whose upper bound is below
+    the query's lower bound, at most those whose lower bound does not exceed
+    its upper bound. Both counts hold for either side and for either ordering
+    of signed zeros, and equal counts fix the insertion point.
+    """
+    primitive = eqn.params["_prim"]
+    length = _atom_shape(eqn.invars[0])[primitive.dimension]
     out_shape = _atom_shape(eqn.outvars[0])
-    state_bounds[eqn.outvars[0]] = (
-        np.zeros(out_shape, dtype=np.int64),
-        np.full(out_shape, length, dtype=np.int64),
+    lower = np.zeros(out_shape, dtype=np.int64)
+    upper = np.full(out_shape, length, dtype=np.int64)
+    sorted_bounds = _atom_value_bounds(eqn.invars[0], state_consts, state_bounds)
+    query_bounds = _atom_value_bounds(eqn.invars[1], state_consts, state_bounds)
+    if (
+        primitive.batch_dims == 0
+        and len(_atom_shape(eqn.invars[0])) == 1
+        and sorted_bounds is not None
+        and query_bounds is not None
+        and _real_ordered(*sorted_bounds, *query_bounds)
+    ):
+        sorted_lower, sorted_upper = sorted_bounds
+        query_lower, query_upper = query_bounds
+        if np.all(sorted_upper[:-1] < sorted_lower[1:]):
+            lower = np.reshape(
+                np.searchsorted(sorted_upper, query_lower, side="left"), out_shape
+            ).astype(np.int64)
+            upper = np.reshape(
+                np.searchsorted(sorted_lower, query_upper, side="right"), out_shape
+            ).astype(np.int64)
+    state_bounds[eqn.outvars[0]] = (lower, upper)
+    aval = eqn.outvars[0].aval
+    if np.array_equal(lower, upper) and isinstance(aval, ShapedArray):
+        state_consts[eqn.outvars[0]] = lower.astype(aval.dtype)
+
+
+def _real_ordered(*arrays: np.ndarray) -> bool:
+    """Whether every array holds real, NaN-free values with a total order."""
+    return all(
+        not jnp.issubdtype(array.dtype, jnp.complexfloating)
+        and not np.any(np.isnan(array))
+        for array in arrays
     )
 
 

@@ -473,6 +473,16 @@ class NativeImplicitBoundaryQueryArchiveRecipe(NamedTuple):
     expected_query_id: str
 
 
+class NativeImplicitSourceArchiveRecipe(NamedTuple):
+    geometry: object
+    grid: object | None
+    discovery: object | None
+    authoring_profile: AnalyticImplicitProfileArchiveRecipe | None
+    source_id: str
+    source_revision: str
+    expected_binding_id: str
+
+
 class NativePlcSourceArchiveRecipe(NamedTuple):
     complex: object
     source_id: str
@@ -1836,6 +1846,27 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
                 value.frame_id,
                 profile_recipe,
                 value.query_id,
+            )
+    if type(value).__module__ == "phydrax.meshing.providers._native_sources":
+        from ..meshing.providers._native_sources import NativeImplicitSource
+
+        if type(value) is NativeImplicitSource:
+            implicit_profile: AnalyticImplicitProfileArchiveRecipe | None = None
+            if value.authoring_profile is not None:
+                recipe = _source_query_archive_recipe(value.authoring_profile)
+                if type(recipe) is not AnalyticImplicitProfileArchiveRecipe:
+                    raise TypeError(
+                        "Native implicit source lost its exact authoring-profile recipe."
+                    )
+                implicit_profile = recipe
+            return NativeImplicitSourceArchiveRecipe(
+                value.geometry,
+                value.grid,
+                None if value.discovery is None else value.discovery.archive_recipe,
+                implicit_profile,
+                value.source_id,
+                value.source_revision,
+                value.binding_id,
             )
     if isinstance(value, SourceBoundaryQuery):
         raise TypeError(

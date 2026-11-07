@@ -4,6 +4,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from ..._meshcore import (
+    exact_orient3d,
     TetMeshPeriodicEdit,
     TetMeshPeriodicEntityOrbitMap,
     TetMeshPeriodicIdentityMap,
@@ -148,7 +149,8 @@ def tet_mesh_periodic_state(
         for row, identifier in enumerate(vertex_lifted_ids)
     }
     top_entity_vertices = _entity_vertex_rows(mesh)[3]
-    quotient_cells = []
+    vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    staged: list[tuple[int, np.ndarray, int, np.ndarray]] = []
     for quotient_row, quotient_id in enumerate(cell_quotient_ids):
         members = np.flatnonzero(cell_lifted_to_quotient == quotient_row)
         if members.size == 0:
@@ -159,9 +161,6 @@ def tet_mesh_periodic_state(
         if cell_row is None:
             raise ValueError("Periodic representative cell ID is absent from the lifted mesh.")
         lifted_vertex_rows = np.asarray(top_entity_vertices[cell_row], dtype=np.int64)
-        lifted_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)[
-            lifted_vertex_rows
-        ]
         corner_permutation = np.array(
             cell_map.corner_permutation_row(representative_row),
             dtype=np.int64,
@@ -172,7 +171,48 @@ def tet_mesh_periodic_state(
             raise ValueError("Periodic quotient cell has an invalid corner orientation.")
         if orientation < 0:
             corner_permutation[[0, 1]] = corner_permutation[[1, 0]]
-        lifted_vertex_ids = lifted_vertex_ids[corner_permutation]
+        try:
+            region_values = {
+                region_by_cell_id[int(cell_lifted_ids[row])] for row in members
+            }
+        except KeyError as error:
+            raise ValueError("Periodic cell references an absent source entity identity.") from error
+        if len(region_values) != 1:
+            raise ValueError("Periodic material regions must agree over each quotient cell orbit.")
+        lifted_cell_ids = np.sort(cell_lifted_ids[members]).astype(np.uint64, copy=False)
+        staged.append(
+            (
+                int(quotient_id),
+                lifted_vertex_rows[corner_permutation],
+                next(iter(region_values)),
+                lifted_cell_ids,
+            )
+        )
+    # The orbit map orients corners relative to the connectivity's entity row,
+    # which is the sorted simplex for simplicial connectivity, not the oriented
+    # lifted cell. The native kernel requires positive quotient cells, so the
+    # exact orientation of the representative lift decides the corner order.
+    ordered_rows = np.asarray([rows for _, rows, _, _ in staged], dtype=np.int64).reshape(
+        (-1, 4)
+    )
+    points = np.asarray(mesh.coordinates, dtype=np.float64)[ordered_rows.reshape(-1)]
+    corners = points.reshape((-1, 4, 3))
+    signs = np.asarray(
+        exact_orient3d(corners[:, 0], corners[:, 1], corners[:, 2], corners[:, 3]),
+        dtype=np.int64,
+    ).reshape(-1)
+    if np.any(signs == 0):
+        raise ValueError("Periodic quotient cells must have nonzero exact orientation.")
+    negative = signs < 0
+    ordered_rows[negative, 0], ordered_rows[negative, 1] = (
+        ordered_rows[negative, 1].copy(),
+        ordered_rows[negative, 0].copy(),
+    )
+    quotient_cells = []
+    for (quotient_id, _, region, lifted_cell_ids), rows in zip(
+        staged, ordered_rows, strict=True
+    ):
+        lifted_vertex_ids = vertex_global_ids[rows]
         try:
             representative_vertices = np.asarray(
                 [
@@ -187,21 +227,15 @@ def tet_mesh_periodic_state(
                     for identifier in lifted_vertex_ids
                 ]
             )
-            region_values = {
-                region_by_cell_id[int(cell_lifted_ids[row])] for row in members
-            }
         except KeyError as error:
             raise ValueError("Periodic cell references an absent source entity identity.") from error
-        if len(region_values) != 1:
-            raise ValueError("Periodic material regions must agree over each quotient cell orbit.")
-        lifted_cell_ids = np.sort(cell_lifted_ids[members]).astype(np.uint64, copy=False)
         quotient_cells.append(
             TetMeshPeriodicQuotientCell(
-                int(quotient_id),
-                int(quotient_id),
+                quotient_id,
+                quotient_id,
                 representative_vertices,
                 winding,
-                next(iter(region_values)),
+                region,
                 lifted_cell_ids,
             )
         )

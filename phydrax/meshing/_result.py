@@ -3,8 +3,8 @@
 #
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
 
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 
@@ -27,6 +27,7 @@ from ._association import GeometryAssociation
 from ._audit import (
     _evidence_id,
     _mesh_evidence_issues,
+    CellMeshAuditPolicy,
     CellMeshAuditReport,
 )
 from ._certification import MeshCertificationReport
@@ -52,7 +53,10 @@ from ._organization import (
 from ._quality import CellQualityReport
 from ._trace import MeshingTrace
 
+
 if TYPE_CHECKING:
+    from ..geometry._global_embedding import GlobalEmbeddingCertificate
+    from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
     from ._canonical import _CellMeshAcceptance
     from .providers._native_sources import NativeLayerCoreSource
 
@@ -288,6 +292,190 @@ def _require_result_certification(
         raise ValueError("Result boundary must match its computed scientific acceptance.")
 
 
+def _restored_audit_policy(stored: CellMeshAuditPolicy, /) -> CellMeshAuditPolicy:
+    """Rebuild a stored audit policy and require its stored identity."""
+    from ..discretization._cell_geometry_validity import CellValidityPolicy
+
+    if type(stored) is not CellMeshAuditPolicy:
+        raise TypeError("Stored audit policy must be CellMeshAuditPolicy.")
+    validity = CellValidityPolicy(
+        relative_determinant_floor=stored.validity_policy.relative_determinant_floor,
+        relative_planarity_tolerance=stored.validity_policy.relative_planarity_tolerance,
+    )
+    names = (
+        "unused_entities",
+        "require_complete_association",
+        "minimum_measure",
+        "minimum_mean_ratio",
+        "maximum_aspect_ratio",
+        "coincident_vertices",
+        "coincident_vertex_tolerance",
+        "duplicate_cells",
+        "nonmanifold",
+        "inconsistent_orientation",
+        "watertight_boundary",
+        "self_intersection",
+        "invalid_geometry",
+        "unresolved",
+    )
+    policy = CellMeshAuditPolicy(
+        **{name: getattr(stored, name) for name in names},
+        validity_policy=validity,
+    )
+    if policy.policy_id != stored.policy_id or not _same_tree_content(policy, stored):
+        raise ValueError("Stored audit policy changed.")
+    return policy
+
+
+def _restored_adapter_report(stored: AdapterReport, /) -> AdapterReport:
+    """Rebuild one stored conversion report and its negotiation by constructor.
+
+    Losses, profiles, requirements, capabilities, waivers, and nested stages are
+    rebuilt by their owners; the report identity must reproduce. The external
+    conversion itself is never replayed.
+    """
+    from ..interchange._report import (
+        AdapterCapability,
+        AdapterFormatProfile,
+        AdapterLoss,
+        AdapterRequirement,
+        AdapterWaiver,
+    )
+
+    if type(stored) is not AdapterReport:
+        raise TypeError("Stored adapter reports must be AdapterReport values.")
+
+    def profile(value: AdapterFormatProfile, /) -> AdapterFormatProfile:
+        rebuilt = AdapterFormatProfile(value.format, qualifiers=value.qualifiers)
+        if rebuilt.profile_id != value.profile_id:
+            raise ValueError("Stored adapter format profile changed.")
+        return rebuilt
+
+    rebuilt = AdapterReport(
+        stored.status,
+        stored.source_format,
+        stored.target_format,
+        source_id=stored.source_id,
+        target_id=stored.target_id,
+        coordinate_mapping=stored.coordinate_mapping,
+        preserved_fields=stored.preserved_fields,
+        assumptions=stored.assumptions,
+        losses=tuple(
+            AdapterLoss(
+                item.path,
+                item.direction,
+                item.category,
+                item.rationale,
+                changes_interpretation=item.changes_interpretation,
+                affected_capability_ids=item.affected_capability_ids,
+            )
+            for item in stored.losses
+        ),
+        stage=stored.stage,
+        source_profile=profile(stored.source_profile),
+        target_profile=profile(stored.target_profile),
+        requirements=tuple(
+            AdapterRequirement(
+                item.semantic_id, required=item.required, rationale=item.rationale
+            )
+            for item in stored.requirements
+        ),
+        capabilities=tuple(
+            AdapterCapability(item.semantic_id, detail=item.detail)
+            for item in stored.capabilities
+        ),
+        waivers=tuple(
+            AdapterWaiver(item.loss_id, item.rationale) for item in stored.waivers
+        ),
+        stages=tuple(_restored_adapter_report(item) for item in stored.stages),
+    )
+    if rebuilt.report_id != stored.report_id or not _same_tree_content(rebuilt, stored):
+        raise ValueError("Stored adapter report changed.")
+    return rebuilt
+
+
+def _restored_global_embedding(
+    stored: GlobalEmbeddingCertificate, mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> GlobalEmbeddingCertificate:
+    """Recompute a stored global embedding over restored mesh and coordinate map.
+
+    Local validity and every global proof obligation are recomputed (through a
+    restored nested-restriction premise when the proof used one); the recomputed
+    certificates must reproduce the stored identities.
+    """
+    from ..discretization._cell_geometry_validity import (
+        CellValidityPolicy,
+        certify_cell_geometry_validity,
+    )
+    from ..geometry._global_embedding import (
+        certify_global_embedding,
+        GlobalEmbeddingCertificate,
+    )
+
+    if (
+        type(stored) is not GlobalEmbeddingCertificate
+        or stored.periodic is not None
+        or stored.periodic_restriction_premise is not None
+    ):
+        raise TypeError("Restored global embeddings require a nonperiodic proof.")
+    stored_validity = stored.validity
+    validity = certify_cell_geometry_validity(
+        geometry,
+        mesh=None if stored_validity.mesh is None else mesh,
+        policy=CellValidityPolicy(
+            relative_determinant_floor=stored_validity.policy.relative_determinant_floor,
+            relative_planarity_tolerance=stored_validity.policy.relative_planarity_tolerance,
+        ),
+    )
+    if validity.certificate_id != stored_validity.certificate_id:
+        raise ValueError("Stored cell validity does not reproduce its proof.")
+    nested = stored.nested_restriction_premise
+    embedding = certify_global_embedding(
+        mesh,
+        geometry,
+        validity,
+        junction_vertices=stored.binding.junction_vertices,
+        nested_restriction=(
+            None if nested is None else _restored_nested_restriction_premise(nested)
+        ),
+    )
+    if embedding.certificate_id != stored.certificate_id:
+        raise ValueError("Stored global embedding does not reproduce its proof.")
+    return embedding
+
+
+def _restored_nested_restriction_premise(
+    stored: NestedRestrictionPremise, /
+) -> NestedRestrictionPremise:
+    """Rebuild a stored nested-restriction premise from its restored owners.
+
+    The source embedding is recomputed over the restored source mesh and
+    coordinate map and the coordinate transition is rebuilt by its owner;
+    acceptance then re-proves the nested restriction theorem over them.
+    """
+    from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+    from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
+    from ..geometry._surface_source_archive import _geometry
+    from ._model_codec import _same_model_content, restore_model_archive_value
+
+    if type(stored) is not NestedRestrictionPremise:
+        raise TypeError("Stored embedding premise must be NestedRestrictionPremise.")
+    source_mesh = CellMesh.from_stored_fields(stored.source_mesh)
+    source_geometry = _geometry(stored.source_geometry, source_mesh)
+    source_embedding = _restored_global_embedding(
+        stored.source_embedding, source_mesh, source_geometry
+    )
+    transition = restore_model_archive_value(stored.transition)
+    if type(transition) is not CellGeometryTransition:
+        raise TypeError("Stored embedding premise lost its geometry transition.")
+    premise = NestedRestrictionPremise(
+        source_mesh, source_geometry, source_embedding, transition
+    )
+    if not _same_model_content(premise, stored):
+        raise ValueError("Stored nested-restriction premise changed.")
+    return premise
+
+
 class CellMeshingResult(StrictModule, NonTrainableState):
     mesh: CellMesh
     geometry: CellGeometrySpec
@@ -418,12 +606,16 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 or root.source_binding_id != layer_core_carrier_witness.source_binding_id
                 or root.specification_id != layer_core_carrier_witness.specification_id
             ):
-                raise ValueError("Layer root geometry and retained evidence have different source bindings.")
+                raise ValueError(
+                    "Layer root geometry and retained evidence have different source bindings."
+                )
             if mapped_layer_root:
                 from .providers._native_sources import NativeLayerCoreSource
 
                 if certification is None:
-                    raise ValueError("Mapped physical layer results require certification.")
+                    raise ValueError(
+                        "Mapped physical layer results require certification."
+                    )
                 source = certification.inputs.feature_source
                 if (
                     not isinstance(source, NativeLayerCoreSource)
@@ -432,16 +624,23 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                     or layer_core_overlap_stencils is not None
                     or layer_core_column_certification is not None
                 ):
-                    raise ValueError("Mapped physical layer results require their original mapped root.")
+                    raise ValueError(
+                        "Mapped physical layer results require their original mapped root."
+                    )
                 mapped_source = source
             elif (
                 layer_core_overlap_stencils is None
                 or layer_core_column_certification is None
-                or root.overlap_stencils.witness_id != layer_core_overlap_stencils.witness_id
-                or layer_core_column_certification.source_binding_id != root.source_binding_id
-                or layer_core_column_certification.specification_id != root.specification_id
+                or root.overlap_stencils.witness_id
+                != layer_core_overlap_stencils.witness_id
+                or layer_core_column_certification.source_binding_id
+                != root.source_binding_id
+                or layer_core_column_certification.specification_id
+                != root.specification_id
             ):
-                raise ValueError("Layer root geometry and retained evidence have different source bindings.")
+                raise ValueError(
+                    "Layer root geometry and retained evidence have different source bindings."
+                )
         if computed_root is not None:
             from .providers._native_sources import NativeLayerCoreSource
 
@@ -533,12 +732,16 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 **(
                     {}
                     if layer_core_overlap_stencils is None
-                    else {"layer_core_overlap_stencils": layer_core_overlap_stencils.witness_id}
+                    else {
+                        "layer_core_overlap_stencils": layer_core_overlap_stencils.witness_id
+                    }
                 ),
                 **(
                     {}
                     if layer_core_column_certification is None
-                    else {"layer_core_column_certification": layer_core_column_certification.certification_id}
+                    else {
+                        "layer_core_column_certification": layer_core_column_certification.certification_id
+                    }
                 ),
                 **(
                     {}
@@ -548,7 +751,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             }
         )
         if mapped_layer_root:
-            from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+            from ._layer_core_association_transfer import (
+                NativeLayerCoreAssociationTransfer,
+            )
 
             if mapped_source is None or layer_core_root_geometry is None:
                 raise ValueError("Mapped layer result lost its source/root authority.")
@@ -583,6 +788,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         never themselves authority for a carrier.
         A supplied ``computed_root`` is a fresh, operand-bound proof from the
         same restore operation, not a stored authority.
+        An uncertified result (the direct cell-mesh audit of ``certify_cell_mesh``
+        without certification inputs) is re-audited under the audit policy its
+        stored audit report retains.
         """
         from copy import copy
 
@@ -600,26 +808,31 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         )
         from ..interchange._cad_archive import _reconstruct_brep_graph
         from ._association import GeometryAssociationArchiveRecipe
-        from ._audit import CellMeshAuditPolicy
+        from ._audit import CellMeshManifoldScope
         from ._canonical import _certify_cell_mesh_acceptance
-        from ._certification_inputs import MeshCertificationInputs, validate_fidelity_witnesses
+        from ._certification_inputs import (
+            MeshCertificationInputs,
+            validate_fidelity_witnesses,
+        )
         from ._certification_schedule import MeshCertificationSchedule
         from ._controls import ProtectedFeature
         from ._model_codec import (
             _register_model_archive_types,
             _same_model_content,
-            restore_model_archive_value,
             restore_mapped_layer_core_boundary_source,
+            restore_model_archive_value,
         )
         from ._native_construction import NativeMeshOrganization
-        from .providers._native_sources import NativeLayerCoreSource
         from ._scope import MeshingScope
+        from .providers._native_sources import NativeLayerCoreSource
 
-        if (
-            type(value) is not cls
-            or type(value.certification) is not MeshCertificationReport
+        if type(value) is not cls or (
+            value.certification is not None
+            and type(value.certification) is not MeshCertificationReport
         ):
-            raise TypeError("Stored result must contain a mesh certification report.")
+            raise TypeError(
+                "Stored result certification must be a MeshCertificationReport or absent."
+            )
         _register_model_archive_types()
         for stored, regenerated, name in (
             (value.layer_curving_evidence, layer_curving_evidence, "layer curving"),
@@ -655,9 +868,10 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         geometry = _geometry(value.geometry, mesh)
         if computed_root is not None:
             root = layer_core_root_geometry
-            if type(root) is not LayerCoreRootGeometry or type(
-                layer_core_feature_source
-            ) is not NativeLayerCoreSource:
+            if (
+                type(root) is not LayerCoreRootGeometry
+                or type(layer_core_feature_source) is not NativeLayerCoreSource
+            ):
                 raise ValueError("A computed root requires its actual source and root.")
             computed_root.require(
                 layer_core_feature_source,
@@ -674,7 +888,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                     or not _same_model_content(mesh, root.mesh)
                     or not _same_model_content(geometry, root.geometry)
                 ):
-                    raise ValueError("Stored root endpoint differs from its proved operands.")
+                    raise ValueError(
+                        "Stored root endpoint differs from its proved operands."
+                    )
                 mesh, geometry = root.mesh, root.geometry
         contract = SpatialCoordinateContract.from_dict(
             value.coordinate_contract.to_dict()
@@ -842,6 +1058,58 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             if embedding.embedding_id != item.embedding_id:
                 raise ValueError("Stored planar embedding changed.")
 
+        if value.certification is None:
+            if (
+                computed_root is not None
+                or layer_core_feature_source is not None
+                or _computed_embedding_out is not None
+                or _validated_chart_parent_embedding is not None
+            ):
+                raise ValueError(
+                    "An uncertified stored result has no certified source authority."
+                )
+            audit_policy = _restored_audit_policy(value.audit.policy)
+            stored_scope = value.audit.manifold_scope
+            manifold_scope = None
+            if stored_scope is not None:
+                manifold_scope = CellMeshManifoldScope(
+                    stored_scope.kind,
+                    stored_scope.vertex_ids,
+                    star_cells=tuple(
+                        zip(
+                            stored_scope.star_cell_kinds,
+                            stored_scope.star_cell_ids,
+                            stored_scope.star_cell_vertex_ids,
+                            strict=True,
+                        )
+                    ),
+                )
+                if manifold_scope.scope_id != stored_scope.scope_id:
+                    raise ValueError("Stored audit manifold scope changed.")
+            audited = _certify_cell_mesh_acceptance(
+                mesh,
+                contract,
+                geometry=geometry,
+                audit_policy=audit_policy,
+                boundary=boundary,
+                patches=patches,
+                zones=zones,
+                labels=labels,
+                attributes=attributes,
+                associations=associations,
+                surface_source=surface_source,
+                region_boundary_evidence=region_boundaries,
+                planar_embedding=embedding,
+                layer_curving_evidence=layer_curving_evidence,
+                layer_core_carrier_witness=layer_core_carrier_witness,
+                layer_core_overlap_stencils=layer_core_overlap_stencils,
+                layer_core_column_certification=layer_core_column_certification,
+                layer_core_root_geometry=layer_core_root_geometry,
+                manifold_scope=manifold_scope,
+            )
+            return cls._complete_reproved_acceptance(
+                value, audited, CellQualityReport.from_stored_fields(value.audit.quality)
+            )
         report = value.certification
         original = report.inputs
         input_mesh = CellMesh.from_stored_fields(original.mesh)
@@ -853,16 +1121,25 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         schedule = MeshCertificationSchedule(original.schedule.route)
         if not _same_tree_content(schedule, original.schedule):
             raise ValueError("Stored certification schedule changed.")
-        domain = (
-            None
-            if original.domain is None
-            else restore_model_archive_value(original.domain)
-        )
+        # One owner often plays several certification roles (an analytic profile
+        # is domain, fidelity query and feature source); restore each distinct
+        # stored owner once so the roles keep one exact object.
+        restored_owners: list[tuple[object, object]] = []
+
+        def restored_owner(stored: object, /) -> object:
+            for previous, owner in restored_owners:
+                if previous is stored or _same_model_content(previous, stored):
+                    return owner
+            owner = restore_model_archive_value(stored)
+            restored_owners.append((stored, owner))
+            return owner
+
+        domain = None if original.domain is None else restored_owner(original.domain)
         source = (
             None
             if original.source is None
             or type(original.source) is LayerCoreFidelitySourceReferenceArchiveRecipe
-            else restore_model_archive_value(original.source)
+            else restored_owner(original.source)
         )
         if type(original.feature_source) is LayerCoreSourceReferenceArchiveRecipe:
             reference = original.feature_source
@@ -878,13 +1155,16 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             restored_feature_source = layer_core_feature_source
             actual_source = layer_core_feature_source.fidelity_source
             if type(original.source) is LayerCoreFidelitySourceReferenceArchiveRecipe:
-                from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+                from ..geometry._mapped_reference_boundary import (
+                    MappedReferenceBoundarySource,
+                )
 
                 stored_source = original.source
                 if (
                     type(actual_source) is not MappedReferenceBoundarySource
                     or stored_source.source_id != layer_core_feature_source.source_id
-                    or stored_source.source_revision != layer_core_feature_source.source_revision
+                    or stored_source.source_revision
+                    != layer_core_feature_source.source_revision
                     or stored_source.binding_id != layer_core_feature_source.binding_id
                     or actual_source.source_id != stored_source.source_id
                     or actual_source.source_revision != stored_source.source_revision
@@ -900,27 +1180,30 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             source = actual_source
         else:
             if type(original.source) is LayerCoreFidelitySourceReferenceArchiveRecipe:
-                raise ValueError("Layer core fidelity reference requires its restored source owner.")
+                raise ValueError(
+                    "Layer core fidelity reference requires its restored source owner."
+                )
             if layer_core_feature_source is not None:
-                raise ValueError("Layer core source override requires a stored source reference.")
+                raise ValueError(
+                    "Layer core source override requires a stored source reference."
+                )
             restored_feature_source = (
                 None
                 if original.feature_source is None
-                else restore_model_archive_value(original.feature_source)
+                else restored_owner(original.feature_source)
             )
             from .providers._native_sources import (
                 NativeStructuredSource,
                 NativeSweepSource,
             )
 
-            if type(restored_feature_source) in (
-                NativeStructuredSource,
-                NativeSweepSource,
+            if (
+                type(restored_feature_source) is NativeStructuredSource
+                or type(restored_feature_source) is NativeSweepSource
             ):
-                if (
-                    not _same_model_content(source, restored_feature_source.fidelity_source)
-                    or not _same_model_content(domain, restored_feature_source.domain)
-                ):
+                if not _same_model_content(
+                    source, restored_feature_source.fidelity_source
+                ) or not _same_model_content(domain, restored_feature_source.domain):
                     raise ValueError(
                         "Stored structured or sweep certification differs from its "
                         "restored source authority."
@@ -941,19 +1224,33 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 for item in original.protected_features
             )
         )
+        from ..geometry._source_boundary_records import SurfaceEnvelopeDistanceWitness
+
+        def stored_witness[W](witness: W, /) -> W:
+            # An envelope witness retains its derived chart source and witness
+            # as archive recipes; they are rebuilt through their owners.
+            return (
+                restore_model_archive_value(witness)
+                if type(witness) is SurfaceEnvelopeDistanceWitness
+                else witness
+            )
+
         scoped = tuple(
             (
-                restore_mapped_layer_core_boundary_source(query, layer_core_feature_source)
+                restore_mapped_layer_core_boundary_source(
+                    query, layer_core_feature_source
+                )
                 if type(query) is MappedReferenceBoundarySourceArchiveRecipe
                 and type(query.authority) is MappedCoreFacetAuthorityArchiveRecipe
                 else restore_model_archive_value(query),
-                witness,
+                stored_witness(witness),
                 tolerance,
             )
             for query, witness, tolerance in original.scoped_fidelity
         )
+        fidelity_witness = stored_witness(original.fidelity_witness)
         validated = validate_fidelity_witnesses(
-            mesh, geometry, source, original.fidelity_witness, scoped
+            mesh, geometry, source, fidelity_witness, scoped
         )
         inputs = MeshCertificationInputs(
             mesh,
@@ -969,7 +1266,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             junction_vertices=original.junction_vertices,
             protected_features=features,
             scoped_fidelity=scoped,
-            fidelity_witness=original.fidelity_witness,
+            fidelity_witness=fidelity_witness,
             feature_source=restored_feature_source,
             layer_core_root_geometry=layer_core_root_geometry,
             computed_root=computed_root,
@@ -1006,7 +1303,8 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 if (
                     query is None
                     or not isinstance(
-                        witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+                        witness,
+                        (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness),
                     )
                     or witness.witness_id != association.source_boundary_witness_id
                     or witness.source_id != association.source_id
@@ -1027,33 +1325,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             # Reproof of each exact association row and its source-side support
             # is performed by canonical recertification using this same token bank.
             checked_associations.add(key)
-        stored_policy = report.audit_policy
-        validity = CellValidityPolicy(
-            relative_determinant_floor=stored_policy.validity_policy.relative_determinant_floor,
-            relative_planarity_tolerance=stored_policy.validity_policy.relative_planarity_tolerance,
-        )
-        names = (
-            "unused_entities",
-            "require_complete_association",
-            "minimum_measure",
-            "minimum_mean_ratio",
-            "maximum_aspect_ratio",
-            "coincident_vertices",
-            "coincident_vertex_tolerance",
-            "duplicate_cells",
-            "nonmanifold",
-            "inconsistent_orientation",
-            "watertight_boundary",
-            "self_intersection",
-            "invalid_geometry",
-            "unresolved",
-        )
-        policy = CellMeshAuditPolicy(
-            **{name: getattr(stored_policy, name) for name in names},
-            validity_policy=validity,
-        )
-        if not _same_tree_content(policy, stored_policy):
-            raise ValueError("Stored audit policy changed.")
+        policy = _restored_audit_policy(report.audit_policy)
         organization = NativeMeshOrganization(
             boundary=boundary,
             patches=patches,
@@ -1076,10 +1348,21 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             inputs, audit_policy=policy, organization=organization
         )
         stored_quality = CellQualityReport.from_stored_fields(report.audit.quality)
+        stored_embedding = report.embedding
+        embedding_premise = (
+            None
+            if stored_embedding is None
+            or stored_embedding.nested_restriction_premise is None
+            else _restored_nested_restriction_premise(
+                stored_embedding.nested_restriction_premise
+            )
+        )
         computed_embedding = None
         if _computed_embedding_out is not None:
             if not isinstance(_computed_embedding_out, list) or _computed_embedding_out:
-                raise ValueError("Computed embedding output must be an empty operation-local list.")
+                raise ValueError(
+                    "Computed embedding output must be an empty operation-local list."
+                )
             root = layer_core_root_geometry
             if (
                 computed_root is not None
@@ -1095,7 +1378,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                     geometry, mesh, policy.validity_policy, ()
                 )
                 computed_embedding = ValidatedGlobalEmbedding(
-                    mesh, geometry, computed_validity.certificate,
+                    mesh,
+                    geometry,
+                    computed_validity.certificate,
                     validated_validity=computed_validity,
                 )
         result = _certify_cell_mesh_acceptance(
@@ -1121,6 +1406,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             computed_root=computed_root,
             _validated_embedding=computed_embedding,
             _validated_chart_parent_embedding=_validated_chart_parent_embedding,
+            embedding_premise=embedding_premise,
             validated_witnesses=validated,
         )
         rebuilt = cls._complete_reproved_acceptance(
@@ -1143,16 +1429,24 @@ class CellMeshingResult(StrictModule, NonTrainableState):
     ) -> CellMeshingResult:
         """Finalize original publication metadata after actual acceptance reproof."""
         report = value.certification
-        if report is None or result.certification is None:
+        if (report is None) != (result.certification is None):
             raise ValueError("Stored result requires its recomputed acceptance.")
-        mesh, geometry, contract = result.mesh, result.geometry, result.coordinate_contract
-        inputs = result.certification.inputs
+        mesh, geometry, contract = (
+            result.mesh,
+            result.geometry,
+            result.coordinate_contract,
+        )
+        inputs = None if result.certification is None else result.certification.inputs
         boundary, patches, zones, labels = (
-            result.boundary, result.patches, result.zones, result.labels
+            result.boundary,
+            result.patches,
+            result.zones,
+            result.labels,
         )
         attributes, associations = result.attributes, result.associations
         surface_source, region_boundaries = (
-            result.surface_source, result.region_boundary_evidence
+            result.surface_source,
+            result.region_boundary_evidence,
         )
         embedding = result.planar_embedding
         layer_curving_evidence = result.layer_curving_evidence
@@ -1169,7 +1463,10 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             if stored_event is None
             else restore_model_archive_value(model_archive_projection(stored_event))
         )
-        if surface_quad_field_event is not None and type(surface_quad_field_event) is not SurfaceQuadFieldEvent:
+        if (
+            surface_quad_field_event is not None
+            and type(surface_quad_field_event) is not SurfaceQuadFieldEvent
+        ):
             raise TypeError("Stored quad field event lost its canonical owner.")
 
         if not _same_model_content(mesh, value.mesh) or not _same_model_content(
@@ -1177,8 +1474,8 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         ):
             raise ValueError("Recomputed acceptance binds different stored operands.")
         if (
-            result.certification is None
-            or result.certification.report_id != report.report_id
+            (None if report is None else report.report_id)
+            != (None if result.certification is None else result.certification.report_id)
             or result.quality.report_id != stored_quality.report_id
             or result.audit.report_id != value.audit.report_id
             or result.quality.report_id != value.quality.report_id
@@ -1193,10 +1490,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         from ._contracts import MeshingFailureEvidence
         from ._trace import MeshingDiagnostic, MeshingStageReport
 
-        if value.adapter_reports:
-            raise ValueError(
-                "Stored adapter reports require their independent archive owner."
-            )
+        adapter_reports = tuple(
+            _restored_adapter_report(item) for item in value.adapter_reports
+        )
         stored_compliance = value.compliance
         compliance = MeshingComplianceReport(
             stored_compliance.specification_id,
@@ -1270,17 +1566,19 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         if not _same_tree_content(trace, value.trace):
             raise ValueError("Stored meshing trace changed.")
         provenance = SemanticProvenance.from_stored_fields(value.provenance)
-        if provenance.matches_content_fields(
-            {"kind": "native-mesh-construction"}
-        ) and not provenance.matches_content_fields(
-            {
-                "source": (inputs.source_id, inputs.source_revision),
-                "specification": compliance.specification_id,
-                "certification": report.report_id,
-                "surface_quad_field_event": None
-                if surface_quad_field_event is None
-                else surface_quad_field_event.event_id,
-            }
+        if provenance.matches_content_fields({"kind": "native-mesh-construction"}) and (
+            inputs is None
+            or report is None
+            or not provenance.matches_content_fields(
+                {
+                    "source": (inputs.source_id, inputs.source_revision),
+                    "specification": compliance.specification_id,
+                    "certification": report.report_id,
+                    "surface_quad_field_event": None
+                    if surface_quad_field_event is None
+                    else surface_quad_field_event.event_id,
+                }
+            )
         ):
             raise ValueError(
                 "Stored native provenance differs from its revalidated premises."
@@ -1318,6 +1616,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             associations=associations,
             surface_source=surface_source,
             surface_quad_field_event=surface_quad_field_event,
+            adapter_reports=adapter_reports,
             region_boundary_evidence=region_boundaries,
             planar_embedding=embedding,
             certification=result.certification,

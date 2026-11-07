@@ -6,12 +6,26 @@ from jax._src.core import JaxprEqn
 from ._common import (
     _atom_value_bounds,
     _clear_where_zero,
+    _is_floating,
     _propagate_const_binary,
+    _store_bounds,
     StateBounds,
     StateConsts,
     StateIndices,
 )
-from ._elementwise import _binary_elementwise
+from ._elementwise import _binary_elementwise, _integer_division_defined
+
+
+def _integer_quotient(dividend: np.ndarray, divisor: np.ndarray) -> np.ndarray | None:
+    """Integer ``lax.div``: the quotient is truncated toward zero.
+
+    Floating quotients are never folded (see ``_store_folded_const``).
+    """
+    if not _integer_division_defined(dividend, divisor):
+        return None
+    quotient = np.floor_divide(dividend, divisor)
+    inexact = np.remainder(dividend, divisor) != 0
+    return np.where(inexact & ((dividend < 0) != (divisor < 0)), quotient + 1, quotient)
 
 
 def _prop_div(
@@ -37,7 +51,7 @@ def _prop_div(
         invars[1]: denominator
     """
     _binary_elementwise(eqn, state_indices)
-    _propagate_const_binary(eqn, state_consts, np.divide)
+    _propagate_const_binary(eqn, state_consts, _integer_quotient)
     _clear_where_zero(eqn, state_indices, state_consts, 0)
     _propagate_bounds_div(eqn, state_consts, state_bounds)
 
@@ -47,11 +61,12 @@ def _propagate_bounds_div(
     state_consts: StateConsts,
     state_bounds: StateBounds,
 ) -> None:
-    """Propagate value bounds through ``div`` via interval arithmetic.
+    """Propagate value bounds through ``div``.
 
-    Only propagates when divisor bounds have constant sign (no zero crossing),
-    since division by an interval spanning zero is undefined.
-    Uses ``floor_divide`` for integer dtypes and ``true_divide`` for floats.
+    Only propagates when divisor bounds have constant sign (no zero crossing).
+    True and truncating division are monotone in each operand on such a box,
+    so the extreme quotients are attained at its corners. Floating corners are
+    widened to backend enclosures (see ``_backend_bounds``).
     """
     in1_bounds = _atom_value_bounds(eqn.invars[0], state_consts, state_bounds)
     in2_bounds = _atom_value_bounds(eqn.invars[1], state_consts, state_bounds)
@@ -65,15 +80,14 @@ def _propagate_bounds_div(
     if not (np.all(lo2 > 0) or np.all(hi2 < 0)):
         return
 
-    out_dtype = getattr(eqn.outvars[0].aval, "dtype", np.float64)
-    divide = np.floor_divide if np.issubdtype(out_dtype, np.integer) else np.true_divide
-
-    # All four endpoint combinations.
-    c1 = divide(lo1, lo2)
-    c2 = divide(lo1, hi2)
-    c3 = divide(hi1, lo2)
-    c4 = divide(hi1, hi2)
-
-    lo = np.minimum(np.minimum(c1, c2), np.minimum(c3, c4))
-    hi = np.maximum(np.maximum(c1, c2), np.maximum(c3, c4))
-    state_bounds[eqn.outvars[0]] = (lo, hi)
+    pairs = [(dividend, divisor) for dividend in (lo1, hi1) for divisor in (lo2, hi2)]
+    if any(_is_floating(end) for end in (lo1, hi1, lo2, hi2)):
+        with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+            corners = [np.true_divide(dividend, divisor) for dividend, divisor in pairs]
+    else:
+        quotients = [_integer_quotient(dividend, divisor) for dividend, divisor in pairs]
+        if any(quotient is None for quotient in quotients):
+            return
+        corners = [quotient for quotient in quotients if quotient is not None]
+    stacked = np.stack(np.broadcast_arrays(*corners))
+    _store_bounds(eqn, state_bounds, np.min(stacked, axis=0), np.max(stacked, axis=0))

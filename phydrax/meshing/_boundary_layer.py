@@ -53,7 +53,7 @@ from ..discretization._periodic_exact import (
     exact_periodic_element,
     identification_orders,
 )
-from ..discretization._periodic_topology import PeriodicMeshTopology, _entity_vertex_rows
+from ..discretization._periodic_topology import _entity_vertex_rows, PeriodicMeshTopology
 from ..geometry._source_identity import source_entity_id
 from ..typing import checked
 from ._association import _incidence_pairs, GeometryAssociation
@@ -3692,7 +3692,7 @@ def _reprove_retained_front(
     policy: BoundaryLayerPolicy,
     wall_association: GeometryAssociation | None,
     /,
-) -> tuple[_Wall, _Front, _Directions, np.ndarray]:
+) -> tuple[_Wall, _Front, _Directions]:
     """Reprove source binding and front ancestry, without accepting the layers.
 
     This is only the front portion of retained-state reproof.  In particular,
@@ -3767,10 +3767,7 @@ def _reprove_retained_front(
             equal = actual == expected
         if not equal:
             raise ValueError(f"Retained layer front ancestry differs in {name}.")
-    stretch = _probe_stretch(wall, front)
-    if np.any(stretch > control.maximum_corner_stretch):
-        raise ValueError("Retained layer front exceeds maximum_corner_stretch.")
-    return wall, front, directions, stretch
+    return wall, front, directions
 
 
 def _reprove_retained_cell_intersections(
@@ -3870,20 +3867,33 @@ def _reprove_retained_boundary_layers(
     policy_ = BoundaryLayerPolicy() if policy is None else policy
     if not bool(eqx.tree_equal(retained.obstacles, obstacles)):
         raise ValueError("Retained layers do not bind the actual obstacles.")
-    wall, front, directions, stretch = _reprove_retained_front(
+    wall, front, directions = _reprove_retained_front(
         retained, source_wall, control, policy_, wall_association
     )
     thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
     levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
     count = np.asarray(retained.column_layer_count, dtype=np.int64)
     scale = np.asarray(retained.column_scale, dtype=np.float64)
-    realized_stretch = stretch
-    if source_wall.periodic_topology is not None:
-        synchronized = np.zeros_like(stretch)
-        np.maximum.at(synchronized, front.column_orbits, stretch)
-        realized_stretch = synchronized[front.column_orbits]
-    if not np.array_equal(np.asarray(retained.column_stretch), realized_stretch):
-        raise ValueError("Retained column stretch differs from the source wall.")
+    # The column stretch is stored evidence: the generator's acceptance
+    # (``stretch <= maximum_corner_stretch``, periodic orbit synchronization) is
+    # decided exactly on the stored array, never on a float re-derivation of the
+    # probe, which depends on the host's floating-point kernels.
+    realized_stretch = np.asarray(retained.column_stretch, dtype=np.float64)
+    if realized_stretch.shape != front.column_vertex.shape:
+        raise ValueError("Retained column stretch does not match the source front.")
+    if np.any(realized_stretch > control.maximum_corner_stretch):
+        raise ValueError("Retained layer front exceeds maximum_corner_stretch.")
+    if source_wall.periodic_topology is None:
+        # The generator's collision predictor read exactly this stretch.
+        stretch = realized_stretch
+    else:
+        synchronized = np.zeros_like(realized_stretch)
+        np.maximum.at(synchronized, front.column_orbits, realized_stretch)
+        if not np.array_equal(realized_stretch, synchronized[front.column_orbits]):
+            raise ValueError("Retained periodic column stretch is not synchronized.")
+        # The generator's collision predictor read the unsynchronized probe,
+        # which the archive does not store; only the predictor consumes it.
+        stretch = _probe_stretch(wall, front)
     columns = _Columns(
         levels, realized_stretch, scale, count,
         np.asarray(retained.column_merged_top, dtype=np.int64),
@@ -4081,7 +4091,7 @@ def _reprove_retained_boundary_layers(
         "concave_ridge_count": np.count_nonzero(wall.concave),
         "rim_vertex_count": np.count_nonzero(wall.rim_vertex),
         "minimum_visibility": float(np.min(directions.visibility)),
-        "maximum_stretch": float(np.max(stretch)),
+        "maximum_stretch": float(np.max(realized_stretch)),
         "collision_policy": control.collision,
         "reduced_vertex_count": np.count_nonzero(scale[wall.wall_vertices] < 1.0),
         "terminated_vertex_count": np.count_nonzero(count[wall.wall_vertices] < thicknesses.size),

@@ -16,7 +16,6 @@ import math
 from collections.abc import Iterator
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import combinations
 from typing import Literal, TYPE_CHECKING
 
 import numpy as np
@@ -723,14 +722,39 @@ def _cad_chart_vertex_key(
     point: _Point2,
     /,
 ) -> tuple[object, ...]:
+    from ._domain_boundary import (
+        _is_rooted_pole_line,
+        _line_endpoints,
+        _rooted_patch_chart_endpoints,
+    )
     from ._meshing_domain import PatchCurveUse, PatchPoleUse
 
     labels: set[tuple[object, ...]] = set()
-    for loop in domain.patches[patch].loops:
-        for use in loop:
+    rooted_sides = None
+    for loop_index, loop in enumerate(domain.patches[patch].loops):
+        for use_index, use in enumerate(loop):
             if isinstance(use, PatchPoleUse):
                 # A collapsed pole side maps every chart point to its one corner.
-                if _cad_pcurve_parameter(use, point) is not None:
+                # A B-Rep rooted pole latitude is located on its rooted chart
+                # side, exactly as the CAD pole lens does.
+                on_pole = _cad_pcurve_parameter(use, point) is not None
+                if (
+                    not on_pole
+                    and domain.brep_authority is not None
+                    and _is_rooted_pole_line(use)
+                ):
+                    if rooted_sides is None:
+                        rooted_sides = _rooted_patch_chart_endpoints(domain, patch)
+                    start, stop = rooted_sides[loop_index][use_index]
+                    dx, dy = stop[0] - start[0], stop[1] - start[1]
+                    px, py = point[0] - start[0], point[1] - start[1]
+                    along = px * dx + py * dy
+                    on_pole = (
+                        (start, stop) == _line_endpoints(use)
+                        and px * dy == py * dx
+                        and 0 <= along <= dx * dx + dy * dy
+                    )
+                if on_pole:
                     labels.add(
                         (
                             "corner",

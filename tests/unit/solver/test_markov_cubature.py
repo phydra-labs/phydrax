@@ -1,5 +1,7 @@
+from fractions import Fraction
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
@@ -211,3 +213,56 @@ def test_dynamic_nonfinite_failure_returns_a_status_when_throw_is_disabled() -> 
     assert solution.status == int(phx.solver.MarkovCubatureStatus.NONFINITE_DYNAMICS)
     assert not solution.successful
     assert not solution.valid[-1]
+
+
+def test_weak_error_bound_dominates_its_exact_rational_value() -> None:
+    solution = phx.solver.solve_markov_cubature(
+        _additive_problem(rate=0.2, initial=1.0), _plan(4)
+    )
+    envelope = phx.solver.WeakObservableEnvelope(
+        "mean", jnp.asarray([0.663]), jnp.asarray(0.907)
+    )
+    evidence = phx.solver.markov_cubature_error_evidence(
+        solution,
+        signature_residuals=jnp.asarray([0.798]),
+        flow_errors=jnp.asarray([0.303]),
+        embedded_errors=jnp.asarray([0.37]),
+        envelope=envelope,
+    )
+    recombination = float(jnp.max(jnp.abs(evidence.recombination)))
+    errors = (0.798, recombination, 0.303, 0.37)
+    exact = Fraction(0.663) * Fraction(0.907) * sum(map(Fraction, errors))
+    # Measured counterexample: the round-to-nearest product falls below it.
+    nearest = 0.663 * 0.907 * (errors[0] + errors[1] + errors[2] + errors[3])
+    assert Fraction(nearest) < exact
+    assert evidence.rigorous_upper_bound is not None
+    assert Fraction(float(evidence.rigorous_upper_bound)) >= exact
+
+
+def test_weak_error_bound_is_traceable_and_matches_eager() -> None:
+    solution = phx.solver.solve_markov_cubature(
+        _additive_problem(rate=0.2, initial=1.0), _plan(4)
+    )
+    envelope = phx.solver.WeakObservableEnvelope(
+        "mean", jnp.asarray([0.663]), jnp.asarray(0.907)
+    )
+
+    def bound(residual: Any, envelope_: Any, solution_: Any) -> Any:
+        return phx.solver.markov_cubature_error_evidence(
+            solution_,
+            signature_residuals=residual,
+            flow_errors=jnp.asarray([0.303]),
+            embedded_errors=jnp.asarray([0.37]),
+            envelope=envelope_,
+        ).rigorous_upper_bound
+
+    residuals = jnp.asarray([[0.798], [0.5]])
+    eager = jnp.stack([bound(row, envelope, solution) for row in residuals])
+    jitted = jax.jit(lambda row: bound(row, envelope, solution))(residuals[0])
+    filtered = eqx.filter_jit(bound)(residuals[0], envelope, solution)
+    mapped = jax.vmap(lambda row: bound(row, envelope, solution))(residuals)
+    assert jnp.array_equal(jitted, eager[0])
+    assert jnp.array_equal(filtered, eager[0])
+    assert jnp.array_equal(mapped, eager)
+    nonfinite = bound(jnp.asarray([jnp.inf]), envelope, solution)
+    assert jnp.isnan(nonfinite)

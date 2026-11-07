@@ -30,9 +30,9 @@ from __future__ import annotations
 
 import itertools
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from fractions import Fraction
-from typing import assert_never, Literal, NoReturn, TypeAlias
+from typing import assert_never, final, Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax
@@ -1604,6 +1604,284 @@ def certify_trigonometric_sheet_thickness(
     )
 
 
+# Probabilities of the reported measured thickness quantiles.
+_THICKNESS_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
+# Line samples per period of a line's largest frequency (root bracketing).
+_LINE_SAMPLES_PER_PERIOD = 32
+# Points per measured evaluation; bounds the host working set.
+_MEASURE_CHUNK = 65536
+# Chord march steps evaluated together per active ray.
+_MARCH_BLOCK = 32
+
+
+def _measured_values(enclosure: _TableEnclosure, points: np.ndarray, /) -> np.ndarray:
+    """Binary64 midpoints of the point value enclosures (measured, not certified)."""
+    values = np.empty(points.shape[0], dtype=np.float64)
+    for start in range(0, points.shape[0], _MEASURE_CHUNK):
+        chunk = points[start : start + _MEASURE_CHUNK]
+        low, high = enclosure.evaluate(chunk, chunk, 0)[0]
+        values[start : start + _MEASURE_CHUNK] = 0.5 * low + 0.5 * high
+    return values
+
+
+def _bisect_to_binary64(
+    excess: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    low: np.ndarray,
+    high: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Bisect brackets with ``excess(rows, low) <= 0 < excess(rows, high)``.
+
+    Each bracket halves until its midpoint rounds onto an end (binary64
+    resolution), so the loop ends on that decided outcome.
+    """
+    low, high = low.copy(), high.copy()
+    while True:
+        middle = 0.5 * low + 0.5 * high
+        rows = np.flatnonzero((middle > low) & (middle < high))
+        if not rows.size:
+            return middle
+        above = excess(rows, middle[rows]) > 0.0
+        high[rows[above]] = middle[rows[above]]
+        low[rows[~above]] = middle[rows[~above]]
+
+
+@final
+class TrigonometricThicknessDistribution(StrictModule, NonTrainableState):
+    """Measured wall-thickness distribution of a sheet band beside its certified minimum.
+
+    Sampling (measured evidence, not certified): the mid-surface points are
+    the roots of ``F = c`` on the ``3 n^2`` reduced-coordinate lines parallel
+    to one lattice vector whose two other reduced coordinates are
+    ``(i / n, j / n)``, ``n = lines_per_axis``. Roots are bracketed by sign
+    changes at 32 samples per period of the line's largest frequency and
+    bisected to binary64; a line tangent to the mid-surface between samples
+    contributes no point. At each point ``p`` the band chord along the unit
+    Cartesian normal ``grad F / ||grad F||`` is measured: each direction is
+    marched in steps of ``uniform_minimum / 4`` until ``|F - c| > tau``, the
+    exit is bisected to binary64, and the thickness is the chord length. A ray
+    without an exit within the sum of the lattice-vector lengths is counted
+    in ``unexited_count`` and its point is dropped.
+
+    ``uniform_minimum`` is ``2 tau / gradient_norm_upper`` (rounded down)
+    with ``gradient_norm_upper`` a certified bound of ``sup ||grad F||`` over
+    the band, and ``certified_minimum`` is the larger of it and the integral
+    bound ``TrigonometricSheetThickness.minimum_thickness``; both are
+    certified lower bounds of the wall thickness. Each half chord runs inside
+    the band from ``F = c`` to a band boundary, so every measured thickness is
+    at least ``certified_minimum``. ``quantiles`` are the measured
+    thicknesses at ``quantile_levels`` (linear interpolation).
+    """
+
+    thicknesses: np.ndarray
+    points: np.ndarray
+    level: float = eqx.field(static=True)
+    half_width: float = eqx.field(static=True)
+    lines_per_axis: int = eqx.field(static=True)
+    unexited_count: int = eqx.field(static=True)
+    certified_minimum: float = eqx.field(static=True)
+    uniform_minimum: float = eqx.field(static=True)
+    gradient_norm_upper: float = eqx.field(static=True)
+    minimum: float = eqx.field(static=True)
+    maximum: float = eqx.field(static=True)
+    quantile_levels: tuple[float, ...] = eqx.field(static=True)
+    quantiles: tuple[float, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        thicknesses: np.ndarray,
+        points: np.ndarray,
+        level: float,
+        half_width: float,
+        lines_per_axis: int,
+        unexited_count: int,
+        certified_minimum: float,
+        uniform_minimum: float,
+        gradient_norm_upper: float,
+    ) -> None:
+        values = _readonly(thicknesses)
+        located = _readonly(points)
+        if values.ndim != 1 or not values.size or located.shape != (values.size, 3):
+            raise ValueError("A thickness distribution needs one point per sample.")
+        self.thicknesses = values
+        self.points = located
+        self.level = float(level)
+        self.half_width = float(half_width)
+        self.lines_per_axis = int(lines_per_axis)
+        self.unexited_count = int(unexited_count)
+        self.certified_minimum = float(certified_minimum)
+        self.uniform_minimum = float(uniform_minimum)
+        self.gradient_norm_upper = float(gradient_norm_upper)
+        self.minimum = float(np.min(values))
+        self.maximum = float(np.max(values))
+        self.quantile_levels = _THICKNESS_QUANTILES
+        self.quantiles = tuple(
+            float(value) for value in np.quantile(values, _THICKNESS_QUANTILES)
+        )
+
+    @property
+    def sample_count(self) -> int:
+        return int(self.thicknesses.size)
+
+
+def _mid_surface_points(
+    enclosure: _TableEnclosure, table: TrigonometricTable, level: float, lines: int, /
+) -> np.ndarray:
+    """Reduced roots of ``F = level`` on the documented axis-parallel lines."""
+    offsets = np.arange(lines, dtype=np.float64) / lines
+    grid = np.stack(np.meshgrid(offsets, offsets, indexing="ij"), axis=-1).reshape(
+        (-1, 2)
+    )
+    roots: list[np.ndarray] = []
+    for axis in range(3):
+        others = [other for other in range(3) if other != axis]
+        frequency = max(table.axis_frequencies(axis), default=1)
+        count = _LINE_SAMPLES_PER_PERIOD * frequency
+        steps = np.arange(count + 1, dtype=np.float64) / count
+        origins = np.zeros((grid.shape[0], 3), dtype=np.float64)
+        origins[:, others] = grid
+        direction = np.zeros(3, dtype=np.float64)
+        direction[axis] = 1.0
+        rows_per_chunk = max(_MEASURE_CHUNK // steps.size, 1)
+        for start in range(0, origins.shape[0], rows_per_chunk):
+            base = origins[start : start + rows_per_chunk]
+            samples = base[:, None, :] + steps[None, :, None] * direction
+            values = (
+                _measured_values(enclosure, samples.reshape((-1, 3))).reshape(
+                    (base.shape[0], steps.size)
+                )
+                - level
+            )
+            exact = values[:, :-1] == 0.0
+            crossing = values[:, :-1] * values[:, 1:] < 0.0
+            line, step = np.nonzero(crossing)
+            negative_first = values[line, step] < 0.0
+
+            def excess(
+                rows: np.ndarray,
+                parameter: np.ndarray,
+                base: np.ndarray = base,
+                line: np.ndarray = line,
+                negative_first: np.ndarray = negative_first,
+            ) -> np.ndarray:
+                at = base[line[rows]] + parameter[:, None] * direction
+                value = _measured_values(enclosure, at) - level
+                return np.where(negative_first[rows], value, -value)
+
+            located = _bisect_to_binary64(excess, steps[step], steps[step + 1])
+            exact_line, exact_step = np.nonzero(exact)
+            parameters = np.concatenate((located, steps[exact_step]))
+            owners = np.concatenate((line, exact_line))
+            roots.append(base[owners] + parameters[:, None] * direction)
+    return np.concatenate(roots) if roots else np.empty((0, 3), dtype=np.float64)
+
+
+def _band_chords(
+    enclosure: _TableEnclosure,
+    inverse: np.ndarray,
+    reduced: np.ndarray,
+    level: float,
+    half_width: float,
+    step: float,
+    reach: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Measured band chord lengths through reduced mid-surface points.
+
+    Returns the chord lengths and the mask of points whose two rays exit.
+    """
+    count = reduced.shape[0]
+    gradient_reduced = np.empty((count, 3), dtype=np.float64)
+    for start in range(0, count, _MEASURE_CHUNK):
+        chunk = reduced[start : start + _MEASURE_CHUNK]
+        gradient = enclosure.evaluate(chunk, chunk, 1)[1]
+        if gradient is None:
+            raise RuntimeError("The table gradient enclosure was not evaluated.")
+        gradient_reduced[start : start + _MEASURE_CHUNK] = (
+            0.5 * gradient[0] + 0.5 * gradient[1]
+        )
+    cartesian = gradient_reduced @ inverse.T
+    normal = cartesian / np.linalg.norm(cartesian, axis=1, keepdims=True)
+    # u(t) = u_p + t (n @ M) moves t along the Cartesian unit normal n.
+    origins = np.concatenate((reduced, reduced))
+    directions = np.concatenate((normal @ inverse, -(normal @ inverse)))
+    rays = origins.shape[0]
+    exit_step = np.full(rays, -1, dtype=np.int64)
+    active = np.arange(rays)
+    limit = math.ceil(reach / step)
+    block = np.arange(1, _MARCH_BLOCK + 1, dtype=np.float64)
+    first = 0
+    while active.size and first < limit:
+        rows_per_chunk = max(_MEASURE_CHUNK // block.size, 1)
+        for start in range(0, active.size, rows_per_chunk):
+            rows = active[start : start + rows_per_chunk]
+            distance = (first + block) * step
+            at = (
+                origins[rows, None, :]
+                + distance[None, :, None] * directions[rows, None, :]
+            )
+            values = np.abs(
+                _measured_values(enclosure, at.reshape((-1, 3))) - level
+            ).reshape((rows.size, block.size))
+            outside = values > half_width
+            hit = np.any(outside, axis=1)
+            exit_step[rows[hit]] = first + 1 + np.argmax(outside[hit], axis=1)
+        active = active[exit_step[active] < 0]
+        first += _MARCH_BLOCK
+    exited = exit_step > 0
+    rows = np.flatnonzero(exited)
+
+    def excess(chosen: np.ndarray, distance: np.ndarray) -> np.ndarray:
+        ray = rows[chosen]
+        at = origins[ray] + distance[:, None] * directions[ray]
+        return np.abs(_measured_values(enclosure, at) - level) - half_width
+
+    lengths = np.zeros(rays, dtype=np.float64)
+    lengths[rows] = _bisect_to_binary64(
+        excess, (exit_step[rows] - 1) * step, exit_step[rows] * step
+    )
+    both = exited[:count] & exited[count:]
+    return lengths[:count] + lengths[count:], both
+
+
+def _measure_sheet_thickness(
+    table: TrigonometricTable,
+    cell: PeriodicCell,
+    certificate: TrigonometricSheetThickness,
+    level: float,
+    half_width: float,
+    lines: int,
+    /,
+) -> TrigonometricThicknessDistribution:
+    inverse = _require_cell(cell)
+    vectors = np.asarray(cell.vectors, dtype=np.float64)
+    origin = np.asarray(cell.origin, dtype=np.float64)
+    enclosure = _TableEnclosure(table)
+    gradient_upper = certificate.gradient_norm_upper(half_width)
+    uniform = _down(_down(2.0 * half_width) / gradient_upper)
+    reduced = _mid_surface_points(enclosure, table, level, lines)
+    if not reduced.shape[0]:
+        raise ValueError("No sampling line meets the sheet's mid-surface.")
+    reach = float(np.sum(np.linalg.norm(vectors, axis=1)))
+    chords, exited = _band_chords(
+        enclosure, inverse, reduced, level, half_width, 0.25 * uniform, reach
+    )
+    if not np.any(exited):
+        raise ValueError("No measured band chord exits the band.")
+    return TrigonometricThicknessDistribution(
+        thicknesses=chords[exited],
+        points=origin + reduced[exited] @ vectors,
+        level=level,
+        half_width=half_width,
+        lines_per_axis=lines,
+        unexited_count=int(np.count_nonzero(~exited)),
+        certified_minimum=max(certificate.minimum_thickness(half_width), uniform),
+        uniform_minimum=uniform,
+        gradient_norm_upper=gradient_upper,
+    )
+
+
 class TrigonometricSheetBand(StrictModule):
     """Sheet semantics: the level band ``{|F - c| <= half_width}`` as requested."""
 
@@ -1723,6 +2001,43 @@ class TrigonometricLevelSet(GeometrySource):
         """Upper bound of ``sup ||Hess_x F||_2 = ||M Hess_u F M^T||_2``."""
         norm = _matrix_norm_upper(np.asarray(self.cell.inverse_vectors, dtype=np.float64))
         return _up(_up(norm * norm) * self.table.hessian_bound)
+
+    def thickness_distribution(
+        self, *, lines_per_axis: int = 16, resolution_level: int = 6
+    ) -> TrigonometricThicknessDistribution:
+        """Measured wall-thickness distribution of the sheet band, with its certified minimum.
+
+        The sampling is documented on ``TrigonometricThicknessDistribution``.
+        The certified minimum comes from ``sheet_thickness`` when the band was
+        solved from a ``TrigonometricWallThickness`` target, otherwise from
+        ``certify_trigonometric_sheet_thickness`` at ``resolution_level`` with
+        ``maximum_half_width = half_width``.
+        """
+        if self.region != "sheet" or self.half_width is None:
+            raise ValueError("Only a sheet region has a wall-thickness distribution.")
+        if isinstance(lines_per_axis, bool) or not isinstance(lines_per_axis, int):
+            raise TypeError("lines_per_axis must be an integer.")
+        if not 1 <= lines_per_axis <= 256:
+            raise ValueError("lines_per_axis must lie in [1, 256].")
+        certificate = (
+            certify_trigonometric_sheet_thickness(
+                self.table,
+                self.cell,
+                level=self.level,
+                maximum_half_width=self.half_width,
+                resolution_level=resolution_level,
+            )
+            if self.sheet_thickness is None
+            else self.sheet_thickness
+        )
+        return _measure_sheet_thickness(
+            self.table,
+            self.cell,
+            certificate,
+            self.level,
+            self.half_width,
+            lines_per_axis,
+        )
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
         del context
@@ -1996,6 +2311,7 @@ __all__ = [
     "TrigonometricTable",
     "TrigonometricTerm",
     "TrigonometricWallThickness",
+    "TrigonometricThicknessDistribution",
     "certify_trigonometric_critical_levels",
     "certify_trigonometric_sheet_thickness",
 ]

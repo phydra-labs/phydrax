@@ -38,7 +38,9 @@ def _invoke(name: str, arguments: argparse.Namespace, /) -> dict[str, object]:
 
                     record = function(checkpoint=checkpoint)
                 else:
-                    with checkpoint_path.open("w", encoding="utf-8") as stream:
+                    with checkpoint_path.open(
+                        "w", encoding="utf-8", newline="\n"
+                    ) as stream:
 
                         def checkpoint(event: dict[str, object]) -> None:
                             stream.write(
@@ -161,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.output is None:
         print(rendered)
     else:
-        arguments.output.write_text(rendered + "\n", encoding="utf-8")
+        arguments.output.write_text(rendered + "\n", encoding="utf-8", newline="\n")
     scenario_records = record.get("scenarios")
     if not isinstance(scenario_records, dict):
         raise RuntimeError("Qualification run omitted its scenario record mapping.")

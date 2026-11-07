@@ -206,6 +206,11 @@ class ComponentTransport(StrictModule):
                 )
             if discretization.cell_dimension != 3:
                 raise ValueError("Hybrid tensor dispersion requires 3D geometry.")
+            if dispersion.facet_count != dispersion.face_count:
+                raise ValueError(
+                    "Dispersion face concentrations require one hybrid trace facet per "
+                    "FV face; got warped faces split into sub-facets."
+                )
         self.discretization, self.component_names, self.nonnegative_components = (
             discretization,
             names,

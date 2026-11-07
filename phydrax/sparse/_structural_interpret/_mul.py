@@ -7,6 +7,7 @@ from ._common import (
     _atom_value_bounds,
     _clear_where_zero,
     _propagate_const_binary,
+    _store_bounds,
     StateBounds,
     StateConsts,
     StateIndices,
@@ -68,4 +69,4 @@ def _propagate_bounds_mul(
 
     lo = np.minimum(np.minimum(c1, c2), np.minimum(c3, c4))
     hi = np.maximum(np.maximum(c1, c2), np.maximum(c3, c4))
-    state_bounds[eqn.outvars[0]] = (lo, hi)
+    _store_bounds(eqn, state_bounds, lo, hi)

@@ -3,11 +3,20 @@
 import numpy as np
 from jax._src.core import JaxprEqn
 
-from ._common import _index_sets, _propagate_const_unary, StateConsts, StateIndices
+from ._common import (
+    _index_sets,
+    _propagate_const_unary,
+    StateBounds,
+    StateConsts,
+    StateIndices,
+)
 
 
 def _prop_squeeze(
-    eqn: JaxprEqn, state_indices: StateIndices, state_consts: StateConsts
+    eqn: JaxprEqn,
+    state_indices: StateIndices,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
 ) -> None:
     """Squeeze removes dimensions of size 1 without changing the data.
 
@@ -30,4 +39,6 @@ def _prop_squeeze(
     """
     state_indices[eqn.outvars[0]] = _index_sets(state_indices, eqn.invars[0])
     dims = eqn.params["dimensions"]
-    _propagate_const_unary(eqn, state_consts, lambda v: np.squeeze(v, axis=dims))
+    _propagate_const_unary(
+        eqn, state_consts, lambda v: np.squeeze(v, axis=dims), state_bounds
+    )

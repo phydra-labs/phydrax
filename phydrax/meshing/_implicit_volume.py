@@ -39,6 +39,11 @@ from ..discretization._cell_geometry_validity import (
 )
 from ..discretization._cell_mesh import CellMesh, TetrahedralConnectivity
 from ..geometry._global_embedding import ValidatedGlobalEmbedding
+from ..geometry._rational import (
+    binary64_difference_magnitude,
+    binary64_norm_lower,
+    binary64_norm_upper,
+)
 from ..geometry._source_boundary_records import (
     SourceBoundaryDistanceWitness,
     SourceBoundarySamples,
@@ -790,8 +795,7 @@ def _isolate_monotone_root_bank(
             )
 
         extent = np.nextafter(np.abs(coordinate_upper - coordinate_lower), np.inf)
-        diagonal_xy = np.nextafter(np.hypot(extent[:, 0], extent[:, 1]), np.inf)
-        diameter = np.nextafter(np.hypot(diagonal_xy, extent[:, 2]), np.inf)
+        diameter = binary64_norm_upper(extent)
         finished = diameter <= spatial_resolution
         for position in np.flatnonzero(finished).tolist():
             row = int(active[position])
@@ -1062,7 +1066,7 @@ def _root_edge(
                         "restricted_root_isolation",
                     )
                 extent = np.nextafter(np.abs(root_x_upper - root_x_lower), np.inf)
-                diameter = float(np.nextafter(math.hypot(*extent.tolist()), np.inf))
+                diameter = float(binary64_norm_upper(extent))
                 if diameter <= spatial_resolution:
                     if not np.all(
                         np.isfinite(
@@ -1560,6 +1564,12 @@ def _topology_matches(
     )
 
 
+def _triangle_diameter_upper(triangles: np.ndarray, /) -> np.ndarray:
+    """Directed upper bound of the longest edge of each ``(3, 3)`` triangle."""
+    edges = binary64_difference_magnitude(triangles, np.roll(triangles, -1, axis=1))[1]
+    return np.max(binary64_norm_upper(edges), axis=1)
+
+
 def _facet_deviation(
     profile: AnalyticImplicitProfile,
     points: np.ndarray,
@@ -1572,28 +1582,17 @@ def _facet_deviation(
     value_lower, value_upper = profile.field_bounds.point_values(vertices[used])
     vertex_error = np.maximum(np.abs(value_lower), np.abs(value_upper))
     triangles = vertices[faces]
-    diameter = np.maximum.reduce(
-        tuple(
-            np.nextafter(
-                np.linalg.norm(
-                    np.nextafter(triangles[:, first] - triangles[:, second], np.inf),
-                    axis=1,
-                ),
-                np.inf,
-            )
-            for first, second in ((0, 1), (1, 2), (2, 0))
-        )
-    )
+    diameter = _triangle_diameter_upper(triangles)
     error = np.max(vertex_error[inverse.reshape(faces.shape)], axis=1)
     in_tube = np.nextafter(error + diameter, np.inf) < profile.tube_radius
-    interpolation = np.nextafter(
-        error
-        + np.nextafter(
-            profile.hessian_upper * np.nextafter(diameter * diameter, np.inf) / 6.0,
-            np.inf,
-        ),
+    curvature = np.nextafter(
+        np.nextafter(
+            profile.hessian_upper * np.nextafter(diameter * diameter, np.inf), np.inf
+        )
+        / 6.0,
         np.inf,
     )
+    interpolation = np.nextafter(error + curvature, np.inf)
     boxes = profile.field_bounds.boxes(
         np.min(triangles, axis=1), np.max(triangles, axis=1)
     )
@@ -1606,32 +1605,46 @@ def _tetra_quality(
     tetrahedra: np.ndarray,
     center_bounds: np.ndarray,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, float]:
+    """Radius-edge upper bounds per tetrahedron and a minimum-dihedral lower bound.
+
+    Every rounded operation is directed: center-to-vertex and edge distances use
+    the binary64 norm bounds, and face normals and their cosines are interval
+    products, sums, and quotients. The dihedral angle increases with the cosine
+    of its face normals, so the smallest certified cosine lower bound gives one
+    rigorous angle bound.
+    """
+    from ..geometry._interval_enclosure import (
+        interval_add,
+        interval_divide,
+        interval_multiply,
+        interval_sqrt,
+        interval_square,
+        interval_subtract,
+    )
+
     vertices = np.asarray(points, dtype=np.float64)[
         np.asarray(tetrahedra, dtype=np.int64)
     ]
     centers = np.asarray(center_bounds, dtype=np.float64)
     center_lower, center_upper = centers[:, 0], centers[:, 1]
-    center_mid = center_lower + 0.5 * (center_upper - center_lower)
-    center_radius = np.linalg.norm(
-        np.maximum(
-            np.abs(center_mid[:, None, :] - vertices),
-            np.abs(center_upper[:, None, :] - vertices),
-        ),
-        axis=2,
+    # The farthest center-box point from a vertex is a box corner: per axis the
+    # larger of the gaps to both box endpoints.
+    center_gap = np.maximum(
+        binary64_difference_magnitude(center_lower[:, None, :], vertices)[1],
+        binary64_difference_magnitude(center_upper[:, None, :], vertices)[1],
     )
-    center_radius = np.maximum(
-        center_radius,
-        np.linalg.norm(center_lower[:, None, :] - vertices, axis=2),
-    )
-    radius_upper = np.nextafter(np.max(center_radius, axis=1), np.inf)
+    radius_upper = np.max(binary64_norm_upper(center_gap), axis=1)
     edge_pairs = np.asarray(
         ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64
     )
-    edge_vectors = vertices[:, edge_pairs[:, 0]] - vertices[:, edge_pairs[:, 1]]
-    edge_lengths = np.linalg.norm(edge_vectors, axis=2)
-    edge_lower = np.nextafter(
-        np.min(np.nextafter(edge_lengths, -np.inf), axis=1), -np.inf
+    edge_lower = np.min(
+        binary64_norm_lower(
+            binary64_difference_magnitude(
+                vertices[:, edge_pairs[:, 0]], vertices[:, edge_pairs[:, 1]]
+            )[0]
+        ),
+        axis=1,
     )
     if np.any(edge_lower <= 0.0) or np.any(~np.isfinite(radius_upper)):
         raise _failure(
@@ -1641,11 +1654,15 @@ def _tetra_quality(
         )
     radius_edge = np.nextafter(radius_upper / edge_lower, np.inf)
     face_vertices = vertices[:, np.asarray(_FACE_CORNERS, dtype=np.int64)]
-    first_edges = face_vertices[:, :, 1] - face_vertices[:, :, 0]
-    second_edges = face_vertices[:, :, 2] - face_vertices[:, :, 0]
-    normal_scale = np.maximum(
-        np.max(np.abs(first_edges), axis=2),
-        np.max(np.abs(second_edges), axis=2),
+    origins = (face_vertices[:, :, 0], face_vertices[:, :, 0])
+    first_edges = _float_interval(
+        interval_subtract((face_vertices[:, :, 1], face_vertices[:, :, 1]), origins)
+    )
+    second_edges = _float_interval(
+        interval_subtract((face_vertices[:, :, 2], face_vertices[:, :, 2]), origins)
+    )
+    normal_scale = np.max(
+        np.abs(np.concatenate((*first_edges, *second_edges), axis=2)), axis=2
     )
     if np.any(~np.isfinite(normal_scale)) or np.any(normal_scale <= 0.0):
         raise _failure(
@@ -1653,22 +1670,95 @@ def _tetra_quality(
             "Restricted tetrahedron face-normal quality is unresolved at binary64 scale.",
             "specification_compliance",
         )
-    face_normals = np.cross(
-        first_edges / normal_scale[:, :, None],
-        second_edges / normal_scale[:, :, None],
+    # A power-of-two scale keeps the normal products in range; interval
+    # products round any scaled endpoint that is not exact outward.
+    scale = np.ldexp(1.0, -np.frexp(normal_scale)[1])[:, :, None]
+    first_edges = _float_interval(interval_multiply(first_edges, (scale, scale)))
+    second_edges = _float_interval(interval_multiply(second_edges, (scale, scale)))
+    following = np.asarray((1, 2, 0), dtype=np.int64)
+    preceding = np.asarray((2, 0, 1), dtype=np.int64)
+    face_normals = _float_interval(
+        interval_subtract(
+            interval_multiply(
+                (first_edges[0][..., following], first_edges[1][..., following]),
+                (second_edges[0][..., preceding], second_edges[1][..., preceding]),
+            ),
+            interval_multiply(
+                (first_edges[0][..., preceding], first_edges[1][..., preceding]),
+                (second_edges[0][..., following], second_edges[1][..., following]),
+            ),
+        )
     )
-    normal_lengths = np.linalg.norm(face_normals, axis=2)
-    if np.any(~np.isfinite(normal_lengths)) or np.any(normal_lengths <= 0.0):
+    normal_squares = _float_interval(interval_square(face_normals))
+    normal_lengths = _float_interval(
+        interval_sqrt(
+            interval_add(
+                interval_add(
+                    (normal_squares[0][..., 0], normal_squares[1][..., 0]),
+                    (normal_squares[0][..., 1], normal_squares[1][..., 1]),
+                ),
+                (normal_squares[0][..., 2], normal_squares[1][..., 2]),
+            )
+        )
+    )
+    if np.any(~np.isfinite(normal_lengths[1])) or np.any(normal_lengths[0] <= 0.0):
         raise _failure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
             "Restricted tetrahedron dihedral quality is unresolved at binary64 normal precision.",
             "specification_compliance",
         )
-    unit = face_normals / normal_lengths[:, :, None]
     pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64)
-    cosine = np.sum(unit[:, pairs[:, 0]] * unit[:, pairs[:, 1]], axis=2)
-    dihedral = 180.0 - np.rad2deg(np.arccos(np.clip(cosine, -1.0, 1.0)))
-    return radius_edge, np.min(dihedral, axis=1)
+    products = _float_interval(
+        interval_multiply(
+            (face_normals[0][:, pairs[:, 0]], face_normals[1][:, pairs[:, 0]]),
+            (face_normals[0][:, pairs[:, 1]], face_normals[1][:, pairs[:, 1]]),
+        )
+    )
+    dots = interval_add(
+        interval_add(
+            (products[0][..., 0], products[1][..., 0]),
+            (products[0][..., 1], products[1][..., 1]),
+        ),
+        (products[0][..., 2], products[1][..., 2]),
+    )
+    cosine_lower = _float_interval(
+        interval_divide(
+            dots,
+            interval_multiply(
+                (normal_lengths[0][:, pairs[:, 0]], normal_lengths[1][:, pairs[:, 0]]),
+                (normal_lengths[0][:, pairs[:, 1]], normal_lengths[1][:, pairs[:, 1]]),
+            ),
+        )
+    )[0]
+    if cosine_lower.size == 0:
+        return radius_edge, 180.0
+    return radius_edge, _dihedral_degrees_lower(float(np.min(cosine_lower)))
+
+
+def _float_interval(value: tuple[object, object], /) -> tuple[np.ndarray, np.ndarray]:
+    return (
+        np.asarray(value[0], dtype=np.float64),
+        np.asarray(value[1], dtype=np.float64),
+    )
+
+
+def _dihedral_degrees_lower(cosine_lower: float, /) -> float:
+    """Binary64 lower bound of ``180 - degrees(acos(c))`` over ``c >= cosine_lower``.
+
+    ``acos(c) = atan2(sqrt(1 - c**2), c)`` is evaluated in outward mpmath interval
+    arithmetic, and the float candidate is checked against the enclosure exactly.
+    """
+    from ..geometry.brep._intersection_curve import interval_context
+
+    context = interval_context(40)
+    cosine = context.mpf(min(max(cosine_lower, -1.0), 1.0))
+    degrees = 180 - 180 * context.atan2(context.sqrt(1 - cosine * cosine), cosine) / (
+        context.pi
+    )
+    bound = float(degrees.a)
+    while not context.mpf(bound) <= degrees.a:
+        bound = math.nextafter(bound, -math.inf)
+    return max(bound, 0.0)
 
 
 def _strict_region_site_mask(
@@ -2179,9 +2269,8 @@ def _compliance(
             "Published restricted tetrahedra require successful native circumcenter bounds.",
             "specification_compliance",
         )
-    radius_edge, dihedral = _tetra_quality(coordinates, cells, centers)
+    radius_edge, minimum_dihedral = _tetra_quality(coordinates, cells, centers)
     maximum_radius_edge = float(np.max(radius_edge, initial=0.0))
-    minimum_dihedral = float(np.min(dihedral, initial=180.0))
     requested: list[tuple[str, float]] = []
     if schedule.radius_edge_bound is not None:
         requested.append(("radius_edge_bound", schedule.radius_edge_bound))
@@ -2332,21 +2421,7 @@ def _restricted_primal_mesh(
         # Root-certified facets may use strict-side Steiner sites;
         # complete source coverage is a separate proof.
         selected_points = points[selected_facets]
-        face_diameters = np.maximum.reduce(
-            tuple(
-                np.nextafter(
-                    np.linalg.norm(
-                        np.nextafter(
-                            selected_points[:, first] - selected_points[:, second],
-                            np.inf,
-                        ),
-                        axis=1,
-                    ),
-                    np.inf,
-                )
-                for first, second in ((0, 1), (1, 2), (2, 0))
-            )
-        )
+        face_diameters = _triangle_diameter_upper(selected_points)
         if np.any(face_diameters >= profile.reach_lower / 4.0):
             return "cover"
     selected_keys = {
@@ -2710,9 +2785,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             if validity.all_certified
             else None
         )
-        embedding = (
-            None if validated_embedding is None else validated_embedding.certificate
-        )
         validate_restricted_delaunay_boundary_witness(
             mesh,
             geometry,
@@ -2741,7 +2813,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             fidelity_witness=fidelity_witness,
             feature_source=profile,
             source_coverage_witness=coverage_witness,
-            global_embedding=embedding,
         )
         return NativeMeshConstruction(
             mesh,

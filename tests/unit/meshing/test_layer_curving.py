@@ -125,6 +125,78 @@ def test_nodal_elevation_preserves_nonbinary_exact_source_vertices() -> None:
     assert expected_midpoint in elevated.exact_coordinate_bank
 
 
+def test_restricted_child_evaluates_parent_map_on_exact_coordinate_bank() -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.discretization._cell_geometry import (
+        PerCellRestrictedCellGeometryElement,
+    )
+    from phydrax.meshing._curving import _exact_coordinate_bank_source_map
+    from phydrax.meshing._layer_curving_records import _evaluate_cell_geometry_point
+
+    # The P2 parent places its (0, 1/2, 0) edge node at the exact non-binary
+    # y = 7/160; the child inherits that edge through a half-scale chart.
+    parent = lagrange_element("tetrahedron", 2)
+    exact_bank = tuple(
+        (Fraction(0), Fraction(7, 160), Fraction(0))
+        if tuple(float(value) for value in node) == (0.0, 0.5, 0.0)
+        else tuple(Fraction(float(value)) / 8 for value in node)
+        for node in np.asarray(parent.reference_nodes, dtype=np.float64)
+    )
+    assert (Fraction(0), Fraction(7, 160), Fraction(0)) in exact_bank
+    execution = np.asarray(exact_bank, dtype=np.float64)
+    half: tuple[dict[tuple[int, ...], Fraction], ...] = (
+        {(1, 0, 0): Fraction(1, 2)},
+        {(0, 1, 0): Fraction(1, 2)},
+        {(0, 0, 1): Fraction(1, 2)},
+    )
+    element = PerCellRestrictedCellGeometryElement(
+        parent, "tetrahedron", (1,), (1,), (half,)
+    )
+    mesh = CellMesh(
+        np.asarray(
+            (
+                (0.0, 0.0, 0.0),
+                (1 / 16, 0.0, 0.0),
+                (0.0, 7 / 160, 0.0),
+                (0.0, 0.0, 1 / 16),
+            ),
+            dtype=np.float64,
+        ),
+        (
+            CellBlock(
+                "child",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3),), dtype=np.int64),
+                global_ids=np.asarray((1,), dtype=np.int64),
+            ),
+        ),
+    )
+    geometry = CellGeometrySpec(
+        {"child": element},
+        {"child": np.arange(len(exact_bank), dtype=np.int64)[None, :]},
+        execution,
+        source_map=_exact_coordinate_bank_source_map(
+            mesh, "source", "revision", ("test",), exact_bank, execution
+        ),
+        source_mesh=mesh,
+    )
+    assert geometry.exact_coordinate_bank == exact_bank
+    elements, routes, coordinates = geometry.resolve(mesh)
+    # Child edge midpoint (0, 1/2, 0) is parent (0, 1/4, 0): the exact P2 image
+    # y = 3/4 * 7/160 - 1/8 * 1/8 = 11/640, compared with a 0.0 tolerance.
+    reference = (Fraction(0), Fraction(1, 2), Fraction(0))
+    source_point = np.asarray((0.0, float(Fraction(11, 640)), 0.0), dtype=np.float64)
+    tolerance = 0.0
+    exact_point = _evaluate_cell_geometry_point(
+        elements, routes, coordinates, geometry.exact_coordinate_bank, 0, 0, reference
+    )
+    float_point = _evaluate_cell_geometry_point(
+        elements, routes, coordinates, None, 0, 0, reference
+    )
+    assert np.linalg.norm(exact_point - source_point) <= tolerance
+    assert np.linalg.norm(float_point - source_point) > tolerance
+
+
 def test_changed_reversed_wall_chart_requires_authored_region_side() -> None:
     original = (
         (Fraction(0), Fraction(0)),

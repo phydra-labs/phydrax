@@ -45,7 +45,7 @@ from ._trim_helpers import PeriodOffset
 
 
 if TYPE_CHECKING:
-    from .._meshing_domain import SourcePreparation
+    from .._meshing_domain import MeshingDomain, SourcePreparation
     from .._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
     from ._curve_approximation_topology import TrimReferenceSegment
 
@@ -218,6 +218,13 @@ def _family(surface: AbstractSurfacePatch, /) -> _Family | None:
             )
         ):
             return "ring-torus"
+        # A meridian centred on the axis whose first axis is radial revolves to
+        # a sphere whose collapsed poles are exactly the latitudes ±τ/4.
+        if (
+            patch.exact_sphere_revolution_witness() is not None
+            and _exact_dot3(first, axis) == 0
+        ):
+            return "sphere"
     elif type(patch) is RevolutionSurface and type(patch.curve) is LineCurve:
         line = _prepare_revolution_line_profile(patch, patch.curve)
         if (
@@ -457,16 +464,127 @@ class BRepTrimSheetProof:
         )
 
 
+def _sphere_trim_latitudes(
+    domain: MeshingDomain, patch: int, /
+) -> (
+    tuple[
+        dict[tuple[int, int], ChartScalar],
+        dict[tuple[int, int], tuple[ChartScalar, ChartScalar]],
+    ]
+    | None
+):
+    """Exact chart latitudes of a sphere patch's pole and affine-latitude uses.
+
+    Every pole use must replay its exact full-interval B-Rep collapse and name a
+    constant chart latitude, or the patch is refused. A regular use whose
+    occurrence keeps its authored affine latitude is monotone between the exact
+    latitudes of its rooted endpoints, returned in increasing order. Other
+    regular uses are absent and keep only their numerical enclosures.
+    """
+    from .._domain_boundary import _is_rooted_pole_line
+    from .._meshing_domain import PatchPoleUse
+    from ._boolean_core import (
+        _cardinal_conic_phase,
+        _coedge_affine_axis,
+        _coedge_axis_values,
+        AffinePCurve,
+        PeriodicPCurve,
+    )
+    from ._correspondence import _exact_brep_pole_collapse
+    from ._patches import ConicRootLinePCurve
+
+    authority = domain.brep_authority
+    if authority is None:
+        return None
+    geometry = authority.geometry
+    face = domain.source_indices[2][patch]
+    uses = domain.patches[patch].loops
+    coedges = geometry.face_loops[face]
+    if len(uses) != len(coedges) or any(
+        len(loop) != len(edges) for loop, edges in zip(uses, coedges, strict=True)
+    ):
+        return None
+    edge_ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
+
+    def pole_latitude(use: PatchPoleUse, coedge: int, /) -> ChartScalar | None:
+        edge = geometry.coedge_edges[coedge]
+        vertex, other = geometry.edge_vertices[edge]
+        first, last = (float(value) for value in edge_ranges[edge])
+        if (
+            geometry.edge_curves[edge] >= 0
+            or vertex != other
+            or not _exact_brep_pole_collapse(
+                None,
+                authority.patches[face],
+                geometry.pcurves[coedge],
+                first,
+                last,
+                geometry.vertex_exact_points[vertex],
+                geometry.vertex_roots[vertex],
+                geometry.coedge_endpoint_roots[coedge],
+            )
+        ):
+            return None
+        line = _constant_chart_line(use.pcurve, 1)
+        if line is not None:
+            return line[0]
+        if not _is_rooted_pole_line(use):
+            return None
+        curve = use.pcurve
+        while isinstance(curve, PeriodicPCurve):
+            if curve.period_shifts[1]:
+                return None
+            curve = curve.source_curve
+        if (
+            not isinstance(curve, AffinePCurve)
+            or not isinstance(curve.curve, ConicRootLinePCurve)
+            or not isinstance(curve.curve.phase_shift_exact, Fraction)
+        ):
+            return None
+        # The swapped rooted line's second chart coordinate is its root angle.
+        phase = _cardinal_conic_phase(curve.curve.root)
+        return None if phase is None else chart_add(phase, curve.curve.phase_shift_exact)
+
+    poles: dict[tuple[int, int], ChartScalar] = {}
+    exact: dict[tuple[int, int], tuple[ChartScalar, ChartScalar]] = {}
+    for li, (loop, edges) in enumerate(zip(uses, coedges, strict=True)):
+        for ui, (use, coedge) in enumerate(zip(loop, edges, strict=True)):
+            if isinstance(use, PatchPoleUse):
+                latitude = pole_latitude(use, coedge)
+                if latitude is None:
+                    return None
+                poles[(li, ui)] = latitude
+                continue
+            values = _coedge_axis_values(geometry, coedge, 1)
+            authored = _coedge_affine_axis(geometry.pcurves[coedge], 1)
+            occurrence = _coedge_affine_axis(use.pcurve, 1)
+            if (
+                values is None
+                or authored is None
+                or occurrence is None
+                or not _same(authored[0], occurrence[0])
+                or authored[1] != occurrence[1]
+            ):
+                continue
+            order = _sheet_sign(_difference(values[1], values[0]))
+            if order is None:
+                return None
+            exact[(li, ui)] = values if order >= 0 else (values[1], values[0])
+    return poles, exact
+
+
 def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof | None:
-    """Prove a plane, cylindrical, polar-plane, or ring-torus CAD source sheet.
+    """Prove a plane, cylindrical, polar-plane, sphere, or ring-torus CAD sheet.
 
     A full-turn quotient requires opposite coedge uses of one source edge on
     the exact constant lines 0 and τ. For an overhanging curved use, exact seam
     identity, interval monotonicity, and an enclosure of any non-seam endpoint
-    prove that the use stays between the native seam lines. The proof binds this actual
-    domain occurrence; it does not identify the trimmed interior, prove a
-    separate solver region has the same symbolic full-period domain, or
-    establish trim homotopy/partition.
+    prove that the use stays between the native seam lines. A sphere pole use
+    must replay its exact full-interval B-Rep collapse and name the cardinal
+    latitude ±τ/4 exactly; it is then declared as a full-turn pole quotient.
+    The proof binds this actual domain occurrence; it does not identify the
+    trimmed interior, prove a separate solver region has the same symbolic
+    full-period domain, or establish trim homotopy/partition.
     """
     from .._domain_boundary import (
         _exact_line_junction_box,
@@ -528,7 +646,13 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
                 return None
             return BRepTrimSheetProof(domain, domain.domain_id, patch, embedding)
         family = _family(surface)
-        if family not in ("plane", "cylinder", "revolution-cylinder", "ring-torus"):
+        if family not in (
+            "plane",
+            "cylinder",
+            "revolution-cylinder",
+            "ring-torus",
+            "sphere",
+        ):
             return None
         uses = domain.patches[patch].loops
         coedges = authority.geometry.face_loops[face]
@@ -541,17 +665,28 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
             )
         ):
             return None
+        geometry = authority.geometry
+        sphere_poles: dict[tuple[int, int], ChartScalar] = {}
+        exact_v: dict[tuple[int, int], tuple[ChartScalar, ChartScalar]] = {}
+        if family == "sphere":
+            latitudes = _sphere_trim_latitudes(domain, patch)
+            if latitudes is None:
+                return None
+            sphere_poles, exact_v = latitudes
         preparation = SourcePreparation(domain)
         lines = {}
         ranges = {}
         boxes = {}
         for li, loop in enumerate(uses):
             for ui, use in enumerate(loop):
+                if (li, ui) in sphere_poles:
+                    continue
+                coedge = coedges[li][ui]
                 line = _constant_chart_line(use.pcurve, 0)
                 if line is not None:
                     lines[(li, ui)] = line
                 first, last = min(use.first, use.last), max(use.first, use.last)
-                for root in authority.geometry.coedge_endpoint_roots[coedges[li][ui]]:
+                for root in geometry.coedge_endpoint_roots[coedge]:
                     if root is not None:
                         low, high = root.parameter_enclosure()
                         if not np.isfinite(low) or not np.isfinite(high) or low > high:
@@ -577,6 +712,47 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
         v_high = max(Fraction.from_float(float(box[1, 1])) for box in boxes.values())
         if v_low == v_high:
             return None
+        v_bounds: tuple[ChartScalar, ChartScalar] = (v_low, v_high)
+        pole_roots: tuple[ChartScalar, ...] = ()
+        if family == "sphere":
+            south = chart_scale(_QUARTER, Fraction(-1))
+            pole_roots = tuple(
+                root
+                for root in (south, _QUARTER)
+                if any(_same(latitude, root) for latitude in sphere_poles.values())
+            )
+            # Every pole use names a distinct exact cardinal latitude.
+            if len(pole_roots) != len(sphere_poles):
+                return None
+            intervals = [
+                exact_v.get(
+                    key,
+                    (
+                        Fraction.from_float(float(box[0, 1])),
+                        Fraction.from_float(float(box[1, 1])),
+                    ),
+                )
+                for key, box in boxes.items()
+            ]
+            low_bound, high_bound = intervals[0]
+            for low, high in intervals[1:]:
+                low_sign = _sheet_sign(_difference(low, low_bound))
+                high_sign = _sheet_sign(_difference(high, high_bound))
+                if low_sign is None or high_sign is None:
+                    return None
+                low_bound = low if low_sign < 0 else low_bound
+                high_bound = high if high_sign > 0 else high_bound
+            # A declared pole is the sheet's latitude side; no regular use may
+            # cross it.
+            if any(_same(root, south) for root in pole_roots):
+                if _sheet_sign(_difference(low_bound, south)) not in (0, 1):
+                    return None
+                low_bound = south
+            if any(_same(root, _QUARTER) for root in pole_roots):
+                if _sheet_sign(_difference(_QUARTER, high_bound)) not in (0, 1):
+                    return None
+                high_bound = _QUARTER
+            v_bounds = (low_bound, high_bound)
         if family == "plane":
             u_low = min(Fraction.from_float(float(box[0, 0])) for box in boxes.values())
             u_high = max(Fraction.from_float(float(box[1, 0])) for box in boxes.values())
@@ -637,7 +813,7 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
         for li, loop in enumerate(uses):
             for ui, use in enumerate(loop):
                 line = lines.get((li, ui))
-                if (
+                if (li, ui) in sphere_poles or (
                     full_turn
                     and line is not None
                     and (_same(line[0], Fraction(0)) or _same(line[0], _TAU))
@@ -689,13 +865,17 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
                     u_high = high if u_high is None else max(u_high, high)
         if full_turn:
             embedding = certify_source_embedding(
-                surface, ((Fraction(0), v_low), (_TAU, v_high)), deck_axes=(0,)
+                surface,
+                ((Fraction(0), v_bounds[0]), (_TAU, v_bounds[1])),
+                deck_axes=(0,),
+                pole_roots=pole_roots,
             )
         else:
-            if u_low is None or u_high is None:
+            # A collapsed pole fiber is a whole native turn of its latitude.
+            if u_low is None or u_high is None or pole_roots:
                 return None
             embedding = certify_source_embedding(
-                surface, ((u_low, v_low), (u_high, v_high))
+                surface, ((u_low, v_bounds[0]), (u_high, v_bounds[1]))
             )
         if embedding is None:
             return None
@@ -752,6 +932,7 @@ def _certify_cad_trim_sheet_validated(
 ) -> CadTrimSheetProof | None:
     """Compose a sheet using ancestry replayed by the enclosing proof."""
     from .._approximate_source_coverage import _cad_trim_reference_loops
+    from ._boolean_core import _coedge_affine_axis
     from ._curve_approximation_topology import _trim_reference_box
 
     try:
@@ -771,25 +952,93 @@ def _certify_cad_trim_sheet_validated(
             return None
         native_bounds = native.embedding.bounds
         native_v_low, native_v_high = native_bounds[0][1], native_bounds[1][1]
-        if not isinstance(native_v_low, Fraction) or not isinstance(
-            native_v_high, Fraction
-        ):
-            return None
+        v_low: ChartScalar
+        v_high: ChartScalar
         if native.embedding.family == "revolution-plane":
-            if any(
-                not native_v_low <= point[1] <= native_v_high
-                for segment in pieces
-                for point in (segment.start, segment.stop)
+            if (
+                not isinstance(native_v_low, Fraction)
+                or not isinstance(native_v_high, Fraction)
+                or any(
+                    not native_v_low <= point[1] <= native_v_high
+                    for segment in pieces
+                    for point in (segment.start, segment.stop)
+                )
             ):
                 return None
             v_low, v_high = native_v_low, native_v_high
         else:
-            v_low = min(
-                (native_v_low, *(Fraction.from_float(float(box[0, 1])) for box in boxes))
-            )
-            v_high = max(
-                (native_v_high, *(Fraction.from_float(float(box[1, 1])) for box in boxes))
-            )
+            # Only a sphere pole side is a symbolic latitude. Directed comparison
+            # keeps it; an enclosure crossing it widens the box past the pole,
+            # which the embedding replay then refuses.
+            sphere = native.embedding.family == "sphere"
+            if not sphere and (
+                not isinstance(native_v_low, Fraction)
+                or not isinstance(native_v_high, Fraction)
+            ):
+                return None
+            latitudes = _sphere_trim_latitudes(charts.domain, patch) if sphere else None
+            if sphere and latitudes is None:
+                return None
+            owners: list[tuple[int, int] | None] = [None] * len(pieces)
+            if latitudes is not None:
+                owners = []
+                for li, loop in enumerate(reference):
+                    uses = charts.domain.patches[patch].loops[li]
+                    for segment in loop:
+                        matches = [
+                            ui
+                            for ui, use in enumerate(uses)
+                            if use.pcurve is segment.curve
+                        ]
+                        owners.append((li, matches[0]) if len(matches) == 1 else None)
+
+            def exact_latitudes(
+                segment: TrimReferenceSegment, owner: tuple[int, int] | None, /
+            ) -> bool:
+                """Whether the source arc stays within its use's exact latitudes.
+
+                A pole arc is its constant pole latitude. An affine-latitude
+                arc is monotone; a rooted end is its use's exact endpoint and
+                any other end is checked exactly. The native sheet contains
+                every such latitude, so only the reference chord remains.
+                """
+                if latitudes is None or owner is None:
+                    return False
+                poles, exact = latitudes
+                if owner in poles:
+                    return True
+                interval = exact.get(owner)
+                coefficients = _coedge_affine_axis(segment.curve, 1)
+                if interval is None or coefficients is None:
+                    return False
+                origin, rate = coefficients
+                for parameter, root_box in (
+                    (segment.first, segment.start_root_box),
+                    (segment.last, segment.stop_root_box),
+                ):
+                    if root_box is not None:
+                        continue
+                    value = chart_add(origin, chart_scale(parameter, rate))
+                    if _sheet_sign(_difference(value, interval[0])) not in (
+                        0,
+                        1,
+                    ) or _sheet_sign(_difference(interval[1], value)) not in (0, 1):
+                        return False
+                return True
+
+            v_low, v_high = native_v_low, native_v_high
+            for segment, box, owner in zip(pieces, boxes, owners, strict=True):
+                if exact_latitudes(segment, owner):
+                    low, high = sorted((segment.start[1], segment.stop[1]))
+                else:
+                    low = Fraction.from_float(float(box[0, 1]))
+                    high = Fraction.from_float(float(box[1, 1]))
+                low_sign = _sheet_sign(_difference(low, v_low))
+                high_sign = _sheet_sign(_difference(high, v_high))
+                if low_sign is None or high_sign is None:
+                    return None
+                v_low = low if low_sign < 0 else v_low
+                v_high = high if high_sign > 0 else v_high
         full_turn = native.embedding.deck_axes == (0,)
         if full_turn:
             for segment in pieces:

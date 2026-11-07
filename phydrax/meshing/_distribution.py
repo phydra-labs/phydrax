@@ -5739,6 +5739,32 @@ class OwnerLocalGraphMigrationEvidence(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    def from_stored_fields(
+        cls, value: OwnerLocalGraphMigrationEvidence, /
+    ) -> OwnerLocalGraphMigrationEvidence:
+        """Rebuild stored migration evidence and require its recomputed identity."""
+        if type(value) is not cls:
+            raise TypeError("Stored graph migration evidence has the wrong type.")
+        rebuilt = cls(
+            value.result,
+            value.source_candidate_id,
+            value.source_part_id,
+            value.periodic_face_coverage_id,
+            value.source_directory_id,
+            value.target_part_id,
+            value.target_directory_id,
+            value.group_id,
+            value.local_rank,
+            value.part_count,
+            value.target_cell_ids,
+        )
+        if rebuilt.evidence_id != value.evidence_id:
+            raise ValueError(
+                "Stored graph migration evidence differs from its recomputed identity."
+            )
+        return rebuilt
+
     def collective_status(
         self,
         local_success: ArrayLike,

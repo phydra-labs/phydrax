@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from fractions import Fraction
 from typing import final, Literal, NamedTuple
@@ -41,6 +40,7 @@ from ._mesh_certificates import (
 )
 from ._meshing_domain import MeshingDomain
 from ._planar_coverage import FacetOverlap, PlcSourcePoints, PlcSourcePointWitness
+from ._rational import fraction_up
 from ._source_boundary_records import SourceBoundaryDistanceWitness, SourceBoundaryQuery
 from ._source_fidelity import _AdaptiveImplicitBoundaryCarrier
 from ._source_fidelity_certificate import SourceFidelityCertificate
@@ -616,6 +616,55 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         if fresh.certificate_id != value.certificate_id or not _same_tree_content(
             value, fresh
         ):
+            raise ValueError(
+                "Domain coverage does not reproduce its current mathematical witness."
+            )
+        return fresh
+
+    @classmethod
+    def from_restored_inputs(
+        cls,
+        value: DomainCoverageCertificate,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        embedding: GlobalEmbeddingCertificate,
+        domain: CoverageDomain,
+        /,
+        *,
+        source: SourceBoundaryQuery | None = None,
+        chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+    ) -> DomainCoverageCertificate:
+        """Recompute stored coverage over independently restored owners.
+
+        ``mesh``, ``geometry``, ``embedding``, ``domain``, and ``source`` replace
+        the stored archive views of those inputs; every claim is re-proved and
+        the recomputed certificate must reproduce the stored identity.
+        """
+        if not isinstance(value, cls):
+            raise TypeError("value must be DomainCoverageCertificate.")
+        if (
+            mesh.mesh_id != value.binding.mesh_id
+            or embedding.certificate_id != value.embedding_certificate_id
+        ):
+            raise ValueError("Restored coverage inputs bind another mesh or embedding.")
+        fresh = certify_domain_coverage(
+            mesh,
+            geometry,
+            domain,
+            value.cell_regions,
+            embedding=embedding,
+            source_coverage_witness=value.source_coverage_witness,
+            source=source,
+            fidelity=value.fidelity,
+            chart_parent=chart_parent,
+        )
+        if any(
+            finding.check == "mapped_chart_parent_premise" for finding in fresh.findings
+        ):
+            raise ValueError(
+                "Mapped child coverage requires its actual parent mesh and geometry."
+            )
+        if fresh.certificate_id != value.certificate_id:
             raise ValueError(
                 "Domain coverage does not reproduce its current mathematical witness."
             )
@@ -1442,8 +1491,7 @@ def _plc_source_points(
 
 
 def _upper_sum(first: float, second: float, /) -> float:
-    total = first + second
-    return total if total - first >= second else math.nextafter(total, math.inf)
+    return fraction_up(Fraction(first) + Fraction(second))
 
 
 def _prove_coverage(

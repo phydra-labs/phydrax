@@ -57,6 +57,7 @@ from ._intersection import (
 )
 from ._intersection_curve import (
     CurveTrimSegment,
+    exact_curve_parameter_point,
     IntersectionCurve,
     IntersectionPCurve,
     IntersectionSide,
@@ -1357,8 +1358,13 @@ def _endpoint_on_carrier(
 
     Coincident chart transport changes the UV carrier, not its raw parameter.
     The new carrier retains the source source expression and chart map. A conic
-    root reached on a coincident carrier binds that carrier at the retained raw
-    edge parameter; the model's exact conic endpoint check proves the point.
+    root reached on a coincident carrier keeps an exact carrier parameter only
+    when one is proved: the source root's own exact parameter transported at the
+    identical raw parameter, or an exact evaluation of the spatial carrier at
+    that parameter reproducing the root point. The raw parameter is otherwise a
+    binary representative of a generally transcendental conic phase, so the
+    rebound root carries no exact parameter and keeps the conic root's outward
+    isolation enclosure.
     A native period root names its period through the publishing face patch:
     a transported coedge root keeps its raw expression and rebinds the
     coincident patch's identical declared period on the same axis; an edge
@@ -1368,8 +1374,15 @@ def _endpoint_on_carrier(
     if isinstance(endpoint, ConicParameterEndpoint):
         if carrier_payload(endpoint.carrier) == carrier_payload(carrier):
             return endpoint
+        proved = endpoint.parameter_exact == parameter or (
+            carrier.ambient_dimension == 3
+            and exact_curve_parameter_point(carrier, parameter) == endpoint.point_exact
+        )
         return ConicParameterEndpoint(
-            endpoint.root, carrier, parameter, endpoint.point_exact
+            endpoint.root,
+            carrier,
+            parameter if proved else None,
+            endpoint.point_exact,
         )
     if not isinstance(endpoint, NativePeriodEndpoint):
         return endpoint

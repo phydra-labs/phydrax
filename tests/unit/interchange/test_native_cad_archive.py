@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,9 @@ from phydrax._model._structure import (
     ParametricCurveBoundarySourceArchiveRecipe,
 )
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.discretization._surface_chart_records import (
+    SurfaceChartWitnessArchiveRecipe,
+)
 from phydrax.exterior import FormType, FormValueSpec
 from phydrax.geometry.brep._constructors import brep_sphere
 from phydrax.geometry.brep._model import BRepEntityId
@@ -33,6 +37,7 @@ from phydrax.interchange._cad_archive import (
     load_brep_archive,
     save_brep_archive,
 )
+from phydrax.meshing._archive_layer_columns import ExactExpressionRowsArchiveRecipe
 from phydrax.meshing._model_codec import (
     _register_model_archive_types,
     MODEL_ARCHIVE_LIMITS,
@@ -44,6 +49,68 @@ from phydrax.meshing._quality import CellQualityReportArchiveRecipe
 
 _WORKER = Path(__file__).with_name("_native_cad_archive_worker.py")
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _find_layer_record(node: object, record_type: str, /) -> dict[str, Any] | None:
+    """Return the stored fields of the first columnized layer record of a type."""
+    if isinstance(node, dict):
+        if (
+            node.get("kind") == "namedtuple"
+            and node.get("type") == "phydrax.model.archive:LayerRecordArchiveRecipe"
+            and node["items"][0] == {"kind": "literal", "value": record_type}
+        ):
+            return {key["value"]: value for key, value in node["items"][1]["items"]}
+        children: Any = node.values()
+    elif isinstance(node, list):
+        children = node
+    else:
+        return None
+    for child in children:
+        found = _find_layer_record(child, record_type)
+        if found is not None:
+            return found
+    return None
+
+
+def _exact_token_columns(
+    manifest: dict[str, Any], arrays: dict[str, Any], suffix: str, /
+) -> list[tuple[str, str, str, list[str]]]:
+    """Return ``(path, data, ends, tokens)`` of exact text columns ending in ``suffix``.
+
+    Exact archive columns store one canonical decimal token (``n`` or ``n/d``)
+    per scalar in a UTF-8 payload with row end offsets.
+    """
+    _register_model_archive_types()
+    inventory = model_recipe_array_inventory(
+        manifest["model_recipe"], prefix="model/leaves", limits=None
+    )
+    ends = {entry.path: entry.name for entry in inventory}
+    columns = []
+    for entry in inventory:
+        if entry.path.endswith(f"{suffix}.text.data"):
+            path = entry.path.removesuffix(".text.data")
+            ends_name = ends[f"{path}.text.ends"]
+            tokens = TextColumnArchiveRecipe(
+                arrays[entry.name], arrays[ends_name]
+            ).decode()
+            columns.append((path, entry.name, ends_name, list(tokens)))
+    return columns
+
+
+def _store_exact_tokens(
+    arrays: dict[str, Any],
+    tensor: dict[str, Any],
+    data_name: str,
+    ends_name: str,
+    tokens: list[str],
+    /,
+) -> None:
+    """Replace one exact tensor column's tokens and its manifest payload shape."""
+    assert tensor["type"].endswith(":ExactTensorArchiveRecipe")
+    changed = TextColumnArchiveRecipe.encode(tuple(tokens))
+    arrays[data_name] = changed.data
+    arrays[ends_name] = changed.ends
+    tensor["items"][0]["items"][0]["shape"] = list(changed.data.shape)
 
 
 def test_exact_plc_bank_restores_by_constructor_and_refuses_forgery(tmp_path: Path) -> None:
@@ -187,9 +254,11 @@ def test_brep_archive_cold_restores_source_and_exact_spline_in_new_process(
         capture_output=True,
         text=True,
     )
-    expected = json.loads(written.stdout)
+    # The cold-restore oracle exceeds the per-argument process limit; it is a file.
+    expected = tmp_path / "cold-restore-expected.json"
+    expected.write_text(json.dumps(json.loads(written.stdout)), encoding="utf-8")
     restored = subprocess.run(
-        [sys.executable, str(_WORKER), "read", str(tmp_path), json.dumps(expected)],
+        [sys.executable, str(_WORKER), "read", str(tmp_path), str(expected)],
         cwd=_REPOSITORY_ROOT,
         check=True,
         capture_output=True,
@@ -302,10 +371,12 @@ def test_brep_archive_rejects_tampered_tessellation_chart_tokens(
     corrupted = tmp_path / "tampered-tessellation-chart-tokens.phx"
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
+    # Since 4ff2cfd9c the witness archives as SurfaceChartWitnessArchiveRecipe
+    # with its exact chart tokens as one exact integer text column.
     def find_surface_witness(node: object) -> dict[str, Any] | None:
         if isinstance(node, dict):
-            if node.get("kind") == "dataclass" and str(node.get("type", "")).endswith(
-                ":SurfaceChartWitness"
+            if node.get("kind") == "namedtuple" and str(node.get("type", "")).endswith(
+                ":SurfaceChartWitnessArchiveRecipe"
             ):
                 return node
             for child in node.values():
@@ -321,19 +392,14 @@ def test_brep_archive_rejects_tampered_tessellation_chart_tokens(
 
     witness = find_surface_witness(manifest["model_recipe"])
     assert witness is not None
-    token_bank = witness["fields"]["chart_rational_tokens"]
-
-    def tamper_first_integer(node: object) -> bool:
-        if isinstance(node, dict):
-            if node.get("kind") == "literal" and type(node.get("value")) is int:
-                node["value"] += 1
-                return True
-            return any(tamper_first_integer(child) for child in node.values())
-        if isinstance(node, list):
-            return any(tamper_first_integer(child) for child in node)
-        return False
-
-    assert tamper_first_integer(token_bank)
+    token_bank = witness["items"][
+        SurfaceChartWitnessArchiveRecipe._fields.index("chart_rational_tokens")
+    ]
+    [(_, data_name, ends_name, tokens)] = _exact_token_columns(
+        manifest, arrays, "source_chart_witness.chart_rational_tokens"
+    )
+    tokens[0] = str(int(tokens[0]) + 1)
+    _store_exact_tokens(arrays, token_bank, data_name, ends_name, tokens)
     write_model_archive(
         corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
     )
@@ -989,43 +1055,16 @@ def test_mapped_layer_curving_composition_rebuilds_source_trace_cold(
     # MODEL_ARCHIVE_LIMITS); the harness reads and rewrites it the same way.
     manifest, arrays = read_model_archive(source, limits=None)
 
-    def find_mapped_trace(node: object) -> dict[object, object] | None:
-        if isinstance(node, dict):
-            if (
-                node.get("kind") == "dataclass"
-                and str(node.get("type", "")).rsplit(":", 1)[-1]
-                == "LayerCurvingMappedChartTrace"
-            ):
-                return node
-            for child in node.values():
-                found = find_mapped_trace(child)
-                if found is not None:
-                    return found
-        elif isinstance(node, list):
-            for child in node:
-                found = find_mapped_trace(child)
-                if found is not None:
-                    return found
-        return None
-
-    def tamper_first_fraction(node: object) -> bool:
-        if isinstance(node, dict):
-            if node.get("kind") == "fraction":
-                numerator = node.get("numerator")
-                if not isinstance(numerator, int):
-                    return False
-                node["numerator"] = numerator + 1
-                return True
-            return any(tamper_first_fraction(child) for child in node.values())
-        if isinstance(node, list):
-            return any(tamper_first_fraction(child) for child in node)
-        return False
-
-    trace = find_mapped_trace(manifest["model_recipe"])
+    # Since 2c500dd58/4f88ab07e the trace archives as a LayerRecordArchiveRecipe
+    # whose exact source parameters are one rational text column.
+    trace = _find_layer_record(manifest["model_recipe"], "LayerCurvingMappedChartTrace")
     assert trace is not None
-    fields = trace.get("fields")
-    assert isinstance(fields, dict)
-    assert tamper_first_fraction(fields["source_parameters"])
+    [(_, data_name, ends_name, tokens)] = _exact_token_columns(
+        manifest, arrays, "fields['mapped_chart_trace'].fields['source_parameters']"
+    )
+    first = Fraction(tokens[0])
+    tokens[0] = str(Fraction(first.numerator + 1, first.denominator))
+    _store_exact_tokens(arrays, trace["source_parameters"], data_name, ends_name, tokens)
     corrupted = tmp_path / "changed-mapped-layer-source-parameters.phx"
     write_model_archive(corrupted, manifest=manifest, arrays=arrays, limits=None)
     refused = subprocess.run(
@@ -1125,33 +1164,24 @@ def test_implicit_layer_curving_archive_revalidates_primitive_chart_evidence_col
     # The worker writes and reads layer-curving compositions with limits=None.
     manifest, arrays = read_model_archive(source, limits=None)
 
-    def find_implicit_trace(node: object) -> dict[str, Any] | None:
-        if isinstance(node, dict):
-            if (
-                node.get("kind") == "dataclass"
-                and str(node.get("type", "")).rsplit(":", 1)[-1]
-                == "LayerCurvingImplicitRootTrace"
-            ):
-                return node
-            for child in node.values():
-                found = find_implicit_trace(child)
-                if found is not None:
-                    return found
-        elif isinstance(node, list):
-            for child in node:
-                found = find_implicit_trace(child)
-                if found is not None:
-                    return found
-        return None
-
-    trace = find_implicit_trace(manifest["model_recipe"])
+    # Since 2c500dd58/4f88ab07e the trace archives as a LayerRecordArchiveRecipe
+    # whose primitive chart evidence is transposed into ImplicitChartRowsArchiveRecipe
+    # columns; bound column 1 is each row's target-to-root lower bound.
+    trace = _find_layer_record(manifest["model_recipe"], "LayerCurvingImplicitRootTrace")
     assert trace is not None
-    chart_rows = trace["fields"]["chart_evidence"]["items"]
-    assert chart_rows and chart_rows[0]["kind"] == "mapping"
-    primitive_fields = {pair[0]["value"]: pair[1] for pair in chart_rows[0]["items"]}
-    lower_bound = primitive_fields["target_to_root_lower_bound"]
-    assert lower_bound["kind"] == "literal"
-    lower_bound["value"] += 0.125
+    assert trace["chart_evidence"]["type"].endswith(":ImplicitChartRowsArchiveRecipe")
+    _register_model_archive_types()
+    [bounds] = (
+        entry
+        for entry in model_recipe_array_inventory(
+            manifest["model_recipe"], prefix="model/leaves", limits=None
+        )
+        if entry.path.endswith("fields['chart_evidence'].bounds")
+    )
+    lower_bounds = np.array(arrays[bounds.name], copy=True)
+    assert lower_bounds.ndim == 2 and lower_bounds.shape[0] > 0
+    lower_bounds[0, 1] += 0.125
+    arrays[bounds.name] = lower_bounds
     corrupted = tmp_path / "changed-implicit-layer-chart-evidence.phx"
     write_model_archive(corrupted, manifest=manifest, arrays=arrays, limits=None)
     refused = subprocess.run(
@@ -3454,26 +3484,13 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
     assert expected["coverage_region_occurrence_paths"] == [[]]
     path_manifest, path_arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
-    def find_coverage_certificate(node: object) -> dict[str, Any] | None:
-        if isinstance(node, dict):
-            if node.get("kind") == "dataclass" and str(node.get("type", "")).endswith(
-                ":DomainCoverageCertificate"
-            ):
-                return node
-            for child in node.values():
-                found = find_coverage_certificate(child)
-                if found is not None:
-                    return found
-        elif isinstance(node, list):
-            for child in node:
-                found = find_coverage_certificate(child)
-                if found is not None:
-                    return found
-        return None
-
-    coverage = find_coverage_certificate(path_manifest["model_recipe"])
+    # Since 2c500dd58/4f88ab07e the certificate archives as a LayerRecordArchiveRecipe;
+    # its region occurrence paths stay an ordinary tuple field.
+    coverage = _find_layer_record(
+        path_manifest["model_recipe"], "DomainCoverageCertificate"
+    )
     assert coverage is not None
-    path_bank = coverage["fields"]["region_occurrence_paths"]
+    path_bank = coverage["region_occurrence_paths"]
     assert path_bank["kind"] == "tuple"
     path_bank["items"][0]["items"] = [
         {"kind": "literal", "value": "stale-region-occurrence"}
@@ -3781,41 +3798,33 @@ def test_coordinate_map_composition_cold_replays_native_source_maps(
     assert "incompatible with its registered recipe" in refused_node_keys.stderr
     bank_manifest, bank_arrays = read_model_archive(source, limits=None)
 
-    def find_exact_coordinate_bank(node: object) -> dict[str, Any] | None:
-        if isinstance(node, dict):
-            if (
-                node.get("kind") == "dataclass"
-                and str(node.get("type", "")).rsplit(":", 1)[-1] == "CellGeometrySpec"
-            ):
-                fields = node.get("fields")
-                if isinstance(fields, dict):
-                    bank = fields.get("exact_coordinate_bank")
-                    if isinstance(bank, dict) and bank.get("kind") == "tuple":
-                        return bank
-            for child in node.values():
-                found = find_exact_coordinate_bank(child)
-                if found is not None:
-                    return found
-        elif isinstance(node, list):
-            for child in node:
-                found = find_exact_coordinate_bank(child)
-                if found is not None:
-                    return found
-        return None
-
-    def tamper_first_exact_fraction(node: object) -> bool:
-        if isinstance(node, dict):
-            if node.get("kind") == "fraction" and type(node.get("numerator")) is int:
-                node["numerator"] += 1
-                return True
-            return any(tamper_first_exact_fraction(child) for child in node.values())
-        if isinstance(node, list):
-            return any(tamper_first_exact_fraction(child) for child in node)
-        return False
-
-    bank = find_exact_coordinate_bank(bank_manifest["model_recipe"])
-    assert bank is not None
-    assert tamper_first_exact_fraction(bank)
+    # Since 2c500dd58/4f88ab07e CellGeometrySpec archives as a LayerRecordArchiveRecipe
+    # whose exact coordinate bank is one rational text column.
+    entry_banks = [
+        (int(match.group(1)), data_name, ends_name, tokens)
+        for path, data_name, ends_name, tokens in _exact_token_columns(
+            bank_manifest, bank_arrays, "fields['exact_coordinate_bank']"
+        )
+        if (
+            match := re.fullmatch(
+                r"\.entries\[(\d+)\]\.value\.fields\['exact_coordinate_bank'\]", path
+            )
+        )
+    ]
+    assert entry_banks
+    entry_index, data_name, ends_name, tokens = entry_banks[0]
+    geometry = _find_layer_record(
+        bank_manifest["model_recipe"]["fields"]["entries"]["items"][entry_index][
+            "fields"
+        ]["value"],
+        "CellGeometrySpec",
+    )
+    assert geometry is not None
+    first = Fraction(tokens[0])
+    tokens[0] = str(Fraction(first.numerator + 1, first.denominator))
+    _store_exact_tokens(
+        bank_arrays, geometry["exact_coordinate_bank"], data_name, ends_name, tokens
+    )
     bank_directory = tmp_path / "changed-cell-geometry-exact-coordinate-bank"
     bank_directory.mkdir()
     write_model_archive(
@@ -5089,26 +5098,40 @@ def test_reference_chart_rational_archive_rejects_tampered_expression(
     corrupted = corrupted_directory / "reference-chart-arguments.phx"
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
 
-    def find_rational(node: object) -> dict[str, Any] | None:
-        if isinstance(node, dict):
-            if node.get("kind") == "rational_polynomial":
-                return node
-            for child in node.values():
-                found = find_rational(child)
-                if found is not None:
-                    return found
-        elif isinstance(node, list):
-            for child in node:
-                found = find_rational(child)
-                if found is not None:
-                    return found
-        return None
-
-    polynomial = find_rational(manifest["model_recipe"])
-    assert polynomial is not None
-    coefficient = polynomial["numerator"]["items"][0][1]
-    assert coefficient["kind"] == "fraction"
-    coefficient["numerator"] += 1
+    # Since 2c500dd58/4f88ab07e reference chart arguments archive as
+    # ExactExpressionRowsArchiveRecipe columns: int8 expression kinds (2 is a
+    # rational polynomial), cumulative numerator then denominator term ends, and
+    # one exact coefficient token per term.
+    witnesses = _find_layer_record(manifest["model_recipe"], "ReferenceCellMapWitnesses")
+    assert witnesses is not None
+    expressions = witnesses["source_reference_chart_arguments"]
+    assert expressions["type"].endswith(":ExactExpressionRowsArchiveRecipe")
+    [(path, data_name, ends_name, tokens)] = _exact_token_columns(
+        manifest, arrays, "fields['source_reference_chart_arguments'].coefficients"
+    )
+    names = {
+        entry.path: entry.name
+        for entry in model_recipe_array_inventory(
+            manifest["model_recipe"], prefix="model/leaves", limits=None
+        )
+    }
+    expression_path = path.removesuffix(".coefficients")
+    kinds = np.asarray(arrays[names[f"{expression_path}.kinds"]])
+    polynomial_ends = np.asarray(arrays[names[f"{expression_path}.polynomial_ends"]])
+    rational = int(np.flatnonzero(kinds == 2)[0])
+    first_term = 0 if rational == 0 else int(polynomial_ends[2 * rational - 1])
+    assert int(polynomial_ends[2 * rational]) > first_term
+    coefficient = Fraction(tokens[first_term])
+    tokens[first_term] = str(Fraction(coefficient.numerator + 1, coefficient.denominator))
+    _store_exact_tokens(
+        arrays,
+        expressions["items"][
+            ExactExpressionRowsArchiveRecipe._fields.index("coefficients")
+        ],
+        data_name,
+        ends_name,
+        tokens,
+    )
     write_model_archive(
         corrupted, manifest=manifest, arrays=arrays, limits=MODEL_ARCHIVE_LIMITS
     )
