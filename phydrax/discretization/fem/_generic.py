@@ -4277,17 +4277,10 @@ def _masked_boundary_dofs(mesh: MaskedSimplexMesh, /) -> Array:
 
 
 @eqx.filter_jit
-def assemble_masked_finite_element(
+def _masked_finite_element_program(
     plan: MaskedFiniteElementPlan, mesh: MaskedSimplexMesh, /
 ) -> MaskedFiniteElementSystem:
-    """Assemble capacity-shaped P1 mass and stiffness on one masked layout.
-
-    Module-level compiled entry. Its compile key is the plan's static identity
-    plus the layout signature (cell kind, ambient dimension, capacities,
-    coordinate dtype); coordinates, IDs, masks, cells, and adjacency are traced,
-    so layouts of one bucket with different active counts or topology reuse one
-    executable. See `MaskedFiniteElementSystem` for the pinned-padding layout.
-    """
+    """Compiled body of `assemble_masked_finite_element` (traced topology)."""
 
     if not isinstance(plan, MaskedFiniteElementPlan):
         raise TypeError("plan must be a MaskedFiniteElementPlan.")
@@ -4347,6 +4340,37 @@ def assemble_masked_finite_element(
         stiffness,
         mesh.vertex_active,
         _masked_boundary_dofs(mesh),
+    )
+
+
+def assemble_masked_finite_element(
+    plan: MaskedFiniteElementPlan, mesh: MaskedSimplexMesh, /
+) -> MaskedFiniteElementSystem:
+    """Assemble capacity-shaped P1 mass and stiffness on one masked layout.
+
+    Assembly runs as one module-level compiled program. Its compile key is the
+    plan's static identity plus the layout signature (cell kind, ambient
+    dimension, capacities, coordinate dtype); coordinates, IDs, masks, cells, and
+    adjacency are traced, so layouts of one bucket with different active counts
+    or topology reuse one executable. Mass and stiffness leaving the program are
+    rebound to their now-concrete topology, keeping relation, coefficients,
+    properties, and operator IDs, so host canonical counts (and sparse cost
+    estimation and `linalg.solve` planning) are available as for host-assembled
+    operators. See `MaskedFiniteElementSystem` for the pinned-padding layout.
+    """
+
+    system = _masked_finite_element_program(plan, mesh)
+    mass, stiffness = (
+        SparseLinearMap(
+            operator.relation,
+            operator.coefficients,
+            properties=operator.properties,
+            operator_id=operator.operator_id,
+        )
+        for operator in (system.mass, system.stiffness)
+    )
+    return MaskedFiniteElementSystem(
+        system.plan_id, mass, stiffness, system.dof_active, system.boundary_dofs
     )
 
 

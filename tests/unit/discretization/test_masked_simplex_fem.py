@@ -194,6 +194,22 @@ def test_masked_mass_integrates_constants_and_stiffness_annihilates_them(
     np.testing.assert_allclose(system.stiffness.mv(ones), 0.0, atol=1e-12)
 
 
+def test_masked_operators_admit_sparse_cost_estimation_and_solves(case: Any) -> None:
+    _, _, mesh, _, system = case
+    for operator in (system.mass, system.stiffness):
+        assert phx.linalg.estimate_operator_action_cost(operator).storage_bytes > 0
+    rhs = jnp.where(
+        mesh.vertex_active,
+        jnp.linspace(-0.4, 0.9, mesh.vertex_capacity, dtype=jnp.float64),
+        0.0,
+    )
+    solved = phx.linalg.solve(phx.linalg.LinearSystem(system.mass), rhs)
+    residual = np.asarray(system.mass.as_dense()) @ np.asarray(solved.value) - rhs
+    assert bool(solved.successful)
+    assert np.linalg.norm(residual) <= 1e-7 * np.linalg.norm(rhs)
+    assert jnp.all(solved.value[~mesh.vertex_active] == 0.0)
+
+
 def test_masked_plan_rejects_non_vertex_degrees_and_foreign_buckets() -> None:
     points, cells = _square(2)
     mesh, _ = _masked_layout(points, cells, 12, 10, 0)

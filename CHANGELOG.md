@@ -240,6 +240,10 @@
   compiled program are rebound to their concrete topology on return, so sparse
   cost estimation and `linalg.solve` accept them again (for example the FEM-BEM
   volume-source mass operator).
+- `assemble_masked_finite_element` rebinds the mass and stiffness operators
+  leaving its compiled program to their concrete topology, keeping relation,
+  coefficients, properties and operator IDs, so sparse cost estimation and
+  `linalg.solve` accept them instead of refusing traced topology.
 - Certified distance, chord, norm, frame and quality bounds round outward in
   directed binary64 arithmetic instead of padding round-to-nearest estimates:
   source distance sums, curve and surface chord, point and box bounds,
