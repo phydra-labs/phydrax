@@ -227,6 +227,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Projector Monte Carlo sums the post-annihilation norm, the committed and
+  initial populations, and the validator's population check in one ordered
+  compensated order, so inactive capacity padding is an exact no-op: resource
+  transport to larger group or support capacities stays bitwise and the
+  validator reproduces committed populations exactly on every platform.
 - `RowGramLinearOperator` plans the canonical storage of a sparse factor from
   its concrete topology at construction, so its exact diagonal (and the
   matrix-free Jacobi preconditioner of Craig solves) works again for sparse

@@ -10,6 +10,7 @@ from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._jax_config import x64_enabled
+from .._numerics._compensated import compensated_sum
 from ..operators.quantum.lattice._address import QuantumConfigurationDomain
 from ..operators.quantum.lattice._guide import GuidedQuantumColumnOperator
 from ..sparse import KeyGroupPlan, reduce_key_groups
@@ -337,7 +338,7 @@ def initialize_projector_monte_carlo(
             raise ValueError(
                 "Guide transformation is invalid or outside numerical range."
             )
-    population = jnp.sum(jnp.abs(coefficients), dtype=jnp.float64)
+    population = compensated_sum(jnp.abs(coefficients))
     if not bool(jax.device_get(jnp.isfinite(population) & (population > 0))):
         raise ValueError("Initial represented population must be finite and positive.")
     r, s = prepared.plan.replicas, prepared.plan.support_capacity
@@ -435,10 +436,8 @@ def validate_projector_state(
         state.metric_id,
     ):
         raise ValueError("History semantic bindings do not match the state.")
-    population = jnp.sum(
-        jnp.where(state.active, jnp.abs(state.coefficients), jnp.float64(0)),
-        axis=1,
-        dtype=jnp.float64,
+    population = compensated_sum(
+        jnp.where(state.active, jnp.abs(state.coefficients), jnp.float64(0)), axis=1
     )
     support_good = (
         _active_keys_admissible(

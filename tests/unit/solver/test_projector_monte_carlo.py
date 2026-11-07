@@ -47,6 +47,7 @@ from phydrax.solver._projector_monte_carlo_contracts import (
     ProjectorMonteCarloStatus,
     SpawnPolicy,
 )
+from phydrax.solver._projector_monte_carlo_step import _compress, _empty_stream
 from phydrax.units import derived_unit, HARTREE, METER
 from tests._support.projector_monte_carlo import (
     complex_flux_control,
@@ -397,6 +398,60 @@ def test_all_chunks_annihilate_before_one_final_compression() -> None:
     np.testing.assert_array_equal(
         result.evidence.post_annihilation_norm, np.asarray((1.0, 1.0))
     )
+
+
+def test_compression_norms_are_bitwise_independent_of_padded_capacities() -> None:
+    # Eight active terms whose length-dependent XLA tree sums differ by one ulp
+    # between capacities 8 and 12; inactive padding must be an exact no-op.
+    values = jnp.asarray(
+        (
+            0.126 - 0.704j,
+            -0.132 - 1.265j,
+            0.64 - 0.623j,
+            0.105 + 0.041j,
+            -0.536 - 2.325j,
+            0.362 - 0.219j,
+            1.304 - 1.246j,
+            0.947 - 0.732j,
+        ),
+        dtype=jnp.complex128,
+    )
+    control = two_boson_two_site_control()
+    initial = np.asarray((0.0, 1.0, 0.0), dtype=np.complex128)
+    sums: list[tuple[jax.Array, jax.Array]] = []
+    for capacity in (8, 12):
+        prepared = _prepared(control, initial, _plan(support=capacity, groups=capacity))
+        state = initialize_projector_monte_carlo(prepared, jax.random.key(5))
+
+        def compress(
+            terms: jax.Array,
+            prepared: PreparedProjectorMonteCarlo = prepared,
+            state: ProjectorMonteCarloState = state,
+            capacity: int = capacity,
+        ) -> tuple[jax.Array, jax.Array]:
+            stream = _empty_stream(prepared)
+            active = jnp.arange(capacity, dtype=jnp.int64) < terms.shape[0]
+            labels = jnp.arange(1, capacity + 1, dtype=jnp.uint32)[:, None]
+            keys = jnp.where(
+                active[:, None],
+                jnp.broadcast_to(labels, stream.keys.shape),
+                jnp.uint32(0),
+            )
+            padded = jnp.pad(terms, (0, capacity - terms.shape[0]))
+            stream = stream._replace(keys=keys, active=active, high=padded)
+            replica = _compress(prepared, state, jnp.asarray(0, dtype=jnp.int32), stream)
+            assert replica.post_norm.dtype == jnp.float64
+            assert replica.population.dtype == jnp.float64
+            return replica.post_norm, replica.population
+
+        single = jax.jit(compress)(values)
+        batched = jax.jit(jax.vmap(compress))(jnp.stack((values, values)))
+        for scalar, lanes in zip(single, batched, strict=True):
+            np.testing.assert_array_equal(lanes, np.stack((scalar, scalar)))
+        sums.append(single)
+    (narrow_norm, narrow_population), (wide_norm, wide_population) = sums
+    np.testing.assert_array_equal(wide_norm, narrow_norm)
+    np.testing.assert_array_equal(wide_population, narrow_population)
 
 
 @pytest.mark.parametrize(
