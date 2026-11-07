@@ -156,7 +156,12 @@ def _dense_sampler(
     if np.any(eigenvalues < -tolerance):
         raise ValueError("fractional Gaussian grid covariance is not semidefinite.")
     eigenvalues = np.maximum(eigenvalues, 0.0)
-    factor = jnp.asarray(eigenvectors * np.sqrt(eigenvalues)[None, :])
+    # The principal square root V sqrt(L) V^T is the unique symmetric
+    # semidefinite factor of the covariance. Eigenvector signs (and bases of
+    # repeated eigenvalues) are LAPACK-implementation choices, so the
+    # unsymmetrized factor V sqrt(L) would draw a different path for the same
+    # key on another platform.
+    factor = jnp.asarray((eigenvectors * np.sqrt(eigenvalues)[None, :]) @ eigenvectors.T)
     return _DenseFractionalGaussianSampler(factor, nodes.size)
 
 
