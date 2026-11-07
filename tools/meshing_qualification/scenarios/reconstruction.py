@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from time import perf_counter
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -71,6 +72,71 @@ def _directions(count: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     )
 
 
+class CorrectRoundingUndecided(ArithmeticError):
+    """Ziv's strategy did not decide a correctly rounded value by its cap."""
+
+
+# Ziv precisions (bits): each interval evaluation of the exact binary64
+# argument either rounds both endpoints to one binary64 or doubles precision.
+# Published worst cases (identical bits m after the round bit) for binary64:
+# Lefevre & Muller, ARITH-15 (2001), Property 5 and Tables 6-8: sin on
+# [1/32, 2] is decided by 53 + 65 = 118 bits, cos on [1/64, 12867/8192] by
+# 108 bits. Lefevre, Ly & Zimmermann, ARITH 2026, Tables V-VI: for |x| >= 2**10
+# the hardest sin case has m = 65 (0x1.b951f1572eba5p+23) and the hardest cos
+# case m = 62. These do not cover every binade of the sampler's [0, 2*pi);
+# the complete sets are the CORE-MATH sin.wc/cos.wc files. The 4096-bit cap
+# exceeds 53 + 68 + guard bits by far and also covers argument reduction of
+# |x| < 2**1024.
+_ZIV_PRECISIONS = (64, 128, 256, 512, 1024, 2048, 4096)
+
+
+def _correctly_rounded_sin_cos(
+    function: Literal["sin", "cos"], values: np.ndarray, /
+) -> np.ndarray:
+    """Correctly rounded binary64 ``sin``/``cos`` (round to nearest, ties to even).
+
+    The exact binary64 arguments first go through the host enclosure entry
+    points ``phydrax.geometry._interval_enclosure.interval_sin`` /
+    ``interval_cos``. An enclosure whose endpoints round to one binary64 (for
+    binary64 endpoints: coincide) decides the value. Every other argument is
+    converted exactly to an mpmath float and evaluated in mpmath interval
+    arithmetic at increasing precision (Ziv's strategy) until both endpoints
+    round to the same binary64, independent of the platform libm.
+    """
+    from mpmath.libmp import from_float, round_nearest, to_float
+    from mpmath.libmp.libmpi import mpi_cos, mpi_sin
+
+    from phydrax.geometry._interval_enclosure import interval_cos, interval_sin
+
+    arguments = np.asarray(values, dtype=np.float64)
+    enclose = interval_sin if function == "sin" else interval_cos
+    lower, upper = (
+        np.asarray(endpoint, dtype=np.float64).ravel()
+        for endpoint in enclose((arguments, arguments))
+    )
+    rounded = np.where(lower == upper, lower, np.nan)
+    evaluate = mpi_sin if function == "sin" else mpi_cos
+    flat = arguments.ravel()
+    for index in np.flatnonzero(lower != upper).tolist():
+        value = float(flat[index])
+        if value == 0.0:
+            # Exact: sin(+-0) = +-0 keeps its sign, cos(+-0) = 1.
+            rounded[index] = value if function == "sin" else 1.0
+            continue
+        exact = from_float(value)
+        for precision in _ZIV_PRECISIONS:
+            low, high = evaluate((exact, exact), precision)
+            candidate = to_float(low, rnd=round_nearest)
+            if candidate == to_float(high, rnd=round_nearest):
+                rounded[index] = candidate
+                break
+        else:
+            raise CorrectRoundingUndecided(
+                f"{function}({value!r}) is undecided at {_ZIV_PRECISIONS[-1]} bits."
+            )
+    return rounded.reshape(arguments.shape)
+
+
 def _surface_samples(kind: str, resolution: int, rng: np.random.Generator) -> np.ndarray:
     samples_per_area = 16.0 / (4.0 * np.pi * 0.2**2)
     if kind == "lobed-sphere":
@@ -101,10 +167,18 @@ def _surface_samples(kind: str, resolution: int, rng: np.random.Generator) -> np
         while total < count:
             u, v, keep = rng.random(size=(3, 4 * count))
             u, v = 2.0 * np.pi * u, 2.0 * np.pi * v
-            ring = major + minor * np.cos(v)
+            # Platform libm sin/cos differ in the last ulp across OSes; the
+            # sample points use the correctly rounded values instead.
+            cos_v = _correctly_rounded_sin_cos("cos", v)
+            ring = major + minor * cos_v
             selected = keep < ring / (major + minor)
             block = np.stack(
-                (ring * np.cos(u), ring * np.sin(u), minor * np.sin(v)), axis=1
+                (
+                    ring * _correctly_rounded_sin_cos("cos", u),
+                    ring * _correctly_rounded_sin_cos("sin", u),
+                    minor * _correctly_rounded_sin_cos("sin", v),
+                ),
+                axis=1,
             )[selected]
             accepted.append(block)
             total += block.shape[0]
