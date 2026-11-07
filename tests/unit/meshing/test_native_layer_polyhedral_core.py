@@ -10,6 +10,7 @@ from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.discretization.finite_volume import (
     prepare_polyhedral_finite_volume_geometry,
 )
+from phydrax.geometry._source_fidelity import validate_source_fidelity_witness
 from phydrax.geometry._surface_source_support import SurfaceSourceCharts
 from phydrax.meshing import (
     BoundaryLayerControl,
@@ -31,6 +32,8 @@ from phydrax.meshing import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from phydrax.meshing._association import GeometryAssociation, GeometrySourceEntityRole
+from phydrax.meshing._audit import audit_cell_mesh
 from phydrax.meshing._boundary_layer import BoundaryLayerMesh
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
 from phydrax.meshing._polyhedral_generation import NativePolyhedralSchedule
@@ -330,3 +333,69 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
             assert float(np.sum(exterior_measures[selected])) == pytest.approx(
                 1.0, rel=0.0, abs=1.0e-10
             )
+
+
+def test_polyhedral_core_audit_refuses_an_unreplayed_source_edge_face_overlay() -> None:
+    fixture = _make_fixture()
+    source, specification = _source_and_specification(fixture, include_power_source=True)
+    result = (
+        NativeMeshingProvider(_options())
+        .plan(source, specification, coordinate_contract=_COORDINATES)
+        .execute()
+    )
+    certification = result.certification
+    assert certification is not None
+    inputs = certification.inputs
+    if inputs.source is None or inputs.fidelity_witness is None:
+        raise AssertionError("The polyhedral core fixture requires a fidelity witness.")
+    token = validate_source_fidelity_witness(
+        result.mesh, result.geometry, inputs.source, inputs.fidelity_witness
+    )
+    face_set = result.mesh.entity_set(2).entity_set_id
+    facets = next(
+        value
+        for value in result.associations
+        if value.target_entity_set_id == face_set
+        and (value.source_id, value.source_revision)
+        == (source.source_id, source.source_revision)
+    )
+    # Polyhedral constructions emit no source-edge face overlay; an injected
+    # one cannot be replayed through reference-cell core charts.
+    overlay = GeometryAssociation(
+        facets.association_kind,
+        facets.source_id,
+        facets.source_revision,
+        face_set,
+        np.asarray(facets.target_global_ids, dtype=np.int64)[:1],
+        facets.source_entity_ids[:1],
+        np.zeros((1,), dtype=np.float64),
+        exact=True,
+        source_roles=(GeometrySourceEntityRole.EDGE,),
+        source_occurrence_paths=(
+            None
+            if facets.source_occurrence_paths is None
+            else facets.source_occurrence_paths[:1]
+        ),
+    )
+
+    def overlay_issues(associations: tuple[GeometryAssociation, ...]) -> list[str]:
+        report = audit_cell_mesh(
+            result.mesh,
+            result.geometry,
+            associations=associations,
+            validated_fidelity=(token,),
+            association_source=source,
+            layer_core_root_geometry=inputs.layer_core_root_geometry,
+            certification_inputs=inputs,
+        )
+        return [
+            issue
+            for issue in report.issues
+            if issue.startswith("association_source_witness_detail:")
+            and '"stage":"edge_face_overlay"' in issue
+        ]
+
+    assert overlay_issues(result.associations) == []
+    refused = overlay_issues((*result.associations, overlay))
+    assert len(refused) == 1
+    assert "admits no source-edge face overlay" in refused[0]
