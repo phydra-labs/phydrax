@@ -1882,19 +1882,46 @@ def audit_cell_mesh(
                  if value.source is association_source.fidelity_source),
                 chart_tokens[0],
             )
-            try:
-                _validate_source_edge_face_overlays(
-                    mesh, geometry, token, associations, association_source,
-                    validated_fidelity, layer_core_root_geometry,
-                    computed_root=computed_root,
-                    computed_replay=computed_replay,
-                    image_preparations=image_preparations,
+            if any(block.cell_kind == "polyhedron" for block in mesh.blocks):
+                # Overlay replay resolves core edges through reference-cell
+                # charts, which polyhedral cores lack; their constructions emit
+                # no source-edge face overlay, so any such row is unproved.
+                authored = (
+                    association_source
+                    if association_source.reference_source is None
+                    else association_source.reference_source
                 )
-            except (TypeError, ValueError) as error:
-                _record_source_witness_issue(
-                    issues, "edge_face_overlay", associations,
-                    token.witness.witness_id, f"{type(error).__name__}: {error}",
+                face_set = mesh.entity_set(2).entity_set_id
+                overlays = tuple(
+                    value
+                    for value in associations
+                    if value.target_entity_set_id == face_set
+                    and (value.source_id, value.source_revision)
+                    == (authored.source_id, authored.source_revision)
+                    and GeometrySourceEntityRole.EDGE in value.source_roles
                 )
+                if overlays:
+                    _record_source_witness_issue(
+                        issues,
+                        "edge_face_overlay",
+                        overlays,
+                        token.witness.witness_id,
+                        "ValueError: A polyhedral core admits no source-edge face overlay.",
+                    )
+            else:
+                try:
+                    _validate_source_edge_face_overlays(
+                        mesh, geometry, token, associations, association_source,
+                        validated_fidelity, layer_core_root_geometry,
+                        computed_root=computed_root,
+                        computed_replay=computed_replay,
+                        image_preparations=image_preparations,
+                    )
+                except (TypeError, ValueError) as error:
+                    _record_source_witness_issue(
+                        issues, "edge_face_overlay", associations,
+                        token.witness.witness_id, f"{type(error).__name__}: {error}",
+                    )
     support_coverage, face_issues, wall_association_ids = _validated_partial_face_coverage(
         mesh, geometry, associations, validated_fidelity, association_source,
         layer_core_root_geometry, certification_inputs, computed_root, computed_replay,
