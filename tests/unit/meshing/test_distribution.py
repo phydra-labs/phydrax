@@ -1329,9 +1329,14 @@ def test_owner_message_channels_in_fresh_three_process_group() -> None:
     from phydrax import config as pxconfig
     from phydrax._execution_launch import launch_local_processes, LocalProcessLaunchPlan
 
-    if jax.process_count() != 1 or os.environ.get("PYTEST_XDIST_WORKER") is not None:
+    if (
+        jax.process_count() != 1
+        or os.name != "posix"
+        or os.environ.get("PYTEST_XDIST_WORKER") is not None
+    ):
         pytest.skip(
-            "The three-owner coordinator must run outside a process group and xdist."
+            "The three-owner coordinator requires POSIX supervision outside a "
+            "process group and xdist."
         )
     repository = Path(__file__).resolve().parents[3]
     environment = dict(os.environ)
