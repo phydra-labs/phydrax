@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "elementary.hpp"
 #include "floating_point_mode.hpp"
 #include "interval_program.hpp"
 #include "phydrax_meshcore.h"
@@ -68,11 +69,6 @@ double steps_down(double value, int count) {
   return value;
 }
 
-double steps_up(double value, int count) {
-  for (int step = 0; step < count; ++step) value = step_up(value);
-  return value;
-}
-
 double numpy_minimum(double first, double second) {
   if (std::isnan(first)) return first;
   if (std::isnan(second)) return second;
@@ -90,33 +86,6 @@ double numpy_maximum(double first, double second) {
 double endpoint_product(double first, double second) {
   if ((first == 0.0 && std::isinf(second)) || (std::isinf(first) && second == 0.0)) return 0.0;
   return first * second;
-}
-
-bool phase_inside(double lower, double upper, double phase) {
-  const double slack = 8.0 * kEpsilon * numpy_maximum(1.0, std::fabs(lower));
-  const double index = std::ceil((lower - slack - phase) / kTwoPi);
-  return phase + index * kTwoPi <= upper + slack;
-}
-
-std::array<double, 2> trig_contract(double lower, double upper, bool is_sine) {
-  const double lower_spacing =
-      std::nextafter(std::fabs(lower), kInfinity) - std::fabs(lower);
-  const double upper_spacing =
-      std::nextafter(std::fabs(upper), kInfinity) - std::fabs(upper);
-  const bool wide = !(upper - lower < kTwoPi) || !std::isfinite(lower) ||
-                    !std::isfinite(upper) ||
-                    numpy_maximum(lower_spacing, upper_spacing) >= 0.5 * kPi;
-  const auto function = [is_sine](double value) {
-    if (!std::isfinite(value)) return kNaN;
-    return is_sine ? std::sin(value) : std::cos(value);
-  };
-  const double first = function(lower);
-  const double last = function(upper);
-  double low = numpy_minimum(first, last);
-  double high = numpy_maximum(first, last);
-  if (phase_inside(lower, upper, is_sine ? 0.5 * kPi : 0.0) || wide) high = 1.0;
-  if (phase_inside(lower, upper, is_sine ? -0.5 * kPi : kPi) || wide) low = -1.0;
-  return {steps_down(low, 4), steps_up(high, 4)};
 }
 
 struct Program {
@@ -219,9 +188,10 @@ void reference(const Program& program, std::vector<double>& lower, std::vector<d
         lower[target] = -ah;
         upper[target] = -al;
       } else if (opcode == kSine || opcode == kCosine) {
-        const auto interval = trig_contract(al, ah, opcode == kSine);
-        lower[target] = interval[0];
-        upper[target] = interval[1];
+        const phx::mc::elementary::Enclosure interval =
+            opcode == kSine ? phx::mc::elementary::sin(al, ah) : phx::mc::elementary::cos(al, ah);
+        lower[target] = interval.lower;
+        upper[target] = interval.upper;
       } else {
         const std::size_t y = at(b, bi, element);
         const double bl = lower[y], bh = upper[y];
@@ -346,6 +316,8 @@ void zero_times_unbounded_multiply() {
   PHX_CHECK(same(program.lower[out + 3], -kInfinity) && same(program.upper[out + 3], kInfinity));
 }
 
+// The opcodes are the rigorous elementary kernels (test_elementary owns their
+// numerical contract); here they must match them bit for bit inside programs.
 void trigonometric_enclosures() {
   Program program;
   const double below_two_pi = step_down(kTwoPi);
@@ -357,30 +329,32 @@ void trigonometric_enclosures() {
   const std::int64_t cosine = program.slots(8);
   program.row(kCosine, cosine, 8, input, -1, -1, -1, 0);
   check_reference(program, true);
-  PHX_CHECK(same(program.lower[sine], -4 * kSmallest));
-  PHX_CHECK(same(program.upper[sine], 4 * kSmallest));
-  PHX_CHECK(same(program.lower[cosine], 1.0 - 0x1p-51));
-  PHX_CHECK(same(program.upper[cosine], steps_up(1.0, 4)));
-  for (std::int64_t element : {1, 2, 3, 4, 5, 7}) {
-    PHX_CHECK(same(program.lower[sine + element], steps_down(-1.0, 4)));
-    PHX_CHECK(same(program.upper[sine + element], steps_up(1.0, 4)));
-    PHX_CHECK(same(program.lower[cosine + element], steps_down(-1.0, 4)));
-    PHX_CHECK(same(program.upper[cosine + element], steps_up(1.0, 4)));
+  PHX_CHECK(same(program.lower[sine], 0.0) && same(program.upper[sine], 0.0));
+  PHX_CHECK(same(program.lower[cosine], 1.0) && same(program.upper[cosine], 1.0));
+  for (std::int64_t element : {1, 4, 5, 7}) {
+    PHX_CHECK(same(program.lower[sine + element], -1.0));
+    PHX_CHECK(same(program.upper[sine + element], 1.0));
+    PHX_CHECK(same(program.lower[cosine + element], -1.0));
+    PHX_CHECK(same(program.upper[cosine + element], 1.0));
   }
-  PHX_CHECK(same(program.lower[sine + 6], steps_down(std::sin(0.1), 4)));
-  PHX_CHECK(same(program.upper[sine + 6], steps_up(std::sin(0.2), 4)));
-  PHX_CHECK(same(program.lower[cosine + 6], steps_down(std::cos(0.2), 4)));
-  PHX_CHECK(same(program.upper[cosine + 6], steps_up(std::cos(0.1), 4)));
+  // A NaN endpoint gives the whole line.
+  PHX_CHECK(program.lower[sine + 2] == -kInfinity && program.upper[sine + 2] == kInfinity);
+  PHX_CHECK(program.lower[cosine + 2] == -kInfinity && program.upper[cosine + 2] == kInfinity);
+  // A huge point keeps a tight enclosure from the exact argument reduction.
+  PHX_CHECK(program.lower[sine + 3] > -1.0 && program.upper[sine + 3] < 1.0);
+  PHX_CHECK(bits(program.upper[sine + 3]) - bits(program.lower[sine + 3]) <= 2 ||
+            bits(program.lower[sine + 3]) - bits(program.upper[sine + 3]) <= 2);
   for (std::int64_t element = 0; element < 8; ++element) {
-    if (std::isnan(program.lower[sine + element])) continue;
+    const double lo = program.lower[input + element], hi = program.upper[input + element];
+    if (!std::isfinite(lo) || !std::isfinite(hi)) continue;
     for (int sample = 0; sample <= 8; ++sample) {
-      const double lo = program.lower[input + element], hi = program.upper[input + element];
-      if (!std::isfinite(lo) || !std::isfinite(hi)) continue;
       const double x = lo + (hi - lo) * (static_cast<double>(sample) / 8.0);
-      PHX_CHECK(program.lower[sine + element] <= std::sin(x));
-      PHX_CHECK(std::sin(x) <= program.upper[sine + element]);
-      PHX_CHECK(program.lower[cosine + element] <= std::cos(x));
-      PHX_CHECK(std::cos(x) <= program.upper[cosine + element]);
+      const auto point_sine = phx::mc::elementary::sin(x, x);
+      const auto point_cosine = phx::mc::elementary::cos(x, x);
+      PHX_CHECK(program.lower[sine + element] <= point_sine.lower);
+      PHX_CHECK(point_sine.upper <= program.upper[sine + element]);
+      PHX_CHECK(program.lower[cosine + element] <= point_cosine.lower);
+      PHX_CHECK(point_cosine.upper <= program.upper[cosine + element]);
     }
   }
 }
@@ -475,8 +449,9 @@ void maximum_and_minimum() {
   }
 }
 
-// Shared vectors with tests/unit/geometry (host interpreter): libm endpoints
-// widened by one ulp; log sends a nonpositive endpoint to the matching infinity.
+// The exp and log opcodes are the rigorous elementary kernels: exp(0) = 1
+// exactly, exp(-inf) = 0, and log sends a nonpositive endpoint to the matching
+// infinity.
 void exponential_and_logarithm() {
   Program program;
   const std::int64_t input = program.values(
@@ -489,13 +464,17 @@ void exponential_and_logarithm() {
   const double lows[5] = {0.0, -kInfinity, -1.0, 1.0, -2.0};
   const double highs[5] = {1.0, 0.0, 2.0, kInfinity, -1.0};
   for (int k = 0; k < 5; ++k) {
-    PHX_CHECK(same(program.lower[exponential + k], step_down(std::exp(lows[k]))));
-    PHX_CHECK(same(program.upper[exponential + k], step_up(std::exp(highs[k]))));
-    const double log_low = lows[k] <= 0.0 ? -kInfinity : step_down(std::log(lows[k]));
-    const double log_high = highs[k] <= 0.0 ? kInfinity : step_up(std::log(highs[k]));
-    PHX_CHECK(same(program.lower[logarithm + k], log_low));
-    PHX_CHECK(same(program.upper[logarithm + k], log_high));
+    const auto exp_expected = phx::mc::elementary::exp(lows[k], highs[k]);
+    const auto log_expected = phx::mc::elementary::log(lows[k], highs[k]);
+    PHX_CHECK(same(program.lower[exponential + k], exp_expected.lower));
+    PHX_CHECK(same(program.upper[exponential + k], exp_expected.upper));
+    PHX_CHECK(same(program.lower[logarithm + k], log_expected.lower));
+    PHX_CHECK(same(program.upper[logarithm + k], log_expected.upper));
   }
+  PHX_CHECK(same(program.lower[exponential], 1.0));
+  PHX_CHECK(same(program.lower[exponential + 1], 0.0) && same(program.upper[exponential + 1], 1.0));
+  PHX_CHECK(same(program.lower[logarithm + 3], 0.0) && program.upper[logarithm + 3] == kInfinity);
+  PHX_CHECK(program.lower[logarithm + 4] == -kInfinity && program.upper[logarithm + 4] == kInfinity);
 }
 
 void interval_capability_query() {

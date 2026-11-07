@@ -850,6 +850,51 @@ PHX_MC_API int32_t phx_mc_interval_sum(
     int64_t count, const double* first_lower, const double* first_upper,
     const double* second_lower, const double* second_upper, int32_t subtract, double* lower,
     double* upper);
+#define PHX_MC_ELEMENTARY_EXP 0
+#define PHX_MC_ELEMENTARY_LOG 1
+#define PHX_MC_ELEMENTARY_SIN 2
+#define PHX_MC_ELEMENTARY_COS 3
+#define PHX_MC_ELEMENTARY_TAN 4
+#define PHX_MC_ELEMENTARY_ATAN 5
+#define PHX_MC_ELEMENTARY_TANH 6
+/* Elementwise rigorous enclosure [out_lower, out_upper] of the selected f over
+ * each box [lower, upper] of count items (lower <= upper unless an endpoint is
+ * NaN; infinite endpoints bound the real set and are never members), computed
+ * without a platform libm from binary64 basic operations and fma in
+ * round-to-nearest with gradual underflow. That mode is established before any
+ * argument is inspected; if it cannot be, the call returns
+ * PHX_MC_INTERNAL_ERROR. count < 0, parallelism < 1, an unknown function code
+ * or a null pointer with count > 0 returns PHX_MC_INVALID_ARGUMENT. Outputs may
+ * alias inputs (element i is read before it is written). Results are
+ * bit-identical for every parallelism and platform.
+ * Rules:
+ *   - A NaN endpoint gives (-inf, inf) for every f.
+ *   - Monotone f (exp, log, atan, tanh) bound f at the lower endpoint from below
+ *     and at the upper endpoint from above (an inverted box stays inverted).
+ *   - exp: exp(-inf) contributes 0 below and exp([-inf, -inf]) = [0, 2^-1074];
+ *     exp(+inf) contributes +inf above and exp([+inf, +inf]) = [DBL_MAX, +inf].
+ *   - log: lower <= 0 gives out_lower = -inf and upper <= 0 gives
+ *     out_upper = +inf (a box <= 0 maps to the whole line); log(+inf) is
+ *     bounded by [DBL_MAX, +inf].
+ *   - atan(+-inf) contributes the outward-rounded +-pi/2 bound; tanh(+-inf)
+ *     contributes +-1 exactly.
+ *   - sin, cos: an infinite endpoint, an inverted box or a width >= 2 pi
+ *     (decided exactly) gives [-1, 1]; otherwise the endpoint enclosures widened
+ *     to -1 or 1 wherever an extremum may lie in the box, clipped to [-1, 1].
+ *   - tan: an infinite endpoint, an inverted box or a possible pole (decided or
+ *     undecided) gives (-inf, +inf); otherwise [bound at lower, bound at upper].
+ *   - The argument reduction of sin, cos and tan is exact Payne-Hanek with a
+ *     proven error bound for every finite binary64 x (R = DBL_MAX), so no finite
+ *     argument falls back to the full range; extremum and pole membership is
+ *     decided from the reduced quadrants, undecided meaning contained.
+ *   - Exact results are returned exactly: exp(0) = 1, log(1) = 0, cos(0) = 1,
+ *     and sin, tan, atan, tanh of a signed zero return that zero; other zero
+ *     results are +0, and zeros order as IEEE 754-2019 minimum/maximum.
+ * Point enclosures of finite non-exact results are one or two binary64 steps
+ * wide; the error proofs are documented in src/elementary.cpp. */
+PHX_MC_API int32_t phx_mc_interval_elementary(
+    int32_t function, int64_t count, const double* lower, const double* upper,
+    double* out_lower, double* out_upper, int32_t parallelism);
 /* Exact Bernstein controls of polynomials sum_t N_t x^{e_t} / Q on a domain.
  * Item i owns terms [term_offsets[i], term_offsets[i + 1]) with exponents
  * (terms, dimension) and numerators (terms) words, degrees (count, degree_width)

@@ -72,6 +72,7 @@ set(PHX_MC_SOURCES
   src/refine3d.cpp
   src/improve3d.cpp
   src/zero_set_admission.cpp
+  src/elementary.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -109,6 +110,7 @@ set(PHX_MC_HEADERS
   src/triangulation2d.hpp
   src/triangulation3d.hpp
   src/zero_set_admission.hpp
+  src/elementary.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -212,4 +214,5 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_surface_mesh)
   phx_mc_add_test(test_surface_remesh)
   phx_mc_add_test(test_zero_set_admission)
+  phx_mc_add_test(test_elementary)
 endif()

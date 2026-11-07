@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "capi_guard.hpp"
+#include "elementary.hpp"
 #include "floating_point_mode.hpp"
 #include "interval_program.hpp"
 #include "phydrax_meshcore.h"
@@ -41,8 +42,8 @@ constexpr std::int64_t kSelect = 14;
 // propagation, -0 below +0).
 constexpr std::int64_t kMaximum = 15;
 constexpr std::int64_t kMinimum = 16;
-// exp and log: libm endpoint values widened by one ulp each side; log maps a
-// nonpositive endpoint to the matching infinity (host interpreter semantics).
+// exp and log: the rigorous elementary kernels (elementary.hpp) with the
+// conventions of phx_mc_interval_elementary, as in the host interpreter.
 constexpr std::int64_t kExp = 17;
 constexpr std::int64_t kLog = 18;
 
@@ -56,13 +57,6 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect) |
     (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
     (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog);
-
-constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
-constexpr double kPi = 3.141592653589793;  // binary64 pi, Python math.pi.
-constexpr double kTwoPi = 2.0 * kPi;
-constexpr double kHalfPi = 0.5 * kPi;
-constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
-constexpr int kTranscendentalSteps = 4;
 
 struct Row {
   std::int64_t opcode;
@@ -80,7 +74,8 @@ Row row_at(const std::int64_t* instructions, std::int64_t row) noexcept {
   return {fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], fields[7]};
 }
 
-// NumPy minimum/maximum: preserve the first NaN operand and order -0 below +0.
+// IEEE 754-2019 minimum/maximum: preserve the first NaN operand and order -0
+// below +0, matched by the host interpreter's IEEE endpoint helpers.
 double minimum(double first, double second) noexcept {
   if (std::isnan(first)) return first;
   if (std::isnan(second)) return second;
@@ -95,15 +90,9 @@ double maximum(double first, double second) noexcept {
   return first > second ? first : second;
 }
 
-double down(double value, int steps = 1) noexcept {
-  for (int step = 0; step < steps; ++step) value = next_down(value);
-  return value;
-}
+double down(double value) noexcept { return next_down(value); }
 
-double up(double value, int steps = 1) noexcept {
-  for (int step = 0; step < steps; ++step) value = next_up(value);
-  return value;
-}
+double up(double value) noexcept { return next_up(value); }
 
 // Endpoint product. Interval endpoints bound real numbers; an infinite
 // endpoint marks an unbounded side, never a member, so an exact zero
@@ -112,40 +101,6 @@ double up(double value, int steps = 1) noexcept {
 double product(double first, double second) noexcept {
   if ((first == 0.0 && std::isinf(second)) || (std::isinf(first) && second == 0.0)) return 0.0;
   return first * second;
-}
-
-// Whether phase + 2 k pi may lie in [lower, upper] for an integer k.
-bool contains_phase(double lower, double upper, double phase) noexcept {
-  const double slack = 8.0 * kEpsilon * maximum(1.0, std::fabs(lower));
-  const double index = std::ceil((lower - slack - phase) / kTwoPi);
-  return phase + index * kTwoPi <= upper + slack;
-}
-
-double sine(double value) noexcept { return std::isfinite(value) ? std::sin(value) : kNaN; }
-double cosine(double value) noexcept { return std::isfinite(value) ? std::cos(value) : kNaN; }
-
-template <class Function>
-void trigonometric(double lower, double upper, Function function, double high_phase,
-                   double low_phase, double& out_lower, double& out_upper) noexcept {
-  const double lower_spacing =
-      std::nextafter(std::fabs(lower), std::numeric_limits<double>::infinity()) -
-      std::fabs(lower);
-  const double upper_spacing =
-      std::nextafter(std::fabs(upper), std::numeric_limits<double>::infinity()) -
-      std::fabs(upper);
-  const bool wide = !(upper - lower < kTwoPi) || !std::isfinite(lower) ||
-                    !std::isfinite(upper) ||
-                    maximum(lower_spacing, upper_spacing) >= kHalfPi;
-  const double first = function(lower);
-  const double last = function(upper);
-  double low = minimum(first, last);
-  double high = maximum(first, last);
-  if (contains_phase(lower, upper, high_phase) || wide) high = 1.0;
-  if (contains_phase(lower, upper, low_phase) || wide) low = -1.0;
-  low = down(low, kTranscendentalSteps);
-  high = up(high, kTranscendentalSteps);
-  out_lower = low;
-  out_upper = high;
 }
 
 // Every element offset + (index < 0 ? k : indices[index + k]), k < size,
@@ -309,11 +264,20 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
         upper[out + k] = certainly_false ? 0.0 : 1.0;
       }
       return;
+    case kExp:
+    case kLog:
+      for (std::int64_t k = begin; k < end; ++k) {
+        const std::int64_t input = address(indices, row.a, row.a_index, k);
+        const phx::mc::elementary::Enclosure result =
+            row.opcode == kExp ? phx::mc::elementary::exp(lower[input], upper[input])
+                               : phx::mc::elementary::log(lower[input], upper[input]);
+        lower[out + k] = result.lower;
+        upper[out + k] = result.upper;
+      }
+      return;
     case kSquare:
     case kSqrt:
     case kReciprocal:
-    case kExp:
-    case kLog:
       for (std::int64_t k = begin; k < end; ++k) {
         const std::int64_t input = address(indices, row.a, row.a_index, k);
         const double low = lower[input];
@@ -321,14 +285,6 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
         if (std::isnan(low) || std::isnan(high)) {
           lower[out + k] = -std::numeric_limits<double>::infinity();
           upper[out + k] = std::numeric_limits<double>::infinity();
-        } else if (row.opcode == kExp) {
-          lower[out + k] = down(std::exp(low));
-          upper[out + k] = up(std::exp(high));
-        } else if (row.opcode == kLog) {
-          lower[out + k] =
-              low <= 0.0 ? -std::numeric_limits<double>::infinity() : down(std::log(low));
-          upper[out + k] =
-              high <= 0.0 ? std::numeric_limits<double>::infinity() : up(std::log(high));
         } else if (row.opcode == kSquare) {
           const bool crosses = low <= 0.0 && high >= 0.0;
           const double low_square = low * low;
@@ -356,20 +312,16 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
       }
       return;
     case kSine:
-    case kCosine: {
-      const bool is_sine = row.opcode == kSine;
+    case kCosine:
       for (std::int64_t k = begin; k < end; ++k) {
         const std::int64_t input = address(indices, row.a, row.a_index, k);
-        if (is_sine) {
-          trigonometric(lower[input], upper[input], sine, kHalfPi, -kHalfPi,
-                        lower[out + k], upper[out + k]);
-        } else {
-          trigonometric(lower[input], upper[input], cosine, 0.0, kPi,
-                        lower[out + k], upper[out + k]);
-        }
+        const phx::mc::elementary::Enclosure result =
+            row.opcode == kSine ? phx::mc::elementary::sin(lower[input], upper[input])
+                                : phx::mc::elementary::cos(lower[input], upper[input]);
+        lower[out + k] = result.lower;
+        upper[out + k] = result.upper;
       }
       return;
-    }
     case kReduceSum: {
       const double gamma = parameters[row.b_index];
       for (std::int64_t k = begin; k < end; ++k) {
@@ -475,6 +427,8 @@ int32_t phx::mc::PreparedIntervalProgram::bind(
     int64_t workspace_size) {
   workspace_size_ = -1;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!phx::mc::addressable(instruction_count, kFields, sizeof(int64_t)) ||
         !phx::mc::addressable(index_count, 1, sizeof(int64_t)) ||
         !phx::mc::addressable(parameter_count, 1, sizeof(double)) ||
@@ -483,8 +437,6 @@ int32_t phx::mc::PreparedIntervalProgram::bind(
         (index_count > 0 && indices == nullptr) ||
         (parameter_count > 0 && parameters == nullptr))
       return PHX_MC_INVALID_ARGUMENT;
-    const phx::mc::GradualNearestScope mode;
-    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::vector<int64_t> owned_instructions, owned_indices;
     std::vector<double> owned_parameters;
     if (instruction_count)
@@ -505,11 +457,11 @@ int32_t phx::mc::PreparedIntervalProgram::bind(
 int32_t phx::mc::PreparedIntervalProgram::execute(
     double* lower, double* upper, int64_t workspace_size) const {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (workspace_size_ < 0 || workspace_size != workspace_size_ ||
         (workspace_size > 0 && (lower == nullptr || upper == nullptr)))
       return PHX_MC_INVALID_ARGUMENT;
-    const phx::mc::GradualNearestScope mode;
-    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     execute_validated(instructions_.data(), static_cast<int64_t>(instructions_.size() / kFields),
                       indices_.data(), parameters_.data(), lower, upper);
     return PHX_MC_OK;
@@ -523,6 +475,8 @@ int32_t phx_mc_interval_program_execute(const int64_t* instructions, int64_t ins
                                         const double* parameters, int64_t parameter_count,
                                         double* lower, double* upper, int64_t workspace_size) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!phx::mc::addressable(instruction_count, kFields, sizeof(int64_t)) ||
         !phx::mc::addressable(index_count, 1, sizeof(int64_t)) ||
         !phx::mc::addressable(parameter_count, 1, sizeof(double)) ||
@@ -535,8 +489,6 @@ int32_t phx_mc_interval_program_execute(const int64_t* instructions, int64_t ins
         (workspace_size > 0 && (lower == nullptr || upper == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    const phx::mc::GradualNearestScope mode;
-    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!program_valid(instructions, instruction_count, indices, index_count, parameters,
                        parameter_count, workspace_size)) {
       return PHX_MC_INVALID_INPUT;
