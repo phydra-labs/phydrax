@@ -365,9 +365,7 @@ def _compress(
     stream: _Stream,
 ) -> _Replica:
     coefficients = stream.high + stream.correction
-    post_norm = compensated_sum(
-        jnp.where(stream.active, jnp.abs(coefficients), jnp.float64(0))
-    )
+    post_norm = compensated_sum(jnp.abs(coefficients), where=stream.active)
     match prepared.plan.compression:
         case "none":
             compressed = coefficients
@@ -409,7 +407,7 @@ def _compress(
     final_active = jnp.arange(prepared.plan.support_capacity, dtype=jnp.int64) < required
     keys = jnp.where(final_active[:, None], stream.keys[indices], jnp.uint32(0))
     values = jnp.where(final_active, compressed[indices], jnp.complex128(0))
-    population = compensated_sum(jnp.abs(values))
+    population = compensated_sum(jnp.abs(values), where=final_active)
     status = _fail(
         stream.status,
         ~jnp.all(jnp.isfinite(coefficients))

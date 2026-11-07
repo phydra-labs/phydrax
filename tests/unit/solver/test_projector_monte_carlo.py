@@ -400,26 +400,44 @@ def test_all_chunks_annihilate_before_one_final_compression() -> None:
     )
 
 
-def test_compression_norms_are_bitwise_independent_of_padded_capacities() -> None:
-    # Eight active terms whose length-dependent XLA tree sums differ by one ulp
-    # between capacities 8 and 12; inactive padding must be an exact no-op.
-    values = jnp.asarray(
-        (
-            0.126 - 0.704j,
-            -0.132 - 1.265j,
-            0.64 - 0.623j,
-            0.105 + 0.041j,
-            -0.536 - 2.325j,
-            0.362 - 0.219j,
-            1.304 - 1.246j,
-            0.947 - 0.732j,
-        ),
-        dtype=jnp.complex128,
-    )
+# Eight terms whose length-dependent XLA tree sums differ by one ulp between
+# capacities 8 and 12.
+_EIGHT_TERMS = np.asarray(
+    (
+        0.126 - 0.704j,
+        -0.132 - 1.265j,
+        0.64 - 0.623j,
+        0.105 + 0.041j,
+        -0.536 - 2.325j,
+        0.362 - 0.219j,
+        1.304 - 1.246j,
+        0.947 - 0.732j,
+    ),
+    dtype=np.complex128,
+)
+# Sixty terms whose sequential and blocked compensated sums differ by one ulp:
+# 1 + 2**-53 ties to 1, and only a blocked sum keeps the 2**-108 tail.
+_SIXTY_TERMS = np.concatenate(
+    (np.asarray((1.0, 2.0**-53)), np.full((58,), 2.0**-108))
+).astype(np.complex128)
+
+
+@pytest.mark.parametrize(
+    "terms,capacities",
+    (
+        pytest.param(_EIGHT_TERMS, (8, 12), id="logical-8"),
+        pytest.param(_SIXTY_TERMS, (60, 70, 128), id="logical-60"),
+    ),
+)
+def test_compression_norms_are_bitwise_independent_of_padded_capacities(
+    terms: npt.NDArray[np.complex128], capacities: tuple[int, ...]
+) -> None:
+    # Inactive padding must be an exact no-op at every capacity.
+    values = jnp.asarray(terms)
     control = two_boson_two_site_control()
     initial = np.asarray((0.0, 1.0, 0.0), dtype=np.complex128)
     sums: list[tuple[jax.Array, jax.Array]] = []
-    for capacity in (8, 12):
+    for capacity in capacities:
         prepared = _prepared(control, initial, _plan(support=capacity, groups=capacity))
         state = initialize_projector_monte_carlo(prepared, jax.random.key(5))
 
@@ -449,9 +467,10 @@ def test_compression_norms_are_bitwise_independent_of_padded_capacities() -> Non
         for scalar, lanes in zip(single, batched, strict=True):
             np.testing.assert_array_equal(lanes, np.stack((scalar, scalar)))
         sums.append(single)
-    (narrow_norm, narrow_population), (wide_norm, wide_population) = sums
-    np.testing.assert_array_equal(wide_norm, narrow_norm)
-    np.testing.assert_array_equal(wide_population, narrow_population)
+    (norm, population), *wider = sums
+    for wide_norm, wide_population in wider:
+        np.testing.assert_array_equal(wide_norm, norm)
+        np.testing.assert_array_equal(wide_population, population)
 
 
 @pytest.mark.parametrize(

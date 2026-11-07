@@ -37,6 +37,13 @@ def _real_dtype(dtype: jnp.dtype, /) -> jnp.dtype:
     return dtype
 
 
+def _compensates(dtype: jnp.dtype, /) -> bool:
+    return (
+        jnp.issubdtype(dtype, jnp.inexact)
+        and _real_dtype(dtype) in _SUPPORTED_REAL_DTYPES
+    )
+
+
 def _flat_leading(value: Array, output_ndim: int, /) -> Array:
     output_shape = value.shape[value.ndim - output_ndim :] if output_ndim else ()
     reduction_shape = value.shape[: value.ndim - output_ndim]
@@ -206,9 +213,7 @@ def compensated_sum_chunks(
     dtype = jnp.result_type(*(array.dtype for array in arrays))
     arrays = tuple(array.astype(dtype) for array in arrays)
     flat_chunks = tuple(_flat_leading(array, output_ndim_) for array in arrays)
-    if not jnp.issubdtype(dtype, jnp.inexact) or _real_dtype(dtype) not in (
-        _SUPPORTED_REAL_DTYPES
-    ):
+    if not _compensates(dtype):
         native = jnp.zeros(output_shape, dtype=dtype)
         for flat in flat_chunks:
             native = native + jnp.sum(flat, axis=0)
@@ -242,27 +247,65 @@ def _resolve_axes(axis: Axis, ndim: int, /) -> tuple[int, ...]:
     return resolved
 
 
+def _selected_sum(flat: Array, selected: Array, /) -> Array:
+    output_ndim = flat.ndim - 1
+    if flat.shape[0] <= _BLOCK_THRESHOLD or not _compensates(flat.dtype):
+        # Excluded entries are zeros, and a zero term is an exact Sum2 no-op
+        # wherever it sits: the running sum and correction never become -0.
+        return compensated_sum_chunks((flat,), output_ndim=output_ndim)
+    # Blocks are position-dependent. A stable compaction moves the selected
+    # terms to the front, so the zeros fill the tail of the last occupied
+    # block and whole trailing blocks, both exact no-ops of the expansion; the
+    # logical count then picks what the unpadded stream would use.
+    order = jnp.argsort(jnp.logical_not(selected).astype(jnp.int8), axis=0, stable=True)
+    compacted = jnp.take_along_axis(flat, order, axis=0)
+    sequential = compensated_sum_chunks(
+        (compacted[:_BLOCK_THRESHOLD],), output_ndim=output_ndim
+    )
+    blocked = compensated_sum_chunks((compacted,), output_ndim=output_ndim)
+    # The compacted mask is True exactly on the first `count` slots.
+    exceeds = jnp.take_along_axis(selected, order, axis=0)[_BLOCK_THRESHOLD]
+    return jnp.where(exceeds, blocked, sequential)
+
+
 def compensated_sum(
     value: ArrayLike,
     /,
     *,
     axis: Axis = None,
     keepdims: bool = False,
+    where: ArrayLike | None = None,
 ) -> Array:
-    """Sum explicit axes using the branch-free Sum2 error transformation."""
+    """Sum explicit axes using the branch-free Sum2 error transformation.
+
+    ``where`` selects the logical terms of a padded stream. For float32 and
+    float64 (real or complex) values each output lane is bitwise the unmasked
+    sum of its selected terms in reduction order: the algorithm follows the
+    logical term count, and neither the capacity nor the positions or values of
+    excluded entries change the result. Other dtypes keep the native sum of the
+    zeroed stream.
+    """
     array = jnp.asarray(value)
     axes = _resolve_axes(axis, array.ndim)
+    selected = None
+    if where is not None:
+        selected = jnp.asarray(where)
+        if selected.dtype != jnp.bool_:
+            raise TypeError("where must be a boolean mask.")
+        selected = jnp.broadcast_to(selected, array.shape)
+        array = jnp.where(selected, array, jnp.zeros((), dtype=array.dtype))
     if not axes:
         return array
     output_axes = tuple(index for index in range(array.ndim) if index not in axes)
-    transposed = jnp.transpose(array, axes + output_axes)
-    flattened = transposed.reshape(
-        (prod(array.shape[index] for index in axes),)
-        + tuple(array.shape[index] for index in output_axes)
+    order = axes + output_axes
+    flat_shape = (prod(array.shape[index] for index in axes),) + tuple(
+        array.shape[index] for index in output_axes
     )
-    result = compensated_sum_chunks(
-        (flattened,),
-        output_ndim=len(output_axes),
+    flattened = jnp.transpose(array, order).reshape(flat_shape)
+    result = (
+        compensated_sum_chunks((flattened,), output_ndim=len(output_axes))
+        if selected is None
+        else _selected_sum(flattened, jnp.transpose(selected, order).reshape(flat_shape))
     )
     if not keepdims:
         return result
