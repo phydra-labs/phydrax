@@ -2129,3 +2129,29 @@ def test_committed_fixture_records_its_regeneration_gates(release: str) -> None:
     assert gates == FLOAT64_GATES
     assert set(manifest["host"]) == {"machine", "platform", "python"}
     assert manifest["provider"]["mace-torch"] == release
+
+
+@pytest.mark.parametrize("release", sorted(_COMMITTED_FAMILY_CASES))
+def test_committed_attention_fixture_is_a_dyadic_model_without_gradients(
+    release: str,
+) -> None:
+    # The provider's attention edge network dominates the state; the fixture is
+    # the exact dyadic-rounded model (its oracle evaluated on it), without the
+    # parameter gradients no family test reads.
+    declaration = committed_manifest(release)["cases"]["two_attention"]
+    exponent = declaration["dyadic_weight_exponent"]
+    assert 6 <= exponent <= 10
+    assert declaration["parameter_gradients"] is False
+    path = RELEASE_FIXTURES[release] / "two_attention.npz"
+    assert path.stat().st_size <= 1_000_000
+    fixture = np.load(path)
+    assert not [name for name in fixture.files if "/parameter_gradient/" in name]
+    edge_networks = [
+        name
+        for name in fixture.files
+        if ".conv_tp_weights." in name or ".linear_down.weight" in name
+    ]
+    assert edge_networks
+    for name in edge_networks:
+        scaled = np.ldexp(fixture[name], exponent)
+        np.testing.assert_array_equal(scaled, np.round(scaled))

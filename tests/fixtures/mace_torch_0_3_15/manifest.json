@@ -8,6 +8,7 @@
         2
       ],
       "distance_transform": "None",
+      "dyadic_weight_exponent": 6,
       "first": "RealAgnosticAttResidualInteractionBlock",
       "heads": [
         "Default"
@@ -15,6 +16,7 @@
       "interactions": 2,
       "normalize2mom_silu": 1.6791767923989418,
       "pair_repulsion": false,
+      "parameter_gradients": false,
       "readout_scale": 1.6791767923989418,
       "rest": "RealAgnosticAttResidualInteractionBlock"
     },

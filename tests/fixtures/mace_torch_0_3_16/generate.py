@@ -18,7 +18,10 @@ Forces and virials are the provider's own autograd outputs, except where the
 provider radial basis carries no autograd (``ChebychevBasis`` evaluates
 ``torch.special.chebyshev_polynomial_t``): its autograd forces then omit the
 basis derivative, so those cases store a five-point central difference of the
-provider energy instead and record it as ``force_reference``.
+provider energy instead and record it as ``force_reference``. A case declaring
+``dyadic_weight_exponent`` rounds its perturbed parameters to multiples of
+``2**-dyadic_weight_exponent`` before any evaluation, and one declaring
+``parameter_gradients: False`` stores no parameter gradients.
 
 Family cases cover the attention-residual and residual-nonlinear interactions
 with a nonlinear-bias readout, Gaussian/Chebyshev bases with Soft/Agnesi
@@ -137,10 +140,17 @@ _FAMILY_SHARED: dict[str, Any] = {
     "apply_cutoff": True,
 }
 FAMILY_CASES: dict[str, dict[str, Any]] = {
+    # The attention edge network is fixed by the provider at [4+2*64]+3x[256]+[W]
+    # (99% of the state), so this case rounds its perturbed weights to
+    # multiples of 2**-dyadic_weight_exponent before evaluation (the oracle is
+    # that exact rounded model) and stores no parameter gradients (no test reads
+    # them for family cases); both keep the fixture compressible.
     "two_attention": {
         **_FAMILY_SHARED,
         "first": "RealAgnosticAttResidualInteractionBlock",
         "rest": "RealAgnosticAttResidualInteractionBlock",
+        "dyadic_weight_exponent": 6,
+        "parameter_gradients": False,
     },
     "two_nonlinear_bias": {
         **_FAMILY_SHARED,
@@ -316,6 +326,7 @@ def _evaluate(
     structure: dict[str, Any],
     head: int,
     conditions: dict[str, int],
+    parameter_gradients: bool,
     /,
 ) -> dict[str, np.ndarray]:
     torch = modules["torch"]
@@ -329,22 +340,21 @@ def _evaluate(
         conditions,
     )
     output = model(batch, compute_force=True, compute_virials=periodic, training=True)
-    names, parameters = zip(*model.named_parameters())
-    gradients = torch.autograd.grad(
-        output["energy"].sum(), parameters, retain_graph=True, allow_unused=True
-    )
     result = {
         "energy": output["energy"].detach().numpy(),
         "forces": output["forces"].detach().numpy(),
-        **{
-            f"parameter_gradient/{name}": (
-                torch.zeros_like(parameter) if gradient is None else gradient
-            )
-            .detach()
-            .numpy()
-            for name, parameter, gradient in zip(names, parameters, gradients)
-        },
     }
+    if parameter_gradients:
+        names, parameters = zip(*model.named_parameters())
+        gradients = torch.autograd.grad(
+            output["energy"].sum(), parameters, retain_graph=True, allow_unused=True
+        )
+        for name, parameter, gradient in zip(names, parameters, gradients):
+            result[f"parameter_gradient/{name}"] = (
+                (torch.zeros_like(parameter) if gradient is None else gradient)
+                .detach()
+                .numpy()
+            )
     if periodic:
         result["virials"] = output["virials"].detach().numpy()
     if _detached_radial_basis(modules, model):
@@ -448,6 +458,11 @@ def _case(
     with torch.no_grad():
         for parameter in model.parameters():
             parameter.add_(0.3 * torch.randn_like(parameter))
+        if "dyadic_weight_exponent" in case:
+            # Exact in float64: scaling by a power of two only shifts exponents.
+            scale = 2.0 ** case["dyadic_weight_exponent"]
+            for parameter in model.parameters():
+                parameter.copy_(torch.round(parameter * scale) / scale)
     arrays: dict[str, np.ndarray] = {
         f"state/{key}": value.detach().numpy()
         for key, value in model.state_dict().items()
@@ -473,7 +488,12 @@ def _case(
             arrays[f"{structure_name}/cell"] = np.asarray(structure["cell"])
         for index, head in enumerate(heads):
             for key, value in _evaluate(
-                modules, model, structure, index, conditions
+                modules,
+                model,
+                structure,
+                index,
+                conditions,
+                case.get("parameter_gradients", True),
             ).items():
                 arrays[f"{structure_name}/{head}/{key}"] = value
     # The compressed npz layout of numpy.savez_compressed, written member by
