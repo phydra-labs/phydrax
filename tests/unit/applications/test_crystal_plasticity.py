@@ -407,7 +407,12 @@ def test_crystal_plasticity_scenario_3() -> None:
 def test_crystal_plasticity_scenario_4() -> None:
     discretization = _one_block_two_cell_discretization()
     model = _model()
-    quadrature_count = discretization.block_geometries[0][0].physical_weights.shape[1]
+    # The route owns its material-site quadrature; size the field from its sites.
+    quadrature_count = (
+        cpfem.CrystalPlasticityRoute(discretization, "u", (("phase", model, jnp.eye(3)),))
+        .crystal_to_sample[0]
+        .shape[1]
+    )
     orientations = (
         jnp.broadcast_to(jnp.eye(3), (2, quadrature_count, 3, 3)).at[1].set(_rotation_z())
     )
