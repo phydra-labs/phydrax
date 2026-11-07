@@ -85,6 +85,8 @@ BRepNormalSingularityKind: TypeAlias = Literal[
 
 _PI = float(np.nextafter(pi, np.inf))
 _HALF_PI = pi / 2.0
+# ``fl(pi) < pi < _PI``, so half of ``_PI`` is a rational upper bound of pi/2.
+_HALF_PI_UPPER = Fraction(_PI) / 2
 
 
 @final
@@ -1327,7 +1329,9 @@ def _status(
     limit = _HALF_PI - draft
     if upper < limit:
         return "positive"
-    if lower > limit and upper < _HALF_PI:
+    # Insufficient draft needs ``lower > pi/2 - draft``; ``limit`` starts from
+    # ``fl(pi)/2 < pi/2``, so decide against a rational upper bound instead.
+    if lower > fraction_up(_HALF_PI_UPPER - Fraction(draft)) and upper < _HALF_PI:
         return "insufficient"
     if lower > _HALF_PI:
         return "undercut"

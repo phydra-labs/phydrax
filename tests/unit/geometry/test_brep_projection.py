@@ -1356,9 +1356,46 @@ def test_torus_seam_minimum_requires_certified_distance_evidence(
         center + (major + minor * np.cos(angle)) * radial + minor * np.sin(angle) * axis
     )
     np.testing.assert_allclose(result.points[0], expected, rtol=0.0, atol=1.0e-13)
-    assert (
-        float(result.distance_lower_bounds[0]) <= distance <= float(result.residuals[0])
+    # The binary64 query lies about ``distance`` inside the tube, so its exact
+    # distance is m - t with t = hypot(rho - M, z). With
+    # s = rho^2 + M^2 + z^2 - b^2, t < b iff s < 2 M rho and t > b iff s > 2 M rho,
+    # decided by exact squares.
+    exact = tuple(
+        tuple(value for value in vector if isinstance(value, Fraction))
+        for vector in (
+            patch.center_exact,
+            patch.first_axis_exact,
+            patch.second_axis_exact,
+            patch.axis_exact,
+            (patch.major_radius_exact, patch.minor_radius_exact),
+        )
     )
+    assert [len(vector) for vector in exact] == [3, 3, 3, 3, 2]
+    relative = tuple(
+        Fraction(float(value)) - base for value, base in zip(point, exact[0], strict=True)
+    )
+    x, y, z = (
+        sum((a * b for a, b in zip(relative, vector, strict=True)), Fraction(0))
+        for vector in exact[1:4]
+    )
+    major_exact, minor_exact = exact[4]
+    ring = 4 * major_exact**2 * (x * x + y * y)
+
+    def excess(bound: Fraction, /) -> Fraction:
+        return x * x + y * y + major_exact**2 + z * z - bound * bound
+
+    def tube_below(bound: Fraction, /) -> bool:
+        return excess(bound) < 0 or excess(bound) ** 2 < ring
+
+    def tube_above(bound: Fraction, /) -> bool:
+        return excess(bound) > 0 and excess(bound) ** 2 > ring
+
+    lower = Fraction(float(result.distance_lower_bounds[0]))
+    upper = Fraction(float(result.residuals[0]))
+    assert 0 <= lower <= upper < minor_exact and tube_below(minor_exact)
+    # lower <= m - t <= upper.
+    assert not tube_above(minor_exact - lower)
+    assert not tube_below(minor_exact - upper)
     np.testing.assert_allclose(np.linalg.norm(result.normals[0]), 1.0, atol=1.0e-13)
 
 
@@ -1383,3 +1420,25 @@ def test_torus_seam_projection_does_not_promote_an_unrepaired_source_gap() -> No
     )
     assert int(result.status[0]) == _STATUS.UNRESOLVED
     assert np.all(np.isnan(np.asarray(result.points)))
+
+
+def test_far_cylinder_certified_boundary_distance_encloses_exact_distance() -> None:
+    radius = 1.0e8
+    model = brep_cylinder(
+        radius, 1.0, base_center=(radius, 0.0, 0.0), coordinate_contract=_CONTRACT
+    )
+    x = float.fromhex("0x1.78e53f68f61f9p-19")
+    y = float.fromhex("0x1.04e4917c420eep-13")
+    result = phx.geometry.prepare_brep_projection(model).boundary_distance(
+        np.asarray([[x, y, 0.5]], dtype=np.float64)
+    )
+    assert result.semantics == "certified"
+    lower = Fraction(float(np.asarray(result.lower)[0]))
+    upper = Fraction(float(np.asarray(result.upper)[0]))
+
+    # The query lies inside, about 2.8e-6 from the side and 0.5 from both caps,
+    # so its exact distance is R - sqrt(axis_squared).
+    axis_squared = (Fraction(x) - Fraction(radius)) ** 2 + Fraction(y) ** 2
+    assert 0 <= lower <= upper < Fraction(1, 2)
+    assert (Fraction(radius) - lower) ** 2 >= axis_squared
+    assert (Fraction(radius) - upper) ** 2 <= axis_squared

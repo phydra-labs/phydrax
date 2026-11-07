@@ -283,3 +283,17 @@ def test_near_singular_regular_patch_resolves_below_former_singular_width() -> N
     assert face.singularities == ()
     enclosure = np.asarray(face.angle_enclosure)
     assert enclosure[0] == 0.0 and enclosure[1] < pi / 2.0
+
+
+def test_insufficient_draft_needs_a_lower_angle_above_the_exact_limit() -> None:
+    from phydrax.geometry.brep._normal_range import _status
+
+    lower = float.fromhex("0x1.a5ba180991559p-2")
+    upper = float.fromhex("0x1.a5ba18099155ap-2")
+    draft = float.fromhex("0x1.28b12f41de7c2p+0")
+    # The 36-digit truncation of pi is a rational lower bound of pi.
+    pi_lower = Fraction(314159265358979323846264338327950288, 10**35)
+    # The face's angle can still lie at or below pi/2 - draft.
+    assert Fraction(lower) < pi_lower / 2 - Fraction(draft)
+
+    assert _status(lower, upper, draft, False, False) != "insufficient"

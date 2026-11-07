@@ -228,15 +228,21 @@ def krawczyk(
     residual_lower, residual_upper = round_interval(
         identity - product_upper, identity - product_lower
     )
-    offset_lower = (lower - center)[:, free, None]
-    offset_upper = (upper - center)[:, free, None]
+    # Every binary64 operation below rounds to nearest once, so each result is
+    # widened by one outward step before it feeds the next operation.
+    offset_lower, offset_upper = round_interval(lower - center, upper - center)
     spread_lower, spread_upper = interval_times_interval(
-        residual_lower, residual_upper, offset_lower, offset_upper
+        residual_lower,
+        residual_upper,
+        offset_lower[:, free, None],
+        offset_upper[:, free, None],
     )
     base = center[:, free]
+    step_lower, step_upper = round_interval(
+        base - shift_upper[..., 0], base - shift_lower[..., 0]
+    )
     result_lower, result_upper = round_interval(
-        base - shift_upper[..., 0] + spread_lower[..., 0],
-        base - shift_lower[..., 0] + spread_upper[..., 0],
+        step_lower + spread_lower[..., 0], step_upper + spread_upper[..., 0]
     )
     finite = np.all(np.isfinite(result_lower) & np.isfinite(result_upper), axis=1)
     box_lower = lower[:, free]
