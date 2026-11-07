@@ -12,6 +12,7 @@ Provider-built fixtures are lawful deterministic test oracles, not qualified
 pretrained models.
 """
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -29,12 +30,16 @@ from phydrax.artifacts import (
     ArtifactManifest,
     ExternalArtifactPolicy,
 )
-from phydrax.atomistic.interchange import MACESourceKind
+from phydrax.atomistic.interchange import evaluate_mace_source, MACESourceKind
 from phydrax.interchange import pin_executable
 from phydrax.nn.atomistic import (
     MACEArchitecture,
     MACEDistanceTransform,
     MACEInteractionKind,
+)
+from tests.fixtures.mace_torch_0_3_16.generate import (
+    five_point_energy_gradient,
+    STENCIL_ERROR_BOUND,
 )
 
 
@@ -490,6 +495,52 @@ def within(observed: Any, reference: Any, gate: tuple[float, float]) -> bool:
         np.asarray(observed, np.float64) - np.asarray(reference, np.float64)
     )
     return bool(np.all(difference <= absolute + relative * np.abs(reference)))
+
+
+def provider_energy_gradient_reference(
+    source: Any, configuration: Any, reference: Any, *, provider: Any, head: str
+) -> tuple[Any, dict[str, tuple[float, float]]]:
+    """``reference`` with the provider-energy gradient as forces and stress.
+
+    A provider radial basis without autograd (mace-torch ``ChebychevBasis``)
+    returns forces and stress that are not the energy gradient. Like the
+    committed fixture generator, the reference is then its five-point
+    difference of the provider energy; the gates widen by the stencil's error
+    bound (forces in eV/angstrom, virials in eV, so stress by bound / volume).
+    """
+
+    def energies(points: list[tuple[np.ndarray, np.ndarray | None]]) -> list[float]:
+        moved = [
+            dataclasses.replace(
+                configuration,
+                positions=positions,
+                cell=configuration.cell if cell is None else cell,
+            )
+            for positions, cell in points
+        ]
+        evaluation = evaluate_mace_source(source, moved, provider=provider, head=head)
+        return [case.energy for case in evaluation.cases]
+
+    cell = (
+        np.asarray(configuration.cell, dtype=np.float64)
+        if configuration.periodic
+        else None
+    )
+    gradient = five_point_energy_gradient(
+        energies, np.asarray(configuration.positions, dtype=np.float64), cell
+    )
+    forces_gate = FLOAT64_GATES["forces"]
+    gates = {
+        **FLOAT64_GATES,
+        "forces": (forces_gate[0] + STENCIL_ERROR_BOUND, forces_gate[1]),
+    }
+    if cell is None:
+        return dataclasses.replace(reference, forces=gradient["forces"]), gates
+    volume = abs(float(np.linalg.det(cell)))
+    stress_gate = FLOAT64_GATES["stress"]
+    gates["stress"] = (stress_gate[0] + STENCIL_ERROR_BOUND / volume, stress_gate[1])
+    stress = -gradient["virials"][0] / volume
+    return dataclasses.replace(reference, forces=gradient["forces"], stress=stress), gates
 
 
 def assert_matches_oracle(

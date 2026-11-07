@@ -41,6 +41,7 @@ import json
 import platform
 import sys
 import zipfile
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -219,9 +220,11 @@ _STRUCTURES: dict[str, dict[str, Any]] = {
 
 # Five-point central stencil of the energy-gradient oracle (step in angstrom
 # for positions, dimensionless for strain). At 2.5e-4 the truncation (~h**4)
-# and rounding (~eps |E| / h) errors stay below 1e-10 on the autograd-exact
-# Gaussian case, an order under the force and stress gates.
-_STENCIL_STEP = 2.5e-4
+# and rounding (~eps |E| / h) errors stay below STENCIL_ERROR_BOUND (forces in
+# eV/angstrom, virials in eV) on the autograd-exact Gaussian case, an order
+# under the force and stress gates.
+STENCIL_STEP = 2.5e-4
+STENCIL_ERROR_BOUND = 1.0e-10
 _STENCIL = (
     (-2.0, 1.0 / 12.0),
     (-1.0, -8.0 / 12.0),
@@ -273,6 +276,48 @@ def _detached_radial_basis(modules: dict[str, Any], model: Any, /) -> bool:
     return not model.radial_embedding.bessel_fn(probe).requires_grad
 
 
+def five_point_energy_gradient(
+    energies: Callable[[list[tuple[np.ndarray, np.ndarray | None]]], Sequence[float]],
+    positions: np.ndarray,
+    cell: np.ndarray | None,
+    /,
+) -> dict[str, np.ndarray]:
+    """Forces and virials as five-point stencil derivatives of an energy.
+
+    ``energies`` evaluates the energy at every ``(positions, cell)`` stencil
+    point at once (``cell`` is ``None`` for a finite structure). Virials follow
+    the provider convention ``-dE/d(eps)`` with positions and cell mapped by
+    ``x (I + sym(eps))``.
+    """
+
+    points: list[tuple[np.ndarray, np.ndarray | None]] = []
+    for atom, axis in np.ndindex(positions.shape):
+        for offset, _ in _STENCIL:
+            moved = positions.copy()
+            moved[atom, axis] += offset * STENCIL_STEP
+            points.append((moved, cell))
+    if cell is not None:
+        for row, column in np.ndindex(3, 3):
+            for offset, _ in _STENCIL:
+                strain = np.zeros((3, 3), dtype=np.float64)
+                strain[row, column] = offset * STENCIL_STEP
+                deformation = np.eye(3, dtype=np.float64) + 0.5 * (strain + strain.T)
+                points.append((positions @ deformation, cell @ deformation))
+    values = iter(energies(points))
+    forces = np.zeros_like(positions)
+    for atom, axis in np.ndindex(positions.shape):
+        for _, weight in _STENCIL:
+            forces[atom, axis] -= weight * next(values) / STENCIL_STEP
+    result = {"forces": forces}
+    if cell is not None:
+        virials = np.zeros((1, 3, 3), dtype=np.float64)
+        for row, column in np.ndindex(3, 3):
+            for _, weight in _STENCIL:
+                virials[0, row, column] -= weight * next(values) / STENCIL_STEP
+        result["virials"] = virials
+    return result
+
+
 def _energy_gradient(
     modules: dict[str, Any],
     model: Any,
@@ -281,43 +326,24 @@ def _energy_gradient(
     conditions: dict[str, int],
     /,
 ) -> dict[str, np.ndarray]:
-    """Forces and virials as stencil derivatives of the provider energy.
+    """Forces and virials as stencil derivatives of the provider energy."""
 
-    Virials follow the provider convention ``-dE/d(eps)`` with positions and
-    cell mapped by ``x (I + sym(eps))``.
-    """
+    def energies(points: list[tuple[np.ndarray, np.ndarray | None]]) -> list[float]:
+        values = []
+        for moved, moved_cell in points:
+            batch = _batch(
+                modules, structure["symbols"], moved, moved_cell, head, conditions
+            )
+            output = model(batch, compute_force=False, training=False)
+            values.append(float(output["energy"].detach().sum()))
+        return values
 
-    positions = np.asarray(structure["positions"], dtype=np.float64)
     cell = (
         None if structure["cell"] is None else np.asarray(structure["cell"], np.float64)
     )
-
-    def energy(moved: np.ndarray, moved_cell: np.ndarray | None) -> float:
-        batch = _batch(modules, structure["symbols"], moved, moved_cell, head, conditions)
-        output = model(batch, compute_force=False, training=False)
-        return float(output["energy"].detach().sum())
-
-    forces = np.zeros_like(positions)
-    for atom, axis in np.ndindex(positions.shape):
-        for offset, weight in _STENCIL:
-            moved = positions.copy()
-            moved[atom, axis] += offset * _STENCIL_STEP
-            forces[atom, axis] -= weight * energy(moved, cell) / _STENCIL_STEP
-    result = {"forces": forces}
-    if cell is not None:
-        virials = np.zeros((1, 3, 3), dtype=np.float64)
-        for row, column in np.ndindex(3, 3):
-            for offset, weight in _STENCIL:
-                strain = np.zeros((3, 3), dtype=np.float64)
-                strain[row, column] = offset * _STENCIL_STEP
-                deformation = np.eye(3, dtype=np.float64) + 0.5 * (strain + strain.T)
-                virials[0, row, column] -= (
-                    weight
-                    * energy(positions @ deformation, cell @ deformation)
-                    / _STENCIL_STEP
-                )
-        result["virials"] = virials
-    return result
+    return five_point_energy_gradient(
+        energies, np.asarray(structure["positions"], dtype=np.float64), cell
+    )
 
 
 def _evaluate(
@@ -510,7 +536,7 @@ def _case(
     if _detached_radial_basis(modules, model):
         record["force_reference"] = {
             "method": "five-point central difference of the provider energy",
-            "step": _STENCIL_STEP,
+            "step": STENCIL_STEP,
         }
     return record
 
