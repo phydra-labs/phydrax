@@ -63,17 +63,17 @@ int32_t TetMesh::set_affine_metric(std::span<const double> linear) {
   std::copy(linear.begin(), linear.end(), next.begin());
   if (next == metric_) return PHX_MC_OK;
   if (!points_.empty()) return PHX_MC_INVALID_ARGUMENT;
-  const long double a = next[0], b = next[1], c = next[2];
-  const long double d = next[3], e = next[4], f = next[5];
-  const long double g = next[6], h = next[7], i = next[8];
-  const long double det = a*(e*i-f*h) - b*(d*i-f*g) + c*(d*h-e*g);
+  const double a = next[0], b = next[1], c = next[2];
+  const double d = next[3], e = next[4], f = next[5];
+  const double g = next[6], h = next[7], i = next[8];
+  const double det = a*(e*i-f*h) - b*(d*i-f*g) + c*(d*h-e*g);
   if (det == 0 || !std::isfinite(det)) return PHX_MC_INVALID_ARGUMENT;
-  const std::array<long double, 9> adj{
+  const std::array<double, 9> adj{
       e*i-f*h, c*h-b*i, b*f-c*e, f*g-d*i, a*i-c*g,
       c*d-a*f, d*h-e*g, b*g-a*h, a*e-b*d};
   std::array<double, 9> inverse;
   for (std::size_t k = 0; k < 9; ++k) {
-    inverse[k] = static_cast<double>(adj[k] / det);
+    inverse[k] = adj[k] / det;
     if (!std::isfinite(inverse[k])) return PHX_MC_INVALID_ARGUMENT;
   }
   if (generation_ == std::numeric_limits<std::uint64_t>::max()) return PHX_MC_INVALID_ARGUMENT;

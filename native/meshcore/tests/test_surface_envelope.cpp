@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <vector>
 
 #include "check.hpp"
@@ -198,20 +199,20 @@ void source_tetrahedron_envelope() {
 
   const auto determinant = [](const double* a, const double* b,
                               const double* c, const double* d) {
-    const long double u0 = static_cast<long double>(b[0]) - a[0];
-    const long double u1 = static_cast<long double>(b[1]) - a[1];
-    const long double u2 = static_cast<long double>(b[2]) - a[2];
-    const long double v0 = static_cast<long double>(c[0]) - a[0];
-    const long double v1 = static_cast<long double>(c[1]) - a[1];
-    const long double v2 = static_cast<long double>(c[2]) - a[2];
-    const long double w0 = static_cast<long double>(d[0]) - a[0];
-    const long double w1 = static_cast<long double>(d[1]) - a[1];
-    const long double w2 = static_cast<long double>(d[2]) - a[2];
+    const double u0 = b[0] - a[0];
+    const double u1 = b[1] - a[1];
+    const double u2 = b[2] - a[2];
+    const double v0 = c[0] - a[0];
+    const double v1 = c[1] - a[1];
+    const double v2 = c[2] - a[2];
+    const double w0 = d[0] - a[0];
+    const double w1 = d[1] - a[1];
+    const double w2 = d[2] - a[2];
     return u0 * (v1 * w2 - v2 * w1) -
            u1 * (v0 * w2 - v2 * w0) +
            u2 * (v0 * w1 - v1 * w0);
   };
-  long double tetrahedra_volume6 = 0.0L;
+  double tetrahedra_volume6 = 0.0;
   for (int64_t cell = 0; cell < sizes[3]; ++cell) {
     const int64_t* tet = tetrahedra.data() + 4 * cell;
     bool valid = true;
@@ -235,7 +236,7 @@ void source_tetrahedron_envelope() {
     }
   }
 
-  long double surface_volume6 = 0.0L;
+  double surface_volume6 = 0.0;
   int64_t boundary_triangles = 0;
   for (int64_t triangle = 0; triangle < sizes[1]; ++triangle) {
     const int64_t* face = surface_triangles.data() + 3 * triangle;
@@ -257,8 +258,8 @@ void source_tetrahedron_envelope() {
   }
   PHX_CHECK(boundary_triangles == sizes[1]);
   PHX_CHECK(std::abs(tetrahedra_volume6 - surface_volume6) <=
-            1.0e-10L * std::max(1.0L, std::abs(tetrahedra_volume6)));
-  PHX_CHECK(surface_volume6 > 0.0L);
+            1.0e-10 * std::max(1.0, std::abs(tetrahedra_volume6)));
+  PHX_CHECK(surface_volume6 > 0.0);
   phx_mc_surface_envelope_free(handle);
 }
 
@@ -297,7 +298,8 @@ void remeshed_tetrahedron_envelope() {
         }
         const double cosine = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) /
                               (std::hypot(u[0], u[1], u[2]) * std::hypot(v[0], v[1], v[2]));
-        minimum = std::min(minimum, std::acos(std::clamp(cosine, -1.0, 1.0)) * 180.0 / M_PI);
+        minimum = std::min(minimum, std::acos(std::clamp(cosine, -1.0, 1.0)) * 180.0 /
+                                        std::numbers::pi);
       }
     return minimum;
   };

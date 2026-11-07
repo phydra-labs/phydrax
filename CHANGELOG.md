@@ -106,8 +106,25 @@
 
 ### Fixed
 - Native meshcore C++ tests now build with GCC and MSVC: request designators
-  follow declaration order, and `std::minmax` results are compared component by
-  component instead of through a C++23 heterogeneous pair comparison.
+  follow declaration order, `std::minmax` results are compared component by
+  component instead of through a C++23 heterogeneous pair comparison, and the
+  surface-envelope test uses `std::numbers::pi` instead of POSIX `M_PI`.
+- Native meshcore builds with MSVC. Exact wide-integer arithmetic uses
+  standard C++ carry and 64×64→128-bit product helpers, with the compiler's
+  exact wide multiply where available (`unsigned __int128`, `_umul128`,
+  `__umulh`), and exact combinatorics cancel common factors instead of using
+  128-bit intermediates; every exact value is unchanged.
+- Native meshcore no longer uses `long double`. Affine-metric inverses and
+  periodic excess sums are binary64 in the same operation order on every
+  platform, so GCC on aarch64 now matches macOS and MSVC bit for bit.
+- Native 3D refinement no longer reads an uninitialized circumcenter when a
+  constrained facet's metric circumcircle is degenerate; the equatorial-ball
+  test returns the same decision for every input.
+- MSVC builds use `/fp:precise` and require MSVC 19.30 or newer, where it does
+  not contract `a * b + c`; clang-cl builds forbid contraction explicitly.
+- Host interval endpoints order signed zeros as IEEE 754-2019
+  `minimum`/`maximum` (-0 below +0, first NaN wins) on every platform, so host
+  and native enclosures and their fingerprints agree on x86-64 as on arm64.
 - Native surface routes certify shared line-revolution seams, rims and poles
   exactly. The trace of each edge is matched as an exact harmonic-affine
   function; a collapsed pole curve is proved from exact zero radial

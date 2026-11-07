@@ -2,6 +2,7 @@
 // Exact Bernstein kernels, interval restriction, separation screen and the BVH
 // pair stream: exact values, typed range refusals, and 1-vs-N thread identity.
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <cfenv>
@@ -96,6 +97,104 @@ void test_wide_integer() {
   PHX_CHECK(!phx::mc::checked_shift_left(Int256::from_int64(1), 255, shifted));
   PHX_CHECK(!phx::mc::checked_shift_left(Int256::from_int64(3), 254, shifted));
   PHX_CHECK(phx::mc::compare(Int256::from_int64(-1), Int256::from_int64(0)) < 0);
+}
+
+// Limb carries at their extremes, against products computed independently in
+// exact integer arithmetic.
+void test_wide_integer_carries() {
+  constexpr std::uint64_t kOnes = ~std::uint64_t{0};
+  std::uint64_t high = 0;
+  PHX_CHECK(phx::mc::multiply_wide(kOnes, kOnes, high) == 1 && high == kOnes - 1);
+  // (2^192 - 1)(2^63 - 1) = 2^255 - 2^192 - 2^63 + 1 propagates a carry through every limb.
+  Int256 ones_192;
+  ones_192.limb = {kOnes, kOnes, kOnes, 0};
+  Int256 product;
+  PHX_CHECK(phx::mc::checked_multiply(ones_192, Int256::from_int64(INT64_MAX), product));
+  PHX_CHECK((product.limb == std::array<std::uint64_t, 4>{
+                                 0x8000000000000001u, kOnes, kOnes, 0x7FFFFFFFFFFFFFFEu}));
+  PHX_CHECK(phx::mc::checked_multiply(ones_192, Int256::from_int64(-INT64_MAX), product));
+  PHX_CHECK((product.limb == std::array<std::uint64_t, 4>{0x7FFFFFFFFFFFFFFFu, 0, 0,
+                                                         0x8000000000000001u}));
+  Int256 ones_128;
+  ones_128.limb = {kOnes, kOnes, 0, 0};
+  PHX_CHECK(!phx::mc::checked_multiply(ones_128, ones_128, product));
+  // (2^128 - 1)(2^126 - 1) = 2^254 - 2^128 - 2^126 + 1: each column sum overflows a
+  // limb both when adding the stored partial product and when adding the incoming carry.
+  Int256 ones_126;
+  ones_126.limb = {kOnes, 0x3FFFFFFFFFFFFFFFu, 0, 0};
+  PHX_CHECK(phx::mc::checked_multiply(ones_128, ones_126, product));
+  PHX_CHECK((product.limb == std::array<std::uint64_t, 4>{1, 0xC000000000000000u, kOnes - 1,
+                                                         0x3FFFFFFFFFFFFFFFu}));
+  PHX_CHECK(phx::mc::checked_multiply(phx::mc::wrapping_negate(ones_128), ones_126, product));
+  PHX_CHECK((product.limb == std::array<std::uint64_t, 4>{kOnes, 0x3FFFFFFFFFFFFFFFu, 1,
+                                                         0xC000000000000000u}));
+  Int256 sum;
+  PHX_CHECK(phx::mc::checked_add(ones_192, Int256::from_int64(1), sum));
+  PHX_CHECK(phx::mc::compare(sum, power_of_two(192)) == 0);
+  PHX_CHECK(phx::mc::wrapping_negate(Int256{}).zero());
+
+  std::int64_t signed_product = 0;
+  PHX_CHECK(phx::mc::checked_multiply(INT64_MIN, std::int64_t{1}, signed_product) &&
+            signed_product == INT64_MIN);
+  PHX_CHECK(!phx::mc::checked_multiply(INT64_MIN, std::int64_t{-1}, signed_product));
+  PHX_CHECK(phx::mc::checked_multiply(-(std::int64_t{1} << 32), std::int64_t{1} << 31,
+                                      signed_product) &&
+            signed_product == INT64_MIN);
+  PHX_CHECK(!phx::mc::checked_multiply(std::int64_t{1} << 32, std::int64_t{1} << 31,
+                                       signed_product));
+  PHX_CHECK(phx::mc::checked_multiply(std::int64_t{3037000499}, std::int64_t{3037000499},
+                                      signed_product) &&
+            signed_product == 9223372030926249001);
+  PHX_CHECK(!phx::mc::checked_multiply(std::int64_t{3037000500}, std::int64_t{3037000500},
+                                       signed_product));
+  std::uint64_t unsigned_product = 0;
+  PHX_CHECK(phx::mc::checked_multiply(std::uint64_t{0xFFFFFFFFu}, std::uint64_t{0x100000001u},
+                                      unsigned_product) &&
+            unsigned_product == kOnes);
+  PHX_CHECK(!phx::mc::checked_multiply(std::uint64_t{1} << 32, std::uint64_t{1} << 32,
+                                       unsigned_product));
+}
+
+// Reference 64 x 64 -> 128-bit product from 16-bit schoolbook digits, a
+// decomposition shared by none of multiply_wide's compiled routes.
+std::array<std::uint64_t, 2> schoolbook_product(std::uint64_t a, std::uint64_t b) {
+  std::array<std::uint64_t, 8> digits{};
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      digits[static_cast<std::size_t>(i + j)] +=
+          ((a >> (16 * i)) & 0xFFFFu) * ((b >> (16 * j)) & 0xFFFFu);
+    }
+  }
+  for (std::size_t k = 0; k + 1 < digits.size(); ++k) {
+    digits[k + 1] += digits[k] >> 16;
+    digits[k] &= 0xFFFFu;
+  }
+  std::array<std::uint64_t, 2> out{};
+  for (std::size_t k = 0; k < digits.size(); ++k) out[k / 4] |= digits[k] << (16 * (k % 4));
+  return out;
+}
+
+// The compiled multiply_wide route (compiler wide multiply or portable split)
+// equals the reference on boundary and random operands.
+void test_multiply_wide_matches_schoolbook() {
+  std::vector<std::uint64_t> operands = {0, 1, 2, 0xFFFFFFFFu, 0x100000000u, 0xFFFFFFFF00000000u,
+                                         0x8000000000000000u, 0x7FFFFFFFFFFFFFFFu,
+                                         ~std::uint64_t{0}, ~std::uint64_t{0} - 1};
+  for (const std::uint64_t a : operands) {
+    for (const std::uint64_t b : operands) {
+      std::uint64_t high = 0;
+      const std::uint64_t low = phx::mc::multiply_wide(a, b, high);
+      PHX_CHECK((std::array<std::uint64_t, 2>{low, high} == schoolbook_product(a, b)));
+    }
+  }
+  std::mt19937_64 random(41);
+  for (int trial = 0; trial < 100000; ++trial) {
+    const std::uint64_t a = random();
+    const std::uint64_t b = random() >> (trial % 64);
+    std::uint64_t high = 0;
+    const std::uint64_t low = phx::mc::multiply_wide(a, b, high);
+    PHX_CHECK((std::array<std::uint64_t, 2>{low, high} == schoolbook_product(a, b)));
+  }
 }
 
 // Reference step of the host interval de Casteljau formula for one entry.
@@ -837,6 +936,8 @@ void test_multichunk_exact() {
 
 int main() {
   test_wide_integer();
+  test_wide_integer_carries();
+  test_multiply_wide_matches_schoolbook();
   test_interval_restrict();
   test_bernstein_controls();
   test_wide_box_controls();

@@ -1428,11 +1428,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   const auto in_equatorial_ball = [&](const double* const corners[3], const double* point) {
     double center[3];
     const double radius_squared = circumcircle(corners, center);
+    // `circumcircle` leaves `center` unwritten when it returns the degenerate sentinel.
+    if (!(radius_squared > 0.0)) return false;
     if (!mesh.metric_active()) {
-      return radius_squared > 0.0 && geometry::squared_distance(point, center) < radius_squared;
+      return geometry::squared_distance(point, center) < radius_squared;
     }
     const double distance = metric_distance(mesh, point, center);
-    return radius_squared > 0.0 && distance * distance < radius_squared;
+    return distance * distance < radius_squared;
   };
   // Diametral ball of a segment.
   const auto in_diametral_ball = [&](const double* a, const double* b, const double* point) {

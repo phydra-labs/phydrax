@@ -2018,7 +2018,7 @@ class QuotientRanks final {
     uint64_t priority;
     int32_t left = -1, right = -1;
     int64_t size = 1;
-    long double sum = 0.0L;
+    double sum = 0.0;
   };
   void reserve(std::size_t additions) {
     reserve_for(nodes_, nodes_.size() + additions);
@@ -2036,13 +2036,13 @@ class QuotientRanks final {
     }
     return result;
   }
-  long double excess(double threshold) const {
-    long double result=0.0L;
+  double excess(double threshold) const {
+    double result=0.0;
     for (int32_t id=root_;id>=0;) {
       const Node& n=nodes_[id];
       if (n.key.first>threshold) {
-        result+=n.key.first-static_cast<long double>(threshold)+sum(n.right)-
-                static_cast<long double>(threshold)*count(n.right);
+        result+=n.key.first-threshold+sum(n.right)-
+                threshold*static_cast<double>(count(n.right));
         id=n.left;
       } else id=n.right;
     }
@@ -2075,7 +2075,7 @@ class QuotientRanks final {
   std::vector<int32_t> free_;
   int32_t root_ = -1;
   int64_t count(int32_t id) const { return id < 0 ? 0 : nodes_[id].size; }
-  long double sum(int32_t id) const { return id<0 ? 0.0L : nodes_[id].sum; }
+  double sum(int32_t id) const { return id<0 ? 0.0 : nodes_[id].sum; }
   void update(int32_t id) {
     nodes_[id].size = 1 + count(nodes_[id].left) + count(nodes_[id].right);
     nodes_[id].sum = nodes_[id].key.first + sum(nodes_[id].left) + sum(nodes_[id].right);
@@ -2168,12 +2168,12 @@ class HypotheticalRanks final {
     return fraction >= 0.5 ? b - (b - a) * (1.0 - fraction) : a + (b - a) * fraction;
   }
   double excess(double threshold) const {
-    long double result=base_.excess(threshold);
+    double result=base_.excess(threshold);
     for (const Key& key:removed_)
-      result-=std::max(0.0L,static_cast<long double>(key.first)-threshold);
+      result-=std::max(0.0,key.first-threshold);
     for (const Key& key:added_)
-      result+=std::max(0.0L,static_cast<long double>(key.first)-threshold);
-    return static_cast<double>(std::max(0.0L,result));
+      result+=std::max(0.0,key.first-threshold);
+    return std::max(0.0,result);
   }
  private:
   const QuotientRanks& base_;

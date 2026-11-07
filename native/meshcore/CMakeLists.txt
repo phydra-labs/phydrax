@@ -123,8 +123,16 @@ string(SHA256 PHX_MC_BUILD_HASH "${PHX_MC_HASH_INPUT}")
 
 # Exact predicates require IEEE-754 binary64 semantics: no contraction of
 # a * b + c into fused multiply-adds and no value-changing optimizations.
-if(MSVC)
-  set(PHX_MC_FP_FLAGS /fp:precise /fp:contract-)
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  # cl.exe has no flag that forbids contraction; from 19.30 on, /fp:precise
+  # contracts only when /fp:contract is also given.
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19.30)
+    message(FATAL_ERROR "phydrax-meshcore requires MSVC 19.30 or newer: older /fp:precise may contract a * b + c.")
+  endif()
+  set(PHX_MC_FP_FLAGS /fp:precise)
+elseif(MSVC)
+  # clang-cl: /fp:precise permits contraction, so forbid it explicitly.
+  set(PHX_MC_FP_FLAGS /fp:precise /clang:-ffp-contract=off)
 else()
   set(PHX_MC_FP_FLAGS -ffp-contract=off -fno-fast-math -fno-finite-math-only)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(i[3-6]86|x86)$")

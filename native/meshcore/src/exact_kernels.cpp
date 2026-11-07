@@ -209,10 +209,6 @@ void round_out_inexact(double low, double high, bool low_exact, bool high_exact,
 
 // ------------------------------------------------------ exact combinatorics
 
-bool checked_mul_u64(std::uint64_t a, std::uint64_t b, std::uint64_t& out) noexcept {
-  return !__builtin_mul_overflow(a, b, &out);
-}
-
 // b (b - 1) ... (b - a + 1); zero when a > b.
 bool falling(std::int64_t b, std::int64_t a, std::uint64_t& out) noexcept {
   out = 1;
@@ -221,7 +217,7 @@ bool falling(std::int64_t b, std::int64_t a, std::uint64_t& out) noexcept {
     return true;
   }
   for (std::int64_t factor = b - a + 1; factor <= b; ++factor) {
-    if (!checked_mul_u64(out, static_cast<std::uint64_t>(factor), out)) return false;
+    if (!phx::mc::checked_multiply(out, static_cast<std::uint64_t>(factor), out)) return false;
   }
   return true;
 }
@@ -232,12 +228,17 @@ bool binomial(std::int64_t n, std::int64_t k, std::uint64_t& out) noexcept {
     return true;
   }
   k = std::min(k, n - k);
-  unsigned __int128 value = 1;
+  std::uint64_t value = 1;
   for (std::int64_t step = 1; step <= k; ++step) {
-    value = value * static_cast<unsigned __int128>(n - k + step) / static_cast<unsigned __int128>(step);
-    if (value > std::numeric_limits<std::uint64_t>::max()) return false;
+    // value (n - k + step) / step is the integer C(n - k + step, step). Cancelling
+    // g = gcd(value, step) leaves a divisor step / g coprime to value / g, so it
+    // divides n - k + step and the remaining product is the exact result.
+    const std::uint64_t factor = static_cast<std::uint64_t>(n - k + step);
+    const std::uint64_t common = std::gcd(value, static_cast<std::uint64_t>(step));
+    const std::uint64_t divisor = static_cast<std::uint64_t>(step) / common;
+    if (!phx::mc::checked_multiply(value / common, factor / divisor, value)) return false;
   }
-  out = static_cast<std::uint64_t>(value);
+  out = value;
   return true;
 }
 
@@ -246,7 +247,7 @@ bool lcm_u64(std::uint64_t a, std::uint64_t b, std::uint64_t& out) noexcept {
     out = std::max(a, b);
     return true;
   }
-  return checked_mul_u64(a / std::gcd(a, b), b, out);
+  return phx::mc::checked_multiply(a / std::gcd(a, b), b, out);
 }
 
 // Runs `body` with a value of the wide-integer word type of `limbs` limbs.
@@ -388,8 +389,8 @@ class WeightTable final {
               return PHX_MC_RANGE_ERROR;
             }
           }
-          if (!checked_mul_u64(denominator, axis_lcm_[static_cast<std::size_t>(axis)],
-                               denominator)) {
+          if (!phx::mc::checked_multiply(denominator, axis_lcm_[static_cast<std::size_t>(axis)],
+                                         denominator)) {
             return PHX_MC_RANGE_ERROR;
           }
         }
@@ -413,7 +414,7 @@ class WeightTable final {
         }
         std::uint64_t triangle_denominator = 1;
         if (!falling(triangle, tmax, triangle_denominator) ||
-            !checked_mul_u64(triangle_denominator, line_lcm, denominator)) {
+            !phx::mc::checked_multiply(triangle_denominator, line_lcm, denominator)) {
           return PHX_MC_RANGE_ERROR;
         }
         scales_.assign(terms_, 0);
@@ -462,7 +463,7 @@ class WeightTable final {
             out = 0;
             return true;
           }
-          if (!checked_mul_u64(out, factor, out)) return false;
+          if (!phx::mc::checked_multiply(out, factor, out)) return false;
         }
         return true;
       }
@@ -475,7 +476,7 @@ class WeightTable final {
             !line_weight(degree[1], line_beta, exponent(term, 2), axis_lcm_[0], line)) {
           return false;
         }
-        return checked_mul_u64(triangle, line, out);
+        return phx::mc::checked_multiply(triangle, line, out);
       }
       default:
         return false;
@@ -502,7 +503,7 @@ class WeightTable final {
         out = 0;
         return true;
       }
-      if (!checked_mul_u64(out, factor, out)) return false;
+      if (!phx::mc::checked_multiply(out, factor, out)) return false;
     }
     return true;
   }
@@ -517,7 +518,7 @@ class WeightTable final {
     std::uint64_t numerator = 0;
     std::uint64_t denominator = 0;
     if (!binomial(beta, alpha, numerator) || !binomial(n, alpha, denominator)) return false;
-    return checked_mul_u64(numerator, lcm / denominator, out);
+    return phx::mc::checked_multiply(numerator, lcm / denominator, out);
   }
 
   std::size_t terms_ = 0;
@@ -537,7 +538,8 @@ int64_t domain_control_count(int32_t domain, int32_t dimension, const int32_t* d
     case PHX_MC_BERNSTEIN_BOX: {
       int64_t count = 1;
       for (int32_t axis = 0; axis < dimension; ++axis) {
-        if (degree[axis] < 0 || __builtin_mul_overflow(count, int64_t{degree[axis]} + 1, &count)) {
+        if (degree[axis] < 0 ||
+            !phx::mc::checked_multiply(count, int64_t{degree[axis]} + 1, count)) {
           return -1;
         }
       }
@@ -547,7 +549,7 @@ int64_t domain_control_count(int32_t domain, int32_t dimension, const int32_t* d
       if (degree[0] < 0 || degree[1] < 0) return -1;
       const int64_t triangle = composition_count(degree[0], 3);
       int64_t count = 0;
-      if (triangle < 0 || __builtin_mul_overflow(triangle, int64_t{degree[1]} + 1, &count)) {
+      if (triangle < 0 || !phx::mc::checked_multiply(triangle, int64_t{degree[1]} + 1, count)) {
         return -1;
       }
       return count;
@@ -610,7 +612,9 @@ int32_t box_controls(const ControlsCall& call, int64_t item, std::vector<Word>& 
         return PHX_MC_RANGE_ERROR;
       }
     }
-    if (!checked_mul_u64(total_denominator, lcm, total_denominator)) return PHX_MC_RANGE_ERROR;
+    if (!phx::mc::checked_multiply(total_denominator, lcm, total_denominator)) {
+      return PHX_MC_RANGE_ERROR;
+    }
     // weights[b * n + a] for used a <= b.
     if (!phx::mc::addressable(static_cast<int64_t>(n), static_cast<int64_t>(n), Word::kBytes)) {
       return PHX_MC_RANGE_ERROR;
@@ -624,7 +628,7 @@ int32_t box_controls(const ControlsCall& call, int64_t item, std::vector<Word>& 
         std::uint64_t weight = 0;
         if (!binomial(static_cast<std::int64_t>(b), static_cast<std::int64_t>(a), numerator) ||
             !binomial(static_cast<std::int64_t>(n - 1), static_cast<std::int64_t>(a), binomial_n) ||
-            !checked_mul_u64(numerator, lcm / binomial_n, weight)) {
+            !phx::mc::checked_multiply(numerator, lcm / binomial_n, weight)) {
           return PHX_MC_RANGE_ERROR;
         }
         weights[b * n + a] = Word::from_uint64(weight);
@@ -1121,7 +1125,7 @@ int32_t phx_mc_interval_bernstein_restrict(int64_t count, int32_t degree, int64_
   return phx::mc::guarded([&]() -> int32_t {
     int64_t row_entries = 0;
     if (count < 0 || degree < 0 || width < 1 || parallelism < 1 ||
-        __builtin_mul_overflow(int64_t{degree} + 1, width, &row_entries) ||
+        !phx::mc::checked_multiply(int64_t{degree} + 1, width, row_entries) ||
         !phx::mc::addressable(1, row_entries, sizeof(double)) ||
         !phx::mc::addressable(count, row_entries, sizeof(double)) ||
         !phx::mc::addressable(count, 4, sizeof(double))) {
@@ -1294,7 +1298,7 @@ int32_t phx_mc_simplex_bernstein_blossoms(int64_t count, int32_t parts, const in
     const int64_t word_bytes = int64_t{8} * word_limbs;
     int64_t corner_bytes = 0;
     if (count < 0 || parts < 1 || parallelism < 1 || control_offsets == nullptr ||
-        __builtin_mul_overflow(int64_t{parts} * parts, word_bytes, &corner_bytes) ||
+        !phx::mc::checked_multiply(int64_t{parts} * parts, word_bytes, corner_bytes) ||
         !phx::mc::addressable(1, corner_bytes, 1) ||
         !phx::mc::addressable(count, corner_bytes, 1) ||
         !phx::mc::addressable(count, 2, sizeof(int64_t)) ||
@@ -1371,8 +1375,8 @@ int32_t phx_mc_bernstein_bisect(int64_t count, int64_t control_count, int32_t sl
         first < 0 || second < 0 || first >= slot_count || second >= slot_count ||
         first == second || indices == nullptr || exponent == nullptr ||
         !phx::mc::addressable(control_count, slot_count, sizeof(int32_t)) ||
-        __builtin_mul_overflow(control_count, int64_t{components}, &net_words_checked) ||
-        __builtin_mul_overflow(net_words_checked, word_bytes, &net_bytes) ||
+        !phx::mc::checked_multiply(control_count, int64_t{components}, net_words_checked) ||
+        !phx::mc::checked_multiply(net_words_checked, word_bytes, net_bytes) ||
         !phx::mc::addressable(1, net_bytes, 1) ||
         !phx::mc::addressable(count, net_bytes, 1)) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -1537,7 +1541,7 @@ int32_t phx_mc_bvh_pair_stream_create(const phx_mc_bvh_tree_view* first,
       return PHX_MC_INVALID_ARGUMENT;
     }
     int64_t per_leaf = 0;
-    if (__builtin_mul_overflow(first->leaf_width, second->leaf_width, &per_leaf) ||
+    if (!phx::mc::checked_multiply(first->leaf_width, second->leaf_width, per_leaf) ||
         !phx::mc::addressable(1, per_leaf, sizeof(int64_t)) ||
         !phx::mc::addressable(node_block, 2, sizeof(int64_t))) {
       return PHX_MC_INVALID_ARGUMENT;
