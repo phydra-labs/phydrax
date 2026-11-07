@@ -635,6 +635,180 @@ def test_independent_singular_fields_select_distinct_quad_topologies(tmp_path: P
         prepare_surface_cross_field(source, guide_angles=[float("nan")] * 6)
 
 
+def _guided_singular_fan(apex_height: float) -> tuple[CellMesh, SurfaceCrossField]:
+    # Six triangles around one interior vertex; a quarter-polar guide gives it
+    # fourfold index one. A raised apex makes every face normal distinct.
+    ring_angles = 2.0 * np.pi * np.arange(6) / 6
+    points = np.vstack(
+        (
+            np.asarray(((0.0, 0.0, apex_height),)),
+            np.column_stack((np.cos(ring_angles), np.sin(ring_angles), np.zeros(6))),
+        )
+    )
+    triangles = np.asarray([(0, i + 1, (i + 1) % 6 + 1) for i in range(6)])
+    source = CellMesh.from_triangles(points, triangles)
+    frames = np.asarray(prepare_surface_cross_field(source).frames)
+    centers = points[triangles].mean(axis=1)
+    direction = np.arctan2(centers[:, 1], centers[:, 0]) / 4
+    physical = np.column_stack((np.cos(direction), np.sin(direction), np.zeros(6)))
+    local = np.einsum("fij,fj->fi", frames, physical)
+    field = prepare_surface_cross_field(
+        source, guide_angles=np.arctan2(local[:, 1], local[:, 0])
+    )
+    np.testing.assert_array_equal(field.singular_vertices, [0])
+    np.testing.assert_array_equal(field.singularity_indices, [1])
+    return source, field
+
+
+def _restored_field_content(field: SurfaceCrossField) -> SurfaceCrossField:
+    """Rebind edited stored arrays to their own content identity."""
+    return SurfaceCrossField(
+        field.frames,
+        field.angles,
+        field.transport_edges,
+        field.patch_ids,
+        field.feature_edges,
+        field.transport_angles,
+        field.feature_rows,
+        field.feature_angles,
+        field.guide_angles,
+        field.feature_residuals,
+        field.field_solve_residual,
+        field.field_solve_relative_residual,
+        field.field_energy,
+        field.singular_vertices,
+        field.singularity_indices,
+        field.source,
+    )
+
+
+@pytest.mark.parametrize("apex_height", [0.0, 0.4])
+def test_stored_cross_field_restores_another_platforms_rounding(
+    apex_height: float,
+) -> None:
+    # Another platform's solve differs from this one by a few ulps in the
+    # angles and arbitrarily in the tiny solve residuals. Restore must accept
+    # that archive and decide the same singularities and quad pairing.
+    source, field = _guided_singular_fan(apex_height)
+    geometry = CellGeometrySpec.affine(source)
+    layout = prepare_surface_quad_layout(source, field)
+    angles = np.asarray(field.angles)
+    foreign = _restored_field_content(
+        eqx.tree_at(
+            lambda value: (
+                value.angles,
+                value.feature_residuals,
+                value.field_solve_residual,
+                value.field_solve_relative_residual,
+                value.field_energy,
+            ),
+            field,
+            (
+                np.nextafter(angles, np.zeros_like(angles)),
+                np.nextafter(np.asarray(field.feature_residuals), np.inf),
+                np.asarray(field.field_solve_residual) * 3.0 + 1.0e-15,
+                np.asarray(field.field_solve_relative_residual) * 0.5,
+                np.nextafter(np.asarray(field.field_energy), np.inf),
+            ),
+        )
+    )
+    assert foreign.field_id != field.field_id
+    foreign_layout = prepare_surface_quad_layout(source, foreign)
+    event = SurfaceQuadFieldEvent(
+        source,
+        geometry,
+        foreign,
+        foreign_layout,
+        maximum_field_error=2.0,
+        complete=True,
+    )
+
+    restored = restore_surface_quad_field_event(event.archive_recipe(), source, geometry)
+
+    assert restored.event_id == event.event_id
+    assert restored.field.field_id == foreign.field_id
+    np.testing.assert_array_equal(restored.field.angles, foreign.angles)
+    np.testing.assert_array_equal(
+        restored.field.field_solve_residual, foreign.field_solve_residual
+    )
+    np.testing.assert_array_equal(restored.field.singular_vertices, [0])
+    np.testing.assert_array_equal(restored.field.singularity_indices, [1])
+    np.testing.assert_array_equal(
+        restored.layout.paired_edge_rows, layout.paired_edge_rows
+    )
+
+
+@pytest.mark.parametrize("apex_height", [0.0, 0.4])
+def test_stored_cross_field_restore_refuses_altered_constraints(
+    apex_height: float,
+) -> None:
+    source, field = _guided_singular_fan(apex_height)
+    assert SurfaceCrossField.from_stored_fields(field).field_id == field.field_id
+    frames = np.asarray(field.frames)
+    angles = np.asarray(field.angles)
+    patches = np.asarray(field.patch_ids)
+    alterations = (
+        (
+            lambda value: value.singularity_indices,
+            np.asarray([2], dtype=np.int32),
+            "certified singularity indices",
+        ),
+        (
+            lambda value: value.singular_vertices,
+            np.asarray([1], dtype=np.int64),
+            "certified singularity indices",
+        ),
+        (
+            lambda value: value.frames,
+            np.nextafter(frames, np.full_like(frames, 2.0)),
+            "source frames",
+        ),
+        (
+            lambda value: value.feature_angles,
+            np.asarray(field.feature_angles) + 1.0e-6,
+            "source edge directions",
+        ),
+        (
+            lambda value: value.transport_angles,
+            np.asarray(field.transport_angles) - 1.0e-6,
+            "source edge directions",
+        ),
+        (
+            lambda value: value.patch_ids,
+            np.where(np.arange(patches.size) == 0, patches + 1, patches),
+            "source edge graph",
+        ),
+        (
+            lambda value: value.angles,
+            np.where(np.arange(angles.size) == 0, angles + 1.0e-7, angles),
+            "feature-alignment residuals",
+        ),
+        (
+            lambda value: value.angles,
+            np.where(np.arange(angles.size) == 0, np.pi / 4 + 1.0e-12, angles),
+            "canonical quarter-turn angles",
+        ),
+        (
+            lambda value: value.feature_residuals,
+            np.asarray(field.feature_residuals) + 1.0e-6,
+            "feature-alignment residuals",
+        ),
+        (
+            lambda value: value.field_energy,
+            np.asarray(field.field_energy) + 1.0e-6,
+            "certified field energy",
+        ),
+    )
+    for where, replacement, message in alterations:
+        altered = _restored_field_content(eqx.tree_at(where, field, replacement))
+        with pytest.raises(ValueError, match=message):
+            SurfaceCrossField.from_stored_fields(altered)
+    with pytest.raises(ValueError, match="its identity"):
+        SurfaceCrossField.from_stored_fields(
+            eqx.tree_at(lambda value: value.angles, field, np.nextafter(angles, 1.0))
+        )
+
+
 def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path) -> None:
     from phydrax._array_archive import ArrayArchiveCorruptionError
     from phydrax._physical import SpatialCoordinateContract
