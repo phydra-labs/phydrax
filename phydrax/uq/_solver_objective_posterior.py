@@ -13,7 +13,7 @@ from jax import Array
 from jax.flatten_util import ravel_pytree
 from jaxtyping import PyTree
 
-from .._admissibility import guard_derivative_validity
+from .._admissibility import refuse_derivative_dependencies
 from .._trainable import combine_parameters, partition_parameters
 from ..solver._solver_objective import RolloutObjective, SolverObjective
 from ._posterior import ParameterSpace, PosteriorProblem
@@ -83,19 +83,17 @@ def posterior_problem_from_solver_objective(
         f"({'; '.join(failures)}); use a derivative-free consumer such as fit_eki."
     )
 
-    def guarded(value: Any) -> Any:
-        if not failures:
-            return value
-        return guard_derivative_validity(value, False, failure="error", message=message)
-
     def residual(position: Array) -> Array:
         component = combine_parameters(
             unravel(jnp.asarray(position, flat.dtype)), model_state, fixed
         )
         vectors, accepted = objective._residual_cases(component)
-        return guarded(
-            jnp.where(jnp.all(accepted), jnp.ravel(vectors), jnp.asarray(jnp.nan))
-        )
+        values = jnp.where(jnp.all(accepted), jnp.ravel(vectors), jnp.asarray(jnp.nan))
+        if not failures:
+            return values
+        # The refusal is static: any tangent of the position raises at trace
+        # time, in forward and reverse mode alike.
+        return refuse_derivative_dependencies(values, position, message=message)
 
     def log_likelihood(position: Array) -> Array:
         values = residual(position)

@@ -767,6 +767,10 @@
 - Cell-geometry validity again caches its Bernstein interpolation plans per
   parameter domain and degree in the bounded host-table cache instead of
   re-solving the conversion operator on every certification.
+- `posterior_problem_from_solver_objective` now refuses every derivative of a
+  likelihood whose component declares no admitted derivative route, at trace
+  time and in reverse mode as well as forward mode; reverse-mode gradients
+  previously returned silent zeros.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
