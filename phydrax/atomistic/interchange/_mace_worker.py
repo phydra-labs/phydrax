@@ -368,6 +368,17 @@ def _record_digest(distribution: metadata.Distribution, /) -> str:
     return hashlib.sha256(record.encode("utf-8")).hexdigest()
 
 
+def _stat_state(value: os.stat_result, /) -> tuple[int, ...]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
 def _verify_record_files(distribution: metadata.Distribution, /) -> int:
     files = distribution.files
     if files is None:
@@ -382,30 +393,21 @@ def _verify_record_files(distribution: metadata.Distribution, /) -> int:
         location = Path(str(distribution.locate_file(package_path)))
         with location.open("rb") as stream:
             before = os.fstat(stream.fileno())
+            named = location.stat()
             if not stat.S_ISREG(before.st_mode):
                 raise _refuse(f"Provider file {package_path} is not a regular file.")
             if package_path.size is not None and before.st_size != package_path.size:
                 raise _refuse(f"Provider file {package_path} differs from its RECORD.")
             digest = hashlib.file_digest(stream, "sha256").digest()
-            for after in (os.fstat(stream.fileno()), location.stat()):
-                if (
-                    before.st_dev,
-                    before.st_ino,
-                    before.st_mode,
-                    before.st_size,
-                    before.st_mtime_ns,
-                    before.st_ctime_ns,
-                ) != (
-                    after.st_dev,
-                    after.st_ino,
-                    after.st_mode,
-                    after.st_size,
-                    after.st_mtime_ns,
-                    after.st_ctime_ns,
-                ):
-                    raise _refuse(
-                        f"Provider file {package_path} changed while being hashed."
-                    )
+            # The open handle and the path are each compared with their own
+            # earlier observation (Windows reports st_ctime differently through
+            # handle and path queries); the path must still name the hashed file.
+            if (
+                _stat_state(os.fstat(stream.fileno())) != _stat_state(before)
+                or _stat_state(location.stat()) != _stat_state(named)
+                or (named.st_dev, named.st_ino) != (before.st_dev, before.st_ino)
+            ):
+                raise _refuse(f"Provider file {package_path} changed while being hashed.")
         encoded = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         if encoded != recorded.value:
             raise _refuse(f"Provider file {package_path} differs from its RECORD.")

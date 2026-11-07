@@ -248,6 +248,10 @@
   (`RealAgnosticResidualNonLinearInteractionBlock`) reconstruct natively: their
   scalar density normalization `alpha`/`beta` keeps its rank instead of becoming
   a one-element vector that the interaction refused.
+- MACE provider RECORD verification compares the open handle and the path each
+  with its own earlier `stat`, so unchanged provider files verify on Windows,
+  whose handle and path queries report different `st_ctime` values; replaced,
+  rewritten and touched files are still refused.
 - Certified distance, chord, norm, frame and quality bounds round outward in
   directed binary64 arithmetic instead of padding round-to-nearest estimates:
   source distance sums, curve and surface chord, point and box bounds,
