@@ -4,10 +4,15 @@ from itertools import permutations, product
 import numpy as np
 import pytest
 
-from phydrax.discretization import CellMesh
+from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._reference_cell import reference_cell_topology
+from phydrax.discretization.fem import lagrange_element
 from phydrax.geometry._global_embedding import GlobalEmbeddingCertificate
-from phydrax.meshing._hex_frame_map import generate_frame_hexes, prepare_frame_hex_grid
+from phydrax.meshing._hex_frame_map import (
+    generate_frame_hexes,
+    prepare_frame_hex_grid,
+    prepare_source_hex_frame,
+)
 from phydrax.meshing._hex_frame_records import FrameFieldRefusal, HexFrameIntegerLayout
 from phydrax.meshing._hex_schedule import NativeHexGridSchedule
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
@@ -209,6 +214,38 @@ def _hex_volume(mesh: CellMesh) -> float:
             assert determinant > 0.0
             total += determinant / 8.0
     return total
+
+
+def test_source_frame_axis_bound_encloses_the_exact_jacobian_column_norm() -> None:
+    # WIN-5 C5: one ``nextafter`` after ``sqrt(sum of squares)`` gave
+    # 0x1.70ce94b6672e0p+2, whose square is below the exact column norm square.
+    column = tuple(
+        float.fromhex(value)
+        for value in (
+            "0x1.43d55519530b8p-6",
+            "0x1.70abf9fc8c4c0p+2",
+            "0x1.3cecce40c6800p-3",
+        )
+    )
+    matrix = np.asarray(
+        ((column[0], 0.0, 0.0), (column[1], 1.0, 0.0), (column[2], 0.0, 1.0)),
+        dtype=np.float64,
+    )
+    reference = np.asarray(
+        reference_cell_topology("hexahedron").vertices, dtype=np.float64
+    )
+    mesh = CellMesh(reference, (CellBlock("cells", "hexahedron", np.arange(8)[None, :]),))
+    element = lagrange_element("hexahedron", 1)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(nodes.shape[0], dtype=np.int64)[None, :]},
+        nodes @ matrix.T,
+    )
+    frame = prepare_source_hex_frame(mesh, geometry)
+    exact = sum((Fraction(value) ** 2 for value in column), Fraction(0))
+    bound = Fraction(float(frame.axis_jacobian_bounds[0, 0]))
+    assert exact <= bound * bound <= exact * (1 + Fraction(1, 2**47))
 
 
 def test_integrable_per_cell_frame_layout_preserves_hex_quality_and_map() -> None:

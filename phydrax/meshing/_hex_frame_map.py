@@ -50,6 +50,7 @@ from ..discretization._coordinate_enclosure import (
 )
 from ..discretization._reference_cell import reference_cell_topology
 from ..ein import contract
+from ..geometry._rational import binary64_norm_upper
 from ..optim import (
     Bounds,
     MinimizationResult,
@@ -902,8 +903,8 @@ def prepare_source_hex_frame(
                         derivatives[physical_axis][axis], "box", 3
                     )
                     upper.append(max(abs(lower), abs(upper_value)))
-                axis_bounds[root, axis] = np.nextafter(
-                    math.sqrt(sum(value * value for value in upper)), np.inf
+                axis_bounds[root, axis] = float(
+                    binary64_norm_upper(np.asarray(upper, dtype=np.float64))
                 )
             for corner_index, point in enumerate(corner_points):
                 jacobian = np.asarray(
