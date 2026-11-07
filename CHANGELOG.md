@@ -750,6 +750,9 @@
   `NumericsConfig(rank_promotion="raise")`. Its biases and layer-normalization
   scales and shifts are broadcast over the feature lead axes explicitly; under
   that setting it previously refused every input with lead axes.
+- UMA domain owner partials (`case_sums`) keep the dtype of the summed values:
+  owned atom and species counts stay int32 with 64-bit JAX enabled, as the
+  slab path's `case_atom_counts` does, instead of widening to int64.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
