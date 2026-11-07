@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import IntFlag
 from functools import partial
 from typing import Any, Literal, TypeAlias
@@ -41,6 +41,33 @@ DOMAIN_REASON_SHIFT = 8
 DerivativeFailureMode: TypeAlias = Literal["status", "error"]
 
 
+def _refuse_invalid_tangent(tangent: Array, invalid: Array, message: str, /) -> Array:
+    """Identity on `tangent` that raises when `invalid`, in either direction.
+
+    A check applied directly to a tangent is dead code once reverse mode
+    transposes the linear map: the transposed program never evaluates it and
+    silently returns zero cotangents. The forward check stays on the tangent;
+    the identity is additionally owned as a linear solve whose transpose
+    applies the same check to the cotangent, so reverse derivatives are
+    refused as well. Primal values never pass through either check.
+    """
+
+    def identity(matvec: Callable[[Array], Array], right: Array, /) -> Array:
+        del matvec
+        return right
+
+    def refuse(matvec: Callable[[Array], Array], right: Array, /) -> Array:
+        del matvec
+        return eqx.error_if(right, invalid, message)
+
+    return jax.lax.custom_linear_solve(
+        lambda vector: vector,
+        eqx.error_if(tangent, invalid, message),
+        identity,
+        transpose_solve=refuse,
+    )
+
+
 @partial(jax.custom_jvp, nondiff_argnums=(3, 4))
 def _guard_derivative_leaf(
     value: Array,
@@ -65,11 +92,7 @@ def _guard_derivative_leaf_jvp(
     value_tangent, dependency_tangent, _ = tangents
     valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     if failure == "error":
-        value_tangent = eqx.error_if(
-            value_tangent,
-            ~jnp.all(valid_),
-            message,
-        )
+        value_tangent = _refuse_invalid_tangent(value_tangent, ~jnp.all(valid_), message)
     else:
         value_scale = jnp.where(
             valid_,

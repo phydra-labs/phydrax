@@ -96,6 +96,33 @@ def test_admissibility_scenario_1() -> None:
         jax.block_until_ready(tangent)
 
 
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "filter_jit"])
+def test_error_mode_refuses_reverse_mode_derivatives(compiled: bool) -> None:
+    value = jnp.asarray((1.0, -2.0))
+
+    def guarded(argument: Any, valid: Any) -> Any:
+        return jnp.sum(
+            guard_derivative_validity(
+                argument**2, valid, failure="error", message="invalid test derivative"
+            )
+        )
+
+    # Equinox raises EquinoxRuntimeError from eager and filter_jit programs; a
+    # check evaluated inside a staged program without filter_jit (the reverse
+    # pass evaluates the transposed derivative that way) surfaces as the
+    # JaxRuntimeError carrying the same message.
+    refused = (eqx.EquinoxRuntimeError, jax.errors.JaxRuntimeError)
+    gradient = eqx.filter_jit(jax.grad(guarded)) if compiled else jax.grad(guarded)
+    with pytest.raises(refused, match="invalid test derivative"):
+        jax.block_until_ready(gradient(value, jnp.asarray(False)))
+    with pytest.raises(refused, match="invalid test derivative"):
+        _, pullback = jax.vjp(lambda argument: guarded(argument, False), value)
+        jax.block_until_ready(pullback(jnp.asarray(1.0)))
+    # Valid derivatives and every primal value are unchanged.
+    np.testing.assert_allclose(gradient(value, jnp.asarray(True)), 2.0 * value)
+    np.testing.assert_allclose(guarded(value, jnp.asarray(False)), 5.0)
+
+
 def test_admissibility_is_jittable_and_transition_is_diagnostic_only() -> None:
     @jax.jit
     def evaluate(margin: Any) -> Any:
