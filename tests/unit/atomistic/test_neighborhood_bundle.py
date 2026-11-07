@@ -1290,3 +1290,17 @@ def test_virtual_sites_refuse_physical_exceptions_and_keep_unit_scales() -> None
     np.testing.assert_array_equal(np.asarray(view.lennard_jones_scales)[valid], 1.0)
     np.testing.assert_array_equal(np.asarray(view.electrostatic_scales)[valid], 1.0)
     np.testing.assert_array_equal(np.asarray(view.lennard_jones_scales)[~valid], 0.0)
+
+
+def test_selected_requirement_archive_round_trip() -> None:
+    from phydrax._model._structure import (
+        model_from_structure_recipe,
+        model_structure_recipe,
+    )
+
+    restored = model_from_structure_recipe(model_structure_recipe(SELECTED))
+    assert isinstance(restored.selection, ImageNeighborSelectionPolicy)
+    assert SELECTED.selection is not None
+    assert restored.selection.policy_id == SELECTED.selection.policy_id
+    assert restored.requirement_id == SELECTED.requirement_id
+    assert restored.role is Role.DIRECTED_IMAGE_GRAPH

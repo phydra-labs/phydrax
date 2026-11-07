@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
+from ..._model import register_artifact_value
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation, KeyGroupPlan
@@ -2336,6 +2337,13 @@ class PreparedImageNeighborSelection(StrictModule, NonTrainableState):
             policy.policy_id,
             self.capacity.capacity_id,
         )
+
+
+# Stored atomistic neighborhood requirements embed their declared selection.
+register_artifact_value(
+    "phydrax.discretization.particle:ImageNeighborSelectionPolicy",
+    ImageNeighborSelectionPolicy,
+)
 
 
 __all__ = [
