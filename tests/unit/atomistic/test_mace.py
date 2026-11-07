@@ -184,10 +184,12 @@ def _source_potential(
     )
 
 
+# The base cases; family cases are reconstructed by tests/interchange.
+BASE_CASES = ("one_residual", "two_scale_shift", "three_density", "two_multihead_unscaled")
 SOURCE_ROWS = [
     pytest.param(case, head, id=f"{case}-{head}")
-    for case, declaration in MANIFEST["cases"].items()
-    for head in declaration["heads"]
+    for case in BASE_CASES
+    for head in MANIFEST["cases"][case]["heads"]
 ]
 
 

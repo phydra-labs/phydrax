@@ -30,6 +30,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import platform
 import sys
 import zipfile
 from pathlib import Path
@@ -41,6 +42,14 @@ import numpy as np
 _DIRECTORY = Path(__file__).resolve().parent
 _GATE_SCALE_KEY = "normalize2mom_silu"
 _SEED = 20261003
+# The (absolute, relative) float64 gates under which native reconstruction must
+# reproduce these provider outputs (tests/_support/mace_source.py FLOAT64_GATES).
+# Values are self-consistent per generating host, not bitwise across hosts.
+_GATES = {
+    "energy": [1.0e-9, 1.0e-12],
+    "forces": [1.0e-8, 1.0e-10],
+    "stress": [1.0e-9, 1.0e-10],
+}
 
 _LES_ARGUMENTS: dict[str, Any] = {
     "n_layers": 3,
@@ -416,6 +425,12 @@ def generate(directory: Path, cases: dict[str, dict[str, Any]], release: str, /)
     manifest = {
         "provider": {name: metadata.version(name) for name in distributions},
         "generator": f"tests/fixtures/{directory.name}/generate.py",
+        "host": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+        },
+        "gates": _GATES,
         "units": {"length": "angstrom", "energy": "eV"},
         "virial_convention": "provider virials = -dE/d(symmetric strain)",
         "structures": _STRUCTURES,

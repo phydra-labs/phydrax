@@ -1,0 +1,209 @@
+{
+  "cases": {
+    "two_attention": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticAttResidualInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticAttResidualInteractionBlock"
+    },
+    "two_gaussian_soft": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "Soft",
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "radial_type": "gaussian",
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock"
+    },
+    "two_joint_embedding": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "conditions": {
+        "total_charge": 1,
+        "total_spin": 2
+      },
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "embedding_specs": {
+        "total_charge": {
+          "emb_dim": 3,
+          "num_classes": 5,
+          "offset": 2,
+          "per": "graph",
+          "type": "categorical"
+        },
+        "total_spin": {
+          "emb_dim": 2,
+          "num_classes": 4,
+          "offset": 0,
+          "per": "graph",
+          "type": "categorical"
+        }
+      },
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock",
+      "use_embedding_readout": true
+    },
+    "two_nonlinear_bias": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticResidualNonLinearInteractionBlock",
+      "gate_scales": [
+        1.6791767923989418,
+        1.8467055342154763
+      ],
+      "heads": [
+        "Default"
+      ],
+      "interactions": 2,
+      "normalize2mom_silu": null,
+      "pair_repulsion": false,
+      "readout_class": "NonLinearBiasReadoutBlock",
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualNonLinearInteractionBlock"
+    },
+    "two_so3": {
+      "apply_cutoff": true,
+      "class": "ScaleShiftMACE",
+      "correlation": [
+        2,
+        2
+      ],
+      "distance_transform": "None",
+      "first": "RealAgnosticInteractionBlock",
+      "heads": [
+        "Default"
+      ],
+      "hidden_irreps": "4x0e+4x1e",
+      "interactions": 2,
+      "normalize2mom_silu": 1.6791767923989418,
+      "pair_repulsion": false,
+      "readout_scale": 1.6791767923989418,
+      "rest": "RealAgnosticResidualInteractionBlock",
+      "use_so3": true
+    }
+  },
+  "gates": {
+    "energy": [
+      1e-09,
+      1e-12
+    ],
+    "forces": [
+      1e-08,
+      1e-10
+    ],
+    "stress": [
+      1e-09,
+      1e-10
+    ]
+  },
+  "generator": "tests/fixtures/mace_torch_0_3_15/generate.py",
+  "host": {
+    "machine": "AMD64",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.17"
+  },
+  "provider": {
+    "ase": "3.29.0",
+    "e3nn": "0.4.4",
+    "mace-torch": "0.3.15",
+    "torch": "2.14.1"
+  },
+  "structures": {
+    "crystal": {
+      "cell": [
+        [
+          2.4,
+          0.0,
+          0.0
+        ],
+        [
+          0.6,
+          2.2,
+          0.0
+        ],
+        [
+          0.3,
+          0.4,
+          2.6
+        ]
+      ],
+      "positions": [
+        [
+          0.1,
+          0.2,
+          0.05
+        ],
+        [
+          1.05,
+          0.65,
+          0.9
+        ]
+      ],
+      "symbols": "OH"
+    },
+    "molecule": {
+      "cell": null,
+      "positions": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.95,
+          0.1,
+          0.0
+        ],
+        [
+          -0.25,
+          0.85,
+          0.2
+        ]
+      ],
+      "symbols": "OHH"
+    }
+  },
+  "units": {
+    "energy": "eV",
+    "length": "angstrom"
+  },
+  "virial_convention": "provider virials = -dE/d(symmetric strain)"
+}

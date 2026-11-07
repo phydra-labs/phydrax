@@ -2061,3 +2061,14 @@ def test_committed_family_fixture_matches_its_provider_evaluation(
                 -fixture[prefix + "virials"][0],
                 FLOAT64_GATES["stress"],
             )
+
+
+@pytest.mark.parametrize("release", sorted(_COMMITTED_FAMILY_CASES))
+def test_committed_fixture_records_its_regeneration_gates(release: str) -> None:
+    # Fixtures are self-consistent on their generating host, not bitwise across
+    # hosts; the family evaluation above checks them under exactly these gates.
+    manifest = committed_manifest(release)
+    gates = {name: tuple(gate) for name, gate in manifest["gates"].items()}
+    assert gates == FLOAT64_GATES
+    assert set(manifest["host"]) == {"machine", "platform", "python"}
+    assert manifest["provider"]["mace-torch"] == release
