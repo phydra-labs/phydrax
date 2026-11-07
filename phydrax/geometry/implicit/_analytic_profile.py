@@ -33,6 +33,7 @@ from .._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
+from .._rational import binary64_norm_upper
 from .._source_boundary_records import (
     SourceBoundaryDistance,
     SourceBoundarySamples,
@@ -58,13 +59,6 @@ def _upper_fraction(value: Fraction) -> float:
     if not math.isfinite(rounded):
         return rounded
     return float(np.nextafter(rounded, np.inf)) if Fraction(rounded) < value else rounded
-
-
-def _norm_upper(values: np.ndarray) -> float:
-    raw = np.abs(np.asarray(values, dtype=np.float64).reshape((-1,)))
-    if not np.any(raw):
-        return 0.0
-    return float(np.nextafter(math.hypot(*np.nextafter(raw, np.inf).tolist()), np.inf))
 
 
 _INTERVAL_BATCH_SIZE = 64
@@ -1043,10 +1037,7 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             pi_upper = Fraction(float(np.nextafter(math.pi, np.inf)))
             scale = Fraction(self.major_radius) + 2 * Fraction(self.radius)
             period_slack = _upper_fraction(4 * (pi_upper - pi_lower) * scale)
-        radii = np.asarray(
-            [_norm_upper(row) for row in displacement],
-            dtype=np.float64,
-        )
+        radii = binary64_norm_upper(displacement)
         radii = np.nextafter(radii + period_slack, np.inf)
         errors = self.boundary_distance(points).upper
         return SourceBoundarySamples(
