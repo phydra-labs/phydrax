@@ -746,6 +746,10 @@
   scenario names from the canonical registry, rejects missing, extra, failed,
   missing-dependency, and skipped results, and excludes warm bytecode while
   confirming qualification modules and Phydrax load from their isolated sources.
+- `LayerNormRadialMLP` evaluates batched edge features under
+  `NumericsConfig(rank_promotion="raise")`. Its biases and layer-normalization
+  scales and shifts are broadcast over the feature lead axes explicitly; under
+  that setting it previously refused every input with lead axes.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile

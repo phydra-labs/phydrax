@@ -897,18 +897,24 @@ class LayerNormRadialMLP(StrictModule, ParameterOwner):
         if features.shape[-1:] != (self.input_width,):
             raise ValueError(f"Radial MLP features must end in width {self.input_width}.")
         value = features
+        # Per-width vectors gain the feature lead axes explicitly (rank promotion).
+        lead = (1,) * (features.ndim - 1)
         last = len(self.weights) - 1
         for index, (weight, bias) in enumerate(zip(self.weights, self.biases)):
-            value = value @ weight + bias
+            value = value @ weight + bias.reshape(lead + bias.shape)
             if index == last:
                 break
             mean = jnp.mean(value, axis=-1, keepdims=True)
             centered = value - mean
             variance = jnp.mean(centered * centered, axis=-1, keepdims=True)
             epsilon = jnp.asarray(self.epsilon, dtype=value.dtype)
+            scale = self.norm_scales[index]
+            shift = self.norm_shifts[index]
             value = jax.nn.silu(
-                centered * jax.lax.rsqrt(variance + epsilon) * self.norm_scales[index]
-                + self.norm_shifts[index]
+                centered
+                * jax.lax.rsqrt(variance + epsilon)
+                * scale.reshape(lead + scale.shape)
+                + shift.reshape(lead + shift.shape)
             )
         match self.postprocess:
             case "none":
