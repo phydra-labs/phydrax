@@ -165,6 +165,29 @@ def test_exponential_and_power_cones_satisfy_moreau_and_regular_derivatives() ->
         assert cone.dual_projection_smoothness_margin(jnp.zeros(3)) == 0.0
 
 
+def test_exponential_and_power_projections_support_reverse_mode() -> None:
+    direction = jnp.asarray([0.2, -0.1, 0.3])
+    cotangent = jnp.asarray([0.7, -0.4, 0.2])
+    cases = (
+        (phx.optim.ExponentialCone(), jnp.asarray([1.0, 2.0, 3.0])),
+        (phx.optim.PowerCone(0.4), jnp.asarray([-1.0, 2.0, 1.0])),
+    )
+    for cone, value in cases:
+        # The pullback reuses the symmetric bordered-KKT solve of the tangent, so
+        # the two pairings differ only by the roundoff of one 4x4 LU solve: a
+        # small multiple of eps for these well-conditioned exterior points.
+        tolerance = 64.0 * jnp.finfo(value.dtype).eps
+        for project in (cone.project, cone.project_dual):
+            tangent = jax.jvp(project, (value,), (direction,))[1]
+            (adjoint,) = jax.vjp(project, value)[1](cotangent)
+            np.testing.assert_allclose(
+                jnp.vdot(adjoint, direction),
+                jnp.vdot(cotangent, tangent),
+                atol=tolerance,
+                rtol=tolerance,
+            )
+
+
 def test_power_cone_projection_is_idempotent_and_exponent_swap_equivariant() -> None:
     value = jnp.asarray([-1.0, 2.0, 1.0])
     for exponent in (0.01, 0.1, 0.5, 0.9, 0.99):

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import jax
@@ -345,17 +346,26 @@ def _boundary_kkt_matrix(value: Array, projected: Array, /) -> tuple[Array, Arra
 
 
 def _kkt_solve(matrix: Array, right: Array, /) -> Array:
-    return solve(
-        LinearSystem(
-            DenseLinearOperator(matrix),
-            problem_id="exponential-cone-projection-kkt",
-        ),
-        right,
-        policy=LinearSolvePolicy(
-            DenseLU(),
-            failure=FailurePolicy("status"),
-        ),
-    ).value
+    def dense_solve(matvec: Callable[[Array], Array], rhs: Array, /) -> Array:
+        del matvec
+        return solve(
+            LinearSystem(
+                DenseLinearOperator(matrix),
+                problem_id="exponential-cone-projection-kkt",
+            ),
+            rhs,
+            policy=LinearSolvePolicy(
+                DenseLU(),
+                failure=FailurePolicy("status"),
+            ),
+        ).value
+
+    # The bordered KKT matrix is symmetric. Owning the solve keeps the
+    # derivative linear in `right`, so reverse mode reuses the same solve
+    # instead of transposing the native solve's internals.
+    return jax.lax.custom_linear_solve(
+        lambda vector: matrix @ vector, right, dense_solve, symmetric=True
+    )
 
 
 def _minimum_singular_value(matrix: Array, /) -> Array:
