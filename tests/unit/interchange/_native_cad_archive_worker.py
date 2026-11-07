@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
-from typing import NoReturn, TYPE_CHECKING, TypeVar
+from typing import Any, NoReturn, TYPE_CHECKING, TypeVar
 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -14230,228 +14230,219 @@ def _read_polyhedral_periodic_archive(path: Path, expected: dict[str, object], /
     print("polyhedral-periodic-cold-restored")
 
 
+def _worker_oracle() -> Any:
+    """Load the caller's oracle from the file named by the third argument.
+
+    Oracles exceed the process limits (128 KiB per argument on Linux, 32,767
+    characters per command line on Windows), so callers pass a path.
+    """
+    return json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     operation = sys.argv[1]
     archive_directory = Path(sys.argv[2])
     if operation == "write":
         _write(archive_directory)
     elif operation == "read":
-        # The cold-restore oracle exceeds the per-argument process limit; it is a file.
-        _read(
-            archive_directory, json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
-        )
+        _read(archive_directory, _worker_oracle())
     elif operation == "read-continuation":
-        _read_continuation(archive_directory, json.loads(sys.argv[3]))
+        _read_continuation(archive_directory, _worker_oracle())
     elif operation == "read-implicit":
         _read_adaptive_implicit(
-            archive_directory / "implicit-domain.phx", json.loads(sys.argv[3])
+            archive_directory / "implicit-domain.phx", _worker_oracle()
         )
     elif operation == "write-implicit":
         _write_adaptive_implicit(archive_directory)
     elif operation == "read-reconstructed":
         _read_reconstructed_source(
-            archive_directory / "reconstructed-source.phx", json.loads(sys.argv[3])
+            archive_directory / "reconstructed-source.phx", _worker_oracle()
         )
     elif operation == "write-reconstructed":
         _write_reconstructed_source(archive_directory)
     elif operation == "read-pwl-boundary-query":
-        # The per-entity oracle exceeds the process argument limit; it is a file.
         _read_piecewise_boundary_query(
             archive_directory / "pwl-boundary-query.phx",
-            json.loads(Path(sys.argv[3]).read_text(encoding="utf-8")),
+            _worker_oracle(),
         )
     elif operation == "write-pwl-boundary-query":
         _write_piecewise_boundary_query(archive_directory)
     elif operation == "read-curve-query":
         _read_parametric_curve_query(
-            archive_directory / "parametric-curve-query.phx", json.loads(sys.argv[3])
+            archive_directory / "parametric-curve-query.phx", _worker_oracle()
         )
     elif operation == "write-curve-query":
         _write_parametric_curve_query(archive_directory)
     elif operation == "write-mapped-reference-domain":
         _write_mapped_reference_domain_artifact(archive_directory)
     elif operation == "read-mapped-reference-domain":
-        _read_mapped_reference_domain_artifact(archive_directory, json.loads(sys.argv[3]))
+        _read_mapped_reference_domain_artifact(archive_directory, _worker_oracle())
     elif operation == "write-piecewise-region-occurrences":
         _write_piecewise_region_occurrence_archive(archive_directory)
     elif operation == "read-piecewise-region-occurrences":
-        _read_piecewise_region_occurrence_archive(
-            archive_directory, json.loads(sys.argv[3])
-        )
+        _read_piecewise_region_occurrence_archive(archive_directory, _worker_oracle())
     elif operation == "write-mapped-reference-boundary-query":
         _write_mapped_reference_boundary_query(archive_directory)
     elif operation == "read-mapped-reference-boundary-query":
         _read_mapped_reference_boundary_query(
             archive_directory / "mapped-reference-boundary-query.phx",
-            json.loads(sys.argv[3]),
+            _worker_oracle(),
         )
     elif operation == "write-coordinate-maps":
         _write_coordinate_map_artifact(archive_directory)
     elif operation == "read-coordinate-maps":
-        _read_coordinate_map_artifact(archive_directory, json.loads(sys.argv[3]))
+        _read_coordinate_map_artifact(archive_directory, _worker_oracle())
     elif operation == "write-periodic-power-map":
         _write_periodic_power_map_archive(archive_directory)
     elif operation == "read-periodic-power-map":
-        _read_periodic_power_map_archive(archive_directory, json.loads(sys.argv[3]))
+        _read_periodic_power_map_archive(archive_directory, _worker_oracle())
     elif operation == "read-periodic-power-map-without-mesh":
         _read_periodic_power_map_without_mesh(archive_directory)
     elif operation == "write-owner-local-remap":
         _write_owner_local_remap_archive(archive_directory)
     elif operation == "read-owner-local-remap":
-        _read_owner_local_remap_archive(archive_directory, json.loads(sys.argv[3]))
+        _read_owner_local_remap_archive(archive_directory, _worker_oracle())
     elif operation == "write-owner-local-periodic-adaptive":
         _write_owner_local_periodic_adaptive_archive(archive_directory)
     elif operation == "read-owner-local-periodic-adaptive":
-        _read_owner_local_periodic_adaptive_archive(
-            archive_directory, json.loads(sys.argv[3])
-        )
+        _read_owner_local_periodic_adaptive_archive(archive_directory, _worker_oracle())
     elif operation == "write-meshing-specs":
         _write_meshing_spec_archive(archive_directory)
     elif operation == "read-meshing-specs":
-        _read_meshing_spec_archive(archive_directory, json.loads(sys.argv[3]))
+        _read_meshing_spec_archive(archive_directory, _worker_oracle())
     elif operation == "write-analytic-profile":
         _write_analytic_profile_artifact(archive_directory)
     elif operation == "read-analytic-profile":
-        _read_analytic_profile_artifact(archive_directory, json.loads(sys.argv[3]))
+        _read_analytic_profile_artifact(archive_directory, _worker_oracle())
     elif operation == "write-certification":
         _write_certification_artifact(archive_directory)
     elif operation == "read-certification":
-        _read_certification_artifact(archive_directory, json.loads(sys.argv[3]))
+        _read_certification_artifact(archive_directory, _worker_oracle())
     elif operation == "write-source-coverage":
         _write_source_coverage_artifact(archive_directory)
     elif operation == "read-source-coverage":
-        _read_source_coverage_artifact(archive_directory, json.loads(sys.argv[3]))
+        _read_source_coverage_artifact(archive_directory, _worker_oracle())
     elif operation == "read-cad-chart-witness":
         _read_cad_chart_witness(archive_directory, sys.argv[3])
     elif operation == "write-region-boundary-evidence":
         _write_region_boundary_archive(archive_directory)
     elif operation == "read-region-boundary-evidence":
-        _read_region_boundary_archive(archive_directory, json.loads(sys.argv[3]))
+        _read_region_boundary_archive(archive_directory, _worker_oracle())
     elif operation == "write-source-chart-rational":
         _write_source_chart_rational_artifact(archive_directory)
     elif operation == "read-source-chart-rational":
-        _read_source_chart_rational_artifact(archive_directory, json.loads(sys.argv[3]))
+        _read_source_chart_rational_artifact(archive_directory, _worker_oracle())
     elif operation == "write-brep-entity":
         _write_brep_entity_composition(archive_directory)
     elif operation == "read-brep-entity":
-        _read_brep_entity_composition(archive_directory, json.loads(sys.argv[3]))
+        _read_brep_entity_composition(archive_directory, _worker_oracle())
     elif operation == "write-brep-assembly-placement-evidence":
         _write_brep_assembly_placement_evidence_archive(archive_directory)
     elif operation == "read-brep-assembly-placement-evidence":
         _read_brep_assembly_placement_evidence_archive(
-            archive_directory, json.loads(sys.argv[3])
+            archive_directory, _worker_oracle()
         )
     elif operation == "write-brep-projection":
         _write_brep_projection_composition(archive_directory)
     elif operation == "read-brep-projection":
         _read_brep_projection_composition(
-            archive_directory / "brep-projection.phx", json.loads(sys.argv[3])
+            archive_directory / "brep-projection.phx", _worker_oracle()
         )
     elif operation == "write-reference-chart-arguments":
         _write_reference_chart_arguments(archive_directory)
     elif operation == "read-reference-chart-arguments":
         _read_reference_chart_arguments(
-            archive_directory / "reference-chart-arguments.phx", json.loads(sys.argv[3])
+            archive_directory / "reference-chart-arguments.phx", _worker_oracle()
         )
     elif operation == "write-tspline-cold-archive":
         _write_tspline_cold_archive(archive_directory)
     elif operation == "read-tspline-cold-archive":
-        _read_tspline_cold_archive(archive_directory, json.loads(sys.argv[3]))
+        _read_tspline_cold_archive(archive_directory, _worker_oracle())
     elif operation == "write-plane-cylinder-section-pcurve":
         _write_plane_cylinder_section_pcurve(archive_directory)
     elif operation == "read-plane-cylinder-section-pcurve":
-        _read_plane_cylinder_section_pcurve(archive_directory, json.loads(sys.argv[3]))
+        _read_plane_cylinder_section_pcurve(archive_directory, _worker_oracle())
     elif operation == "write-brep-curve-surface-lift":
         _write_brep_curve_surface_lift(archive_directory)
     elif operation == "read-brep-curve-surface-lift":
-        _read_brep_curve_surface_lift(archive_directory, json.loads(sys.argv[3]))
+        _read_brep_curve_surface_lift(archive_directory, _worker_oracle())
     elif operation == "write-sphere-chamfer-conic-root":
         _write_sphere_chamfer_conic_root_archive(archive_directory)
     elif operation == "read-sphere-chamfer-conic-root":
-        _read_sphere_chamfer_conic_root_archive(
-            archive_directory, json.loads(sys.argv[3])
-        )
+        _read_sphere_chamfer_conic_root_archive(archive_directory, _worker_oracle())
     elif operation == "write-parallel-cylinder-chamfer":
         _write_parallel_cylinder_chamfer_archive(archive_directory)
     elif operation == "read-parallel-cylinder-chamfer":
-        _read_parallel_cylinder_chamfer_archive(
-            archive_directory, json.loads(sys.argv[3])
-        )
+        _read_parallel_cylinder_chamfer_archive(archive_directory, _worker_oracle())
     elif operation == "write-orthogonal-quadric-boolean":
         _write_orthogonal_quadric_boolean_archive(archive_directory)
     elif operation == "read-orthogonal-quadric-boolean":
-        _read_orthogonal_quadric_boolean_archive(
-            archive_directory, json.loads(sys.argv[3])
-        )
+        _read_orthogonal_quadric_boolean_archive(archive_directory, _worker_oracle())
     elif operation == "write-torus-exact-source":
         _write_torus_exact_source_archive(archive_directory)
     elif operation == "read-torus-exact-source":
-        _read_torus_exact_source_archive(archive_directory, json.loads(sys.argv[3]))
+        _read_torus_exact_source_archive(archive_directory, _worker_oracle())
     elif operation == "read-surface-witness":
-        _read_surface_chart_witness(archive_directory, json.loads(sys.argv[3]))
+        _read_surface_chart_witness(archive_directory, _worker_oracle())
         print("surface-chart-witness-cold-restored")
     elif operation == "write-surface-chart-query":
         _write_surface_chart_boundary_query(archive_directory)
     elif operation == "read-surface-chart-query":
-        _read_surface_chart_boundary_query(archive_directory, json.loads(sys.argv[3]))
+        _read_surface_chart_boundary_query(archive_directory, _worker_oracle())
     elif operation == "write-layer-curving-evidence":
         _write_layer_curving_evidence(archive_directory)
     elif operation == "write-mapped-layer-curving-evidence":
         _write_mapped_layer_curving_evidence(archive_directory)
     elif operation == "read-layer-curving-evidence":
-        _read_layer_curving_evidence(archive_directory, json.loads(sys.argv[3]))
+        _read_layer_curving_evidence(archive_directory, _worker_oracle())
     elif operation == "write-restricted-layer-curving-evidence":
         _write_restricted_layer_curving_evidence(archive_directory)
     elif operation == "read-restricted-layer-curving-evidence":
-        _read_restricted_layer_curving_evidence(
-            archive_directory, json.loads(sys.argv[3])
-        )
+        _read_restricted_layer_curving_evidence(archive_directory, _worker_oracle())
     elif operation == "write-implicit-layer-curving-evidence":
         _write_implicit_layer_curving_evidence(archive_directory)
     elif operation == "read-implicit-layer-curving-evidence":
-        _read_layer_curving_evidence(archive_directory, json.loads(sys.argv[3]))
+        _read_layer_curving_evidence(archive_directory, _worker_oracle())
     elif operation == "write-implicit-chart-restriction":
         _write_implicit_chart_restriction(archive_directory)
     elif operation == "read-implicit-chart-restriction":
-        _read_implicit_chart_restriction(archive_directory, json.loads(sys.argv[3]))
+        _read_implicit_chart_restriction(archive_directory, _worker_oracle())
     elif operation == "write-exact-tensor-quad-fidelity":
         _write_exact_tensor_quad_fidelity(archive_directory)
     elif operation == "read-exact-tensor-quad-fidelity":
-        _read_exact_tensor_quad_fidelity(archive_directory, json.loads(sys.argv[3]))
+        _read_exact_tensor_quad_fidelity(archive_directory, _worker_oracle())
     elif operation == "write-material-reference-seed-transition":
         _write_material_reference_seed_transition(archive_directory)
     elif operation == "read-material-reference-seed-transition":
-        _read_material_reference_seed_transition(
-            archive_directory, json.loads(sys.argv[3])
-        )
+        _read_material_reference_seed_transition(archive_directory, _worker_oracle())
     elif operation == "write-polyhedral-periodic":
         _write_polyhedral_periodic_archive(archive_directory)
     elif operation == "read-polyhedral-periodic":
-        _read_polyhedral_periodic_archive(archive_directory, json.loads(sys.argv[3]))
+        _read_polyhedral_periodic_archive(archive_directory, _worker_oracle())
     elif operation == "write-finite-element-transfer":
         _write_finite_element_transfer_archive(archive_directory)
     elif operation == "read-finite-element-transfer":
         _read_finite_element_transfer_archive(
             archive_directory / "finite-element-transfer.phx",
-            json.loads(sys.argv[3]),
+            _worker_oracle(),
         )
     elif operation == "write-vertex-stencil":
         _write_vertex_interpolation_stencil_archive(archive_directory)
     elif operation == "read-vertex-stencil":
         _read_vertex_interpolation_stencil_archive(
             archive_directory / "vertex-interpolation-stencil.phx",
-            json.loads(sys.argv[3]),
+            _worker_oracle(),
         )
     elif operation == "write-periodic-distributed-fe-transfer":
         _write_periodic_distributed_fe_transfer_archive(archive_directory)
     elif operation == "read-periodic-distributed-fe-transfer":
         _read_periodic_distributed_fe_transfer_archive(
-            archive_directory, json.loads(sys.argv[3])
+            archive_directory, _worker_oracle()
         )
     elif operation == "write-revolution-offset":
         _write_revolution_offset_archive(archive_directory)
     elif operation == "read-revolution-offset":
-        _read_revolution_offset_archive(archive_directory, json.loads(sys.argv[3]))
+        _read_revolution_offset_archive(archive_directory, _worker_oracle())
     elif operation == "read-brep":
         load_brep_archive(archive_directory)
     else:

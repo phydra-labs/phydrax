@@ -87,6 +87,7 @@ from phydrax.meshing.providers._native_schedules import (
 )
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
 from tests.unit.geometry.test_implicit_source_charts import _retarget_implicit_witness
+from tests.unit.interchange.test_native_cad_archive import _worker_oracle
 from tests.unit.meshing.test_native_mapped_hex_routes import _mapped_plc_tetra_source
 from tests.unit.meshing.test_native_surface_routes import (
     _square_domain,
@@ -799,7 +800,7 @@ def test_implicit_chart_restriction_replays_in_an_independent_cold_process(
             str(worker),
             "read-implicit-chart-restriction",
             str(tmp_path / "implicit-chart-restriction.phx"),
-            json.dumps(expected),
+            _worker_oracle(tmp_path, expected),
         ],
         check=False,
         capture_output=True,
