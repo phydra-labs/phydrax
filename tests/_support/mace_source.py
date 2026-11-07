@@ -813,7 +813,7 @@ def water_training_problem(
             phx.atomistic.AtomisticWorkloadBuckets(
                 (
                     phx.atomistic.AtomisticWorkloadBucket(
-                        "water-microstep",
+                        "water_microstep",
                         cases=payload_cases,
                         levels=(
                             phx.atomistic.AtomisticLevelCapacity(
