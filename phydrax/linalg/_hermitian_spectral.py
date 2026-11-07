@@ -60,7 +60,9 @@ class HermitianSpectrum(StrictModule):
         precision_ = HermitianPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, HermitianPrecisionPolicy):
             raise TypeError("precision must be a HermitianPrecisionPolicy or None.")
-        value = precision_.compute(original)
+        # Measure and factorize one rounded matrix: a fused, FMA-contracted
+        # recomputation would report the rounding of values never materialized.
+        value = jax.lax.optimization_barrier(precision_.compute(original))
         if value.ndim < 2 or value.shape[-2] != value.shape[-1]:
             raise ValueError("Hermitian spectrum requires square trailing matrix axes.")
         if tolerance < 0.0:
