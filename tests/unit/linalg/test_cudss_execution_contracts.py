@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -103,7 +105,9 @@ def test_mgmn_requires_exact_site_communication_provenance() -> None:
     execution = CudssExecutionPolicy(
         "mgmn",
         group=group,
-        communication_library_path="/site/lib/libcudss_commlayer_openmpi.so",
+        communication_library_path=str(
+            Path(Path.cwd().anchor, "site", "lib", "libcudss_commlayer_openmpi.so")
+        ),
         communication_library_sha256="a" * 64,
         communication_build_identity="site-openmpi-pinned",
     )
