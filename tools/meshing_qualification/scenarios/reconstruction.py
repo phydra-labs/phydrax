@@ -98,11 +98,13 @@ def _correctly_rounded_sin_cos(
 
     The exact binary64 arguments first go through the host enclosure entry
     points ``phydrax.geometry._interval_enclosure.interval_sin`` /
-    ``interval_cos``. An enclosure whose endpoints round to one binary64 (for
-    binary64 endpoints: coincide) decides the value. Every other argument is
-    converted exactly to an mpmath float and evaluated in mpmath interval
-    arithmetic at increasing precision (Ziv's strategy) until both endpoints
-    round to the same binary64, independent of the platform libm.
+    ``interval_cos``. They decide only the exact cases: under round to
+    nearest only a width-0 enclosure decides directly,
+    while a 1-ulp enclosure decides directed rounding but not RN. So there is
+    no enclosure fast path. Every other argument is converted exactly to an
+    mpmath float and evaluated in mpmath interval arithmetic at increasing
+    precision (Ziv's strategy) until both endpoints round to the same binary64,
+    independent of the platform libm.
     """
     from mpmath.libmp import from_float, round_nearest, to_float
     from mpmath.libmp.libmpi import mpi_cos, mpi_sin
