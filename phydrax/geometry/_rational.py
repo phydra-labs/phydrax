@@ -9,6 +9,8 @@ from fractions import Fraction
 from typing import overload
 
 import numpy as np
+from jax.typing import ArrayLike
+from numpy.typing import NDArray
 
 from ..linalg._exact import ExactField, solve_exact
 
@@ -154,6 +156,72 @@ def upper_float(value: Fraction, /) -> float:
     )
 
 
+def binary64_difference_magnitude(
+    first: ArrayLike, second: ArrayLike, /
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Directed binary64 bounds of ``|first - second|``, elementwise.
+
+    Under IEEE 754 round-to-nearest with gradual underflow a difference rounds to
+    zero only when it is exactly zero; otherwise the exact difference lies
+    between the neighbors of its rounding. ``abs`` is exact, so stepping the
+    rounded magnitude once down and once up encloses the exact magnitude.
+    """
+    with np.errstate(over="ignore", invalid="ignore"):
+        magnitude = np.abs(
+            np.subtract(
+                np.asarray(first, dtype=np.float64), np.asarray(second, dtype=np.float64)
+            )
+        )
+    exact = magnitude == 0.0
+    return (
+        np.where(exact, 0.0, np.nextafter(magnitude, -np.inf)),
+        np.where(exact, 0.0, np.nextafter(magnitude, np.inf)),
+    )
+
+
+def _directed_norm(components: ArrayLike, upward: bool, /) -> NDArray[np.float64]:
+    values = np.abs(np.asarray(components, dtype=np.float64))
+    if values.ndim == 0:
+        raise ValueError("binary64 norm bounds require a component axis.")
+    direction = np.inf if upward else -np.inf
+    with np.errstate(over="ignore", invalid="ignore"):
+        squares = np.where(
+            values == 0.0,
+            0.0,
+            np.maximum(np.nextafter(values * values, direction), 0.0),
+        )
+        total = np.zeros(values.shape[:-1], dtype=np.float64)
+        for axis in range(values.shape[-1]):
+            term = squares[..., axis]
+            rounded = total + term
+            total = np.where(
+                (total == 0.0) | (term == 0.0),
+                rounded,
+                np.nextafter(rounded, direction),
+            )
+        return np.where(total == 0.0, 0.0, np.nextafter(np.sqrt(total), direction))
+
+
+def binary64_norm_upper(components: ArrayLike, /) -> NDArray[np.float64]:
+    """Upper bound of the Euclidean norm along the last axis.
+
+    Every square, partial sum, and the square root is one correctly rounded IEEE
+    754 operation followed by one step toward ``+inf`` unless an operand is an
+    exact zero, so the bound holds on every IEEE platform without relying on a
+    platform ``hypot``. Squares beyond the binary64 range give ``inf``.
+    """
+    return _directed_norm(components, True)
+
+
+def binary64_norm_lower(components: ArrayLike, /) -> NDArray[np.float64]:
+    """Lower bound of the Euclidean norm along the last axis.
+
+    The operations of ``binary64_norm_upper`` each step toward ``-inf`` instead;
+    squares that underflow contribute zero.
+    """
+    return _directed_norm(components, False)
+
+
 def dyadic_integers(values: np.ndarray, /) -> tuple[np.ndarray, int]:
     """Return integers ``n`` and one exponent ``e`` with ``values == n*2**e``."""
     array = np.asarray(values, dtype=np.float64)
@@ -241,6 +309,9 @@ def translation_ranges(
 
 __all__ = [
     "RationalVector",
+    "binary64_difference_magnitude",
+    "binary64_norm_lower",
+    "binary64_norm_upper",
     "dyadic_integers",
     "exact_float",
     "fraction_down",
