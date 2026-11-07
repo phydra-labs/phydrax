@@ -1318,14 +1318,33 @@ def test_native_overset_continuous_ale_rebind_preserves_gcl_and_next_step() -> N
     ].topology_artifact_id == (connectivity.connectivity_id)
     assert bool(np.asarray(accepted.accepted))
     assert bool(np.asarray(accepted.ale.geometry.passed))
-    for gcl_rate in (
-        accepted.ale.geometry.g1,
-        accepted.ale.geometry.g2,
-        accepted.ale.geometry.g3,
-    ):
-        np.testing.assert_allclose(gcl_rate, 0.0, rtol=0.0, atol=1.0e-12)
     accepted_state = accepted.runtime_state
     accepted_dt = float(np.asarray(accepted.accepted_step_size))
+    # Since 783c4a697 stage rates are swept volumes between the realized stage
+    # positions over dt, so a rigid translation cancels only up to the rounding of
+    # those positions. A displacement fl(x + fl(v t)) - x (subtraction exact by
+    # Sterbenz) is off by at most half an ulp of the position plus half an ulp of
+    # v t, i.e. |delta| <= eps * max|x|. Vertical faces then sweep L * d with exact
+    # L, horizontal faces sweep exactly 0 (zero normal displacement), so a unit
+    # quadrilateral's swept volume errs by <= sum_f |A_f| |delta| <= 4 eps max|x|.
+    # The stage rates s_end / dt, (4 s_mid - s_end) / dt and (1.5 s_end - s_mid) / dt
+    # amplify that by c = (1, 5, 2.5).
+    represented_x = float(
+        np.max(np.abs(np.asarray(accepted.ale.geometry.end_geometry.vertices)[:, 0]))
+    )
+    swept_rounding = 4.0 * np.finfo(np.float64).eps * represented_x / accepted_dt
+    for amplification, gcl_rate in zip(
+        (1.0, 5.0, 2.5),
+        (
+            accepted.ale.geometry.g1,
+            accepted.ale.geometry.g2,
+            accepted.ale.geometry.g3,
+        ),
+        strict=True,
+    ):
+        np.testing.assert_allclose(
+            gcl_rate, 0.0, rtol=0.0, atol=amplification * swept_rounding
+        )
     np.testing.assert_allclose(
         accepted_state.content_state.volume_integral()[0] - initial_total[0],
         0.05 * accepted_dt * 4.0,
