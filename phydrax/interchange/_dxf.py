@@ -42,6 +42,7 @@ from ..geometry.brep._constructors import (
     ProfilePlane,
     ProfileSegment,
 )
+from ..geometry.brep._intersection import NativePeriodEndpoint
 from ..geometry.brep._patches import BSplineCurve, CircleCurve, EllipseCurve
 from ..typing import checked, parse
 from ..units import (
@@ -646,6 +647,68 @@ def _conic(name: str, groups: _Groups, label: str) -> list[_Edge]:
     ]
 
 
+def _closed_ellipse(groups: _Groups, edge: _Edge, limit: float) -> ProfileLoop | None:
+    """Closed periodic carrier for the DXF full-ellipse parameter convention.
+
+    The one-vertex loop closes on the carrier's exact native full turn, so no
+    junction is formed. Its vertex is the correctly rounded exact carrier point
+    at parameter 0; a nonzero rounding displacement needs a declared gap.
+    """
+    first, last = _number(groups, 41), _number(groups, 42)
+    # DXF writes a full ellipse as 0 .. fl(2 pi). Equality is bit-exact for the
+    # nonzero end; the sign test excludes -0.0 from the start.
+    if not (first == 0.0 and math.copysign(1.0, first) > 0.0 and last == 2 * math.pi):
+        return None
+    segment = edge[2]
+    if not isinstance(segment, ProfileCurveUse) or not isinstance(
+        segment.curve, EllipseCurve
+    ):
+        raise TypeError("A decoded DXF ellipse must be an analytic ellipse use.")
+    curve = segment.curve
+    center = np.asarray(curve.center).tolist()
+    axis = np.asarray(curve.first_axis).tolist()
+    radius = Fraction(float(np.asarray(curve.first_radius)))
+    vertex = (
+        float(Fraction(center[0]) + radius * Fraction(axis[0])),
+        float(Fraction(center[1]) + radius * Fraction(axis[1])),
+    )
+    loop = ProfileLoop((vertex,), (segment,))
+    gaps = _segment_gaps(loop, 0, full_turn=True)
+    if max(gaps) > limit:
+        raise _SourceRefusal(
+            "DxfSource.junctions must satisfy declared loop closure; got "
+            + f"DXF closed ellipse vertex gap {max(gaps):.17g} exceeds declared maximum_junction_gap {limit:.17g}.",
+            endpoints=(vertex,),
+            gaps=(gaps,),
+        )
+    return loop
+
+
+def _segment_gaps(
+    loop: ProfileLoop, index: int, *, full_turn: bool
+) -> tuple[float, float]:
+    segment = loop.segments[index]
+    if not isinstance(segment, ProfileCurveUse):
+        return 0.0, 0.0
+    # A closed periodic carrier ends on its exact native full turn.
+    rational = Fraction(segment.first)
+    roots = (
+        (
+            NativePeriodEndpoint(segment.curve, rational=rational, turns=0),
+            NativePeriodEndpoint(segment.curve, rational=rational, turns=1),
+        )
+        if full_turn
+        else (None, None)
+    )
+    vertices = (loop.vertices[index], loop.vertices[(index + 1) % len(loop.vertices)])
+    return endpoint_gap_bounds(
+        segment.curve,
+        (segment.first, segment.last),
+        np.asarray(vertices, dtype=np.float64),
+        endpoint_roots=roots,
+    )
+
+
 def _decode_entity(name: str, groups: _Groups, label: str) -> list[_Edge]:
     if _number(groups, 39, 0.0) != 0.0:
         raise _SourceRefusal(
@@ -800,23 +863,17 @@ def _loops(edges: list[_Edge], policy: DxfImportPolicy) -> tuple[ProfileLoop, ..
     return tuple(loops)
 
 
-def _profile(loops: tuple[ProfileLoop, ...]) -> PlanarProfile:
+def _profile(
+    joined: tuple[ProfileLoop, ...], closed: tuple[ProfileLoop, ...]
+) -> PlanarProfile:
+    loops = joined + closed
     rows = tuple(
         tuple(
-            endpoint_gap_bounds(
-                segment.curve,
-                (segment.first, segment.last),
-                np.asarray(
-                    (loop.vertices[i], loop.vertices[(i + 1) % len(loop.vertices)]),
-                    dtype=np.float64,
-                ),
-            )
-            if isinstance(segment, ProfileCurveUse)
-            else (0.0, 0.0)
-            for i, segment in enumerate(loop.segments)
+            _segment_gaps(loop, index, full_turn=False)
+            for index in range(len(loop.segments))
         )
-        for loop in loops
-    )
+        for loop in joined
+    ) + tuple((_segment_gaps(loop, 0, full_turn=True),) for loop in closed)
     gap_rows = rows if any(max(row) > 0.0 for loop in rows for row in loop) else None
     failures: list[str] = []
     for index, outer in enumerate(loops):
@@ -857,19 +914,28 @@ def _decode_dxf_source(
         labelled = _classify_entities(entities, refused, ignored)
         unit = _unit(header, source_length_unit)
         edges: list[_Edge] = []
+        closed: list[ProfileLoop] = []
         for name, groups, label in labelled:
             if name in _ANNOTATIONS:
                 continue
-            edges.extend(_decode_entity(name, groups, label))
+            decoded = _decode_entity(name, groups, label)
+            closed_loop = (
+                _closed_ellipse(groups, decoded[0], policy.maximum_junction_gap)
+                if name == "ELLIPSE"
+                else None
+            )
+            if closed_loop is None:
+                edges.extend(decoded)
+            else:
+                closed.append(closed_loop)
             refused.remove(label)
             consumed.append(label)
-        if not edges:
+        if not edges and not closed:
             raise _SourceRefusal(
                 "DxfSource.geometry must satisfy its declared planar source contract; got "
                 + "DXF contains no supported profile geometry."
             )
-        loops = _loops(edges, policy)
-        profile = _profile(loops)
+        profile = _profile(_loops(edges, policy), tuple(closed))
     except ValueError as error:
         endpoints = error.endpoints if isinstance(error, _SourceRefusal) else ()
         report = _report(

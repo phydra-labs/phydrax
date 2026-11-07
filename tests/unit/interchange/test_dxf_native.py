@@ -1,10 +1,13 @@
 """Independent hand-authored DXF fixtures for the native planar codec."""
 
+import math
 from pathlib import Path
 
 import mpmath
 import pytest
 
+from phydrax.geometry.brep._constructors import ProfileCurveUse
+from phydrax.geometry.brep._patches import EllipseCurve
 from phydrax.interchange._dxf import (
     decode_dxf_bytes,
     DxfImportError,
@@ -213,3 +216,45 @@ def test_float_quarter_angle_keeps_its_literal_ellipse_endpoint() -> None:
         _quarter_ellipse((0.0, 1.0)), DxfImportPolicy(maximum_junction_gap=gap)
     )
     assert [loss.category for loss in axis_corner.report.losses] == ["transformed"]
+
+
+_TWO_PI = 2 * math.pi
+
+
+def _ellipse(first: float, last: float) -> bytes:
+    return _drawing(
+        "0\nELLIPSE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+        f"40\n0.5\n41\n{first!r}\n42\n{last!r}\n"
+    )
+
+
+def test_full_ellipse_convention_is_a_closed_periodic_carrier() -> None:
+    imported = decode_dxf_bytes(_ellipse(0.0, _TWO_PI), DxfImportPolicy())
+    assert imported.report.losses == ()
+    assert imported.profile.endpoint_gap_bounds is None
+    loop = imported.profile.outer
+    (segment,) = loop.segments
+    assert loop.vertices == ((2.0, 0.0),)
+    assert isinstance(segment, ProfileCurveUse)
+    assert isinstance(segment.curve, EllipseCurve)
+    assert segment.curve.native_period_symbol() == "two_pi"
+    assert (segment.first, segment.last) == (0.0, _TWO_PI)
+
+
+@pytest.mark.parametrize(
+    ("first", "last"),
+    (
+        (0.0, math.nextafter(_TWO_PI, 0.0)),
+        (math.nextafter(0.0, 1.0), _TWO_PI),
+    ),
+    ids=("short-end", "late-start"),
+)
+def test_other_ellipse_parameters_keep_declared_gap_closure(
+    first: float, last: float
+) -> None:
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(_ellipse(first, last), DxfImportPolicy())
+    imported = decode_dxf_bytes(
+        _ellipse(first, last), DxfImportPolicy(maximum_junction_gap=1e-14)
+    )
+    assert [loss.category for loss in imported.report.losses] == ["transformed"]
