@@ -99,7 +99,9 @@ def _jittered_cube_tetrahedra(
 
     points, tetrahedra = _kuhn_tetrahedra(cells_per_axis)
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
-    jitter = np.random.default_rng(seed).uniform(-0.1, 0.1, points.shape)
+    # Separate NumPy operations never contract, unlike `Generator.uniform`'s
+    # platform-dependent fused `low + (high - low) * u`.
+    jitter = -0.1 + 0.2 * np.random.default_rng(seed).random(points.shape)
     points[interior] += jitter[interior] / cells_per_axis
     return phx.discretization.CellMesh.from_tetrahedra(points, tetrahedra)
 
@@ -1109,7 +1111,7 @@ def _jittered_unit_square_triangles(
     axis = np.linspace(0.0, 1.0, cells_per_axis + 1)
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
-    jitter = np.random.default_rng(seed).uniform(-0.2, 0.2, points.shape)
+    jitter = -0.2 + 0.4 * np.random.default_rng(seed).random(points.shape)
     points[interior] += jitter[interior] / cells_per_axis
     return phx.discretization.CellMesh.from_triangles(
         points, _planar_triangles(cells_per_axis)
