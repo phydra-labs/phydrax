@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,6 +13,25 @@ from phydrax.linalg import (
     SmallLinearSolvePlan,
     solve_small_linear,
 )
+
+
+def test_eager_small_solve_keeps_validation_and_repeated_x64_warnings() -> None:
+    plan = SmallLinearSolvePlan(2)
+    with pytest.raises(ValueError, match="Small matrix shape does not match"):
+        solve_small_linear(plan, np.eye(3), np.ones(3))
+    with pytest.raises(ValueError, match="right-hand side shape is incompatible"):
+        solve_small_linear(plan, np.eye(2), np.ones((3, 1)))
+    captured = []
+    with jax.enable_x64(False):
+        for _ in range(2):
+            with warnings.catch_warnings(record=True) as observed:
+                warnings.simplefilter("always")
+                result = solve_small_linear(
+                    plan, np.eye(2, dtype=np.int32), np.ones(2, dtype=np.int32)
+                )
+            assert result.value.dtype == jnp.float32
+            captured.append(tuple(str(item.message) for item in observed))
+    assert captured[0] and captured[0] == captured[1]
 
 
 def _system(

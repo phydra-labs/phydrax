@@ -17,6 +17,74 @@ def _cell_block(cell_type: Any, data: Any) -> Any:
     return SimpleNamespace(type=cell_type, data=np.asarray(data, dtype=np.int32))
 
 
+@pytest.mark.parametrize("profile_kind", ("triangle", "quadrilateral"))
+def test_swept_coordinate_element_recipe_retains_source_and_rejects_tampering(
+    profile_kind: str, tmp_path: Any
+) -> None:
+    from phydrax.discretization._cell_geometry import swept_coordinate_element
+    from phydrax.discretization.fem import lagrange_element
+    from phydrax.meshing._model_codec import read_model_artifact, write_model_artifact
+    from phydrax.solver._finite_element_schedule import (
+        _accepted_element_recipe,
+        FiniteElementAcceptedElementRecipe,
+    )
+
+    element = swept_coordinate_element(lagrange_element(profile_kind, 2))
+    recipe = _accepted_element_recipe(element)
+    assert recipe.recipe_kind == "swept"
+    assert recipe.source_recipe is not None
+    path = tmp_path / "swept-element.phx"
+    write_model_artifact(path, recipe, limits=None)
+    stored = read_model_artifact(
+        path, expected_type=FiniteElementAcceptedElementRecipe,
+        restore=lambda value: _accepted_element_recipe(value.rebuild()), limits=None,
+    )
+    rebuilt = stored.rebuild()
+    assert rebuilt.element_id == element.element_id
+    np.testing.assert_array_equal(rebuilt.reference_nodes, element.reference_nodes)
+    forged_nodes = np.array(recipe.reference_nodes)
+    forged_nodes[0, 0] += 0.25
+    forged = FiniteElementAcceptedElementRecipe(
+        recipe.recipe_kind, recipe.family, recipe.cell_kind, recipe.degree,
+        recipe.continuity, recipe.representation, recipe.value_spec, recipe.form_identity,
+        forged_nodes, recipe.entity_dofs, recipe.tabulator_id, recipe.element_id,
+        recipe.source_recipe,
+    )
+    with pytest.raises(ValueError, match="mathematical fields"):
+        forged.rebuild()
+
+
+def test_swept_tabulator_equality_rechecks_all_source_fields() -> None:
+    from dataclasses import fields
+
+    from phydrax.discretization._cell_geometry import (
+        swept_coordinate_element,
+        SweptCoordinateTabulator,
+    )
+    from phydrax.discretization.fem import lagrange_element
+    from phydrax.geometry._mesh_certificates import _same_tree_content
+
+    source = lagrange_element("quadrilateral", 2)
+    rebuilt = lagrange_element("quadrilateral", 2)
+    first = SweptCoordinateTabulator(source)
+    assert first == SweptCoordinateTabulator(rebuilt)
+    assert hash(first) == hash(SweptCoordinateTabulator(rebuilt))
+    assert _same_tree_content(first.source, rebuilt)
+    assert _same_tree_content(swept_coordinate_element(source), swept_coordinate_element(rebuilt))
+    altered = object.__new__(type(source))
+    for field in fields(source):
+        value = getattr(source, field.name)
+        if field.name == "reference_nodes":
+            value = np.array(value)
+            value[0, 0] += 0.125
+        object.__setattr__(altered, field.name, value)
+    assert altered.element_id == source.element_id
+    assert first != SweptCoordinateTabulator(altered)
+    assert hash(first) == hash(SweptCoordinateTabulator(altered))
+    with pytest.raises(AttributeError):
+        first.source = altered
+
+
 def test_mesh_import_preserves_volume_and_facet_groups_with_loss_evidence(
     monkeypatch: Any, tmp_path: Any
 ) -> None:

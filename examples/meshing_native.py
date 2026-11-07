@@ -1,18 +1,30 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Certify, adapt, transfer, and solve on a native mesh without external providers."""
+"""Certify, adapt, transfer, and solve on a native mesh without external providers.
+
+Set ``PHYDRAX_MESHCORE_LIBRARY`` to the intended ABI-matched native library.
+"""
 
 import json
+import os
 
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
+library = os.environ.get("PHYDRAX_MESHCORE_LIBRARY")
+if not library:
+    raise RuntimeError("Set PHYDRAX_MESHCORE_LIBRARY to the native meshcore library.")
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
+
 
 mesh = phx.discretization.CellMesh.from_triangles(
-    np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5))),
+    np.asarray(
+        ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5)),
+        dtype=np.float64,
+    ),
     np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32),
 )
 certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
@@ -20,17 +32,21 @@ adaptation = phx.meshing.execute_mesh_adaptation(
     phx.meshing.prepare_mesh_adaptation(
         certified,
         phx.meshing.MarkedMeshAdaptation(
-            np.asarray(certified.mesh.blocks[0].global_ids)[:1]
+            np.asarray(certified.mesh.blocks[0].global_ids[:1], dtype=np.int64)
         ),
         policy=phx.meshing.MeshAdaptationPolicy(
             phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
         ),
     )
 )
-if adaptation.transfer is None:
-    raise RuntimeError("Native bisection did not provide a vertex transfer.")
-transferred = adaptation.transfer.apply(
-    certified.mesh.coordinates[:, 0] + certified.mesh.coordinates[:, 1]
+if adaptation.status is not phx.meshing.MeshAdaptationStatus.COMPLETE:
+    raise RuntimeError(f"Native bisection did not complete: {adaptation.status.value}")
+adaptation.target.audit.require_passed()
+if adaptation.transition is None or adaptation.transition.vertex_stencil is None:
+    raise RuntimeError("Native bisection did not provide a vertex transfer stencil.")
+transferred = adaptation.transition.vertex_stencil.apply(
+    np.asarray(certified.mesh.vertex_global_ids, dtype=np.int64),
+    certified.mesh.coordinates[:, 0] + certified.mesh.coordinates[:, 1],
 )
 target = adaptation.target.mesh
 expected = target.coordinates[:, 0] + target.coordinates[:, 1]
@@ -57,6 +73,7 @@ if not bool(jnp.all(solved.successful)) or error > 1e-10 or transfer_error > 1e-
 print(
     json.dumps(
         {
+            "native_library": library,
             "source_cells": mesh.blocks[0].cell_count,
             "target_cells": target.blocks[0].cell_count,
             "status": adaptation.status.value,

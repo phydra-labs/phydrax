@@ -40,7 +40,9 @@ enum phx_mc_status {
   PHX_MC_UNRESOLVED = 8,             /* finite numerical resolution did not decide */
   PHX_MC_INTERNAL_ERROR = 9,
   PHX_MC_ALLOCATION_FAILURE = 10,    /* ordinary native allocation failed */
-  PHX_MC_INDEX_RANGE_ERROR = 11      /* result cannot be represented by native indices */
+  PHX_MC_INDEX_RANGE_ERROR = 11,     /* result cannot be represented by native indices */
+  PHX_MC_STALE_GENERATION = 12,     /* requested mesh generation no longer current */
+  PHX_MC_IO_FAILURE = 13            /* owned scratch storage operation failed */
 };
 
 /* ------------------------------------------------------------------ identity */
@@ -49,6 +51,21 @@ PHX_MC_API const char* phx_mc_version(void);
 /* SHA-256 of the library sources recorded at configure time. */
 PHX_MC_API const char* phx_mc_build_hash(void);
 PHX_MC_API void phx_mc_exact_domain(int32_t* min_exponent, int32_t* max_exponent);
+
+/* Bounded implicit-cell contour batches. All arrays are caller-owned and
+ * contiguous: signs/values (count,8), boxes (count,2,3), roots (count,12),
+ * vertices (root_count), points (root_count,3), root_issues (root_count).
+ * Roots contain -1 for noncrossing edges, otherwise a valid root index.
+ * Outputs are handled/counts/issues (count) and triangles (count,10,3).
+ * Unhandled cells require the canonical contour algorithm; triangles for
+ * unhandled rows and unused triangle slots are unspecified. Invalid inputs
+ * leave all outputs unchanged. Callers must supply disjoint output buffers.
+ */
+PHX_MC_API int32_t phx_mc_implicit_contours(
+    int64_t count, int64_t root_count, const int8_t* signs, const double* values,
+    const double* boxes, const int64_t* roots, const int64_t* vertices,
+    const double* points, const int64_t* root_issues, double minimum_area,
+    uint8_t* handled, int8_t* counts, int64_t* triangles, int64_t* issues);
 
 /* ---------------------------------------------------------------- predicates
  * Inputs a, b, ... are (count, 2) or (count, 3) arrays; signs is (count,) with
@@ -283,6 +300,36 @@ enum phx_mc_tet_unmet_reason {
 #define PHX_MC_TET_UNMET_NO_APEX UINT64_MAX
 /* Facet ID of an unmet row without a forcing constrained facet. */
 #define PHX_MC_TET_UNMET_NO_FACET UINT64_MAX
+/* Read-only current-cell quality assessment, independent of stored unmet
+ * records. The determinant floor is max(minimum_relative_determinant, 2^-22).
+ * For quality/refinement calls, radius_edge_bound == 0 encodes no radius-edge
+ * target; a positive finite value is an active target. This does not disable
+ * determinant, finite-measurement, orientation, size, or angle checks.
+ * minimum_dihedral_degrees == 0 requests no positive angle threshold.
+ * Size uses the retained vertex-size field and is checked only when all four
+ * vertices have targets. Values are radius-edge ratio, circumradius/mean size,
+ * angle in degrees, or determinant minus effective floor for VALIDITY.
+ * NONREPRESENTABLE denotes an unrepresentable measurement; otherwise rows use
+ * NO_IMPROVEMENT, without asserting that improvement was attempted.
+ * With capacity zero and all arrays null, returns the required row count and
+ * PHX_MC_OK. Otherwise all rows are written or PHX_MC_CAPACITY_EXCEEDED is
+ * returned with the required count and no array writes. A generation mismatch
+ * returns PHX_MC_STALE_GENERATION. The caller must synchronize against edits.
+ */
+PHX_MC_API int32_t phx_mc_tet_mesh_evaluate_quality(
+    const phx_mc_tet_mesh* mesh, uint64_t expected_generation,
+    double radius_edge_bound, double minimum_dihedral_degrees,
+    double minimum_relative_determinant, int64_t capacity, int64_t* count,
+    uint64_t* cell_ids, int32_t* criteria, int32_t* reasons, double* values);
+/* Evaluate a separate finite candidate in snapshot vertex order without changing
+ * the mesh, its source witnesses, history, or retained per-vertex size field.
+ * This does not certify the candidate's source or constraint fidelity. */
+PHX_MC_API int32_t phx_mc_tet_mesh_evaluate_candidate_quality(
+    const phx_mc_tet_mesh* mesh, uint64_t expected_generation,
+    int64_t vertex_count, const double* points,
+    double radius_edge_bound, double minimum_dihedral_degrees,
+    double minimum_relative_determinant, int64_t capacity, int64_t* count,
+    uint64_t* cell_ids, int32_t* criteria, int32_t* reasons, double* values);
 PHX_MC_API int32_t phx_mc_tet_mesh_unmet_count(const phx_mc_tet_mesh* mesh,
                                                 int64_t* count);
 /* One row per unmet (cell, criterion). INPUT_ANGLE rows carry the acute
@@ -420,6 +467,8 @@ typedef struct phx_mc_tet_mesh_create_request {
   const uint64_t* segment_ids;
   const double* protection_radii;
   const int8_t* protected_vertices;
+  /* Optional source-row circumradius targets, one per point; zero means absent. */
+  const double* initial_vertex_sizes;
   int64_t source_point_count;
   const double* source_points;
   int64_t source_face_count;
@@ -460,6 +509,15 @@ typedef struct phx_mc_tet_mesh_create_request {
   phx_mc_tet_mesh** result;
 } phx_mc_tet_mesh_create_request;
 PHX_MC_API int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request);
+/* Protect source facet groups and their incident edges/vertices in an existing
+ * mesh. Unknown groups are rejected without mutation. */
+PHX_MC_API int32_t phx_mc_tet_mesh_protect_facet_sources(
+    phx_mc_tet_mesh* mesh, int64_t count, const int32_t* sources);
+/* As create, but install the row-major index-to-world linear map before
+ * validating and constructing source witnesses and protection data.
+ * A null linear pointer selects the identity metric. */
+PHX_MC_API int32_t phx_mc_tet_mesh_create_with_affine_metric(
+    const phx_mc_tet_mesh_create_request* request, const double* linear);
 PHX_MC_API int32_t phx_mc_tet_mesh_snapshot_sizes(const phx_mc_tet_mesh* mesh,
                                                   int64_t* sizes);
 PHX_MC_API int32_t phx_mc_tet_mesh_identity_sizes(
@@ -506,6 +564,8 @@ typedef struct phx_mc_tet_mesh_snapshot_request {
   int64_t cell_ancestor_capacity;
   uint64_t* vertex_ids;
   double* points;
+  /* Current retained circumradius target per vertex ID; zero = unconstrained. */
+  double* vertex_size_targets;
   int8_t* witness_strata;
   int32_t* witness_entities;
   double* witness_parameters;
@@ -538,6 +598,8 @@ typedef struct phx_mc_tet_mesh_snapshot_request {
   uint64_t* cell_ids;
   uint64_t* cell_vertices;
   int32_t* cell_regions;
+  /* Canonical mean circumradius target; zero if any corner is unconstrained. */
+  double* cell_size_targets;
   uint64_t* facet_ids;
   uint64_t* facet_vertices;
   int32_t* facet_sources;
@@ -644,7 +706,8 @@ PHX_MC_API int32_t phx_mc_tet_mesh_apply_edit(
  * and its circumradius size target. `sizes` (one per current vertex in
  * snapshot order, 0 = unconstrained; empty keeps the mesh's retained field)
  * becomes the mesh's retained size field; inserted vertices receive
- * interpolated targets. */
+ * interpolated targets. radius_edge_bound == 0 omits the radius-edge target;
+ * retained size and validity obligations remain active. */
 PHX_MC_API int32_t phx_mc_tet_mesh_refine(
     phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
     const char* source_id, int64_t source_id_length,
@@ -657,6 +720,7 @@ PHX_MC_API int32_t phx_mc_tet_mesh_refine(
  * collapses, relocations, and interior vertex insertions are accepted by one
  * sorted-score order; each cell's score is floored to multiples of
  * `*score_quantum` (reported, 2^-20). The determinant floor gates every edit.
+ * radius_edge_bound == 0 omits that target, without disabling validity or size.
  * No edit creates a cell whose circumradius exceeds its size target by more
  * than the largest excess among the cells it removes (none where they were
  * within target), except one removing a degenerate cell (below the
@@ -665,7 +729,14 @@ PHX_MC_API int32_t phx_mc_tet_mesh_refine(
  * status is UNRESOLVED while the radius-edge or dihedral target, or the
  * determinant floor, remains unmet;
  * `phx_mc_tet_mesh_unmet` reports each residual criterion. The size field is
- * a constraint on improvement, not one of its targets. */
+ * a constraint on improvement, not one of its targets.
+ *
+ * `boundary_collapse_quality` opts into transactional generated-facet-vertex
+ * coarsening followed by ordinary improvement. The supplied original vertex
+ * IDs must cover the source-point bank in source order. A trial commits only
+ * when the entire final mesh meets size and quality; failed trials leave the
+ * state, IDs and history unchanged. Use only for an explicitly authorized
+ * conforming boundary policy. */
 PHX_MC_API int32_t phx_mc_tet_mesh_improve_quality(
     phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
     const char* source_id, int64_t source_id_length,
@@ -673,7 +744,9 @@ PHX_MC_API int32_t phx_mc_tet_mesh_improve_quality(
     const char* source_map_id, int64_t source_map_id_length,
     const char* frame_id, int64_t frame_id_length,
     double radius_edge_bound, double minimum_dihedral_degrees,
-    double minimum_relative_determinant, int64_t size_count, const double* sizes,
+    double minimum_relative_determinant, int32_t boundary_collapse_quality,
+    int64_t original_vertex_count, const uint64_t* original_vertex_ids,
+    int64_t size_count, const double* sizes,
     int32_t* edit_status, int32_t* run_status, int64_t* inserted_vertices,
     int64_t* collapsed_vertices, int64_t* relocated_vertices, int64_t* unmet_cells,
     double* score_quantum);
@@ -921,6 +994,14 @@ typedef struct phx_mc_restricted_power_cells_exact_request {
   phx_mc_power_cells** result;
   int64_t* failed_image_coordinate;
   int64_t* failed_component;
+  /* -1 selects all images; nonnegative counts publish exactly these image IDs.
+   * IDs may be unordered but must be distinct and in [0, image_count).
+   * Actual face neighbors are clipped as support to determine remote
+   * components; support site neighbors are not recursively expanded and
+   * support cells are not published. All clipped pieces require a
+   * representable positive binary64 measure. */
+  int64_t selected_site_count;
+  const int32_t* selected_sites;
 } phx_mc_restricted_power_cells_exact_request;
 PHX_MC_API int32_t phx_mc_restricted_power_cells(
     const phx_mc_restricted_power_cells_request* request);
@@ -935,6 +1016,14 @@ PHX_MC_API int32_t phx_mc_power_cells_export(
     double* cell_volumes, double* cell_moments, double* cell_second_moments,
     int32_t* piece_sites, int32_t* piece_tets, int32_t* piece_cells, double* piece_volumes,
     double* piece_moments);
+/* Per face, an unselected counterpart image and an incident tet of its
+ * component, or -1 in both arrays when there is no remote counterpart. A
+ * remote face has second cell -1; its facet remains the input facet if it
+ * lies on a constrained tet face. The witness identifies a real piece, not
+ * a fabricated remote component. */
+PHX_MC_API int32_t phx_mc_power_cells_export_face_remotes(
+    const phx_mc_power_cells* result, int64_t face_capacity,
+    int32_t* remote_sites, int32_t* remote_tets);
 PHX_MC_API int64_t phx_mc_power_cells_site_witness_size(const phx_mc_power_cells* result);
 PHX_MC_API int32_t phx_mc_power_cells_export_vertex_sites(
     const phx_mc_power_cells* result, int64_t vertex_offset_capacity, int64_t vertex_capacity,
@@ -1148,6 +1237,39 @@ typedef struct phx_mc_interval_box_program {
   const int64_t* guards; /* entries whose lower bound must be >= 0 (real-power bases) */
   int64_t guard_count;
 } phx_mc_interval_box_program;
+/* A TetMesh implicit source owns both validated programs after binding. Groups
+ * name actual exterior facet-source rows, all proved against the programs on
+ * bind. Zero orientation asks the owner to derive the common certified sign;
+ * a nonzero sign must agree. A view returned by `implicit_source` borrows
+ * immutable banks until the mesh is freed. Refusal counts are diagnostic and
+ * restart at zero on a new binding. */
+typedef struct phx_mc_tet_implicit_source {
+  phx_mc_interval_box_program value;
+  phx_mc_interval_box_program gradient;
+  const int32_t* groups;
+  int64_t group_count;
+  double tolerance;
+  int32_t orientation;
+  const char* source_id;
+  int64_t source_id_length;
+  const char* source_revision;
+  int64_t source_revision_length;
+  const char* binding_id;
+  int64_t binding_id_length;
+  const char* frame_id;
+  int64_t frame_id_length;
+  int64_t transversality_refusals;
+  int64_t distance_refusals;
+} phx_mc_tet_implicit_source;
+PHX_MC_API int32_t phx_mc_tet_mesh_bind_implicit(
+    phx_mc_tet_mesh* mesh, const phx_mc_tet_implicit_source* source);
+/* Constructs/restores with implicit admission installed before source-face
+ * validation, so already edited faces are never reinterpreted as PWL faces. */
+PHX_MC_API int32_t phx_mc_tet_mesh_create_with_implicit(
+    const phx_mc_tet_mesh_create_request* request,
+    const phx_mc_tet_implicit_source* source);
+PHX_MC_API int32_t phx_mc_tet_mesh_implicit_source(
+    const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_source* source);
 /* Remeshes a closed, consistently oriented, embedded carrier of the zero set of f
  * toward `edge_length` and `minimum_angle_degrees`. Every created triangle is
  * admitted by the kZeroSetBand predicate: its certified distance to {f = 0} is at
@@ -1161,7 +1283,11 @@ typedef struct phx_mc_interval_box_program {
  * for an uncertified distance) and
  * `distance`: the maximum over surviving triangles of the admitted certified
  * distance, or `carrier_distance` (the input carrier's declared bound) for
- * untouched input triangles. */
+ * untouched input triangles. `admission_limited_coarsening` (0 or 1) also runs
+ * the remesher's admission-limited coarsening pass, which centers vertices in
+ * the band off the zero set and collapses edges below 4/5 of `edge_length`
+ * until the admission refuses them; 0 keeps the quality/regularization passes
+ * only. */
 typedef struct phx_mc_zero_set_remesh_request {
   const double* vertices;
   int64_t vertex_count;
@@ -1176,8 +1302,18 @@ typedef struct phx_mc_zero_set_remesh_request {
   void** result;
   int64_t* counters;
   double* distance;
+  int32_t admission_limited_coarsening;
 } phx_mc_zero_set_remesh_request;
 PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* request);
+/* As above, request->triangles contains int32 indices. Optional read-only
+ * vertex-to-face CSR is either absent (both pointers null, both counts zero)
+ * or has vertex_count + 1 int32 offsets and 3 * triangle_count int32 rows.
+ * Each vertex's rows must be strictly increasing and match its incident
+ * triangles exactly. The caller retains both banks until the call returns. */
+PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(
+    const phx_mc_zero_set_remesh_request* request, const int32_t* vertex_face_offsets,
+    int64_t vertex_face_offset_count, const int32_t* vertex_faces,
+    int64_t vertex_face_count);
 PHX_MC_API int32_t phx_mc_zero_set_remesh_sizes(const void* result, int64_t* sizes);
 PHX_MC_API int32_t phx_mc_zero_set_remesh_arrays(void* result, int64_t vertex_capacity,
                                                  int64_t triangle_capacity, double* vertices,
@@ -1406,6 +1542,14 @@ PHX_MC_API int32_t phx_mc_plc3d_prepare_source(
 /* Protected PLC recovery from the same authored source banks. */
 PHX_MC_API int32_t phx_mc_plc3d_recover(
     const phx_mc_plc3d_prepare_source_request* request);
+/* Row-major index-to-physical linear map; topology and witnesses remain in index space. */
+PHX_MC_API int32_t phx_mc_plc3d_recover_with_affine_metric(
+    const phx_mc_plc3d_prepare_source_request* request, const double* affine_metric);
+/* Facet-count 0/1 protection flags; incident edges are protected as well.
+ * The optional affine metric has the same semantics as recover_with_affine_metric. */
+PHX_MC_API int32_t phx_mc_plc3d_recover_protected(
+    const phx_mc_plc3d_prepare_source_request* request,
+    const uint8_t* protected_facets, const double* affine_metric);
 PHX_MC_API int32_t phx_mc_plc3d_sizes(const phx_mc_plc3d_result* result, int64_t* sizes);
 /* sizes rows are points, tetrahedra, faces, segments, PLC edges, and source
  * triangles. Export capacities are row extents: points (P,3), tetrahedra

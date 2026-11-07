@@ -202,6 +202,10 @@ specifications make mixed-space intent explicit.
 first consumer: it prepares a matrix-free degree-one H1 consistency plus
 projector-kernel stabilization action on star-visible, outward-oriented
 polyhedra, retaining volume, rank-margin, and polynomial-reproduction evidence.
+Shared planar faces are triangulated once by the exact polygon owner, retaining
+collinear boundary vertices as scalar DOFs. This avoids zero-area vertex-fan
+triangles without discarding DOFs or relaxing positive-volume, star-visibility,
+rank, or polynomial-consistency requirements.
 `prepare_polyhedral_polynomial_vem_3d` accepts the exact higher-degree
 face/cell-moment projector and consistency/stabilization tensors produced by
 the root-topology cubature route, and rejects rank loss or failed P_k

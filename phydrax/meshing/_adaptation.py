@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from collections import Counter
+from collections.abc import Sequence
 from enum import StrEnum
 from fractions import Fraction
+from functools import partial
 from typing import Any, assert_never, final, NamedTuple, TypeAlias
 
 import equinox as eqx
@@ -73,6 +76,7 @@ from ..discretization._nested_reference_types import (
     NestedReferenceWitnesses,
     reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
+    ReferenceCellPartition,
     validate_nested_reference_witnesses,
 )
 from ..discretization._reference_cell import reference_cell_topology
@@ -97,12 +101,17 @@ from ..discretization.fem import (
 from ..discretization.finite_volume._unstructured_remap import (
     UnstructuredConservativeRemapPlan,
 )
+from ..geometry._affine_plc_domain import AffinePlcDomain
+from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
+from ..geometry._planar_coverage import PlcSourcePointWitness
 from ..geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
     SourceBoundaryDistanceWitness,
+    SourceBoundaryFaceImageWitness,
     SourceBoundaryPointWitness,
+    SourceBoundaryQuery,
     SourceBoundaryRationalChartBank,
     SurfaceEnvelopeDistanceWitness,
 )
@@ -141,7 +150,11 @@ from ._bisection import (
     execute_bisection,
 )
 from ._canonical import certify_cell_mesh
-from ._certification_inputs import MeshCertificationInputs, validate_fidelity_witnesses
+from ._certification_inputs import (
+    MeshCertificationInputs,
+    ScopedFidelityInput,
+    validate_fidelity_witnesses,
+)
 from ._device_metric import DeviceMetricEvidence
 from ._device_tetra_metric import DeviceTetraMetricEvidence
 from ._distribution import (
@@ -151,6 +164,8 @@ from ._distribution import (
     prepare_distribution_transition,
 )
 from ._implicit_association_transfer import ImplicitAssociationTransfer
+from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+from ._layer_core_root_geometry import ComputedLayerCoreRoot
 from ._lineage import (
     CellMeshTransition,
     EntityLineage,
@@ -161,6 +176,7 @@ from ._lineage import (
 )
 from ._local_metric import execute_local_metric_adaptation, LocalMetricEvidence
 from ._mapped_reference_association import MappedReferenceAssociationTransfer
+from ._marker_transfer import transfer_cell_markers, validate_cell_markers
 from ._metric import MeshMetricField
 from ._mixed_adaptation import (
     _mixed_coarsening_reference_transforms,
@@ -177,20 +193,29 @@ from ._periodic import (
     periodic_quotient_facet_cell_classes,
     periodic_topology_after_edit,
     PeriodicRefinementEdgeLock,
+    require_periodic_geometry_face_maps,
     stage_periodic_refinement_candidate,
     stage_periodic_topology_edit,
+)
+from ._plc_association_transfer import (
+    PlcAssociationTransfer,
+    renew_plc_source_point_witness,
 )
 from ._polyhedral_adaptation import (
     adapt_polyhedral_mesh,
     PolyhedralAdaptationEvidence,
     PolyhedralAdaptationHierarchy,
+    PolyhedralAdaptationOperation,
     PolyhedralAdaptationOutcome,
     PolyhedralAdaptationRequest,
     PolyhedralCoverageRenewal,
 )
 from ._result import CellMeshingResult, MeshingComplianceReport
 from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
-from ._surface_association_transfer import SurfaceAssociationTransfer
+from ._surface_association_transfer import (
+    _curve_edges_with_root_ancestry,
+    SurfaceAssociationTransfer,
+)
 from ._surface_metric import (
     SurfaceMetricGeometryRelation,
     SurfaceMetricOutcome,
@@ -327,7 +352,11 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
 
     ``hierarchy`` carries state from bisection, mixed-family, or HP adaptation.
     ``layer_columns`` carries explicit first-layer and axial-schedule constraints
-    for the mixed-family route.
+    for the mixed-family route. ``inherited_cell_markers`` is the explicit
+    attribute remap of the bisection routes: it names every source cell MARKER
+    attribute, and each is remapped through exact cell ancestry (a refined child
+    inherits its parent's value; a coarsened parent requires one value over its
+    children).
     """
 
     refine_cell_ids: Array
@@ -335,6 +364,7 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
     hierarchy: BisectionHierarchy | MixedAdaptationHierarchy | FiniteElementHPEpoch | None
     periodic_edge_lock: PeriodicRefinementEdgeLock | None
     layer_columns: MixedLayerColumns | None
+    inherited_cell_markers: tuple[str, ...] = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
     def __init__(
@@ -349,6 +379,7 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
         | None = None,
         periodic_edge_lock: PeriodicRefinementEdgeLock | None = None,
         layer_columns: MixedLayerColumns | None = None,
+        inherited_cell_markers: Sequence[str] = (),
     ) -> None:
         refine = _identifier_vector(refine_cell_ids, "refine_cell_ids")
         coarsen = _identifier_vector(coarsen_cell_ids, "coarsen_cell_ids")
@@ -369,11 +400,19 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
             raise ValueError("A periodic edge lock requires marked refinement cells.")
         if layer_columns is not None and not isinstance(layer_columns, MixedLayerColumns):
             raise TypeError("layer_columns must be MixedLayerColumns or None.")
+        if isinstance(inherited_cell_markers, str) or not all(
+            isinstance(name, str) and name for name in inherited_cell_markers
+        ):
+            raise TypeError("inherited_cell_markers must be a sequence of marker names.")
+        markers = tuple(sorted(inherited_cell_markers))
+        if len(set(markers)) != len(markers):
+            raise ValueError("inherited_cell_markers must name each marker once.")
         self.refine_cell_ids = jnp.asarray(refine)
         self.coarsen_cell_ids = jnp.asarray(coarsen)
         self.hierarchy = hierarchy
         self.periodic_edge_lock = periodic_edge_lock
         self.layer_columns = layer_columns
+        self.inherited_cell_markers = markers
         identity = {
             "kind": "marked-mesh-adaptation",
             "refine": array_tree_fingerprint(refine),
@@ -385,6 +424,8 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
         }
         if layer_columns is not None:
             identity["layer_columns"] = layer_columns.columns_id
+        if markers:
+            identity["inherited_cell_markers"] = markers
         self.request_id = canonical_fingerprint(identity)
 
 
@@ -620,12 +661,21 @@ class MeshAdaptationPolicy(StrictModule, NonTrainableState):
                     ImplicitAssociationTransfer,
                     SurfaceAssociationTransfer,
                     MappedReferenceAssociationTransfer,
+                    NativeLayerCoreAssociationTransfer,
                     ComposedAssociationTransfer,
+                    PlcAssociationTransfer,
                 ),
             ):
                 raise TypeError(
                     "association_transfer must be a supported "
                     "AssociationTransfer adapter or None."
+                )
+            if (
+                _layer_core_transfer_owner(association_transfer) is not None
+                and route is not MeshAdaptationRoute.NATIVE_MIXED
+            ):
+                raise ValueError(
+                    "Native layer/core association transfer requires NATIVE_MIXED."
                 )
             if route is MeshAdaptationRoute.HP:
                 raise ValueError("HP adaptation cannot carry source associations.")
@@ -827,6 +877,8 @@ def _resolve_constraints(
     request: MeshAdaptationRequest,
     policy: MeshAdaptationPolicy,
     /,
+    *,
+    computed_layer_root: ComputedLayerCoreRoot | None = None,
 ) -> _AdaptationConstraints:
     mesh = source.mesh
     dimension = mesh.topological_dimension
@@ -851,9 +903,21 @@ def _resolve_constraints(
     )
     edge_codes = np.zeros((edge_count,), dtype=np.int64)
     transfer = policy.association_transfer
-    if transfer is not None and source.associations:
-        # Associated strata define the source classes used for closure and target propagation.
+    if computed_layer_root is not None:
+        if (
+            type(transfer) is not NativeLayerCoreAssociationTransfer
+            or not source.associations
+        ):
+            raise ValueError(
+                "Computed layer root requires its native-layer association route."
+            )
+        classes = transfer._classes(source, computed_root=computed_layer_root)
+    elif transfer is not None and source.associations:
         classes = transfer.classes(source)
+    else:
+        classes = None
+    if classes is not None:
+        # Associated strata define source classes for closure and propagation.
         codes = tuple(np.asarray(level.codes, dtype=np.int64) for level in classes)
         fixed |= classes[0].dimensions == 0
         protected_edges |= ~classes[1].resolved
@@ -932,22 +996,41 @@ def _acceptance_audit_policy(
 
 
 def _require_native_source(
-    source: CellMeshingResult, transfer: AssociationTransfer | None, /
+    source: CellMeshingResult,
+    transfer: AssociationTransfer | None,
+    /,
+    *,
+    mixed_markers: bool = False,
+    inherited_markers: tuple[str, ...] = (),
 ) -> None:
     if source.attributes:
-        raise ValueError("Native adaptation needs an explicit attribute remap.")
+        if not mixed_markers and inherited_markers != tuple(
+            sorted(attribute.name for attribute in source.attributes)
+        ):
+            raise ValueError("Native adaptation needs an explicit attribute remap.")
+        validate_cell_markers(source.mesh, source.attributes)
+    elif inherited_markers:
+        raise ValueError("The attribute remap names cell markers absent from the source.")
     if source.boundary is not None and not isinstance(
-        transfer, (ImplicitAssociationTransfer, SurfaceAssociationTransfer)
+        transfer,
+        (ImplicitAssociationTransfer, SurfaceAssociationTransfer, PlcAssociationTransfer),
     ):
         raise ValueError(
-            "Native adaptation of a boundary model requires an implicit or surface association transfer."
+            "Native adaptation of a boundary model requires an implicit, surface, or PLC association transfer."
         )
     if source.associations or source.boundary is not None:
         if transfer is None:
             raise ValueError(
                 "Geometry associations require the policy's association_transfer."
             )
-        transfer.validate_source(source)
+        # The exact layer/core adapter validates as the first step of its
+        # mandatory classes() call in _resolve_constraints below. Keep one
+        # complete validation in this preparation, not two identical replays.
+        deferred_to_classes = False
+        if mixed_markers and source.associations:
+            deferred_to_classes = type(transfer) is NativeLayerCoreAssociationTransfer
+        if not deferred_to_classes:
+            transfer.validate_source(source)
     if source.coordinate_contract.coordinate_system != "cartesian":
         raise ValueError("Native adaptation requires Cartesian coordinates.")
 
@@ -1060,7 +1143,11 @@ def _check_route_request(
                 raise ValueError(
                     f"{policy.route.name} requires triangle or tetrahedron blocks."
                 )
-            _require_native_source(source, policy.association_transfer)
+            _require_native_source(
+                source,
+                policy.association_transfer,
+                inherited_markers=request.inherited_cell_markers,
+            )
             _check_marked_source(source, request)
         case MeshAdaptationRoute.NATIVE_MIXED:
             if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
@@ -1070,21 +1157,22 @@ def _check_route_request(
                     "NATIVE_MIXED requires marked cells and a mixed-family hierarchy."
                 )
             if (
-                not kinds.issubset({"tetrahedron", "prism", "pyramid", "hexahedron"})
+                not kinds.issubset(
+                    {"tetrahedron", "simplex:3", "prism", "pyramid", "hexahedron"}
+                )
                 or mesh.topological_dimension != 3
                 or mesh.ambient_dimension != 3
             ):
                 raise ValueError(
                     "NATIVE_MIXED requires tetrahedron, prism, pyramid, or hexahedron volume cells."
                 )
-            if (
-                mesh.periodic_topology is not None
-                or request.periodic_edge_lock is not None
-            ):
+            if request.inherited_cell_markers:
                 raise ValueError(
-                    "NATIVE_MIXED requires an explicit periodic closure route."
+                    "inherited_cell_markers applies only to the bisection routes."
                 )
-            _require_native_source(source, policy.association_transfer)
+            _require_native_source(
+                source, policy.association_transfer, mixed_markers=True
+            )
             _check_marked_source(source, request)
         case MeshAdaptationRoute.NATIVE_METRIC_2D | MeshAdaptationRoute.DEVICE_METRIC_2D:
             if not isinstance(request, (MetricMeshAdaptation, RelocationMeshAdaptation)):
@@ -1133,7 +1221,62 @@ def _check_route_request(
                 raise ValueError(
                     "NATIVE_POLYHEDRAL requires a three-dimensional polyhedral mesh."
                 )
-            _require_native_source(source, policy.association_transfer)
+            if (
+                request.operation is PolyhedralAdaptationOperation.REGENERATE
+                and (source.attributes or source.associations)
+            ):
+                successor = request.regeneration_source
+                certification = source.certification
+                expected = {
+                    "power_site_index": "marker",
+                    "power_component_index": "marker",
+                    "power_site_parent_index": "marker",
+                    "power_site_weight": "user",
+                }
+                if (
+                    successor is None
+                    or certification is None
+                    or source.provider.name != "phydrax-native"
+                    or certification.inputs.source_id != successor.source_id
+                    or source.boundary is not None
+                    or policy.association_transfer is not None
+                    or source.mesh.periodic_topology is not None
+                ):
+                    raise ValueError(
+                        "Polyhedral regeneration requires an independently certified native "
+                        "source in the successor namespace without boundary or periodic transfer."
+                    )
+                if (
+                    len(source.attributes) != len(expected)
+                    or {
+                        attribute.name: attribute.role.value
+                        for attribute in source.attributes
+                    }
+                    != expected
+                ):
+                    raise ValueError("Native adaptation needs an explicit attribute remap.")
+                source_cell_ids = np.sort(_cell_ids(mesh))
+                for attribute in source.attributes:
+                    if (
+                        attribute.scope.entity_dimension != 3
+                        or attribute.scope.entity_set_id != mesh.entity_set(3).entity_set_id
+                        or not np.array_equal(attribute.scope.entity_ids, source_cell_ids)
+                        or attribute.component_shape
+                        or attribute.unit is not None
+                    ):
+                        raise ValueError(
+                            "Native power attributes must cover the exact source cells."
+                        )
+                for association in source.associations:
+                    if (
+                        association.source_id != certification.inputs.source_id
+                        or association.source_revision != certification.inputs.source_revision
+                    ):
+                        raise ValueError("Polyhedral regeneration cannot discard another source namespace.")
+                if source.coordinate_contract.coordinate_system != "cartesian":
+                    raise ValueError("Native adaptation requires Cartesian coordinates.")
+            else:
+                _require_native_source(source, policy.association_transfer)
         case MeshAdaptationRoute.MMG | MeshAdaptationRoute.OMEGA_H:
             if not isinstance(request, MetricMeshAdaptation):
                 raise TypeError("Provider routes require a metric request.")
@@ -1144,6 +1287,10 @@ def _check_route_request(
                 raise TypeError("HP requires a marked request with its hp epoch.")
             if request.layer_columns is not None:
                 raise ValueError("layer_columns applies only to NATIVE_MIXED.")
+            if request.inherited_cell_markers:
+                raise ValueError(
+                    "inherited_cell_markers applies only to the bisection routes."
+                )
             if request.hierarchy.mesh.topology_id != mesh.topology_id:
                 raise ValueError("The hp epoch does not describe the source mesh.")
             if request.refine_cell_ids.size and request.coarsen_cell_ids.size:
@@ -1221,6 +1368,26 @@ class PreparedMeshAdaptation(StrictModule, NonTrainableState):
         )
 
 
+def _material_layer_chart_parent(
+    source: CellMeshingResult, geometry: CellGeometrySpec, /
+) -> tuple[CellMesh, CellGeometrySpec] | None:
+    """Offer the retained layer root only for an explicitly rooted restriction.
+
+    Matching the declared IDs merely selects the possible owner; the material
+    coverage constructor independently re-proves the complete parent maps.
+    """
+    root = source.layer_core_root_geometry
+    restriction = geometry.restriction_source
+    if (
+        root is None
+        or restriction is None
+        or restriction.source_topology_id != root.mesh.topology_id
+        or restriction.source_geometry_id != cell_geometry_id(root.geometry)
+    ):
+        return None
+    return root.mesh, root.geometry
+
+
 def _validate_material_reference_seed(
     source: CellMeshingResult,
     reference: MaterialReferenceDeclaration,
@@ -1239,6 +1406,7 @@ def _validate_material_reference_seed(
         reference.root_geometry,
         reference.source_map,
         reference.root_coverage,
+        chart_parent=_material_layer_chart_parent(source, reference.root_geometry),
     )
     if (
         rebuilt.root_mesh.mesh_id != source.mesh.mesh_id
@@ -1346,6 +1514,7 @@ def prepare_mesh_adaptation(
     policy: MeshAdaptationPolicy,
     prior_transition: CellMeshTransition | None = None,
     material_reference: MaterialReferenceDeclaration | None = None,
+    _computed_layer_root: ComputedLayerCoreRoot | None = None,
 ) -> PreparedMeshAdaptation:
     """Validate the route/request pairing and resolve protection and organization."""
 
@@ -1363,6 +1532,15 @@ def prepare_mesh_adaptation(
         raise TypeError("request must be a typed mesh-adaptation request.")
     if not isinstance(policy, MeshAdaptationPolicy):
         raise TypeError("policy must be MeshAdaptationPolicy.")
+    if _computed_layer_root is not None and (
+        type(policy.association_transfer) is not NativeLayerCoreAssociationTransfer
+        or not source.associations
+        or policy.route
+        in (MeshAdaptationRoute.MMG, MeshAdaptationRoute.OMEGA_H, MeshAdaptationRoute.HP)
+    ):
+        raise ValueError(
+            "Computed layer root requires its native-layer association route."
+        )
     if prior_transition is not None and not isinstance(
         prior_transition, CellMeshTransition
     ):
@@ -1414,6 +1592,9 @@ def prepare_mesh_adaptation(
                 prior_transition.material_reference.root_geometry,
                 prior_transition.material_reference.source_map,
                 prior_transition.material_reference.root_coverage,
+                chart_parent=_material_layer_chart_parent(
+                    source, prior_transition.material_reference.root_geometry
+                ),
             )
             if reference.root_mesh.mesh_id != source.mesh.mesh_id or cell_geometry_id(
                 reference.root_geometry
@@ -1453,7 +1634,9 @@ def prepare_mesh_adaptation(
             | MeshAdaptationRoute.DEVICE_METRIC_3D
             | MeshAdaptationRoute.NATIVE_POLYHEDRAL
         ):
-            constraints = _resolve_constraints(source, request, policy)
+            constraints = _resolve_constraints(
+                source, request, policy, computed_layer_root=_computed_layer_root
+            )
         case (
             MeshAdaptationRoute.MMG | MeshAdaptationRoute.OMEGA_H | MeshAdaptationRoute.HP
         ):
@@ -1661,6 +1844,40 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
                 if distribution is None
                 else distribution.transition_id,
             }
+        )
+
+    @classmethod
+    def from_stored_fields(
+        cls,
+        value: MeshAdaptationResult,
+        /,
+        *,
+        source: CellMeshingResult,
+        target: CellMeshingResult,
+        policy: MeshAdaptationPolicy,
+        request: MarkedMeshAdaptation,
+        geometry_transition: CellGeometryTransition,
+        hierarchy: MixedAdaptationHierarchy,
+        expected_result_id: str,
+        _computed_layer_root: ComputedLayerCoreRoot | None = None,
+    ) -> MeshAdaptationResult:
+        """Reprove a changed mixed result prepared without prior transition or seed.
+
+        Source and target must already be independently recertified. The trusted
+        expected ID binds the historical request and allocation choices.
+        """
+        from ._adaptation_restore import restore_mixed_adaptation_result
+
+        return restore_mixed_adaptation_result(
+            value,
+            source=source,
+            target=target,
+            policy=policy,
+            request=request,
+            geometry_transition=geometry_transition,
+            hierarchy=hierarchy,
+            expected_result_id=expected_result_id,
+            computed_layer_root=_computed_layer_root,
         )
 
 
@@ -2338,6 +2555,7 @@ def _bisection_coarsening_witness(
         for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64))
     }
     source_vertex_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
+    target_vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
     fine_reference: dict[int, tuple[tuple[Fraction, ...], ...]] = {}
     for coarse_id in sorted(set(fine_to_coarse.values())):
         root = target_cells.get(coarse_id)
@@ -2347,7 +2565,7 @@ def _bisection_coarsening_witness(
         root_block, root_row = root
         if root_block.cell_kind not in ("triangle", "tetrahedron", "simplex:3"):
             raise ValueError("Exact bisection coarsening maps require simplex parents.")
-        root_vertices = source_vertex_ids[
+        root_vertices = target_vertex_ids[
             np.asarray(root_block.vertices[root_row], dtype=np.int64)
         ]
         topology = reference_cell_topology(root_block.cell_kind)
@@ -2823,16 +3041,16 @@ def _vertex_source_target_geometry(
 
 
 def _metric_exact_source_vertices(
-    source: CellMeshingResult, /
+    mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[tuple[Fraction, ...], ...]:
     """Read the rational physical vertex bank from the accepted coordinate map."""
-    vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     bank: dict[int, tuple[Fraction, ...]] = {}
-    for block in source.mesh.blocks:
+    for block in mesh.blocks:
         identifiers = np.asarray(block.global_ids, dtype=np.int64)
         corners = _fraction_reference_corners(block.cell_kind)
-        values = source.geometry.evaluate_exact(
-            source.mesh, identifiers, tuple(corners for _ in identifiers)
+        values = geometry.evaluate_exact(
+            mesh, identifiers, tuple(corners for _ in identifiers)
         )
         for cell, points in zip(np.asarray(block.vertices), values, strict=True):
             for row, point in zip(cell, points, strict=True):
@@ -2901,6 +3119,36 @@ def _affine_edit_geometry(
         vertex_occurrence_paths=((),) * len(exact),
     )
     return _vertex_source_target_geometry(target, bank)
+
+
+def _retained_periodic_exact_rows(
+    source: CellMeshingResult, target: CellMesh, /
+) -> tuple[tuple[Any, ...], ...] | None:
+    """Exact target rows of a periodic coarsening whose vertices are all retained."""
+    from ..discretization._exact_algebraic_geometry import ExactPeriodicAlgebraicSource
+
+    topology = source.mesh.periodic_topology
+    witness = None if topology is None else topology.exact_coordinate_source
+    # Power witnesses address exact rows by source sites, not retained vertex IDs.
+    if not isinstance(witness, (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource)):
+        return None
+    exact_by_id = dict(
+        zip(
+            np.asarray(witness.vertex_global_ids, dtype=np.int64).tolist(),
+            witness.source_coordinates(),
+            strict=True,
+        )
+    )
+    target_ids = np.asarray(target.vertex_global_ids, dtype=np.int64).tolist()
+    if any(identifier not in exact_by_id for identifier in target_ids):
+        raise ValueError("Periodic coarsening must retain exact source vertices only.")
+    rows = tuple(tuple(exact_by_id[identifier]) for identifier in target_ids)
+    if not np.array_equal(
+        np.asarray([[float(value) for value in row] for row in rows], dtype=np.float64),
+        np.asarray(target.coordinates, dtype=np.float64),
+    ):
+        raise ValueError("Periodic coarsening target differs from its exact source rows.")
+    return rows
 
 
 def _restricted_target_geometry(
@@ -2987,12 +3235,14 @@ def _restricted_target_geometry(
         source.mesh, source.geometry
     ):
         # A restored P1 parent is affine on its own exact corners; its children are
-        # distinct roots, so no single root chart exists or is needed.
+        # distinct roots, so no single root chart exists or is needed. A periodic
+        # target retains source vertices only, so its exact rows are the source
+        # witness rows that the periodic quotient bank must carry forward.
         return (
             target,
             _affine_edit_geometry(source, target, edit, exact_source_vertices),
             reference_maps,
-            None,
+            _retained_periodic_exact_rows(source, target),
         )
     roots = _source_root_parents(source)
     coarse = (
@@ -3338,6 +3588,7 @@ def _transition_geometry_record(
     reference_maps: tuple[ReferenceCellMapWitnesses, ...] = (),
     refinement: Any = None,
     coarsening: Any = None,
+    coarsening_partition: ReferenceCellPartition | None = None,
 ) -> CellGeometryTransition:
     """Bind only coordinate-map equality witnesses, not relocation charts."""
     retained_maps = reference_maps
@@ -3345,6 +3596,7 @@ def _transition_geometry_record(
         retained_maps
         and refinement is None
         and coarsening is None
+        and coarsening_partition is None
         and source.mesh.topology_id == target.topology_id
         and _piecewise_linear_geometry(source.mesh, source.geometry)
         and _piecewise_linear_geometry(target, geometry)
@@ -3361,7 +3613,7 @@ def _transition_geometry_record(
         geometry,
         evidence=CellGeometryTransitionEvidence(
             "nested_restriction"
-            if retained_maps or refinement or coarsening
+            if retained_maps or refinement or coarsening or coarsening_partition
             else "vertex_displacement",
             reference_map_count=sum(
                 np.asarray(value.target_cell_ids).size for value in retained_maps
@@ -3369,13 +3621,21 @@ def _transition_geometry_record(
             refinement_map_count=0
             if refinement is None
             else len(refinement.fine_cell_ids),
-            coarsening_map_count=0
-            if coarsening is None
-            else len(coarsening.fine_cell_ids),
+            coarsening_map_count=(
+                (0 if coarsening is None else len(coarsening.fine_cell_ids))
+                + (
+                    0
+                    if coarsening_partition is None
+                    else sum(
+                        len(group.target_cell_ids) for group in coarsening_partition.maps
+                    )
+                )
+            ),
         ),
         reference_map=retained_maps or None,
         refinement=refinement,
         coarsening=coarsening,
+        coarsening_partition=coarsening_partition,
     )
 
 
@@ -3858,6 +4118,143 @@ def _retarget_polyhedral_chart_by_identity(
     )
 
 
+def _split_refined_chart_triangle(
+    source_triangle: tuple[tuple[Fraction, ...], ...],
+    target_triangle: tuple[tuple[Fraction, ...], ...],
+    old_rows: tuple[int, ...],
+    old_reference: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    old_parameters: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    /,
+) -> tuple[
+    tuple[int, tuple[tuple[Fraction, ...], ...], tuple[tuple[Fraction, ...], ...]], ...
+]:
+    """Partition a refined face against its actual exact source-chart pieces."""
+    from ..geometry._source_fidelity import _area2, _screened_intersection_areas
+    from .providers._native_layer import _clip_exact_triangle, _triangle_chart_map
+
+    dimension = len(source_triangle[0])
+    axes = next(
+        (
+            (first, second)
+            for first in range(dimension)
+            for second in range(first + 1, dimension)
+            if (
+                (source_triangle[1][first] - source_triangle[0][first])
+                * (source_triangle[2][second] - source_triangle[0][second])
+                - (source_triangle[1][second] - source_triangle[0][second])
+                * (source_triangle[2][first] - source_triangle[0][first])
+            )
+        ),
+        None,
+    )
+    if axes is None:
+        raise ValueError("A target chart subface has a degenerate exact reference map.")
+    first_axis, second_axis = axes
+
+    def project(
+        points: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[tuple[Fraction, Fraction], ...]:
+        return tuple((point[first_axis], point[second_axis]) for point in points)
+
+    source_uv = project(source_triangle)
+    pieces = []
+    triangles = []
+    for old_row in old_rows:
+        old_points = old_reference[old_row]
+        old_uv = project(old_points)
+        if not _area2(old_uv):
+            continue
+        # Projection alone is not a coplanarity proof in a volume cell.
+        if _triangle_chart_map(old_uv, source_uv, source_triangle) != old_points:
+            continue
+        polygon = _clip_exact_triangle(source_uv, old_uv)
+        for index in range(1, len(polygon) - 1):
+            triangle = (polygon[0], polygon[index], polygon[index + 1])
+            if not _area2(triangle):
+                continue
+            triangles.append(triangle)
+            pieces.append(
+                (
+                    old_row,
+                    _triangle_chart_map(triangle, source_uv, target_triangle),
+                    _triangle_chart_map(triangle, old_uv, old_parameters[old_row]),
+                )
+            )
+    triangle_bank = tuple(triangles)
+    if sum((abs(_area2(triangle)) for triangle in triangle_bank), Fraction(0)) != abs(
+        _area2(source_uv)
+    ) or any(
+        area
+        for _, _, area in _screened_intersection_areas(
+            triangle_bank, triangle_bank, self_pairs=True
+        )
+    ):
+        raise ValueError(
+            "A target chart subface lacks a disjoint exact source-piece cover."
+        )
+    return tuple(pieces)
+
+
+def _require_disjoint_chart_occurrences(
+    rows: list[tuple[tuple[str, str, tuple[str, ...]], dict[str, Any]]], /
+) -> None:
+    """Admit distinct source occurrences only on disjoint exact target pieces."""
+    from ..geometry._source_fidelity import _area2, _screened_intersection_areas
+    from .providers._native_layer import _triangle_chart_map
+
+    first = rows[0][1]
+    if any(
+        (value["cell_id"], value["local_entity"])
+        != (first["cell_id"], first["local_entity"])
+        for _, value in rows
+    ):
+        raise ValueError("Distinct chart occurrences do not share one target cell chart.")
+    reference = first["reference"]
+    if any(len(value["reference"]) != 3 for _, value in rows):
+        raise ValueError("Target source chart pieces must be exact triangles.")
+    dimension = len(reference[0])
+    axes = next(
+        (
+            (a, b)
+            for a in range(dimension)
+            for b in range(a + 1, dimension)
+            if (
+                (reference[1][a] - reference[0][a]) * (reference[2][b] - reference[0][b])
+                - (reference[1][b] - reference[0][b])
+                * (reference[2][a] - reference[0][a])
+            )
+        ),
+        None,
+    )
+    if axes is None:
+        raise ValueError("A target source chart piece is exactly degenerate.")
+    first_axis, second_axis = axes
+    triangles = tuple(
+        (
+            (value["reference"][0][first_axis], value["reference"][0][second_axis]),
+            (value["reference"][1][first_axis], value["reference"][1][second_axis]),
+            (value["reference"][2][first_axis], value["reference"][2][second_axis]),
+        )
+        for _, value in rows
+    )
+    domain = triangles[0]
+    for triangle, (_, value) in zip(triangles, rows, strict=True):
+        if (
+            not _area2(triangle)
+            or _triangle_chart_map(triangle, domain, reference) != value["reference"]
+        ):
+            raise ValueError("Target source chart pieces do not share one exact plane.")
+    if any(
+        area and rows[left][0] != rows[right][0]
+        for left, right, area in _screened_intersection_areas(
+            triangles, triangles, self_pairs=True
+        )
+    ):
+        raise ValueError(
+            "Distinct source chart occurrences overlap on the target entity."
+        )
+
+
 def _retarget_source_boundary_chart_witness(
     source: CellMeshingResult,
     target: CellMesh,
@@ -3869,18 +4266,28 @@ def _retarget_source_boundary_chart_witness(
     reference_maps: tuple[ReferenceCellMapWitnesses, ...],
     coarsening: NestedReferenceWitnesses | None = None,
     mixed_coarsening_maps: tuple[MixedCoarseningMap, ...] = (),
+    vertex_stencil: VertexInterpolationStencil | None = None,
 ) -> SourceBoundaryChartWitness:
+    cad_curve_association = witness.cad_curve_association
     if witness.cad_plc is not None:
         if any(
-            block.cell_kind == "polyhedron" for block in (*source.mesh.blocks, *target.blocks)
+            block.cell_kind == "polyhedron"
+            for block in (*source.mesh.blocks, *target.blocks)
         ):
             return _retarget_polyhedral_chart_by_identity(
                 source, target, geometry, lineage, witness
             )
-        if target.topology_id != witness.topology_id:
-            raise ValueError("CAD chart transfer requires exact target edge ancestry replay.")
-        if witness.cad_curve_association is not None:
-            witness.cad_curve_association.validate_target(target.entity_set(1))
+        if cad_curve_association is not None:
+            cad_curve_association.validate_target(source.mesh.entity_set(1))
+            if target.topology_id != witness.topology_id:
+                if vertex_stencil is None:
+                    raise ValueError(
+                        "CAD chart transfer requires exact target edge ancestry replay."
+                    )
+                cad_curve_association = _curve_edges_with_root_ancestry(
+                    source, lineage, target, vertex_stencil, cad_curve_association
+                )
+            cad_curve_association.validate_target(target.entity_set(1))
     if any(
         block.cell_kind == "polyhedron" for block in (*source.mesh.blocks, *target.blocks)
     ):
@@ -4492,6 +4899,59 @@ def _retarget_source_boundary_chart_witness(
                             continue
                         found_rows.append((old_row, parameters_exact, target_orientation))
                     if not found_rows:
+                        if chart_dimension == 2:
+                            from ..geometry._source_fidelity import _face_reference_chart
+
+                            pieces = _split_refined_chart_triangle(
+                                source_reference,
+                                target_reference,
+                                tuple(old_rows),
+                                old_reference_exact,
+                                old_parameters_exact,
+                            )
+                            for old_row, piece_reference, parameters_exact in pieces:
+                                if top_dimension == 2:
+                                    piece_orientation = _chart_orientation(
+                                        piece_reference, 2
+                                    )
+                                else:
+                                    target_chart, _ = _face_reference_chart(
+                                        block.cell_kind, local_entity, piece_reference
+                                    )
+                                    piece_orientation = _chart_orientation(
+                                        np.asarray(target_chart[0], dtype=np.float64), 2
+                                    )
+                                parameter_orientation = _chart_orientation(
+                                    parameters_exact, 2
+                                )
+                                if piece_orientation == 0 or parameter_orientation == 0:
+                                    raise ValueError(
+                                        "A clipped source chart piece is degenerate."
+                                    )
+                                chart_key = (
+                                    target_entity_id,
+                                    witness.source_chart_ids[old_row],
+                                    witness.source_entity_ids[old_row],
+                                    witness.occurrence_paths[old_row],
+                                )
+                                candidates.setdefault(chart_key, {}).setdefault(
+                                    (target_cell_id, local_entity), []
+                                ).append(
+                                    {
+                                        "cell_id": target_cell_id,
+                                        "entity_id": target_entity_id,
+                                        "local_entity": local_entity,
+                                        "reference": piece_reference,
+                                        "parameters_exact": parameters_exact,
+                                        "orientation": parameter_orientation
+                                        * piece_orientation,
+                                        "vertices": _source_parameter_vertices(
+                                            parameters_exact
+                                        ),
+                                        "source_row": old_row,
+                                    }
+                                )
+                            continue
                         raise ValueError(
                             "A target chart subface has no exact source-piece ancestor."
                         )
@@ -4504,6 +4964,11 @@ def _retarget_source_boundary_chart_witness(
                             != witness.source_entity_ids[first[0]]
                             or witness.occurrence_paths[value[0]]
                             != witness.occurrence_paths[first[0]]
+                            or (
+                                witness.cad_plc is not None
+                                and witness.cad_root_cell_ids[value[0]]
+                                != witness.cad_root_cell_ids[first[0]]
+                            )
                             or value[1] != first[1]
                             for value in found_rows[1:]
                         ):
@@ -4607,10 +5072,21 @@ def _retarget_source_boundary_chart_witness(
         return [merged]
 
     rows_to_publish: list[dict[str, Any]] = []
+    occurrence_rows: dict[
+        int, list[tuple[tuple[str, str, tuple[str, ...]], dict[str, Any]]]
+    ] = {}
+    occurrences_per_entity = Counter(key[0] for key in candidates)
     for chart_key, sides in candidates.items():
         side_values = []
         for side, side_rows in sides.items():
-            rows = merged_pieces(side_rows)
+            # A parent entity may cross distinct source charts. Their exact
+            # child pieces cannot each be merged into the whole parent chart;
+            # retain them for the disjoint-occurrence and fidelity proofs below.
+            rows = (
+                side_rows
+                if chart_dimension == 2 and occurrences_per_entity[chart_key[0]] > 1
+                else merged_pieces(side_rows)
+            )
             vertex_parameters: dict[int, tuple[Fraction, ...]] = {}
             for value in rows:
                 for vertex_id, parameter in zip(
@@ -4635,14 +5111,18 @@ def _retarget_source_boundary_chart_witness(
                 )
         selected = min(side_values, key=lambda value: value[0])
         rows_to_publish.extend(selected[1])
-    by_entity: dict[int, set[tuple[str, str, tuple[str, ...]]]] = {}
-    for key in candidates:
-        by_entity.setdefault(key[0], set()).add((key[1], key[2], key[3]))
-    if any(len(values) > 1 for values in by_entity.values()):
-        raise ValueError(
-            "One target chart entity has ambiguous source-chart occurrence ancestry."
+        occurrence = (chart_key[1], chart_key[2], chart_key[3])
+        occurrence_rows.setdefault(chart_key[0], []).extend(
+            (occurrence, value) for value in selected[1]
         )
-    del candidates, by_entity
+    for values in occurrence_rows.values():
+        if len({key for key, _ in values}) > 1:
+            if chart_dimension != 2:
+                raise ValueError(
+                    "One target chart entity has ambiguous source-chart occurrence ancestry."
+                )
+            _require_disjoint_chart_occurrences(values)
+    del candidates, occurrence_rows
     if not rows_to_publish:
         raise ValueError("Transition removed every witnessed source chart stratum.")
     rows_to_publish.sort(
@@ -4711,10 +5191,11 @@ def _retarget_source_boundary_chart_witness(
         implicit_cell_keys=implicit_cells_out,
         implicit_root_edge_keys=implicit_edges_out,
         cad_plc=witness.cad_plc,
-        cad_curve_association=witness.cad_curve_association,
+        cad_curve_association=cad_curve_association,
         cad_root_cell_ids=(
             witness.cad_root_cell_ids[source_rows]
-            if witness.cad_plc is not None else None
+            if witness.cad_plc is not None
+            else None
         ),
     )
 
@@ -4759,6 +5240,7 @@ def _retarget_fidelity_witness(
     reference_maps: tuple[ReferenceCellMapWitnesses, ...] = (),
     coarsening: NestedReferenceWitnesses | None = None,
     mixed_coarsening_maps: tuple[MixedCoarseningMap, ...] = (),
+    vertex_stencil: VertexInterpolationStencil | None = None,
 ) -> SourceFidelityWitness:
     if isinstance(witness, SurfaceChartWitness):
         if mixed_coarsening_maps:
@@ -4805,6 +5287,7 @@ def _retarget_fidelity_witness(
             reference_maps=reference_maps,
             coarsening=coarsening,
             mixed_coarsening_maps=mixed_coarsening_maps,
+            vertex_stencil=vertex_stencil,
         )
     if isinstance(witness, SourceBoundaryDistanceWitness):
         same_coordinates = (
@@ -4831,15 +5314,54 @@ def _retarget_fidelity_witness(
             target_facet_global_ids=np.asarray(witness.target_facet_global_ids),
         )
     if isinstance(witness, SurfaceEnvelopeDistanceWitness):
-        if (
-            source.mesh.topology_id != target.topology_id
-            or cell_geometry_id(source.geometry) != geometry_id
-            or not np.array_equal(
+        unchanged = (
+            source.mesh.topology_id == target.topology_id
+            and cell_geometry_id(source.geometry) == geometry_id
+            and np.array_equal(
                 np.asarray(source.mesh.coordinates), np.asarray(target.coordinates)
             )
+        )
+        if unchanged:
+            derived_witness = (
+                None
+                if witness.derived_witness is None
+                else _rebind_surface_metric_witness(
+                    witness.derived_witness, target, geometry
+                )
+            )
+            vertex_ids = np.asarray(witness.target_vertex_global_ids)
+            facet_ids = np.asarray(witness.target_facet_global_ids)
+        else:
+            # An edited target keeps the kernel bounds only through its chart
+            # correspondence to the reproduced envelope. That chart follows the
+            # exact lineage rule of every source-bound chart, and the complete
+            # target exterior is rebound; validation recomposes the bounds.
+            if witness.derived_witness is None:
+                raise ValueError(
+                    "Surface-envelope distance evidence without an envelope chart requires unchanged target coordinates."
+                )
+            derived_witness = _retarget_source_boundary_chart_witness(
+                source,
+                target,
+                geometry,
+                lineage,
+                witness.derived_witness,
+                reference_maps=reference_maps,
+                coarsening=coarsening,
+                mixed_coarsening_maps=mixed_coarsening_maps,
+                vertex_stencil=vertex_stencil,
+            )
+            vertex_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)[
+                np.asarray(target.boundary_masks[0], dtype=np.bool_)
+            ]
+            facet_ids = np.asarray(target.entity_set(2).entity_ids, dtype=np.int64)[
+                np.asarray(target.boundary_masks[2], dtype=np.bool_)
+            ]
+        if derived_witness is not None and not isinstance(
+            derived_witness, SourceBoundaryChartWitness
         ):
-            raise ValueError(
-                "Surface-envelope distance evidence requires unchanged target coordinates."
+            raise TypeError(
+                "Surface-envelope derived witness must remain a source-bound chart."
             )
         return SurfaceEnvelopeDistanceWitness(
             mesh_id=target.mesh_id,
@@ -4851,12 +5373,15 @@ def _retarget_fidelity_witness(
             offset=witness.offset,
             spacing=witness.spacing,
             certificate_spacing=witness.certificate_spacing,
+            envelope_mode=witness.envelope_mode,
             bounds=np.asarray(witness.bounds),
             envelope_vertices=np.asarray(witness.envelope_vertices),
             envelope_triangles=np.asarray(witness.envelope_triangles),
-            target_vertex_global_ids=np.asarray(witness.target_vertex_global_ids),
-            target_facet_global_ids=np.asarray(witness.target_facet_global_ids),
+            target_vertex_global_ids=vertex_ids,
+            target_facet_global_ids=facet_ids,
             reproduction=witness.reproduction,
+            derived_source=witness.derived_source,
+            derived_witness=derived_witness,
         )
     raise TypeError("No transition ancestry rule accepts this source fidelity witness.")
 
@@ -4926,7 +5451,10 @@ def _renew_transition_certification_inputs(
     coarsening: NestedReferenceWitnesses | None = None,
     mixed_coarsening_maps: tuple[MixedCoarseningMap, ...] = (),
     coverage_renewal: PolyhedralCoverageRenewal | None = None,
+    vertex_stencil: VertexInterpolationStencil | None = None,
     fidelity_witness_override: SourceFidelityWitness | None = None,
+    renew_scoped_from_override: bool = False,
+    computed_root: ComputedLayerCoreRoot | None = None,
 ) -> tuple[MeshCertificationInputs, tuple[ValidatedSourceFidelityWitness, ...]] | None:
     """Rebuild target-bound acceptance inputs without reducing retained claims.
 
@@ -4944,6 +5472,35 @@ def _renew_transition_certification_inputs(
     report.require_current(source.mesh, source.geometry)
     original = report.inputs
     regions = _transition_regions(original, target, lineage)
+    renewed_tokens: list[ValidatedSourceFidelityWitness] = []
+
+    def renew_image(query: SourceBoundaryQuery, /) -> SourceBoundaryFaceImageWitness:
+        from ..geometry._domain_boundary import MeshingDomainBoundarySource
+        from .providers._native_layer_overlap import issue_layer_boundary_image_witness
+        from .providers._native_sources import NativeLayerCoreSource
+
+        feature_source = original.feature_source
+        if type(feature_source) is not NativeLayerCoreSource:
+            raise ValueError(
+                "Image fidelity renewal requires its actual layer/core source."
+            )
+        if not isinstance(query, MeshingDomainBoundarySource):
+            raise TypeError("Image fidelity renewal requires its domain boundary query.")
+        renewed_query, renewed_witness, token = issue_layer_boundary_image_witness(
+            feature_source,
+            target,
+            geometry,
+            query,
+            original.layer_core_root_geometry,
+            source,
+            lineage,
+            computed_root=computed_root,
+        )
+        if renewed_query is not query:
+            raise ValueError("Image fidelity renewal changed its retained source query.")
+        renewed_tokens.append(token)
+        return renewed_witness
+
     if coverage_renewal is not None and fidelity_witness_override is not None:
         raise ValueError(
             "Polyhedral coverage and surface fidelity renewals are mutually exclusive."
@@ -4967,6 +5524,10 @@ def _renew_transition_certification_inputs(
         if original.fidelity_witness is None:
             raise ValueError("A route cannot add an undeclared source-fidelity claim.")
         fidelity = fidelity_witness_override
+    elif isinstance(original.fidelity_witness, SourceBoundaryFaceImageWitness):
+        if original.source is None:
+            raise ValueError("Image fidelity renewal lacks its original source query.")
+        fidelity = renew_image(original.source)
     else:
         fidelity = (
             None
@@ -4980,12 +5541,19 @@ def _renew_transition_certification_inputs(
                 reference_maps=reference_maps,
                 coarsening=coarsening,
                 mixed_coarsening_maps=mixed_coarsening_maps,
+                vertex_stencil=vertex_stencil,
             )
         )
     coverage = None
     if original.source_coverage_witness is not None:
         if coverage_renewal is not None:
             coverage = coverage_renewal.target_witness
+        elif isinstance(original.source_coverage_witness, PlcSourcePointWitness):
+            if not isinstance(original.domain, (PiecewiseLinearDomain, AffinePlcDomain)):
+                raise ValueError("PLC source points require their declared PLC domain.")
+            coverage = renew_plc_source_point_witness(
+                original.source_coverage_witness, original.domain, target, vertex_stencil
+            )
         else:
             if transition is None:
                 raise ValueError(
@@ -4996,24 +5564,75 @@ def _renew_transition_certification_inputs(
         raise ValueError(
             "Polyhedral coverage renewal cannot add an undeclared source claim."
         )
-    scoped = tuple(
-        (
-            query,
-            _retarget_fidelity_witness(
-                source,
+    from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+    from ._layer_core_facet_authority import (
+        issue_mapped_core_facet_witness,
+        MappedCoreFacetAuthority,
+    )
+    from .providers._native_sources import NativeLayerCoreSource
+
+    scoped_rows: list[ScopedFidelityInput] = []
+    for query, witness, tolerance in original.scoped_fidelity:
+        if (
+            renew_scoped_from_override
+            and fidelity_witness_override is not None
+            and witness is original.fidelity_witness
+            and query is original.source
+        ):
+            scoped_rows.append((query, fidelity_witness_override, tolerance))
+        elif isinstance(witness, SourceBoundaryFaceImageWitness):
+            scoped_rows.append((query, renew_image(query), tolerance))
+        elif isinstance(query, MappedReferenceBoundarySource) and isinstance(
+            query.authority, MappedCoreFacetAuthority
+        ):
+            feature_source = original.feature_source
+            if type(feature_source) is not NativeLayerCoreSource:
+                raise ValueError(
+                    "Internal core chart renewal requires its actual source owner."
+                )
+            renewed = issue_mapped_core_facet_witness(
+                feature_source,
                 target,
                 geometry,
-                lineage,
-                witness,
-                reference_maps=reference_maps,
-                coarsening=coarsening,
-            ),
-            tolerance,
-        )
-        for query, witness, tolerance in original.scoped_fidelity
-    )
+                original.layer_core_root_geometry,
+                query=query,
+                computed_root=computed_root,
+            )
+            if renewed is None:
+                raise ValueError(
+                    "Internal core chart renewal lost its authored facet scope."
+                )
+            renewed_query, renewed_witness, token = renewed
+            if renewed_query is not query:
+                raise ValueError("Internal core chart renewal changed its source query.")
+            scoped_rows.append((query, renewed_witness, tolerance))
+            renewed_tokens.append(token)
+        else:
+            scoped_rows.append(
+                (
+                    query,
+                    _retarget_fidelity_witness(
+                        source,
+                        target,
+                        geometry,
+                        lineage,
+                        witness,
+                        reference_maps=reference_maps,
+                        coarsening=coarsening,
+                        mixed_coarsening_maps=mixed_coarsening_maps,
+                        vertex_stencil=vertex_stencil,
+                    ),
+                    tolerance,
+                )
+            )
+    scoped = tuple(scoped_rows)
     validated = validate_fidelity_witnesses(
-        target, geometry, original.source, fidelity, scoped
+        target,
+        geometry,
+        original.source,
+        fidelity,
+        scoped,
+        validated=tuple(renewed_tokens),
     )
     inputs = MeshCertificationInputs(
         target,
@@ -5031,8 +5650,10 @@ def _renew_transition_certification_inputs(
         scoped_fidelity=scoped,
         fidelity_witness=fidelity,
         feature_source=original.feature_source,
+        layer_core_root_geometry=original.layer_core_root_geometry,
         source_coverage_witness=coverage,
         validated=validated,
+        computed_root=computed_root,
     )
     return inputs, validated
 
@@ -5301,6 +5922,7 @@ def _extend_prior_volume_material_chain(
         reference.root_geometry,
         reference.source_map,
         reference.root_coverage,
+        chart_parent=_material_layer_chart_parent(source, reference.root_geometry),
     )
     if (
         source.certification is None
@@ -5389,6 +6011,8 @@ def _extend_prior_volume_material_chain(
         source_frame_id=source.coordinate_contract.spatial_id,
         target_frame_id=target.coordinate_contract.spatial_id,
         coordinate_transition=coordinate_transition,
+        source_chart_parent=_material_layer_chart_parent(source, source.geometry),
+        target_chart_parent=_material_layer_chart_parent(target, target.geometry),
     )
     material_map = VolumeMaterialMap(
         source.mesh,
@@ -5406,6 +6030,8 @@ def _extend_prior_volume_material_chain(
         integration_policy=integration_policy,
         source_occurrence_paths=source_occurrences,
         target_occurrence_paths=material_rows.occurrence_paths,
+        source_chart_parent=_material_layer_chart_parent(source, source.geometry),
+        target_chart_parent=_material_layer_chart_parent(target, target.geometry),
     )
     return VolumeMaterialChain(
         (material_map,) if chain is None else (*chain.maps, material_map)
@@ -5624,6 +6250,26 @@ def _validated_source_chart_parent(
     return None
 
 
+def _layer_core_transfer_owner(
+    transfer: AssociationTransfer | None, /
+) -> NativeLayerCoreAssociationTransfer | None:
+    """Resolve the unique original layer/core authority, including composition."""
+    if isinstance(transfer, NativeLayerCoreAssociationTransfer):
+        return transfer
+    if not isinstance(transfer, ComposedAssociationTransfer):
+        return None
+    owners = tuple(
+        owner
+        for child in transfer.transfers
+        if (owner := _layer_core_transfer_owner(child)) is not None
+    )
+    if len(owners) > 1:
+        raise ValueError(
+            "A mixed transition cannot combine multiple layer/core authorities."
+        )
+    return None if not owners else owners[0]
+
+
 def _finalize_native(
     prepared: PreparedMeshAdaptation,
     edit: CellTopologyEdit,
@@ -5700,6 +6346,17 @@ def _finalize_native(
         geometry, reference_maps = _mixed_geometry_for_target(
             source, mesh, lineage, mixed_outcome
         )
+        if periodic_source:
+            if not np.array_equal(
+                np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+                np.asarray(edit.vertex_global_ids, dtype=np.int64),
+            ):
+                raise ValueError("Mixed exact vertex rows do not follow the target mesh.")
+            quotient_rows = mixed_outcome.exact_vertex_coordinates
+            if quotient_rows is None:
+                raise ValueError(
+                    "Periodic mixed geometry requires exact target vertices."
+                )
     elif surface_metric_outcome is not None:
         geometry = CellGeometrySpec.affine(mesh)
         reference_maps = surface_metric_outcome.geometry.reference_maps
@@ -5759,7 +6416,15 @@ def _finalize_native(
                 )
             else:
                 periodic_topology = periodic_topology_after_edit(
-                    source.mesh, mesh, stencil, exact_coordinate_source=quotient_bank
+                    source.mesh,
+                    mesh,
+                    stencil,
+                    exact_coordinate_source=quotient_bank,
+                    quotient_history=(
+                        None
+                        if mixed_outcome is None
+                        else mixed_outcome.hierarchy.periodic_quotient_history
+                    ),
                 )
             if periodic_topology is None:
                 raise ValueError(
@@ -5773,7 +6438,12 @@ def _finalize_native(
                 periodic_topology,
                 exact_coordinate_source=quotient_bank,
             )
-        if quotient_rows is not None:
+        if mixed_outcome is not None:
+            geometry, reference_maps = _mixed_geometry_for_target(
+                source, mesh, lineage, mixed_outcome
+            )
+            require_periodic_geometry_face_maps(mesh, geometry)
+        if quotient_rows is not None and mixed_outcome is None:
             geometry = _vertex_source_target_geometry(mesh, quotient_bank)
     transition_geometry = None
     surface_chart_witness = None
@@ -5816,7 +6486,10 @@ def _finalize_native(
         and coverage_renewal is None
     )
     has_exact_reference_maps = (
-        bool(reference_maps) or edit.refinement is not None or coarsening is not None
+        bool(reference_maps)
+        or edit.refinement is not None
+        or coarsening is not None
+        or (mixed_outcome is not None and mixed_outcome.coarsening_partition is not None)
     )
     preserves_topology = source.mesh.topology_id == mesh.topology_id
 
@@ -5834,6 +6507,9 @@ def _finalize_native(
                 reference_maps=reference_maps,
                 refinement=edit.refinement,
                 coarsening=coarsening,
+                coarsening_partition=(
+                    None if mixed_outcome is None else mixed_outcome.coarsening_partition
+                ),
             )
         except ValueError as error:
             material_state_retained = prepared.prior_transition is not None and (
@@ -5844,6 +6520,7 @@ def _finalize_native(
                 str(error)
                 == "Exact reference maps do not prove source/target coordinate-map equality."
                 and not exact_bisection_route
+                and mixed_outcome is None
                 and not _has_retained_source_claims(source)
                 and not material_state_retained
             ):
@@ -5851,21 +6528,149 @@ def _finalize_native(
                 reference_maps = ()
             else:
                 raise
-    patches, zones, labels, boundaries = _inherited_organization(source, mesh, lineage)
     association_transfer = prepared.policy.association_transfer
+    root = source.layer_core_root_geometry
+    computed_root = None
+    if (
+        type(association_transfer) is NativeLayerCoreAssociationTransfer
+        and root is not None
+        and source.certification is not None
+        and source.certification.inputs.feature_source is association_transfer.source
+        and root.specification is association_transfer.specification
+    ):
+        computed_root = ComputedLayerCoreRoot.reprove(
+            association_transfer.source, association_transfer.specification, root
+        )
+    implicit_fidelity_override = None
+    if (
+        prepared.policy.route
+        in (MeshAdaptationRoute.NATIVE_METRIC_3D, MeshAdaptationRoute.DEVICE_METRIC_3D)
+        and retained_inputs is not None
+        and isinstance(retained_inputs.fidelity_witness, SourceBoundaryChartWitness)
+        and retained_inputs.fidelity_witness.implicit_cell_keys.size
+    ):
+        from .providers._native_implicit import _implicit_remeshed_volume_chart_witness
+        from .providers._native_sources import NativeImplicitSource
+
+        implicit_source = retained_inputs.feature_source
+        if (
+            isinstance(implicit_source, NativeImplicitSource)
+            and implicit_source.discovery is not None
+        ):
+            implicit_fidelity_override = _implicit_remeshed_volume_chart_witness(
+                implicit_source, implicit_source.discovery, mesh, geometry
+            )
+    renewed_inputs = _renew_transition_certification_inputs(
+        source,
+        mesh,
+        geometry,
+        lineage,
+        vertex_stencil=stencil,
+        reference_maps=reference_maps,
+        transition=transition_geometry,
+        coarsening=coarsening,
+        mixed_coarsening_maps=(
+            () if mixed_outcome is None else mixed_outcome.coarsening_maps
+        ),
+        coverage_renewal=coverage_renewal,
+        fidelity_witness_override=(
+            implicit_fidelity_override
+            if implicit_fidelity_override is not None
+            else (
+                surface_metric_outcome.geometry.target_chart_witness
+                if surface_metric_outcome is not None
+                and source.certification is not None
+                and source.certification.inputs.fidelity_witness is not None
+                else None
+            )
+        ),
+        renew_scoped_from_override=implicit_fidelity_override is not None,
+        computed_root=computed_root,
+    )
+    certification_inputs, validated_witnesses = (
+        (None, ()) if renewed_inputs is None else renewed_inputs
+    )
+    patches, zones, labels, boundaries = _inherited_organization(source, mesh, lineage)
+    column_certification = source.layer_core_column_certification
+    if column_certification is not None:
+        owner = _layer_core_transfer_owner(association_transfer)
+        if owner is None or mixed_outcome is None or transition_geometry is None:
+            raise ValueError(
+                "Retained layer columns require exact source-bound mixed ancestry."
+            )
+        from ._layer_core_subdivision import renew_refined_column_certification
+
+        column_certification = renew_refined_column_certification(
+            owner.source,
+            owner.specification,
+            source,
+            mesh,
+            geometry,
+            stencil,
+            transition_geometry,
+        )
+    if (
+        type(association_transfer) is NativeLayerCoreAssociationTransfer
+        and computed_root is not None
+    ):
+        propagate_associations = partial(
+            association_transfer._propagate_computed, computed_root=computed_root
+        )
+    elif association_transfer is not None:
+        propagate_associations = association_transfer.propagate
+    else:
+        propagate_associations = None
     associations = (
-        association_transfer.propagate(source, lineage, mesh, vertex_stencil=stencil)
-        if association_transfer is not None and source.associations
+        propagate_associations(
+            source,
+            lineage,
+            mesh,
+            vertex_stencil=stencil,
+            geometry_transition=transition_geometry,
+            target_fidelity_witness=(
+                certification_inputs.fidelity_witness
+                if certification_inputs is not None
+                and isinstance(
+                    certification_inputs.fidelity_witness,
+                    (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness),
+                )
+                else None
+            ),
+            target_scoped_fidelity=(
+                ()
+                if certification_inputs is None
+                else certification_inputs.scoped_fidelity
+            ),
+            validated_fidelity=validated_witnesses,
+        )
+        if propagate_associations is not None and source.associations
         else ()
     )
+    if mixed_outcome is not None:
+        source_kinds = {
+            (value.source_id, value.source_revision, value.association_kind)
+            for value in source.associations
+        }
+        target_kinds = {
+            (value.source_id, value.source_revision, value.association_kind)
+            for value in associations
+        }
+        if not source_kinds.issubset(target_kinds):
+            raise ValueError(
+                "Mixed adaptation association transfer omitted a source namespace or kind."
+            )
     target_boundary = None
     if source.boundary is not None:
         if not isinstance(
             association_transfer,
-            (ImplicitAssociationTransfer, SurfaceAssociationTransfer),
+            (
+                ImplicitAssociationTransfer,
+                SurfaceAssociationTransfer,
+                PlcAssociationTransfer,
+            ),
         ):
             raise TypeError(
-                "Boundary remapping requires an implicit or surface association transfer."
+                "Boundary remapping requires an implicit, surface, or PLC association transfer."
             )
         target_boundary = association_transfer.remap_boundary(source, lineage, mesh)
         if target_boundary is None:
@@ -5877,29 +6682,6 @@ def _finalize_native(
         surface_source = target_surface_source(
             surface_source, mesh, geometry, associations, surface_metric_outcome
         )
-    renewed_inputs = _renew_transition_certification_inputs(
-        source,
-        mesh,
-        geometry,
-        lineage,
-        reference_maps=reference_maps,
-        transition=transition_geometry,
-        coarsening=coarsening,
-        mixed_coarsening_maps=(
-            () if mixed_outcome is None else mixed_outcome.coarsening_maps
-        ),
-        coverage_renewal=coverage_renewal,
-        fidelity_witness_override=(
-            surface_metric_outcome.geometry.target_chart_witness
-            if surface_metric_outcome is not None
-            and source.certification is not None
-            and source.certification.inputs.fidelity_witness is not None
-            else None
-        ),
-    )
-    certification_inputs, validated_witnesses = (
-        (None, ()) if renewed_inputs is None else renewed_inputs
-    )
     layer_curving_evidence = None
     if source.layer_curving_evidence is not None:
         target_chart_witness = _retarget_source_boundary_chart_witness(
@@ -5908,6 +6690,7 @@ def _finalize_native(
             geometry,
             lineage,
             source.layer_curving_evidence.chart_witness,
+            vertex_stencil=stencil,
             reference_maps=reference_maps,
             coarsening=coarsening,
             mixed_coarsening_maps=(
@@ -5943,11 +6726,14 @@ def _finalize_native(
         if certification_inputs is not None
         and source.certification is not None
         and transition_geometry is not None
+        and mesh.periodic_topology is None
         and coarsening is None
         and source.certification.embedding.status == "certified"
         else None
     )
-    fidelity_premise = _fidelity_premise(source, certification_inputs, transition_geometry)
+    fidelity_premise = _fidelity_premise(
+        source, certification_inputs, transition_geometry
+    )
     if (
         coarsening is not None
         and fidelity_premise is not None
@@ -5981,13 +6767,61 @@ def _finalize_native(
         patches=patches,
         zones=zones,
         labels=labels,
+        attributes=(
+            transfer_cell_markers(source.mesh, source.attributes, lineage, mesh)
+            if mixed_outcome is not None
+            or (
+                isinstance(prepared.request, MarkedMeshAdaptation)
+                and prepared.request.inherited_cell_markers
+            )
+            else ()
+        ),
         associations=associations,
         surface_source=surface_source,
         region_boundary_evidence=boundaries,
         planar_embedding=source.planar_embedding,
         layer_curving_evidence=layer_curving_evidence,
+        layer_core_carrier_witness=source.layer_core_carrier_witness,
+        layer_core_overlap_stencils=source.layer_core_overlap_stencils,
+        layer_core_column_certification=column_certification,
+        layer_core_root_geometry=source.layer_core_root_geometry,
+        computed_root=computed_root,
         validity_parent=validated_validity_parent,
     )
+    return _finish_certified_native_target(
+        prepared,
+        mesh,
+        target,
+        kind,
+        lineage,
+        stencil,
+        transition_geometry,
+        reference_maps,
+        coarsening,
+        conservative=conservative,
+        linear_transfer=linear_transfer,
+        surface_chart_witness=surface_chart_witness,
+    )
+
+
+def _finish_certified_native_target(
+    prepared: PreparedMeshAdaptation,
+    mesh: CellMesh,
+    target: CellMeshingResult,
+    kind: MeshTransitionKind,
+    lineage: MeshLineage,
+    stencil: VertexInterpolationStencil,
+    transition_geometry: CellGeometryTransition | None,
+    reference_maps: tuple[ReferenceCellMapWitnesses, ...],
+    coarsening: NestedReferenceWitnesses | None,
+    /,
+    *,
+    conservative: bool,
+    linear_transfer: bool,
+    surface_chart_witness: SurfaceChartWitness | SourceBoundaryChartWitness | None,
+) -> _NativeTarget:
+    """Finish the original topology/transfer phase after target certification."""
+    source = prepared.source
     if target.mesh.topology_id != mesh.topology_id:
         raise ValueError("Certification reordered the adapted topology.")
     material_chain = _extend_prior_volume_material_chain(
@@ -6156,6 +6990,161 @@ def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutco
     )
 
 
+def _mixed_execution_state(
+    outcome: MixedAdaptationOutcome, /
+) -> tuple[bool, bool, bool, bool]:
+    """Derive the native mixed route's status from its actual outcome evidence."""
+    evidence = outcome.evidence
+    refinement_rejected = not np.all(
+        np.isin(evidence.requested_refine_cell_ids, evidence.refined_cell_ids)
+    )
+    partial = bool(evidence.rejected_coarsening_ids.size) or refinement_rejected
+    refined = bool(evidence.refined_cell_ids.size) or bool(evidence.closure_cell_ids.size)
+    coarsened = bool(evidence.coarsened_cell_ids.size)
+    schedule_changed = bool(evidence.schedule_changed_cell_ids.size)
+    return bool(partial), refined, coarsened, schedule_changed
+
+
+def _mixed_transition_kind(refined: bool, coarsened: bool, /) -> MeshTransitionKind:
+    match (refined, coarsened):
+        case (True, False):
+            return MeshTransitionKind.REFINE
+        case (False, True):
+            return MeshTransitionKind.COARSEN
+        case _:
+            return MeshTransitionKind.REMESH
+
+
+def _mixed_route_outcome(
+    outcome: MixedAdaptationOutcome, native: _NativeTarget, partial: bool, /
+) -> _RouteOutcome:
+    return _RouteOutcome(
+        MeshAdaptationStatus.PARTIAL if partial else MeshAdaptationStatus.COMPLETE,
+        native.target,
+        native.transition,
+        native.lineage,
+        native.stencil,
+        native.transfer,
+        None,
+        outcome.evidence,
+        outcome.hierarchy,
+        outcome.cell_content_transfer,
+    )
+
+
+def _resume_certified_mixed_outcome(
+    prepared: PreparedMeshAdaptation,
+    outcome: MixedAdaptationOutcome,
+    edit: CellTopologyEdit,
+    target: CellMeshingResult,
+    lineage: MeshLineage,
+    stencil: VertexInterpolationStencil,
+    transition_geometry: CellGeometryTransition,
+    reference_maps: tuple[ReferenceCellMapWitnesses, ...],
+    started: float,
+    /,
+) -> MeshAdaptationResult:
+    """Continue the mixed owner's post-certification phase from actual retained data.
+
+    The saved edit is independently reassembled and rebound; the supplied
+    target, exact transition, lineage and stencil must be its actual contents.
+    ``started`` is the measured start of this continuation, not a fabricated
+    duration for the earlier interrupted operation.
+    """
+    from ..geometry._mesh_certificates import _same_tree_content
+
+    if (
+        type(prepared) is not PreparedMeshAdaptation
+        or prepared.policy.route is not MeshAdaptationRoute.NATIVE_MIXED
+        or type(outcome) is not MixedAdaptationOutcome
+        or type(edit) is not CellTopologyEdit
+        or type(target) is not CellMeshingResult
+        or type(lineage) is not MeshLineage
+        or type(stencil) is not VertexInterpolationStencil
+        or type(transition_geometry) is not CellGeometryTransition
+    ):
+        raise TypeError("Saved mixed continuation requires its exact canonical owners.")
+    rebuilt_prepared = PreparedMeshAdaptation(
+        prepared.source,
+        prepared.request,
+        prepared.policy,
+        prepared.constraints,
+        prepared.prior_transition,
+        prepared.material_reference,
+    )
+    if not _same_tree_content(rebuilt_prepared, prepared):
+        raise ValueError(
+            "Saved mixed preparation differs from its canonical owner fields."
+        )
+    if not _same_tree_content(edit, outcome.edit._replace(coordinates=edit.coordinates)):
+        raise ValueError("Saved mixed edit differs from its original native outcome.")
+    source = prepared.source
+    if target.certification is None:
+        raise ValueError("Saved mixed continuation requires a certified target.")
+    target.certification.require_current(target.mesh, target.geometry)
+    transition_geometry.require_bound(
+        source.mesh, source.geometry, target.mesh, target.geometry
+    )
+    if not (
+        (not reference_maps and transition_geometry.reference_map is None)
+        or _same_tree_content(reference_maps, transition_geometry.reference_map)
+    ):
+        raise ValueError(
+            "Saved mixed reference maps differ from their actual transition."
+        )
+    rebuilt_mesh, rebuilt_lineage, rebuilt_stencil = assemble_topology_edit(
+        source.mesh,
+        edit,
+        numeric_version=target.mesh.numeric_version,
+        bind_periodic=source.mesh.periodic_topology is None,
+    )
+    if source.mesh.periodic_topology is not None:
+        topology = target.mesh.periodic_topology
+        if topology is None:
+            raise ValueError("Saved mixed target lost its actual periodic quotient.")
+        rebuilt_mesh, rebuilt_lineage, rebuilt_stencil = bind_periodic_topology_edit(
+            source.mesh,
+            rebuilt_mesh,
+            rebuilt_stencil,
+            edit,
+            topology,
+            exact_coordinate_source=topology.exact_coordinate_source,
+        )
+    if (
+        not _same_tree_content(rebuilt_mesh, target.mesh)
+        or not _same_tree_content(rebuilt_lineage, lineage)
+        or not _same_tree_content(rebuilt_stencil, stencil)
+    ):
+        raise ValueError(
+            "Saved mixed target, lineage or stencil differs from its actual edit."
+        )
+    partial, refined, coarsened, schedule_changed = _mixed_execution_state(outcome)
+    if not refined and not coarsened and not schedule_changed:
+        raise ValueError(
+            "A saved changed target requires an actual changed mixed outcome."
+        )
+    kind = _mixed_transition_kind(refined, coarsened)
+    # These are the native mixed route's fixed arguments in _execute_mixed_route;
+    # surface metric relocation is a different route and cannot enter here.
+    native = _finish_certified_native_target(
+        prepared,
+        rebuilt_mesh,
+        target,
+        kind,
+        rebuilt_lineage,
+        rebuilt_stencil,
+        transition_geometry,
+        reference_maps,
+        edit.coarsening,
+        conservative=False,
+        linear_transfer=True,
+        surface_chart_witness=None,
+    )
+    return _adaptation_result(
+        prepared, _mixed_route_outcome(outcome, native, partial), started
+    )
+
+
 def _execute_mixed_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation):
@@ -6169,6 +7158,23 @@ def _execute_mixed_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     constraints = prepared.constraints
     protected_cells = _protected_scope_rows(mesh, prepared.policy.protected_scopes, 3)
     protected_faces = _protected_scope_rows(mesh, prepared.policy.protected_scopes, 2)
+    root_mesh = (
+        None
+        if prepared.source.layer_core_root_geometry is None
+        else prepared.source.layer_core_root_geometry.mesh
+    )
+    layer_owner = _layer_core_transfer_owner(prepared.policy.association_transfer)
+    if (
+        root_mesh is None
+        and layer_owner is not None
+        and layer_owner.source.mapped_domain is not None
+    ):
+        root_mesh = layer_owner.source.mapped_domain.reference_mesh
+    if root_mesh is None and prepared.material_reference is not None:
+        restriction = prepared.source.geometry.restriction_source
+        candidate = prepared.material_reference.root_mesh
+        if restriction is None or restriction.source_topology_id == candidate.topology_id:
+            root_mesh = candidate
     outcome = adapt_mixed_mesh(
         mesh,
         refine_cell_ids=np.asarray(request.refine_cell_ids, dtype=np.int64),
@@ -6180,16 +7186,12 @@ def _execute_mixed_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         protected_edge_keys=constraints.protected_edge_keys,
         protected_face_keys=entity_keys(mesh, 2)[protected_faces],
         layer_columns=request.layer_columns,
+        periodic_edge_lock=request.periodic_edge_lock,
         source_geometry=prepared.source.geometry,
+        root_mesh=root_mesh,
     )
     evidence = outcome.evidence
-    refinement_rejected = not np.all(
-        np.isin(evidence.requested_refine_cell_ids, evidence.refined_cell_ids)
-    )
-    partial = bool(evidence.rejected_coarsening_ids.size) or refinement_rejected
-    refined = bool(evidence.refined_cell_ids.size) or bool(evidence.closure_cell_ids.size)
-    coarsened = bool(evidence.coarsened_cell_ids.size)
-    schedule_changed = bool(evidence.schedule_changed_cell_ids.size)
+    partial, refined, coarsened, schedule_changed = _mixed_execution_state(outcome)
     if not refined and not coarsened and not schedule_changed:
         return _unchanged(
             prepared,
@@ -6199,13 +7201,7 @@ def _execute_mixed_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
             if partial
             else MeshAdaptationStatus.UNCHANGED,
         )
-    match (refined, coarsened):
-        case (True, False):
-            kind = MeshTransitionKind.REFINE
-        case (False, True):
-            kind = MeshTransitionKind.COARSEN
-        case _:
-            kind = MeshTransitionKind.REMESH
+    kind = _mixed_transition_kind(refined, coarsened)
     native = _finalize_native(
         prepared,
         outcome.edit,
@@ -6213,18 +7209,7 @@ def _execute_mixed_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         conservative=False,
         mixed_outcome=outcome,
     )
-    return _RouteOutcome(
-        MeshAdaptationStatus.PARTIAL if partial else MeshAdaptationStatus.COMPLETE,
-        native.target,
-        native.transition,
-        native.lineage,
-        native.stencil,
-        native.transfer,
-        None,
-        evidence,
-        outcome.hierarchy,
-        outcome.cell_content_transfer,
-    )
+    return _mixed_route_outcome(outcome, native, partial)
 
 
 def _target_metric(
@@ -6267,7 +7252,7 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     constraints = prepared.constraints
     topology = isinstance(request, MetricMeshAdaptation)
     exact_source_vertices = (
-        _metric_exact_source_vertices(prepared.source)
+        _metric_exact_source_vertices(prepared.source.mesh, prepared.source.geometry)
         if prepared.source.mesh.periodic_topology is None
         else None
     )
@@ -6348,7 +7333,11 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
     if applied == 0:
         return _unchanged(prepared, evidence, None, status=status)
     native = _finalize_native(
-        prepared, outcome.edit, MeshTransitionKind.REMESH, conservative=False
+        prepared,
+        outcome.edit,
+        MeshTransitionKind.REMESH,
+        conservative=False,
+        exact_source_vertices=outcome.exact_source_vertices,
     )
     return _RouteOutcome(
         status,
@@ -6494,6 +7483,10 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
         raise TypeError("NATIVE_POLYHEDRAL requires PolyhedralAdaptationRequest.")
     source = prepared.source
     mesh = source.mesh
+    republish_regeneration = (
+        request.operation is PolyhedralAdaptationOperation.REGENERATE
+        and bool(source.attributes or source.associations)
+    )
     protected_faces = _protected_scope_rows(mesh, prepared.policy.protected_scopes, 2)
     certification_inputs = (
         None if source.certification is None else source.certification.inputs
@@ -6532,7 +7525,11 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
         mesh,
         request,
         source_geometry=source.geometry,
-        cell_classes=prepared.constraints.cell_classes,
+        cell_classes=(
+            _cell_classes(mesh, tuple(zone.scope for zone in source.zones))
+            if republish_regeneration
+            else prepared.constraints.cell_classes
+        ),
         protected_face_ids=np.asarray(mesh.entity_set(2).entity_ids)[protected_faces],
         source_coverage_witness=source_coverage_witness,
         source_distance_witness=source_distance_witness,
@@ -6543,14 +7540,71 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
         return _unchanged(
             prepared, evidence, outcome.hierarchy, status=MeshAdaptationStatus.UNCHANGED
         )
-    native = _finalize_native(
-        prepared,
-        outcome.edit,
-        MeshTransitionKind.REMESH,
-        conservative=False,
-        polyhedral_outcome=outcome,
-        coverage_renewal=outcome.coverage_renewal,
-    )
+    if republish_regeneration:
+        from .._meshcore import meshcore_identity
+        from ._canonical import _accept_native_construction, _NATIVE_PROVIDER
+        from .providers._native import NativeMeshingProvider
+        from .providers._native_options import NativeMeshingOptions
+        from .providers._native_polyhedral import _PreparedNativePolyhedral
+
+        if (
+            outcome.construction is None
+            or request.regeneration_source is None
+            or request.volume_specification is None
+        ):
+            raise ValueError("Regeneration omitted its authored construction.")
+        plan = NativeMeshingProvider(
+            NativeMeshingOptions(
+                "plc_restricted_power",
+                polyhedral_schedule=request.schedule,
+            )
+        ).plan(
+            request.regeneration_source,
+            request.volume_specification,
+            coordinate_contract=source.coordinate_contract,
+        )
+        if not isinstance(plan.prepared, _PreparedNativePolyhedral):
+            raise TypeError("Regeneration requires the native polyhedral publisher.")
+        construction = plan.prepared.publish(outcome.construction)
+        target = _accept_native_construction(
+            construction,
+            request.volume_specification,
+            _NATIVE_PROVIDER,
+            meshcore_identity(),
+            canonical_fingerprint(
+                {
+                    "kind": "polyhedral-regeneration-publication",
+                    "plan": plan.plan_id,
+                    "request": request.request_id,
+                    "construction": outcome.construction.construction_id,
+                    "target_mesh": outcome.target_mesh.mesh_id,
+                }
+            ),
+            plan.route,
+        )
+        native = _finish_certified_native_target(
+            prepared,
+            outcome.target_mesh,
+            target,
+            MeshTransitionKind.REMESH,
+            outcome.lineage,
+            outcome.vertex_stencil,
+            None,
+            (),
+            None,
+            conservative=False,
+            linear_transfer=False,
+            surface_chart_witness=None,
+        )
+    else:
+        native = _finalize_native(
+            prepared,
+            outcome.edit,
+            MeshTransitionKind.REMESH,
+            conservative=False,
+            polyhedral_outcome=outcome,
+            coverage_renewal=outcome.coverage_renewal,
+        )
     return _RouteOutcome(
         MeshAdaptationStatus.COMPLETE,
         native.target,
@@ -6765,17 +7819,6 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
             lineage,
             hp_reference_maps,
         )
-    patches, zones, labels, boundaries = _inherited_organization(source, mesh, lineage)
-    association_transfer = prepared.policy.association_transfer
-    if source.associations and association_transfer is None:
-        raise ValueError(
-            "The hp route needs an exact transfer for retained source associations."
-        )
-    associations = (
-        association_transfer.propagate(source, lineage, mesh, vertex_stencil=None)
-        if association_transfer is not None and source.associations
-        else ()
-    )
     renewed_inputs = _renew_transition_certification_inputs(
         source,
         mesh,
@@ -6786,6 +7829,38 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     )
     certification_inputs, validated_witnesses = (
         (None, ()) if renewed_inputs is None else renewed_inputs
+    )
+    patches, zones, labels, boundaries = _inherited_organization(source, mesh, lineage)
+    association_transfer = prepared.policy.association_transfer
+    if source.associations and association_transfer is None:
+        raise ValueError(
+            "The hp route needs an exact transfer for retained source associations."
+        )
+    associations = (
+        association_transfer.propagate(
+            source,
+            lineage,
+            mesh,
+            vertex_stencil=None,
+            geometry_transition=hp_geometry_transition,
+            target_fidelity_witness=(
+                certification_inputs.fidelity_witness
+                if certification_inputs is not None
+                and isinstance(
+                    certification_inputs.fidelity_witness,
+                    (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness),
+                )
+                else None
+            ),
+            target_scoped_fidelity=(
+                ()
+                if certification_inputs is None
+                else certification_inputs.scoped_fidelity
+            ),
+            validated_fidelity=validated_witnesses,
+        )
+        if association_transfer is not None and source.associations
+        else ()
     )
     target = certify_cell_mesh(
         mesh,

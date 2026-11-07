@@ -1,5 +1,5 @@
 from fractions import Fraction
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._fingerprint import canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
@@ -26,6 +25,7 @@ from phydrax.geometry._domain_boundary import (
 )
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._meshing_domain import (
+    _PlacedSurfacePatch,
     MeshingDomain,
     MeshingDomainCurve,
     MeshingSurfacePatch,
@@ -33,7 +33,10 @@ from phydrax.geometry._meshing_domain import (
     PatchPoleUse,
     SourcePreparation,
 )
-from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+from phydrax.geometry._piecewise_linear_boundary import (
+    PiecewiseLinearBoundarySource,
+    PiecewiseLinearDomainBoundaryOwner,
+)
 from phydrax.geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -56,18 +59,22 @@ from phydrax.geometry._source_fidelity import (
     certify_source_fidelity,
     polyhedral_face_triangle_vertex_ids,
 )
-from phydrax.geometry._source_identity import source_entity_id as _source_entity_id
-from phydrax.geometry.brep import brep_cylinder, brep_sphere
+from phydrax.geometry.brep import brep_cylinder, brep_sphere, BRepAffinePlacement
 from phydrax.geometry.brep._patches import (
     AbstractSurfacePatch,
+    BSplineSurfacePatch,
     CircleCurve,
     LineCurve,
     PlanePatch,
+    RevolutionSurface,
     SpherePatch,
 )
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 from phydrax.units import METER, MILLIMETER
+
+
+_DERIVATIVE_ORDERS: tuple[Literal[0, 1, 2], ...] = (0, 1, 2)
 
 
 def test_triangle_chain_boundary_handles_subdivision_and_forgeries() -> None:
@@ -78,122 +85,283 @@ def test_triangle_chain_boundary_handles_subdivision_and_forgeries() -> None:
     m = point(1, 0)
     original = ((a, b, c), (a, c, d))
     subdivided = ((a, m, c), (m, b, c), (a, c, d))
-    reversed_rows = tuple(tuple(reversed(triangle)) for triangle in subdivided)
+    reversed_rows = tuple(
+        (triangle[2], triangle[1], triangle[0]) for triangle in subdivided
+    )
     assert _same_triangle_chain_boundary(original, subdivided)
     assert _same_triangle_chain_boundary(original, reversed_rows)
     assert not _same_triangle_chain_boundary(original, subdivided[:-1])
     assert not _same_triangle_chain_boundary(original, (*subdivided, subdivided[0]))
     shifted = tuple(
-        tuple((x + 1, y) for x, y in triangle) for triangle in original
+        ((a[0] + 1, a[1]), (b[0] + 1, b[1]), (c[0] + 1, c[1])) for a, b, c in original
     )
     assert not _same_triangle_chain_boundary(original, shifted)
 
 
-def test_trim_lens_box_screen_preserves_exact_closed_contacts(
+def _pwl_boundary_owner() -> PiecewiseLinearDomainBoundaryOwner:
+    vertices = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        dtype=np.float64,
+    )
+    facets = np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64)
+    domain = PiecewiseLinearDomain(
+        vertices,
+        facets,
+        np.tile(np.asarray(((0, -1),), dtype=np.int64), (facets.shape[0], 1)),
+        ("solid",),
+        source_id="pwl-curve-source",
+    )
+    return PiecewiseLinearDomainBoundaryOwner(domain)
+
+
+def test_piecewise_linear_surface_chart_roundoff_and_partition() -> None:
+    owner = _pwl_boundary_owner()
+    source = PiecewiseLinearBoundarySource(owner, 2)
+    reference = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+    cell_ids = np.asarray((11, 12, 13, 14), dtype=np.int64)
+
+    def operands(
+        displacement: float, *, source_scale: float = 1.0
+    ) -> tuple[CellMesh, CellGeometrySpec, SourceBoundaryChartWitness]:
+        vertices = np.array(owner.domain.vertices, copy=True)
+        vertices[0, 0] += displacement
+        mesh = CellMesh(
+            vertices,
+            (CellBlock("surface", "triangle", owner.domain.facets, global_ids=cell_ids),),
+        )
+        geometry = CellGeometrySpec.affine(mesh)
+        witness = SourceBoundaryChartWitness(
+            mesh_id=mesh.mesh_id,
+            geometry_id=cell_geometry_id(geometry),
+            topology_id=mesh.topology_id,
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            source_query_id=source.source_query_id,
+            chart_dimension=2,
+            reference_dimension=2,
+            cell_global_ids=cell_ids,
+            entity_global_ids=cell_ids,
+            local_entity_indices=np.full(4, -1, dtype=np.int32),
+            target_reference_vertices=np.tile(reference[None], (4, 1, 1)),
+            source_chart_ids=source.chart_ids,
+            source_entity_ids=source.source_entity_keys,
+            occurrence_paths=source.source_occurrence_paths,
+            source_parameters=np.tile((source_scale * reference)[None], (4, 1, 1)),
+            orientations=np.ones(4, dtype=np.int8),
+        )
+        return mesh, geometry, witness
+
+    mesh, geometry, witness = operands(0.0)
+    exact = certify_source_fidelity(
+        mesh, geometry, source, tolerance=0.0, witness=witness
+    )
+    assert exact.status == "certified"
+    assert exact.mesh_to_source_upper == 0.0
+    mesh, geometry, witness = operands(1.0e-12)
+    displaced = certify_source_fidelity(
+        mesh, geometry, source, tolerance=1.0e-6, witness=witness
+    )
+    assert displaced.status == "certified"
+    assert displaced.mesh_to_source_upper >= 1.0e-12
+    assert displaced.source_to_mesh_upper >= 1.0e-12
+
+    mesh, geometry, forged = operands(0.0, source_scale=0.5)
+    with pytest.raises(ValueError):
+        certify_source_fidelity(mesh, geometry, source, tolerance=1.0, witness=forged)
+
+
+def test_envelope_composes_actual_chart_displacement_and_rejects_forgeries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from phydrax.geometry import _source_fidelity
+    from types import SimpleNamespace
 
-    q = Fraction
-    rows = [
-        (10, ((q(0), q(0)), (q(1), q(0)), (q(0), q(1)))),
-        (11, ((q(1), q(0)), (q(2), q(0)), (q(1), q(1)))),
-        (12, ((q(3), q(3)), (q(4), q(3)), (q(3), q(4)))),
-    ]
-    bounds = (
-        (q(1), (q(0), q(0)), (q(1), q(1))),
-        (q(2), (q(1), q(1)), (q(3), q(3))),
-        (q(0), (q(0), q(0)), (q(4), q(4))),
+    from phydrax.geometry import _source_fidelity
+    from phydrax.geometry._source_boundary_records import SurfaceEnvelopeDistanceWitness
+    from phydrax.geometry.reconstruction import _envelope
+    from phydrax.geometry.reconstruction._boundary import (
+        ReconstructedTriangleBoundarySource,
     )
+    from phydrax.geometry.reconstruction._core import (
+        ReconstructedGeometrySource,
+        ReconstructionReport,
+    )
+    from phydrax.geometry.simplicial._regions import MeshRegion
+
+    owner = _pwl_boundary_owner()
+    derived = PiecewiseLinearBoundarySource(owner, 2)
+    report = ReconstructionReport(
+        source_kind="point_cloud",
+        algorithm="screened-poisson-reconstruction",
+        input_digest="a" * 64,
+        input_points=4,
+        retained_points=4,
+        output_vertices=4,
+        output_cells=4,
+        connected_components=1,
+        watertight=True,
+        winding_consistent=True,
+        recenter_offset=(0.0, 0.0, 0.0),
+        parameters=(("screening", "4.0"),),
+    )
+    original = ReconstructedTriangleBoundarySource(
+        ReconstructedGeometrySource(
+            MeshRegion(
+                jnp.asarray(owner.domain.vertices),
+                jnp.asarray(owner.domain.facets),
+                feature_id="envelope-chart-test",
+            ),
+            report,
+        )
+    )
+    # Isolate the synthetic kernel premise; chart geometry and composition remain real.
+    monkeypatch.setattr(_envelope, "envelope_reproduces", lambda *args: True)
     monkeypatch.setattr(
         _source_fidelity,
-        "_curved_trim_lens_cap",
-        lambda surface, lens, preparation: lens,
+        "_reconstructed_domain_query",
+        lambda source: SimpleNamespace(source_scope_id="original-scope"),
     )
-    actual = _source_fidelity._curved_trim_lens_caps(None, rows, bounds, None)
-    assert actual == {10: q(2), 11: q(2), 12: q(2)}
-
-
-class _PwlBoundaryOwner:
-    domain: PiecewiseLinearDomain
-    edges: np.ndarray
-    envelope_id: str
-    scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
-    source_id: str
-    source_revision: str
-
-    def __init__(self) -> None:
-        vertices = np.asarray(
-            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
-            dtype=np.float64,
+    vertices = np.array(owner.domain.vertices, copy=True)
+    vertices[0, 0] = 1.0e-12
+    mesh = CellMesh(
+        vertices,
+        (
+            CellBlock(
+                "volume", "tetrahedron", np.asarray(((0, 1, 2, 3),)), global_ids=(31,)
+            ),
+        ),
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    topology = reference_cell_topology("tetrahedron")
+    lookup = _volume_boundary_facet_lookup(mesh)
+    reference_vertices = np.asarray(topology.vertices, dtype=np.float64)
+    source_facets = np.asarray(owner.domain.facets, dtype=np.int64)
+    standard = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+    chart_rows, target_refs, source_refs, facet_ids, local_faces = [], [], [], [], []
+    for local_face, face in enumerate(topology.entities[2]):
+        row = next(
+            index
+            for index, source_face in enumerate(source_facets)
+            if set(np.asarray(source_face).reshape(-1).tolist()) == set(face)
         )
-        facets = np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64)
-        self.domain = PiecewiseLinearDomain(
-            vertices,
-            facets,
-            np.tile(np.asarray(((0, -1),), dtype=np.int64), (facets.shape[0], 1)),
-            ("solid",),
-            source_id="pwl-curve-source",
-        )
-        self.source_id = self.domain.source_id
-        self.source_revision = self.domain.source_revision
-        self.envelope_id = "pwl-curve-owner"
-        edge_rows = sorted(
-            {
-                tuple(sorted((int(face[index]), int(face[(index + 1) % 3]))))
-                for face in facets
-                for index in range(3)
-            }
-        )
-        self.edges = np.asarray(edge_rows, dtype=np.int64)
-        self.scope_entity_ids_by_mesh_row = (
-            np.asarray((101, 102, 103, 104), dtype=np.int64),
-            np.asarray(tuple(201 + row for row in range(len(edge_rows))), dtype=np.int64),
+        chart_rows.append(row)
+        local_faces.append(local_face)
+        facet_ids.append(lookup[(31, local_face)][0])
+        target_refs.append(reference_vertices[np.asarray(face, dtype=np.int64)])
+        source_refs.append(
             np.asarray(
-                tuple(301 + row for row in range(facets.shape[0])), dtype=np.int64
-            ),
-        )
-
-    def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
-        return self.scope_entity_ids_by_mesh_row[dimension]
-
-    def scope_entity_set_id(self, dimension: int, /) -> str:
-        return canonical_fingerprint(
-            {
-                "source": (self.source_id, self.source_revision),
-                "dimension": dimension,
-                "entities": tuple(
-                    int(self.scope_entity_ids(dimension)[row])
-                    for row in range(self.scope_entity_ids(dimension).size)
-                ),
-            }
-        )
-
-    def source_entity_key_for_scope(
-        self, dimension: int, entity_id: int, /
-    ) -> tuple[str, tuple[str, ...]]:
-        kinds = ("pwl-vertex", "pwl-edge", "pwl-facet")
-        identifiers = self.scope_entity_ids(dimension)
-        if dimension not in range(len(kinds)) or not np.any(identifiers == entity_id):
-            raise ValueError("PWL test source entity is outside its retained scope.")
-        return (
-            _source_entity_id(
-                self.source_id,
-                self.source_revision,
-                kinds[dimension],
-                int(entity_id),
-            ),
-            (),
-        )
-
-    def require_current(self, /) -> None:
-        if (self.domain.source_id, self.domain.source_revision) != (
-            self.source_id,
-            self.source_revision,
-        ):
-            raise ValueError(
-                "PWL test owner no longer matches its retained source domain."
+                [standard[list(source_facets[row]).index(vertex)] for vertex in face]
             )
+        )
+
+    def chart(scale: float = 1.0) -> SourceBoundaryChartWitness:
+        parameters = np.asarray(source_refs) * scale
+
+        def make_chart(orientations: np.ndarray) -> SourceBoundaryChartWitness:
+            return SourceBoundaryChartWitness(
+                mesh_id=mesh.mesh_id,
+                geometry_id=cell_geometry_id(geometry),
+                topology_id=mesh.topology_id,
+                source_id=derived.source_id,
+                source_revision=derived.source_revision,
+                source_query_id=derived.source_query_id,
+                chart_dimension=2,
+                reference_dimension=3,
+                cell_global_ids=np.full(4, 31, dtype=np.int64),
+                entity_global_ids=np.asarray(facet_ids, dtype=np.int64),
+                local_entity_indices=np.asarray(local_faces, dtype=np.int32),
+                target_reference_vertices=np.asarray(target_refs),
+                source_chart_ids=tuple(derived.chart_ids[row] for row in chart_rows),
+                source_entity_ids=tuple(
+                    derived.source_entity_keys[row] for row in chart_rows
+                ),
+                occurrence_paths=tuple(
+                    derived.source_occurrence_paths[row] for row in chart_rows
+                ),
+                source_parameters=parameters,
+                orientations=orientations,
+            )
+
+        provisional = make_chart(np.ones(4, dtype=np.int8))
+        _, _, target_signs = _surface_target_chart_rows(
+            mesh, geometry, None, provisional, full_source=True
+        )
+        signs_by_facet = dict(
+            zip(provisional.entity_global_ids, target_signs, strict=True)
+        )
+        source_signs = [
+            1 if np.linalg.det(np.stack((p[1] - p[0], p[2] - p[0]))) > 0 else -1
+            for p in parameters
+        ]
+        return make_chart(
+            np.asarray(
+                [
+                    sign * signs_by_facet[facet]
+                    for sign, facet in zip(source_signs, facet_ids, strict=True)
+                ],
+                dtype=np.int8,
+            )
+        )
+
+    def envelope_witness(
+        chart_source: PiecewiseLinearBoundarySource,
+        chart_witness: SourceBoundaryChartWitness,
+    ) -> SurfaceEnvelopeDistanceWitness:
+        return SurfaceEnvelopeDistanceWitness(
+            mesh_id=mesh.mesh_id,
+            geometry_id=cell_geometry_id(geometry),
+            topology_id=mesh.topology_id,
+            source_id=original.source_id,
+            source_revision=original.source_revision,
+            source_query_id="original-scope",
+            offset=0.1,
+            spacing=0.01,
+            certificate_spacing=0.01,
+            envelope_mode="remeshed",
+            bounds=np.asarray((0.05, 0.06, 0.01, 0.0)),
+            envelope_vertices=owner.domain.vertices,
+            envelope_triangles=owner.domain.facets,
+            target_vertex_global_ids=mesh.vertex_global_ids,
+            target_facet_global_ids=np.asarray(facet_ids, dtype=np.int64),
+            derived_source=chart_source,
+            derived_witness=chart_witness,
+        )
+
+    witness = envelope_witness(derived, chart())
+    certificate = certify_source_fidelity(
+        mesh, geometry, original, tolerance=1.0, witness=witness
+    )
+    assert certificate.status == "certified"
+    assert certificate.mesh_to_source_upper > witness.bounds[1]
+    assert certificate.source_to_mesh_upper > witness.bounds[0]
+    assert certificate.mesh_to_source_lower < witness.bounds[2]
+    with pytest.raises(ValueError):
+        envelope_witness(derived, chart(0.5)).require_current(mesh, geometry, original)
+    changed = np.array(derived.domain.vertices, copy=True)
+    changed[0, 0] = 0.25
+    spoofed = eqx.tree_at(lambda value: value.domain.vertices, derived, changed)
+    with pytest.raises(ValueError, match="complete reproduced envelope"):
+        envelope_witness(spoofed, chart()).require_current(mesh, geometry, original)
+
+    from dataclasses import replace
+
+    from phydrax.geometry import _mapped_reference_interpolation
+    from phydrax.geometry._embedding_state import MeshCertificateFinding
+
+    compute = _mapped_reference_interpolation.certify_surface_chart_maps
+
+    def unresolved(*args: Any, **kwargs: Any) -> Any:
+        return replace(
+            compute(*args, **kwargs),
+            findings=(MeshCertificateFinding("chart_test", "unresolved", "mesh"),),
+        )
+
+    monkeypatch.setattr(
+        _mapped_reference_interpolation, "certify_surface_chart_maps", unresolved
+    )
+    uncertain = certify_source_fidelity(
+        mesh, geometry, original, tolerance=1.0, witness=witness
+    )
+    assert uncertain.status == "unresolved"
 
 
 def _domain() -> MeshingDomain:
@@ -657,6 +825,59 @@ def test_parametric_curve_fidelity_certifies_exact_map_and_refuses_omitted_sourc
         )
 
 
+def test_exact_line_fidelity_accounts_for_endpoint_root_brackets() -> None:
+    from phydrax.geometry._source_interpolation import _line_endpoint_bracket_padding
+
+    _, mesh, geometry = _linear_curve_case()
+    source = ParametricCurveBoundarySource(
+        (LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
+        ((0.0, 1.0),),
+        source_id="bracketed-curve",
+        source_revision="r1",
+        curve_entity_ids=("authored-edge",),
+        occurrence_paths=((),),
+        chart_ids=("authored-edge-chart",),
+        endpoint_parameter_bounds=(((0.0, 0.0), (1.0, 1.125)),),
+    )
+    direction = (Fraction(1), Fraction(0), Fraction(0))
+    assert _line_endpoint_bracket_padding(
+        source, 0, Fraction(0), Fraction(1), direction
+    ) == Fraction(1, 8)
+    assert (
+        _line_endpoint_bracket_padding(source, 0, Fraction(0), Fraction(1, 2), direction)
+        == 0
+    )
+    inward = ParametricCurveBoundarySource(
+        (LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),),
+        ((0.0, 1.0),),
+        source_id="inward-bracketed-curve",
+        source_revision="r1",
+        curve_entity_ids=("authored-edge",),
+        occurrence_paths=((),),
+        chart_ids=("authored-edge-chart",),
+        endpoint_parameter_bounds=(((0.0, 0.0), (0.875, 1.0)),),
+    )
+    assert _line_endpoint_bracket_padding(
+        inward, 0, Fraction(9, 10), Fraction(19, 20), direction
+    ) == Fraction(1, 8)
+    witness = _curve_witness(
+        mesh,
+        geometry,
+        source,
+        parameters=np.asarray((((0.0,), (1.0,)),), dtype=np.float64),
+    )
+    exact = certify_source_fidelity(
+        mesh, geometry, source, tolerance=0.0, witness=witness
+    )
+    assert exact.status != "certified"
+    bounded = certify_source_fidelity(
+        mesh, geometry, source, tolerance=0.25, witness=witness
+    )
+    assert bounded.status == "certified"
+    assert bounded.mesh_to_source_upper >= 0.125
+    assert bounded.source_to_mesh_upper >= 0.125
+
+
 def test_chart_witness_static_metadata_keeps_numerical_leaves_compilable() -> None:
     source, mesh, geometry = _linear_curve_case(
         occurrence_paths=(("assembly", "instance"),),
@@ -809,7 +1030,7 @@ def test_curve_fidelity_binds_a_real_edge_of_a_surface_mesh() -> None:
 def test_piecewise_linear_curve_fidelity_uses_complete_source_and_target_edges() -> None:
     from phydrax.discretization._cell_complex import TetrahedralConnectivity
 
-    owner = _PwlBoundaryOwner()
+    owner = _pwl_boundary_owner()
     scope_id = int(owner.scope_entity_ids(1)[0])
     source = PiecewiseLinearBoundarySource(
         owner, 1, entity_ids=np.asarray((scope_id,), dtype=np.int64)
@@ -1532,6 +1753,7 @@ def test_trim_homotopy_rejects_crossing_source_loops() -> None:
             SourcePreparation(_domain()),
         )
 
+
 def test_rooted_chart_endpoints_refuse_unproved_nearby_join() -> None:
     import equinox as eqx
 
@@ -1666,6 +1888,216 @@ def test_source_normal_deviation_uses_actual_target_map_orientation() -> None:
     assert certificate.status == "violated"
     assert certificate.maximum_normal_deviation_lower is not None
     assert certificate.maximum_normal_deviation_lower > 0.1
+
+
+def test_nonbinary_placed_spline_normal_uses_exact_prepared_spans() -> None:
+    q = Fraction
+    control = (
+        ((q(0), q(0), q(0)), (q(0), q(1), q(0))),
+        ((q(1), q(0), q(0)), (q(1), q(1), q(0))),
+    )
+    surface = BSplineSurfacePatch(
+        np.asarray(control, dtype=float),
+        np.ones((2, 2)),
+        np.asarray((0.0, 0.0, 1.0, 1.0)),
+        np.asarray((0.0, 0.0, 1.0, 1.0)),
+        1,
+        1,
+        exact_control_points=control,
+        exact_weights=((q(1), q(1)), (q(1), q(1))),
+        exact_u_knots=(q(0), q(0), q(1), q(1)),
+        exact_v_knots=(q(0), q(0), q(1), q(1)),
+    )
+    placement = BRepAffinePlacement.from_matrix(
+        ((1, 0, 0, q(41, 20)), (0, 0, -1, 0), (0, 1, 0, 0), (0, 0, 0, 1))
+    )
+    template = _domain()
+    domain = MeshingDomain(
+        (
+            MeshingSurfacePatch(
+                _PlacedSurfacePatch(surface, placement), template.patches[0].loops
+            ),
+        ),
+        template.curves,
+        4,
+        source_id="nonbinary-placed-spline",
+        source_revision="nonbinary-placed-spline-revision",
+        corner_points=np.asarray(
+            ((2.05, 0, 0), (3.05, 0, 0), (3.05, 0, 1), (2.05, 0, 1))
+        ),
+    )
+    triangle = ((q(0), q(0)), (q(1), q(0)), (q(0), q(1)))
+    # Independent transformed plane tangents are (1,0,0) and (0,0,1).
+    cache = _DerivativeCache(SourcePreparation(domain))
+    aligned = _normal_deviation_for_cell(domain, 0, triangle, (q(0), q(-1), q(0)), cache)
+    wrong = _normal_deviation_for_cell(domain, 0, triangle, (q(0), q(0), q(1)), cache)
+    assert aligned is not None and 0 <= aligned[0] <= aligned[1] < q(1, 1000)
+    assert wrong is not None and wrong[0] > 1
+    outside = ((q(-1), q(0)), (q(1), q(0)), (q(0), q(1)))
+    assert (
+        _normal_deviation_for_cell(domain, 0, outside, (q(0), q(-1), q(0)), cache) is None
+    )
+
+
+@pytest.mark.parametrize("placed", (False, True))
+@pytest.mark.parametrize(
+    "direction",
+    (
+        (Fraction(2, 7), Fraction(-1, 5), Fraction(-3, 11)),
+        (Fraction(-2, 7), Fraction(1, 5), Fraction(0)),
+    ),
+)
+@pytest.mark.parametrize("point_box", (False, True))
+def test_line_revolution_source_program_encloses_authored_derivatives(
+    placed: bool, direction: tuple[Fraction, ...], point_box: bool
+) -> None:
+    import mpmath as mp
+
+    origin = (Fraction(1, 3), Fraction(-2, 9), Fraction(4, 7))
+    line = LineCurve(
+        tuple(map(float, origin)),
+        tuple(map(float, direction)),
+        origin_exact=origin,
+        direction_exact=direction,
+    )
+    patch = RevolutionSurface(line, (0, 0, 0), (0, 0, 1))
+    placement = BRepAffinePlacement.from_matrix(
+        ((1, 0, 0, Fraction(2, 5)), (0, 0, -1, 0), (0, 1, 0, 0), (0, 0, 0, 1))
+    )
+    surface = _PlacedSurfacePatch(patch, placement) if placed else patch
+    preparation = SourcePreparation(_domain())
+    low = np.asarray((0.0, 0.5) if point_box else (-0.3, 0.1))
+    high = np.asarray((0.0, 0.5) if point_box else (0.7, 0.8))
+    with mp.workdps(100):
+        f = lambda x: mp.mpf(x.numerator) / x.denominator
+        for sample in (low, high, (low + high) / 2):
+            u, v = map(mp.mpf, sample)
+            c, s = mp.cos(u), mp.sin(u)
+            x, y, z = (f(origin[i]) + v * f(direction[i]) for i in range(3))
+            dx, dy, dz = map(f, direction)
+            values = (
+                (c * x - s * y, s * x + c * y, z),
+                (
+                    (-s * x - c * y, c * dx - s * dy),
+                    (c * x - s * y, s * dx + c * dy),
+                    (0, dz),
+                ),
+                (
+                    ((-c * x + s * y, -s * dx - c * dy), (-s * dx - c * dy, 0)),
+                    ((-s * x - c * y, c * dx - s * dy), (c * dx - s * dy, 0)),
+                    ((0, 0), (0, 0)),
+                ),
+            )
+            for order, reference in zip(_DERIVATIVE_ORDERS, values, strict=True):
+                exact = np.asarray(reference, dtype=object)
+                if placed:
+                    transformed = np.empty_like(exact)
+                    transformed[0] = exact[0]
+                    transformed[1] = -exact[2]
+                    transformed[2] = exact[1]
+                    if order == 0:
+                        transformed[0] += f(Fraction(2, 5))
+                    exact = transformed
+                lower, upper = preparation.derivative_program(surface, order).evaluate(
+                    low[None, :], high[None, :]
+                )
+                for index in np.ndindex(exact.shape):
+                    assert mp.mpf(float(lower[(0, *index)])) <= exact[index]
+                    assert exact[index] <= mp.mpf(float(upper[(0, *index)]))
+
+
+def test_line_revolution_preserves_radical_profile_coefficient() -> None:
+    radical = RadicalElement.sqrt(2) / 3
+    zero = Fraction(0)
+    origin = (radical, zero, zero)
+    direction = (Fraction(1, 7), zero, Fraction(-1, 5))
+    line = LineCurve(
+        tuple(map(float, origin)),
+        tuple(map(float, direction)),
+        origin_exact=origin,
+        direction_exact=direction,
+    )
+    surface = RevolutionSurface(line, (0, 0, 0), (0, 0, 1))
+    preparation = SourcePreparation(_domain())
+    chart = np.asarray(((0.0, 0.0),))
+    expected = (
+        (radical, zero, zero),
+        ((zero, direction[0]), (radical, zero), (zero, direction[2])),
+        (
+            ((-radical, zero), (zero, zero)),
+            ((zero, direction[0]), (direction[0], zero)),
+            ((zero, zero), (zero, zero)),
+        ),
+    )
+    for order, values in zip(_DERIVATIVE_ORDERS, expected, strict=True):
+        lower, upper = preparation.derivative_program(surface, order).evaluate(
+            chart, chart
+        )
+        exact = np.asarray(values, dtype=object)
+        for index in np.ndindex(exact.shape):
+            assert Fraction.from_float(float(lower[(0, *index)])) <= exact[index]
+            assert exact[index] <= Fraction.from_float(float(upper[(0, *index)]))
+
+
+def test_native_cylinder_line_revolution_chart_cover_is_complete() -> None:
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=SpatialCoordinateContract.si())
+    )
+    source = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
+    cover = source.boundary_chart_cover()
+    assert cover.complete
+    assert cover.semantics == "certified"
+    assert not cover.findings
+
+
+@pytest.mark.parametrize("placed", (False, True))
+def test_circle_revolution_source_program_encloses_exact_derivatives(
+    placed: bool,
+) -> None:
+    import mpmath as mp
+
+    radius = Fraction(3, 5)
+    circle = CircleCurve(
+        (2, 0, 0),
+        (1, 0, 0),
+        (0, 0, 1),
+        float(radius),
+        radius_exact=radius,
+    )
+    patch = RevolutionSurface(circle, (0, 0, 0), (0, 0, 1))
+    placement = BRepAffinePlacement.from_matrix(
+        ((1, 0, 0, Fraction(2, 5)), (0, 0, -1, 0), (0, 1, 0, 0), (0, 0, 0, 1))
+    )
+    surface = _PlacedSurfacePatch(patch, placement) if placed else patch
+    preparation = SourcePreparation(_domain())
+    low, high = np.asarray((-0.3, 0.1)), np.asarray((0.7, 0.8))
+    with mp.workdps(100):
+        r = mp.mpf(3) / 5
+        functions = (
+            lambda u, v: (2 + r * mp.cos(v)) * mp.cos(u),
+            lambda u, v: (2 + r * mp.cos(v)) * mp.sin(u),
+            lambda u, v: r * mp.sin(v),
+        )
+        for sample in (low, high, (low + high) / 2):
+            u, v = map(mp.mpf, sample)
+            for order in _DERIVATIVE_ORDERS:
+                lower, upper = preparation.derivative_program(surface, order).evaluate(
+                    low[None, :], high[None, :]
+                )
+                for axis in range(3):
+                    source_axis = (0, 2, 1)[axis] if placed else axis
+                    sign = -1 if placed and axis == 1 else 1
+                    for indices in np.ndindex((2,) * order):
+                        derivative = (indices.count(0), indices.count(1))
+                        value = sign * mp.diff(functions[source_axis], (u, v), derivative)
+                        if placed and order == 0 and axis == 0:
+                            value += mp.mpf(2) / 5
+                        index = (0, axis, *indices)
+                        assert (
+                            mp.mpf(float(lower[index]))
+                            <= value
+                            <= mp.mpf(float(upper[index]))
+                        )
 
 
 def test_curved_cell_normal_deviation_bound_is_first_order_in_cell_width() -> None:

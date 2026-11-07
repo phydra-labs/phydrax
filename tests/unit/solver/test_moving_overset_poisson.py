@@ -165,7 +165,7 @@ def _owned_boundary_ids(view: OwnerLocalCellGeometry, /) -> np.ndarray:
     )
 
 
-def _case() -> tuple[
+def _case(*, bound: bool = True) -> tuple[
     OversetConnectivity,
     dict[str, FiniteElementPlan],
     Composition,
@@ -189,6 +189,8 @@ def _case() -> tuple[
             OversetPartSpec("receptor", boundary=receptor.scope(1, boundary_ids)),
         ),
         policy=OversetPolicy(fringe_layers=1),
+        partition_priority=("receptor", "donor") if bound else None,
+        partition_sources={} if bound else None,
     )
     plans: dict[str, FiniteElementPlan] = {}
     entries = list(connectivity.composition_entries())
@@ -253,8 +255,36 @@ def _advance(
         numeric_version="moving-overset-test",
     )
 
+def test_serial_composite_rejects_unbound_connectivity() -> None:
+    connectivity, plans, composition, receptor = _case(bound=False)
+    advance = _advance(receptor, (0.01, 0.0))
+    with pytest.raises(ValueError, match="connectivity-bound partition"):
+        prepare_moving_overset_poisson_update(
+            composition, connectivity, {"receptor": advance}, plans, "u",
+            part_priority=("receptor", "donor"),
+            boundary_values=lambda points: jnp.zeros(points.shape[0]),
+        )
 
-def test_moving_overset_poisson_commits_all_parts_with_overlap_flux_balance() -> None:
+def test_serial_composite_rejects_partition_input_mismatch() -> None:
+    connectivity, plans, composition, receptor = _case()
+    advance = _advance(receptor, (0.01, 0.0))
+    boundary = lambda points: jnp.zeros(points.shape[0])
+    with pytest.raises(ValueError, match="part_priority must match"):
+        prepare_moving_overset_poisson_update(
+            composition, connectivity, {"receptor": advance}, plans, "u",
+            part_priority=("donor", "receptor"), boundary_values=boundary,
+        )
+    cavity = np.asarray(((0.1, 0.1), (0.2, 0.1), (0.1, 0.2)))
+    with pytest.raises(ValueError, match="cavities must match"):
+        prepare_moving_overset_poisson_update(
+            composition, connectivity, {"receptor": advance}, plans, "u",
+            part_priority=("receptor", "donor"), cavities=(cavity,),
+            boundary_values=boundary,
+        )
+
+
+
+def test_moving_overset_poisson_commits_one_physical_partition() -> None:
     connectivity, plans, composition, receptor = _case()
     advance = _advance(receptor, (0.01, 0.0))
 
@@ -264,22 +294,37 @@ def test_moving_overset_poisson_commits_all_parts_with_overlap_flux_balance() ->
         {"receptor": advance},
         plans,
         "u",
+        part_priority=("receptor", "donor"),
+        boundary_values=lambda points: jnp.zeros(points.shape[0]),
     )
 
     assert isinstance(update, PreparedMovingOversetPoissonUpdate)
     assert update.accepted
-    expected_content = {"donor": 2.0, "receptor": 0.125}
+    expected_content = {"donor": 1.875, "receptor": 0.125}
     assert {part.part_name for part in update.parts} == set(expected_content)
     for part in update.parts:
-        assert part.remap_complete
+        assert not part.remap_complete
+        assert part.conservative_remap is None
+        assert part.overlap_evidence is None
+        assert part.reanalysis_id
         assert part.source_content == pytest.approx(expected_content[part.part_name])
         assert part.target_content == pytest.approx(expected_content[part.part_name])
-        assert part.overlap_defect <= 1e-9
+        assert part.overlap_defect is None
         assert part.linear_residual <= 1e-11
         assert part.boundary_flux + part.overset_flux == pytest.approx(
             -expected_content[part.part_name], abs=1e-9
         )
         assert part.flux_defect <= 1e-9
+    assert update.partition is not None
+    assert update.partition is update.candidate.bound_partition
+    assert update.composite is not None
+    assert update.interfaces is not None
+    assert float(update.partition.total_area) == pytest.approx(2.0)
+    assert update.composite.flux_defect <= 1e-9
+    assert sum(part.overset_flux for part in update.parts) == pytest.approx(0.0, abs=1e-12)
+    assert any(edge.kind == "inter_part" for edge in update.interfaces)
+    receptor_part = next(part for part in update.parts if part.part_name == "receptor")
+    assert abs(receptor_part.overset_flux) > 0.1
 
     rejected = update.commit(accepted_boundary=False)
     assert not rejected.published
@@ -289,6 +334,78 @@ def test_moving_overset_poisson_commits_all_parts_with_overlap_flux_balance() ->
     assert accepted.composition.composition_id != composition.composition_id
     assert accepted.composition.entry("poisson:donor").value is not None
     assert accepted.composition.entry("poisson:receptor").value is not None
+
+
+def test_composite_solution_uses_current_boundary_not_predecessor_receptors() -> None:
+    connectivity, plans, composition, receptor = _case()
+    advance = _advance(receptor, (0.01, 0.0), move_all=True)
+    zero = prepare_moving_overset_poisson_update(
+        composition, connectivity, {"receptor": advance}, plans, "u",
+        boundary_values=lambda points: jnp.zeros(points.shape[0]), part_priority=("receptor", "donor"),
+    )
+    one = prepare_moving_overset_poisson_update(
+        composition, connectivity, {"receptor": advance}, plans, "u",
+        boundary_values=lambda points: jnp.ones(points.shape[0]), part_priority=("receptor", "donor"),
+    )
+    assert zero.update_id != one.update_id
+    assert zero.accepted and one.accepted
+    assert zero.partition is not None
+    assert float(zero.partition.total_area) == pytest.approx(2.0)
+    for first, second in zip(zero.parts, one.parts, strict=True):
+        assert first.part_name == second.part_name
+        assert np.max(np.abs(np.asarray(second.coefficients - first.coefficients))) > 0.9
+    receipt = zero.commit(accepted_boundary=True)
+    assert receipt.published
+    with pytest.raises(ValueError, match="current overset source result"):
+        prepare_moving_overset_poisson_update(
+            receipt.composition, zero.candidate, {"receptor": advance}, plans, "u",
+            boundary_values=lambda points: jnp.zeros(points.shape[0]), part_priority=("receptor", "donor"),
+        )
+    successor_parts = {part.name: part for part in zero.candidate.assembly.parts}
+    successor_plans = {}
+    for name, part in successor_parts.items():
+        result = _cell_result(part)
+        old = plans[name]
+        successor_plans[name] = FiniteElementPlan(
+            result.mesh, old.fields, precision_policy=old.precision_policy,
+            coordinate_spec=result.geometry, coefficient_dtype=old.coefficient_dtype,
+            coordinate_measure=old.coordinate_measure,
+        )
+    second = prepare_moving_overset_poisson_update(
+        receipt.composition, zero.candidate,
+        {
+            "donor": _advance(successor_parts["donor"], (0.002, 0.0)),
+            "receptor": _advance(successor_parts["receptor"], (0.005, 0.0), move_all=True),
+        },
+        successor_plans, "u",
+        boundary_values=lambda points: jnp.ones(points.shape[0]), part_priority=("receptor", "donor"),
+    )
+    assert second.previous.connectivity_id == zero.candidate.connectivity_id
+    assert second.accepted
+    assert second.commit(accepted_boundary=True).published
+
+
+def test_composite_boundary_support_distinguishes_cavity_and_unmatched_edges() -> None:
+    from phydrax.geometry._overset_partition import partition_overset_triangles
+    from phydrax.solver._moving_overset_poisson import _require_physical_partition_boundary
+
+    points = np.asarray(((0., 0.), (1., 0.), (1., 1.), (0., 1.)))
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64)
+    background = ("background", points, triangles)
+    cavity = np.asarray(((0.25, 0.25), (0.75, 0.25), (0.75, 0.75), (0.25, 0.75)))
+    partition = partition_overset_triangles((background,), (cavity,))
+    interfaces = _require_physical_partition_boundary(partition, background, (cavity,))
+    assert float(partition.total_area) == pytest.approx(0.75)
+    assert any(edge.kind == "physical_boundary" for edge in interfaces)
+
+    rogue = (
+        "rogue",
+        np.asarray(((1., 0.), (1.5, 0.5), (1., 1.))),
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+    )
+    partition = partition_overset_triangles((rogue, background), ())
+    with pytest.raises(ValueError, match="unmatched edge"):
+        _require_physical_partition_boundary(partition, background, ())
 
 
 def test_moving_overset_orphan_refuses_before_composition_publication() -> None:
@@ -740,6 +857,7 @@ def test_owner_local_moving_overset_poisson_commits_collectively() -> None:
     assert {part.part_name for part in update.parts} == set(previous.global_part_names)
     for part in update.parts:
         assert part.remap_complete
+        assert part.overlap_defect is not None
         assert part.overlap_defect <= 1e-9
         assert part.boundary_flux + part.overset_flux == pytest.approx(
             -part.target_content, abs=1e-9

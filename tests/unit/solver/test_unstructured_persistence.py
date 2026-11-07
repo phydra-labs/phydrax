@@ -128,6 +128,7 @@ def _moving_sliding_runtime() -> Any:
             face_ids
         ],
         receptor_face_cells=face_cells,
+        receptor_face_orientations=orientation.astype(np.int8),
     )
 
     def translation(time: Any, points: Any, args: Any) -> Any:

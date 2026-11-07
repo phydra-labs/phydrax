@@ -4,9 +4,11 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
+#include "interval_program.hpp"
 #include "phydrax_meshcore.h"
 #include "rounding.hpp"
 
@@ -446,8 +448,73 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
     upper[out + k] = high;
   }
 }
+void execute_validated(const int64_t* instructions, int64_t instruction_count,
+                       const int64_t* indices, const double* parameters,
+                       double* lower, double* upper) noexcept {
+  for (int64_t row_index = 0; row_index < instruction_count; ++row_index) {
+    const Row row = row_at(instructions, row_index);
+    if (row.size == 0) continue;
+    if (row.opcode == kReduceSum) {
+      for (int64_t element = 0; element < row.size; ++element) {
+        const int64_t base = row.a + element * row.aux;
+        Reduction sum;
+        accumulate(lower, upper, base, base + row.aux, sum);
+        store_reduction(sum, parameters[row.b_index], lower, upper, row.out + element);
+      }
+    } else {
+      execute_row(row, 0, row.size, indices, parameters, lower, upper);
+    }
+  }
+}
 
 }  // namespace
+
+int32_t phx::mc::PreparedIntervalProgram::bind(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count,
+    int64_t workspace_size) {
+  workspace_size_ = -1;
+  return phx::mc::guarded([&]() -> int32_t {
+    if (!phx::mc::addressable(instruction_count, kFields, sizeof(int64_t)) ||
+        !phx::mc::addressable(index_count, 1, sizeof(int64_t)) ||
+        !phx::mc::addressable(parameter_count, 1, sizeof(double)) ||
+        !phx::mc::addressable(workspace_size, 1, sizeof(double)) ||
+        (instruction_count > 0 && instructions == nullptr) ||
+        (index_count > 0 && indices == nullptr) ||
+        (parameter_count > 0 && parameters == nullptr))
+      return PHX_MC_INVALID_ARGUMENT;
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    std::vector<int64_t> owned_instructions, owned_indices;
+    std::vector<double> owned_parameters;
+    if (instruction_count)
+      owned_instructions.assign(instructions, instructions + instruction_count * kFields);
+    if (index_count) owned_indices.assign(indices, indices + index_count);
+    if (parameter_count) owned_parameters.assign(parameters, parameters + parameter_count);
+    if (!program_valid(owned_instructions.data(), instruction_count, owned_indices.data(),
+                       index_count, owned_parameters.data(), parameter_count, workspace_size))
+      return PHX_MC_INVALID_INPUT;
+    instructions_ = std::move(owned_instructions);
+    indices_ = std::move(owned_indices);
+    parameters_ = std::move(owned_parameters);
+    workspace_size_ = workspace_size;
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx::mc::PreparedIntervalProgram::execute(
+    double* lower, double* upper, int64_t workspace_size) const {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (workspace_size_ < 0 || workspace_size != workspace_size_ ||
+        (workspace_size > 0 && (lower == nullptr || upper == nullptr)))
+      return PHX_MC_INVALID_ARGUMENT;
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    execute_validated(instructions_.data(), static_cast<int64_t>(instructions_.size() / kFields),
+                      indices_.data(), parameters_.data(), lower, upper);
+    return PHX_MC_OK;
+  });
+}
 
 extern "C" {
 
@@ -474,20 +541,7 @@ int32_t phx_mc_interval_program_execute(const int64_t* instructions, int64_t ins
                        parameter_count, workspace_size)) {
       return PHX_MC_INVALID_INPUT;
     }
-    for (std::int64_t row_index = 0; row_index < instruction_count; ++row_index) {
-      const Row row = row_at(instructions, row_index);
-      if (row.size == 0) continue;
-      if (row.opcode == kReduceSum) {
-        for (std::int64_t element = 0; element < row.size; ++element) {
-          const std::int64_t base = row.a + element * row.aux;
-          Reduction sum;
-          accumulate(lower, upper, base, base + row.aux, sum);
-          store_reduction(sum, parameters[row.b_index], lower, upper, row.out + element);
-        }
-      } else {
-        execute_row(row, 0, row.size, indices, parameters, lower, upper);
-      }
-    }
+    execute_validated(instructions, instruction_count, indices, parameters, lower, upper);
     return PHX_MC_OK;
   });
 }

@@ -46,6 +46,39 @@ _WORKER = Path(__file__).with_name("_native_cad_archive_worker.py")
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_exact_plc_bank_restores_by_constructor_and_refuses_forgery(tmp_path: Path) -> None:
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    source = ExactPlcCellGeometrySource(
+        "periodic-quotient-chart", "original-mesh", np.asarray([2, 7], dtype=np.int64),
+        ((Fraction(1, 3), Fraction(0)), (Fraction(4, 3), Fraction(0))),
+        vertex_source_entity_ids=(None, None), vertex_occurrence_paths=((), ()),
+    )
+    path = tmp_path / "bank.phx"
+    write_model_artifact(path, source, limits=MODEL_ARCHIVE_LIMITS)
+    restored = read_model_artifact(
+        path, expected_type=ExactPlcCellGeometrySource, restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.source_map_id == source.source_map_id
+    assert restored.exact_coordinates == source.exact_coordinates
+
+    forged = copy.copy(source)
+    object.__setattr__(forged, "source_map_id", "0" * 64)
+    write_model_artifact(path, forged, limits=MODEL_ARCHIVE_LIMITS)
+    with pytest.raises(ArrayArchiveCorruptionError) as refusal:
+        read_model_artifact(
+            path, expected_type=ExactPlcCellGeometrySource, restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+    assert "does not reproduce" in str(refusal.value.__cause__)
+
+
 def test_form_values_round_trip_through_registered_structure_recipes() -> None:
     _register_model_archive_types()
     form_type = FormType(3, 1, twist="twisted", fiber_shape=(2,), ambient_dimension=4)

@@ -51,12 +51,13 @@ from .._controls import (
     RegionControl,
     RegionSeed,
 )
+from .._certification import _ComputedSurfaceAcceptance
 from .._native_construction import (
     NativeCertificationRequest,
     NativeMeshConstruction,
     NativeMeshOrganization,
 )
-from .._plc_source import _certify_cad_surface, PiecewiseLinearComplex, PlcBoundaryPolicy
+from .._plc_source import _ValidatedCadSurface, PiecewiseLinearComplex, PlcBoundaryPolicy
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import UniformSizeControl
@@ -336,6 +337,8 @@ def _cad_plc_data(
     boundary: PlcBoundaryPolicy,
     deviation: float | None,
     /,
+    *,
+    computed_surface: _ComputedSurfaceAcceptance | None = None,
 ) -> _CadPlcData:
     """PLC of an accepted CAD surface mesh; facet rows are source patch rows.
 
@@ -703,12 +706,16 @@ def _cad_plc_data(
         if plane is not None:
             facet_planes[patch] = plane
     report = surface.certification
+    if computed_surface is not None and computed_surface.report is not report:
+        raise ValueError("Computed surface acceptance binds another report.")
+    validated_surface = None
     if report is None:
         fidelity_tolerance = 0.0 if deviation is None else deviation
         normal_deviation = None
-        embedding, fidelity = _certify_cad_surface(
+        validated_surface = _ValidatedCadSurface(
             surface_source, fidelity_tolerance, normal_deviation, None
         )
+        embedding, fidelity = validated_surface.proofs
     else:
         certification_inputs = report.inputs
         fidelity_tolerance = certification_inputs.fidelity_tolerance
@@ -718,12 +725,13 @@ def _cad_plc_data(
         embedding = report.embedding
         fidelity = report.fidelity
         if fidelity is None:
-            _, fidelity = _certify_cad_surface(
+            validated_surface = _ValidatedCadSurface(
                 surface_source,
                 fidelity_tolerance,
                 normal_deviation,
                 certification_inputs.junction_vertices,
             )
+            _, fidelity = validated_surface.proofs
     complex_ = PiecewiseLinearComplex(
         np.asarray(
             [[float(value) for value in point] for point in plc_points], dtype=np.float64
@@ -748,6 +756,8 @@ def _cad_plc_data(
         cad_vertex_rows=tuple(mesh_row_to_plc),
         cad_segment_edge_ids=tuple(segment_edge_ids),
         cad_polygon_cell_ids=tuple(triangle_cell_ids),
+        _validated_cad_surface=validated_surface,
+        _computed_surface=computed_surface,
         boundary=boundary,
         facet_planes=facet_planes,
         facet_plane_tolerances=np.full(
@@ -930,6 +940,7 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
         fidelity_source: SourceBoundaryQuery | None = None,
         maximum_deviation: float | None = None,
         boundary: PlcBoundaryPolicy = "fixed",
+        _computed_surface: _ComputedSurfaceAcceptance | None = None,
     ) -> None:
         if isinstance(domain, BRepModel):
             domain = MeshingDomain.from_brep(domain)
@@ -985,7 +996,10 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
             deviation = finite_real_scalar(float(maximum_deviation), "maximum_deviation")
             if deviation < 0.0:
                 raise ValueError("maximum_deviation must be non-negative.")
-        data = _cad_plc_data(domain, surface, surface_source, boundary, deviation)
+        data = _cad_plc_data(
+            domain, surface, surface_source, boundary, deviation,
+            computed_surface=_computed_surface,
+        )
         plc_source = NativePlcSource(
             data.complex, domain.source_id, domain.source_revision
         )

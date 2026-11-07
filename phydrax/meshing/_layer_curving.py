@@ -17,10 +17,10 @@ from ..discretization import (
     CellGeometrySpec,
     CellMesh,
     CellValidityCertificate,
-    certify_cell_geometry_validity,
 )
-from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._cell_geometry_validity import cell_geometry_id, ComputedCellValidity
 from ..discretization._coordinate_enclosure import (
+    affine_map,
     compose_expression,
     evaluate_expression,
     Expression,
@@ -36,13 +36,15 @@ from ..discretization._nested_reference_types import (
     reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
     validate_nested_reference_witnesses,
+    validate_reference_cell_partition,
     validate_reference_cell_map_witnesses,
 )
 from ..discretization.fem import lagrange_element
 from ..geometry._global_embedding import (
-    certify_global_embedding,
     GlobalEmbeddingCertificate,
+    ValidatedGlobalEmbedding,
 )
+from ..geometry._domain_boundary import MeshingDomainBoundarySource
 from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ..geometry._source_boundary_records import (
     rational_chart_tokens,
@@ -95,7 +97,9 @@ from ._layer_curving_records import (
     _prepare_barycentric_solver_3d,
     _reference_expression,
     _reference_face_dofs,
+    _require_reoriented_wall_side,
     _validate_parametric_chart_geometry,
+    parametric_wall_query,
     LayerColumnProjectionIdentity,
     LayerCurvingImplicitRootTrace,
     LayerCurvingMappedChartTrace,
@@ -526,6 +530,17 @@ def _face_table(
     return target, face_ids
 
 
+def layer_wall_boundary_query(
+    layers: BoundaryLayerMesh, charts: SurfaceSourceCharts, /
+) -> MeshingDomainBoundarySource:
+    """Resolve the actual grown wall cells to complete original source patches."""
+    from ._layer_core_brep import grown_wall_cells
+
+    return parametric_wall_query(
+        charts, tuple(int(value) for value in grown_wall_cells(layers))
+    )
+
+
 def _source_faces(
     construction: LayerCoreConstruction,
     layers: BoundaryLayerMesh,
@@ -559,6 +574,9 @@ def _source_faces(
         raise ValueError(
             "Layer/core composition changed exact layer vertex identity or coordinates."
         )
+    from ..geometry._source_fidelity import reprove_actual_planar_chart_rows
+
+    actual_chart_rows = reprove_actual_planar_chart_rows(charts)
     wall_map = np.asarray(layers.wall_vertices, dtype=np.int64)
     if wall_map.shape != (wall.coordinates.shape[0],):
         raise ValueError("Boundary-layer root vertex map does not bind its source wall.")
@@ -598,7 +616,9 @@ def _source_faces(
     rows_by_cell_id = {
         int(identifier): row for row, identifier in enumerate(charts.cell_global_ids)
     }
-    query_patches = set(int(value) for value in charts.boundary_source.patches)
+    from ._layer_core_brep import grown_wall_cells
+
+    selected_cells = {int(value) for value in grown_wall_cells(layers)}
     layer_values = np.asarray(layers.layer_index, dtype=np.int64)
     front_row_values = np.asarray(layers.column_index, dtype=np.int64)
     front_columns = np.asarray(layers.front_row_column_ids, dtype=np.int64)
@@ -607,7 +627,7 @@ def _source_faces(
     for chart_row, cell_id in enumerate(charts.cell_global_ids):
         cell_identifier = int(cell_id)
         patch = int(charts.root_patches[chart_row])
-        if patch not in query_patches:
+        if cell_identifier not in selected_cells:
             continue
         if cell_identifier not in source_cell_rows:
             raise ValueError("Exact source chart references a missing source-wall cell.")
@@ -658,6 +678,8 @@ def _source_faces(
         }
         exact_parameters = _fraction_chart2(
             charts.root_parameter_chart(rows_by_cell_id[cell_identifier])
+            if actual_chart_rows is None
+            else actual_chart_rows[rows_by_cell_id[cell_identifier]]
         )
         local_vertices = _FACE_ROUTES[target_block.cell_kind][local_face]
         reference_vertices = _exact_reference_cell_vertices(target_block.cell_kind)
@@ -691,6 +713,8 @@ def _source_faces(
             raise ValueError(
                 "Source chart degenerates on the realized layer boundary face."
             )
+        if actual_chart_rows is not None:
+            _require_reoriented_wall_side(charts, chart_row, actual_chart_rows[chart_row], area)
         result.append(
             _SourceFace(
                 chart_row,
@@ -1060,6 +1084,7 @@ def _chart_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     charts: SurfaceSourceCharts,
+    source_query: MeshingDomainBoundarySource,
     faces: tuple[_SourceFace, ...],
     /,
 ) -> SourceBoundaryChartWitness:
@@ -1073,7 +1098,7 @@ def _chart_witness(
         topology_id=mesh.topology_id,
         source_id=charts.source_id,
         source_revision=charts.source_revision,
-        source_query_id=charts.boundary_source.source_scope_id,
+        source_query_id=source_query.source_scope_id,
         chart_dimension=2,
         reference_dimension=3,
         cell_global_ids=np.asarray(
@@ -1164,6 +1189,13 @@ def _construction_with_geometry(
         construction.reference_mesh,
         construction.reference_geometry,
         construction.polyhedral_core,
+        # These are retained construction operands, not proofs of the new map.
+        # LayerCoreRootGeometry independently rechecks them at publication.
+        construction.overlap_exact_geometry,
+        construction.overlap_source_stencils,
+        construction.layer_core_column_certification,
+        construction.layer_root_partition,
+        construction.execution_carrier,
     )
 
 
@@ -1214,6 +1246,7 @@ def _curve_adaptive_implicit_layer_core(
     frame_id: str,
     fidelity_tolerance: float,
     maximum_normal_deviation: float | None,
+    embedding_proofs: list[ValidatedGlobalEmbedding] | None,
     /,
 ) -> LayerCurvingConstructionResult:
     """Create and continuously certify mixed-cell maps over adaptive implicit root charts."""
@@ -1228,7 +1261,9 @@ def _curve_adaptive_implicit_layer_core(
         faces = _implicit_source_faces(
             construction.mesh, layers, source_query, root_witness
         )
-        straight = _straight_geometry(construction.mesh, policy.degree)
+        straight = _straight_geometry(
+            construction.mesh, policy.degree, source_geometry=construction.geometry
+        )
         witness = _implicit_chart_witness(
             construction.mesh, straight, source_query, faces
         )
@@ -1473,9 +1508,10 @@ def _curve_adaptive_implicit_layer_core(
         )
 
     try:
-        validity = certify_cell_geometry_validity(
-            candidate, mesh=construction.mesh, policy=policy.validity
+        computed_validity = ComputedCellValidity(
+            candidate, construction.mesh, policy.validity, None
         )
+        validity = computed_validity.certificate
     except (ArithmeticError, ValueError) as error:
         return _rollback(
             LayerCurvingStatus.ROLLED_BACK_INVALID,
@@ -1502,7 +1538,12 @@ def _curve_adaptive_implicit_layer_core(
             chart_witness=witness,
         )
     try:
-        embedding = certify_global_embedding(construction.mesh, candidate, validity)
+        proof = ValidatedGlobalEmbedding(
+            construction.mesh, candidate, validity, validated_validity=computed_validity
+        )
+        embedding = proof.certificate
+        if embedding_proofs is not None:
+            embedding_proofs.append(proof)
     except (ArithmeticError, ValueError) as error:
         return _rollback(
             LayerCurvingStatus.ROLLED_BACK_EMBEDDING,
@@ -1644,6 +1685,45 @@ def _curve_adaptive_implicit_layer_core(
     )
 
 
+def _mapped_child_chart_on_parent_face(
+    mapping: NestedCellReferenceMap,
+    parent_kind: str,
+    target_kind: str,
+    target_corners: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> None:
+    """Prove an exact affine child chart remains on one actual parent face."""
+    from ..discretization._reference_cell import reference_cell_topology
+
+    if (
+        mapping.source_cell_kind != parent_kind
+        or mapping.target_cell_kind != target_kind
+        or mapping.arguments is None
+    ):
+        raise ValueError("Mapped child changes its original layer reference chart.")
+    arguments = tuple(_reference_expression(value) for value in mapping.arguments)
+    if affine_map(arguments, 3) is None:
+        raise ValueError("Mapped child source-wall ancestry requires an exact affine chart.")
+    points = tuple(_exact3(mapping.evaluate(point)) for point in target_corners)
+    vertices = _exact_reference_cell_vertices(parent_kind)
+    for face in reference_cell_topology(parent_kind).entities[2]:
+        if len(face) not in (3, 4):
+            continue
+        corners = _fraction_chart3((vertices[int(face[0])], vertices[int(face[1])], vertices[int(face[-1])]))
+        solver = _prepare_barycentric_solver_3d(corners)
+        try:
+            weights = tuple(_barycentric_3d(point, corners, solver=solver) for point in points)
+        except ValueError:
+            continue
+        if len(face) == 3:
+            inside = all(all(value >= 0 for value in row) for row in weights)
+        else:
+            inside = all(0 <= row[1] <= 1 and 0 <= row[2] <= 1 for row in weights)
+        if inside:
+            return
+    raise ValueError("Mapped child source chart leaves every original parent boundary face.")
+
+
 def _mapped_layer_column_identity(
     construction: LayerCoreConstruction,
     layers: BoundaryLayerMesh,
@@ -1652,21 +1732,43 @@ def _mapped_layer_column_identity(
 ) -> LayerColumnProjectionIdentity:
     wall = layers.source_wall
     wall_map = np.asarray(layers.wall_vertices, dtype=np.int64)
-    mesh = construction.mesh
+    mesh = layers.mesh
     target_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     if wall_map.shape != np.asarray(wall.vertex_global_ids).shape:
         raise ValueError("Mapped layer source-wall vertex ancestry is incomplete.")
     target_faces, target_face_ids = _face_table(mesh)
-    layer_cell_ids = np.concatenate(
-        tuple(
-            np.asarray(block.global_ids, dtype=np.int64) for block in layers.mesh.blocks
-        )
+    layer_cell_ids = np.sort(
+        np.asarray(layers.mesh.entity_set(3).entity_ids, dtype=np.int64)
     )
     layer_rows = {int(identifier): row for row, identifier in enumerate(layer_cell_ids)}
+    parent_kinds = {
+        int(identifier): block.cell_kind
+        for block in layers.mesh.blocks
+        for identifier in np.asarray(block.global_ids, dtype=np.int64)
+    }
+    target_kinds = {
+        int(identifier): block.cell_kind
+        for block in construction.mesh.blocks
+        for identifier in np.asarray(block.global_ids, dtype=np.int64)
+    }
     layer_indices = np.asarray(layers.layer_index, dtype=np.int64)
     front_rows = np.asarray(layers.column_index, dtype=np.int64)
     front_columns = np.asarray(layers.front_row_column_ids, dtype=np.int64)
     column_sources = np.asarray(layers.column_vertex_sources, dtype=np.int64)
+    partition = construction.layer_root_partition
+    child_maps: dict[int, NestedCellReferenceMap] = {}
+    if partition is not None:
+        validate_reference_cell_partition(partition)
+        for group in partition.maps:
+            for mapping in nested_cell_reference_maps(group):
+                if mapping.target_cell_id in child_maps:
+                    raise ValueError("Mapped layer partition repeats a target cell.")
+                if mapping.source_cell_id not in layer_rows:
+                    raise ValueError("Mapped layer partition names an absent original layer cell.")
+                child_maps[mapping.target_cell_id] = mapping
+    from ._layer_core_brep import grown_wall_cells
+
+    selected_cells = {int(value) for value in grown_wall_cells(layers)}
     provenance: dict[
         int, tuple[int, int, int, str, tuple[int, ...], tuple[str, ...], tuple[int, ...]]
     ] = {}
@@ -1678,6 +1780,8 @@ def _mapped_layer_column_identity(
         for source_row, source_cell_id in enumerate(
             np.asarray(block.global_ids, dtype=np.int64)
         ):
+            if int(source_cell_id) not in selected_cells:
+                continue
             source_vertices = np.asarray(block.vertices[source_row], dtype=np.int64)
             target_rows = wall_map[source_vertices]
             if np.any(target_rows < 0) or np.any(target_rows >= target_vertex_ids.size):
@@ -1691,7 +1795,8 @@ def _mapped_layer_column_identity(
                     "Mapped source-wall facet does not bind one exact output boundary face."
                 )
             block_row, cell_row, _, _ = candidates[0]
-            target_cell_id = int(np.asarray(mesh.blocks[block_row].global_ids)[cell_row])
+            target_block = mesh.blocks[block_row]
+            target_cell_id = int(np.asarray(target_block.global_ids)[cell_row])
             layer_row = layer_rows.get(target_cell_id)
             if layer_row is None:
                 raise ValueError(
@@ -1720,14 +1825,38 @@ def _mapped_layer_column_identity(
                     "Mapped source-wall ancestry repeats an output boundary face."
                 )
             provenance[face_id] = values
+    by_front = {value[2]: value for value in provenance.values()}
+    if len(by_front) != len(provenance):
+        raise ValueError("Mapped wall facets do not have unique source front rows.")
     records = []
-    for face_id in np.asarray(witness.entity_global_ids, dtype=np.int64):
-        try:
-            records.append(provenance[int(face_id)])
-        except KeyError as error:
-            raise ValueError(
-                "Mapped source chart lost its exact layer/source-column ancestry."
-            ) from error
+    for witness_row, target_cell in enumerate(np.asarray(witness.cell_global_ids, dtype=np.int64)):
+        target_id = int(target_cell)
+        mapping = child_maps.get(target_id)
+        parent_id = mapping.source_cell_id if mapping is not None else target_id
+        layer_row = layer_rows.get(parent_id)
+        if layer_row is None:
+            # Core charts have exact mapped-root authority, not a layer column.
+            if mapping is not None:
+                raise ValueError("Mapped child ancestry names an absent layer parent.")
+            records.append((-1, -1, -1, "", (), (), ()))
+            continue
+        if partition is not None and mapping is None:
+            # An identically numbered core cell must not be mistaken for an
+            # original layer parent when an explicit child partition is present.
+            records.append((-1, -1, -1, "", (), (), ()))
+            continue
+        front_row = int(front_rows[layer_row])
+        original = by_front.get(front_row)
+        if original is None:
+            raise ValueError("Mapped layer chart lost its source front-row ancestry.")
+        if mapping is not None:
+            _mapped_child_chart_on_parent_face(
+                mapping,
+                parent_kinds[parent_id],
+                target_kinds[target_id],
+                witness.target_reference_chart(witness_row),
+            )
+        records.append((original[0], int(layer_indices[layer_row]), *original[2:7]))
     return LayerColumnProjectionIdentity(
         np.asarray([row[1] for row in records], dtype=np.int64),
         np.asarray([row[0] for row in records], dtype=np.int64),
@@ -1736,6 +1865,7 @@ def _mapped_layer_column_identity(
         tuple(row[4] for row in records),
         tuple(row[5] for row in records),
         tuple(row[6] for row in records),
+        allow_unbound=True,
     )
 
 
@@ -1788,6 +1918,7 @@ def _curve_mapped_layer_core(
     frame_id: str,
     tolerance: float,
     maximum_normal_deviation: float | None,
+    embedding_proofs: list[ValidatedGlobalEmbedding] | None,
     /,
 ) -> LayerCurvingConstructionResult:
     trace: LayerCurvingMappedChartTrace | None = None
@@ -1816,9 +1947,41 @@ def _curve_mapped_layer_core(
             query, witness, construction.reference_maps
         )
         chart_identity = _mapped_layer_column_identity(construction, layers, witness)
-        straight = _straight_geometry(construction.mesh, policy.degree)
+        straight = _straight_geometry(
+            construction.mesh, policy.degree, source_geometry=construction.geometry
+        )
         elements, routes, coordinates = straight.resolve(construction.mesh)
         candidate_coordinates = np.array(coordinates, dtype=np.float64, copy=True)
+        from phydrax.discretization.fem import FiniteElementSpec
+        from phydrax.discretization.fem._reference import lagrange_reference_node_data
+
+        exact_nodes: dict[int, tuple[ExactScalar, ...]] = {}
+        for block, element, route in zip(
+            construction.mesh.blocks, elements, routes, strict=True
+        ):
+            if not isinstance(element, FiniteElementSpec):
+                raise TypeError("Mapped layer realization needs nodal coordinate elements.")
+            nodes = lagrange_reference_node_data(element)
+            points = tuple(point for node in nodes if (point := node.exact_point) is not None)
+            if len(points) != len(nodes):
+                raise ValueError("Mapped layer coordinate nodes require exact reference points.")
+            values = construction.geometry.evaluate_exact(
+                construction.mesh,
+                np.asarray(block.global_ids, dtype=np.int64),
+                tuple(points for _ in range(block.cell_count)),
+            )
+            for cell_row, cell_values in enumerate(values):
+                for local_row, point in enumerate(cell_values):
+                    geometry_row = int(np.asarray(route)[cell_row, local_row])
+                    old = exact_nodes.setdefault(geometry_row, point)
+                    if old != point:
+                        raise ValueError("Mapped source cells disagree at a shared coordinate node.")
+                    execution = np.asarray(tuple(float(value) for value in point))
+                    if geometry_row < construction.mesh.coordinates.shape[0] and not np.array_equal(
+                        candidate_coordinates[geometry_row].view(np.uint64), execution.view(np.uint64)
+                    ):
+                        raise ValueError("Mapped source changes an immutable mesh vertex.")
+                    candidate_coordinates[geometry_row] = execution
         block_rows_by_cell = {
             int(identifier): (block_row, cell_row)
             for block_row, block in enumerate(construction.mesh.blocks)
@@ -1826,7 +1989,9 @@ def _curve_mapped_layer_core(
                 np.asarray(block.global_ids, dtype=np.int64)
             )
         }
-        assigned: dict[int, np.ndarray] = {}
+        assigned: dict[int, np.ndarray] = {
+            row: candidate_coordinates[row].copy() for row in exact_nodes
+        }
         records: list[_MappedLayerNodeRecord] = []
         covered: dict[tuple[int, int], set[int]] = {}
         face_dofs: dict[tuple[int, int], set[int]] = {}
@@ -1940,34 +2105,28 @@ def _curve_mapped_layer_core(
                 query.source_query_id,
                 witness.witness_id,
             ),
+            exact_overrides=exact_nodes,
+        )
+        from phydrax.discretization._source_geometry_realization import _displacement_bound
+
+        if _displacement_bound(
+            construction.mesh, construction.geometry, construction.mesh, candidate
+        ) != 0.0:
+            raise ValueError("Nodal geometry does not reproduce the complete mapped source.")
+        if construction.geometry.restriction_source is None or candidate.source_map is None:
+            raise ValueError("Exact mapped curving must retain its original root-map owners.")
+        candidate = CellGeometrySpec(
+            layout[0], layout[1], candidate.coordinates,
+            source_map=candidate.source_map, source_mesh=construction.mesh,
+            restriction_source=construction.geometry.restriction_source,
         )
         target_witness = _rebind_chart_witness_geometry(witness, candidate)
         reference_maps = tuple(construction.reference_maps)
         trace_chart_rows = np.asarray(
             [record.chart_row for record in records], dtype=np.int64
         )
-        trace_columns = LayerColumnProjectionIdentity(
-            np.asarray(
-                [chart_identity.layer_indices[row] for row in trace_chart_rows],
-                dtype=np.int64,
-            ),
-            np.asarray(
-                [chart_identity.source_wall_cell_ids[row] for row in trace_chart_rows],
-                dtype=np.int64,
-            ),
-            np.asarray(
-                [chart_identity.front_row_ids[row] for row in trace_chart_rows],
-                dtype=np.int64,
-            ),
-            tuple(chart_identity.front_row_identities[row] for row in trace_chart_rows),
-            tuple(chart_identity.source_column_ids[row] for row in trace_chart_rows),
-            tuple(
-                chart_identity.source_column_identities[row] for row in trace_chart_rows
-            ),
-            tuple(
-                chart_identity.source_column_root_vertex_ids[row]
-                for row in trace_chart_rows
-            ),
+        trace_columns = _select_column_identity(
+            chart_identity, tuple(int(row) for row in trace_chart_rows)
         )
         physical_distance_bounds = tuple(
             _mapped_physical_distance_bounds(
@@ -2040,9 +2199,10 @@ def _curve_mapped_layer_core(
             chart_witness=target_witness,
         )
     try:
-        validity = certify_cell_geometry_validity(
-            candidate, mesh=construction.mesh, policy=policy.validity
+        computed_validity = ComputedCellValidity(
+            candidate, construction.mesh, policy.validity, None
         )
+        validity = computed_validity.certificate
     except (ArithmeticError, ValueError) as error:
         return _rollback(
             LayerCurvingStatus.ROLLED_BACK_INVALID,
@@ -2063,7 +2223,12 @@ def _curve_mapped_layer_core(
             chart_witness=target_witness,
         )
     try:
-        embedding = certify_global_embedding(construction.mesh, candidate, validity)
+        proof = ValidatedGlobalEmbedding(
+            construction.mesh, candidate, validity, validated_validity=computed_validity
+        )
+        embedding = proof.certificate
+        if embedding_proofs is not None:
+            embedding_proofs.append(proof)
     except (ArithmeticError, ValueError) as error:
         return _rollback(
             LayerCurvingStatus.ROLLED_BACK_EMBEDDING,
@@ -2191,6 +2356,7 @@ def curve_layer_core_construction(
     implicit_root_witness: SourceBoundaryChartWitness | None = None,
     mapped_chart_witness: SourceBoundaryChartWitness | None = None,
     frame_id: str | None = None,
+    _embedding_proofs: list[ValidatedGlobalEmbedding] | None = None,
 ) -> LayerCurvingConstructionResult:
     """Build and certify a full mixed-cell high-order layer/core coordinate map.
 
@@ -2256,6 +2422,7 @@ def curve_layer_core_construction(
             selected_frame,
             selected_tolerance,
             maximum_normal_deviation,
+            _embedding_proofs,
         )
     if source_surface_charts is None:
         if mapped_chart_witness is not None:
@@ -2314,6 +2481,7 @@ def curve_layer_core_construction(
             selected_frame,
             selected_tolerance,
             maximum_normal_deviation,
+            _embedding_proofs,
         )
     if not isinstance(source_surface_charts, SurfaceSourceCharts):
         raise TypeError("source_surface_charts must be SurfaceSourceCharts or None.")
@@ -2329,8 +2497,11 @@ def curve_layer_core_construction(
     witness: SourceBoundaryChartWitness | None = None
     projection_trace: LayerCurvingProjectionTrace | None = None
     try:
+        wall_query = layer_wall_boundary_query(layers, source_surface_charts)
         source_faces = _source_faces(construction, layers, source_surface_charts)
-        straight = _straight_geometry(construction.mesh, policy.degree)
+        straight = _straight_geometry(
+            construction.mesh, policy.degree, source_geometry=construction.geometry
+        )
         elements, routes, coordinates = straight.resolve(construction.mesh)
         candidate_coordinates = np.array(coordinates, dtype=np.float64, copy=True)
         assigned: dict[int, np.ndarray] = {}
@@ -2422,13 +2593,20 @@ def curve_layer_core_construction(
                     )
                 assigned[geometry_row] = np.array(point, copy=True)
                 assigned_exact[geometry_row] = exact_point
-                candidate_exact_overrides[geometry_row] = exact_point
+                if geometry_row >= construction.mesh.coordinates.shape[0]:
+                    candidate_exact_overrides[geometry_row] = exact_point
                 if geometry_row < construction.mesh.coordinates.shape[0]:
                     physical_vertex = np.asarray(
                         construction.mesh.coordinates, dtype=np.float64
                     )[geometry_row]
                     if not np.array_equal(
                         physical_vertex.view(np.uint64), point.view(np.uint64)
+                    ):
+                        raise ValueError(
+                            "Exact source chart changes an immutable layer/core mesh vertex."
+                        )
+                    if straight.exact_coordinate_bank is None or (
+                        straight.exact_coordinate_bank[geometry_row] != exact_point
                     ):
                         raise ValueError(
                             "Exact source chart changes an immutable layer/core mesh vertex."
@@ -2463,7 +2641,7 @@ def curve_layer_core_construction(
             exact_overrides=candidate_exact_overrides,
         )
         witness = _chart_witness(
-            construction.mesh, candidate, source_surface_charts, source_faces
+            construction.mesh, candidate, source_surface_charts, wall_query, source_faces
         )
         _validate_parametric_chart_geometry(
             construction.mesh,
@@ -2486,9 +2664,10 @@ def curve_layer_core_construction(
             "Exact source-chart construction returned without its retained target map."
         )
     try:
-        validity = certify_cell_geometry_validity(
-            candidate, mesh=construction.mesh, policy=policy.validity
+        computed_validity = ComputedCellValidity(
+            candidate, construction.mesh, policy.validity, None
         )
+        validity = computed_validity.certificate
     except (ArithmeticError, ValueError) as error:
         return _rollback(
             LayerCurvingStatus.ROLLED_BACK_INVALID,
@@ -2509,7 +2688,12 @@ def curve_layer_core_construction(
             chart_witness=witness,
         )
     try:
-        embedding = certify_global_embedding(construction.mesh, candidate, validity)
+        proof = ValidatedGlobalEmbedding(
+            construction.mesh, candidate, validity, validated_validity=computed_validity
+        )
+        embedding = proof.certificate
+        if _embedding_proofs is not None:
+            _embedding_proofs.append(proof)
     except (ArithmeticError, ValueError) as error:
         return _rollback(
             LayerCurvingStatus.ROLLED_BACK_EMBEDDING,
@@ -2552,7 +2736,7 @@ def curve_layer_core_construction(
         fidelity = certify_source_fidelity(
             construction.mesh,
             candidate,
-            source_surface_charts.boundary_source,
+            wall_query,
             tolerance=tolerance,
             maximum_normal_deviation=maximum_normal_deviation,
             witness=witness,
@@ -2587,7 +2771,7 @@ def curve_layer_core_construction(
         )
         evidence = LayerCurvingSourceEvidence(
             source_surface_charts,
-            source_surface_charts.boundary_source,
+            wall_query,
             layers.result_id,
             layers.evidence,
             witness,
@@ -2967,6 +3151,7 @@ def _select_column_identity(
         tuple(identity.source_column_ids[row] for row in rows),
         tuple(identity.source_column_identities[row] for row in rows),
         tuple(identity.source_column_root_vertex_ids[row] for row in rows),
+        allow_unbound=identity.allow_unbound,
     )
 
 
@@ -3641,11 +3826,162 @@ def renew_layer_curving_source_evidence(
     )
 
 
+def prepare_layer_column_geometry(
+    reference_mesh: CellMesh,
+    layers: BoundaryLayerMesh,
+    wall_mesh: CellMesh,
+    wall_geometry: CellGeometrySpec,
+    upper_geometry: CellGeometrySpec,
+    upper_vertex_ids: np.ndarray,
+    /,
+) -> CellGeometrySpec:
+    """Bind directed prism columns to authored profile and endpoint coordinates."""
+    from ..discretization._cell_geometry import LayerColumnCellGeometryElement
+    from ..discretization.fem import FiniteElementSpec
+
+    layer_mesh = layers.mesh
+    layer_ids = np.asarray(layer_mesh.vertex_global_ids, dtype=np.int64)
+    layer_rows = {int(identifier): row for row, identifier in enumerate(layer_ids)}
+    roots = {
+        int(layer_ids[row]): int(layer_ids[row])
+        for row in np.asarray(layers.wall_vertices, dtype=np.int64)
+        if row >= 0
+    }
+    predecessors: dict[int, int] = {}
+    actual_cells: dict[int, tuple[int, ...]] = {}
+    for block in layer_mesh.blocks:
+        if block.cell_kind != "prism":
+            raise ValueError("Column geometry requires directed prepared prism layers.")
+        for identifier, row in zip(block.global_ids, block.vertices, strict=True):
+            vertices = tuple(int(value) for value in layer_ids[np.asarray(row)])
+            actual_cells[int(identifier)] = vertices
+            for bottom, top in zip(vertices[:3], vertices[3:], strict=True):
+                previous = predecessors.setdefault(top, bottom)
+                if previous != bottom:
+                    raise ValueError("A layer vertex has multiple column predecessors.")
+    for identifier in layer_ids:
+        current = int(identifier)
+        chain: list[int] = []
+        visited: set[int] = set()
+        while current not in roots:
+            if current in visited or current not in predecessors:
+                raise ValueError("A layer vertex has no unique source-wall ancestry.")
+            chain.append(current)
+            visited.add(current)
+            current = predecessors[current]
+        for vertex in reversed(chain):
+            roots[vertex] = roots[current]
+            current = vertex
+
+    wall_ids = np.asarray(wall_mesh.vertex_global_ids, dtype=np.int64)
+    upper_ids = np.asarray(upper_vertex_ids)
+    if (
+        upper_ids.shape != wall_ids.shape
+        or upper_ids.dtype.kind not in "iu"
+        or np.unique(upper_ids).size != upper_ids.size
+        or set(map(int, upper_ids)) & set(layer_rows)
+    ):
+        raise ValueError("Upper roots must be distinct and correspond to wall vertices.")
+    upper_roots = dict(zip(map(int, upper_ids), map(int, wall_ids), strict=True))
+    lower_elements, lower_routes, _ = wall_geometry.resolve(wall_mesh)
+    upper_elements, upper_routes, _ = upper_geometry.resolve(wall_mesh)
+    profiles: dict[tuple[int, ...], tuple[FiniteElementSpec, np.ndarray, np.ndarray]] = {}
+    lower_offset = len(layer_ids)
+    upper_offset = lower_offset + wall_geometry.coordinates.shape[0]
+    for block, lower, upper, lower_route, upper_route in zip(
+        wall_mesh.blocks, lower_elements, upper_elements, lower_routes, upper_routes,
+        strict=True,
+    ):
+        if (
+            block.cell_kind != "triangle"
+            or not isinstance(lower, FiniteElementSpec)
+            or not isinstance(upper, FiniteElementSpec)
+            or lower.element_id != upper.element_id
+        ):
+            raise ValueError("Endpoint profiles require the same triangular nodal basis.")
+        for row, bottom, top in zip(
+            block.vertices, lower_route, upper_route, strict=True
+        ):
+            key = tuple(int(value) for value in wall_ids[np.asarray(row)])
+            if key in profiles:
+                raise ValueError("A directed wall profile is multiply owned.")
+            profiles[key] = (
+                lower,
+                lower_offset + np.asarray(bottom, dtype=np.int64),
+                upper_offset + np.asarray(top, dtype=np.int64),
+            )
+
+    reference_ids = np.asarray(reference_mesh.vertex_global_ids, dtype=np.int64)
+    elements: dict[str, LayerColumnCellGeometryElement] = {}
+    routes: dict[str, np.ndarray] = {}
+    seen: set[int] = set()
+    for block in reference_mesh.blocks:
+        if block.cell_kind != "prism":
+            raise ValueError("Column root geometry requires prism blocks.")
+        rows: list[np.ndarray] = []
+        prototype: FiniteElementSpec | None = None
+        for identifier_value, row in zip(block.global_ids, block.vertices, strict=True):
+            identifier = int(identifier_value)
+            vertices = tuple(int(value) for value in reference_ids[np.asarray(row)])
+            if any(vertex not in roots for vertex in vertices[:3]):
+                raise ValueError("A prism has no directed wall-column ancestry.")
+            key = tuple(roots[vertex] for vertex in vertices[:3])
+            if key not in profiles:
+                raise ValueError("A prism changed its directed source-wall profile.")
+            element, bottom, top = profiles[key]
+            if prototype is not None and prototype.element_id != element.element_id:
+                raise ValueError("One prism block cannot mix endpoint profile bases.")
+            prototype = element
+            corner_dofs = np.asarray(
+                [dofs[0] for dofs in element.entity_dofs[0]], dtype=np.int64
+            )
+            if identifier in actual_cells:
+                if vertices != actual_cells[identifier]:
+                    raise ValueError("A prepared layer prism changed its vertex identity.")
+                seen.add(identifier)
+                top = bottom
+                actual_top = np.asarray(
+                    [layer_rows[vertex] for vertex in vertices[3:]], dtype=np.int64
+                )
+            else:
+                if any(
+                    upper_roots.get(vertex) != root
+                    for vertex, root in zip(vertices[3:], key, strict=True)
+                ):
+                    raise ValueError("A core prism changed its authored upper roots.")
+                actual_top = top[corner_dofs]
+            actual_bottom = np.asarray(
+                [layer_rows[vertex] for vertex in vertices[:3]], dtype=np.int64
+            )
+            rows.append(
+                np.concatenate(
+                    (bottom, top, actual_bottom, actual_top,
+                     bottom[corner_dofs], top[corner_dofs])
+                )
+            )
+        if prototype is None:
+            raise ValueError("Column root blocks must contain at least one prism.")
+        elements[block.name] = LayerColumnCellGeometryElement(prototype)
+        routes[block.name] = np.stack(rows)
+    if seen != set(actual_cells):
+        raise ValueError("The root mesh must retain every prepared layer prism.")
+    return CellGeometrySpec(
+        elements,
+        routes,
+        np.concatenate(
+            (np.asarray(layer_mesh.coordinates, dtype=np.float64),
+             np.asarray(wall_geometry.coordinates, dtype=np.float64),
+             np.asarray(upper_geometry.coordinates, dtype=np.float64))
+        ),
+    )
+
+
 __all__ = [
     "LayerCurvingConstructionResult",
     "LayerCurvingFailure",
     "require_layer_core_construction",
     "LayerCurvingStatus",
     "curve_layer_core_construction",
+    "prepare_layer_column_geometry",
     "renew_layer_curving_source_evidence",
 ]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import math
 from fractions import Fraction
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, Sequence
 
 import numpy as np
 
@@ -14,6 +14,7 @@ from ._cell_geometry import (
     CellGeometryElement,
     CellGeometrySpec,
     coordinate_effective_basis,
+    PerCellRestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
 from ._cell_geometry_validity import (
@@ -29,6 +30,7 @@ from ._coordinate_enclosure import (
     compose,
     compose_expression,
     constant,
+    CoordinateSourceBank,
     derivative,
     ExactScalar,
     Expression,
@@ -38,6 +40,7 @@ from ._coordinate_enclosure import (
     Polynomial,
     pyramid_reference_to_box_arguments,
     RationalPolynomial,
+    RestrictedCoordinateMapPreparation,
     scale,
     sum_polynomials,
 )
@@ -248,8 +251,13 @@ def mapped_coordinate_expressions(
         raise TypeError(
             "Mapped coordinate expressions require a scalar coordinate element."
         )
-    scalar = element
-    basis = coordinate_effective_basis(scalar, cell_row=cell_row)
+    basis = coordinate_effective_basis(element, cell_row=cell_row)
+    return _mapped_basis_expressions(basis, local)
+
+
+def _mapped_basis_expressions(
+    basis: tuple[Expression, ...], local: tuple[tuple[ExactScalar, ...], ...], /
+) -> tuple[Expression, ...]:
     if not basis or len(basis) != len(local):
         raise ValueError("Mapped coordinate basis and local coefficient rows differ.")
     ambient = len(local[0])
@@ -845,12 +853,12 @@ def _publish_integral(value: ExactScalar, /) -> tuple[float, float]:
     return published, max(published - lower, upper - published)
 
 
-@checked
-def mapped_geometry_cells(
-    mesh: CellMesh, geometry: CellGeometrySpec, /
+def _mapped_geometry_cells(
+    elements: Sequence[CellGeometryElement],
+    routes: Sequence[np.ndarray],
+    source_bank: CoordinateSourceBank,
+    /,
 ) -> tuple[MappedGeometryCell, ...]:
-    elements, routes, _ = geometry.resolve(mesh)
-    source_bank = geometry.source_coordinates()
     cells: list[MappedGeometryCell] = []
     for element, route in zip(elements, routes, strict=True):
         rows = np.asarray(route, dtype=np.int64).tolist()
@@ -863,6 +871,17 @@ def mapped_geometry_cells(
                 )
             )
     return tuple(cells)
+
+
+@checked
+def mapped_geometry_cells(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> tuple[MappedGeometryCell, ...]:
+    elements, routes, _ = geometry.resolve(mesh)
+    return _mapped_geometry_cells(
+        elements, tuple(np.asarray(route, dtype=np.int64) for route in routes),
+        geometry.source_coordinates(),
+    )
 
 
 @checked
@@ -896,13 +915,21 @@ def certified_cell_measures(
         validity.require_bound(geometry, mesh=mesh)
     if not validity.all_certified:
         raise ValueError("Mapped cell measures require every cell to be certified valid.")
-    cells = mapped_geometry_cells(mesh, geometry)
+    resolved_elements, raw_routes, _ = geometry.resolve(mesh)
+    resolved_routes = tuple(np.asarray(route, dtype=np.int64) for route in raw_routes)
+    source_bank = geometry.source_coordinates()
+    cells = _mapped_geometry_cells(resolved_elements, resolved_routes, source_bank)
     values = np.empty((len(cells),), dtype=np.float64)
     errors = np.empty_like(values)
     exact = True
     absolute_per_cell = Fraction(absolute) / max(len(cells), 1)
     relative_fraction = Fraction(relative)
     embedded_integrals: dict[tuple[object, ...], tuple[float, float, bool]] = {}
+    route_banks: dict[int, np.ndarray | None] = {}
+    for element, route in zip(resolved_elements, resolved_routes, strict=True):
+        key = id(element)
+        route_banks[key] = None if key in route_banks else route
+    preparations: dict[int, RestrictedCoordinateMapPreparation] = {}
 
     def polynomial_key(polynomial: Polynomial, /) -> tuple[object, ...]:
         return tuple(
@@ -915,7 +942,22 @@ def certified_cell_measures(
             raise TypeError("Mapped cell measures require scalar coordinate elements.")
         scalar = element
         dimension = scalar.topological_dimension
-        coordinates = mapped_coordinate_expressions(scalar, local, cell_row=cell_row)
+        coordinates = None
+        route_bank = route_banks.get(id(scalar))
+        if (
+            isinstance(scalar, PerCellRestrictedCellGeometryElement)
+            and route_bank is not None
+            and all(type(value) is Fraction for row in local for value in row)
+        ):
+            preparation = preparations.get(id(scalar))
+            if preparation is None:
+                preparation = RestrictedCoordinateMapPreparation(
+                    scalar, source_bank, route_bank, mode="source"
+                )
+                preparations[id(scalar)] = preparation
+            coordinates = preparation.expressions(cell_row)
+        if coordinates is None:
+            coordinates = mapped_coordinate_expressions(scalar, local, cell_row=cell_row)
         jacobian = _coordinate_jacobian(coordinates, dimension)
         ambient_dimension = len(jacobian)
         if ambient_dimension == dimension:

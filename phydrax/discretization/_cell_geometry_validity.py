@@ -30,13 +30,14 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
 from functools import cache
 from itertools import product
-from typing import Any, assert_never
+from typing import Any, assert_never, NoReturn, SupportsIndex
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -56,7 +57,14 @@ from .._geometry_predicates import (
 )
 from .._strict import reconstruct_strict, register_strict_reconstruction, StrictModule
 from .._trainable import NonTrainableState
-from ..geometry._interval_enclosure import interval_divide
+from ..geometry._interval_enclosure import (
+    interval_add,
+    interval_divide,
+    interval_multiply,
+    interval_sqrt,
+    interval_square,
+    interval_subtract,
+)
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
@@ -69,8 +77,11 @@ from ..linalg._exact import determinant_exact, determinant_small_algebra
 from ..typing import ConvertibleToArray
 from ._cell_complex import PolyhedralConnectivity
 from ._cell_geometry import (
+    _execution_reference_arguments,
     CellGeometrySpec,
     CellVertexGeometryElement,
+    coordinate_reference_arguments,
+    PerCellRestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
 from ._cell_mesh import CellMesh
@@ -99,6 +110,7 @@ from ._coordinate_enclosure import (
     Polynomial,
     polynomial_bounds,
     RationalPolynomial,
+    RestrictedCoordinateMapPreparation,
     scale,
     subtract,
     sum_polynomials,
@@ -332,8 +344,8 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     ``cell_map_digests`` names, per cell, the exact execution and source
     coordinate maps (cell kind and exact coefficients in their stored order)
     those proofs answer: ``cells x 2 x 16`` bytes, all-zero where no map record
-    exists. It is not identity-bearing; ``certify_cell_geometry_validity(...,
-    parent=...)`` reuses a cell's proof only for an identical digest.
+    exists. It is not identity-bearing; reuse treats the digest only as an
+    index and compares the complete exact cell map before accepting a proof.
     """
 
     status: Array
@@ -1900,6 +1912,279 @@ def _certify_positive_source_expression(
     )
 
 
+def _interval_jacobian_certificate(
+    bounds: tuple[tuple[tuple[float, float], ...], ...],
+    dimension: int,
+    policy: CellValidityPolicy,
+    /,
+) -> _ExactCellValidity | None:
+    if any(
+        not math.isfinite(endpoint)
+        for row in bounds
+        for interval in row
+        for endpoint in interval
+    ):
+        return None
+    from ._mapped_locator import _interval_determinant
+
+    lower, upper = _interval_determinant(bounds)
+    if not math.isfinite(lower) or not math.isfinite(upper) or lower <= 0.0:
+        return None
+    norm_product_upper = Fraction(1)
+    for column in range(dimension):
+        norm_squared = sum(
+            (
+                Fraction(max(abs(row[column][0]), abs(row[column][1]))) ** 2
+                for row in bounds
+            ),
+            Fraction(0),
+        )
+        norm_product_upper *= norm_squared
+    floor = Fraction(policy.determinant_floor())
+    if Fraction(lower) ** 2 <= floor**2 * norm_product_upper:
+        return None
+    return CellValidityStatus.CERTIFIED_VALID, lower, upper, 0
+
+
+def _interval_quadratic_simplex_certificate(
+    expressions: tuple[Expression, ...],
+    domain: BernsteinDomain,
+    dimension: int,
+    policy: CellValidityPolicy,
+    /,
+) -> _ExactCellValidity | None:
+    """Prove a quadratic tetrahedral map from exact affine-Jacobian bounds."""
+    if (
+        domain != "simplex"
+        or dimension != 3
+        or len(expressions) != 3
+        or any(isinstance(value, RationalPolynomial) for value in expressions)
+    ):
+        return None
+    if not all(
+        isinstance(value, dict)
+        and all(
+            len(exponent) == 3 and sum(exponent) <= 2 and type(coefficient) is Fraction
+            for exponent, coefficient in value.items()
+        )
+        for value in expressions
+    ) or not any(
+        sum(exponent) == 2
+        for value in expressions
+        if isinstance(value, dict)
+        for exponent in value
+    ):
+        return None
+    vertices = (
+        (Fraction(0), Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(0), Fraction(1)),
+    )
+    rows = []
+    for value in expressions:
+        assert isinstance(value, dict)
+        row = []
+        for axis in range(3):
+            slope = derivative(value, axis)
+            values = tuple(evaluate_polynomial(slope, point) for point in vertices)
+            row.append(
+                (
+                    coefficient_endpoint(min(values), upper=False, saturate=True),
+                    coefficient_endpoint(max(values), upper=True, saturate=True),
+                )
+            )
+        rows.append(tuple(row))
+    return _interval_jacobian_certificate(tuple(rows), 3, policy)
+
+
+def _quadratic_tetra_block_screen(
+    element: ScalarCoordinateElement,
+    cell_kind: str,
+    basis: tuple[Expression, ...] | None,
+    routes: NDArray[np.int64],
+    point_bounds: tuple[NDArray[np.float64], NDArray[np.float64]] | None,
+    policy: CellValidityPolicy,
+    /,
+) -> tuple[NDArray[np.bool_], NDArray[np.float64], NDArray[np.float64]] | None:
+    """Screen P2 tetrahedra using outward bounds of their affine Jacobians.
+
+    The supplied basis is the actual source or execution basis, never a
+    reconstructed nodal surrogate. Inconclusive rows retain the exact path.
+    """
+    if (
+        type(element) is not FiniteElementSpec
+        or element.degree != 2
+        or cell_kind not in ("tetrahedron", "simplex:3")
+        or basis is None
+        or len(basis) != 10
+        or routes.shape[1] != 10
+        or point_bounds is None
+        or point_bounds[0].shape[1:] != (3,)
+        or point_bounds[0].shape != point_bounds[1].shape
+    ):
+        return None
+    if not all(
+        isinstance(value, dict)
+        and all(
+            len(exponent) == 3 and sum(exponent) <= 2 and type(coefficient) is Fraction
+            for exponent, coefficient in value.items()
+        )
+        for value in basis
+    ):
+        return None
+    vertices = (
+        (Fraction(0), Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(0), Fraction(1)),
+    )
+    gradient_lower = np.empty((10, 3, 4), dtype=np.float64)
+    gradient_upper = np.empty_like(gradient_lower)
+    for dof, value in enumerate(basis):
+        assert isinstance(value, dict)
+        for axis in range(3):
+            slope = derivative(value, axis)
+            for vertex, point in enumerate(vertices):
+                exact = evaluate_polynomial(slope, point)
+                gradient_lower[dof, axis, vertex] = coefficient_endpoint(
+                    exact, upper=False, saturate=True
+                )
+                gradient_upper[dof, axis, vertex] = coefficient_endpoint(
+                    exact, upper=True, saturate=True
+                )
+    count = routes.shape[0]
+    accepted = np.zeros(count, dtype=np.bool_)
+    determinant_lower = np.full(count, np.nan)
+    determinant_upper = np.full(count, np.nan)
+    floor = np.asarray(policy.determinant_floor(), dtype=np.float64)
+    for start in range(0, count, 2048):
+        stop = min(start + 2048, count)
+        chunk = routes[start:stop]
+        jacobian = []
+        for axis in range(3):
+            total = None
+            for dof in range(10):
+                points = (
+                    point_bounds[0][chunk[:, dof], None, :],
+                    point_bounds[1][chunk[:, dof], None, :],
+                )
+                weights = (
+                    gradient_lower[dof, axis][None, :, None],
+                    gradient_upper[dof, axis][None, :, None],
+                )
+                term = interval_multiply(points, weights)
+                total = term if total is None else interval_add(total, term)
+            assert total is not None
+            jacobian.append((np.min(total[0], axis=1), np.max(total[1], axis=1)))
+        matrix = tuple(
+            tuple(
+                (jacobian[column][0][:, row], jacobian[column][1][:, row])
+                for column in range(3)
+            )
+            for row in range(3)
+        )
+        determinant = None
+        for column in range(3):
+            first = interval_multiply(
+                matrix[1][(column + 1) % 3], matrix[2][(column + 2) % 3]
+            )
+            second = interval_multiply(
+                matrix[1][(column + 2) % 3], matrix[2][(column + 1) % 3]
+            )
+            term = interval_multiply(matrix[0][column], interval_subtract(first, second))
+            determinant = term if determinant is None else interval_add(determinant, term)
+        assert determinant is not None
+        floor_bound = (floor, floor)
+        for column in range(3):
+            norm_squared = interval_add(
+                interval_add(
+                    interval_square(matrix[0][column]), interval_square(matrix[1][column])
+                ),
+                interval_square(matrix[2][column]),
+            )
+            floor_bound = interval_multiply(floor_bound, interval_sqrt(norm_squared))
+        lower, upper = np.asarray(determinant[0]), np.asarray(determinant[1])
+        ok = (
+            np.isfinite(lower)
+            & np.isfinite(upper)
+            & np.isfinite(floor_bound[1])
+            & (lower > floor_bound[1])
+        )
+        accepted[start:stop] = ok
+        determinant_lower[start:stop] = lower
+        determinant_upper[start:stop] = upper
+    return accepted, determinant_lower, determinant_upper
+
+
+def _interval_rational_map_certificate(
+    expressions: tuple[Expression, ...],
+    jacobian: tuple[tuple[Expression, ...], ...] | None,
+    domain: BernsteinDomain,
+    dimension: int,
+    policy: CellValidityPolicy,
+    /,
+) -> _ExactCellValidity | None:
+    """Prove a square rational map using directed Jacobian enclosures.
+
+    Failure to obtain a strict enclosure is inconclusive, not an invalidity
+    claim; the caller then uses the full exact determinant proof.
+    """
+    if len(expressions) != dimension or not any(
+        isinstance(value, RationalPolynomial) for value in expressions
+    ):
+        return None
+    rows = []
+    for value in expressions:
+        if isinstance(value, RationalPolynomial):
+            denominator = polynomial_bounds(value.denominator, domain, dimension)
+            if (
+                not all(math.isfinite(endpoint) for endpoint in denominator)
+                or denominator[0] <= 0.0 <= denominator[1]
+            ):
+                return None
+        if jacobian is not None:
+            continue
+        if not isinstance(value, RationalPolynomial):
+            rows.append(
+                tuple(
+                    polynomial_bounds(derivative(value, axis), domain, dimension)
+                    for axis in range(dimension)
+                )
+            )
+            continue
+        numerator_bounds = polynomial_bounds(value.numerator, domain, dimension)
+        numerator = (np.asarray(numerator_bounds[0]), np.asarray(numerator_bounds[1]))
+        denominator_interval = (np.asarray(denominator[0]), np.asarray(denominator[1]))
+        square = interval_multiply(denominator_interval, denominator_interval)
+        row = []
+        for axis in range(dimension):
+            dn_bounds = polynomial_bounds(
+                derivative(value.numerator, axis), domain, dimension
+            )
+            dd_bounds = polynomial_bounds(
+                derivative(value.denominator, axis), domain, dimension
+            )
+            dn = (np.asarray(dn_bounds[0]), np.asarray(dn_bounds[1]))
+            dd = (np.asarray(dd_bounds[0]), np.asarray(dd_bounds[1]))
+            quotient_numerator = interval_subtract(
+                interval_multiply(dn, denominator_interval),
+                interval_multiply(numerator, dd),
+            )
+            lower, upper = interval_divide(quotient_numerator, square)
+            row.append((float(lower), float(upper)))
+        rows.append(tuple(row))
+    bounds = (
+        tuple(rows)
+        if jacobian is None
+        else tuple(
+            tuple(polynomial_bounds(value, domain, dimension) for value in row)
+            for row in jacobian
+        )
+    )
+    return _interval_jacobian_certificate(bounds, dimension, policy)
+
+
 def _certify_nonlinear_source_map(
     expressions: tuple[Expression, ...],
     cell_kind: str,
@@ -1932,6 +2217,12 @@ def _certify_nonlinear_source_map(
     else:
         proof_coordinates = expressions
         jacobian = _exact_map_jacobian(expressions, dimension)
+    if reference_cell_topology(cell_kind).family != "pyramid":
+        interval_certificate = _interval_rational_map_certificate(
+            proof_coordinates, jacobian, domain, dimension, policy
+        )
+        if interval_certificate is not None:
+            return interval_certificate
     defined, denominator_depth = _source_denominators_defined(
         proof_coordinates + tuple(value for row in jacobian for value in row),
         domain,
@@ -1964,7 +2255,6 @@ def _certify_nonlinear_source_map(
 # One cell's proof (status, determinant lower/upper endpoint, depth) is a pure
 # function of its exact coordinate map, cell kind and validity policy.
 type _CellProof = tuple[int, float, float, int]
-type _CellProofs = dict[bytes, _CellProof]
 _MAP_DIGEST_SIZE = 16
 
 
@@ -1985,8 +2275,8 @@ def _polynomial_digest_terms(
 def _map_digest(cell_kind: str, expressions: tuple[Expression, ...], /) -> bytes | None:
     """Digest a cell's exact coordinate map, or ``None`` when it has no record.
 
-    Coefficients are encoded with their exact type and in stored order, so an
-    equal digest means the prover receives identical operands.
+    Coefficients are encoded with their exact type and in stored order. A
+    digest is only an index: reuse also compares the complete exact operands.
     """
     parts: list[object] = [cell_kind, len(expressions)]
     for expression in expressions:
@@ -2013,6 +2303,160 @@ def _pyramid_apex_unique(expressions: tuple[Expression, ...], dimension: int, /)
     )
 
 
+class _CellProofs:
+    """Operation-local proof index with exact map comparison on every hit."""
+
+    def __init__(self) -> None:
+        self.parents: dict[
+            bytes, list[tuple[CellValidityCertificate, int, int, _CellProof]]
+        ] = {}
+        self.local: OrderedDict[
+            int, tuple[bytes, str, tuple[Expression, ...], _CellProof]
+        ] = OrderedDict()
+        self.parent_context: dict[int, tuple[Any, ...]] = {}
+        self.parent_bases: dict[tuple[int, int, int], tuple[Expression, ...] | None] = {}
+        self.parent_maps: OrderedDict[
+            tuple[int, int, int], tuple[str, tuple[Expression, ...]]
+        ] = OrderedDict()
+        self.serial = 0
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Operation-local cell proofs cannot be serialized.")
+
+    def add_parent(
+        self,
+        digest: bytes,
+        certificate: CellValidityCertificate,
+        row: int,
+        column: int,
+        proof: _CellProof,
+        /,
+    ) -> None:
+        self.parents.setdefault(digest, []).append((certificate, row, column, proof))
+
+    def _parent_map(
+        self, certificate: CellValidityCertificate, row: int, column: int, /
+    ) -> tuple[str, tuple[Expression, ...]] | None:
+        key = (id(certificate), row, column)
+        cached = self.parent_maps.get(key)
+        if cached is not None:
+            self.parent_maps.move_to_end(key)
+            return cached
+        context = self.parent_context.get(id(certificate))
+        if context is None:
+            geometry, mesh = certificate.geometry, certificate.mesh
+            if mesh is None:
+                elements = geometry.elements
+                routes = tuple(
+                    np.asarray(value, dtype=np.int64) for value in geometry.geometry_dofs
+                )
+                kinds = tuple(element.cell_kind for element in elements)
+            else:
+                elements, resolved_routes, _ = geometry.resolve(mesh)
+                routes = tuple(
+                    np.asarray(value, dtype=np.int64) for value in resolved_routes
+                )
+                kinds = tuple(block.cell_kind for block in mesh.blocks)
+            execution = tuple(
+                tuple(Fraction(float(value)) for value in point)
+                for point in np.asarray(geometry.coordinates, dtype=np.float64)
+            )
+            source = (
+                geometry.source_coordinates()
+                if geometry.exact_coordinate_bank is not None
+                else execution
+            )
+            context = (elements, routes, kinds, execution, source)
+            self.parent_context[id(certificate)] = context
+        elements, routes, kinds, execution, source = context
+        block = next(
+            index
+            for index in range(len(certificate.block_names))
+            if certificate.block_offsets[index]
+            <= row
+            < certificate.block_offsets[index + 1]
+        )
+        local_row = row - certificate.block_offsets[block]
+        element = elements[block]
+        if not isinstance(element, ScalarCoordinateElement):
+            return None
+        bank = execution if column == 0 else source
+        local = tuple(bank[int(index)] for index in routes[block][local_row])
+        try:
+            basis_key = (id(certificate), block, column)
+            if not isinstance(element, PerCellRestrictedCellGeometryElement):
+                if basis_key not in self.parent_bases:
+                    self.parent_bases[basis_key] = (
+                        coordinate_execution_basis(element)
+                        if column == 0
+                        else coordinate_source_basis(element)
+                    )
+                basis = self.parent_bases[basis_key]
+            else:
+                basis = None
+            if basis is None:
+                expressions = (
+                    coordinate_execution_map_expressions(
+                        element, local, cell_row=local_row
+                    )
+                    if column == 0
+                    else coordinate_map_expressions(element, local, cell_row=local_row)
+                )
+            else:
+                if not local or len(basis) != len(local):
+                    raise ValueError(
+                        "Coordinate basis and local source bank widths differ."
+                    )
+                components = tuple(
+                    tuple(local[dof][axis] for dof in range(len(local)))
+                    for axis in range(len(local[0]))
+                )
+                expressions = linear_combinations(basis, components)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        result = (kinds[block], expressions)
+        self.parent_maps[key] = result
+        if len(self.parent_maps) > 64:
+            self.parent_maps.popitem(last=False)
+        return result
+
+    def find(
+        self, digest: bytes, kind: str, expressions: tuple[Expression, ...], /
+    ) -> _CellProof | None:
+        for key, (candidate_digest, candidate_kind, candidate_map, proof) in reversed(
+            self.local.items()
+        ):
+            if (
+                candidate_digest == digest
+                and candidate_kind == kind
+                and _expression_sequence_evidence_equal(expressions, candidate_map)
+            ):
+                self.local.move_to_end(key)
+                return proof
+        for certificate, row, column, proof in self.parents.get(digest, ()):
+            candidate = self._parent_map(certificate, row, column)
+            if (
+                candidate is not None
+                and candidate[0] == kind
+                and _expression_sequence_evidence_equal(expressions, candidate[1])
+            ):
+                return proof
+        return None
+
+    def add(
+        self,
+        digest: bytes,
+        kind: str,
+        expressions: tuple[Expression, ...],
+        proof: _CellProof,
+        /,
+    ) -> None:
+        self.serial += 1
+        self.local[self.serial] = (digest, kind, expressions, proof)
+        if len(self.local) > 64:
+            self.local.popitem(last=False)
+
+
 def _certify_source_block(
     element: ScalarCoordinateElement,
     cell_kind: str,
@@ -2023,12 +2467,13 @@ def _certify_source_block(
     /,
     *,
     execution_map: bool = False,
+    point_bounds: tuple[NDArray[np.float64], NDArray[np.float64]] | None = None,
 ) -> tuple[_BlockCertificate, bool, NDArray[np.uint8]]:
     """Prove an exact-source or binary64-shadow coordinate map.
 
-    ``proofs`` holds proofs of ``policy`` keyed by exact map digest; a cell
-    whose map is recorded there reuses its proof, and every proof made here
-    is recorded. Also returns each cell's map digest (zero when unrecorded).
+    ``proofs`` indexes earlier proofs of ``policy`` by map digest, but a hit
+    is reusable only after full exact map and cell-kind comparison. Also
+    returns each cell's digest (zero when unrecorded).
     """
     count = routes.shape[0]
     dimension = reference_cell_topology(cell_kind).dimension
@@ -2041,25 +2486,133 @@ def _certify_source_block(
     pyramid = reference_cell_topology(cell_kind).family == "pyramid"
     domain = _source_proof_domain(cell_kind)
     has_unsupported_map = False
+    restricted_bases: OrderedDict[
+        bytes, tuple[tuple[Expression, ...], tuple[Expression, ...]]
+    ] = OrderedDict()
+    root_preparation = (
+        RestrictedCoordinateMapPreparation(
+            element,
+            coordinates,
+            routes,
+            mode="execution" if execution_map else "source",
+            allow_shared_rational=True,
+        )
+        if routes.shape[0] and isinstance(element, PerCellRestrictedCellGeometryElement)
+        else None
+    )
+    plain_basis = (
+        (
+            coordinate_execution_basis(element)
+            if execution_map
+            else coordinate_source_basis(element)
+        )
+        if routes.shape[0]
+        and not isinstance(element, PerCellRestrictedCellGeometryElement)
+        else None
+    )
+    try:
+        screened = _quadratic_tetra_block_screen(
+            element, cell_kind, plain_basis, routes, point_bounds, policy
+        )
+    except (OverflowError, TypeError, ValueError):
+        screened = None
+    if screened is not None:
+        mask, screened_lower, screened_upper = screened
+        status[mask] = CellValidityStatus.CERTIFIED_VALID
+        lower[mask] = screened_lower[mask]
+        upper[mask] = screened_upper[mask]
+        # Direct interval proofs do not claim a reusable exact-map digest.
     for row in range(routes.shape[0]):
+        if screened is not None and mask[row]:
+            continue
         local = tuple(
             coordinates[int(routes[row, column])] for column in range(routes.shape[1])
         )
+        basis = plain_basis
         expressions = (
-            coordinate_execution_map_expressions(element, local, cell_row=row)
-            if execution_map
-            else coordinate_map_expressions(element, local, cell_row=row)
+            None if root_preparation is None else root_preparation.expressions(row)
         )
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            chart = (
+                _execution_reference_arguments(element, cell_row=row)
+                if execution_map
+                else coordinate_reference_arguments(element, cell_row=row)
+            )
+            # All other domains retain the original exact per-chart path.
+            digest = (
+                None
+                if chart is None or expressions is not None
+                else _map_digest(cell_kind, chart)
+            )
+            if digest is not None and chart is not None:
+                cached = restricted_bases.get(digest)
+                if cached is not None and _expression_sequence_evidence_equal(
+                    chart, cached[0]
+                ):
+                    basis = cached[1]
+                    restricted_bases.move_to_end(digest)
+                else:
+                    basis = (
+                        coordinate_execution_basis(element, cell_row=row)
+                        if execution_map
+                        else coordinate_source_basis(element, cell_row=row)
+                    )
+                    restricted_bases[digest] = (chart, basis)
+                    if len(restricted_bases) > 64:
+                        restricted_bases.popitem(last=False)
+        if expressions is None:
+            if basis is None:
+                expressions = (
+                    coordinate_execution_map_expressions(element, local, cell_row=row)
+                    if execution_map
+                    else coordinate_map_expressions(element, local, cell_row=row)
+                )
+            else:
+                if not local or len(basis) != len(local):
+                    raise ValueError(
+                        "Coordinate basis and local source bank widths differ."
+                    )
+                components = tuple(
+                    tuple(local[dof][axis] for dof in range(len(local)))
+                    for axis in range(len(local[0]))
+                )
+                expressions = linear_combinations(basis, components)
         # Without a proof domain an unsupported nonaffine map is reported, so
         # only maps with a domain carry reusable records.
         digest = None if domain is None else _map_digest(cell_kind, expressions)
         if digest is not None:
             digests[row] = np.frombuffer(digest, dtype=np.uint8)
-            recorded = proofs.get(digest)
+            recorded = proofs.find(digest, cell_kind, expressions)
             if recorded is not None:
                 status[row], lower[row], upper[row], depth[row] = recorded
                 if pyramid and affine_map(expressions, dimension) is None:
                     apex_unique[row] = _pyramid_apex_unique(expressions, dimension)
+                continue
+        # Try directed quotient-rule bounds before constructing expanded exact
+        # rational derivatives.  This is only a sufficient proof; inconclusive
+        # intervals retain the original exact affine/nonlinear fallback.
+        if domain is not None and not pyramid:
+            interval_proof = _interval_quadratic_simplex_certificate(
+                expressions, domain, dimension, policy
+            )
+            if interval_proof is None:
+                interval_proof = _interval_rational_map_certificate(
+                    expressions, None, domain, dimension, policy
+                )
+            if interval_proof is not None:
+                status[row], lower[row], upper[row], depth[row] = interval_proof
+                if digest is not None:
+                    proofs.add(
+                        digest,
+                        cell_kind,
+                        expressions,
+                        (
+                            int(status[row]),
+                            float(lower[row]),
+                            float(upper[row]),
+                            int(depth[row]),
+                        ),
+                    )
                 continue
         affine = affine_map(expressions, dimension)
         if affine is None:
@@ -2079,11 +2632,16 @@ def _certify_source_block(
             lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
             upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
         if digest is not None:
-            proofs[digest] = (
-                int(status[row]),
-                float(lower[row]),
-                float(upper[row]),
-                int(depth[row]),
+            proofs.add(
+                digest,
+                cell_kind,
+                expressions,
+                (
+                    int(status[row]),
+                    float(lower[row]),
+                    float(upper[row]),
+                    int(depth[row]),
+                ),
             )
     return (
         _BlockCertificate(status, lower, upper, depth, apex_unique),
@@ -2100,6 +2658,9 @@ class ValidatedCellValidityParent:
 
     def __post_init__(self) -> None:
         self.certificate.revalidate(self.certificate.geometry, mesh=self.certificate.mesh)
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Validated cell validity cannot be serialized.")
 
     def require(
         self,
@@ -2129,7 +2690,11 @@ class ComputedCellValidity:
         policy: CellValidityPolicy,
         parent: CellValidityCertificate
         | ValidatedCellValidityParent
-        | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+        | ComputedCellValidity
+        | tuple[
+            CellValidityCertificate | ValidatedCellValidityParent | ComputedCellValidity,
+            ...,
+        ]
         | None,
         /,
     ) -> None:
@@ -2155,6 +2720,9 @@ class ComputedCellValidity:
     def __delattr__(self, name: str) -> None:
         raise AttributeError("A computed validity artifact is immutable.")
 
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Computed cell validity cannot be serialized.")
+
     def require(
         self,
         geometry: CellGeometrySpec,
@@ -2174,7 +2742,10 @@ class ComputedCellValidity:
 def _parent_proofs(
     parent: CellValidityCertificate
     | ValidatedCellValidityParent
-    | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+    | ComputedCellValidity
+    | tuple[
+        CellValidityCertificate | ValidatedCellValidityParent | ComputedCellValidity, ...
+    ]
     | None,
     policy: CellValidityPolicy,
     /,
@@ -2183,9 +2754,16 @@ def _parent_proofs(
     match parent:
         case None:
             parents: tuple[
-                CellValidityCertificate | ValidatedCellValidityParent, ...
+                CellValidityCertificate
+                | ValidatedCellValidityParent
+                | ComputedCellValidity,
+                ...,
             ] = ()
-        case CellValidityCertificate() | ValidatedCellValidityParent():
+        case (
+            CellValidityCertificate()
+            | ValidatedCellValidityParent()
+            | ComputedCellValidity()
+        ):
             parents = (parent,)
         case tuple():
             parents = parent
@@ -2193,9 +2771,12 @@ def _parent_proofs(
             raise TypeError(
                 "parent must be CellValidityCertificate, a tuple of them, or None."
             )
-    proofs: _CellProofs = {}
+    proofs = _CellProofs()
     for value in parents:
-        if type(value) is ValidatedCellValidityParent:
+        if type(value) is ComputedCellValidity:
+            certificate = value.certificate
+            value.require(value.geometry, value.mesh, certificate)
+        elif type(value) is ValidatedCellValidityParent:
             certificate = value.certificate
             certificate.require_current(certificate.geometry, mesh=certificate.mesh)
         elif type(value) is CellValidityCertificate:
@@ -2234,7 +2815,13 @@ def _parent_proofs(
             for row, values in zip(
                 rows.tolist(), zip(status, lower, upper, depth, strict=True), strict=True
             ):
-                proofs.setdefault(digests[row].tobytes(), values)
+                proofs.add_parent(
+                    digests[row].tobytes(),
+                    certificate,
+                    row,
+                    column,
+                    (int(values[0]), float(values[1]), float(values[2]), int(values[3])),
+                )
     return proofs
 
 
@@ -2654,7 +3241,10 @@ def certify_cell_geometry_validity(
     policy: CellValidityPolicy | None = None,
     parent: CellValidityCertificate
     | ValidatedCellValidityParent
-    | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+    | ComputedCellValidity
+    | tuple[
+        CellValidityCertificate | ValidatedCellValidityParent | ComputedCellValidity, ...
+    ]
     | None = None,
 ) -> CellValidityCertificate:
     """Certify determinant positivity of every mapped cell with Bernstein bounds.
@@ -2665,9 +3255,9 @@ def certify_cell_geometry_validity(
 
     ``parent`` passes earlier certificates of the same ``policy`` explicitly. A
     cell whose exact coordinate map (cell kind and exact coefficients) equals a
-    map a parent proved reuses that recorded proof, matched by map digest and
-    never by cell index; every other cell is proved. The result is identical
-    to the certificate of a full proof.
+    map a parent proved reuses that recorded proof after a digest lookup and
+    full exact map comparison, never by cell index; every other cell is proved.
+    The result is identical to the certificate of a full proof.
     """
 
     policy_ = CellValidityPolicy() if policy is None else policy
@@ -2710,6 +3300,7 @@ def certify_cell_geometry_validity(
     distinct_source = (
         source_coordinates is not None and source_coordinates != execution_coordinates
     )
+    source_coordinate_distinct = distinct_source
     coefficient_rounding_error = (
         max(
             (
@@ -2726,7 +3317,163 @@ def certify_cell_geometry_validity(
     for name, element, route in zip(names, elements, routes, strict=True):
         if not isinstance(element, ScalarCoordinateElement):
             continue
-        for row in range(route.shape[0]):
+        chart_rounding: OrderedDict[
+            tuple[bytes, bytes],
+            tuple[tuple[Expression, ...], tuple[Expression, ...], bool, ExactScalar],
+        ] = OrderedDict()
+        equal_root_bases = False
+        admitted_rows: list[
+            tuple[
+                int, tuple[Expression, ...], tuple[Expression, ...], tuple[bytes, bytes]
+            ]
+        ] = []
+        reorder_safe = False
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            try:
+                source_root = coordinate_source_basis(element.source_element)
+                execution_root = coordinate_execution_basis(element.source_element)
+                equal_root_bases = _expression_sequence_evidence_equal(
+                    source_root, execution_root
+                )
+
+                def rational_denominator(
+                    basis: tuple[Expression, ...],
+                ) -> tuple[bool, Polynomial | None]:
+                    if not basis:
+                        return False, None
+                    first = basis[0]
+                    if all(
+                        isinstance(value, dict)
+                        and all(
+                            type(coefficient) is Fraction
+                            for coefficient in value.values()
+                        )
+                        for value in basis
+                    ):
+                        return True, None
+                    if not isinstance(first, RationalPolynomial):
+                        return False, None
+                    if all(
+                        isinstance(value, RationalPolynomial)
+                        and value.denominator == first.denominator
+                        and all(
+                            type(coefficient) is Fraction
+                            for coefficient in value.numerator.values()
+                        )
+                        for value in basis
+                    ) and all(
+                        type(coefficient) is Fraction
+                        for coefficient in first.denominator.values()
+                    ):
+                        return True, dict(first.denominator)
+                    return False, None
+
+                source_ok, source_denominator = rational_denominator(source_root)
+                execution_ok, execution_denominator = rational_denominator(execution_root)
+                reorder_safe = source_ok and execution_ok
+                if reorder_safe:
+                    # Admit every row in its original order before scheduling
+                    # any commutative rounding-maximum work out of order.
+                    for row in range(route.shape[0]):
+                        source_chart = coordinate_reference_arguments(
+                            element, cell_row=row
+                        )
+                        execution_chart = _execution_reference_arguments(
+                            element, cell_row=row
+                        )
+                        if (
+                            source_chart is None
+                            or execution_chart is None
+                            or not all(
+                                isinstance(value, dict)
+                                and all(
+                                    type(coefficient) is Fraction
+                                    for coefficient in value.values()
+                                )
+                                for value in (*source_chart, *execution_chart)
+                            )
+                        ):
+                            reorder_safe = False
+                            break
+                        source_digest = _map_digest(element.cell_kind, source_chart)
+                        execution_digest = _map_digest(element.cell_kind, execution_chart)
+                        if source_digest is None or execution_digest is None:
+                            reorder_safe = False
+                            break
+                        if (
+                            source_denominator is not None
+                            and not compose(source_denominator, source_chart)
+                        ) or (
+                            execution_denominator is not None
+                            and not compose(execution_denominator, execution_chart)
+                        ):
+                            reorder_safe = False
+                            break
+                        admitted_rows.append(
+                            (
+                                row,
+                                source_chart,
+                                execution_chart,
+                                (source_digest, execution_digest),
+                            )
+                        )
+            except (OverflowError, TypeError, ValueError):
+                reorder_safe = False
+        work_rows = (
+            sorted(admitted_rows, key=lambda value: (value[3], value[0]))
+            if reorder_safe
+            else (
+                (row, None, None, None)
+                for row in range(
+                    min(route.shape[0], 1)
+                    if type(element) is FiniteElementSpec
+                    and element.degree == 2
+                    and element.cell_kind in ("tetrahedron", "simplex:3")
+                    else route.shape[0]
+                )
+            )
+        )
+        for row, source_chart, execution_chart, chart_key in work_rows:
+            if isinstance(element, PerCellRestrictedCellGeometryElement):
+                try:
+                    if source_chart is None or execution_chart is None:
+                        source_chart = coordinate_reference_arguments(
+                            element, cell_row=row
+                        )
+                        execution_chart = _execution_reference_arguments(
+                            element, cell_row=row
+                        )
+                    if source_chart is not None and execution_chart is not None:
+                        if equal_root_bases and _expression_sequence_evidence_equal(
+                            source_chart, execution_chart
+                        ):
+                            continue
+                        if chart_key is None:
+                            source_digest = _map_digest(element.cell_kind, source_chart)
+                            execution_digest = _map_digest(
+                                element.cell_kind, execution_chart
+                            )
+                            if source_digest is not None and execution_digest is not None:
+                                chart_key = (source_digest, execution_digest)
+                        if chart_key is not None:
+                            cached = chart_rounding.get(chart_key)
+                            if (
+                                cached is not None
+                                and _expression_sequence_evidence_equal(
+                                    source_chart, cached[0]
+                                )
+                                and _expression_sequence_evidence_equal(
+                                    execution_chart, cached[1]
+                                )
+                            ):
+                                chart_rounding.move_to_end(chart_key)
+                                distinct_source = distinct_source or cached[2]
+                                element_rounding_error = max(
+                                    element_rounding_error, cached[3]
+                                )
+                                continue
+                except (OverflowError, TypeError, ValueError):
+                    pass
             try:
                 source_basis = coordinate_source_basis(element, cell_row=row)
                 execution_basis = coordinate_execution_basis(element, cell_row=row)
@@ -2734,17 +3481,24 @@ def certify_cell_geometry_validity(
                 distinct_source = True
                 unsupported.add(name)
                 continue
-            distinct_source = distinct_source or not _expression_sequence_evidence_equal(
+            different = not _expression_sequence_evidence_equal(
                 source_basis, execution_basis
             )
-            element_rounding_error = max(
-                element_rounding_error,
-                _element_basis_rounding_error(
-                    source_basis,
-                    execution_basis,
-                    element.topological_dimension,
-                ),
+            rounding_error = _element_basis_rounding_error(
+                source_basis, execution_basis, element.topological_dimension
             )
+            if chart_key is not None:
+                assert source_chart is not None and execution_chart is not None
+                chart_rounding[chart_key] = (
+                    source_chart,
+                    execution_chart,
+                    different,
+                    rounding_error,
+                )
+                if len(chart_rounding) > 64:
+                    chart_rounding.popitem(last=False)
+            distinct_source = distinct_source or different
+            element_rounding_error = max(element_rounding_error, rounding_error)
     tables = None
     polyhedral_points = None
     cursor = 0
@@ -2753,6 +3507,9 @@ def certify_cell_geometry_validity(
     source_blocks: list[_BlockCertificate] = []
     digests = np.zeros(
         (sum(route.shape[0] for route in routes), 2, _MAP_DIGEST_SIZE), dtype=np.uint8
+    )
+    source_point_bounds: tuple[NDArray[np.float64], NDArray[np.float64]] | None = (
+        None if source_coordinate_distinct else (values, values)
     )
     for name, kind, element, route in zip(names, kinds, elements, routes, strict=True):
         cell_count = route.shape[0]
@@ -2791,6 +3548,7 @@ def certify_cell_geometry_validity(
                     policy_,
                     proofs,
                     execution_map=True,
+                    point_bounds=(values, values),
                 )
             except (OverflowError, TypeError, ValueError):
                 has_unsupported_map = True
@@ -2817,10 +3575,49 @@ def certify_cell_geometry_validity(
             )
         if distinct_source:
             if isinstance(element, ScalarCoordinateElement):
+                if (
+                    source_point_bounds is None
+                    and source_coordinate_distinct
+                    and type(element) is FiniteElementSpec
+                    and element.degree == 2
+                    and kind in ("tetrahedron", "simplex:3")
+                ):
+                    try:
+                        source_lower = np.asarray(
+                            [
+                                [
+                                    coefficient_endpoint(
+                                        value, upper=False, saturate=True
+                                    )
+                                    for value in point
+                                ]
+                                for point in source_bank
+                            ],
+                            dtype=np.float64,
+                        )
+                        source_upper = np.asarray(
+                            [
+                                [
+                                    coefficient_endpoint(value, upper=True, saturate=True)
+                                    for value in point
+                                ]
+                                for point in source_bank
+                            ],
+                            dtype=np.float64,
+                        )
+                        source_point_bounds = (source_lower, source_upper)
+                    except (OverflowError, TypeError, ValueError):
+                        source_point_bounds = None
                 try:
                     source_certificate, source_unsupported, block_digests = (
                         _certify_source_block(
-                            element, kind, source_bank, route, policy_, proofs
+                            element,
+                            kind,
+                            source_bank,
+                            route,
+                            policy_,
+                            proofs,
+                            point_bounds=source_point_bounds,
                         )
                     )
                 except (OverflowError, TypeError, ValueError):

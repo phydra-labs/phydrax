@@ -142,7 +142,7 @@ def _canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
 
 
 class IntervalConnectivity(StrictModule, NonTrainableState):
-    """Canonical vertex incidence for one-dimensional interval cells."""
+    """Canonical interval incidence, including authored network junctions."""
 
     cell_vertices: Array
     vertex_cell_counts: Array
@@ -158,8 +158,6 @@ def interval_connectivity(
 ) -> IntervalConnectivity:
     cells = _validated_cells("intervals", intervals, 2, int(vertex_count))
     counts = np.bincount(cells.reshape((-1,)), minlength=int(vertex_count))
-    if np.any(counts > 2):
-        raise ValueError("Interval cells must form a vertex-manifold mesh.")
     return IntervalConnectivity(
         jnp.asarray(cells),
         jnp.asarray(counts, dtype=jnp.int32),

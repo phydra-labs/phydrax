@@ -30,6 +30,7 @@ from ._form_elements import (
     _form_entity_chart,
     FormBasis,
 )
+from ._partition_form_moments import PartitionedReferenceEntities
 from ._reference import FiniteElementSpec
 
 
@@ -362,7 +363,7 @@ def _simplex_test_forms(
     entity_dimension: int,
     entity_dofs: tuple[int, ...],
     /,
-) -> dict[int, tuple[_Expression, ...]]:
+) -> dict[int, tuple[_Polynomial, ...]]:
     degree = (
         basis.order
         + basis.form_degree
@@ -412,10 +413,54 @@ def _target_test_forms(
     entity_dofs: tuple[int, ...],
     free_axes: tuple[int, ...],
     /,
-) -> tuple[tuple[tuple[int, ...], ...], dict[int, tuple[_Expression, ...]]]:
+) -> tuple[tuple[tuple[int, ...], ...], dict[int, tuple[_Polynomial, ...]]]:
     blades = tuple(combinations(range(entity_dimension), basis.form_degree))
     if not entity_dofs:
         return blades, {}
+    if basis.family == "prism-trimmed":
+        triangle_face = tuple(sorted({vertex % 3 for vertex in entity}))
+        interval_face = tuple(sorted({vertex // 3 for vertex in entity}))
+        triangle_dimension = len(triangle_face) - 1
+        interval_dimension = len(interval_face) - 1
+        complementary = tuple(
+            combinations(range(entity_dimension), entity_dimension - basis.form_degree)
+        )
+        result = {}
+        for dof in entity_dofs:
+            i, a, b = basis.dof_labels[dof][1]
+            j = basis.form_degree - i
+            triangle = FormBasis(2, i, basis.order, "trimmed", "untwisted")
+            interval = FormBasis(1, j, basis.order, "tensor-trimmed", "untwisted")
+            tri_free, _, _ = _form_entity_chart(2, "trimmed", triangle_face)
+            int_free, _, _ = _form_entity_chart(1, "tensor-trimmed", interval_face)
+            _, tri_tests = _target_test_forms(
+                triangle, triangle_face, triangle_dimension, (a,), tri_free
+            )
+            _, int_tests = _target_test_forms(
+                interval, interval_face, interval_dimension, (b,), int_free
+            )
+            tri_blades = tuple(
+                combinations(range(triangle_dimension), triangle_dimension - i)
+            )
+            int_blades = tuple(
+                combinations(range(interval_dimension), interval_dimension - j)
+            )
+            rows: list[dict[tuple[int, ...], _ExactScalar]] = [{} for _ in complementary]
+            sign = (-1) ** (j * (triangle_dimension - i))
+            for tri_blade, tri_test in zip(tri_blades, tri_tests[a], strict=True):
+                for int_blade, int_test in zip(int_blades, int_tests[b], strict=True):
+                    blade = tri_blade + tuple(
+                        triangle_dimension + axis for axis in int_blade
+                    )
+                    row = rows[complementary.index(blade)]
+                    for alpha, first in tri_test.items():
+                        for beta, second in int_test.items():
+                            exponent = alpha + beta
+                            row[exponent] = (
+                                row.get(exponent, Fraction(0)) + sign * first * second
+                            )
+            result[dof] = tuple(rows)
+        return blades, result
     if basis.family == "tensor-trimmed":
         if len(free_axes) != entity_dimension:
             raise ValueError(
@@ -512,11 +557,24 @@ def _cube_simplices(dimension: int, /) -> tuple[tuple[tuple[Fraction, ...], ...]
     return tuple(result)
 
 
+def _prism_simplices() -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+    vertices = tuple(
+        tuple(Fraction(value) for value in vertex)
+        for vertex in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (0, 1, 1))
+    )
+    return tuple(
+        tuple(vertices[index] for index in cell)
+        for cell in ((0, 1, 2, 3), (1, 2, 3, 4), (2, 3, 4, 5))
+    )
+
+
 def _entity_simplices(
     entity_dimension: int, family: str, /
 ) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
     if entity_dimension == 0:
         return ()
+    if family == "prism-trimmed" and entity_dimension == 3:
+        return _prism_simplices()
     if family != "tensor-trimmed":
         return (_standard_simplex(entity_dimension),)
     return _cube_simplices(entity_dimension)
@@ -682,6 +740,10 @@ def _strict_expression_sign_on_simplex(
 def _cell_simplex_cover(
     dimension: int, family: str, /
 ) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+    if family == "prism-trimmed":
+        if dimension != 3:
+            raise ValueError("Prism reference cells require dimension three.")
+        return _prism_simplices()
     if family == "tensor-trimmed":
         return _cube_simplices(dimension)
     return (_standard_simplex(dimension),)
@@ -1352,13 +1414,20 @@ def _integrate_entity_expression(
     rule_weights: np.ndarray | None,
     piece_policy: CurvedOverlapIntegrationPolicy | None,
     /,
+    pieces_override: tuple[tuple[tuple[Fraction, ...], ...], ...] | None = None,
 ) -> tuple[float, float, bool]:
+    if pieces_override is not None and not pieces_override:
+        return 0.0, 0.0, True
     expression = _polynomial_expression(expression)
     if entity_dimension == 0:
         exact = _evaluate_expression(expression, ())
         value, error = _integral_center_and_error(exact)
         return value, error, True
-    pieces = _entity_simplices(entity_dimension, family)
+    pieces = (
+        _entity_simplices(entity_dimension, family)
+        if pieces_override is None
+        else pieces_override
+    )
     if not pieces:
         raise RuntimeError("Positive-dimensional FE entity has no exact simplex cover.")
     if not expression:
@@ -1479,6 +1548,8 @@ def _local_reference_moments(
     integration_policy: CurvedOverlapIntegrationPolicy | None,
     prepared_orientation: _PreparedReferenceChartOrientation | None,
     /,
+    entity_pieces: Mapping[tuple[int, ...], tuple[tuple[tuple[Fraction, ...], ...], ...]]
+    | None = None,
 ) -> MomentIntegralMatrix:
     source_basis, target_basis = source.form_basis, target.form_basis
     if source_basis is None or target_basis is None:
@@ -1508,7 +1579,7 @@ def _local_reference_moments(
     exact = np.ones(values.shape, dtype=np.bool_)
     enclosed = np.zeros(values.shape, dtype=np.bool_)
     rules_by_dimension: dict[int, tuple[np.ndarray, np.ndarray]] = {}
-    piece_policies: dict[int, CurvedOverlapIntegrationPolicy] = {}
+    piece_policies: dict[tuple[int, str], CurvedOverlapIntegrationPolicy] = {}
     if integration_policy is not None:
         from ...geometry._common_root_volume_overlap import (
             CurvedOverlapIntegrationPolicy,
@@ -1516,20 +1587,24 @@ def _local_reference_moments(
 
         if not isinstance(integration_policy, CurvedOverlapIntegrationPolicy):
             raise TypeError("Rational FE moments require CurvedOverlapIntegrationPolicy.")
-        for entity_dimension in range(1, dimension + 1):
-            pieces = _entity_simplices(entity_dimension, target_basis.family)
-            piece_policies[entity_dimension] = (
-                integration_policy
-                if len(pieces) == 1
-                else CurvedOverlapIntegrationPolicy(
-                    relative_tolerance=(
-                        integration_policy.relative_tolerance / len(pieces)
-                    ),
-                    absolute_tolerance=(
-                        integration_policy.absolute_tolerance / len(pieces)
-                    ),
+        families = (
+            (target_basis.family, "tensor-trimmed")
+            if target_basis.family == "prism-trimmed"
+            else (target_basis.family,)
+        )
+        for entity_family in families:
+            for entity_dimension in range(1, dimension + 1):
+                pieces = _entity_simplices(entity_dimension, entity_family)
+                piece_policies[entity_dimension, entity_family] = (
+                    integration_policy
+                    if len(pieces) == 1
+                    else CurvedOverlapIntegrationPolicy(
+                        relative_tolerance=integration_policy.relative_tolerance
+                        / len(pieces),
+                        absolute_tolerance=integration_policy.absolute_tolerance
+                        / len(pieces),
+                    )
                 )
-            )
     seen_target_dofs: set[int] = set()
     for entity_dimension, entities in enumerate(target_basis.entity_vertices):
         for entity_index, entity in enumerate(entities):
@@ -1541,6 +1616,16 @@ def _local_reference_moments(
             seen_target_dofs.update(entity_dofs)
             if not entity_dofs:
                 continue
+            pieces = None if entity_pieces is None else entity_pieces.get(entity, ())
+            if pieces is not None and not pieces:
+                continue
+            entity_family = (
+                "tensor-trimmed"
+                if target_basis.family == "prism-trimmed"
+                and entity_dimension == 2
+                and len(entity) == 4
+                else target_basis.family
+            )
             free, origin, chart = _form_entity_chart(
                 target_basis.dimension, target_basis.family, entity
             )
@@ -1638,11 +1723,14 @@ def _local_reference_moments(
                         _integrate_entity_expression(
                             integrand,
                             entity_dimension,
-                            target_basis.family,
+                            entity_family,
                             integration_policy,
                             rule_points,
                             rule_weights,
-                            piece_policies.get(entity_dimension),
+                            None
+                            if pieces is not None
+                            else piece_policies.get((entity_dimension, entity_family)),
+                            pieces,
                         )
                     )
                     values[target_dof, source_dof] = moment_value
@@ -1805,4 +1893,39 @@ def exact_reference_form_moments(
     )
 
 
-__all__ = ["MomentIntegralMatrix", "exact_reference_form_moments"]
+def exact_partitioned_reference_form_moments(
+    source: FiniteElementSpec,
+    target: FiniteElementSpec,
+    record: PartitionedReferenceEntities,
+    source_transform: _CellOrientationMatrix,
+    target_transform: _CellOrientationMatrix,
+    integration_policy: CurvedOverlapIntegrationPolicy | None,
+    /,
+) -> MomentIntegralMatrix:
+    """Integrate one fine cell over its owned pieces of coarse target entities."""
+    if not isinstance(record, PartitionedReferenceEntities):
+        raise TypeError("Expected prepared partitioned reference entities.")
+    if (
+        source.cell_kind != record.fine_cell_kind
+        or target.cell_kind != record.coarse_cell_kind
+    ):
+        raise ValueError("Partition piece cell kinds differ from the form elements.")
+    return _transform_moments(
+        _local_reference_moments(
+            source,
+            target,
+            record.coarse_to_fine,
+            integration_policy,
+            None,
+            dict(record.pieces),
+        ),
+        source_transform,
+        target_transform,
+    )
+
+
+__all__ = [
+    "MomentIntegralMatrix",
+    "exact_reference_form_moments",
+    "exact_partitioned_reference_form_moments",
+]

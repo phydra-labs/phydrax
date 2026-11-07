@@ -4,6 +4,16 @@
 execution, and topology transitions. Solvers consume the resulting native
 carriers; they do not own external meshing sessions.
 
+The built-in qualification catalog includes fourteen scoped native workflow
+candidates, covering the original scientific families and explicit T-spline
+CAD-to-analysis. For example,
+`phx.qualification.builtin_capability_catalog().declaration("meshing.native-implicit")`
+describes its support and required gates. The current declarations identify
+CPU/binary64 scope and remain unreleased: registration is not a completed
+campaign, installed-engine-free witness, or release authorization.
+`tools.meshing_qualification` remains the sole authored case inventory and
+workflow runner; the catalog does not create another execution system.
+
 ## Workflows
 
 Each script is a complete, bounded public-API workflow that checks its own
@@ -35,6 +45,24 @@ evidence and prints a JSON summary:
 
 The code blocks of this guide form one sequence: later blocks reuse the
 `result` certified in the first.
+
+The native planar-feature qualification's closed sphere, torus, and capped
+cylinder PDEs additionally compare the measured source-surface energy error
+with the energy error of the exact nodal P1 interpolant. For an exactly
+integrated coercive Galerkin problem, best approximation makes the former no
+larger than the latter. The qualification evaluates P1 values and gradients on
+the certified source cells independently of the form assembler, using analytic
+tangential gradients and two tensor Gauss rules on the reference triangle.
+It reports both energy errors and their 4-versus-6-point-rule difference, and
+requires that difference to be small relative to the measured energies.
+The comparison includes twice that observed difference as a numerical
+quadrature allowance; it is not an interval error bound. Assembly quadrature and
+linear-solver errors are not separately bounded by this criterion, so it is a
+numerical qualification rather than a proof of the exact Galerkin inequality:
+their effects are included in the measured field error and can make the check
+fail. The algebraic residual is checked separately and cannot replace this
+accuracy check. For the capped cylinder, forcing is restricted by certified
+source-cell ownership to the cylindrical side; the cap forcing is zero.
 
 ## Certify an existing mesh
 
@@ -121,6 +149,9 @@ An exact `CellGeometryCoordinateMap.source_coordinates()` bank is aligned with
 target mesh's vertex table. Restricted maps may retain parent coefficients and
 bind exact target-vertex images separately; those images are checked through
 the retained maps rather than inferred from rounded coordinate equality.
+Layer source-chart revalidation evaluates composed or restricted coordinate maps
+at the exact target reference nodes; parent coefficient slots are not treated
+as target nodal values.
 
 A cell's Jacobian is certified only above `CellValidityPolicy.determinant_floor()`:
 the requested `relative_determinant_floor` (default 2^-35), but never below what
@@ -137,6 +168,25 @@ the small-solve limits (condition `1e12`, scaled-determinant tolerance `1e-12`),
 full-dimensional cells are evaluable for `r > 16 / 1e12` and embedded cells for
 `r^2 > 9 / 1e12`; 2^-35 is the next power of two above both. Both measures are
 angles, so the floor does not limit thin (high-aspect-ratio) cells.
+For full-dimensional rational coordinate maps, directed Bernstein enclosures
+of the Jacobian entries can prove a positive determinant and the same relative
+floor without expanding the rational determinant. Coordinate denominators must
+also be bounded away from zero. Inconclusive interval bounds fall back to the
+exact determinant proof; certificates can therefore carry different bounds and
+identities when this proof route establishes validity.
+Quadratic tetrahedral maps can similarly bound their affine Jacobian entries
+from the four reference vertices before applying outward-rounded determinant
+and column-norm bounds. This is a sufficient whole-cell proof, not a sampled
+determinant test. Both routes preserve the requested relative floor and prove
+the exact source and binary64 execution maps separately. An inconclusive screen
+never authorizes acceptance: the exact route remains responsible for the result.
+For eligible quadratic tetrahedra, the proof can screen bounded blocks without
+materializing each exact polynomial map. A directly screened cell may have no
+reusable map-index record; this absence is not a map identity or proof. A later
+parent-assisted certification screens such cells again, while indexed reuse
+still requires comparison of the complete exact map. Changed enclosures and
+map-index availability can change certificate and containing artifact
+identities; they do not change the source geometry or validity policy.
 
 Polygon cells are certified without assuming star-shapedness. A planar polygon
 is `CERTIFIED_VALID` iff its vertices are finite and distinct, every edge is at
@@ -199,6 +249,12 @@ The report composes global embedding, source coverage, continuous fidelity,
 and applicable feature obligations. Unsupported proofs remain unresolved, not
 successful. `report.revalidate(mesh, geometry)` independently recomputes the
 proofs; stored IDs or a passed flag are not substitutes for source operands.
+For an exactly affine coordinate map, equality against the complete source
+expressions licenses a canonical affine polynomial in the embedding proof.
+This removes removable pyramid denominators from shared-vertex and shared-edge
+sign tests without changing mesh coordinates or geometry identity. Affine-looking
+corners alone do not license this reduction; genuinely curved maps retain their
+full expressions and overlapping positive-Jacobian cells are not accepted.
 The global-embedding theorem is computed once per mesh, coordinate map and
 validity policy and handed on explicitly: a route that already proved it
 passes the certificate in its certification request (or
@@ -220,14 +276,68 @@ embedding witnesses and surface cell tags as array columns (a value table with
 int64 row indices, or UTF-8 text with offsets), so manifests stay within the
 canonical `MODEL_ARCHIVE_LIMITS`; the decoder rebuilds each record through its
 constructor and requires its stored identity.
+Ordered association collections and exact facet-overlap records also use
+batched owner-specific columns. Their archive content IDs change with this
+representation; reconstructed association identities, row order, exact
+parameters, occurrence paths, and numerical values do not.
+Exact PLC vertex witnesses and retained mixed-adaptation coefficient banks use
+the same exact column representation. The retained bank's copied source IDs are
+provenance, not authority: accepted adaptation restore checks them and every
+exact coefficient against the independently restored source or root geometry,
+then reproves the complete coordinate-map transition.
+Archive writers use compact, sorted-key JSON manifests. This changes archive
+bytes compared with earlier indented manifests but not their JSON data or native
+model content IDs; readers continue to admit either whitespace representation.
+`MODEL_ARCHIVE_LIMITS` allows 16 MiB of manifest metadata for source identities,
+occurrence paths, and exact evidence alongside its 4,096 array leaves. The
+1 GiB container and aggregate limits, 256 MiB member limit, and existing
+nesting, dtype, and shape checks remain enforced. This admission policy does
+not change archive bytes, content identities, or mathematical restoration.
 Staged prerequisite reads also validate unselected column records and their local
 content identities. Each raw subtree must reproduce its admitted recipe before
 column decoding; the reader discards unrequested records rather than rebuilding
 their enclosing target geometry. Selecting one field never bypasses malformed
 columns elsewhere, and admission still does not certify stored mathematics.
+Accepted-state reconstruction can borrow read-only NumPy leaves from immutable
+archive-byte snapshots after the complete archive and checksums are admitted.
+The ordinary array and model inventory readers retain their existing behavior;
+this storage choice does not change archive identities or certify source proofs.
+Structured source archives retain the declared blocks, oriented curve or surface
+controls, interfaces and source boundary query. Cold restoration replays their
+constructors, recomputes the scope banks and identities, and compares the full
+stored content before recertifying the retained mesh. A saved finite-element
+restart carries the accepted field values and layout; continuation uses the
+restored state rather than rerunning the meshing request.
+Swept sources likewise retain the profile coordinate element and station
+control, and mapped sweeps reconstruct their exact root authority and boundary
+query. Independently restored query and domain content must agree before they
+are rebound for a new source-fidelity proof.
+Layer-core carrier identities now retain only the original and required source
+edge inventories derived from the source and request. Recovery history and a
+historical core-mesh ID are not scientific authority. Cold restoration derives
+actual source-edge support from the retained endpoint and independently checks
+complete coverage of required edges, even when the archive content hash matches.
+This intentionally changes carrier and dependent result identities and rejects
+the superseded archive structure.
 Missing continuous fidelity witnesses produce an unresolved certificate with
 unbounded directed deviation evidence. Those bounds remain infinity; they are
 not replaced with finite estimates or accepted merely because mesh samples agree.
+
+Within one certification operation, identical overall and scoped fidelity
+requests can share the freshly computed certificate. Reuse requires the same
+actual source and witness, the same tolerance representation, and no additional
+normal-angle or parent-proof premise. Different scoped bounds remain separate
+obligations, and findings retain their original order. This is not a persisted
+proof cache: reconstruction still validates the current scientific operands.
+Implicit source-cover existence checks scan bounded host blocks rather than
+materializing a mask for the complete cover.
+Numeric polygon staging uses mapped scratch blocks that are released while the
+final owning arrays are assembled. The retained scaffold and mesh data are not
+reduced. A connected triangular complex already has canonical component label
+zero, so topology preparation does not sort and copy that complete label bank.
+Triangle topology duplicate detection and large vertex-incidence ordering use
+released mapped scratch rather than retaining full-size sort buffers in the host
+allocator. Incidence order and component labels remain unchanged.
 
 Distance-only analytic or envelope witnesses do not establish source topology.
 An explicitly changed envelope has its own source domain; its original-source
@@ -353,6 +463,14 @@ chart edge rather than its longest physical edge, so a full-turn polar chart
 cannot hide a fold behind physically nearby endpoints. Physical acceptance
 criteria and source-curve identities remain unchanged.
 
+Curve-loop classification recognizes exact affine trim spans, including
+affine-harmonic p-curves whose harmonic coefficients vanish and whose phase is
+exactly zero. If a guaranteed source span intersects the query box, separation
+cannot succeed; classification retains `UNRESOLVED` without repeated interval
+subdivision. Symbolic endpoints use the interior of their certified parameter
+brackets, not rounded endpoint shadows. This shortcut does not assert a boundary
+hit or replace continuous bounds for curved or undecided spans.
+
 At a certified shared-root junction, the chart partition uses one deterministic
 representative on the proved native sheet. That representative is a point of
 the constructed reference partition, not a claim that the source root equals
@@ -408,10 +526,11 @@ other diagonal of its convex chart quad when that raises the smaller physical
 minimum angle of the two cells. Trim edges, source-piece root-cell boundaries
 and pole fans never flip. A hard physical angle target also marks violating
 triangles for conforming refinement. For a direct CAD tetrahedral fill, the
-surface target is derived from the volume radius-edge bound $B$: every fixed
+surface target is derived from a supplied volume radius-edge bound $B$: every fixed
 boundary triangle must have minimum angle at least $\arcsin(1/(2B))$, a
 necessary condition for any incident tetrahedron to meet that bound. Source
 fidelity and protected-feature checks remain independent of this quality gate.
+An explicitly absent radius-edge target adds no such derived angle constraint.
 
 A surface of revolution whose profile is an exact line perpendicular to the
 axis, with its radial offset along that line (a cylinder or cone cap, a flat
@@ -481,9 +600,18 @@ The PWL boundary query must be full-scope and bound to that same domain.
 
 A graded `LayerSchedule` sweeps a whole slab natively without a core fill: the
 stations are the cumulative layer thicknesses, so the first-cell height is the
-first scheduled thickness exactly. Each PWL wall facet must map to one swept
-target face, so the domain carries a vertex at every station on its walls
-rather than one tall facet spanning several layers.
+first scheduled thickness exactly. A PWL facet spanning several swept faces is
+covered by an exact affine boundary overlay, without changing the source facet.
+For a triangular whole-slab extrusion, an `EXACT_SWEEP` layer control may bind
+the complete original PWL wall, cap, and volume scopes; its physical schedule
+must match the sweep schedule. Partial or mismatched scopes are refused.
+
+For an ambient-3 periodic profile, straight extrusion rebuilds the target
+quotient from the profile's representative and winding at every station.
+The exact periodic generators must preserve the extrusion direction; otherwise
+the sweep is refused. Periodic revolution and frame sweeps are not supported.
+The rebuilt vertex quotient does not by itself certify higher-order periodic
+face traces; those remain a separate geometry and embedding obligation.
 
 The composed boundary witness keeps source-chart and target-reference
 coordinates distinct. A standard triangular boundary face of a 3D swept cell
@@ -650,6 +778,13 @@ layers, the wall, adjacent surfaces, and obstacles. Collisions resolve only by
 terminations, never below the first layer), `REDUCE_THICKNESS` (never below
 `minimum_thickness_fraction`), or `MERGE` (mutually paired, face-to-face opposing
 fronts share their midsurface). Failures carry the wall vertices and locations.
+An authored periodic wall may be intrinsically two-dimensional in a
+three-dimensional identification frame. Its lifted vertex representatives and
+windings define quotient edge and column ancestry; advancing layers carry that
+identity to both the volume layer mesh and its cap. Periodic seam directions and
+growth limits are synchronized in the declared isometry frame, and published
+coordinates must satisfy the same exact identification checks as the wall.
+
 `BoundaryLayerMesh` holds the certified layer cells, the exact cap (quadrilateral
 cap faces are closed by transition pyramids), and `BoundaryLayerEvidence` with
 thicknesses measured as exact distances to the wall. Per-layer statistics cover
@@ -661,6 +796,24 @@ for every growth rate touching it (`achieved_growth_rates[k]` is the ratio of
 achieved thicknesses `k + 1` and `k`). Read layer support from `layer_active`,
 not from NaNs; `terminated_vertex_count`, `reduced_vertex_count`, and
 `merged_vertex_count` state why columns stopped short of or shrank the schedule.
+The result retains the original obstacle surface (or its absence) and the actual
+final column scales, layer counts, stretches, merge targets, and level coordinates,
+including coordinates not present in the compacted cell mesh. These are source
+state, not a substitute for rechecking the retained geometry and controls. Collision
+prediction and resolution iteration counts describe historical work, not a proof
+that the final cells are valid or collision-free.
+Layer-core source archives retain these actual layer arrays, wall and obstacle
+owners, controls, and policy. Cold restoration reconstructs their owners and
+independently rechecks the retained geometry, controls, and contacts; it does
+not rerun growth or collision-resolution decisions.
+
+Warped layer faces are checked as bilinear images, not as triangulated corner
+surrogates. If exact plane separation is inconclusive, a nondegenerate
+tetrahedral control hull provides a conservative enclosure. Its exact
+intersection with each wall triangle must lie entirely in the declared shared
+stratum. An inconclusive enclosure is still refused; neither wall penetration
+nor a nearby undeclared contact is accepted through a numerical tolerance.
+
 `GmshProvider.fill_boundary_layer_core` tetrahedralizes between a closed cap and
 the remaining boundary while keeping both fixed: fixed nodes are verified
 bitwise and core faces must match the fixed triangles exactly; the merged mesh
@@ -668,6 +821,46 @@ carries `boundary-layer` and `core` zones and `wall`, `layer-core-interface`, an
 `outer` patches. `PlanarBandControl` instead declares explicit side schedules over
 a planar partition patch; `prepare_planar_bands` returns the per-layer partition
 evidence.
+
+`NativeLayerCoreSource` can explicitly request `noncap_refinement="conforming"`
+while keeping `cap_refinement="fixed"`. This permits conforming subdivision of
+the noncap core boundary, not movement of original vertices or changes to the
+authored geometry, layer controls, material sides, or quality targets. The
+original layer control and policy must be retained on the source. The accepted
+result retains source ancestry and independently checks the realized boundary
+and the layer/core interface. Fixed remains the default; cap refinement is a
+separate opt-in.
+For this conforming noncap policy, native quality repair may collapse only
+eligible generated boundary vertices; the original execution vertex bank and
+protected facets remain constraints. Repair status, unmet criteria, and its
+predecessor native identity remain distinct from the final quality evidence.
+
+
+For a charted planar CAD or native surface source, the source-face layer/core
+builder can construct the remaining core boundary by an exact arrangement of
+the original face trims and the realized layer boundary. The fixed cap and
+true source curves remain constraints; earlier surface-mesh diagonals do not
+become CAD edges. A derived core face may cross several earlier surface cells
+and is bound to the original face by an independently checked exact overlap,
+not by a fabricated single-cell ancestor. This changes derived core/source
+association identities, while the authored CAD geometry, occurrence paths,
+material sides and fixed cap remain unchanged. This construction requires
+independently proved planar source and layer images, and boundary vertices
+that retain actual layer or source-wall ancestry and are exactly representable
+by the native carrier. Unsupported nonbinary or unowned arrangement vertices
+are refused, not treated as exact rounded shadows.
+
+
+For mapped layer/core meshes, the native volume schedule is evaluated on the
+physical affine corner tetrahedra. Reference-space refinement and improvement
+findings remain historical evidence, not physical quality results. Curved
+whole-cell validity is certified separately; the affine quality measurement
+does not claim a whole-map radius-edge or dihedral bound.
+When a mapped physical improvement proposes a topology change, its retained
+reference size targets are derived from the actual native snapshot. Each
+changed material cavity must preserve the native reference size bound, and the
+validated targets are retained on the rebound mesh. Missing or ambiguous
+target correspondence is refused rather than treated as unconstrained.
 
 `NativeLayerCoreSource` can instead declare a `core_power_source` and request
 `VolumeFillStrategy.POLYHEDRAL` with the polyhedron family. The native layer/core
@@ -856,18 +1049,32 @@ scaffold, whose triangles can be slivers. Because a tetrahedron on a `FIXED`
 face has a radius-edge ratio at least the face's, a carrier with any face above
 `NativeVolumeSchedule.radius_edge_bound` is first remeshed natively toward the
 requested uniform target size (else its mean edge length) and a 30° minimum
-angle. Every created triangle is admitted by the zero-set band predicate: from
-native interval enclosures of the field and its gradient, its distance to the
-zero set is certified at most the scaffold's own bound (residual over a
-certified gradient-norm lower bound on a widened box) and its normal is
-certified transversal to the gradient with the carrier's orientation. Vertex
-proposals come from interval Newton along the gradient line. The published
-fidelity bound is the certified maximum over the remeshed triangles; each face's
-chart witness names the nearest scaffold triangle, and coverage proves degree
-one without a one-to-one scaffold correspondence: the certified charts make the
-lift a covering, and one lifted point per boundary component has exactly one
-preimage, so folded or duplicated sheets are refused. A remeshed face still
-above the bound is a typed `QUALITY_REJECTED` refusal; carriers already within
+angle. Every created triangle is admitted by the zero-set band predicate using
+the smallest explicitly declared whole-surface `maximum_deviation` and hard
+protected-feature deviation, further limited by the analytic profile's
+established tube when a profile is present. Soft protected features do not
+tighten this admission bound. Foreign or partial implicit feature scopes are
+refused. If remeshing is required, an absent positive declared bound or a zero
+exact bound is refused rather than replaced with an invented tolerance.
+
+Native interval enclosures certify each created face's distance to the zero set
+within that selected bound and its normal transversal to the field gradient with
+the carrier's orientation. Untouched scaffold faces retain the independently
+established original scaffold distance bound; that bound is not substituted for
+the requested admission tolerance. Vertex proposals come from interval Newton
+along the gradient line. The native result reports the maximum certified
+distance over both created and untouched faces, and the volume fidelity bound
+adds the fill's boundary-witness deviation outward before checking the original
+request and hard features. The remeshed carrier identity binds both distance
+bounds, and achieved evidence includes `carrier_remesh_admission_tolerance`.
+
+Each face's chart witness names the nearest scaffold triangle, and coverage
+proves degree one without a one-to-one scaffold correspondence: the certified
+charts make the lift a covering, and one lifted point per boundary component
+has exactly one preimage, so folded or duplicated sheets are refused. These
+independent charts, normal and source-coverage proofs are still required; native
+admission alone does not establish them. A remeshed face still above the
+radius-edge bound is a typed `QUALITY_REJECTED` refusal; carriers already within
 the bound keep the scaffold triangles and their one-to-one certificate. The
 compliance report records the carrier ratio and minimum angle before and after.
 
@@ -889,10 +1096,38 @@ revision; fidelity and domain coverage bind it through the discovery's adaptive
 boundary query and the source ID, and its zero-set scope is the one canonical
 surface entity.
 
+Discovery retains the complete interval-leaf cover, root witnesses, and
+boundary-band scaffold; packing the frontier and leaf columns does not change
+the requested resolution or discard components. Interval classification is
+batched; nonambiguous cell contours use the ABI-matched meshcore native batch
+kernel, with the canonical scalar contour kernel resolving cases not decided by
+the batch.
+The internally produced immutable cover and scaffold adopt their
+sealed owning buffers rather than making a second full copy. The retained
+cover and scaffold still scale with the resolved geometry; polygon ordering and
+root ancestry also require scratch proportional to the boundary band. Rejected
+refinement and re-anchoring attempts are released before the next attempt.
+Boundary-cover samples match witness boxes by exact numeric keys in bounded
+batches, retaining duplicate-box refusals and the geometric fallback for
+nonmatching boxes. Fresh sealed sample buffers transfer into their validated
+immutable result without a second full copy; public sample construction still
+copies caller-owned inputs.
+Source-coverage qualification independently replays the interval leaves and
+checks the retained lattice, roots, and polygon ancestry instead of retaining a
+second complete discovery. The exact dyadic cells must partition the domain;
+their outward-rounded interval enclosures may overlap at rounded boundaries,
+but each is independently checked to contain its corresponding exact cell.
+Its partition and source-map checks remain separate from mesh generation.
+Earlier refinement and lattice choices are replayed when needed to bind the
+retained evidence to the requested policy.
+
 Root charts map each target face (P1–P3) to the zero set along gradient lines.
 A face is certified piece by piece: undecided pieces split and siblings share
 one batched interval evaluation. The field and gradient use mean-value forms
 about the piece center, and the residual also uses a second-order Taylor form.
+The retained residual enclosure bounds the absolute field magnitude, including
+pieces lying entirely on the negative side of zero. A signed upper endpoint
+alone is not an absolute residual bound.
 The normal-line root interval is one-sided and narrowed by an interval Newton
 step. Its endpoint signs are also bounded by the residual plus the interval
 times the certified normal-line derivative. A bracket that misses a sign widens
@@ -960,9 +1195,51 @@ target is compared with measured arc lengths at the `SizeCompliancePolicy`
 tolerances, which default to zero; a target such as 0.2 m that floating-point
 placement cannot reproduce exactly needs an explicit tolerance in the request.
 
+Interval meshes also represent authored curve networks. Junctions retain every
+incident source-curve point restriction and the authored source vertex; they are
+not split into disconnected interval endpoints. Certification admits multiple
+curve associations at a vertex only when current, independently validated curve
+charts prove each exact source parameter and occurrence at that target endpoint.
+Missing proof, a changed parameter, or an unrelated occurrence is refused.
+Degree-one vertices remain the graph boundary, and conforming H1 diffusion
+assembles the incident fluxes at the shared junction.
+
 Native tetrahedral refinement and quality improvement (`TetMesh3D.refine` and
 `TetMesh3D.improve`, run in that order by the native volume routes) have these
 contracts:
+
+For an execution PLC derived from original exact source points, boundary
+stencils compose back to those original points before rounding the final
+carrier. Candidate quality is evaluated on the corrected coordinates with the
+native connectivity and retained size field, without modifying the original
+native state. Its payload-bound candidate identity is distinct from the native
+historical identity. This quality check does not replace source, coverage, or
+global embedding certification, and historical unresolved work remains visible.
+
+`NativeVolumeSchedule` retains its default radius-edge target `2.0` and minimum
+dihedral target `10.0` degrees. Set `radius_edge_bound=None` to omit only the
+radius-edge target; `minimum_dihedral_degrees=0.0` already represents no positive
+angle target. This does not disable retained size controls, orientation,
+finiteness, determinant validity, or construction failures. Reports omit an
+unrequested radius target rather than claiming that an arbitrary large bound
+was achieved. Existing numeric schedules keep their identities. At the C
+interchange boundary only, zero encodes absence; Python callers use `None`,
+and an explicit numeric zero remains invalid.
+
+`shape_strength` (a `SizeControlStrength`, default `HARD`) sets how acceptance
+reads both shape targets. `HARD` gates them: every unmet radius-edge or
+dihedral row is a `native_final_quality` finding unless an input-forced
+exemption covers it. `SOFT` refines and improves toward the same targets, so
+the native mesh is identical. Unmet radius-edge and dihedral rows are then
+published as `soft_shape_target:*` evidence (with `soft_shape_target_unmet_count`)
+instead of findings. Validity, determinant, construction and nonrepresentable
+rows, size, source fidelity, protected features and coverage stay hard. Hard
+schedules keep their identities; `SOFT` enters the schedule identity. The PLC, CAD,
+image, envelope and adaptive implicit volume routes support soft targets. Routes
+whose acceptance never reads these rows (restricted Delaunay, layer core, hex
+families, polyhedral carriers) refuse `SOFT` rather than ignore it.
+Original qualification profiles declare `SOFT` only where the donor source
+authored the targets as aims, and each receipt cites that source.
 
 - **Size field.** `sizes` holds one circumradius target per current vertex (0:
   unconstrained). A cell's target is the mean of its corners' targets, and is
@@ -971,7 +1248,7 @@ contracts:
   at its position, and a removed vertex's entry is erased. `improve()` without
   `sizes` uses the retained field, so a route's refinement size field (for
   example a `UniformSizeControl`) constrains improvement too.
-- **Refinement.** Circumcenters of cells violating the radius-edge bound or
+- **Refinement.** Circumcenters of cells violating an active radius-edge bound or
   their size target are inserted through a checked cavity; an encroached
   splittable boundary face is split instead. No point is inserted closer than
   min(lfs(x), h(x))/2 to an existing vertex, h(x) the target interpolated at
@@ -1110,15 +1387,47 @@ contracts:
   its triangle ratio (`TetMeshUnmet.facet_ids`, `facet_ratios`; the largest
   when several force the cell). Other improvement residuals are
   `NO_IMPROVEMENT`. Volume routes refuse a mesh with improvement residuals
-  rather than publish it.
+  rather than publish it, with one exception for an authored PLC. A dihedral
+  row is exempt only when it is forced by the input: the cell has an edge on the
+  recovered chain of an authored ridge between exactly two planar source
+  polygons, its region lies inside that ridge's convex wedge, the ridge's exact
+  input dihedral is below the requested target, and every other dihedral of the
+  cell meets the target. Dihedral angles around an edge sum to the input angle,
+  so no mesh can satisfy the target there. The comparison is exact rational
+  arithmetic against an outward enclosure of the target's cosine, and anything
+  unresolved stays a finding. A radius-edge row is likewise exempt only when
+  the cell has a face triangulating an authored planar facet at a facet vertex
+  whose exact interior angle α forces 1/(2·sin α) above the bound: every
+  triangle at that vertex, and every tetrahedron on it, must exceed the bound.
+  Other radius-edge rows, dihedral rows elsewhere, mapped/CAD-charted sources
+  and tessellated CAD planes are never exempt. The compliance report records
+  the exemption count, each exempt cell's achieved value, each ridge's input
+  angle, and each forcing vertex's angle, forced ratio and face ratio. These
+  records change the report identity only when an exemption applies.
 
 `ImplicitSurfacePlan`, created by `geometry.discover_implicit_surface`, is the
 geometry-owned fixed-lattice, fixed-topology operation. Its `realize(state)`
-keeps the discovered route and triangle connectivity fixed while JAX
-differentiates the realized surface coordinates. This does not differentiate
-through adaptive extraction, topology discovery, or canonical meshing
-acceptance; initial native meshing uses the separate nondifferentiable
-`NativeMeshingProvider` workflow.
+keeps the actual discovered numerical/QEF plan and triangle connectivity fixed
+while JAX differentiates the realized coordinates. This does not differentiate
+adaptive discovery, topology selection, or host acceptance.
+
+An explicit `ImplicitSurfacePolicy` selects the native fixed-lattice surface
+route; the default adaptive policy remains a distinct route. Authored lattice
+points and projection controls are not replaced by adaptive defaults. For
+republication, `NativeMeshingProvider.plan(..., fixed_plan=...)` accepts
+a validated prior fixed-route native plan with compatible source, complete
+kernel contract, parameter schema, physical frame, grid, and policy. Preserve
+the compiled geometry schema with `original_geometry.with_state(...)`; a
+newly compiled shape can have a different parameter scale despite sharing its
+displayed formula.
+
+Changed source state requires truthful revision/content binding and fresh
+independent source authority, fidelity, coverage, geometry, and physical
+analysis. That authority does not replace the reused fixed numerical plan:
+rediscovering a new QEF plan is not the same fixed-event calculation.
+Tree-edited preparations, stale revisions, and changed branch/regularity
+conditions cannot be published under prior plan identity. Soft size guidance
+does not become an unrequested hard source-deviation tolerance.
 
 `ManifoldProvider` performs n-ary union, difference (first operand minus all
 others), and intersection of closed, oriented triangular `SurfaceModel`
@@ -1159,6 +1468,27 @@ and the mesh stays conforming. Every new vertex keeps its exact source-vertex
 support. Calling `extract_surface_quads` directly keeps the refusal unless it
 passes `unpaired_triangles="subdivide"`.
 
+`SurfaceMeshingSpec.cross_field` supplies an independently prepared,
+source-bound `SurfaceCrossField` to this route. Its source mesh and physical
+features must match the actual scaffold; equal dimensions or matching array
+shapes do not establish that binding. Unsupported routes reject the field
+instead of ignoring it. Distinct admitted fields can select distinct quad
+topologies while keeping the physical source and feature constraints fixed.
+
+The accepted result retains the validated construction as
+`CellMeshingResult.surface_quad_field_event`. The event binds the source,
+cross field, singularity/valence constraints, layout, and extracted mesh.
+Restoration reconstructs and revalidates the field and layout through their
+owners rather than trusting their IDs. An independently archived event uses a
+`Composition` container; accepted result archives carry the event directly.
+Field and event arrays remain dynamic, fixed-role scientific data.
+
+These request/result fields change the canonical PyTree and archive field
+sets and their fingerprints, including absent fields/events. Older exact
+templates are not identity-preserving current results. Rebuild canonical
+artifacts from their actual scientific sources and controls; do not patch
+historical IDs or manufacture compatibility payloads.
+
 `plc_dual_hex` is the explicit tetrahedral dual conversion. It retains parent
 cell, source-vertex, material-block, and exact coordinate-map ancestry, but is
 not a general all-hexahedron PLC mesher. `plc_hex_dominant` reports its actual
@@ -1189,6 +1519,24 @@ within its authored root vertex/edge/face/cell support; artificial grid planes
 are not treated as fixed source features. Every proposal retains exact chart and
 region ancestry and must pass reference coverage, whole-cell validity, global
 embedding, and the unchanged quality schedule before publication.
+
+When a target's exact charts restrict an intermediate physical parent rather
+than the mapped domain directly, coverage takes that current parent's mesh and
+geometry as the operation-local `chart_parent`. It reconstructs those owners,
+proves the parent's partition of the mapped root, the target's complete
+partition of the parent, and equality of the composed physical maps. A
+source-bound layer/core certification supplies its independently validated
+retained root; standalone coverage revalidation or cold reconstruction must
+supply the same actual parent. A missing parent is unresolved and a foreign
+parent is refused. The compact retained coefficient bank is data, not a
+historical-parent authority, and direct-root coverage needs no parent argument.
+For this parent-input cutover, AST decision counts changed from 49 to 55 for
+`_certify_intermediate_parent_chain`, 83 to 86 for
+`certify_child_chart_partition`, 7 to 9 for coverage `require_current`, 6 to 8
+for coverage `from_stored_fields`, and 42 to 46 for the mesh certification
+report constructor; coverage boundary/proof traversal counts remain 64 and 29.
+The additions own parent reconstruction, source binding and explicit missing
+premise refusal, not a new geometric lineage model.
 
 `plc_frame_grid_hex` is separate from that balanced carrier-grid route. It
 solves spatially varying per-tetrahedron frames and exact block/integer charts,
@@ -1243,16 +1591,41 @@ separately rounded lifted vertex bit for bit.
 For owner-local execution, each rank supplies its owned and resident ghost site
 rows and calls `plan.execute(execution_group=group)`. Generation closes native
 support by exact periodic predicates and returns a `MeshAssembly` containing a
-compact local `OwnerLocalCellGeometry`; no rank gathers a global site table or
-mesh. The local view retains stable cell owners, exact quotient keys, absolute
-deck windings, source/map context, and the collectively proved quotient-facet
-coverage.
+compact local `OwnerLocalCellGeometry` without a global mesh gather. The local
+view retains stable cell owners, exact quotient keys, absolute deck windings,
+source/map context, and the collectively proved quotient-facet coverage.
 
 Periodic Delaunay views exchange every face-neighbor cell of an owned cell that
 is not already resident before publication. The owner-pair transfer retains
 exact lifted coordinates, quotient IDs and windings, and cumulative
 interpolation ancestry; it follows certified face adjacency rather than a fixed
 local cell ring.
+
+Periodic power views grow owner-pair site support from an initial seed until
+exact provisional-cell bounds exclude all missing competitors. The proof
+includes ties, and is recomputed as support or face-neighbor candidates change.
+Only owned cells and their actual quotient face neighbors are materialized in
+the resident mesh, whose source map binds the expanded support. Weight ranges
+can make global influence genuine; locality and a bounded support size are not
+guaranteed for every source. Cell ownership follows authored site identity,
+including after graph repartition or changed-placement reattachment. Inactive
+sites and their weights remain in the source bank even though they produce no
+cell. Collective quotient face coverage checks every owned face neighbor and
+its owner.
+The native clipper constructs selected target images and the support components
+needed for their actual face neighbors; support-only cells are not published.
+Remote interfaces retain native site/carrier-tetrahedron witnesses tied to the
+exact face, orientation, owner and periodic action. Cold reattachment checks
+those witnesses against the actual source, positive-area carrier intersection
+and owner graph. A shifted self-neighbor cannot be replaced by the same
+zero-winding image. Retained coordinate and witness banks cover the resident
+mesh rather than all transient clipped cells.
+
+Exact rational zero now has one native binary64 realization, positive zero,
+regardless of denominator sign. Negative nonzero underflow keeps its sign, and
+zero denominators remain errors. This can change execution-array fingerprints
+and dependent container identities; exact scientific site, vertex and orbit
+identities are not inferred from those floating-point representations.
 
 Owner-local uniform size controls bind the common complete fundamental-domain
 scope, not rank-local point subsets; each process validates the same source,
@@ -1281,10 +1654,44 @@ is its root's exact position translated exactly by its deck winding, and the
 binary64 carrier holds the canonical rounding of that translate. Orbit-locked
 bisection on a non-dyadic lattice can create midpoints that are not binary64;
 its target is then published on the lifted vertex-indexed P1 carrier with an
-`ExactPlcCellGeometrySource` bank of the exact midpoints, which the target's
-`PeriodicMeshTopology` accepts as its exact coordinate witness. Certify or
-distribute the adaptation result itself: re-certifying the bare target mesh
-drops that bank.
+`ExactPlcCellGeometrySource` bank of the exact midpoints. The target's
+`PeriodicMeshTopology` retains that exact vertex witness, independently of the
+full coordinate map. Restore reconstructs the witness and quotient, verifies
+every incident cell's actual map at its reference corners against the witness,
+and proves the exact deck actions. The supplied actual periodic mesh and its
+current geometry are ephemeral proof inputs, not retained topology history.
+Any separately topology-bound lifted-carrier geometry retains its own epoch;
+restore compares its complete map and source content with the current endpoint,
+without relabeling either geometry. Vertex agreement alone does not certify
+curved facet traces: periodic embedding separately proves the
+complete oriented mapped traces and the required global contact conditions.
+The same retained-witness contract applies to exact periodic power sources;
+cyclic carrier/witness graphs are refused.
+
+Quotient-history replay evaluates its actual root-point/supporting-cell requests
+in one exact batch, materializing the root coordinate bank once. Every candidate
+and shared-cell agreement is still checked; this is not a Cartesian expansion.
+If speculative batch preparation fails, the original ordered verification path
+reports the first refusal rather than accepting a partial result.
+
+Mapped layer association replay accepts an independently reconstructed root
+endpoint only after comparing its complete mesh and coordinate-map content with
+the certified root. Its cell charts are then the exact reference identities;
+the root's own restriction to an earlier authored map is not a restriction
+from that root to itself. Descendant endpoints still require their complete
+exact restrictions to the current root.
+A local AST decision count records 17 to 24 for `_conforming_current_rows`,
+with the added decisions belonging to full-content root identity validation
+and exact per-cell identity-chart construction.
+
+For the retained-witness cutover, an AST decision count (one base plus each
+conditional, loop, handler, comprehension, and extra Boolean operand) changed
+`PeriodicMeshTopology.__init__` from 74 to 80 and
+`PeriodicMeshTopology.from_stored_fields` from 30 to 47;
+`CellMesh.from_stored_fields` changed from 44 to 45. New, separately owned
+checks measure 11 for cycle refusal, 3 for exact-source reconstruction, and
+24 for actual-map vertex binding. These counts describe control-flow decisions,
+not asymptotic runtime or a bound on exact arithmetic.
 
 Every owner-local periodic view retains the exact `specification_id`, including
 nonadaptive periodic-power views. Cold reattachment requires the archived typed
@@ -1400,6 +1807,17 @@ periodic directions, every lifted triangle or tetrahedron is checked against
 each overlapping image, and the nonperiodic directions are closed by the
 quotient's oriented physical boundary. A mesh that wraps the quotient twice
 overlaps its own image and is refused as violated.
+
+For mapped lattice quotients and `PeriodicIsometryGroup` quotients whose
+generators have exact identity linear parts, with an oriented physical boundary,
+the exact contact route enumerates potentially overlapping images from outward cell
+image bounds and proves their contacts on declared lifted strata. It uses exact
+mapped facet and edge separation, Bernstein subdivision for disjoint mapped
+images, or exact affine-piece contacts where applicable; unsupported contacts
+remain unresolved. This includes the curved
+periodic hexahedron–pyramid refinement and two-round coarsening lifecycle.
+Mapped contact for nontranslational isometry groups remains unresolved by this
+route; rotational affine quotients use the separate affine proof.
 
 Quotient cells may be convex vertex-defined polyhedra, as produced by the
 restricted-power polyhedral fill, and a single cell may span a whole period or
@@ -1680,6 +2098,13 @@ from a complete, uniquely resolved volume-cell `REGION` association and certifie
 domain coverage. CAD, PLC, mapped-root, and compartment identities remain distinct
 from the coverage's material-region identifiers. The helper does not declare a
 material reference or infer one from proximity.
+For a mapped descendant with an intermediate chart parent, supply the actual
+parent mesh and geometry as `chart_parent=(parent_mesh, parent_geometry)` to
+this helper and to `declare_material_reference`. They independently reprove
+coverage; a certificate ID or matching source label cannot replace the parent
+geometry. The parent is an operation input, not an added coordinate-history
+field. Material transfer and restore likewise accept explicit endpoint chart
+parents when the authored material reference is not that immediate parent.
 
 An Eulerian overlap, vertex stencil, or new physical proximity does not establish
 material identity; without an explicit reference the adaptation leaves the
@@ -1743,6 +2168,15 @@ Polyhedral volume faces bind actual target triangle vertex IDs in the standard
 two-dimensional face chart. Identity-lineage renewal carries those rows forward
 and revalidates the canonical target triangulation; changed IDs without an exact
 face/vertex map refuse.
+
+For a planar target face whose complete coordinate map is bilinear, an exact
+face-image witness may instead retain physical overlap pieces separately for
+each original source entity, occurrence, and oriented material side. Each
+target support is the pullback of its exact physical piece through the bound
+whole-face map; it is not an affine reference triangle. Acceptance replays
+the regular face-image theorem and the complete, disjoint source and target
+partitions. Zero exact set distance does not assert zero error in any rounded
+binary64 realization of those physical pieces.
 
 `TargetMatrixOptimizationPlan` and `optimize_cell_mesh` optimize fixed-topology
 triangle, tetrahedron, quadrilateral, hexahedron, prism, pyramid, and polygon corner
@@ -1808,6 +2242,20 @@ claims are checked against the moved geometry. A boundary move that no longer
 satisfies those claims is rejected with its failed report; the immutable accepted
 result remains available for retry. Audit-only results keep the monitor/audit
 contract without acquiring source claims.
+
+For an authored `NativePlanarSource`, `NativePlanarMotionSource(source,
+translation)` derives a new source revision by translating its region and
+embedded strata while retaining their authored numeric identities.
+`advance_mesh_motion(..., source_transition=transition)` requires the entire
+coordinate proposal to equal the same binary64 translation of the predecessor
+mesh. It rebuilds the source domain, associations, protected scopes and
+point/curve fidelity witnesses for the successor and certifies the target against
+those actual sources. The accepted advance retains `source_transition`; use
+its `successor` as the source for the next epoch only after committing the
+advance. Omitting this authority retains the fixed-source checks above; a stale
+source or noncommuting proposal is rejected. This route does not authorize
+arbitrary deformations or source witness types outside planar point and curve
+charts.
 
 On periodic owner-local views, `advance_owner_local_mesh_motion` certifies each
 rank's resident patch (owned cells plus one face halo). That patch is legitimately
@@ -1980,6 +2428,11 @@ Its smallest-enclosing-ball goal uses a finite support search (at most four
 support points in three dimensions), not a capped iterative approximation.
 The native owner rechecks every affected cell and every retained or replaced
 facet and segment at the new carrier before committing atomically.
+Moved surviving vertex IDs retain relocation lineage and the exact source
+stencil; collapsed source-vertex ancestry remains explicit after the move.
+For an adaptive implicit volume, a nonnested metric edit proposes root-chart
+ancestry from the actual oriented target boundary. The candidate ancestry is
+not a certificate: source fidelity, coverage, and embedding are checked again.
 Nonperiodic relocation reuses stage-specific local proposals only while their
 closed stars are unchanged; moved stars invalidate the affected entries.
 The relocation search compares admissible coarse and fine dyadic carriers by
@@ -2199,6 +2652,24 @@ accepted on its own when valid; a relaxation whose minimization did not converge
 cannot replace the accepted geometry unless
 `HighOrderCurvingPolicy(accept_valid_nonconverged_relaxation=True)` permits it.
 
+Preparation shares the straight-map normalization solve across sample points
+only when their reference-gradient tables are bitwise identical. The complete
+curved-map sample lattice and all acceptance checks remain unchanged; varying
+tensor-cell gradients retain separate sample targets. An empty periodic request
+does not build unused entity-owner and incidence tables.
+Sampled diagnostics use bounded cell worksets while retaining every cell's
+complete sample lattice and the original eager floating-point evaluation order.
+They do not replace the independent whole-cell validity certificate.
+Within one curving operation, computed validity artifacts bind the actual
+geometry and mesh objects and allow unchanged parent maps to reuse their proofs.
+These live artifacts are not serialized; restored certificates require
+independent validation.
+The initial straight-map projections are also retained separately from the
+latest candidate's projections for that invocation. Rollback reuses them only
+for the same source, entity classes and bitwise-identical queries, avoiding
+repeated exact intersection-root isolation while preserving residuals and
+returned evidence. These caches are not persisted or shared between operations.
+
 Passing `prior_transition=` to `curve_cell_mesh` or `verify_curved_geometry`
 binds the exact source result. A retained material reference produces an
 edge-bound `CurvedGeometryEvidence.material_transition` with exact same-cell
@@ -2224,7 +2695,13 @@ during relaxation. Global embedding of curved maps (triangles in the plane,
 tetrahedra and prisms in space) proves that neighbours meet only in their
 declared shared stratum. Cells sharing a vertex or an edge are handled by exact
 Bernstein subdivision (tensor triangle-times-line pieces for prisms), using
-hull separation or stratum-residual cones. For cells sharing a facet, an exact
+hull separation or stratum-residual cones. A quadratic parameterization can have
+an exactly straight edge image: when its nonconstant coefficient vectors are
+exactly collinear, a late fallback uses two independent exact planes through
+that line. The parameterization is neither rounded nor replaced, and earlier
+completed contact proofs retain their original witnesses.
+
+For cells sharing a facet, an exact
 affine glue places the second reference cell across the facet so that the union
 is convex; a constant preconditioner then makes the glued map strictly monotone
 at every (uniformly refined) Jacobian Bernstein control. Single-cell injectivity
@@ -2256,6 +2733,13 @@ are prepared from complete packed connectivity; padding and validity masks are
 execution layout, not a caller-selected entry or byte ceiling. Structural,
 index-representability, and real allocation failures remain explicit.
 
+Restricted-power size and patch controls bind stable source entity IDs and
+occurrence paths, not the PLC's internal facet or region row numbers.
+Facet-scoped and region-scoped uniform size requirements are evaluated on the
+actual output edges. Regional output sizing is not passed to the facet-only
+tetrahedral clipping-carrier size field; the original request and its hard
+compliance checks remain unchanged.
+
 ### Mixed and polyhedral adaptation
 
 `NATIVE_MIXED` adapts three-dimensional tetrahedron, prism, pyramid, and
@@ -2266,6 +2750,17 @@ the finalized target geometry, including high-order coordinate maps, and
 exposes `MixedCellContentTransfer` for conservative transfer of extensive
 per-cell quantities.
 
+Complete, unitless integer cell `MARKER` attributes follow exact cell ancestry.
+Refinement inherits the parent's value; coarsening refuses siblings with
+different values rather than averaging them. The paired `layer_index` and
+`layer_column` markers retain source interval and source-column provenance,
+including the `-1` core sentinel. A refined `MixedLayerColumns` grouping is a
+separate adaptation constraint and does not redefine source-column identity.
+Other attribute roles and incomplete marker scopes remain unsupported.
+When a retained CAD boundary chart carries curve-edge ancestry, exact edge
+lineage and rational interpolation rows retarget the curve intervals and
+orientations; coarsening requires the child intervals to tile exactly.
+
 Marked cells keep their preferred family refinement; face closure then chooses
 neighbor templates that match the refined shared faces, so a marked cell is
 never downgraded to a partial split to spare its neighbors. Every
@@ -2275,6 +2770,20 @@ with the source coordinate map. Coarsening restores a parent only when every
 sibling chart reconstructs one exact parent map. A source without acceptance
 inputs yields a target without a certification; whole-cell validity of the
 restricted map is still checked.
+The shared exact affine reference-map computation also admits canonical
+`simplex:3` tetrahedral cells when replaying original source strata.
+
+Mixed descendants retain one original geometry/topology binding and exact
+block-local target-to-root reference maps. Subsequent refinements compose those
+maps; coarsening validates the complete child partition and restores a parent
+root chart only when all siblings agree on its source cell, chart, and support.
+Exact coordinate-source identity and coefficient banks remain bound across both
+operations.
+Starting a fresh hierarchy from an already restricted source requires its
+independently bound root mesh; root vertex keys are evaluated through exact
+charts, including nonaffine charts. Edge and face lineage uses the immediate
+source or restored-parent reference partition, not straight chords in a
+curved root chart.
 
 Simplex coarsening of a piecewise-linear mesh keeps the restored parents affine
 on their exact corners; refine/coarsen round trips through the bisection
@@ -2285,6 +2794,23 @@ original root cells rather than an intermediate mesh. Non-P1 coarsening rebuilds
 each restored parent's exact root chart from its children's root charts and the
 inverse bisection maps; it refuses when the children name different root cells,
 coordinate dofs, or charts.
+
+Periodic mixed hierarchies retain canonical issued quotient keys, IDs, winding
+occurrences and allocator high-watermarks rather than ancestor meshes. Retired
+vertex root keys remain available to validate restored siblings. Two-round
+refinement and coarsening restore the original quotient IDs while retaining
+the current source-epoch binding.
+Each hierarchy also retains its initial forest cells and their complete exact
+charts into the independently bound geometry root, including when the first
+adaptation starts from an already restricted source.
+
+Cold restoration of a retained, changed mixed transition prepared without a
+prior transition or material-reference seed uses independently recertified
+source and target results, the original policy and marked request, the stored
+geometry transition and hierarchy, and a trusted expected result ID. It
+reconstructs the owners and reproves their root charts, complete sibling
+partitions, lineage, interpolation and source associations without executing
+the adaptation request again.
 
 `NATIVE_POLYHEDRAL` selects one explicit operation: `PLANE_SPLIT`,
 `AGGLOMERATE`, or `REGENERATE`. Plane splits and agglomerations retain exact
@@ -2371,15 +2897,21 @@ transposes. Curved endpoint maps require an explicit certified common-root
 witness; no corner-linearization fallback is used. Failed coverage cannot be
 applied or committed as accepted state.
 `phydrax.solver.prepare_moving_overset_poisson_update(composition, previous,
-advances, plans, "u")` performs serial full-dimensional P1-simplex FE reanalysis
-for every overset part. It interpolates candidate receptor values, transports
-the unit Poisson source through complete physical-overlap refinements, solves
-`-Δu = 1`, and retains each part's overlap-content, linear-residual, physical
-boundary-reaction, overset-reaction, and flux-balance evidence. Motion must keep
-the FE topology and DOF identity; an orphan or incomplete overlap fails before
-staging. `PreparedMovingOversetPoissonUpdate.commit(accepted_boundary=...)`
-publishes all candidate connectivity, FE operators, and field states in one
-`CompositionRebind`; a rejected boundary returns the original composition.
+advances, plans, "u")` performs serial two-dimensional composite P1 reanalysis
+on the exact priority-owned physical partition, excluding protected cavities.
+It couples current unknowns across inter-part boundaries with symmetric Nitsche
+terms and a cut-dependent coercive penalty; physical boundary data is imposed
+on the exterior and cavity boundaries. The result retains linear residual,
+physical and interface numerical fluxes, and flux-balance evidence. The
+qualification profiles independently integrate the manufactured solution and
+boundary gradients and require decreasing L2, absolute QoI, and grouped
+exterior/cavity flux errors under refinement at both motion epochs. Physical
+inventory conservation is a separate overlap-remap operation, not a claim that
+FE reanalysis itself is conservative remapping. Motion must keep FE topology
+and DOF identity; an orphan fails before staging.
+`PreparedMovingOversetPoissonUpdate.commit(accepted_boundary=...)` publishes
+candidate connectivity, FE operators, and field states in one `CompositionRebind`;
+a rejected boundary returns the original composition.
 For owner-local assemblies, also pass `execution_group` and the accepted
 `successor_assembly`. Each process holds only its owned cells plus their exact
 face-neighbor halo for every part, and this completeness is checked
@@ -2446,15 +2978,22 @@ Mesh promotion does not implicitly transfer PDE fields: consume the exposed
 transition/transfer through the solver topology transaction.
 
 `MeshAdaptationObjective` supplies the physical stopping rule for h, p, geometry-
-order, metric, and relocation alternatives. Each candidate binds its source and
-target revisions, compiled layout, geometry/topology certificates, and accepted
-state dispositions; the canonical `solve_checked` result is a separate numerical
-admissibility gate. `PhysicalErrorEvidence` sums field, geometry, algebraic, and
-transfer contributions without cancellation, and QoI targets require an explicit
-well-posedness certificate. The objective chooses the lowest measured
-preparation, compilation, adaptation, transfer, and reanalysis time among
-candidates that improve the baseline and meet tolerance; time is a ranking cost,
-not a wall-time, memory, or DOF admission ceiling. Before publication,
+order, metric, and relocation alternatives. Its default `intent="meet-target"`
+stops when the baseline already meets tolerance. Explicit `intent="improve"`
+allows selection in that case but still requires a strictly improved candidate
+within the same target tolerance. Intent participates in canonical objective
+and decision identity; it is not implemented by inventing a tighter target.
+Each candidate binds its source and target revisions, compiled layout,
+geometry/topology certificates, and accepted state dispositions; the canonical
+`solve_checked` result is a separate numerical admissibility gate.
+`PhysicalErrorEvidence` sums field, geometry, algebraic, and transfer
+contributions in the identified quantity's units without cancellation.
+QoI targets require an explicit well-posedness certificate; a field L2 target
+and a QoI verification tolerance are distinct scientific controls.
+The objective chooses the lowest measured preparation, compilation,
+adaptation, transfer, and reanalysis time among admissible candidates that
+improve the baseline and meet tolerance. Time is a ranking cost, not a
+wall-time, memory, or DOF admission ceiling. Before publication,
 `decision.require_reanalysis` requires independent target-bound error evidence,
 a successful checked solve, and matching `CompositionRebind` dispositions.
 `FixedEpochDerivativeEvidence` binds geometry/PDE/transfer derivatives to stable
@@ -2551,12 +3090,17 @@ refuses instead of silently relaxing the bound.
 
 The envelope owns a distinct derived source identity/revision and an exact
 `PiecewiseLinearDomain`. The `surface_envelope_tetrahedral` route fills that
-derived domain using an ordinary volume specification. Its exact PWL chart
-witness certifies the derived envelope boundary only. The separate
-`SurfaceEnvelopeDistanceWitness` bounds the original reconstructed surface at
-`maximum_deviation`; unsigned distance does not establish the original
-surface's topology or solid interior, and the route does not claim exact-volume
-equivalence to the original reconstruction.
+derived domain using an ordinary volume specification. Source-faithful
+conforming recovery may subdivide envelope facets and protected edges to meet
+the requested size and quality controls; it retains the original facet and
+edge ancestry and proves the complete target boundary as exact source-chart
+partitions. Correctly rounded target carriers are measured against those source
+charts rather than treated as exact coincidences. The separate
+`SurfaceEnvelopeDistanceWitness` composes this certified displacement with the
+native original-source bounds and checks the requested `maximum_deviation`.
+Unsigned distance does not establish the original surface's topology or solid
+interior, and the route does not claim exact-volume equivalence to the original
+reconstruction.
 
 An `AuthoredTriangleSheet` accepts an imperfect, possibly open triangle sheet:
 boundary edges and holes, unwelded cracks (bitwise-coincident duplicate
@@ -2586,10 +3130,18 @@ the envelope.
 The envelope surface is extracted by marching tetrahedra on the sampled
 distance grid, which certifies that every point of every extracted triangle
 lies in the band `bounds[2] <= d_source <= bounds[1]`; its triangles are grid
-cuts, mostly needles and caps. `SurfaceEnvelopeSource` (and
-`surface_envelope(..., remesh=True)`) then remeshes that surface inside the same
-band toward edge length `h = 2 * spacing` and a 30 degree minimum angle, and
-drops the tetrahedral carrier.
+cuts, mostly needles and caps. `SurfaceEnvelopeSource` requires an explicit
+`envelope_mode` (`SurfaceEnvelopeMode`). In `"remeshed"` mode it (like
+`surface_envelope(..., remesh=True)`) remeshes that surface inside the same
+band toward edge length `h = 2 * spacing` and a 30 degree minimum angle, drops
+the tetrahedral carrier, and fills the remeshed surface afresh. In `"kernel"`
+mode it keeps the marching-tetrahedra extraction: its skin is the envelope
+surface and its tetrahedral carrier is the initial volume, which
+`generate_plc_volume(carrier=...)` refines in place. The mode enters the
+envelope, witness and reproduction identities, and a reproduction record binds
+the kept carrier. Either mode meshes the sampled unsigned-distance envelope, not
+the original surface. Compliance records the mode and the independent
+input-to-envelope deviation.
 
 Every remeshing edit (edge split, flip, collapse, vertex relocation) is admitted
 only when each created triangle provably stays in the band and the surface stays
@@ -2913,6 +3465,17 @@ Exact separating-axis intervals either prove disjointness or reduce touching
 tetrahedra to their complete supporting point, edge, or triangle intersections.
 Positive-volume overlap retains the full exact clipping path.
 
+The global case also compares a complete target validity proof with parent-assisted
+proofs after moving one coordinate row. It checks complete certificate content,
+not only matching IDs, and reports parent replay separately from reuse of a live
+computed artifact. Host wall and process CPU times are separate observations.
+The native-CAD and high-order cases report execution and source cell counts and
+shares by proof depth; depth `-1` means unresolved. Depth zero does not distinguish
+an affine proof from an interval or exact initial screen, and these shares are
+not CPU percentages or measured cache-hit rates. When no cell is certified valid,
+the high-order report retains the invalid/unresolved counts and reports a null
+minimum certified determinant bound.
+
 An uncontended Darwin arm64/CPU run on CPython 3.13.11, NumPy 2.5.4, JAX 0.12.0.1,
 and Equinox 0.13.8 used x64 and disabled persistent JAX caching. One sample per
 capacity gave the following warmed certification times; these are not
@@ -2939,6 +3502,11 @@ tolerances, and explicit failing gates; a target mapping is not a pass claim.
 Each native record carries an explicit status and canonical scenario identity.
 Missing meshcore, unsupported routes, or missing/extra/failed/skipped records
 fail rather than disappearing into optional-provider comparisons.
+The `native-general-families` scenario emits a flushed JSON Lines checkpoint
+at each profile phase and on profile completion. With `--output PATH` the
+checkpoint is written to `PATH.profiles.jsonl`; otherwise it goes to standard
+error, leaving the final JSON document on standard output. Completed profile
+records remain available if a later profile is interrupted.
 
 Optional comparisons are selected explicitly: `manifold`, `mmg`, `ftetwild`,
 `gmsh`, `vorocrust`, `poisson`, `omega-h`, `gmsh-metric`,
@@ -2986,8 +3554,9 @@ systems; installing the Python client alone does not supply the server.
 
 Topology adaptation carries existing geometry associations only through an
 explicit source-kind transfer. `BRepAssociationTransfer`,
-`ImplicitAssociationTransfer`, `SurfaceAssociationTransfer`, and
-`MappedReferenceAssociationTransfer` each validate their own source authority;
+`ImplicitAssociationTransfer`, `SurfaceAssociationTransfer`,
+`MappedReferenceAssociationTransfer`, and `NativeLayerCoreAssociationTransfer`
+each validate their own source authority;
 `ComposedAssociationTransfer` combines disjoint source namespaces and assigns
 joint class codes without merging source identities. A transfer never invents
 a correspondence for an unclassified target.
@@ -3016,6 +3585,94 @@ ancestry. For a mesh carrying several independent source authorities,
 `ComposedAssociationTransfer` preserves each namespace in separate
 `GeometryAssociation` rows. Field values remain the responsibility of the
 accepted mesh transition and the field-specific transfer action.
+
+For native mixed layer/core adaptation,
+`phydrax.meshing.NativeLayerCoreAssociationTransfer` binds the actual
+`NativeLayerCoreSource` and volume specification. It
+replays source wall, layer, core, mapped-root and material strata from their
+retained authorities; an output association table or coincident physical
+coordinates are not source authority. Exact geometry ancestry and complete
+partitions are required for refinement and coarsening. A conforming layer/core
+result retains its independently checked root geometry once, with current
+geometry restrictions composed back to that root.
+For a conforming mapped root, that owner also retains the actual reference mesh,
+reference coordinate map, and reference-cell material assignments. Its exact
+PLC carrier, overlap stencils and reference-column evidence remain bound to
+the original reference source, not to physical coordinates. Reconstruction
+replays those reference proofs, the complete reference prism partition, and
+the physical cell-map compositions, corner and periodic identifications and
+physical layer controls against the original mapped source. The mapped root ID
+and archive recipe include these retained operands; earlier mapped root IDs or
+carrier-only records are not interchangeable. Unmapped root semantics remain
+unchanged.
+
+Mapped physical results do not relabel those reference stencils or column
+certifications as physical evidence: their corresponding physical result fields
+are empty only when the retained root and current endpoint are independently
+reproved. For conforming caps, a dedicated current source-chart witness owns
+cap facet-edge claims only after exact complete source-chart coverage and
+actual layer/core interface incidence are established; other source
+occurrences, material sides and partial supports remain distinct.
+The additional mapped replay scales with the retained reference and physical
+cell maps, their root-chart localization and the complete column/periodic
+incidence; the unmapped root retains its existing stencil and partition work.
+Within one live operation, mapped root-association replay may reuse a freshly
+computed root proof only for the identical source, request, mesh, geometry and
+root objects, and only when that proof also established exact equality of the
+complete regenerated and retained root chart banks. Otherwise replay performs
+its full independent map comparison. The operation-local proof is not an
+archive or a certificate issued by an ID.
+Reference-entity containment uses exact canonical vertex, segment, triangle,
+convex quadrilateral and whole-cell predicates for the standard volume families,
+rather than enumerating subsets and solving an exact system for every point.
+The per-operation cache is bounded; other supported entity shapes retain the
+general exact-hull decision. This optimization concerns reference cells only and
+does not approximate curved physical facets.
+Repeated reference affine charts are solved once per bounded, operation-local
+cache entry keyed by the complete exact corner bank and cell family; every
+declared full chart is still compared, including charts with identical corners.
+
+CAD curve-lift validation also prepares exact rooted patch endpoints once per
+patch within that validation operation. Each curve endpoint retains its own
+source and chart checks; subsequent validations prepare fresh endpoint data,
+including after source changes or restoration.
+Prepared sources also retain the actual patch owner and reuse its host interval
+program for repeated fallback surface boxes. Earlier exact and specialized
+bounding routes, explicit overrides, rounding, and refusal order remain intact.
+
+Source-edge matching prepares closed, outward-rounded spatial bounds through
+the native BVH owner. Carrier incidence and exact whole-chart restrictions
+still determine accepted source support. Unmapped affine edge/face overlays
+use the same conservative screening principle; mapped or nonrepresentable
+cases retain their exact reference path.
+
+Nearest-wall column proofs prepare the wall once per operation. Indexed queries
+use an upper distance bound derived from actual wall geometry, then retain the
+exact rational nearest-point calculation for every possible co-nearest support.
+Source triangle identities, ties, and degeneracy refusals remain unchanged;
+bounds outside the finite spatial index retain exhaustive exact evaluation.
+
+Source-facet support on a target edge may cover an exact target interval rather
+than the whole edge. Conversely, an original source edge may cross a target
+face without being a target edge. Such support retains its exact source
+parameter interval, occurrence, material sides and orientation. The existing
+`GeometryAssociation.target_reference_pieces` distinguishes exact reference
+charts from `phydrax.geometry.SourceBoundaryImagePullback` records. An image
+pullback represents the subset of the **complete target-face map** whose
+physical image lies in the recorded exact polygon or segment; its physical
+coordinates are not target reference coordinates. A validated
+`phydrax.geometry.SourceBoundaryFaceImageWitness` binds each image piece, and
+actual incident target materials are checked independently. Partial support
+does not classify an entire target face as an edge.
+
+`GeometryAssociation.validate_source_boundary_support` requires the original
+`association_source` for a source-edge segment in a target face. When mapped
+ancestry is bound through a retained layer/core root, also provide the actual
+`layer_core_root_geometry`. These operands permit source occurrence, side,
+parameter and full-map reproof; witness IDs or restored association rows alone
+are not substitutes. Independently validated scoped queries retain cap and
+same-material core-carrier authority without asserting that an internal carrier
+is an exterior material boundary.
 
 ### Surface-chart field transfer
 

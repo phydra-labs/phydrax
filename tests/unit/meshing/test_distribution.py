@@ -1198,6 +1198,107 @@ def _logical_bucket_identity_reference(
     )
 
 
+def test_owner_message_channels_preserve_typed_sparse_banks() -> None:
+    from phydrax.meshing._distribution import _owner_exchange_message_banks
+
+    devices = tuple(sorted(jax.devices(), key=lambda device: device.process_index))
+    processes = tuple(device.process_index for device in devices)
+    if processes != (0, 1, 2) or len(jax.local_devices()) != 1:
+        pytest.skip("This exchange test requires three native process owners.")
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "owner-message-byte-channels",
+            processes,
+            tuple((process, device.id) for process, device in zip(processes, devices)),
+            mesh_axes=(("message_test", 3),),
+        ),
+        devices,
+    )
+    rank = jax.process_index()
+    for iteration, dtype in enumerate((np.int16, np.float64, np.uint8)):
+        counts = ((0, 3, 17), (5, 0, 0), (0, 0, 0))
+
+        def bank(sender: int, receiver: int) -> np.ndarray:
+            count = counts[sender][receiver]
+            # A strided input also exercises the exact contiguous byte packing.
+            values = np.arange(count * 6, dtype=dtype).reshape(count, 6)
+            if dtype is np.float64 and count:
+                values[0, 0] = -0.0
+                values[0, 2] = np.asarray((0x7FF8000000000042,), dtype=np.uint64).view(
+                    np.float64
+                )[0]
+            return values[:, ::2]
+
+        received = _owner_exchange_message_banks(
+            tuple(bank(rank, receiver) for receiver in processes),
+            rank,
+            group,
+            f"message_test_distinct_callsite_{iteration}",
+        )
+        assert set(received) == {sender for sender in processes if counts[sender][rank]}
+        for sender, values in received.items():
+            assert values.dtype == np.dtype(dtype)
+            assert (
+                np.ascontiguousarray(values).tobytes()
+                == np.ascontiguousarray(bank(sender, rank)).tobytes()
+            )
+
+
+def test_owner_message_channels_in_fresh_three_process_group() -> None:
+    import os
+    import socket
+    import sys
+
+    from phydrax import config as pxconfig
+    from phydrax._execution_launch import launch_local_processes, LocalProcessLaunchPlan
+
+    if jax.process_count() != 1 or os.environ.get("PYTEST_XDIST_WORKER") is not None:
+        pytest.skip(
+            "The three-owner coordinator must run outside a process group and xdist."
+        )
+    repository = Path(__file__).resolve().parents[3]
+    environment = dict(os.environ)
+    for name in (
+        "PHYDRAX_COORDINATOR_ADDRESS",
+        "PHYDRAX_NUM_PROCESSES",
+        "PHYDRAX_PROCESS_ID",
+        "PHYDRAX_LOCAL_DEVICE_IDS",
+        "PHYDRAX_COORDINATOR_BIND_ADDRESS",
+    ):
+        environment.pop(name, None)
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(
+            enable_x64=True,
+            platforms=("cpu",),
+            cpu_device_count=1,
+            cpu_collectives_implementation="gloo",
+        ),
+        base=environment,
+    )
+    environment.update(
+        PYTHONPATH=str(repository),
+        OMP_NUM_THREADS="1",
+        OPENBLAS_NUM_THREADS="1",
+        XLA_PYTHON_CLIENT_PREALLOCATE="false",
+    )
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    worker = (
+        "import runpy, sys; "
+        "runpy.run_path(sys.argv[1])"
+        "['test_owner_message_channels_preserve_typed_sparse_banks']()"
+    )
+    results = launch_local_processes(
+        (sys.executable, "-c", worker, str(Path(__file__).resolve())),
+        LocalProcessLaunchPlan(3, f"127.0.0.1:{port}", devices_per_process=1),
+        environment=environment,
+        cwd=str(repository),
+        timeout_seconds=180.0,
+    )
+    assert all(result.returncode == 0 for result in results), results
+
+
 def test_owner_local_identity_is_process_count_invariant() -> None:
     processes = tuple(sorted({device.process_index for device in jax.devices()}))
     if len(processes) not in (1, 3):

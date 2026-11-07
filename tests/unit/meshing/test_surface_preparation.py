@@ -47,6 +47,7 @@ from phydrax.meshing._surface_construction import (
 )
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
 from phydrax.meshing.providers._native_surface import (
+    _apply_curve_edge_bounds,
     _ChartMesh,
     _split_chart_at_source_cells,
     _surface_root_charts,
@@ -94,6 +95,17 @@ def _vertex_stencil(
         weights,
         valid,
     )
+
+
+def test_curve_edge_bounds_raise_all_incident_cells_without_reducing_deviation() -> None:
+    triangles = [(0, 1, 2), (2, 1, 3), (4, 5, 6)]
+    deviations = np.asarray((0.1, 0.7, 0.3))
+    _apply_curve_edge_bounds(
+        triangles,
+        {(0, 1): 0.2, (1, 2): 0.5, (1, 3): 0.8},
+        deviations,
+    )
+    np.testing.assert_array_equal(deviations, (0.5, 0.8, 0.3))
 
 
 def test_source_curve_chains_are_discretized_once_with_shared_junction_ids() -> None:
@@ -515,6 +527,10 @@ def _junction_construction(shared: bool) -> SurfaceConstruction:
         curve_parameters=(
             (0, np.asarray((0.0, 1.0, 2.0), dtype=np.float64)),
             (1, np.asarray((0.0, 1.0, 2.0), dtype=np.float64)),
+        ),
+        curve_intervals_exact=(
+            (Fraction(0), Fraction(1)), (Fraction(1), Fraction(2)),
+            (Fraction(0), Fraction(1)), (Fraction(1), Fraction(2)),
         ),
         minimum_angle=0.0,
     )

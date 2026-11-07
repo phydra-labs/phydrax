@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         LocalProcessSupervision as LocalProcessSupervision,
         require_local_process_supervision as require_local_process_supervision,
     )
+    from ._execution_runtime import ExecutionGroup as ExecutionGroup
 
 
 _SYMBOL_MODULES = {

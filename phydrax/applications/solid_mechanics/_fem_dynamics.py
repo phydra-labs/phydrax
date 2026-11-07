@@ -723,7 +723,7 @@ def _selected_materials(
     if candidate is None:
         return previous
     trials: dict[MaterialSiteId | str, ArrayLike] = {
-        old.site_id.key: jnp.where(accepted, new.trial, old.committed)
+        old.site_id.key: jnp.where(accepted, new.trial, old.trial)
         for old, new in zip(previous.states, candidate.states, strict=True)
     }
     return previous.with_trials(trials)

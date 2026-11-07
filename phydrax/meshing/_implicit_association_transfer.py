@@ -16,14 +16,19 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
 from ..discretization._cell_complex import TetrahedralConnectivity
+from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_mesh import SimplicialConnectivity
 from ..geometry._source_boundary_records import (
+    SourceBoundaryChartWitness,
+    SourceBoundaryFaceImageWitness,
     SourceBoundaryProjectionQuery,
     SourceProjectionStatus,
 )
+from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
 from ..typing import checked
+from ._certification_inputs import ScopedFidelityInput
 from ._association import (
     _child_sources,
     AssociationEntityClasses,
@@ -436,6 +441,10 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         vertex_stencil: VertexInterpolationStencil | None,
+        geometry_transition: CellGeometryTransition | None,
+        target_fidelity_witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
+        validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):

@@ -1227,3 +1227,58 @@ def test_native_restricted_torus_projection_degree_accepts_complete_volume() -> 
     )
     assert proof.region_ids == ("interior",)
     assert proof.target_facet_count > 0
+
+
+def test_qualification_implicit_volume_preserves_hard_controls() -> None:
+    from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
+    from tools.meshing_qualification.scenarios.native_implicit import _volume_spec
+
+    profile = AnalyticImplicitProfile(
+        Sphere((0.0, 0.0, 0.0), 0.371, feature_id="qualification-control-test").compile(),
+        SpatialCoordinateContract.si(),
+        source_id="qualification-control-test",
+    )
+    specification = _volume_spec(profile, 0.371 / 2.0, 0.02)
+    control = specification.size_controls[0]
+    assert isinstance(control, UniformSizeControl)
+    assert control.target_size == 0.371 / 2.0
+    assert control.maximum_size == 1.5 * control.target_size
+    assert control.strength is SizeControlStrength.HARD
+    assert specification.size_compliance.relative_tolerance == 0.5
+    assert specification.maximum_deviation == 0.02
+    assert specification.protected_features[0].maximum_deviation == 0.02
+    assert specification.protected_features[0].hard
+
+
+def test_restricted_implicit_volume_refuses_soft_shape_strength() -> None:
+    from phydrax.meshing._sizing import SizeControlStrength
+
+    contract = SpatialCoordinateContract.si()
+    profile = AnalyticImplicitProfile(
+        Sphere((0.0, 0.0, 0.0), 0.5, feature_id="restricted-soft-shape").compile(),
+        contract,
+        source_id="restricted-soft-shape",
+    )
+    scope = MeshingScope(
+        profile.source_id,
+        profile.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        profile.scope_entity_set_id(2),
+        profile.scope_entity_ids(2),
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        scope,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        maximum_deviation=0.25,
+    )
+    soft = NativeVolumeSchedule(shape_strength=SizeControlStrength.SOFT)
+    with pytest.raises(MeshingFailure, match="hard NativeVolumeSchedule shape strength"):
+        prepare_native_implicit(
+            profile,
+            specification,
+            NativeMeshingOptions("implicit_restricted_delaunay", volume_schedule=soft),
+            contract,
+        )

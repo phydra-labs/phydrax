@@ -236,6 +236,7 @@ _DEFERRED_EXPORTS = {
     "MaterialCheckpointPayload": "._finite_element_material",
     "MaterialIntegrationPlan": "._finite_element_material",
     "MaterialSiteId": "._finite_element_material",
+    "MaterialSiteOwnership": "._finite_element_material",
     "MaterialState": "._finite_element_material",
     "MaterialTransaction": "._finite_element_material",
     "CellBilinearAction": "._finite_element_variational",
@@ -1148,6 +1149,7 @@ if TYPE_CHECKING:
         MaterialCheckpointPayload,
         MaterialIntegrationPlan,
         MaterialSiteId,
+        MaterialSiteOwnership,
         MaterialState,
         MaterialTransaction,
     )
@@ -2080,6 +2082,7 @@ __all__ = [
     "MaterialCheckpointPayload",
     "MaterialIntegrationPlan",
     "MaterialSiteId",
+    "MaterialSiteOwnership",
     "MaterialState",
     "MaterialTransaction",
     "CompiledStencilDynamics",

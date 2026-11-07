@@ -15,6 +15,7 @@ from phydrax.linalg._exact import (
     matmul_exact,
     solve_exact,
     solve_exact_sparse,
+    symmetric_product_minors_exact,
 )
 
 
@@ -415,3 +416,88 @@ def test_exact_matrix_product_equals_fraction_sums() -> None:
     assert all(type(value) is Fraction for row in product for value in row)
     with pytest.raises(ValueError, match="incompatible"):
         matmul_exact(matrix, right[:-1])
+
+
+@pytest.mark.parametrize(
+    ("factors", "expected"),
+    (
+        (
+            (((Fraction(-2, 3),),), ((Fraction(-3, 4),),)),
+            (Fraction(1, 2),),
+        ),
+        (
+            (
+                ((Fraction(1, 2), 0), (0, Fraction(1, 3))),
+                ((2, 1), (3, 4)),
+                ((1, 2), (0, 1)),
+            ),
+            (Fraction(1), Fraction(13, 48)),
+        ),
+        (
+            (
+                ((Fraction(1, 2), 0, 0), (0, Fraction(1, 3), 0), (0, 0, Fraction(1, 5))),
+                ((2, 0, 0), (0, 6, 0), (0, 0, 15)),
+                ((1, -2, 0), (2, 1, 0), (0, 0, 1)),
+            ),
+            (Fraction(1), Fraction(1), Fraction(3)),
+        ),
+        (
+            (((1, 0), (0, 9)), ((1, 2), (2, 5))),
+            (Fraction(1), Fraction(-55)),
+        ),
+        (
+            (((0, 1), (1, 0)),),
+            (Fraction(0), Fraction(-1)),
+        ),
+        (
+            (
+                (
+                    (1, 0, 0),
+                    (0, Fraction(1, 1 << 2048), 0),
+                    (0, 0, Fraction(-1, 1 << 2048)),
+                ),
+            ),
+            (Fraction(1), Fraction(1, 1 << 2048), Fraction(-1, 1 << 4096)),
+        ),
+    ),
+    ids=(
+        "scalar",
+        "ordered-rational-product",
+        "three-dimensional-product",
+        "positive-factors-indefinite-symmetric-product",
+        "zero-leading-minor-nonzero-determinant",
+        "below-floating-range",
+    ),
+)
+def test_exact_symmetric_product_principal_minors(
+    factors: tuple[tuple[tuple[Fraction | int, ...], ...], ...],
+    expected: tuple[Fraction, ...],
+) -> None:
+    actual = symmetric_product_minors_exact(*factors)
+    assert actual == expected
+    assert all(type(value) is Fraction for value in actual)
+
+
+@pytest.mark.parametrize(
+    "factors",
+    (
+        (),
+        ((),),
+        (((1, 0), (0, 1)), ((1,),)),
+        (((1, 0), (0,)),),
+    ),
+    ids=("no-factors", "empty-matrix", "different-orders", "ragged-factor"),
+)
+def test_exact_symmetric_product_rejects_invalid_shapes(
+    factors: tuple[tuple[tuple[int, ...], ...], ...],
+) -> None:
+    with pytest.raises(ValueError):
+        symmetric_product_minors_exact(*factors)
+
+
+@pytest.mark.parametrize("value", (0.25, True), ids=("floating", "boolean"))
+def test_exact_symmetric_product_refuses_inexact_scalar_kinds(
+    value: float | bool,
+) -> None:
+    with pytest.raises(TypeError):
+        symmetric_product_minors_exact(((value,),))  # ty: ignore[invalid-argument-type]

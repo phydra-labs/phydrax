@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "interval_program.hpp"
 #include "surface_remesh.hpp"
 
 namespace phx::mc::remesh {
@@ -52,10 +53,16 @@ class IntervalBoxProgram {
   // output is NaN. `result` must hold output_count() intervals.
   bool evaluate(const Point& lower, const Point& upper, Interval* result) const;
   int64_t output_count() const { return static_cast<int64_t>(outputs_.size()); }
+  const phx::mc::PreparedIntervalProgram& program() const noexcept { return program_; }
+  const std::vector<int64_t>& outputs() const noexcept { return outputs_; }
+  const std::vector<int64_t>& guards() const noexcept { return guards_; }
+  const std::vector<double>& template_lower() const noexcept { return template_lower_; }
+  const std::vector<double>& template_upper() const noexcept { return template_upper_; }
 
  private:
-  std::vector<int64_t> instructions_, indices_, outputs_, guards_;
-  std::vector<double> parameters_, template_lower_, template_upper_;
+  phx::mc::PreparedIntervalProgram program_;
+  std::vector<int64_t> outputs_, guards_;
+  std::vector<double> template_lower_, template_upper_;
   mutable std::vector<double> lower_, upper_;  // single-threaded scratch workspace
 };
 

@@ -24,6 +24,7 @@ from ..typing import checked, parse
 
 
 type ErrorQuantity = Literal["physical-error", "qoi"]
+type AdaptationIntent = Literal["meet-target", "improve"]
 
 
 class AdaptationAction(StrEnum):
@@ -445,10 +446,13 @@ class MeshAdaptationObjective(StrictModule, NonTrainableState):
     The tolerance applies to a non-cancelling sum of physical contributions.
     Route feasibility and the solver's own numerical check are hard scientific
     gates; measured time only ranks alternatives that pass every gate.
+    ``improve`` explicitly requests a strict improvement even when the baseline
+    already meets the target; ``meet-target`` stops in that case.
     """
 
     objective_id: str = eqx.field(static=True)
     quantity: ErrorQuantity = eqx.field(static=True)
+    intent: AdaptationIntent = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     objective_id_hash: str = eqx.field(static=True)
 
@@ -459,20 +463,24 @@ class MeshAdaptationObjective(StrictModule, NonTrainableState):
         /,
         *,
         quantity: ErrorQuantity = "physical-error",
+        intent: AdaptationIntent = "meet-target",
     ) -> None:
         objective = canonical_identifier(objective_id, "objective_id")
         quantity_ = parse(quantity, ErrorQuantity, "quantity")
+        intent_ = parse(intent, AdaptationIntent, "intent")
         tolerance_ = finite_real_scalar(tolerance, "tolerance")
         if tolerance_ <= 0.0:
             raise ValueError("Mesh adaptation tolerance must be positive.")
         self.objective_id = objective
         self.quantity = quantity_
+        self.intent = intent_
         self.tolerance = tolerance_
         self.objective_id_hash = canonical_fingerprint(
             {
                 "kind": "mesh-adaptation-objective",
                 "objective": objective,
                 "quantity": quantity_,
+                "intent": intent_,
                 "tolerance": tolerance_,
             }
         )
@@ -517,7 +525,9 @@ class MeshAdaptationDecision(StrictModule, NonTrainableState):
         candidate_ids = tuple(value.candidate_id for value in candidates_)
         if len(set(candidate_ids)) != len(candidate_ids):
             raise ValueError("Decision candidates must have unique identities.")
-        no_adaptation_needed = baseline.bound <= objective.tolerance
+        no_adaptation_needed = (
+            objective.intent == "meet-target" and baseline.bound <= objective.tolerance
+        )
         dispositions: list[tuple[str, tuple[str, ...]]] = []
         feasible: list[MeshAdaptationCandidate] = []
         for candidate in candidates_:
@@ -565,7 +575,11 @@ class MeshAdaptationDecision(StrictModule, NonTrainableState):
 
     @property
     def satisfied_without_adaptation(self) -> bool:
-        return self.selected is None and self.baseline.bound <= self.objective.tolerance
+        return (
+            self.objective.intent == "meet-target"
+            and self.selected is None
+            and self.baseline.bound <= self.objective.tolerance
+        )
 
     @checked
     def reanalysis_issues(
@@ -784,6 +798,7 @@ class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
 
 __all__ = [
     "AdaptationAction",
+    "AdaptationIntent",
     "ErrorQuantity",
     "FixedEpochDerivativeEvidence",
     "MeasuredAdaptationCost",

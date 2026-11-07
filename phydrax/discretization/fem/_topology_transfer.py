@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from fractions import Fraction
 from math import isfinite
-from typing import Any, final, TYPE_CHECKING
+from typing import Any, final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -42,14 +43,16 @@ from ...linalg import (
     transpose,
 )
 from ...linalg._operators import _generic_adjoint, _materialize_by_basis
+from ...linalg._sparse_rank import sparse_support_rank, SparseSupportRank
 from ...sparse import (
     EdgeRelation,
     linear_apply,
     linear_transpose_apply,
     RowRelation,
+    SparseCoordinateOperator,
     SparseLinearMap,
 )
-from ...typing import checked
+from ...typing import checked, parse
 from .._cell_mesh import CellMesh
 from .._spaces import DiscreteFieldSpace
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
@@ -100,6 +103,32 @@ def _block_action(action: Callable[[Array], Array], values: ArrayLike, /) -> Arr
         raise ValueError("Transfer inputs require a leading DOF axis.")
     block = action(array.reshape((array.shape[0], -1)))
     return block.reshape((block.shape[0],) + array.shape[1:])
+
+
+def _project_exact_transfer_values(
+    values: list[Fraction], dtype: np.dtype, /
+) -> np.ndarray:
+    """Project exact nonzero entries without silently losing their support."""
+    try:
+        projected = np.asarray([float(value) for value in values], dtype=dtype)
+    except OverflowError as error:
+        raise ValueError("Exact transfer coefficients exceed execution range.") from error
+    if not np.all(np.isfinite(projected)) or any(
+        value != 0 and projected[index] == 0 for index, value in enumerate(values)
+    ):
+        raise ValueError("Exact transfer coefficients lose finite execution support.")
+    return projected
+
+
+type NestedNodalTransferSemantics = Literal["interpolate", "density", "intensive"]
+
+
+def _sparse_transfer_support(primal: AbstractLinearOperator, /) -> SparseSupportRank:
+    if not isinstance(primal, (SparseLinearMap, SparseCoordinateOperator)):
+        raise ValueError("Support reporting requires an explicitly sparse primal map.")
+    if isinstance(primal, SparseCoordinateOperator) and primal.block_shape is not None:
+        raise ValueError("Support reporting requires scalar sparse coordinates.")
+    return sparse_support_rank(primal.sparse_storage())
 
 
 class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
@@ -236,6 +265,14 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
     def target_size(self) -> int:
         return self.primal.target.size
 
+    def support_report(self, /) -> SparseSupportRank:
+        """Prepare host sparse support and rank bounds without a global dense matrix.
+
+        The singleton-row lower bound and structural upper bound certify the rank
+        of the stored execution matrix. ``exact_rank`` is set only when they meet.
+        """
+        return _sparse_transfer_support(self.primal)
+
     def distributed(
         self,
         source_owner: ArrayLike,
@@ -246,9 +283,16 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
         """Prepare owner-local primal/transpose routes when the map is sparse."""
         from .._distributed_field import DistributedSparseTransfer
 
-        if not isinstance(self.primal, SparseLinearMap):
+        if not isinstance(self.primal, (SparseLinearMap, SparseCoordinateOperator)):
             raise ValueError(
                 "Owner-local topology transfer requires an explicit sparse primal map."
+            )
+        if (
+            isinstance(self.primal, SparseCoordinateOperator)
+            and self.primal.block_shape is not None
+        ):
+            raise ValueError(
+                "Owner-local topology transfer requires scalar sparse coordinates."
             )
         return DistributedSparseTransfer(
             self.primal.relation,
@@ -366,7 +410,7 @@ def _row_scales(
 
     ones = jnp.ones((primal.source.size,), dtype=dtype)
     row_scale = np.asarray(_block_action(primal.mv_block, ones), dtype=dtype)
-    if not isinstance(primal, SparseLinearMap):
+    if not isinstance(primal, (SparseLinearMap, SparseCoordinateOperator)):
         if not np.all(np.isfinite(row_scale)):
             raise ValueError("Topology transfer actions must be finite.")
         if positivity_preserving:
@@ -380,14 +424,23 @@ def _row_scales(
         raise ValueError("Topology transfer coefficients must be finite.")
     if positivity_preserving and np.any(coefficients < 0.0):
         raise ValueError("Transfer claims positivity preservation with negative weights.")
-    absolute_scale = np.asarray(
-        SparseLinearMap(
+    if isinstance(primal, SparseCoordinateOperator):
+        if primal.block_shape is not None:
+            raise ValueError("Scalar topology claims require scalar sparse coefficients.")
+        absolute_operator = SparseCoordinateOperator(
+            primal.relation,
+            jnp.abs(primal.coefficients),
+            source=primal.source,
+            target=primal.target,
+            operator_id=f"{primal.operator_id}:absolute",
+        )
+    else:
+        absolute_operator = SparseLinearMap(
             primal.relation,
             jnp.abs(primal.coefficients),
             operator_id=f"{primal.operator_id}:absolute",
-        ).mv(ones),
-        dtype=dtype,
-    )
+        )
+    absolute_scale = np.asarray(absolute_operator.mv(ones), dtype=dtype)
     return row_scale, absolute_scale
 
 
@@ -540,6 +593,651 @@ def vertex_interpolation_transfer(
         target_coordinates=target_coordinates,
         source_measures=source_measures,
         target_measures=target_measures,
+    )
+
+
+def nested_nodal_transfer(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    transition: Any,
+    field_name: str,
+    /,
+    *,
+    semantics: NestedNodalTransferSemantics,
+    source_cell_classes: ArrayLike | None = None,
+    target_cell_classes: ArrayLike | None = None,
+) -> FiniteElementTopologyTransfer:
+    """Transfer a named scalar nodal field using bound exact cell ancestry.
+
+    ``interpolate`` evaluates source coefficients at target nodal functionals.
+    It makes no conservation or history/irreversibility claim. ``density`` and
+    ``intensive`` use physical-mass projection; only density declares conservation.
+    Projection requires certified-valid three-dimensional Cartesian geometry and
+    exact rational polynomial coordinate maps and reference-chart moments;
+    rational-function measures are refused rather than assigned an unproved bound.
+    Optional source/target cell classes certify that no projection route mixes
+    declared regions; combined with density conservation this proves each
+    region's content independently.
+    """
+    from .. import _coordinate_enclosure as algebra
+    from .._cell_geometry import coordinate_effective_basis
+    from .._cell_geometry_transition_types import CellGeometryTransition
+    from .._nested_reference import nested_cell_reference_maps
+    from .._nested_reference_types import (
+        _reference_cell_contains,
+        ReferenceCellMapWitnesses,
+    )
+    from ._de_rham import (
+        _index_nested_reference_maps,
+        _retained_identity_reference_maps,
+        _sparse_operator,
+    )
+    from ._partition_form_moments import _affine, _inverse_map
+    from ._reference import discontinuous_element, lagrange_reference_node_data
+
+    if not isinstance(source, FiniteElementDiscretization) or not isinstance(
+        target, FiniteElementDiscretization
+    ):
+        raise TypeError(
+            "Nested nodal transfer requires prepared finite-element endpoints."
+        )
+    if not isinstance(transition, CellGeometryTransition):
+        raise TypeError("Nested nodal transfer requires a bound CellGeometryTransition.")
+    semantics = parse(semantics, NestedNodalTransferSemantics, "semantics")
+    transition.require_bound(
+        source.mesh, transition.source_geometry, target.mesh, transition.target_geometry
+    )
+    for discretization, geometry in (
+        (source, transition.source_geometry),
+        (target, transition.target_geometry),
+    ):
+        if (
+            geometry.geometry_layout_id
+            != discretization.default_runtime.geometry_layout_id
+            or not np.array_equal(
+                np.asarray(geometry.resolve(discretization.mesh)[2]),
+                np.asarray(discretization.default_runtime.coordinates),
+            )
+        ):
+            raise ValueError("Nodal transfer geometry differs from its bound transition.")
+    if (
+        source.default_runtime.coordinate_frame != target.default_runtime.coordinate_frame
+        or _coordinate_measure_key(source) != _coordinate_measure_key(target)
+    ):
+        raise ValueError(
+            "Nodal transfer endpoints require matching scientific axes and measure."
+        )
+    if np.dtype(source.coefficient_dtype) != np.dtype(target.coefficient_dtype):
+        raise ValueError("Nodal transfer endpoints require the same coefficient dtype.")
+    source_index, target_index = (
+        source._field_index(field_name),
+        target._field_index(field_name),
+    )
+    source_dofs, target_dofs = (
+        source.dof_maps[source_index],
+        target.dof_maps[target_index],
+    )
+    if source_dofs.component_shape != target_dofs.component_shape:
+        raise ValueError("Nodal transfer field component axes differ.")
+    source_elements, target_elements = (
+        source.elements[source_index],
+        target.elements[target_index],
+    )
+    conformity = source_elements[0].conformity
+    if conformity not in ("H1", "L2"):
+        raise ValueError("Nodal transfer requires one scalar H1 or discontinuous field.")
+    for element in (*source_elements, *target_elements):
+        if (
+            element.conformity != conformity
+            or element.form_basis is not None
+            or element.value_spec.value_spec_id
+            != source_elements[0].value_spec.value_spec_id
+            or element.degree not in ((1, 2) if conformity == "H1" else (0, 1))
+        ):
+            raise ValueError(
+                "Nodal transfer field spaces have incompatible scientific identities."
+            )
+        expected = (
+            lagrange_element(element.cell_kind, element.degree)
+            if conformity == "H1"
+            else discontinuous_element(element.cell_kind, element.degree)
+        )
+        if element.element_id != expected.element_id:
+            raise ValueError(
+                "Nodal transfer requires canonical point-evaluation elements."
+            )
+    if semantics in ("density", "intensive") and conformity != "L2":
+        raise ValueError(
+            "Physical-mass projection requires a discontinuous scalar field."
+        )
+
+    partition = transition.coarsening_partition
+    partition_ids = frozenset(
+        int(identifier)
+        for group in (() if partition is None else partition.maps)
+        for identifier in np.asarray(group.source_cell_ids)
+    )
+    direct = transition.reference_map
+    records = (
+        []
+        if direct is None
+        else [direct]
+        if isinstance(direct, ReferenceCellMapWitnesses)
+        else list(direct)
+    )
+    if transition.refinement is not None:
+        records.append(transition.refinement)
+    covered = set(partition_ids)
+    for record in records:
+        identifiers = getattr(
+            record, "target_cell_ids", getattr(record, "fine_cell_ids", ())
+        )
+        covered.update(int(value) for value in np.asarray(identifiers))
+    records.extend(_retained_identity_reference_maps(source, target, covered))
+    reference_maps, parents = _index_nested_reference_maps(
+        tuple(records), source.mesh, target.mesh, partition_target_ids=partition_ids
+    )
+    source_offsets = np.cumsum((0, *(block.cell_count for block in source.mesh.blocks)))
+    source_lookup = {
+        int(identifier): (block_index, row)
+        for block_index, block in enumerate(source.mesh.blocks)
+        for row, identifier in enumerate(np.asarray(block.global_ids))
+    }
+    partitions: dict[int, list[Any]] = {}
+    forward_partitions: dict[int, list[Any]] = {}
+    if partition is not None:
+        for group in partition.maps:
+            for mapping in nested_cell_reference_maps(group):
+                forward_partitions.setdefault(mapping.source_cell_id, []).append(mapping)
+                a, matrix = _affine(
+                    mapping.target_cell_kind, mapping.source_reference_vertices
+                )
+                inverse = _inverse_map(
+                    mapping.target_cell_id,
+                    mapping.source_cell_id,
+                    mapping.target_cell_kind,
+                    mapping.source_cell_kind,
+                    a,
+                    matrix,
+                )
+                partitions.setdefault(mapping.source_cell_id, []).append(inverse)
+        for mappings in partitions.values():
+            mappings.sort(key=lambda mapping: mapping.source_cell_id)
+    region_scope_id = None
+    if (source_cell_classes is None) != (target_cell_classes is None):
+        raise ValueError("Region certification requires both endpoint cell-class arrays.")
+    if source_cell_classes is not None and target_cell_classes is not None:
+        if semantics not in ("density", "intensive"):
+            raise ValueError(
+                "Cell-class certification applies to physical-mass projection."
+            )
+        source_classes = np.asarray(source_cell_classes)
+        target_classes = np.asarray(target_cell_classes)
+        if (
+            source_classes.shape != (int(source_offsets[-1]),)
+            or target_classes.shape
+            != (sum(block.cell_count for block in target.mesh.blocks),)
+            or source_classes.dtype.kind not in "iu"
+            or target_classes.dtype.kind not in "iu"
+        ):
+            raise ValueError(
+                "Cell-class arrays must be integer and aligned with endpoint cells."
+            )
+        offset = 0
+        for block in target.mesh.blocks:
+            for cell, identifier in enumerate(np.asarray(block.global_ids)):
+                row = offset + cell
+                if parents[row] >= 0:
+                    source_rows = (int(parents[row]),)
+                else:
+                    source_rows = tuple(
+                        int(source_offsets[source_lookup[record.target_cell_id][0]])
+                        + source_lookup[record.target_cell_id][1]
+                        for record in forward_partitions.get(int(identifier), ())
+                    )
+                if not source_rows or any(
+                    source_classes[source_row] != target_classes[row]
+                    for source_row in source_rows
+                ):
+                    raise ValueError(
+                        "Nested physical-mass projection crosses a declared region."
+                    )
+            offset += block.cell_count
+        region_scope_id = canonical_fingerprint(
+            {
+                "source_classes": array_tree_fingerprint(source_classes),
+                "target_classes": array_tree_fingerprint(target_classes),
+            }
+        )
+    if semantics in ("density", "intensive"):
+        return _nested_nodal_density_transfer(
+            source,
+            target,
+            transition,
+            source_index,
+            target_index,
+            reference_maps,
+            parents,
+            forward_partitions,
+            source_offsets,
+            source_lookup,
+            semantics == "density",
+            region_scope_id,
+        )
+    if partition is not None and conformity == "L2":
+        raise ValueError(
+            "Discontinuous coarsening requires the declared density projection."
+        )
+
+    rows: list[int] = []
+    columns: list[int] = []
+    values: list[Fraction] = []
+    owners: set[int] = set()
+    source_basis_cache: dict[str, tuple[Any, ...]] = {}
+    target_offset = 0
+    for block_index, (block, element) in enumerate(
+        zip(target.mesh.blocks, target_elements, strict=True)
+    ):
+        nodes = lagrange_reference_node_data(element)
+        for cell, identifier in enumerate(np.asarray(block.global_ids)):
+            target_row = target_offset + cell
+            target_routes = np.asarray(
+                target_dofs.cell_dofs[block_index][cell], dtype=np.int64
+            )
+            parent = int(parents[target_row])
+            direct_map = reference_maps.get(target_row)
+            for local, global_row in enumerate(target_routes):
+                if int(global_row) in owners:
+                    continue
+                node = nodes[local].exact_point
+                if node is None or any(not isinstance(value, Fraction) for value in node):
+                    raise ValueError(
+                        "Nested nodal transfer requires exact rational reference nodes."
+                    )
+                if parent >= 0:
+                    if direct_map is None:
+                        raise ValueError("A target cell lacks its exact reference map.")
+                    source_block = int(
+                        np.searchsorted(source_offsets[1:], parent, side="right")
+                    )
+                    source_cell = parent - int(source_offsets[source_block])
+                    point = direct_map.evaluate(node)
+                else:
+                    candidates = partitions.get(int(identifier), ())
+                    selected = None
+                    for candidate in candidates:
+                        point_ = candidate.evaluate(node)
+                        if all(
+                            isinstance(value, Fraction) for value in point_
+                        ) and _reference_cell_contains(
+                            candidate.source_cell_kind, point_
+                        ):
+                            selected = (candidate, point_)
+                            break
+                    if selected is None:
+                        raise ValueError(
+                            "Coarsened nodal functional lacks a source-cell owner."
+                        )
+                    candidate, point = selected
+                    source_block, source_cell = source_lookup[candidate.source_cell_id]
+                source_element = source_elements[source_block]
+                if source_element.element_id not in source_basis_cache:
+                    source_basis_cache[source_element.element_id] = (
+                        (
+                            algebra.constant(
+                                Fraction(1), source_element.topological_dimension
+                            ),
+                        )
+                        if source_element.degree == 0
+                        else coordinate_effective_basis(
+                            lagrange_element(
+                                source_element.cell_kind, source_element.degree
+                            )
+                        )
+                    )
+                exact_values = tuple(
+                    algebra.evaluate_expression(function, point)
+                    for function in source_basis_cache[source_element.element_id]
+                )
+                source_routes = np.asarray(
+                    source_dofs.cell_dofs[source_block][source_cell], dtype=np.int64
+                )
+                for column, value in zip(source_routes, exact_values, strict=True):
+                    if not isinstance(value, Fraction):
+                        raise ValueError(
+                            "Nested nodal interpolation requires rational exact coefficients."
+                        )
+                    if value:
+                        rows.append(int(global_row))
+                        columns.append(int(column))
+                        values.append(value)
+                owners.add(int(global_row))
+        target_offset += block.cell_count
+    if len(owners) != target_dofs.global_dof_count:
+        raise ValueError("Nested nodal transfer has incomplete target support.")
+    dtype = np.dtype(target.coefficient_dtype)
+    operator = _sparse_operator(
+        np.asarray(rows, dtype=np.int32),
+        np.asarray(columns, dtype=np.int32),
+        jnp.asarray(_project_exact_transfer_values(values, dtype), dtype=dtype),
+        ArraySpace((source_dofs.global_dof_count,), dtype=dtype),
+        ArraySpace((target_dofs.global_dof_count,), dtype=dtype),
+        canonical_fingerprint(
+            {
+                "kind": "nested-nodal-interpolation",
+                "source_field": source.field_spaces[source_index].field_space_id,
+                "target_field": target.field_spaces[target_index].field_space_id,
+                "geometry_transition": transition.transition_id,
+            }
+        ),
+    )
+    return FiniteElementTopologyTransfer(
+        operator,
+        source.mesh.topology_id,
+        target.mesh.topology_id,
+        preserves_constants=True,
+    )
+
+
+def _nested_nodal_density_transfer(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    transition: Any,
+    source_index: int,
+    target_index: int,
+    reference_maps: dict[int, Any],
+    parents: np.ndarray,
+    partitions: dict[int, list[Any]],
+    source_offsets: np.ndarray,
+    source_lookup: dict[int, tuple[int, int]],
+    conservative: bool,
+    region_scope_id: str | None,
+    /,
+) -> FiniteElementTopologyTransfer:
+    """Cell-local exact physical L2 projection of discontinuous nodal fields."""
+    from ...linalg._exact import solve_exact
+    from .. import _coordinate_enclosure as algebra
+    from .._cell_geometry import coordinate_effective_basis
+    from .._cell_geometry_transition_types import _geometry_map_expressions
+    from .._cell_geometry_validity import certify_cell_geometry_validity
+    from ._de_rham import _sparse_operator
+    from ._exact_form_moments import (
+        _determinant,
+        _entity_simplices,
+        _reference_arguments,
+        _simplex_chart_arguments,
+        _simplex_determinant,
+        _standard_simplex_polynomial_integral,
+    )
+
+    if source.mesh.topological_dimension != 3 or source.mesh.ambient_dimension != 3:
+        raise ValueError(
+            "Nested physical-mass projection requires a three-dimensional volume."
+        )
+    if _coordinate_measure_key(source)[0] != "cartesian":
+        raise ValueError(
+            "Nested physical-mass projection currently requires Cartesian measure."
+        )
+    if np.dtype(source.coefficient_dtype) != np.dtype(target.coefficient_dtype):
+        raise ValueError(
+            "Nested projection endpoints require the same coefficient dtype."
+        )
+    for mesh, geometry in (
+        (source.mesh, transition.source_geometry),
+        (target.mesh, transition.target_geometry),
+    ):
+        certificate = certify_cell_geometry_validity(geometry, mesh=mesh)
+        if certificate.invalid_count or certificate.unresolved_count:
+            raise ValueError(
+                "Nested physical-mass projection requires certified valid geometry."
+            )
+    source_resolved = transition.source_geometry.resolve(source.mesh)
+    target_resolved = transition.target_geometry.resolve(target.mesh)
+    source_maps = _geometry_map_expressions(
+        source.mesh, transition.source_geometry, (source_resolved[0], source_resolved[1])
+    )
+    target_maps = _geometry_map_expressions(
+        target.mesh, transition.target_geometry, (target_resolved[0], target_resolved[1])
+    )
+    basis_cache: dict[str, tuple[Any, ...]] = {}
+    determinant_cache: dict[tuple[str, int], Any] = {}
+
+    def basis(element: FiniteElementSpec, /) -> tuple[Any, ...]:
+        if element.element_id not in basis_cache:
+            basis_cache[element.element_id] = (
+                (algebra.constant(Fraction(1), element.topological_dimension),)
+                if element.degree == 0
+                else coordinate_effective_basis(
+                    lagrange_element(element.cell_kind, element.degree)
+                )
+            )
+        return basis_cache[element.element_id]
+
+    def determinant(maps: Any, endpoint: str, identifier: int, kind: str, /) -> Any:
+        key = (endpoint, identifier)
+        if key not in determinant_cache:
+            expressions = maps.expressions(identifier)
+            value = _determinant(
+                tuple(
+                    tuple(algebra.derivative(expression, axis) for axis in range(3))
+                    for expression in expressions
+                ),
+                3,
+            )
+            if isinstance(value, algebra.RationalPolynomial):
+                raise ValueError(
+                    "Rational coordinate measures need bounded integration evidence."
+                )
+            center = (
+                (Fraction(1, 3), Fraction(1, 3), Fraction(1, 2))
+                if kind == "prism"
+                else (Fraction(1, 4),) * 3
+            )
+            sign = algebra.evaluate_expression(value, center)
+            if not isinstance(sign, Fraction) or not sign:
+                raise ValueError(
+                    "Physical-mass orientation lacks an exact rational sign."
+                )
+            determinant_cache[key] = value if sign > 0 else algebra.scale(value, -1)
+        return determinant_cache[key]
+
+    def integrate(expression: Any, kind: str, /) -> Fraction:
+        if kind not in ("prism", "tetrahedron", "simplex:3"):
+            raise ValueError(
+                "Nested physical-mass projection requires prism or tetrahedron cells."
+            )
+        family = "prism-trimmed" if kind == "prism" else "trimmed"
+        total = Fraction(0)
+        for simplex in _entity_simplices(3, family):
+            local = algebra.compose_expression(
+                expression, _simplex_chart_arguments(simplex, 3)
+            )
+            if isinstance(local, algebra.RationalPolynomial) or any(
+                not isinstance(value, Fraction) for value in local.values()
+            ):
+                raise ValueError(
+                    "Physical-mass moments require exact rational polynomials."
+                )
+            total += _standard_simplex_polynomial_integral(local, 3) * abs(
+                _simplex_determinant(simplex)
+            )
+        if not isinstance(total, Fraction):
+            raise RuntimeError(
+                "Rational polynomial integration returned a non-rational moment."
+            )
+        return total
+
+    def cell_measures(
+        discretization: FiniteElementDiscretization,
+        field_index: int,
+        maps: Any,
+        endpoint: str,
+        /,
+    ) -> list[Fraction]:
+        dofs = discretization.dof_maps[field_index]
+        result = [Fraction(0)] * dofs.global_dof_count
+        for block_index, (block, element) in enumerate(
+            zip(
+                discretization.mesh.blocks,
+                discretization.elements[field_index],
+                strict=True,
+            )
+        ):
+            functions = basis(element)
+            for cell, identifier in enumerate(np.asarray(block.global_ids)):
+                weight = determinant(maps, endpoint, int(identifier), block.cell_kind)
+                routes = np.asarray(dofs.cell_dofs[block_index][cell], dtype=np.int64)
+                for row, function in zip(routes, functions, strict=True):
+                    result[int(row)] += integrate(
+                        algebra.multiply(function, weight), block.cell_kind
+                    )
+        return result
+
+    source_dofs, target_dofs = (
+        source.dof_maps[source_index],
+        target.dof_maps[target_index],
+    )
+    source_measure = cell_measures(source, source_index, source_maps, "source")
+    target_measure = cell_measures(target, target_index, target_maps, "target")
+    rows: list[int] = []
+    columns: list[int] = []
+    exact_values: list[Fraction] = []
+    condition = 1.0
+    target_offset = 0
+    for block_index, (block, element) in enumerate(
+        zip(target.mesh.blocks, target.elements[target_index], strict=True)
+    ):
+        target_basis = basis(element)
+        for cell, identifier_ in enumerate(np.asarray(block.global_ids)):
+            identifier = int(identifier_)
+            target_row = target_offset + cell
+            target_routes = np.asarray(
+                target_dofs.cell_dofs[block_index][cell], dtype=np.int64
+            )
+            target_weight = determinant(
+                target_maps, "target", identifier, block.cell_kind
+            )
+            mass = [
+                [
+                    integrate(
+                        algebra.multiply(algebra.multiply(a, b), target_weight),
+                        block.cell_kind,
+                    )
+                    for b in target_basis
+                ]
+                for a in target_basis
+            ]
+            condition = max(
+                condition, float(np.linalg.cond(np.asarray(mass, dtype=np.float64)))
+            )
+            if not np.isfinite(condition):
+                raise ValueError("Nested projection target mass is rank deficient.")
+            if int(parents[target_row]) >= 0:
+                parent = int(parents[target_row])
+                source_block = int(
+                    np.searchsorted(source_offsets[1:], parent, side="right")
+                )
+                source_cell = parent - int(source_offsets[source_block])
+                pieces = ((source_block, source_cell, reference_maps[target_row], False),)
+            else:
+                maps = partitions.get(identifier, ())
+                if not maps:
+                    raise ValueError(
+                        "Coarsened density target has no exact child partition."
+                    )
+                pieces = tuple(
+                    (*source_lookup[mapping.target_cell_id], mapping, True)
+                    for mapping in maps
+                )
+            for source_block, source_cell, mapping, coarsened in pieces:
+                source_element = source.elements[source_index][source_block]
+                source_basis = basis(source_element)
+                source_routes = np.asarray(
+                    source_dofs.cell_dofs[source_block][source_cell], dtype=np.int64
+                )
+                arguments = _reference_arguments(mapping, 3)
+                if coarsened:
+                    fine_block = source.mesh.blocks[source_block]
+                    fine_id = int(np.asarray(fine_block.global_ids)[source_cell])
+                    weight = determinant(
+                        source_maps, "source", fine_id, fine_block.cell_kind
+                    )
+                    test_basis = tuple(
+                        algebra.compose_expression(value, arguments)
+                        for value in target_basis
+                    )
+                    trial_basis = source_basis
+                    integration_kind = fine_block.cell_kind
+                else:
+                    weight = target_weight
+                    test_basis = target_basis
+                    trial_basis = tuple(
+                        algebra.compose_expression(value, arguments)
+                        for value in source_basis
+                    )
+                    integration_kind = block.cell_kind
+                mixed = [
+                    [
+                        integrate(
+                            algebra.multiply(algebra.multiply(a, b), weight),
+                            integration_kind,
+                        )
+                        for b in trial_basis
+                    ]
+                    for a in test_basis
+                ]
+                projection = solve_exact(
+                    mass,
+                    mixed,
+                    singular_message="Nested target physical mass is rank deficient.",
+                )
+                for local_row, global_row in enumerate(target_routes):
+                    for local_column, global_column in enumerate(source_routes):
+                        value = projection[local_row][local_column]
+                        if value:
+                            rows.append(int(global_row))
+                            columns.append(int(global_column))
+                            exact_values.append(value)
+        target_offset += block.cell_count
+    if conservative:
+        pulled = [Fraction(0)] * source_dofs.global_dof_count
+        for row, column, value in zip(rows, columns, exact_values, strict=True):
+            pulled[column] += target_measure[row] * value
+        if pulled != source_measure:
+            raise ValueError(
+                "Nested density projection does not conserve exact physical content."
+            )
+    dtype = np.dtype(target.coefficient_dtype)
+    operator = _sparse_operator(
+        np.asarray(rows, dtype=np.int32),
+        np.asarray(columns, dtype=np.int32),
+        jnp.asarray(_project_exact_transfer_values(exact_values, dtype), dtype=dtype),
+        ArraySpace((source_dofs.global_dof_count,), dtype=dtype),
+        ArraySpace((target_dofs.global_dof_count,), dtype=dtype),
+        canonical_fingerprint(
+            {
+                "kind": "nested-physical-mass-projection",
+                "source_field": source.field_spaces[source_index].field_space_id,
+                "target_field": target.field_spaces[target_index].field_space_id,
+                "geometry_transition": transition.transition_id,
+                "conservative": conservative,
+                "region_scope": region_scope_id,
+            }
+        ),
+    )
+    return FiniteElementTopologyTransfer(
+        operator,
+        source.mesh.topology_id,
+        target.mesh.topology_id,
+        preserves_constants=True,
+        conservative=conservative,
+        action_condition=condition,
+        source_measures=_project_exact_transfer_values(source_measure, dtype)
+        if conservative
+        else None,
+        target_measures=_project_exact_transfer_values(target_measure, dtype)
+        if conservative
+        else None,
     )
 
 
@@ -1400,6 +2098,8 @@ __all__ = [
     "FiniteElementL2Projection",
     "FiniteElementTopologyTransfer",
     "PreparedL2ProjectionTarget",
+    "NestedNodalTransferSemantics",
+    "nested_nodal_transfer",
     "prepare_l2_projection_target",
     "prepare_l2_projection_transfer",
     "refresh_l2_projection_target",

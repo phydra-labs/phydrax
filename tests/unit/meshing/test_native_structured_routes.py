@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import cast
 
 import jax.numpy as jnp
@@ -9,11 +10,16 @@ import pytest
 
 import phydrax as phx
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.discretization._periodic_exact import PeriodicIsometryGroup
+from phydrax.discretization._periodic_topology import PeriodicMeshTopology
 from phydrax.discretization.fem._reference import FiniteElementSpec
 from phydrax.discretization.finite_volume import UnstructuredFiniteVolumePlan
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
-from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+from phydrax.geometry._piecewise_linear_boundary import (
+    PiecewiseLinearBoundarySource,
+    PiecewiseLinearDomainBoundaryOwner,
+)
 from phydrax.geometry._planar_embedding import PlanarEmbedding
 from phydrax.geometry.brep._patches import PlanePatch
 from phydrax.meshing import NativeMeshingProvider
@@ -54,6 +60,7 @@ from phydrax.meshing.providers._native_sources import (
 from phydrax.meshing.providers._native_structured import (
     _size_compliance,
     prepare_native_structured,
+    sweep_support_issues,
 )
 
 
@@ -262,6 +269,82 @@ def test_triangle_and_quad_sweeps_preserve_family_and_source_cell_ids() -> None:
     )
 
 
+def test_periodic_profile_extrusion_preserves_quotient_and_physical_stations() -> None:
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 0.5, 0.0),
+            (1.0, 0.5, 0.0),
+            (0.0, 1.0, 0.0),
+            (1.0, 1.0, 0.0),
+        )
+    )
+    rows = ((0, 1, 3), (0, 3, 2), (2, 3, 5), (2, 5, 4))
+    lifted = phx.discretization.CellMesh.from_triangles(points, rows)
+    generator = np.eye(4)[None]
+    generator[0, 0, 3] = 1.0
+    group = PeriodicIsometryGroup(generator)
+    representatives = np.asarray((0, 0, 2, 2, 4, 4))
+    shifts = np.asarray(((0,), (1,), (0,), (1,), (0,), (1,)))
+    topology = PeriodicMeshTopology(lifted, group, representatives, shifts)
+    profile = phx.discretization.CellMesh(
+        points, lifted.blocks, periodic_topology=topology
+    )
+    swept = generate_sweep(
+        profile, SweepControl(SweepMapKind.EXTRUSION, LayerSchedule((0.01, 0.01)), "z")
+    )
+    actual = swept.mesh.periodic_topology
+    assert actual is not None
+    assert isinstance(actual.cell, PeriodicIsometryGroup)
+    assert actual.cell.group_id == group.group_id
+    np.testing.assert_array_equal(
+        actual.vertex_representatives,
+        np.concatenate([representatives + 6 * station for station in range(3)]),
+    )
+    np.testing.assert_array_equal(actual.vertex_shifts, np.tile(shifts, (3, 1)))
+    np.testing.assert_allclose(swept.stations, (0.0, 0.01, 0.02), rtol=0.0, atol=1e-15)
+    np.testing.assert_allclose(
+        swept.measured_layer_thicknesses, 0.01, rtol=0.0, atol=1e-15
+    )
+    assert swept.mesh.blocks[0].cell_count == 8
+    boundaries = [item.scipy_boundary().toarray() for item in actual.quotient.incidences]
+    for left, right in zip(boundaries[:-1], boundaries[1:], strict=True):
+        np.testing.assert_array_equal(left @ right, 0)
+
+
+def test_periodic_extrusion_rejects_axis_not_preserved_by_group() -> None:
+    points = np.asarray(
+        ((0.5, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.5, 0.0))
+    )
+    lifted = phx.discretization.CellMesh.from_triangles(points, ((0, 1, 2), (0, 2, 3)))
+    generator = np.asarray(
+        (
+            (
+                (0.0, -1.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            ),
+        )
+    )
+    group = PeriodicIsometryGroup(generator)
+    topology = PeriodicMeshTopology(
+        lifted, group, np.asarray((0, 1, 1, 0)), np.asarray(((0,), (0,), (1,), (1,)))
+    )
+    profile = phx.discretization.CellMesh(
+        points, lifted.blocks, periodic_topology=topology
+    )
+    control = SweepControl(
+        SweepMapKind.EXTRUSION,
+        LayerSchedule((0.01,)),
+        "x",
+        axis=np.asarray((1.0, 0.0, 0.0)),
+    )
+    with pytest.raises(ValueError, match="does not preserve the extrusion direction"):
+        generate_sweep(profile, control)
+
+
 def test_closed_revolution_has_an_explicit_periodic_seam_map() -> None:
     profile = phx.discretization.CellMesh.from_triangles(
         ((1.0, 0.0, 0.0), (1.0, 0.0, 1.0), (2.0, 0.0, 0.0)),
@@ -388,92 +471,6 @@ def test_closed_frame_sweep_retains_the_declared_periodic_seam() -> None:
     )
 
 
-
-
-class _SweepPwlDomainOwner:
-    domain: PiecewiseLinearDomain
-    source_id: str
-    source_revision: str
-    envelope_id: str
-    edges: np.ndarray
-    scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
-    _scope_entity_set_ids: tuple[str, ...]
-    _entity_keys: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...]
-    _domain_id: str
-
-    def __init__(self, domain: PiecewiseLinearDomain, /) -> None:
-        self.domain = domain
-        self.source_id = domain.source_id
-        self.source_revision = domain.source_revision
-        self.envelope_id = domain.domain_id
-        self.edges = np.asarray(
-            sorted(
-                {
-                    tuple(sorted((int(face[index]), int(face[(index + 1) % 3]))))
-                    for face in np.asarray(domain.facets, dtype=np.int64)
-                    for index in range(3)
-                }
-            ),
-            dtype=np.int64,
-        ).reshape((-1, 2))
-        entity_rows = (
-            np.arange(domain.vertices.shape[0], dtype=np.int64),
-            np.arange(self.edges.shape[0], dtype=np.int64),
-            np.arange(domain.facets.shape[0], dtype=np.int64),
-            np.arange(len(domain.region_ids), dtype=np.int64),
-        )
-        self.scope_entity_ids_by_mesh_row = entity_rows
-        self._scope_entity_set_ids = tuple(
-            f"{domain.domain_id}:pwl:{dimension}" for dimension in range(len(entity_rows))
-        )
-        self._entity_keys = (
-            tuple(
-                (f"{domain.domain_id}:vertex:{row}", ())
-                for row in range(entity_rows[0].size)
-            ),
-            tuple(
-                (
-                    f"{domain.domain_id}:edge:{int(edge[0])}:{int(edge[1])}",
-                    (),
-                )
-                for edge in self.edges
-            ),
-            tuple(
-                (f"{domain.domain_id}:facet:{row}", ())
-                for row in range(entity_rows[2].size)
-            ),
-            tuple(
-                (name, path)
-                for name, path in zip(
-                    domain.region_ids, domain.region_occurrence_paths, strict=True
-                )
-            ),
-        )
-        self._domain_id = domain.domain_id
-
-    def require_current(self, /) -> None:
-        if self.domain.domain_id != self._domain_id or (
-            self.domain.source_id,
-            self.domain.source_revision,
-        ) != (self.source_id, self.source_revision):
-            raise ValueError("The sweep PWL source domain changed after preparation.")
-
-    def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
-        return self.scope_entity_ids_by_mesh_row[dimension]
-
-    def scope_entity_set_id(self, dimension: int, /) -> str:
-        return self._scope_entity_set_ids[dimension]
-
-    def source_entity_key_for_scope(
-        self, dimension: int, entity_id: int, /
-    ) -> tuple[str, tuple[str, ...]]:
-        identifiers = self.scope_entity_ids_by_mesh_row[dimension]
-        position = int(np.searchsorted(identifiers, entity_id))
-        if position >= identifiers.size or int(identifiers[position]) != entity_id:
-            raise ValueError("The sweep PWL source entity is outside its retained bank.")
-        return self._entity_keys[dimension][position]
-
-
 def _native_square_request(
     required_families: tuple[str, ...],
     /,
@@ -554,6 +551,154 @@ def _native_square_request(
     return source, specification, options, SpatialCoordinateContract.si()
 
 
+def test_structured_source_archive_replays_and_rejects_changed_identity(
+    tmp_path: Path,
+) -> None:
+    import copy
+
+    from phydrax._array_archive import ArrayArchiveCorruptionError
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    source, _, _, _ = _native_square_request(("quadrilateral",))
+    path = tmp_path / "structured.phx"
+    write_model_artifact(path, source, limits=None)
+    restored = read_model_artifact(
+        path,
+        expected_type=NativeStructuredSource,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.binding_id == source.binding_id
+    assert restored.domain is not None and source.domain is not None
+    assert restored.domain.domain_id == source.domain.domain_id
+    for actual, expected in zip(
+        restored.scope_entity_id_banks, source.scope_entity_id_banks, strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    altered = copy.copy(source)
+    object.__setattr__(altered, "binding_id", "tampered")
+    write_model_artifact(path, altered, limits=None)
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_artifact(
+            path,
+            expected_type=NativeStructuredSource,
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+
+
+def test_structured_solid_controls_archive_replay(tmp_path: Path) -> None:
+    import copy
+
+    from phydrax._array_archive import ArrayArchiveCorruptionError
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    block = _box(
+        "solid",
+        (0.0, 0.0, 0.0),
+        ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    )
+    interface = BlockInterfaceControl("solid", 1, "other", 0, (1, 0), (False, True))
+    for value, identity in ((block, "block_id"), (interface, "control_id")):
+        path = tmp_path / f"{identity}.phx"
+        write_model_artifact(path, value, limits=None)
+        restored = read_model_artifact(
+            path,
+            expected_type=type(value),
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+        assert getattr(restored, identity) == getattr(value, identity)
+        altered = copy.copy(value)
+        object.__setattr__(altered, identity, "tampered")
+        write_model_artifact(path, altered, limits=None)
+        with pytest.raises(ArrayArchiveCorruptionError):
+            read_model_artifact(
+                path,
+                expected_type=type(value),
+                restore=restore_model_archive_value,
+                limits=None,
+            )
+
+
+def test_sweep_source_archive_replays_and_rejects_changed_scope(tmp_path: Path) -> None:
+    import copy
+
+    from phydrax._array_archive import ArrayArchiveCorruptionError
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from tools.meshing_qualification.scenarios.native_family_matrix import _make_profile
+
+    source = _make_profile("native-family-lifecycle:sweep-hex").source
+    path = tmp_path / "sweep.phx"
+    write_model_artifact(path, source, limits=None)
+    restored = read_model_artifact(
+        path,
+        expected_type=NativeSweepSource,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.binding_id == source.binding_id
+    assert (
+        restored.fidelity_source.source_query_id == source.fidelity_source.source_query_id
+    )
+    altered = copy.copy(source)
+    object.__setattr__(altered, "scope_entity_set_ids", ("tampered",) * 4)
+    write_model_artifact(path, altered, limits=None)
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_artifact(
+            path,
+            expected_type=NativeSweepSource,
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+    owner = copy.copy(source.fidelity_source.owner)
+    object.__setattr__(owner, "_scope_entity_set_ids", ("tampered",) * 4)
+    write_model_artifact(path, owner, limits=None)
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_artifact(
+            path,
+            expected_type=type(owner),
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+
+
+@pytest.mark.parametrize(
+    "profile",
+    (
+        "transfinite-quad",
+        "multiblock-quad",
+        "sweep-hex",
+        "curved-frame-sweep-hex",
+        "multiblock-reversed-hex",
+        "multiblock-material-hex",
+    ),
+)
+def test_structured_family_cold_fe_continuation(profile: str) -> None:
+    from tools.meshing_qualification.scenarios.native_family_cold import (
+        native_family_cold,
+    )
+
+    evidence = native_family_cold(f"native-family-lifecycle:{profile}")
+    producer, consumer = evidence["producer"], evidence["consumer"]
+    assert isinstance(producer, dict) and isinstance(consumer, dict)
+    assert producer["pid"] != consumer["pid"]
+    assert producer["accepted_id"] == consumer["accepted_id"]
+    assert consumer["next_accepted_id"] != consumer["accepted_id"]
+
+
 def test_native_structured_provider_returns_canonical_construction_data() -> None:
     source, specification, options, coordinate_contract = _native_square_request(
         ("quadrilateral",)
@@ -586,20 +731,22 @@ def test_native_structured_provider_returns_canonical_construction_data() -> Non
 
 def test_embedded_structured_surface_preserves_its_surface_query() -> None:
     domain = PiecewiseLinearDomain(
-        np.asarray(((0., 0., 0.), (2., 0., 0.), (0., 2., 0.), (0., 0., 2.))),
+        np.asarray(((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 2.0))),
         np.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)), dtype=np.int64),
         np.tile(np.asarray((0, -1), dtype=np.int64), (4, 1)),
         ("solid",),
         source_id="embedded-structured-source",
     )
     query = PiecewiseLinearBoundarySource(
-        _SweepPwlDomainOwner(domain), 2, entity_ids=np.asarray((0,), dtype=np.int64)
+        PiecewiseLinearDomainBoundaryOwner(domain),
+        2,
+        entity_ids=np.asarray((0,), dtype=np.int64),
     )
     edges = (
-        ((0., 0., 0.), (0., 0.5, 0.)),
-        ((0.5, 0., 0.), (0.5, 0.5, 0.)),
-        ((0., 0., 0.), (0.5, 0., 0.)),
-        ((0., 0.5, 0.), (0.5, 0.5, 0.)),
+        ((0.0, 0.0, 0.0), (0.0, 0.5, 0.0)),
+        ((0.5, 0.0, 0.0), (0.5, 0.5, 0.0)),
+        ((0.0, 0.0, 0.0), (0.5, 0.0, 0.0)),
+        ((0.0, 0.5, 0.0), (0.5, 0.5, 0.0)),
     )
     block = TransfiniteBlock(
         "embedded",
@@ -609,8 +756,12 @@ def test_embedded_structured_surface_preserves_its_surface_query() -> None:
         ),
     )
     source = NativeStructuredSource(
-        (block,), (), domain.source_id, domain.source_revision,
-        fidelity_source=query, maximum_deviation=1e-12,
+        (block,),
+        (),
+        domain.source_id,
+        domain.source_revision,
+        fidelity_source=query,
+        maximum_deviation=1e-12,
     )
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(2, 3, CellFamilyPolicy(required=("quadrilateral",))),
@@ -619,7 +770,8 @@ def test_embedded_structured_surface_preserves_its_surface_query() -> None:
         quality_target=MeshQualityTarget(minimum_angle=0.2),
     )
     construction = prepare_native_structured(
-        source, specification,
+        source,
+        specification,
         NativeMeshingOptions(
             "structured_transfinite", structured_schedule=NativeStructuredSchedule()
         ),
@@ -631,7 +783,7 @@ def test_embedded_structured_surface_preserves_its_surface_query() -> None:
     assert construction.certification.schedule.route == "surface"
     assert construction.certification.fidelity_source is query
     assert construction.certification.fidelity_witness is None
-    np.testing.assert_array_equal(np.asarray(construction.mesh.coordinates)[:, 2], 0.)
+    np.testing.assert_array_equal(np.asarray(construction.mesh.coordinates)[:, 2], 0.0)
 
 
 @pytest.mark.parametrize("hard", (True, False))
@@ -660,9 +812,7 @@ def test_structured_surface_quality_records_unmet_physical_corner_angle(
         ),
     )
     construction = generate_structured_block(block)
-    compliance = _size_compliance(
-        construction.mesh, construction.geometry, specification
-    )
+    compliance = _size_compliance(construction.mesh, construction.geometry, specification)
 
     assert compliance.passed is not hard
     assert ("minimum_angle" in compliance.issues) is hard
@@ -684,9 +834,7 @@ def test_structured_surface_quality_uses_curved_edge_tangents_not_chords() -> No
     construction = generate_structured_block(
         TransfiniteBlock(rectangle.name, tuple(boundaries)), geometry_degree=2
     )
-    compliance = _size_compliance(
-        construction.mesh, construction.geometry, specification
-    )
+    compliance = _size_compliance(construction.mesh, construction.geometry, specification)
 
     assert compliance.passed
     assert dict(compliance.achieved)["minimum_angle"] == pytest.approx(
@@ -745,7 +893,9 @@ def test_native_sweep_provider_preserves_domain_and_profile_field_ancestry() -> 
         control,
         source_id,
         domain.source_revision,
-        fidelity_source=PiecewiseLinearBoundarySource(_SweepPwlDomainOwner(domain), 2),
+        fidelity_source=PiecewiseLinearBoundarySource(
+            PiecewiseLinearDomainBoundaryOwner(domain), 2
+        ),
         maximum_deviation=0.0,
         domain=domain,
         domain_vertex_map=np.asarray(
@@ -874,6 +1024,7 @@ def test_native_graded_whole_slab_sweep_keeps_the_physical_layer_schedule() -> N
         ("slab",),
         source_id=source_id,
     )
+    owner = PiecewiseLinearDomainBoundaryOwner(domain)
     profile = phx.discretization.CellMesh.from_triangles(
         vertices[:3],
         np.asarray(((0, 1, 2),), dtype=np.int64),
@@ -888,7 +1039,7 @@ def test_native_graded_whole_slab_sweep_keeps_the_physical_layer_schedule() -> N
         ),
         source_id,
         domain.source_revision,
-        fidelity_source=PiecewiseLinearBoundarySource(_SweepPwlDomainOwner(domain), 2),
+        fidelity_source=PiecewiseLinearBoundarySource(owner, 2),
         maximum_deviation=0.0,
         domain=domain,
         domain_vertex_map=np.asarray(
@@ -900,12 +1051,85 @@ def test_native_graded_whole_slab_sweep_keeps_the_physical_layer_schedule() -> N
             dtype=np.int64,
         ),
     )
+    assert isinstance(source.fidelity_source, PiecewiseLinearBoundarySource)
+    assert source.fidelity_source.owner is owner
+    wall_scope = MeshingScope(
+        source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        owner.scope_entity_set_id(2),
+        np.asarray((0,), dtype=np.int64),
+    )
+    cap_scope = MeshingScope(
+        source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        owner.scope_entity_set_id(2),
+        np.asarray((1,), dtype=np.int64),
+    )
+    volume_scope = MeshingScope(
+        source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        3,
+        owner.scope_entity_set_id(3),
+        np.asarray((0,), dtype=np.int64),
+    )
+    control = phx.meshing.BoundaryLayerControl(
+        wall_scope,
+        source.control.schedule,
+        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+        cap_scope=cap_scope,
+        volume_scope=volume_scope,
+    )
     specification = VolumeMeshingSpec(
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("prism",))),
-        MeshingScope.whole(source, 2),
+        MeshingScope.whole(owner, 2),
         VolumeFillStrategy.SWEEP,
         size_controls=(),
+        layer_controls=(control,),
     )
+    assert not sweep_support_issues(source, specification)
+    wrong_schedule = phx.meshing.BoundaryLayerControl(
+        wall_scope,
+        LayerSchedule((0.08, 0.10, 0.11)),
+        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+        cap_scope=cap_scope,
+        volume_scope=volume_scope,
+    )
+    bad_specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("prism",))),
+        MeshingScope.whole(owner, 2),
+        VolumeFillStrategy.SWEEP,
+        size_controls=(),
+        layer_controls=(wrong_schedule,),
+    )
+    assert sweep_support_issues(source, bad_specification)
+    side_scope = MeshingScope(
+        source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        owner.scope_entity_set_id(2),
+        np.asarray((2,), dtype=np.int64),
+    )
+    wrong_cap = phx.meshing.BoundaryLayerControl(
+        wall_scope,
+        source.control.schedule,
+        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+        cap_scope=side_scope,
+        volume_scope=volume_scope,
+    )
+    wrong_cap_specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("prism",))),
+        MeshingScope.whole(owner, 2),
+        VolumeFillStrategy.SWEEP,
+        size_controls=(),
+        layer_controls=(wrong_cap,),
+    )
+    assert sweep_support_issues(source, wrong_cap_specification)
 
     result = (
         NativeMeshingProvider(NativeMeshingOptions("sweep"))
@@ -964,3 +1188,283 @@ def test_native_structured_planar_provider_requires_independent_coverage_domain(
     )
     with pytest.raises(MeshingFailure, match="authoritative planar source domain"):
         prepare_native_structured(unbound, specification, options, coordinate_contract)
+
+
+@pytest.mark.parametrize(
+    "profile", ("sweep-prism", "multiblock-reversed-hex", "multiblock-material-hex")
+)
+def test_split_face_associations_reject_forged_scope_side_and_coverage(
+    profile: str,
+) -> None:
+    from dataclasses import fields
+
+    from phydrax.geometry._source_fidelity import validate_source_fidelity_witness
+    from phydrax.meshing._audit import _validated_partial_face_coverage
+    from tools.meshing_qualification.scenarios.native_family_matrix import (
+        _CONTRACT,
+        _make_profile,
+    )
+
+    case = _make_profile(f"native-family-lifecycle:{profile}")
+    result = (
+        NativeMeshingProvider(case.options)
+        .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
+    assert result.certification is not None
+    inputs = result.certification.inputs
+    assert inputs.fidelity_witness is not None
+    token = validate_source_fidelity_witness(
+        result.mesh, result.geometry, case.source.fidelity_source, inputs.fidelity_witness
+    )
+
+    def audit(associations: tuple, source: object = case.source) -> tuple:
+        return _validated_partial_face_coverage(
+            result.mesh,
+            result.geometry,
+            associations,
+            (token,),
+            source,
+            None,
+            inputs,
+            None,
+            None,
+        )
+
+    covered, issues, _wall_ids = audit(result.associations)
+    assert covered and not issues
+    assert "association_source_witness" in audit(result.associations, object())[1]
+    original = result.associations[0]
+    original_fields = {
+        field.name: getattr(original, field.name) for field in fields(original)
+    }
+    for name, replacement in (
+        ("source_occurrence_paths", (("forged",), *original.source_occurrence_paths[1:])),
+        (
+            "source_region_sides",
+            (
+                tuple(reversed(original.source_region_sides[0])),
+                *original.source_region_sides[1:],
+            ),
+        ),
+        ("target_reference_pieces", (None, *original.target_reference_pieces[1:])),
+    ):
+        values = dict(original_fields)
+        values[name] = replacement
+        forged = object.__new__(type(original))
+        for field_name, value in values.items():
+            object.__setattr__(forged, field_name, value)
+        associations = (forged, *result.associations[1:])
+        issues = audit(associations)[1]
+        assert "association_source_witness" in issues
+        assert any(
+            detail.startswith("association_source_witness_detail:")
+            and "ValueError:" in detail
+            and '"target_scopes":' in detail
+            for detail in issues
+        )
+        from phydrax.meshing._certification import _audit_findings
+
+        forged_audit = object.__new__(type(result.audit))
+        for field in fields(result.audit):
+            object.__setattr__(
+                forged_audit,
+                field.name,
+                issues if field.name == "issues" else getattr(result.audit, field.name),
+            )
+        findings = _audit_findings(inputs, forged_audit, None)
+        assert any(
+            finding.check == "association_source_witness"
+            and finding.entity_ids
+            and "ValueError:" in finding.detail
+            and "target_scopes=" in finding.detail
+            for finding in findings
+        )
+    if profile == "multiblock-material-hex":
+        from phydrax.meshing._controls import RegionSeed
+        from phydrax.meshing.providers._native_structured import (
+            _validate_structured_region_seeds,
+        )
+
+        assert isinstance(case.specification, VolumeMeshingSpec)
+        original_seed = case.specification.region_seeds[0]
+        for point in ((1.5, 0.5, 0.5), (1.0, 0.5, 0.5)):
+            altered = object.__new__(type(case.specification))
+            for field in fields(case.specification):
+                value = getattr(case.specification, field.name)
+                if field.name == "region_seeds":
+                    value = (
+                        RegionSeed(
+                            np.asarray(point),
+                            original_seed.region_name,
+                            original_seed.material_id,
+                            original_seed.role,
+                        ),
+                    )
+                object.__setattr__(altered, field.name, value)
+            with pytest.raises(ValueError, match="source region|source boundary"):
+                _validate_structured_region_seeds(
+                    case.source, altered, result.mesh, result.geometry
+                )
+
+
+def test_annulus_source_anchor_refuses_ambiguity_occurrence_and_side_forgery() -> None:
+    from dataclasses import fields, replace
+
+    from phydrax.meshing.providers._native_structured import (
+        _anchor_proved_planar_boundary,
+        _structured_curve_witness,
+        PreparedStructured,
+    )
+    from tools.meshing_qualification.scenarios.native_family_matrix import (
+        _CONTRACT,
+        _make_profile,
+    )
+
+    case = _make_profile("native-family-lifecycle:multiblock-cycle-quad")
+    assert isinstance(case.specification, SurfaceMeshingSpec)
+    assert case.source.domain is not None
+    prepared = (
+        NativeMeshingProvider(case.options)
+        .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
+        .prepared
+    )
+    assert isinstance(prepared, PreparedStructured)
+    constructions = tuple(
+        generate_structured_block(
+            block,
+            geometry_degree=case.specification.target.geometry_order,
+            optimization_steps=prepared.schedule.optimization_steps,
+        )
+        for block in case.source.blocks
+    )
+    combined = glue_structured_blocks(constructions, case.source.interfaces)
+    witness = _structured_curve_witness(case.source, constructions, combined)
+    assert witness is not None
+    original_domain_vertices = np.array(case.source.domain.vertices)
+    anchored = _anchor_proved_planar_boundary(
+        case.source, case.specification, combined, witness
+    )
+    assert anchored is not combined
+    np.testing.assert_array_equal(case.source.domain.vertices, original_domain_vertices)
+    assert all(
+        any(
+            np.array_equal(point, target)
+            for target in np.asarray(anchored.mesh.coordinates)
+        )
+        for point in original_domain_vertices
+    )
+    offset = np.asarray((1e-8, 2e-8))
+    shifted_mesh = combined.mesh.with_coordinates(
+        np.asarray(combined.mesh.coordinates) + offset, numeric_version="unanchored"
+    )
+    shifted_geometry = phx.discretization.CellGeometrySpec(
+        dict(zip(combined.geometry.block_names, combined.geometry.elements, strict=True)),
+        dict(
+            zip(
+                combined.geometry.block_names,
+                combined.geometry.geometry_dofs,
+                strict=True,
+            )
+        ),
+        np.asarray(combined.geometry.coordinates) + offset,
+    )
+    shifted = replace(combined, mesh=shifted_mesh, geometry=shifted_geometry)
+    shifted_witness = _structured_curve_witness(case.source, constructions, shifted)
+    assert shifted_witness is not None
+    with pytest.raises(ValueError, match="exact common endpoint anchor"):
+        _anchor_proved_planar_boundary(
+            case.source, case.specification, shifted, shifted_witness
+        )
+    ambiguous = NativeStructuredSource(
+        case.source.blocks,
+        case.source.interfaces,
+        case.source.source_id,
+        case.source.source_revision,
+        fidelity_source=case.source.fidelity_source,
+        maximum_deviation=2.0,
+        domain=case.source.domain,
+        block_regions=case.source.block_regions,
+    )
+    with pytest.raises(ValueError, match="unique certified"):
+        _anchor_proved_planar_boundary(ambiguous, case.specification, combined, witness)
+    for field_name in ("region_occurrence_paths", "facet_regions"):
+        domain = object.__new__(type(case.source.domain))
+        for field in fields(case.source.domain):
+            value = getattr(case.source.domain, field.name)
+            if field.name == field_name == "region_occurrence_paths":
+                value = (("forged",),)
+            elif field.name == field_name == "facet_regions":
+                value = np.array(value)
+                value[0] = value[0, ::-1]
+            object.__setattr__(domain, field.name, value)
+        forged_source = object.__new__(type(case.source))
+        for field in fields(case.source):
+            object.__setattr__(
+                forged_source,
+                field.name,
+                domain if field.name == "domain" else getattr(case.source, field.name),
+            )
+        with pytest.raises(ValueError, match="occurrence|oriented PWL"):
+            _anchor_proved_planar_boundary(
+                forged_source, case.specification, combined, witness
+            )
+
+
+def test_structured_material_interface_patch_control_publishes_and_refuses_partial() -> (
+    None
+):
+    from phydrax.meshing._controls import PatchControl
+    from tools.meshing_qualification.scenarios.native_family_matrix import (
+        _CONTRACT,
+        _make_profile,
+        _volume_specification,
+    )
+
+    case = _make_profile("native-family-lifecycle:multiblock-material-hex")
+    assert isinstance(case.specification, VolumeMeshingSpec)
+    (control,) = case.specification.patch_controls
+    result = (
+        NativeMeshingProvider(case.options)
+        .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
+    patches = {patch.name: patch for patch in result.patches}
+    interface = patches["material-interface"]
+    zones = {zone.name: zone for zone in result.zones}
+    assert interface.adjacent_zone_ids == tuple(
+        sorted((zones["left"].zone_id, zones["right"].zone_id))
+    )
+    assert interface.connected
+    # resolution r: the reversed blocks meet on one r x r grid of hexahedron faces.
+    assert np.asarray(interface.scope.entity_ids).size == 4 * 4
+    left = set(np.asarray(zones["left"].scope.entity_ids).tolist())
+    right = set(np.asarray(zones["right"].scope.entity_ids).tolist())
+    assert left and right and not left & right
+
+    scope = control.scope
+    partial = PatchControl(
+        control.name,
+        MeshingScope(
+            scope.source_id,
+            scope.source_revision,
+            scope.entity_kind,
+            2,
+            scope.entity_set_id,
+            np.asarray(scope.entity_ids)[:1],
+        ),
+        control.adjacent_region_names,
+    )
+    mislabeled = PatchControl(control.name, scope, ("left",))
+    for forged in (partial, mislabeled):
+        specification = _volume_specification(
+            case.source,
+            4,
+            "hexahedron",
+            region_controls=case.specification.region_controls,
+            patch_controls=(forged,),
+        )
+        with pytest.raises(MeshingFailure, match="complete declared source material"):
+            NativeMeshingProvider(case.options).plan(
+                case.source, specification, coordinate_contract=_CONTRACT
+            )

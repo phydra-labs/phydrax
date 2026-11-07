@@ -712,3 +712,84 @@ def test_marked_tetrahedron_descendants_have_finitely_many_similarity_classes() 
         generations.append(_similarity_classes(mesh))
     assert len(_cells(mesh)) > 2 * 2**12
     assert set().union(*generations[6:]) <= set().union(*generations[:6])
+
+
+def test_bisection_remaps_declared_cell_materials_through_exact_ancestry() -> None:
+    mesh = _triangle_grid(2, 2)
+    cells = mesh.entity_set(2)
+    ids = np.sort(np.asarray(cells.entity_ids, dtype=np.int64))
+    scope = MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        2,
+        cells.entity_set_id,
+        ids,
+    )
+    values = (ids % 2).astype(np.int32)
+    material = phx.meshing.MeshAttribute(
+        "material", phx.meshing.MeshAttributeRole.MATERIAL, scope, values
+    )
+    source = phx.meshing.certify_cell_mesh(
+        mesh, phx.SpatialCoordinateContract.si(), attributes=(material,)
+    )
+    policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION)
+    with pytest.raises(ValueError, match="explicit attribute remap"):
+        prepare_mesh_adaptation(source, MarkedMeshAdaptation(ids), policy=policy)
+    with pytest.raises(ValueError, match="absent from the source"):
+        prepare_mesh_adaptation(
+            _certified(mesh),
+            MarkedMeshAdaptation(ids, inherited_cell_markers=("material",)),
+            policy=policy,
+        )
+    refined = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(ids, inherited_cell_markers=("material",)),
+            policy=policy,
+        )
+    )
+    by_id = dict(zip(ids.tolist(), values.tolist(), strict=True))
+    transition = refined.transition
+    assert transition is not None and transition.lineage is not None
+    assert isinstance(refined.hierarchy, phx.meshing.BisectionHierarchy)
+    lineage = transition.lineage.entity_lineage(2)
+    parent = dict(
+        zip(
+            np.asarray(lineage.target_global_ids).tolist(),
+            np.asarray(lineage.source_global_ids).tolist(),
+            strict=True,
+        )
+    )
+    (attribute,) = refined.target.attributes
+    assert attribute.role is phx.meshing.MeshAttributeRole.MATERIAL
+    inherited = dict(
+        zip(
+            np.asarray(attribute.scope.entity_ids).tolist(),
+            np.asarray(attribute.values).tolist(),
+            strict=True,
+        )
+    )
+    assert set(inherited) == set(_cell_ids(refined.target.mesh).tolist())
+    assert all(value == by_id[parent[cell]] for cell, value in inherited.items())
+    coarse = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            refined.target,
+            MarkedMeshAdaptation(
+                (),
+                np.sort(_cell_ids(refined.target.mesh)),
+                hierarchy=refined.hierarchy,
+                inherited_cell_markers=("material",),
+            ),
+            policy=policy,
+        )
+    )
+    assert coarse.target.mesh.topology_id == mesh.topology_id
+    (restored,) = coarse.target.attributes
+    assert dict(
+        zip(
+            np.asarray(restored.scope.entity_ids).tolist(),
+            np.asarray(restored.values).tolist(),
+            strict=True,
+        )
+    ) == by_id

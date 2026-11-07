@@ -8,11 +8,12 @@ import importlib.metadata
 import json
 import platform
 import shutil
+from collections.abc import Callable
 from fractions import Fraction
 from importlib.util import find_spec
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from time import perf_counter
+from time import perf_counter, process_time
 from typing import Any, TypedDict
 
 import equinox as eqx
@@ -32,6 +33,14 @@ from phydrax._bvh import (
 )
 from phydrax._jax_config import configuration_values, set_compilation_cache
 from phydrax._meshcore import PlcRecovery3D, TetMeshArrays
+from phydrax.discretization._cell_geometry_validity import (
+    CellValidityCertificate,
+    ComputedCellValidity,
+    ValidatedCellValidityParent,
+)
+from phydrax.discretization._reference_cell import reference_cell_topology
+from phydrax.geometry._mesh_certificates import _same_tree_content
+from phydrax.geometry.brep import brep_box
 from phydrax.meshing._quality import _standard_block_quality
 
 
@@ -43,6 +52,37 @@ def _timed(call: Any) -> Any:
     started = perf_counter()
     result = call()
     return result, perf_counter() - started
+
+
+def _timed_host[T](call: Callable[[], T], /) -> tuple[T, dict[str, float]]:
+    started, cpu_started = perf_counter(), process_time()
+    result = jax.block_until_ready(call())
+    return result, {
+        "wall_seconds": perf_counter() - started,
+        "cpu_seconds": process_time() - cpu_started,
+    }
+
+
+def _validity_decisions(certificate: CellValidityCertificate, /) -> dict[str, object]:
+    """Report proof depths, not an inferred interval-filter or reuse hit rate."""
+    summary = certificate.stage_summary()
+    total = certificate.status.shape[0]
+    return {
+        "cells_per_proof": total,
+        "counts_by_depth": summary,
+        "shares_by_depth": {
+            name: {
+                depth: count / total if total else 0.0
+                for depth, count in sorted(counts.items())
+            }
+            for name, counts in summary.items()
+        },
+        "depth_semantics": (
+            "-1: unresolved; 0: initial proof; positive: subdivision depth. "
+            "Depth zero does not distinguish affine, interval, and exact screens. "
+            "These are cell-decision shares, not CPU shares or proof-reuse counts."
+        ),
+    }
 
 
 def _range(values: Any) -> dict[str, float]:
@@ -99,7 +139,7 @@ def _cad_partition(count: int) -> Any:
     operands = tuple(
         phx.geometry.BRepPartitionOperand(
             name,
-            phx.geometry.brep_box(
+            brep_box(
                 (float(index), 0.0, 0.0),
                 (float(index + 1), 1.0, 1.0),
                 coordinate_contract=contract,
@@ -765,7 +805,6 @@ def benchmark_incidence(resolution: int) -> dict[str, object]:
     if moved.topology_id != mesh.topology_id:
         raise RuntimeError("Coordinate refresh changed the mesh topology.")
     surface, surface_seconds = _timed(
-        # ty: ignore[invalid-argument-type]
         lambda: phx.geometry.simplicial.TriangleTopology(triangles)
     )
     return {
@@ -1439,7 +1478,11 @@ def _native_volume_specification(source: Any, target_size: float, /) -> Any:
 
 
 def _native_volume_result_record(
-    source: Any, plan: Any, result: Any, expected_volume: float, /
+    source: Any,
+    plan: Any,
+    result: phx.meshing.CellMeshingResult,
+    expected_volume: float,
+    /,
 ) -> dict[str, object]:
     measured_volume = float(np.sum(np.asarray(result.quality.evaluation.measures)))
     relative_volume_error = abs(measured_volume - expected_volume) / expected_volume
@@ -1452,8 +1495,13 @@ def _native_volume_result_record(
         )
     if not result.region_boundary_evidence:
         raise RuntimeError("Native CAD volume omitted source-region boundary evidence.")
-    if any(block.cell_kind != "tetrahedron" for block in result.mesh.blocks):
+    if any(
+        reference_cell_topology(block.cell_kind).family != "tetrahedron"
+        for block in result.mesh.blocks
+    ):
         raise RuntimeError("Native CAD volume did not preserve its required tetrahedra.")
+    if result.certification is None:
+        raise RuntimeError("Native CAD volume omitted its certification report.")
     return {
         "status": "passed",
         "identity": {
@@ -1482,13 +1530,16 @@ def _native_volume_result_record(
             "minimum_measure": result.quality.minimum_measure,
             "minimum_mean_ratio": result.quality.minimum_mean_ratio,
         },
+        "validity_decisions": _validity_decisions(
+            result.certification.embedding.validity
+        ),
         "logical_retained_array_bytes": _array_bytes((source, plan, result)),
     }
 
 
 def _changing_box_source(resolution: int, sample: int, repeats: int, /) -> Any:
     extent = float(resolution) + float(sample + 1) / float(repeats + 1)
-    return phx.geometry.brep_box(
+    return brep_box(
         (0.0, 0.0, 0.0),
         (extent, 1.0, 1.0),
         coordinate_contract=_contract(),
@@ -1502,7 +1553,7 @@ def benchmark_native_cad_meshing(resolution: int, repeats: int) -> dict[str, obj
         raise ValueError("resolution and repeats must be positive.")
     provider = phx.meshing.NativeMeshingProvider()
     fixed_source, source_seconds = _timed(
-        lambda: phx.geometry.brep_box(
+        lambda: brep_box(
             (0.0, 0.0, 0.0),
             (1.0, 1.0, 1.0),
             coordinate_contract=_contract(),
@@ -3608,12 +3659,77 @@ def _certification_route(mesh: Any, degree: int, name: str, /) -> Any:
         "invalid": certificate.invalid_count,
         "unresolved": certificate.unresolved_count,
         "depth_histogram": np.bincount(depth).tolist(),
-        "minimum_certified_determinant_lower_bound": float(np.min(determinant_lower)),
+        "validity_decisions": _validity_decisions(certificate),
+        "minimum_certified_determinant_lower_bound": (
+            float(np.min(determinant_lower)) if determinant_lower.size else None
+        ),
         "certified_mapped_volume": float(np.sum(measure)),
         "certificate_retained_bytes": _array_bytes(certificate),
         "geometry_retained_bytes": _array_bytes(geometry),
     }
     return stages, compiled, route
+
+
+def _incremental_validity_record(
+    mesh: phx.discretization.CellMesh,
+    geometry: phx.discretization.CellGeometrySpec,
+    computed: ComputedCellValidity,
+    /,
+) -> dict[str, object]:
+    """Measure one local coordinate edit with separate parent replay and reuse."""
+    coordinates = np.array(geometry.coordinates, dtype=np.float64, copy=True)
+    coordinates[0, 0] += 1.0e-4
+    target = phx.discretization.CellGeometrySpec(
+        dict(zip(geometry.block_names, geometry.elements, strict=True)),
+        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+        coordinates,
+    )
+    affected = sum(
+        np.count_nonzero(np.any(np.asarray(route) == 0, axis=1))
+        for route in geometry.geometry_dofs
+    )
+    validated, parent_replay = _timed_host(
+        lambda: ValidatedCellValidityParent(computed.certificate)
+    )
+    full, full_cost = _timed_host(
+        lambda: phx.discretization.certify_cell_geometry_validity(target, mesh=mesh)
+    )
+    incremental, incremental_cost = _timed_host(
+        lambda: phx.discretization.certify_cell_geometry_validity(
+            target, mesh=mesh, parent=validated
+        )
+    )
+    live, live_cost = _timed_host(
+        lambda: phx.discretization.certify_cell_geometry_validity(
+            target, mesh=mesh, parent=computed
+        )
+    )
+    if not full.all_certified:
+        raise RuntimeError("The local benchmark edit produced invalid geometry.")
+    if not _same_tree_content(full, incremental) or not _same_tree_content(full, live):
+        raise RuntimeError("Incremental validity differs from the complete target proof.")
+    if full.geometry_id == computed.certificate.geometry_id:
+        raise RuntimeError("The benchmark target did not change its coordinate map.")
+    return {
+        "target_geometry": full.geometry_id,
+        "target_certificate": full.certificate_id,
+        "edited_coordinate_rows": 1,
+        "incident_cells": int(affected),
+        "unaffected_cells": mesh.connectivity.cell_count - int(affected),
+        "complete_certificate_parity": True,
+        "phases": {
+            "parent_replay": parent_replay,
+            "full_target": full_cost,
+            "validated_parent_target": incremental_cost,
+            "live_computed_parent_target": live_cost,
+        },
+        "validity_decisions": _validity_decisions(full),
+        "timing_scope": (
+            "Synchronized host wall and process CPU time. Parent replay is separate; "
+            "live reuse requires the actual computed artifact from this operation. "
+            "Incident-cell counts describe the edit, not measured proof-cache hits."
+        ),
+    }
 
 
 def benchmark_global_embedding(resolution: int) -> dict[str, object]:
@@ -3622,9 +3738,12 @@ def benchmark_global_embedding(resolution: int) -> dict[str, object]:
     geometry, geometry_preparation = _timed(
         lambda: phx.discretization.CellGeometrySpec.affine(mesh)
     )
-    validity, local_validity = _timed(
-        lambda: phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
+    computed, local_cost = _timed_host(
+        lambda: ComputedCellValidity(
+            geometry, mesh, phx.discretization.CellValidityPolicy(), None
+        )
     )
+    validity = computed.certificate
     if not validity.all_certified:
         raise RuntimeError("Embedding benchmark requires positive source tetrahedra.")
     certificate, cold = _timed(
@@ -3633,11 +3752,18 @@ def benchmark_global_embedding(resolution: int) -> dict[str, object]:
     repeated, warm = _timed(
         lambda: phx.geometry.certify_global_embedding(mesh, geometry, validity)
     )
+    handed_on, handoff_cost = _timed_host(
+        lambda: phx.geometry.certify_global_embedding(
+            mesh, geometry, validity, validated_validity=computed
+        )
+    )
     if (
         certificate.status != "certified"
-        or repeated.certificate_id != certificate.certificate_id
+        or not _same_tree_content(repeated, certificate)
+        or not _same_tree_content(handed_on, certificate)
     ):
         raise RuntimeError("Embedding benchmark did not reproduce a certified proof.")
+    incremental = _incremental_validity_record(mesh, geometry, computed)
     return {
         "resolution": resolution,
         "counts": {
@@ -3655,9 +3781,21 @@ def benchmark_global_embedding(resolution: int) -> dict[str, object]:
         "stages_seconds": {
             "mesh_preparation": mesh_preparation,
             "geometry_preparation": geometry_preparation,
-            "local_validity": local_validity,
+            "local_validity": local_cost["wall_seconds"],
             "global_embedding_cold": cold,
             "global_embedding_warm": warm,
+            "global_embedding_live_handoff": handoff_cost["wall_seconds"],
+        },
+        "host_cpu_seconds": {
+            "local_validity": local_cost["cpu_seconds"],
+            "global_embedding_live_handoff": handoff_cost["cpu_seconds"],
+        },
+        "validity_decisions": _validity_decisions(validity),
+        "incremental_validity": incremental,
+        "proof_handoff": {
+            "complete_certificate_parity": True,
+            "standalone_embedding": "replays supplied validity independently",
+            "live_embedding": "uses the actual operation-local computed validity",
         },
         "retained_bytes": {
             "mesh": _array_bytes(mesh),
@@ -3910,6 +4048,504 @@ def _environment_identity() -> dict[str, object]:
     }
 
 
+def _periodic_power_component_lookup(
+    full: Any, /
+) -> dict[tuple[int, int], tuple[int, ...]]:
+    """Resolve each site/tet witness to its actual full-result component."""
+    by_cell: list[list[int]] = [[] for _ in range(len(full.cell_sites))]
+    for cell, tet in zip(full.piece_cells, full.piece_tets, strict=True):
+        by_cell[int(cell)].append(int(tet))
+    lookup = {}
+    for cell, pieces in enumerate(by_cell):
+        component = tuple(sorted(pieces))
+        for tet in component:
+            key = (int(full.cell_sites[cell]), tet)
+            if key in lookup:
+                raise ValueError("A full power site/tet has multiple component owners.")
+            lookup[key] = component
+    return lookup
+
+
+def _periodic_power_selected_signature(
+    result: Any,
+    selected: np.ndarray,
+    components: dict[tuple[int, int], tuple[int, ...]],
+    /,
+) -> tuple[Any, ...]:
+    """Compare selected components without relying on native row numbering."""
+    sites = np.asarray(result.cell_sites, dtype=np.int64)
+    face_offsets = np.asarray(result.face_offsets, dtype=np.int64)
+    face_vertices = np.asarray(result.face_vertices, dtype=np.int64)
+    face_cells = np.asarray(result.face_cells, dtype=np.int64)
+    witness_offsets = np.asarray(result.vertex_site_offsets, dtype=np.int64)
+    witnesses = np.asarray(result.vertex_sites, dtype=np.int64)
+    carriers = np.asarray(result.vertex_carriers, dtype=np.int64)
+    vertex_bits = np.ascontiguousarray(result.vertices).view(np.uint64).reshape((-1, 3))
+    piece_rows: list[list[int]] = [[] for _ in range(len(sites))]
+    for cell, tet in zip(result.piece_cells, result.piece_tets, strict=True):
+        piece_rows[int(cell)].append(int(tet))
+    remote_sites = np.asarray(result.face_remote_sites, dtype=np.int64)
+    remote_tets = np.asarray(result.face_remote_tets, dtype=np.int64)
+    facets = np.asarray(result.face_facets, dtype=np.int64)
+    selected_cells = np.flatnonzero(np.isin(sites, selected))
+    face_rows: dict[int, list[tuple[Any, ...]]] = {
+        int(cell): [] for cell in selected_cells
+    }
+    for face, owners in enumerate(face_cells):
+        selected_owners = tuple(int(owner) for owner in owners if int(owner) in face_rows)
+        if not selected_owners:
+            continue
+        vertices = []
+        for vertex in face_vertices[face_offsets[face] : face_offsets[face + 1]]:
+            row = int(vertex)
+            vertices.append(
+                (
+                    tuple(int(value) for value in vertex_bits[row]),
+                    tuple(
+                        int(value)
+                        for value in witnesses[
+                            witness_offsets[row] : witness_offsets[row + 1]
+                        ]
+                    ),
+                    tuple(int(value) for value in carriers[row]),
+                )
+            )
+        forward = tuple(vertices)
+        reverse = tuple(reversed(vertices))
+        forward_key = min(forward[i:] + forward[:i] for i in range(len(forward)))
+        reverse_key = min(reverse[i:] + reverse[:i] for i in range(len(reverse)))
+        face_key = min(forward_key, reverse_key)
+        orientation = 1 if forward_key < reverse_key else -1
+        for owner in selected_owners:
+            sign = orientation if int(owners[0]) == owner else -orientation
+            other = int(owners[1]) if int(owners[0]) == owner else int(owners[0])
+            if other >= 0:
+                if not piece_rows[other]:
+                    raise ValueError(
+                        "A power face neighbor has no carrier component witness."
+                    )
+                neighbor = (int(sites[other]), piece_rows[other][0])
+            elif remote_sites[face] >= 0:
+                neighbor = (int(remote_sites[face]), int(remote_tets[face]))
+            else:
+                neighbor = None
+            if neighbor is None:
+                if facets[face] < 0:
+                    raise ValueError(
+                        "A power face lacks both exterior and remote evidence."
+                    )
+                counterpart: tuple[Any, ...] = ("exterior", int(facets[face]))
+            else:
+                component = components.get(neighbor)
+                if component is None:
+                    raise ValueError("A remote power face has no full-result component.")
+                counterpart = ("cell", neighbor[0], component, int(facets[face]))
+            face_rows[owner].append((face_key, sign, counterpart))
+    signatures = []
+    for cell in selected_cells:
+        signatures.append(
+            (
+                int(sites[cell]),
+                int(result.cell_regions[cell]),
+                tuple(sorted(piece_rows[int(cell)])),
+                tuple(sorted(face_rows[int(cell)])),
+                float(result.cell_volumes[cell]).hex(),
+                tuple(float(value).hex() for value in result.cell_moments[cell]),
+                float(result.cell_second_moments[cell]).hex(),
+            )
+        )
+    return tuple(sorted(signatures))
+
+
+def _periodic_power_prepared_kernel(
+    points: np.ndarray,
+    point_ids: np.ndarray,
+    weights: np.ndarray,
+    lattice: np.ndarray,
+    owned: np.ndarray,
+    repeats: int,
+    /,
+) -> dict[str, object]:
+    """Prepare one immutable global-carrier input and compare native targets."""
+    from phydrax import _meshcore as meshcore
+    from phydrax.meshing.providers import _native_periodic_power as power
+
+    radius = power._lattice_covering_radius(lattice)
+    inverse, inverse_time = _timed_host(lambda: power._exact_lattice_inverse(lattice))
+    lower = power._outward_bound(np.min(points, axis=0) - radius, -np.inf)
+    upper = power._outward_bound(np.max(points, axis=0) + radius, np.inf)
+    (image_owners, image_windings), image_time = _timed_host(
+        lambda: power._power_images(points, point_ids, inverse, lower, upper, radius, 0)
+    )
+    (coordinate_offsets, coordinate_components), coordinates_time = _timed_host(
+        lambda: power._exact_image_coordinates(
+            points, lattice, image_owners, image_windings
+        )
+    )
+    (neighbor_offsets, neighbors), graph_time = _timed_host(
+        lambda: power._image_radius_neighbor_csr(
+            image_owners,
+            image_windings,
+            coordinate_offsets,
+            coordinate_components,
+            radius,
+        )
+    )
+    (carrier_points, carrier_tets, carrier_facets), carrier_time = _timed_host(
+        lambda: power._box_tetrahedra(lower, upper)
+    )
+    selected = np.asarray(
+        [
+            power._image_row(image_owners, image_windings, int(row))
+            for row in np.flatnonzero(owned)
+        ],
+        dtype=np.int32,
+    )
+    args = (
+        points,
+        weights,
+        image_owners,
+        coordinate_offsets,
+        coordinate_components,
+        neighbor_offsets,
+        neighbors,
+        np.zeros(image_owners.size, dtype=np.int8),
+        carrier_points,
+        carrier_tets,
+        np.zeros(carrier_tets.shape[0], dtype=np.int32),
+        carrier_facets,
+    )
+    full, full_time = _timed_host(lambda: meshcore.restricted_power_cells_exact(*args))
+    selected_result, selected_time = _timed_host(
+        lambda: meshcore.restricted_power_cells_exact(*args, selected_sites=selected)
+    )
+    component_lookup, component_time = _timed_host(
+        lambda: _periodic_power_component_lookup(full)
+    )
+    selected_signature, selected_signature_time = _timed_host(
+        lambda: _periodic_power_selected_signature(
+            selected_result, selected, component_lookup
+        )
+    )
+
+    def compare() -> bool:
+        return (
+            _periodic_power_selected_signature(full, selected, component_lookup)
+            == selected_signature
+        )
+
+    matched, comparison_time = _timed_host(compare)
+    if not matched:
+        raise ValueError("Selected native cells differ from the full exact construction.")
+    warm_kernel_times: dict[str, list[dict[str, float]]] = {"full": [], "selected": []}
+    for name, selection in (("full", None), ("selected", selected)):
+        for _ in range(repeats):
+            result, elapsed = _timed_host(
+                lambda selection=selection: meshcore.restricted_power_cells_exact(
+                    *args, selected_sites=selection
+                )
+            )
+            if (
+                _periodic_power_selected_signature(result, selected, component_lookup)
+                != selected_signature
+            ):
+                raise ValueError(
+                    "Warm native power cells changed their selected geometry."
+                )
+            warm_kernel_times[name].append(elapsed)
+
+    def output_size(result: Any) -> dict[str, int]:
+        remote = np.asarray(result.face_remote_sites, dtype=np.int64)
+        return {
+            "cells": int(result.cell_sites.size),
+            "faces": int(result.face_facets.size),
+            "pieces": int(result.piece_sites.size),
+            "represented_remote_image_sites": int(np.unique(remote[remote >= 0]).size),
+            "logical_array_bytes": sum(
+                int(value.nbytes) for value in result if isinstance(value, np.ndarray)
+            ),
+        }
+
+    return {
+        "selected_images": int(selected.size),
+        "derived_image_rows": int(image_owners.size),
+        "derived_image_logical_bytes": sum(
+            int(value.nbytes)
+            for value in (
+                image_owners,
+                image_windings,
+                coordinate_offsets,
+                coordinate_components,
+            )
+        ),
+        "derived_neighbor_logical_bytes": int(neighbor_offsets.nbytes + neighbors.nbytes),
+        "carrier_input_logical_bytes": int(
+            carrier_points.nbytes
+            + carrier_tets.nbytes
+            + carrier_facets.nbytes
+            + args[10].nbytes
+        ),
+        "prepare": {
+            "lattice_inverse": inverse_time,
+            "images": image_time,
+            "exact_image_coordinates": coordinates_time,
+            "neighbor_csr": graph_time,
+            "carrier": carrier_time,
+        },
+        "full_first": full_time,
+        "selected_first": selected_time,
+        "warm": warm_kernel_times,
+        "component_resolution": component_time,
+        "selected_signature": selected_signature_time,
+        "output_comparison": comparison_time,
+        "selected_matches_full": matched,
+        "full_output": output_size(full),
+        "selected_output": output_size(selected_result),
+    }
+
+
+def benchmark_periodic_power_selected(
+    resolution: int, repeats: int, /
+) -> dict[str, object]:
+    """Measure the real owner-local candidate and a matched native kernel ablation.
+
+    Resolution is the authored site count. The current JAX process group is the
+    owner group; launch one process per owner through the normal runtime launcher.
+    Global authored sites and carrier are explicit benchmark inputs. Expanded
+    images and adjacency are derived construction inputs, not authored data.
+    """
+    from contextlib import ExitStack
+    from unittest.mock import patch
+
+    from phydrax import _meshcore as meshcore
+    from phydrax._execution_runtime import ExecutionGroup, ExecutionGroupSpec
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.discretization._exact_power_geometry import ExactPowerCellGeometrySource
+    from phydrax.discretization._periodic_cell import PeriodicCell
+    from phydrax.meshing import PeriodicPointOrbits
+    from phydrax.meshing.providers import (
+        _native_periodic_power as power,
+        NativePeriodicSource,
+    )
+
+    if resolution < 1 or repeats < 1:
+        raise ValueError("resolution and repeats must be positive.")
+    members = tuple(range(jax.process_count()))
+    rank = members.index(jax.process_index())
+    devices = tuple(
+        min(
+            (device for device in jax.devices() if device.process_index == owner),
+            key=lambda device: device.id,
+        )
+        for owner in members
+    )
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "periodic-power-benchmark",
+            members,
+            tuple((device.process_index, device.id) for device in devices),
+            mesh_axes=(("periodic_power_benchmark", len(members)),),
+        ),
+        devices,
+    )
+
+    def authored() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        rows = np.arange(resolution, dtype=np.int64)
+        points = np.column_stack(
+            (
+                (rows + 0.5) / resolution,
+                np.full(resolution, 0.125),
+                np.full(resolution, 0.125),
+            )
+        )
+        return (
+            points,
+            rows + 100,
+            np.zeros(resolution, dtype=np.float64),
+            np.diag((1.0, 0.25, 0.25)),
+            (rows * len(members) // resolution).astype(np.int32),
+        )
+
+    (points, point_ids, weights, lattice, owners), authored_time = _timed_host(authored)
+    cell = PeriodicCell(lattice)
+    owned = owners == rank
+    source, source_time = _timed_host(
+        lambda: NativePeriodicSource(
+            PeriodicPointOrbits(cell, points[owned], point_ids[owned]),
+            "periodic-power-benchmark",
+            "periodic-power-benchmark-r1",
+            site_weights=weights[owned],
+            point_owner_ranks=owners[owned],
+        )
+    )
+    manifest = canonical_fingerprint(
+        ("periodic-power-benchmark", resolution, points, point_ids, weights, lattice)
+    )
+
+    candidate_phases: dict[str, list[dict[str, float]]] = {}
+    native_candidate_outputs: list[dict[str, int]] = []
+
+    def instrument(original: Any, name: str) -> Any:
+        def measured(*args: Any, **kwargs: Any) -> Any:
+            started, cpu_started = perf_counter(), process_time()
+            try:
+                result = original(*args, **kwargs)
+            finally:
+                candidate_phases.setdefault(name, []).append(
+                    {
+                        "wall_seconds": perf_counter() - started,
+                        "cpu_seconds": process_time() - cpu_started,
+                    }
+                )
+            if name == "native_restriction":
+                native_candidate_outputs.append(
+                    {
+                        "cells": int(result.cell_sites.size),
+                        "pieces": int(result.piece_sites.size),
+                        "faces": int(result.face_facets.size),
+                        "logical_array_bytes": sum(
+                            int(value.nbytes)
+                            for value in result
+                            if isinstance(value, np.ndarray)
+                        ),
+                    }
+                )
+            return result
+
+        return measured
+
+    with ExitStack() as stack:
+        for name in (
+            "_power_images",
+            "_exact_image_coordinates",
+            "_image_radius_neighbor_csr",
+            "_owner_local_power_support_exchange",
+            "_owner_local_power_candidate_support",
+            "_polyhedral_quotient_from_power",
+            "_native_power_face_evidence",
+        ):
+            stack.enter_context(
+                patch.object(power, name, instrument(getattr(power, name), name))
+            )
+        stack.enter_context(
+            patch.object(
+                meshcore,
+                "restricted_power_cells_exact",
+                instrument(meshcore.restricted_power_cells_exact, "native_restriction"),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                ExactPowerCellGeometrySource,
+                "__init__",
+                instrument(
+                    ExactPowerCellGeometrySource.__init__, "source_map_construction"
+                ),
+            )
+        )
+        candidate, cold_candidate_time = _timed_host(
+            lambda: power._owner_local_periodic_power_candidate(
+                source, rank, group, manifest, axis_name="periodic_power_benchmark"
+            )
+        )
+        cold_identity = (
+            None if candidate["mesh"] is None else candidate["mesh"].topology_id,
+            None
+            if candidate["source_map"] is None
+            else candidate["source_map"].source_map_id,
+        )
+        warm_candidate_times = []
+        for _ in range(repeats):
+            candidate, elapsed = _timed_host(
+                lambda: power._owner_local_periodic_power_candidate(
+                    source, rank, group, manifest, axis_name="periodic_power_benchmark"
+                )
+            )
+            identity = (
+                None if candidate["mesh"] is None else candidate["mesh"].topology_id,
+                None
+                if candidate["source_map"] is None
+                else candidate["source_map"].source_map_id,
+            )
+            if identity != cold_identity:
+                raise ValueError(
+                    "Warm periodic power construction changed its exact identity."
+                )
+            warm_candidate_times.append(elapsed)
+
+    kernel_ablation = _periodic_power_prepared_kernel(
+        points, point_ids, weights, lattice, owned, repeats
+    )
+
+    try:
+        import resource
+
+        maximum = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        process_peak_bytes: int | None = (
+            maximum if platform.system() == "Darwin" else maximum * 1024
+        )
+    except ImportError:
+        process_peak_bytes = None
+    source_map = candidate["source_map"]
+    local_mesh = candidate["mesh"]
+    support_rows = int(np.asarray(candidate["candidate"]["point_ids"]).size)
+    return {
+        "status": "passed",
+        "scenario": "periodic-power-selected",
+        "resolution_authored_site_count": resolution,
+        "repeats": repeats,
+        "owner_rank": rank,
+        "owner_count": len(members),
+        "source_manifest": manifest,
+        "timing_scope": {
+            "candidate": "owner-local candidate construction, not public provider publication",
+            "kernel": "native full versus selected restriction on the same prepared inputs",
+            "candidate_phases": "inclusive instrumented intervals; nested phases must not be summed",
+            "cold": "first call in this process after case cache clearing, not a fresh process",
+            "warm": "subsequent calls in this process using the same authored or prepared inputs",
+        },
+        "authored": {
+            "global_sites": resolution,
+            "owned_sites": int(np.count_nonzero(owned)),
+            "global_logical_array_bytes": sum(
+                int(value.nbytes) for value in (points, point_ids, weights, lattice)
+            ),
+            "owner_placement_logical_array_bytes": int(owners.nbytes),
+        },
+        "candidate": {
+            "cold": cold_candidate_time,
+            "warm": warm_candidate_times,
+            "phase_samples": candidate_phases,
+            "native_output_samples": native_candidate_outputs,
+            "support_site_rows": support_rows,
+            "ghost_support_site_rows": support_rows - int(np.count_nonzero(owned)),
+            "retained_support_source_logical_array_bytes": _array_bytes(
+                candidate["source"]
+            ),
+            "resident_cells": 0
+            if local_mesh is None
+            else int(local_mesh.entity_set(3).count),
+            "source_map_id": None if source_map is None else source_map.source_map_id,
+            "retained_source_map_logical_array_bytes": 0
+            if source_map is None
+            else _array_bytes(source_map),
+            "retained_mesh_logical_array_bytes": 0
+            if local_mesh is None
+            else _array_bytes(local_mesh),
+            "exact_source_site_rows": 0
+            if source_map is None
+            else len(source_map.exact_site_points),
+            "exact_vertex_rows": 0
+            if source_map is None
+            else len(source_map.exact_vertices),
+        },
+        "kernel_ablation": kernel_ablation,
+        "preparation": {"authored": authored_time, "owner_source": source_time},
+        "process_peak_rss_bytes": process_peak_bytes,
+        "memory_scope": "process lifetime peak RSS; array bytes are logical and exclude Python objects",
+    }
+
+
 def _run_case(name: str, resolution: int, repeats: int, /) -> dict[str, object]:
     jax.clear_caches()
     if name in {
@@ -3955,6 +4591,7 @@ def _repeated_case(
 
 
 _CASES = {
+    "periodic-power-selected": benchmark_periodic_power_selected,
     "native-meshing": lambda resolution, repeats: benchmark_native_meshing(
         resolution, repeats
     ),
@@ -4071,7 +4708,13 @@ _CASES = {
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--resolution", type=int, nargs="+", default=[8, 16])
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        nargs="+",
+        default=[8, 16],
+        help="Scale each case; periodic-power-selected uses the authored site count.",
+    )
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument(
         "--plc-target-size",

@@ -837,7 +837,30 @@ def _query_separation(
     distance = float(np.min(lower_bounds))
     if not distance > enclosure.radius_upper:
         return None
-    membership = query.locate_solids(center[None])
+    # Query the requested solid occurrence, not every solid in the model.
+    # A point may lie on another component's boundary while being strictly
+    # separated from this solid; the aggregate location is then ambiguous.
+    paths = tuple(
+        occurrence.path
+        for occurrence in query.occurrences
+        if occurrence.solid == reference.entity.index
+        and (
+            not reference.entity.occurrence_path
+            or occurrence.path == reference.entity.occurrence_path
+        )
+    )
+    path = (
+        reference.entity.occurrence_path
+        if reference.entity.occurrence_path
+        else paths[0]
+        if len(paths) == 1
+        else ()
+    )
+    membership = query.locate_solids(
+        center[None],
+        occurrence_paths=(path,),
+        solid_indices=np.asarray((reference.entity.index,), dtype=np.int32),
+    )
     status = BRepProjectionStatus(int(np.asarray(membership.status)[0]))
     if status not in (BRepProjectionStatus.UNIQUE, BRepProjectionStatus.FAILED):
         return None

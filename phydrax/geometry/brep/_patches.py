@@ -6022,16 +6022,28 @@ def bspline_curve_bounds(
             component_bounds[axis].append(value)
     if any(not values for values in component_bounds):
         raise ValueError("BSplineCurve bounds do not intersect its active source domain.")
+    result_bounds = [
+        (min(value[0] for value in values), max(value[1] for value in values))
+        for values in component_bounds
+    ]
+    # Only a request wholly inside the exact active knot domain has the
+    # positive-basis convex-hull premise. Preserve existing behavior for
+    # outward-rounded or exterior requests without clamping continuation.
+    knots = curve.exact_knots
+    if lower >= knots[curve.degree] and upper <= knots[len(curve.exact_control_points)]:
+        for axis in range(curve.ambient_dimension):
+            controls = tuple(
+                coefficient_interval(point[axis]) for point in curve.exact_control_points
+            )
+            first_, last_ = result_bounds[axis]
+            result_bounds[axis] = (
+                max(first_, min(value[0] for value in controls)),
+                min(last_, max(value[1] for value in controls)),
+            )
     return np.asarray(
         (
-            tuple(
-                fraction_down(min(value[0] for value in values))
-                for values in component_bounds
-            ),
-            tuple(
-                fraction_up(max(value[1] for value in values))
-                for values in component_bounds
-            ),
+            tuple(fraction_down(first_) for first_, _ in result_bounds),
+            tuple(fraction_up(last_) for _, last_ in result_bounds),
         ),
         dtype=np.float64,
     )

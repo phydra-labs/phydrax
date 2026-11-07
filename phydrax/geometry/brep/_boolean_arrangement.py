@@ -1690,11 +1690,10 @@ class _BoundaryTopology(StrictModule):
                     cut.endpoint.parameter_enclosure()
                 )
         pcurve = arc.pcurve
-        if isinstance(pcurve, IntersectionPCurve):
-            first, last = self.edge_ranges[edge]
-            pcurve = IntersectionPCurve(
-                pcurve.curve, pcurve.side, first=float(first), last=float(last)
-            )
+        # Keep the certified branch-span carrier. The edge range contains
+        # root representatives, not necessarily their full isolating boxes;
+        # restricting the p-curve to those representatives would exclude the
+        # very endpoint roots the coedge must retain.
         self.pcurves.append(pcurve)
         coedge = len(self.coedge_edges)
         self.coedge_edges.append(edge)

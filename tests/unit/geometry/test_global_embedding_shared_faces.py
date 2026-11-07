@@ -124,3 +124,93 @@ def test_extra_shared_vertex_outside_face_union_is_not_declared() -> None:
         _contact_is_declared(lower, upper, contacts, lower.vertex_ids, upper.vertex_ids)
         is False
     )
+
+
+def _edge_touching_boxes(
+    first_chain: tuple[tuple[int, int], ...],
+    second_chain: tuple[tuple[int, int], ...],
+) -> tuple[EmbeddingCell, EmbeddingCell]:
+    low, high = first_chain[0][0], first_chain[-1][0]
+    z_low, z_high = first_chain[0][1], first_chain[-1][1]
+    first_ids = tuple(identifier for identifier, _ in first_chain)
+    second_ids = tuple(identifier for identifier, _ in second_chain)
+    first = _polyhedron(
+        40,
+        {
+            **{identifier: _point(0, 0, z) for identifier, z in first_chain},
+            100: _point(-1, -1, z_low),
+            101: _point(0, -1, z_low),
+            102: _point(-1, 0, z_low),
+            103: _point(-1, -1, z_high),
+            104: _point(0, -1, z_high),
+            105: _point(-1, 0, z_high),
+        },
+        (
+            (100, 102, low, 101),
+            (103, 104, high, 105),
+            (100, 101, 104, 103),
+            (101, *first_ids, 104),
+            (102, 105, *reversed(first_ids)),
+            (100, 103, 105, 102),
+        ),
+    )
+    second = _polyhedron(
+        41,
+        {
+            **{identifier: _point(0, 0, z) for identifier, z in second_chain},
+            200: _point(1, 0, z_low),
+            201: _point(1, 1, z_low),
+            202: _point(0, 1, z_low),
+            203: _point(1, 0, z_high),
+            204: _point(1, 1, z_high),
+            205: _point(0, 1, z_high),
+        },
+        (
+            (low, 202, 201, 200),
+            (high, 203, 204, 205),
+            (low, 200, 203, *reversed(second_ids[1:])),
+            (200, 201, 204, 203),
+            (202, 205, 204, 201),
+            (*second_ids, 205, 202),
+        ),
+    )
+    return first, second
+
+
+def test_collinear_shared_edges_declare_their_complete_segment() -> None:
+    chain = ((0, 0), (1, 1), (2, 2))
+    first, second = _edge_touching_boxes(chain, chain)
+    contacts = (
+        _point(0, 0, 0),
+        (Fraction(0), Fraction(0), Fraction(1, 2)),
+        _point(0, 0, 2),
+    )
+    assert (
+        _contact_is_declared(first, second, contacts, first.vertex_ids, second.vertex_ids)
+        is True
+    )
+    assert (
+        _contact_is_declared(
+            first, second, (_point(0, 0, 3),), first.vertex_ids, second.vertex_ids
+        )
+        is False
+    )
+
+
+def test_disconnected_shared_edges_do_not_declare_their_convex_hull() -> None:
+    first, second = _edge_touching_boxes(
+        ((0, 0), (1, 1), (10, 2), (2, 3), (3, 4)),
+        ((0, 0), (1, 1), (11, 2), (2, 3), (3, 4)),
+    )
+    # The intersection segment's extreme points are declared, but its middle
+    # contains distinct vertex identities and no shared edge.
+    assert (
+        _contact_is_declared(
+            first,
+            second,
+            (_point(0, 0, 0), _point(0, 0, 4)),
+            first.vertex_ids,
+            second.vertex_ids,
+        )
+        is False
+    )

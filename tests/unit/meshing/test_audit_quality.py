@@ -53,6 +53,22 @@ def test_qualified_simplex_quality_preserves_volume_and_face_orthogonality() -> 
     assert mesh.mesh_id == identity
 
 
+def test_canonical_acceptance_phase_matches_published_result_and_is_ephemeral() -> None:
+    import pickle
+
+    from phydrax.meshing._canonical import _certify_cell_mesh_acceptance
+
+    mesh = _mesh("triangle")
+    contract = phx.SpatialCoordinateContract.si()
+    acceptance = _certify_cell_mesh_acceptance(mesh, contract)
+    result = phx.meshing.certify_cell_mesh(mesh, contract)
+    assert acceptance.mesh.mesh_id == result.mesh.mesh_id
+    assert acceptance.audit.report_id == result.audit.report_id
+    assert acceptance.quality.report_id == result.quality.report_id
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(acceptance)
+
+
 def test_audit_quality_scenario_1() -> None:
     for cell_kind in (
         "interval",

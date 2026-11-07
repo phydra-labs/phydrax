@@ -83,6 +83,8 @@ from ..geometry._common_root_volume_overlap import (
     transpose_physical_overlap_extensive,
     transpose_physical_overlap_intensive,
 )
+from ..geometry._overset_partition import OversetPartition, partition_overset_triangles
+from ..geometry._planar_primitives import cross
 from ..geometry._supermesh import (
     CommonRefinementCoverage,
     CommonRefinementEvidence,
@@ -2909,8 +2911,36 @@ def _classify_facets(
     return inside, touching
 
 
+def _segment_intersects_triangle(segment: np.ndarray, triangle: np.ndarray, /) -> bool:
+    """Intersect closed affine segments and triangles with exact binary64 predicates."""
+    points = [
+        (Fraction.from_float(float(point[0])), Fraction.from_float(float(point[1])))
+        for point in np.concatenate((segment, triangle), axis=0)
+    ]
+    start, end, a, b, c = points
+    orientation = cross(a, b, c)
+    if orientation == 0:
+        raise ValueError("Overset affine triangle must be nondegenerate.")
+    lower, upper = Fraction(0), Fraction(1)
+    for first, second in ((a, b), (b, c), (c, a)):
+        first_value = cross(first, second, start) * orientation
+        last_value = cross(first, second, end) * orientation
+        if first_value < 0 and last_value < 0:
+            return False
+        if first_value < 0:
+            lower = max(lower, -first_value / (last_value - first_value))
+        elif last_value < 0:
+            upper = min(upper, first_value / (first_value - last_value))
+        if lower > upper:
+            return False
+    return True
+
+
 def _cut_cell_candidates(
-    geometry: _PartGeometry, facets_in_part_frame: np.ndarray, /
+    geometry: _PartGeometry,
+    facets_in_part_frame: np.ndarray,
+    triangles: np.ndarray | None = None,
+    /,
 ) -> np.ndarray:
     if facets_in_part_frame.size == 0:
         return np.zeros(geometry.cell_ids.shape, dtype=np.bool_)
@@ -2921,8 +2951,15 @@ def _cut_cell_candidates(
         dtype=jnp.float64,
     )
     cut = np.zeros(np.asarray(geometry.cell_ids).shape, dtype=np.bool_)
-    for rows, _ in bvh_overlap_pair_blocks(cells, facets, include_touching=True):
-        cut[rows] = True
+    for rows, items in bvh_overlap_pair_blocks(cells, facets, include_touching=True):
+        if triangles is None:
+            cut[rows] = True
+        else:
+            for row, item in zip(rows, items, strict=True):
+                if not cut[row] and _segment_intersects_triangle(
+                    facets_in_part_frame[item], triangles[row]
+                ):
+                    cut[row] = True
     return cut
 
 
@@ -2978,6 +3015,20 @@ def _blank_part(
     holes = np.zeros(points.shape[0], dtype=np.bool_)
     contact = np.zeros(points.shape[0], dtype=np.bool_)
     cut = np.zeros(cells.shape[0], dtype=np.bool_)
+    result = _cell_result(part)
+    elements, routes, _ = result.geometry.resolve(mesh)
+    affine_triangles = (
+        mesh.ambient_dimension == 2
+        and result.geometry.source_map is None
+        and all(
+            block.cell_kind == "triangle"
+            and isinstance(element, FiniteElementSpec)
+            and element.degree == 1
+            and np.array_equal(np.asarray(route), np.asarray(block.vertices))
+            for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
+        )
+    )
+    triangles = points[cells] if affine_triangles else None
     for other, wall_geometry in enumerate(geometries):
         source_spec = specs[other]
         if other == index or source_spec.wall is None:
@@ -3018,7 +3069,7 @@ def _blank_part(
                 source_spec,
                 spec,
             ).reshape(np.asarray(wall_geometry.wall_facets).shape)
-            cut |= _cut_cell_candidates(geometries[index], wall_in_target)
+            cut |= _cut_cell_candidates(geometries[index], wall_in_target, triangles)
     if spec.excluded is not None:
         part.require_scope(spec.excluded)
         if spec.excluded.entity_dimension != mesh.topological_dimension:
@@ -3395,7 +3446,7 @@ def _receptor_records(
                     continue
                 stencil_ids = choices.ids[slots]
                 stencil_weights = choices.weights[slots]
-                source_ids = np.unique(stencil_ids[stencil_weights > 0])
+                source_ids = np.unique(stencil_ids[stencil_ids >= 0])
                 donor_scope = donor.scope(0, source_ids)
                 receptor_scope = target.scope(0, vertex_ids[rows[slots]])
                 hole_ids = blanking[target_index].vertex_ids_with(
@@ -3427,6 +3478,178 @@ def _receptor_records(
     return tuple(evidence_records), tuple(packets), tuple(overlays)
 
 
+def _partition_digest(partition: OversetPartition) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "overset-exact-partition",
+            "pieces": [
+                (
+                    p.part_name,
+                    p.part_index,
+                    p.cell_index,
+                    tuple((str(x), str(y)) for x, y in p.vertices),
+                    str(p.area),
+                )
+                for p in partition.pieces
+            ],
+            "cells": [
+                (
+                    c.part_name,
+                    c.part_index,
+                    c.cell_index,
+                    str(c.source_area),
+                    str(c.cavity_area),
+                    str(c.owned_area),
+                )
+                for c in partition.cells
+            ],
+            "total": str(partition.total_area),
+        }
+    )
+
+
+def _bound_partition_inputs(
+    parts: tuple[MeshPart, ...],
+    specs: tuple[OversetPartSpec, ...],
+    priority: tuple[str, ...],
+    sources: Mapping[str, Any],
+) -> tuple[tuple[tuple[str, np.ndarray, np.ndarray], ...], tuple[np.ndarray, ...], str]:
+    from ._association import GeometryAssociationKind, GeometrySourceEntityRole
+    from ._motion_source import _rebuild_planar_source
+    from .providers._native_sources import NativePlanarSource
+
+    by_name = {part.name: part for part in parts}
+    roles = {spec.part_name: spec for spec in specs}
+    if len(priority) != len(parts) or set(priority) != set(by_name):
+        raise ValueError("Partition priority must name every part exactly once.")
+    wall_names = tuple(name for name in priority if roles[name].wall is not None)
+    if set(sources) != set(wall_names):
+        raise ValueError("Partition sources must bind exactly the declared wall parts.")
+    cavities = []
+    for name in wall_names:
+        source = sources[name]
+        if not isinstance(source, NativePlanarSource):
+            raise TypeError("Exact partition walls require authored planar sources.")
+        _rebuild_planar_source(source)
+        part = by_name[name]
+        result = _cell_result(part)
+        if (
+            result.certification is None
+            or not isinstance(
+                result.certification.inputs.feature_source, NativePlanarSource
+            )
+            or result.certification.inputs.feature_source.binding_id != source.binding_id
+            or result.certification.inputs.source_revision != source.source_revision
+        ):
+            raise ValueError("Partition source does not bind the current certified mesh.")
+        region = source.region
+        offsets = np.asarray(region.loop_offsets, dtype=np.int64)
+        edges = np.asarray(region.edges, dtype=np.int64)
+        if offsets.shape != (3,):
+            raise ValueError(
+                "Exact partition requires one authored cavity loop per wall."
+            )
+        indices = range(int(offsets[1]), int(offsets[2]))
+        keys = {
+            source.source_entity_key_for_scope(1, int(source.edge_entity_ids[i]))
+            for i in indices
+        }
+        selected, covered = set(), set()
+        entity_set_id = result.mesh.entity_set(1).entity_set_id
+        for association in result.associations:
+            if (
+                association.association_kind is not GeometryAssociationKind.CURVE
+                or association.source_id != source.source_id
+                or association.source_revision != source.source_revision
+                or association.target_entity_set_id != entity_set_id
+            ):
+                continue
+            for identifier, entity, path, role in zip(
+                np.asarray(association.target_global_ids),
+                association.source_entity_ids,
+                association.source_occurrence_paths,
+                association.source_roles,
+                strict=True,
+            ):
+                key = (entity, path)
+                if role is GeometrySourceEntityRole.EDGE and key in keys:
+                    selected.add(int(identifier))
+                    covered.add(key)
+        wall = roles[name].wall
+        if (
+            wall is None
+            or covered != keys
+            or selected != set(map(int, np.asarray(wall.entity_ids)))
+        ):
+            raise ValueError(
+                "Partition wall does not match its authored source associations."
+            )
+        polygon = np.array(
+            np.asarray(region.vertices, dtype=np.float64)[
+                edges[offsets[1] : offsets[2], 0]
+            ],
+            copy=True,
+        )
+        polygon.setflags(write=False)
+        cavities.append(polygon)
+    triangles = []
+    for name in priority:
+        result = _cell_result(by_name[name])
+        mesh = result.mesh
+        elements, routes, geometry_points = result.geometry.resolve(mesh)
+        if (
+            mesh.ambient_dimension != 2
+            or result.geometry.source_map is not None
+            or not np.array_equal(
+                np.asarray(geometry_points), np.asarray(mesh.coordinates)
+            )
+            or not all(
+                block.cell_kind == "triangle"
+                and isinstance(element, FiniteElementSpec)
+                and element.degree == 1
+                and np.array_equal(np.asarray(route), np.asarray(block.vertices))
+                for block, element, route in zip(
+                    mesh.blocks, elements, routes, strict=True
+                )
+            )
+        ):
+            raise ValueError(
+                "Exact overset partition requires affine planar P1 triangles."
+            )
+        triangles.append(
+            (
+                name,
+                np.asarray(mesh.coordinates, dtype=np.float64),
+                np.concatenate(
+                    [np.asarray(b.vertices, dtype=np.int64) for b in mesh.blocks]
+                ),
+            )
+        )
+    binding = canonical_fingerprint(
+        {
+            "kind": "overset-partition-inputs",
+            "priority": priority,
+            "parts": [
+                (
+                    name,
+                    by_name[name].part_id,
+                    _cell_result(by_name[name]).result_id,
+                    cell_geometry_id(_cell_result(by_name[name]).geometry),
+                    roles[name].spec_id,
+                )
+                for name in priority
+            ],
+            "triangles": [
+                (name, array_tree_fingerprint((points, cells)))
+                for name, points, cells in triangles
+            ],
+            "sources": [(name, sources[name].binding_id) for name in wall_names],
+            "cavities": [array_tree_fingerprint(polygon) for polygon in cavities],
+        }
+    )
+    return tuple(triangles), tuple(cavities), binding
+
+
 class OversetConnectivity(StrictModule, NonTrainableState):
     assembly: MeshAssembly
     specs: tuple[OversetPartSpec, ...]
@@ -3435,6 +3658,12 @@ class OversetConnectivity(StrictModule, NonTrainableState):
     receptors: tuple[OversetReceptorEvidence, ...]
     packets: tuple[OversetDonorPacket, ...]
     geometries: tuple[_PartGeometry, ...]
+    bound_partition: OversetPartition | None = eqx.field(static=True)
+    partition_priority: tuple[str, ...] | None = eqx.field(static=True)
+    partition_sources: Mapping[str, Any]
+    partition_cavities: tuple[np.ndarray, ...]
+    partition_binding_id: str | None = eqx.field(static=True)
+    partition_digest: str | None = eqx.field(static=True)
     epoch: int = eqx.field(static=True)
     predecessor_id: str | None = eqx.field(static=True)
     orphan_count: int = eqx.field(static=True)
@@ -3463,6 +3692,8 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         global_conflict_count: int | None = None,
         global_ambiguous_count: int | None = None,
         donor_search_complete: bool = False,
+        partition_priority: tuple[str, ...] | None = None,
+        partition_sources: Mapping[str, Any] | None = None,
     ) -> None:
         expected_names = (
             assembly.global_part_names
@@ -3481,6 +3712,27 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         self.epoch, self.predecessor_id = int(epoch), predecessor_id
         self.owner_local = assembly.owner_local
         self.global_part_names = assembly.global_part_names
+        self.partition_priority = partition_priority
+        self.partition_sources = (
+            {} if partition_sources is None else dict(partition_sources)
+        )
+        self.bound_partition = None
+        self.partition_cavities = ()
+        self.partition_binding_id = None
+        self.partition_digest = None
+        if partition_priority is None:
+            if self.partition_sources:
+                raise ValueError("Partition sources require an explicit priority.")
+        else:
+            if assembly.owner_local:
+                raise ValueError("Exact partition ownership is serial-only.")
+            inputs, cavities, binding = _bound_partition_inputs(
+                assembly.parts, specs, partition_priority, self.partition_sources
+            )
+            self.bound_partition = partition_overset_triangles(inputs, cavities)
+            self.partition_cavities = cavities
+            self.partition_binding_id = binding
+            self.partition_digest = _partition_digest(self.bound_partition)
         self.orphan_count = sum(item.orphan_ids.size for item in receptors)
         local_conflicts = sum(
             int(np.count_nonzero(np.asarray(item.protected_conflict)))
@@ -3503,7 +3755,10 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             raise TypeError("donor_search_complete must be a bool.")
         self.donor_search_complete = donor_search_complete
         self.complete = (
-            donor_search_complete and self.orphan_count == 0 and self.conflict_count == 0
+            donor_search_complete
+            and self.orphan_count == 0
+            and self.conflict_count == 0
+            and (self.ambiguous_count == 0 or self.bound_partition is not None)
         )
         if connectivity_id is not None:
             identifier = str(connectivity_id)
@@ -3523,6 +3778,8 @@ class OversetConnectivity(StrictModule, NonTrainableState):
                     "blanking": [item.blanking_id for item in blanking],
                     "receptors": [item.evidence_id for item in receptors],
                     "packets": [item.packet_id for item in packets],
+                    "partition_binding": self.partition_binding_id,
+                    "partition_digest": self.partition_digest,
                 }
             )
 
@@ -3545,13 +3802,51 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         raise KeyError(name)
 
     def require_complete(self) -> None:
+        if self.partition_priority is not None:
+            _, cavities, binding = _bound_partition_inputs(
+                self.assembly.parts,
+                self.specs,
+                self.partition_priority,
+                self.partition_sources,
+            )
+            expected_id = canonical_fingerprint(
+                {
+                    "kind": "native-overset-connectivity",
+                    "donor_search_complete": self.donor_search_complete,
+                    "assembly": self.assembly.assembly_id,
+                    "specs": [item.spec_id for item in self.specs],
+                    "policy": self.policy.policy_id,
+                    "epoch": self.epoch,
+                    "predecessor": self.predecessor_id,
+                    "blanking": [item.blanking_id for item in self.blanking],
+                    "receptors": [item.evidence_id for item in self.receptors],
+                    "packets": [item.packet_id for item in self.packets],
+                    "partition_binding": self.partition_binding_id,
+                    "partition_digest": self.partition_digest,
+                }
+            )
+            if (
+                self.connectivity_id != expected_id
+                or self.bound_partition is None
+                or binding != self.partition_binding_id
+                or _partition_digest(self.bound_partition) != self.partition_digest
+                or len(cavities) != len(self.partition_cavities)
+                or any(
+                    not np.array_equal(a, b)
+                    for a, b in zip(cavities, self.partition_cavities, strict=True)
+                )
+            ):
+                raise ValueError("Overset partition is stale or has been altered.")
+        elif self.bound_partition is not None or self.partition_sources:
+            raise ValueError("Overset partition lacks its source binding.")
         if not self.complete:
             if not self.donor_search_complete:
                 detail = "donor coverage has not been proved"
             else:
                 detail = (
-                    f"{self.orphan_count} orphan receptors and "
-                    f"{self.conflict_count} protected-wall conflicts"
+                    f"{self.orphan_count} orphan receptors, "
+                    f"{self.conflict_count} protected-wall conflicts, and "
+                    f"{self.ambiguous_count} unproved ambiguous cells"
                 )
             raise OversetConnectivityError(
                 f"Overset connectivity is incomplete: {detail}.",
@@ -3575,6 +3870,8 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         owner_local_field_name: str = "state",
     ) -> OversetConnectivity:
         """Rebuild donor evidence from accepted advances and explicit successor roles."""
+        if self.partition_priority is not None:
+            self.require_complete()
         from ._motion import MeshMotionAdvance
 
         if not isinstance(advances, Mapping) or (not advances and not self.owner_local):
@@ -3706,8 +4003,30 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             raise ValueError(
                 "Moved source solids require an explicit successor solid query."
             )
+        partition_sources = dict(self.partition_sources)
+        if self.partition_priority is not None:
+            from ._motion_source import NativePlanarMotionSource
+
+            for name in set(partition_sources).intersection(advances):
+                transition = advances[name].source_transition
+                if not isinstance(transition, NativePlanarMotionSource):
+                    raise ValueError(
+                        "Moved partition walls require an authored source transition."
+                    )
+                transition = NativePlanarMotionSource.from_stored_fields(transition)
+                if transition.source.binding_id != partition_sources[name].binding_id:
+                    raise ValueError(
+                        "Partition wall transition does not bind the accepted source."
+                    )
+                partition_sources[name] = transition.successor
         return self.reregister(
-            replacements, solid_queries=queries, successor_specs=specs_
+            replacements,
+            solid_queries=queries,
+            successor_specs=specs_,
+            partition_sources=partition_sources
+            if self.partition_priority is not None
+            else None,
+            _partition_advances=advances if self.partition_priority is not None else None,
         )
 
     def _moved_from_owner_local_advances(
@@ -4082,6 +4401,8 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         *,
         solid_queries: Mapping[str, Any] | None = None,
         successor_specs: Mapping[str, OversetPartSpec] | None = None,
+        partition_sources: Mapping[str, Any] | None = None,
+        _partition_advances: Mapping[str, MeshMotionAdvance] | None = None,
         couplings: tuple[MeshCoupling, ...] | None = None,
         execution_group: ExecutionGroup | None = None,
         axis_name: str = "overset_reregister",
@@ -4093,6 +4414,63 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         example a graph-repartitioned part); its prepared field exchange
         resolves the donor winners, and the epoch chain is kept.
         """
+        if self.partition_priority is not None:
+            self.require_complete()
+            walls = set(replacements).intersection(self.partition_sources)
+            if walls and (partition_sources is None or _partition_advances is None):
+                raise ValueError(
+                    "Replaced partition walls require accepted source motion."
+                )
+            if partition_sources is not None:
+                if set(partition_sources) != set(self.partition_sources):
+                    raise ValueError(
+                        "Successor partition sources must retain the wall inventory."
+                    )
+                from ._motion import MeshMotionAdvance
+                from ._motion_source import NativePlanarMotionSource
+
+                for name, source in self.partition_sources.items():
+                    successor = partition_sources[name]
+                    if name not in walls:
+                        if successor.binding_id != source.binding_id:
+                            raise ValueError(
+                                "An unchanged wall cannot change its source."
+                            )
+                        continue
+                    advance = (
+                        None
+                        if _partition_advances is None
+                        else _partition_advances.get(name)
+                    )
+                    if (
+                        not isinstance(advance, MeshMotionAdvance)
+                        or not advance.accepted
+                        or advance.result is None
+                        or advance.source_result_id
+                        != _cell_result(self.assembly.part(name)).result_id
+                        or advance.result.result_id
+                        != _cell_result(replacements[name]).result_id
+                        or not isinstance(
+                            advance.source_transition, NativePlanarMotionSource
+                        )
+                    ):
+                        raise ValueError(
+                            "Partition wall lacks its accepted predecessor motion."
+                        )
+                    transition = NativePlanarMotionSource.from_stored_fields(
+                        advance.source_transition
+                    )
+                    if (
+                        transition.source.binding_id != source.binding_id
+                        or transition.successor.binding_id != successor.binding_id
+                    ):
+                        raise ValueError(
+                            "Partition source motion does not bind its exact endpoints."
+                        )
+        elif partition_sources is not None:
+            raise ValueError(
+                "Cannot attach partition sources to an unbound registration."
+            )
         if (
             not isinstance(replacements, Mapping)
             or not replacements
@@ -4202,10 +4580,12 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             self.policy,
             self.epoch + 1,
             self.connectivity_id,
+            self.partition_priority,
+            self.partition_sources if partition_sources is None else partition_sources,
         )
 
     def composition_entries(self) -> tuple[CompositionEntry, ...]:
-        if self.owner_local:
+        if self.owner_local or self.partition_priority is not None:
             self.require_complete()
         if self.owner_local:
             part_entries = tuple(
@@ -4252,7 +4632,7 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         return (*part_entries, route)
 
     def registration(self) -> OversetRegistration:
-        if self.owner_local:
+        if self.owner_local or self.partition_priority is not None:
             self.require_complete()
         assembly = (
             self.assembly
@@ -4273,6 +4653,8 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             self.epoch,
             self.predecessor_id,
             self.connectivity_id,
+            partition_priority=self.partition_priority,
+            partition_sources=self.partition_sources,
         )
 
 
@@ -4283,6 +4665,8 @@ def _prepare_connectivity(
     policy: OversetPolicy,
     epoch: int,
     predecessor_id: str | None,
+    partition_priority: tuple[str, ...] | None = None,
+    partition_sources: Mapping[str, Any] | None = None,
 ) -> OversetConnectivity:
     geometries = tuple(
         _geometry(part, spec) for part, spec in zip(parts, specs, strict=True)
@@ -4302,6 +4686,8 @@ def _prepare_connectivity(
         epoch=epoch,
         predecessor_id=predecessor_id,
         donor_search_complete=True,
+        partition_priority=partition_priority,
+        partition_sources=partition_sources,
     )
 
 
@@ -4576,6 +4962,8 @@ def prepare_overset_connectivity(
     policy: OversetPolicy | None = None,
     execution_group: ExecutionGroup | None = None,
     axis_name: str = "overset",
+    partition_priority: tuple[str, ...] | None = None,
+    partition_sources: Mapping[str, Any] | None = None,
 ) -> OversetConnectivity:
     """Prepare serial connectivity or collective rank-local blanking/receptors.
 
@@ -4583,6 +4971,14 @@ def prepare_overset_connectivity(
     complete global role-spec tuple and its local ``MeshAssembly`` view. The
     returned owner-local connectivity is a preparation candidate; donor winners
     and field routes are resolved collectively by its prepared field exchange.
+
+    Serial affine planar triangle assemblies may opt into exact physical
+    ownership by supplying ``partition_priority`` (highest priority first)
+    and ``partition_sources``, mapping every declared wall part to its current
+    certified authored planar source. Each source must have one cavity loop
+    whose associated mesh edges exactly equal that part's wall scope. The
+    resulting bound partition is rebuilt on motion and registration replay;
+    whole-cell blanking remains conservative for donor search.
     """
     policy_ = OversetPolicy() if policy is None else policy
     if not isinstance(assembly, MeshAssembly) or not isinstance(policy_, OversetPolicy):
@@ -4603,6 +4999,8 @@ def prepare_overset_connectivity(
         )
     specs = tuple(by_name[name] for name in global_names)
     if assembly.owner_local:
+        if partition_priority is not None or partition_sources is not None:
+            raise ValueError("Exact partition ownership is serial-only.")
         if execution_group is None:
             raise TypeError("Owner-local overset requires execution_group.")
         return _prepare_owner_local_connectivity(
@@ -4645,7 +5043,14 @@ def prepare_overset_connectivity(
                 "Overset solid walls and artificial receptor boundaries must be disjoint."
             )
     return _prepare_connectivity(
-        assembly.parts, assembly.couplings, specs, policy_, 0, None
+        assembly.parts,
+        assembly.couplings,
+        specs,
+        policy_,
+        0,
+        None,
+        partition_priority,
+        partition_sources,
     )
 
 
@@ -5285,6 +5690,12 @@ class PreparedOversetMotion(StrictModule, NonTrainableState):
     def commit(self, /, *, accepted_boundary: bool) -> CompositionRebindReceipt:
         if not isinstance(accepted_boundary, bool):
             raise TypeError("accepted_boundary must be a host bool.")
+        if (
+            accepted_boundary
+            and self.candidate.complete
+            and self.candidate.partition_priority is not None
+        ):
+            self.candidate.require_complete()
         return commit_composition_rebind(
             self.rebind, accepted_boundary=accepted_boundary and self.candidate.complete
         )
@@ -5342,6 +5753,8 @@ class OversetRegistration(StrictModule, NonTrainableState):
     epoch: int = eqx.field(static=True)
     predecessor_id: str | None = eqx.field(static=True)
     connectivity_id: str = eqx.field(static=True)
+    partition_priority: tuple[str, ...] | None = eqx.field(static=True)
+    partition_sources: Mapping[str, Any]
 
     def __init__(
         self,
@@ -5352,12 +5765,19 @@ class OversetRegistration(StrictModule, NonTrainableState):
         predecessor_id: str | None,
         connectivity_id: str,
         /,
+        *,
+        partition_priority: tuple[str, ...] | None = None,
+        partition_sources: Mapping[str, Any] | None = None,
     ) -> None:
         self.assembly, self.specs, self.policy = assembly, specs, policy
         self.epoch, self.predecessor_id, self.connectivity_id = (
             int(epoch),
             predecessor_id,
             str(connectivity_id),
+        )
+        self.partition_priority = partition_priority
+        self.partition_sources = (
+            {} if partition_sources is None else dict(partition_sources)
         )
 
     def prepare(self, /) -> OversetConnectivity:
@@ -5368,6 +5788,8 @@ class OversetRegistration(StrictModule, NonTrainableState):
             self.policy,
             self.epoch,
             self.predecessor_id,
+            self.partition_priority,
+            self.partition_sources,
         )
         if result.connectivity_id != self.connectivity_id:
             raise ValueError(

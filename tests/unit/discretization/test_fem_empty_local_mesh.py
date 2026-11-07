@@ -263,7 +263,7 @@ def _compile_owner_local_problem(
     return discretization, compiled, identity, field_layout
 
 
-def _native_owner_local_fe_empty_rank_worker() -> None:
+def _native_owner_local_fe_empty_rank_worker(owned_material: bool = False) -> None:
     import json
 
     import jax
@@ -364,18 +364,112 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
         dtype=np.float64,
     )
     source_values, source_ownership = source_identity.shard_values(source_full_values)
-    site = phx.equations.MaterialSiteId("steel:integration-site:0")
-    material = phx.equations.MaterialTransaction(
-        (
-            phx.equations.MaterialState(
-                site,
-                "linear-elastic:steel",
-                np.asarray((2.5, 3.5), dtype=np.float64),
-                trial=np.asarray((2.75, 3.75), dtype=np.float64),
-                state_version=3,
-            ),
+    source_material_plan = None
+    target_material_plan = None
+    if owned_material:
+        local_cells = np.asarray(source_view.owned_cell_ids, dtype=np.int64)
+        counts = np.asarray(
+            multihost_utils.process_allgather(
+                np.asarray([local_cells.size], dtype=np.int64)
+            )
+        ).reshape(-1)
+        padded = np.full((int(np.max(counts)),), -1, dtype=np.int64)
+        padded[: local_cells.size] = local_cells
+        gathered = np.asarray(multihost_utils.process_allgather(padded)).reshape(3, -1)
+        cells = tuple(
+            (int(cell), owner)
+            for owner in range(3)
+            for cell in gathered[owner, : int(counts[owner])]
         )
-    )
+        sites = tuple(
+            (
+                phx.equations.MaterialSiteId.for_cell_quadrature(
+                    cell, "barycenter", domain_id="body", quadrature_rule_id="triangle-1"
+                ),
+                owner,
+            )
+            for cell, owner in cells
+        )
+        stateless_site = phx.equations.MaterialSiteId.for_cell_quadrature(
+            cells[0][0], "auxiliary", domain_id="body", quadrature_rule_id="triangle-1"
+        )
+        sites += ((stateless_site, cells[0][1]),)
+        source_authority = phx.equations.MaterialSiteOwnership(sites, part_count=3)
+        target_authority = phx.equations.MaterialSiteOwnership(
+            tuple((site, 2) for site, _ in sites), part_count=3
+        )
+        law = phx.equations.ConstitutiveModel(
+            lambda strain, state, parameters, time, dt: (
+                phx.equations.ConstitutiveResponse(strain, state)
+            ),
+            state_shape=(2,),
+            response_shape=(2,),
+            model_id="linear-elastic:steel",
+        )
+        from tests.unit.equations.test_learned_constitutive import _Cubic, _uniaxial_law
+
+        stateless_law = _uniaxial_law(_Cubic(1.0, 0.0))
+
+        def model_for_site(material_site: Any) -> Any:
+            return stateless_law if material_site.key == stateless_site.key else law
+
+        source_material_plan = phx.equations.MaterialIntegrationPlan(
+            tuple(
+                (site, model_for_site(site)) for site in source_authority.for_owner(rank)
+            ),
+            ownership=source_authority,
+            owner_rank=rank,
+        )
+        target_material_plan = phx.equations.MaterialIntegrationPlan(
+            tuple(
+                (site, model_for_site(site)) for site in target_authority.for_owner(rank)
+            ),
+            ownership=target_authority,
+            owner_rank=rank,
+        )
+
+        def material_state_for_site(
+            site: phx.equations.MaterialSiteId,
+        ) -> phx.equations.MaterialState:
+            cell = site.cell_id
+            if cell is None:
+                raise ValueError("Owned material site has no cell ID.")
+            return phx.equations.MaterialState(
+                site,
+                model_for_site(site).model_id,
+                (
+                    np.empty((0,), dtype=np.float64)
+                    if site.key == stateless_site.key
+                    else np.asarray((cell + 0.25, cell + 0.5))
+                ),
+                trial=(
+                    np.empty((0,), dtype=np.float64)
+                    if site.key == stateless_site.key
+                    else np.asarray((cell + 0.75, cell + 1.0))
+                ),
+                state_version=3 + cell % 5,
+            )
+
+        material = phx.equations.MaterialTransaction(
+            tuple(
+                material_state_for_site(site) for site in source_material_plan.site_ids
+            ),
+            ownership=source_authority,
+            owner_rank=rank,
+        )
+    else:
+        site = phx.equations.MaterialSiteId("steel:integration-site:0")
+        material = phx.equations.MaterialTransaction(
+            (
+                phx.equations.MaterialState(
+                    site,
+                    "linear-elastic:steel",
+                    np.asarray((2.5, 3.5), dtype=np.float64),
+                    trial=np.asarray((2.75, 3.75), dtype=np.float64),
+                    state_version=3,
+                ),
+            )
+        )
     state = phx.solver.FiniteElementAcceptedState(
         (source_values,),
         np.asarray(0.125, dtype=np.float64),
@@ -409,11 +503,27 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
         phx.solver.FiniteElementRestartStateAssociation.REPLICATED,
         prng_impl=str(jax.random.key_impl(rng)),
     )
-    material_layout = phx.solver.FiniteElementRestartStateLayout(
-        site.key,
-        phx.solver.FiniteElementRestartStateRole.MODEL_STATE,
-        phx.solver.FiniteElementRestartStateAssociation.REPLICATED,
-    )
+
+    def material_layouts(plan: Any) -> tuple[Any, ...]:
+        return tuple(
+            phx.solver.FiniteElementRestartStateLayout(
+                material_site.key,
+                phx.solver.FiniteElementRestartStateRole.MODEL_STATE,
+                phx.solver.FiniteElementRestartStateAssociation.OWNED_SITES,
+            )
+            for material_site in plan.site_ids
+        )
+
+    if owned_material:
+        source_material_layouts = material_layouts(source_material_plan)
+        target_material_layouts = material_layouts(target_material_plan)
+    else:
+        material_layout = phx.solver.FiniteElementRestartStateLayout(
+            site.key,
+            phx.solver.FiniteElementRestartStateRole.MODEL_STATE,
+            phx.solver.FiniteElementRestartStateAssociation.REPLICATED,
+        )
+        source_material_layouts = target_material_layouts = (material_layout,)
     source_manifest = phx.solver.FiniteElementRestartManifest(
         state,
         auxiliary_state=((history_name, source_history),),
@@ -423,7 +533,7 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
         ),
         auxiliary_layouts=(source_history_layout,),
         integrator_layouts=(previous_layout, rng_layout),
-        material_layouts=(material_layout,),
+        material_layouts=source_material_layouts,
     )
 
     source_part = source_assembly.parts[0]
@@ -528,7 +638,11 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
         owner_id=state_entry.owner_id,
         structure_id=material.layout_id,
         revision_id=material.transaction_id,
-        semantics_id="replicated-material-transaction",
+        semantics_id=(
+            "owned-material-transaction"
+            if owned_material
+            else "replicated-material-transaction"
+        ),
         dependencies=(state_entry.binding("structure"),),
     )
     source_composition = phx.lifecycle.Composition(
@@ -607,6 +721,8 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
 
     def repartition(
         auxiliary_layout: phx.solver.FiniteElementRestartStateLayout,
+        material_plan: Any = None,
+        material_layout_override: Any = None,
     ) -> phx.solver.FiniteElementRepartitionResult:
         return target_transaction.repartition(
             source_manifest,
@@ -630,7 +746,15 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
             ),
             target_auxiliary_layouts=(auxiliary_layout,),
             target_integrator_layouts=(previous_layout, rng_layout),
-            target_material_layouts=(material_layout,),
+            target_material_layouts=(
+                target_material_layouts
+                if material_layout_override is None
+                else material_layout_override
+            ),
+            source_material_plan=source_material_plan,
+            target_material_plan=(
+                target_material_plan if material_plan is None else material_plan
+            ),
             # Materials are transported; graph migration keeps the authored
             # source root, and only a changed root is re-prepared.
             retain_entry_ids=(
@@ -658,6 +782,35 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
     if source_composition.composition_id != source_composition_id:
         raise ValueError("Collective FE refusal mutated its source composition.")
 
+    if owned_material:
+        if rank == 1:
+            wrong_site = target_authority.site_ids[0]
+            wrong_authority = phx.equations.MaterialSiteOwnership(
+                tuple(
+                    (item, 1 if item.key == wrong_site.key else 2)
+                    for item in target_authority.site_ids
+                ),
+                part_count=3,
+            )
+            wrong_plan = phx.equations.MaterialIntegrationPlan(
+                tuple(
+                    (item, model_for_site(item))
+                    for item in wrong_authority.for_owner(rank)
+                ),
+                ownership=wrong_authority,
+                owner_rank=rank,
+            )
+        else:
+            wrong_plan = target_material_plan
+        refused_placement = repartition(
+            target_history_layout, wrong_plan, material_layouts(wrong_plan)
+        )
+        if (
+            bool(np.asarray(refused_placement.committed))
+            or refused_placement.state.accepted_id != state.accepted_id
+        ):
+            raise ValueError("Forged material placement changed accepted state.")
+
     result = repartition(target_history_layout)
     if not bool(np.asarray(result.committed)) or result.rebind_receipt is None:
         raise ValueError(f"Owner-local FE repartition refused: {result.diagnostics}")
@@ -680,20 +833,55 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
     )
     target_materials = result.state.materials
     if target_materials is None:
-        raise ValueError("Replicated material transaction was lost.")
-    source_material_state = material.state(site)
-    target_material_state = target_materials.state(site)
-    if (
-        target_material_state.model_id != source_material_state.model_id
-        or target_material_state.state_version != source_material_state.state_version
-    ):
-        raise ValueError("Replicated material identity changed during repartition.")
-    np.testing.assert_array_equal(
-        target_material_state.committed, source_material_state.committed
-    )
-    np.testing.assert_array_equal(
-        target_material_state.trial, source_material_state.trial
-    )
+        raise ValueError("Material transaction was lost.")
+    if owned_material:
+        if target_material_plan is None:
+            raise ValueError("Target material plan was lost.")
+        target_material_plan.validate(target_materials)
+        if tuple(state.site_id.cell_id for state in target_materials.states) != tuple(
+            site.cell_id for site in target_material_plan.site_ids
+        ):
+            raise ValueError("Target material sites do not match their owning plan.")
+        if rank != 2 and target_materials.states:
+            raise ValueError("Empty target owner received material state.")
+        if rank == 2 and stateless_site.key not in {
+            state.site_id.key for state in target_materials.states
+        }:
+            raise ValueError("Stateless material site was lost during migration.")
+        for material_state in target_materials.states:
+            cell = material_state.site_id.cell_id
+            if cell is None:
+                raise ValueError("Migrated material site has no cell ID.")
+            if material_state.state_version != 3 + cell % 5:
+                raise ValueError("Material version changed during migration.")
+            if material_state.site_id.key == stateless_site.key:
+                if material_state.model_id != "learned-uniaxial-law":
+                    raise ValueError("Stateless material model changed during migration.")
+                np.testing.assert_array_equal(material_state.committed, np.empty((0,)))
+                np.testing.assert_array_equal(material_state.trial, np.empty((0,)))
+            else:
+                if material_state.model_id != "linear-elastic:steel":
+                    raise ValueError("Material model changed during migration.")
+                np.testing.assert_array_equal(
+                    material_state.committed, (cell + 0.25, cell + 0.5)
+                )
+                np.testing.assert_array_equal(
+                    material_state.trial, (cell + 0.75, cell + 1.0)
+                )
+    else:
+        source_material_state = material.state(site)
+        target_material_state = target_materials.state(site)
+        if (
+            target_material_state.model_id != source_material_state.model_id
+            or target_material_state.state_version != source_material_state.state_version
+        ):
+            raise ValueError("Replicated material identity changed during repartition.")
+        np.testing.assert_array_equal(
+            target_material_state.committed, source_material_state.committed
+        )
+        np.testing.assert_array_equal(
+            target_material_state.trial, source_material_state.trial
+        )
     if (
         not result.rebind_receipt.published
         or result.rebind_receipt.composition.entry(geometry_entry.entry_id).revision_id
@@ -748,6 +936,10 @@ def _native_owner_local_fe_empty_rank_worker() -> None:
             sort_keys=True,
         )
     )
+
+
+def _native_owner_local_fe_owned_material_worker() -> None:
+    _native_owner_local_fe_empty_rank_worker(owned_material=True)
 
 
 def _launch_native_owner_local_fe_worker(worker_name: str, /) -> list[dict[str, Any]]:
@@ -854,6 +1046,17 @@ def test_native_owner_local_fe_repartition_supports_real_empty_owner() -> None:
     assert rows[:, 7].tolist() == [0, 0, 1]
 
 
+def test_native_owner_local_fe_repartition_migrates_owned_materials() -> None:
+    reports = _launch_native_owner_local_fe_worker(
+        "_native_owner_local_fe_owned_material_worker"
+    )
+    assert [report["rank"] for report in reports] == [0, 1, 2]
+    assert all(report["phase"] == "committed" for report in reports)
+    rows = np.asarray(reports[0]["rows"], dtype=np.int64)
+    assert rows[0, 1] > 0 and rows[1, 1] == rows[2, 1] == 0
+    assert rows[0, 3] == rows[1, 3] == 0 and rows[2, 3] > 0
+
+
 def test_native_owner_local_fe_adaptation_transfers_and_solves() -> None:
     """Adapt typed P1/P0 state and restart banks, then move it to new owners."""
     reports = _launch_native_owner_local_fe_worker(
@@ -872,7 +1075,9 @@ def test_native_owner_local_fe_adaptation_transfers_and_solves() -> None:
     assert np.all(rows[:, 4:] == 1)
 
 
-def _native_owner_local_fe_topology_worker() -> None:
+def _native_owner_local_fe_topology_worker(
+    owned_material: bool = False, explicit_payload: bool = False
+) -> None:
     import json
 
     import equinox as eqx
@@ -1024,18 +1229,90 @@ def _native_owner_local_fe_topology_worker() -> None:
     if source_fields[0].size and not np.all(np.asarray(source_fields[0]) > 0.0):
         raise ValueError("The accepted P1 source field is not positive.")
 
-    material_site = phx.equations.MaterialSiteId("steel:integration-site:0")
-    materials = phx.equations.MaterialTransaction(
-        (
-            phx.equations.MaterialState(
-                material_site,
-                "linear-elastic:steel",
-                np.asarray((2.5, 3.5), dtype=np.float64),
-                trial=np.asarray((2.75, 3.75), dtype=np.float64),
-                state_version=3,
+    source_material_plan = adapted_material_plan = target_material_plan = None
+    if owned_material:
+
+        def gather_rows(local_rows: np.ndarray, width: int) -> np.ndarray:
+            local_rows = np.asarray(local_rows, dtype=np.int64).reshape(-1, width)
+            counts = np.asarray(
+                multihost_utils.process_allgather(
+                    np.asarray([len(local_rows)], dtype=np.int64)
+                )
+            ).reshape(-1)
+            padded = np.full((int(np.max(counts)), width), -1, dtype=np.int64)
+            padded[: len(local_rows)] = local_rows
+            gathered = np.asarray(multihost_utils.process_allgather(padded)).reshape(
+                3, -1, width
+            )
+            return np.concatenate(
+                tuple(gathered[owner, : int(counts[owner])] for owner in range(3))
+            )
+
+        def site_for_cell(cell: int) -> Any:
+            return phx.equations.MaterialSiteId.for_cell_quadrature(
+                cell, "barycenter", domain_id="body", quadrature_rule_id="triangle-1"
+            )
+
+        def authority_for_view(view: Any) -> Any:
+            local_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
+            rows = np.column_stack((local_ids, np.full(local_ids.shape, rank)))
+            return phx.equations.MaterialSiteOwnership(
+                tuple(
+                    (site_for_cell(int(cell)), int(owner))
+                    for cell, owner in gather_rows(rows, 2)
+                ),
+                part_count=3,
+            )
+
+        source_material_authority = authority_for_view(source_view)
+        adapted_material_authority = authority_for_view(adaptation_view)
+        target_material_authority = authority_for_view(target_view)
+        material_law = phx.equations.ConstitutiveModel(
+            lambda strain, state, parameters, time, dt: (
+                phx.equations.ConstitutiveResponse(strain, state)
             ),
+            state_shape=(2,),
+            response_shape=(2,),
+            model_id="linear-elastic:steel",
         )
-    )
+
+        def material_plan_for(authority: Any) -> Any:
+            return phx.equations.MaterialIntegrationPlan(
+                tuple((site, material_law) for site in authority.for_owner(rank)),
+                ownership=authority,
+                owner_rank=rank,
+            )
+
+        source_material_plan = material_plan_for(source_material_authority)
+        adapted_material_plan = material_plan_for(adapted_material_authority)
+        target_material_plan = material_plan_for(target_material_authority)
+        materials = phx.equations.MaterialTransaction(
+            tuple(
+                phx.equations.MaterialState(
+                    site,
+                    material_law.model_id,
+                    np.asarray((site.cell_id + 0.25, site.cell_id + 0.5)),
+                    trial=np.asarray((site.cell_id + 0.75, site.cell_id + 1.0)),
+                    state_version=3 + site.cell_id % 5,
+                )
+                for site in source_material_plan.site_ids
+            ),
+            ownership=source_material_authority,
+            owner_rank=rank,
+        )
+    else:
+        material_site = phx.equations.MaterialSiteId("steel:integration-site:0")
+        materials = phx.equations.MaterialTransaction(
+            (
+                phx.equations.MaterialState(
+                    material_site,
+                    "linear-elastic:steel",
+                    np.asarray((2.5, 3.5), dtype=np.float64),
+                    trial=np.asarray((2.75, 3.75), dtype=np.float64),
+                    state_version=3,
+                ),
+            )
+        )
     source_state = phx.solver.FiniteElementAcceptedState(
         source_fields,
         np.asarray(0.125, dtype=np.float64),
@@ -1087,20 +1364,42 @@ def _native_owner_local_fe_topology_worker() -> None:
             prng_impl=str(jax.random.key_impl(rng)),
         ),
     )
-    material_layouts = (
-        phx.solver.FiniteElementRestartStateLayout(
-            material_site.key,
-            phx.solver.FiniteElementRestartStateRole.MODEL_STATE,
-            phx.solver.FiniteElementRestartStateAssociation.REPLICATED,
-        ),
-    )
+
+    def owned_material_layouts(plan: Any) -> tuple[Any, ...]:
+        return tuple(
+            phx.solver.FiniteElementRestartStateLayout(
+                site.key,
+                phx.solver.FiniteElementRestartStateRole.MODEL_STATE,
+                phx.solver.FiniteElementRestartStateAssociation.OWNED_SITES,
+            )
+            for site in plan.site_ids
+        )
+
+    if owned_material:
+        material_layouts = owned_material_layouts(source_material_plan)
+        adapted_material_layouts = owned_material_layouts(adapted_material_plan)
+        target_material_layouts = owned_material_layouts(target_material_plan)
+    else:
+        material_layouts = (
+            phx.solver.FiniteElementRestartStateLayout(
+                material_site.key,
+                phx.solver.FiniteElementRestartStateRole.MODEL_STATE,
+                phx.solver.FiniteElementRestartStateAssociation.REPLICATED,
+            ),
+        )
+        adapted_material_layouts = target_material_layouts = material_layouts
     clock_history = np.asarray((0.0, 0.125), dtype=np.float64)
     previous_step = np.asarray(0.125, dtype=np.float64)
     restart_manifest = phx.solver.FiniteElementRestartManifest(
         source_state,
         auxiliary_state=(
             (u_history_name, source_fields[0] + 2.0),
-            (content_history_name, source_fields[1] + 0.375),
+            (
+                content_history_name,
+                np.stack((source_fields[1] + 0.375, source_fields[1] + 0.75), axis=-1)
+                if explicit_payload
+                else source_fields[1] + 0.375,
+            ),
             (clock_history_name, clock_history),
         ),
         integrator_state=((previous_name, previous_step), (rng_name, rng)),
@@ -1232,15 +1531,127 @@ def _native_owner_local_fe_topology_worker() -> None:
             integrator_entry_ids=integrator_entry_ids,
             target_auxiliary_layouts=auxiliary_layouts_for(adapted_identities),
             target_integrator_layouts=integrator_layouts,
-            target_material_layouts=material_layouts,
+            target_material_layouts=adapted_material_layouts,
+            source_material_plan=source_material_plan,
+            target_material_plan=adapted_material_plan,
             retain_entry_ids=retained_mesh_entry_ids,
             reprepare_entries=adapted_entries,
             axis_name="native_owner_local_fe_adaptation",
         )
 
+    def parent_rows(lineage: Any) -> np.ndarray:
+        if lineage is None:
+            return np.empty((0, 2), dtype=np.int64)
+        record = lineage.entity_lineage(source_view.topological_dimension)
+        targets = set(np.asarray(adaptation_view.owned_cell_ids, dtype=np.int64).tolist())
+        rows = [
+            (int(target), int(source))
+            for source, target in zip(
+                np.asarray(record.source_global_ids, dtype=np.int64),
+                np.asarray(record.target_global_ids, dtype=np.int64),
+                strict=True,
+            )
+            if int(target) in targets
+        ]
+        if len(rows) != len(targets) or {target for target, _ in rows} != targets:
+            raise ValueError(
+                "Piecewise-constant transfer requires one parent per target cell."
+            )
+        return np.asarray(rows, dtype=np.int64).reshape(-1, 2)
+
+    def transfer_materials(source: Any, lineage: Any, context: Any) -> Any:
+        del context
+        parents = dict(parent_rows(lineage))
+        if adapted_material_plan is None:
+            raise ValueError("Adapted material plan was lost.")
+        source_by_cell = {state.site_id.cell_id: state for state in source.states}
+        transferred = []
+        for site in adapted_material_plan.site_ids:
+            parent = source_by_cell[parents[site.cell_id]]
+            transferred.append(
+                phx.equations.MaterialState(
+                    site,
+                    parent.model_id,
+                    parent.committed,
+                    trial=parent.trial,
+                    state_version=parent.state_version,
+                )
+            )
+        return phx.equations.MaterialTransaction(
+            tuple(transferred),
+            ownership=adapted_material_plan.ownership,
+            owner_rank=rank,
+        )
+
+    if owned_material:
+        global_parents = dict(gather_rows(parent_rows(adaptive_result.lineage), 2))
+        for invalid_transfer in (None, lambda source, lineage, context: source):
+            refused = adapt(
+                FiniteElementTopologyTransaction(
+                    lambda mesh, fields, state, lineage, context: True,
+                    material_transfer=invalid_transfer,
+                    transaction_id="native-owner-local-fe-invalid-material-transfer",
+                )
+            )
+            if (
+                bool(np.asarray(refused.committed))
+                or refused.rebind_receipt is not None
+                or refused.state.accepted_id != source_state.accepted_id
+                or refused.manifest.manifest_id != restart_manifest.manifest_id
+                or source_composition.composition_id != source_composition_id
+            ):
+                raise RuntimeError("Invalid material transfer changed accepted FE state.")
+
+    payload_calls: list[tuple[int, ...]] = []
+
+    def transfer_content_history(
+        values: Any, layout: Any, adaptive: Any, context: Any
+    ) -> Any:
+        del adaptive
+        if layout.layout_id != source_layouts[1].layout_id or values.shape[1:] != (2,):
+            raise ValueError("P0 payload action received an unexpected layout or fiber.")
+        payload_calls.append(tuple(values.shape))
+        target_rows = context.target_ownership.dof_keys.shape[0]
+        return jnp.broadcast_to(
+            jnp.asarray((17.0, 29.0), dtype=values.dtype), (target_rows, 2)
+        )
+
+    payload_actions = (
+        ((("auxiliary", content_history_name), transfer_content_history),)
+        if explicit_payload
+        else ()
+    )
+    if explicit_payload:
+
+        def reject_content_history(
+            values: Any, layout: Any, adaptive: Any, context: Any
+        ) -> Any:
+            del values, layout, adaptive, context
+            raise ValueError("Rejected explicit P0 payload transfer.")
+
+        refused_payload = adapt(
+            FiniteElementTopologyTransaction(
+                lambda mesh, fields, state, lineage, context: True,
+                payload_transfers=(
+                    (("auxiliary", content_history_name), reject_content_history),
+                ),
+                transaction_id="native-owner-local-fe-reject-payload",
+            )
+        )
+        if (
+            bool(np.asarray(refused_payload.committed))
+            or refused_payload.rebind_receipt is not None
+            or refused_payload.state.accepted_id != source_state.accepted_id
+            or refused_payload.manifest.manifest_id != restart_manifest.manifest_id
+            or source_composition.composition_id != source_composition_id
+        ):
+            raise RuntimeError("Rejected payload transfer changed accepted FE state.")
+
     rejected = adapt(
         FiniteElementTopologyTransaction(
             lambda mesh, fields, state, lineage, context: jax.process_index() != 1,
+            material_transfer=transfer_materials if owned_material else None,
+            payload_transfers=payload_actions,
             transaction_id="native-owner-local-fe-adaptation-reject",
         )
     )
@@ -1256,6 +1667,7 @@ def _native_owner_local_fe_topology_worker() -> None:
         )
     ):
         raise RuntimeError("Collective adaptation refusal changed accepted FE state.")
+    payload_calls.clear()
 
     def certify(mesh: Any, fields: Any, state: Any, lineage: Any, context: Any) -> bool:
         del mesh, state, lineage, context
@@ -1269,6 +1681,8 @@ def _native_owner_local_fe_topology_worker() -> None:
     result = adapt(
         FiniteElementTopologyTransaction(
             certify,
+            material_transfer=transfer_materials if owned_material else None,
+            payload_transfers=payload_actions,
             transaction_id="native-owner-local-fe-adaptation-commit",
         )
     )
@@ -1326,12 +1740,22 @@ def _native_owner_local_fe_topology_worker() -> None:
         rtol=0.0,
         atol=2.0e-12,
     )
-    np.testing.assert_allclose(
-        np.asarray(target_auxiliary[content_history_name]),
-        np.asarray(result.state.fields[1]) + 0.375,
-        rtol=0.0,
-        atol=2.0e-12,
-    )
+    if explicit_payload:
+        expected_content_history = np.broadcast_to(
+            np.asarray((17.0, 29.0)), (result.state.fields[1].shape[0], 2)
+        )
+        if not payload_calls or payload_calls[-1][1:] != (2,):
+            raise RuntimeError("Explicit P0 payload action was not invoked.")
+        np.testing.assert_array_equal(
+            np.asarray(target_auxiliary[content_history_name]), expected_content_history
+        )
+    else:
+        np.testing.assert_allclose(
+            np.asarray(target_auxiliary[content_history_name]),
+            np.asarray(result.state.fields[1]) + 0.375,
+            rtol=0.0,
+            atol=2.0e-12,
+        )
     np.testing.assert_array_equal(
         np.asarray(target_auxiliary[clock_history_name]), clock_history
     )
@@ -1344,23 +1768,41 @@ def _native_owner_local_fe_topology_worker() -> None:
         np.asarray(jax.random.key_data(rng)),
     )
     if source_state.materials is None or result.state.materials is None:
-        raise RuntimeError("Topology adaptation dropped replicated material state.")
-    source_material = source_state.materials.states[0]
-    target_material = result.state.materials.states[0]
-    if (
-        source_material.site_id != target_material.site_id
-        or source_material.model_id != target_material.model_id
-        or source_material.state_version != target_material.state_version
-    ):
-        raise RuntimeError(
-            "Replicated material state changed during topology adaptation."
+        raise RuntimeError("Topology adaptation dropped material state.")
+    if owned_material:
+        if adapted_material_plan is None:
+            raise RuntimeError("Adapted material plan was lost.")
+        adapted_material_plan.validate(result.state.materials)
+        for material_state in result.state.materials.states:
+            parent = global_parents[material_state.site_id.cell_id]
+            if (
+                material_state.model_id != material_law.model_id
+                or material_state.state_version != 3 + parent % 5
+            ):
+                raise RuntimeError("Adapted material identity or version changed.")
+            np.testing.assert_array_equal(
+                material_state.committed, (parent + 0.25, parent + 0.5)
+            )
+            np.testing.assert_array_equal(
+                material_state.trial, (parent + 0.75, parent + 1.0)
+            )
+    else:
+        source_material = source_state.materials.states[0]
+        target_material = result.state.materials.states[0]
+        if (
+            source_material.site_id != target_material.site_id
+            or source_material.model_id != target_material.model_id
+            or source_material.state_version != target_material.state_version
+        ):
+            raise RuntimeError(
+                "Replicated material state changed during topology adaptation."
+            )
+        np.testing.assert_array_equal(
+            np.asarray(target_material.committed), np.asarray(source_material.committed)
         )
-    np.testing.assert_array_equal(
-        np.asarray(target_material.committed), np.asarray(source_material.committed)
-    )
-    np.testing.assert_array_equal(
-        np.asarray(target_material.trial), np.asarray(source_material.trial)
-    )
+        np.testing.assert_array_equal(
+            np.asarray(target_material.trial), np.asarray(source_material.trial)
+        )
     migration = target_view.graph_migration_evidence
     if not isinstance(migration, OwnerLocalGraphMigrationEvidence):
         raise TypeError("The repartitioned FE target lacks graph migration evidence.")
@@ -1387,7 +1829,9 @@ def _native_owner_local_fe_topology_worker() -> None:
             integrator_entry_ids=integrator_entry_ids,
             target_auxiliary_layouts=auxiliary_layouts_for(target_identities),
             target_integrator_layouts=integrator_layouts,
-            target_material_layouts=material_layouts,
+            target_material_layouts=target_material_layouts,
+            source_material_plan=adapted_material_plan,
+            target_material_plan=target_material_plan,
             retain_entry_ids=retained_mesh_entry_ids,
             reprepare_entries=target_entries,
             axis_name="native_owner_local_fe_adapted_repartition",
@@ -1412,6 +1856,27 @@ def _native_owner_local_fe_topology_worker() -> None:
         raise RuntimeError(
             f"Adapted FE state did not repartition onto its target: {moved.diagnostics}"
         )
+    if owned_material:
+        if target_material_plan is None:
+            raise RuntimeError("Target material plan was lost.")
+        if moved.state.materials is None:
+            raise RuntimeError("Repartition lost adapted materials.")
+        target_material_plan.validate(moved.state.materials)
+        for material_state in moved.state.materials.states:
+            parent = global_parents[material_state.site_id.cell_id]
+            if (
+                material_state.model_id != material_law.model_id
+                or material_state.state_version != 3 + parent % 5
+            ):
+                raise RuntimeError("Repartition changed adapted material identity.")
+            np.testing.assert_array_equal(
+                material_state.committed, (parent + 0.25, parent + 0.5)
+            )
+            np.testing.assert_array_equal(
+                material_state.trial, (parent + 0.75, parent + 1.0)
+            )
+        if rank != 2 and moved.state.materials.states:
+            raise RuntimeError("Empty target owner received adapted materials.")
     moved_auxiliary = dict(moved.manifest.auxiliary_state)
     np.testing.assert_allclose(
         np.asarray(moved_auxiliary[u_history_name]),
@@ -1419,12 +1884,20 @@ def _native_owner_local_fe_topology_worker() -> None:
         rtol=0.0,
         atol=2.0e-12,
     )
-    np.testing.assert_allclose(
-        np.asarray(moved_auxiliary[content_history_name]),
-        np.asarray(moved.state.fields[1]) + 0.375,
-        rtol=0.0,
-        atol=2.0e-12,
-    )
+    if explicit_payload:
+        expected_moved_history = np.broadcast_to(
+            np.asarray((17.0, 29.0)), (moved.state.fields[1].shape[0], 2)
+        )
+        np.testing.assert_array_equal(
+            np.asarray(moved_auxiliary[content_history_name]), expected_moved_history
+        )
+    else:
+        np.testing.assert_allclose(
+            np.asarray(moved_auxiliary[content_history_name]),
+            np.asarray(moved.state.fields[1]) + 0.375,
+            rtol=0.0,
+            atol=2.0e-12,
+        )
     moved_integrator = dict(moved.manifest.integrator_state)
     np.testing.assert_array_equal(
         np.asarray(jax.random.key_data(moved_integrator[rng_name])),
@@ -1541,3 +2014,33 @@ def _native_owner_local_fe_topology_worker() -> None:
             sort_keys=True,
         )
     )
+
+
+def _native_owner_local_fe_owned_topology_worker() -> None:
+    _native_owner_local_fe_topology_worker(owned_material=True)
+
+
+def test_native_owner_local_fe_owned_material_adaptation_and_repartition() -> None:
+    reports = _launch_native_owner_local_fe_worker(
+        "_native_owner_local_fe_owned_topology_worker"
+    )
+    assert [report["rank"] for report in reports] == [0, 1, 2]
+    assert all(report["phase"] == "adapted" for report in reports)
+    rows = np.asarray(reports[0]["rows"], dtype=np.int64)
+    assert rows[0, 0] > 0 and rows[1, 0] > 0 and rows[2, 0] == 0
+    assert rows[0, 2] == rows[1, 2] == 0 and rows[2, 2] > 0
+    assert np.all(rows[:, 4:] == 1)
+
+
+def _native_owner_local_fe_payload_action_worker() -> None:
+    _native_owner_local_fe_topology_worker(explicit_payload=True)
+
+
+def test_native_owner_local_fe_explicit_p0_payload_action() -> None:
+    reports = _launch_native_owner_local_fe_worker(
+        "_native_owner_local_fe_payload_action_worker"
+    )
+    assert [report["rank"] for report in reports] == [0, 1, 2]
+    assert all(report["phase"] == "adapted" for report in reports)
+    rows = np.asarray(reports[0]["rows"], dtype=np.int64)
+    assert np.all(rows[:, 4:] == 1)

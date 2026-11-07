@@ -55,6 +55,7 @@ from ...discretization._reference_cell import reference_cell_topology
 from ...geometry._curve_boundary import ParametricCurveBoundarySource
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ...geometry._source_boundary_records import (
+    _fractions_from_chart_tokens,
     rational_chart_tokens,
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
@@ -119,6 +120,7 @@ from ...meshing._quad_generation import (
 from ...meshing._result import MeshingComplianceReport
 from ...meshing._scope import MeshingEntityKind, MeshingScope
 from ...meshing._sizing import SizeControlStrength, UniformSizeControl
+from ...meshing._volume_generation import _shape_targets_gated
 from ...meshing.providers._native_options import NativeMeshingOptions
 from ...meshing.providers._native_planar import (
     _planar_curve_source_query,
@@ -138,7 +140,7 @@ from ...meshing.providers._native_volume import (
     volume_support_issues,
 )
 from ...typing import checked
-from .._dual_extraction import DualExtraction
+from .._dual_extraction import DualExtraction, QuadLayoutObstruction
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +355,9 @@ def dual_hex_support_issues(
         issues.append("a pure required hexahedral target")
     if options.volume_schedule is None:
         issues.append("a native tetrahedral scaffold schedule")
+    elif not _shape_targets_gated(options.volume_schedule):
+        # Hex acceptance never consumes scaffold shape rows as evidence.
+        issues.append("a hard-strength native tetrahedral scaffold schedule")
     if source.mapped_domain is not None and source.complex.geometry is None:
         issues.append("a source-coordinate map for the mapped PLC tetrahedral scaffold")
     if not issues:
@@ -389,8 +394,6 @@ def quad_support_issues(
         issues.append("affine planar source geometry")
     if specification.target.ambient_dimension != 2:
         issues.append("a planar source embedded in two dimensions")
-    if specification.quality_target is not None:
-        issues.append("no separately declared global quality target")
     if specification.background_metric is not None:
         issues.append("uniform or source-scoped size controls")
     if specification.periodic_constraints:
@@ -946,6 +949,7 @@ def _quad_compliance(
     specification: SurfaceMeshingSpec,
     prepared: PreparedPlanarDomain,
     mesh: CellMesh,
+    geometry: CellGeometrySpec,
     organization: NativeMeshOrganization,
     /,
     *,
@@ -1072,6 +1076,15 @@ def _quad_compliance(
                 + policy.relative_tolerance * control.maximum_growth_rate
             ):
                 issues.append(f"maximum_growth_rate:{control.control_id}")
+    if specification.quality_target is not None:
+        from ._native_structured import _minimum_surface_angle
+
+        quality = specification.quality_target
+        minimum_angle = _minimum_surface_angle(mesh, geometry)
+        requested.append(("minimum_angle", quality.minimum_angle))
+        achieved.append(("minimum_angle", minimum_angle))
+        if quality.hard and minimum_angle < quality.minimum_angle:
+            issues.append("minimum_angle")
     for feature in specification.protected_features:
         requested.append(
             (
@@ -2645,7 +2658,29 @@ class _PreparedNativeDualQuad(StrictModule, NonTrainableState):
         source, specification = self.source, self.specification
         scaffold = self.planar_route.execute()
         feature_edges = _feature_scaffold_edges(source, specification, scaffold)
-        field = prepare_surface_cross_field(scaffold.mesh, feature_edges=feature_edges)
+        field = specification.cross_field
+        if field is None:
+            field = prepare_surface_cross_field(scaffold.mesh, feature_edges=feature_edges)
+        else:
+            if field.source.mesh_id != scaffold.mesh.mesh_id:
+                raise QuadLayoutObstruction(
+                    "source_identity",
+                    "The requested cross field must bind the actual triangle scaffold.",
+                )
+            # Polygonal connectivity pads triangle edge routes to its common
+            # width; only the three valid routes are source-edge incidence.
+            incidence = _cell_entity_incidence(scaffold.mesh, 1)[:, :3]
+            counts = np.bincount(
+                incidence.reshape(-1),
+                minlength=_entity_vertex_rows(scaffold.mesh, 1).shape[0],
+            )
+            expected_features = np.union1d(feature_edges, np.flatnonzero(counts == 1))
+            if not np.array_equal(field.feature_edges, expected_features):
+                raise QuadLayoutObstruction(
+                    "field_feature_integrity",
+                    "The requested cross field must preserve exactly the scaffold's physical features.",
+                    source_edge_rows=np.setxor1d(field.feature_edges, expected_features).tolist(),
+                )
         extraction = extract_surface_quads(
             scaffold.mesh,
             cross_field=field,
@@ -2709,6 +2744,7 @@ class _PreparedNativeDualQuad(StrictModule, NonTrainableState):
             specification,
             self.planar_route.prepared,
             extraction.mesh,
+            geometry,
             organization,
             soft_feature_outcomes=tuple(soft_feature_outcomes),
         )
@@ -2757,6 +2793,7 @@ class _PreparedNativeDualQuad(StrictModule, NonTrainableState):
             stages=scaffold.stages,
             source_mesh=scaffold.mesh,
             source_geometry=scaffold.geometry,
+            surface_quad_field_event=extraction.field_event,
             planar_embedding=specification.planar_embedding,
         )
 
@@ -2821,6 +2858,8 @@ def hex_dominant_support_issues(
         issues.append("a hex-core fraction strictly between zero and one")
     if options.volume_schedule is None:
         issues.append("a native tetrahedral scaffold schedule")
+    elif not _shape_targets_gated(options.volume_schedule):
+        issues.append("a hard-strength native tetrahedral scaffold schedule")
     if not issues:
         issues.extend(volume_support_issues(source, _tetrahedron_scaffold(specification)))
     return list(dict.fromkeys(issues))
@@ -2990,6 +3029,8 @@ def balanced_hex_support_issues(
         issues.append("a source-coordinate map for the mapped PLC tetrahedral scaffold")
     if options.volume_schedule is None:
         issues.append("a native tetrahedral scaffold schedule")
+    elif not _shape_targets_gated(options.volume_schedule):
+        issues.append("a hard-strength native tetrahedral scaffold schedule")
     if options.grid_schedule is None or options.grid_schedule.route != "balanced_grid":
         issues.append("a balanced-grid integer schedule")
     if specification.periodic_constraints:
@@ -3164,6 +3205,8 @@ def frame_hex_support_issues(
         issues.append("a piecewise-linear PLC source map")
     if options.volume_schedule is None:
         issues.append("a native tetrahedral scaffold schedule")
+    elif not _shape_targets_gated(options.volume_schedule):
+        issues.append("a hard-strength native tetrahedral scaffold schedule")
     if options.grid_schedule is None or options.grid_schedule.route != "frame_grid":
         issues.append("a native frame-field integer schedule")
     if specification.periodic_constraints:
@@ -3390,9 +3433,12 @@ def _mapped_grid_hex_support_issues(
         issues.append(
             "reference PLC facets matching the mapped root-domain boundary strata"
         )
-    if specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
+    if specification.fill_strategy not in (
+        VolumeFillStrategy.SIMPLEX,
+        VolumeFillStrategy.MULTIZONE,
+    ):
         issues.append(
-            "a simplex fill declaration for the direct mapped tensor-grid route"
+            "a simplex or multizone fill declaration for the mapped tensor-grid route"
         )
     if specification.periodic_constraints:
         issues.append("no periodic quotient constraints")
@@ -4128,8 +4174,12 @@ def _mapped_face_chart_witness(
             strict=True,
         )
     )
-    if len(set(source_keys)) != len(source_keys):
-        raise ValueError("Mapped source PLC chart identities must be unique.")
+    if len(query.face_chart_ids) != len(source_keys) or len(
+        set(query.face_chart_ids)
+    ) != len(query.face_chart_ids):
+        raise ValueError(
+            "Mapped source PLC triangle chart identities must be unique and complete."
+        )
     charts_by_root_face: dict[int, list[tuple[str, int]]] = {}
     selected_face_keys = set(query.face_scope_keys)
     for source_row, chart_id in enumerate(query.face_chart_ids):
@@ -4480,20 +4530,17 @@ def _mapped_edge_chart_witness(
     query: MappedReferenceBoundarySource,
     /,
 ) -> SourceBoundaryChartWitness:
-    """Bind mapped target root-edge pieces to their authored PLC segments."""
+    """Bind mapped target edge pieces to exact authored PLC segment charts."""
     mesh = construction.mesh
-    relation = source.root_relation
     controls_by_cell = _mapped_reference_cell_charts(source, construction)
     relation_keys = tuple(
         zip(
-            relation.segment_source_entity_keys,
-            relation.segment_source_occurrence_paths,
+            query.segment_source_entity_keys,
+            query.segment_source_occurrence_paths,
             strict=True,
         )
     )
-    if len(set(relation_keys)) != len(relation_keys):
-        raise ValueError("Mapped source segment identities must be unique.")
-    charts_by_root_edge: dict[int, list[tuple[str, int]]] = {}
+    charts_by_root_entity: dict[tuple[int, int], list[tuple[str, int]]] = {}
     selected_edge_keys = set(query.edge_scope_keys)
     for relation_row, chart_id in enumerate(query.edge_chart_ids):
         key = relation_keys[relation_row]
@@ -4501,10 +4548,13 @@ def _mapped_edge_chart_witness(
             continue
         if query.chart_source_key(1, chart_id) != key:
             raise ValueError("Mapped edge query chart lost its authored PLC segment key.")
-        if int(relation.segment_root_dimensions[relation_row]) != 1:
-            raise ValueError("Mapped curve chart is not an original root-edge stratum.")
-        root_edge_id = int(relation.segment_root_entity_ids[relation_row])
-        charts_by_root_edge.setdefault(root_edge_id, []).append((chart_id, relation_row))
+        dimension = int(query.segment_root_dimensions[relation_row])
+        if dimension not in (1, 2, 3):
+            raise ValueError("Mapped curve chart lacks a root entity stratum.")
+        root_entity_id = int(query.segment_root_entity_global_ids[relation_row])
+        charts_by_root_entity.setdefault((dimension, root_entity_id), []).append(
+            (chart_id, relation_row)
+        )
 
     target_edge_rows = {
         frozenset(int(value) for value in edge): row
@@ -4533,7 +4583,11 @@ def _mapped_edge_chart_witness(
             for local_edge, local_vertices in enumerate(target_local_edges):
                 vertex_rows = tuple(int(cell_vertices[index]) for index in local_vertices)
                 edge_row = target_edge_rows.get(frozenset(vertex_rows))
-                if edge_row is None or int(target_parent_dimensions[edge_row]) != 1:
+                if edge_row is None or int(target_parent_dimensions[edge_row]) not in (
+                    1,
+                    2,
+                    3,
+                ):
                     continue
                 edge_owners.setdefault(edge_row, []).append((int(cell_id), local_edge))
 
@@ -4549,100 +4603,81 @@ def _mapped_edge_chart_witness(
     source_parameter_rational_rows: list[tuple[tuple[Fraction, ...], ...]] = []
     orientations: list[int] = []
     intervals_by_chart: dict[str, list[tuple[Fraction, Fraction]]] = {}
-    for target_edge_row, raw_root_edge_id in enumerate(target_parent_ids.tolist()):
-        if int(target_parent_dimensions[target_edge_row]) != 1:
-            continue
-        root_edge_id = int(raw_root_edge_id)
-        chart_entries = charts_by_root_edge.get(root_edge_id)
+    for target_edge_row, raw_root_entity_id in enumerate(target_parent_ids.tolist()):
+        dimension = int(target_parent_dimensions[target_edge_row])
+        chart_entries = charts_by_root_entity.get((dimension, int(raw_root_entity_id)))
         if not chart_entries:
             continue
-        relation_row = chart_entries[0][1]
-        root_cell_id = int(relation.segment_root_cell_global_ids[relation_row])
-        target_owner = next(
-            (
-                (cell_id, local_edge)
-                for cell_id, local_edge in edge_owners.get(target_edge_row, ())
-                if controls_by_cell[cell_id].source_cell_id == root_cell_id
-            ),
-            None,
-        )
-        if target_owner is None:
-            raise ValueError(
-                "Mapped target root edge lacks its declared root-cell owner."
-            )
-        target_cell_id, target_local_edge = target_owner
-        target_control = controls_by_cell[target_cell_id]
-        target_local_vertices = target_local_edges[target_local_edge]
-        target_root_points = tuple(
-            _mapped_root_reference_corner(
-                target_control,
-                index,
-                target_reference_vertices[index],
-            )
-            for index in target_local_vertices
-        )
         for chart_id, source_row in chart_entries:
-            source_local_edge = int(
-                relation.segment_root_local_entity_indices[source_row]
-            )
-            root_edge_orientation = int(relation.segment_orientation_signs[source_row])
-            root_topology = reference_cell_topology("hexahedron")
-            if not 0 <= source_local_edge < len(root_topology.entities[1]):
-                raise ValueError(
-                    "Mapped source segment has an invalid root-local edge index."
-                )
-            root_reference_vertices = tuple(
-                tuple(Fraction.from_float(float(value)) for value in point)
-                for point in root_topology.vertices
-            )
-            root_edge_vertices = tuple(
-                int(value) for value in root_topology.entities[1][source_local_edge]
-            )
-            source_root_points = tuple(
-                root_reference_vertices[index] for index in root_edge_vertices
-            )
-            if root_edge_orientation == -1:
-                source_root_points = tuple(reversed(source_root_points))
-            elif root_edge_orientation != 1:
-                raise ValueError(
-                    "Mapped source segment lacks an exact root-edge orientation."
-                )
-            declared_root_points = np.asarray(
-                relation.segment_root_reference_vertices[source_row], dtype=np.float64
-            )
-            if not np.array_equal(
-                declared_root_points,
-                np.asarray(
-                    [[float(value) for value in point] for point in source_root_points],
-                    dtype=np.float64,
+            root_cell_id = int(query.segment_root_cell_global_ids[source_row])
+            target_owner = next(
+                (
+                    (cell_id, local_edge)
+                    for cell_id, local_edge in edge_owners.get(target_edge_row, ())
+                    if controls_by_cell[cell_id].source_cell_id == root_cell_id
                 ),
-            ):
-                raise ValueError(
-                    "Mapped source segment changed its exact root-edge endpoints."
+                None,
+            )
+            if target_owner is None:
+                continue
+            target_cell_id, target_local_edge = target_owner
+            target_control = controls_by_cell[target_cell_id]
+            target_local_vertices = target_local_edges[target_local_edge]
+            target_root_points = tuple(
+                _mapped_root_reference_corner(
+                    target_control, index, target_reference_vertices[index]
                 )
-            delta = tuple(
-                source_root_points[1][axis] - source_root_points[0][axis]
+                for index in target_local_vertices
+            )
+            source_root_points = _fractions_from_chart_tokens(
+                query.segment_root_reference_rational_tokens, source_row
+            )
+            target_delta = tuple(
+                target_root_points[1][axis] - target_root_points[0][axis]
                 for axis in range(3)
             )
-            varying = next(axis for axis, value in enumerate(delta) if value != 0)
-            parameters = []
-            for point in target_root_points:
-                parameter = (point[varying] - source_root_points[0][varying]) / delta[
-                    varying
-                ]
-                if any(
-                    source_root_points[0][axis] + parameter * delta[axis] != point[axis]
-                    for axis in range(3)
-                ) or not Fraction(0) <= parameter <= Fraction(1):
-                    raise ValueError(
-                        "Mapped target edge leaves its authored source segment chart."
-                    )
-                parameters.append(parameter)
+            varying = next(
+                (axis for axis, value in enumerate(target_delta) if value), None
+            )
+            if varying is None:
+                raise ValueError("Mapped target root edge has zero exact length.")
+            source_in_target = tuple(
+                (point[varying] - target_root_points[0][varying]) / target_delta[varying]
+                for point in source_root_points
+            )
+            if any(
+                target_root_points[0][axis] + parameter * target_delta[axis]
+                != point[axis]
+                for point, parameter in zip(
+                    source_root_points, source_in_target, strict=True
+                )
+                for axis in range(3)
+            ):
+                continue
+            first = max(Fraction(0), min(source_in_target))
+            last = min(Fraction(1), max(source_in_target))
+            if first >= last:
+                continue
+            source_delta = source_in_target[1] - source_in_target[0]
+            if source_delta == 0:
+                raise ValueError("Mapped source segment has zero exact length.")
+            parameters = tuple(
+                (value - source_in_target[0]) / source_delta for value in (first, last)
+            )
             chart_cell_ids.append(target_cell_id)
             chart_edge_ids.append(int(target_edge_entity_ids[target_edge_row]))
             chart_local_edges.append(target_local_edge)
             target_reference_rational_points = tuple(
-                target_reference_vertices[index] for index in target_local_vertices
+                tuple(
+                    target_reference_vertices[target_local_vertices[0]][axis]
+                    + parameter
+                    * (
+                        target_reference_vertices[target_local_vertices[1]][axis]
+                        - target_reference_vertices[target_local_vertices[0]][axis]
+                    )
+                    for axis in range(3)
+                )
+                for parameter in (first, last)
             )
             chart_target_rational_vertices.append(target_reference_rational_points)
             chart_target_vertices.append(
@@ -4663,8 +4698,11 @@ def _mapped_edge_chart_witness(
             intervals_by_chart.setdefault(chart_id, []).append(
                 (min(parameters), max(parameters))
             )
-    for chart_id, intervals in intervals_by_chart.items():
-        ordered = sorted(intervals)
+    selected_chart_ids = {
+        chart_id for entries in charts_by_root_entity.values() for chart_id, _ in entries
+    }
+    for chart_id in selected_chart_ids:
+        ordered = sorted(intervals_by_chart.get(chart_id, ()))
         if (
             not ordered
             or ordered[0][0] != 0
@@ -4823,7 +4861,7 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
             target_size,
             maximum_size=maximum_size,
         )
-        mapped = realize_mapped_grid_hexes(
+        mapped, computed_validity = realize_mapped_grid_hexes(
             grid,
             self.source.domain,
             self.frame,
@@ -4915,6 +4953,7 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
             compliance,
             certification,
             geometry=mapped.geometry,
+            computed_validity=computed_validity,
             organization=organization,
             reference_maps=mapped.reference_maps,
             source_mesh=self.source.domain.reference_mesh,

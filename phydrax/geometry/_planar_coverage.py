@@ -21,6 +21,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
 from ..typing import as_host_array, Dim, HostFloat64, HostInt64, Identifier, Scope
+from ._affine_plc_domain import AffinePlcDomain
 from ._domain_coverage import PiecewiseLinearDomain
 from ._planar_primitives import (
     area2,
@@ -34,6 +35,8 @@ from ._planar_primitives import (
     segment_overlap,
     triangle_pair_separation,
 )
+from ._rational import rational_vector
+
 
 
 type OverlapSemantics = Literal["exact", "candidate"]
@@ -61,9 +64,11 @@ class FacetOverlap:
     coordinate_space: CoordinateSpace
 
 
-def source_facets(domain: PiecewiseLinearDomain, /) -> tuple[OrientedFacet, ...]:
-    points = tuple(
-        tuple(Fraction(float(value)) for value in row) for row in domain.vertices
+def source_facets(domain: PiecewiseLinearDomain | AffinePlcDomain, /) -> tuple[OrientedFacet, ...]:
+    points = (
+        domain.exact_vertices
+        if isinstance(domain, AffinePlcDomain)
+        else tuple(tuple(Fraction(float(value)) for value in row) for row in domain.vertices)
     )
     return tuple(
         OrientedFacet(
@@ -124,7 +129,8 @@ def _facet_measure(facet: OrientedFacet, dimension: int, /) -> Fraction:
     if dimension == 2:
         first, second = facet.vertices
         delta = (second[0] - first[0], second[1] - first[1])
-        axis = max(range(2), key=lambda value: abs(delta[value]))
+        # Match segment_overlap's exact canonical line coordinate.
+        axis = 0 if delta[0] else 1
         return abs(delta[axis])
     plane = plane_key(facet.vertices)
     return area2(project_polygon(facet.vertices, projection_axes(plane))) / 2
@@ -206,7 +212,7 @@ def _possibly_overlapping(
 
 
 def partition_overlaps(
-    domain: PiecewiseLinearDomain,
+    domain: PiecewiseLinearDomain | AffinePlcDomain,
     targets: tuple[OrientedFacet, ...],
     /,
     *,
@@ -223,13 +229,15 @@ def partition_overlaps(
     domain's facet chain realized in declared-plane charts
     (``PlcSourcePoints.sources``); by default the domain's own facets.
     """
-    if not isinstance(domain, PiecewiseLinearDomain):
-        raise TypeError("domain must be PiecewiseLinearDomain.")
+    if not isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain)):
+        raise TypeError("domain must be a PLC domain.")
     dimension = domain.ambient_dimension
     if sources is None:
         sources = source_facets(domain)
     elif len(sources) != domain.facets.shape[0] or any(
-        facet.facet_id != row for row, facet in enumerate(sources)
+        facet.facet_id != row
+        or facet.region_pair != tuple(int(value) for value in domain.facet_regions[row])
+        for row, facet in enumerate(sources)
     ):
         raise ValueError("sources must realize every domain facet in row order.")
     index = SourceFacetIndex(sources)
@@ -369,8 +377,16 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
     ``vertex_parameters``. Source triangles sharing a ``face_groups`` value
     form one source facet; ``domain_face_rows`` names the source triangle
     realizing each coverage-domain facet. The exact source point is
-    authoritative and the mesh carrier must be its correctly rounded binary64
-    realization; certification recomputes both from these parameters.
+    authoritative; certification recomputes it from these parameters.
+
+    ``vertex_deviations`` is ``None`` exactly when every carrier is its
+    source point's correctly rounded binary64 realization. Otherwise it bounds
+    every row: the Euclidean distance from each carrier to its exact source
+    point is at most that outward-rounded value, and rows without a source
+    point hold zero. Nested refinement records such bounds for vertices it
+    creates between rounded source points: a created point is the exact
+    stencil combination of its parents' source points, and its bound is
+    propagated from theirs plus the carrier's own rounding.
     """
 
     __strict_contract__ = True
@@ -385,6 +401,7 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
     face_planes: HostFloat64[_WitnessFaceDim, Literal[3], Literal[3]]
     face_plane_tolerances: HostFloat64[_WitnessFaceDim]
     domain_face_rows: HostInt64[_WitnessDomainFacetDim]
+    vertex_deviations: HostFloat64[_WitnessVertexDim] | None
     domain_id: Identifier = eqx.field(static=True)
     witness_id: Identifier = eqx.field(static=True)
 
@@ -403,6 +420,7 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
         face_plane_tolerances: ArrayLike,
         domain_face_rows: ArrayLike,
         domain_id: str,
+        vertex_deviations: ArrayLike | None,
     ) -> None:
         scope = Scope()
         ids = as_host_array(
@@ -469,6 +487,28 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
             )
         )
         _require_witness_tables(*arrays)
+        deviations = None
+        if vertex_deviations is not None:
+            deviations = np.array(
+                as_host_array(
+                    vertex_deviations,
+                    HostFloat64[_WitnessVertexDim],
+                    "vertex_deviations",
+                    scope=scope,
+                ),
+                copy=True,
+            )
+            if not np.all(np.isfinite(deviations)) or np.any(deviations < 0.0):
+                raise ValueError("vertex_deviations must be finite and nonnegative.")
+            pointed = arrays[1] >= 0
+            if np.any(deviations[~pointed] != 0.0) or np.any(
+                deviations[pointed] <= 0.0
+            ):
+                raise ValueError(
+                    "vertex_deviations must bound every source point positively "
+                    "and hold zero for vertices without one."
+                )
+            deviations.setflags(write=False)
         identity = canonical_identifier(domain_id, "domain_id")
         for array in arrays:
             array.setflags(write=False)
@@ -484,14 +524,17 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
             self.face_plane_tolerances,
             self.domain_face_rows,
         ) = arrays
+        self.vertex_deviations = deviations
         self.domain_id = identity
-        self.witness_id = canonical_fingerprint(
-            {
-                "kind": "plc-source-point-witness",
-                "domain": identity,
-                "tables": tuple(array_tree_fingerprint(array) for array in arrays),
-            }
-        )
+        # The correctly rounded state keeps its identity payload unchanged.
+        payload: dict[str, object] = {
+            "kind": "plc-source-point-witness",
+            "domain": identity,
+            "tables": tuple(array_tree_fingerprint(array) for array in arrays),
+        }
+        if deviations is not None:
+            payload["vertex_deviations"] = array_tree_fingerprint(deviations)
+        self.witness_id = canonical_fingerprint(payload)
 
 
 def _require_witness_tables(
@@ -825,7 +868,7 @@ def _substituted_cell_measures(
 
 def resolve_plc_source_points(
     witness: PlcSourcePointWitness,
-    domain: PiecewiseLinearDomain,
+    domain: PiecewiseLinearDomain | AffinePlcDomain,
     vertex_global_ids: np.ndarray,
     cells: tuple[CellCorners, ...],
     /,
@@ -847,8 +890,13 @@ def resolve_plc_source_points(
             "source_point_witness_binding",
             "The source-point witness binds another domain or mesh vertex bank.",
         )
+    witness_facets = (
+        domain.reference_domain.facets
+        if isinstance(domain, AffinePlcDomain)
+        else domain.facets
+    )
     if domain.ambient_dimension != 3 or not np.array_equal(
-        witness.faces[witness.domain_face_rows], domain.facets
+        witness.faces[witness.domain_face_rows], witness_facets
     ):
         raise SourcePointRefusal(
             "source_point_witness_binding",
@@ -860,9 +908,18 @@ def resolve_plc_source_points(
             "source_point_witness_binding",
             "Witness source rows name absent domain vertices.",
         )
-    vertices = tuple(
-        tuple(Fraction(float(value)) for value in row) for row in domain.vertices
+    vertices = (
+        tuple(rational_vector(row) for row in domain.reference_domain.vertices)
+        if isinstance(domain, AffinePlcDomain)
+        else tuple(tuple(Fraction(float(value)) for value in row) for row in domain.vertices)
     )
+    if isinstance(domain, AffinePlcDomain) and (
+        np.any(witness.vertex_kinds == 3) or np.any(np.isfinite(witness.face_planes))
+    ):
+        raise SourcePointRefusal(
+            "source_point_plane",
+            "Affine PLC evidence must use exact reference vertices, segments or triangles, not declared planes.",
+        )
     facet_groups = tuple(
         int(witness.face_groups[row]) for row in witness.domain_face_rows.tolist()
     )
@@ -886,13 +943,32 @@ def resolve_plc_source_points(
             continue
         vertex = int(witness.vertex_global_ids[row])
         exact = _source_point(witness, row, vertices)
+        if isinstance(domain, AffinePlcDomain):
+            exact = domain.transform_point(exact)
         carrier = carriers.get(vertex)
-        if carrier is None or carrier != tuple(Fraction(float(value)) for value in exact):
+        if carrier is None or (
+            witness.vertex_deviations is None
+            and carrier != exact
+            and carrier != tuple(Fraction(float(value)) for value in exact)
+        ):
             raise SourcePointRefusal(
                 "source_point_rounding",
                 "A mesh carrier is not the correctly rounded exact source point.",
                 entity_ids=(vertex,),
             )
+        if witness.vertex_deviations is not None:
+            squared = sum(
+                ((a - b) ** 2 for a, b in zip(carrier, exact, strict=True)),
+                Fraction(0),
+            )
+            bound = Fraction(float(witness.vertex_deviations[row]))
+            if squared > bound * bound:
+                raise SourcePointRefusal(
+                    "source_point_deviation",
+                    "A mesh carrier lies farther from its exact source point than its "
+                    f"recorded deviation: {_sqrt_upper(squared)!r} > {float(bound)!r}.",
+                    entity_ids=(vertex,),
+                )
         if exact != carrier:
             points[vertex] = exact
             deviation = max(
@@ -911,7 +987,11 @@ def resolve_plc_source_points(
         else:
             groups = {int(witness.face_groups[entity])} & domain_groups
         incidence[vertex] = frozenset(groups)
-    charts, chart_squared = _declared_charts(witness, domain, vertices, facet_groups)
+    charts, chart_squared = (
+        ({}, Fraction(0))
+        if isinstance(domain, AffinePlcDomain)
+        else _declared_charts(witness, domain, vertices, facet_groups)
+    )
     sources = tuple(
         facet
         if facet_groups[facet.facet_id] not in charts

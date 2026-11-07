@@ -485,6 +485,25 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 else embedded_policy_count
             )
             layout.validate_boundary_policy_count(policy_count)
+            owners = np.asarray(layout.owner_cells)
+            neighbors = np.asarray(layout.neighbor_cells)
+            self_faces = np.asarray(layout.active_mask) & (owners == neighbors)
+            if np.any(self_faces):
+                translations = (
+                    discretization.periodic_face_translations
+                    if isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+                    and layout.block_kind == "physical"
+                    else None
+                )
+                face_ids = np.asarray(layout.face_ids, dtype=np.int64)[self_faces]
+                if (
+                    translations is None
+                    or np.any(face_ids >= translations.shape[0])
+                    or np.any(~np.any(np.asarray(translations)[face_ids] != 0.0, axis=1))
+                ):
+                    raise ValueError(
+                        "Self-adjacent FV faces require periodic seam evidence."
+                    )
         stage_rate_block_templates = tuple(
             ConservationStageFluxRateBlock(
                 jnp.zeros(
@@ -493,7 +512,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 ),
                 layout.owner_cells,
                 layout.neighbor_cells,
+                # A certified periodic self-face has equal and opposite cell
+                # incidences, hence contributes exactly zero to the ledger.
                 np.asarray(layout.active_mask)
+                & (np.asarray(layout.owner_cells) != np.asarray(layout.neighbor_cells))
                 & np.asarray(overset_active_cell_mask)[np.asarray(layout.owner_cells)]
                 & (
                     (np.asarray(layout.neighbor_cells) < 0)
@@ -663,6 +685,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         safe_neighbor = jnp.maximum(layout.neighbor_cells, 0)
         return (
             layout.active_mask
+            & (layout.owner_cells != layout.neighbor_cells)
             & self.overset_active_cell_mask[layout.owner_cells]
             & ((layout.neighbor_cells < 0) | self.overset_active_cell_mask[safe_neighbor])
             & active_cell_mask[layout.owner_cells]
@@ -1026,7 +1049,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
         face_ids = overset.receptor_face_ids
         face_cells = overset.receptor_face_cells
-        if face_ids is None or face_cells is None or overset.face_artifact_id is None:
+        face_orientations = overset.receptor_face_orientations
+        if (
+            face_ids is None
+            or face_cells is None
+            or face_orientations is None
+            or overset.face_artifact_id is None
+        ):
             raise ValueError(
                 "Overset correction requires a certified receptor-face artifact with explicit physical face IDs."
             )
@@ -1055,7 +1084,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         )
         physical_owners = layout.owner_cells[positions]
         physical_neighbors = layout.neighbor_cells[positions]
-        incident = (physical_owners == cells) | (physical_neighbors == cells)
+        orientation = jnp.asarray(face_orientations)
+        incident = jnp.where(
+            orientation > 0, physical_owners == cells, physical_neighbors == cells
+        )
         points_array = eqx.error_if(
             points_array,
             jnp.any(~incident) | jnp.any(~layout.active_mask[positions]),
@@ -1066,7 +1098,16 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             physical.area_vectors[positions]
             / face_measures.astype(physical.area_vectors.dtype)[:, None]
         )
-        orientation = jnp.where(physical_owners == cells, 1.0, -1.0)
+        if (
+            isinstance(self.discretization, UnstructuredFiniteVolumeDiscretization)
+            and self.discretization.periodic_face_translations is not None
+        ):
+            translations = self.precision.reconstruction(
+                self.discretization.periodic_face_translations[ids]
+            )
+            points_array = points_array + jnp.where(
+                orientation[:, None, None] < 0.0, translations[:, None, :], 0.0
+            )
         normals_array = orientation[:, None, None] * unit_normals[:, None, :]
         normals_array = jnp.broadcast_to(normals_array, points_array.shape)
         measures_array = self.precision.reduction(physical.quadrature_weights[positions])
@@ -1302,26 +1343,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         route_measures = face_measures[route_right] * route_fraction
         return template.with_flux_rate(route_flux), route_speed, route_measures
 
-    def _append_overset_block(
-        self,
-        ledger: ConservationStageLedger,
-        block: ConservationStageFluxRateBlock | None,
-        /,
-    ) -> ConservationStageLedger:
-        if block is None:
-            return ledger
-        return ConservationStageLedger(
-            (*ledger.blocks, block),
-            ledger.source_rate,
-            ledger.active_cell_mask,
-            geometry_family_id=ledger.geometry_family_id,
-            geometry_layout_id=ledger.geometry_layout_id,
-            geometry_version=ledger.geometry_version,
-            evidence_policy_id=ledger.evidence_policy_id,
-            evidence_version=ledger.evidence_version,
-            topology_epoch_id=ledger.topology_epoch_id,
-        )
-
     def _append_redistribution_block(
         self,
         ledger: ConservationStageLedger,
@@ -1368,6 +1389,15 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         """Create a routed zero rate without invoking reconstruction or physics."""
 
         blocks = self._stage_rate_templates(metrics)
+        zero_overset = (
+            None
+            if self.overset_rate_block_template is None
+            else self.overset_rate_block_template.with_flux_rate(
+                jnp.zeros_like(self.overset_rate_block_template.flux_rate)
+            )
+        )
+        if zero_overset is not None:
+            blocks = (*blocks, zero_overset)
         ledger = ConservationStageLedger(
             blocks,
             jnp.zeros(
@@ -1382,14 +1412,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             evidence_version=metrics.evidence.evidence_version,
             topology_epoch_id=metrics.topology_epoch_id,
         )
-        zero_overset = (
-            None
-            if self.overset_rate_block_template is None
-            else self.overset_rate_block_template.with_flux_rate(
-                jnp.zeros_like(self.overset_rate_block_template.flux_rate)
-            )
-        )
-        ledger = self._append_overset_block(ledger, zero_overset)
         return self._append_redistribution_block(ledger, redistribution)
 
     def evaluate_stage(
@@ -1861,6 +1883,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             source_rate = jnp.where(
                 owned_active[:, None], source_rate, jnp.zeros_like(source_rate)
             )
+        if overset_block is not None:
+            blocks.append(overset_block)
         ledger = ConservationStageLedger(
             tuple(blocks),
             source_rate,
@@ -1872,7 +1896,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             evidence_version=metrics.evidence.evidence_version,
             topology_epoch_id=metrics.topology_epoch_id,
         )
-        ledger = self._append_overset_block(ledger, overset_block)
         ledger = self._append_redistribution_block(ledger, redistribution)
         cfl_active = (
             metrics.active_cell_mask if owner_local_view is None else owned_active

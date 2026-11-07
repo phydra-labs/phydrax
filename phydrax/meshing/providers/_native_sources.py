@@ -5,15 +5,17 @@
 """Scientific source bindings consumed by the native meshing routes."""
 
 from __future__ import annotations
+from dataclasses import dataclass
 
 from fractions import Fraction
-from typing import final, NamedTuple, TYPE_CHECKING
+from typing import final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import normalized_identifier
@@ -29,25 +31,37 @@ from ...discretization._reference_cell import reference_cell_topology
 from ...discretization._tensor_support import PreparedTensorGrid
 from ...geometry._atlas import BoundaryAtlas
 from ...geometry._contracts import CompiledGeometry, GeometryKind
+from ...geometry._coplanar_overlap import CoplanarTrianglePiece
 from ...geometry._curve_boundary import SegmentChartCurve
 from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
 from ...geometry._meshing_domain import MeshingDomain
-from ...geometry._source_boundary_records import SourceBoundaryQuery
+from ...geometry._source_boundary_records import (
+    SourceBoundaryQuery,
+    SourceBoundaryRationalChartBank,
+)
 from ...geometry._source_identity import source_entity_id
 from ...geometry._surface_source_support import SurfaceSourceCharts
+from ...geometry.surface import SurfaceModel
+from ...geometry.brep._projection import NativeBRepProjection, prepare_brep_projection
+from ...geometry.brep._projection_contracts import BRepProjectionPolicy
 from ...geometry.implicit._adaptive_discovery import AdaptiveImplicitSurface
 from ...geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ...geometry.simplicial._regions import PlanarMeshRegion, SegmentMesh
 from ...typing import checked
-from .._association import GeometryAssociation
-from .._boundary_layer import BoundaryLayerMesh
-from .._controls import BlockInterfaceControl
+from .._association import (
+    AssociationPropagationPolicy,
+    GeometryAssociation,
+    GeometryAssociationKind,
+)
+from .._boundary_layer import BoundaryLayerMesh, BoundaryLayerPolicy
+from .._controls import BlockInterfaceControl, BoundaryLayerControl
 from .._layer_core_regions import prepare_layer_region_identity
 from .._plc_source import _numeric_entity_ids, PiecewiseLinearComplex
 from .._scope import _SourceEntityScopes, MeshingScope
 from .._structured import TransfiniteBlock
 from .._sweep import SweepControl
+from ._native_schedules import NativeCurveSchedule, NativeSurfaceSchedule
 
 
 if TYPE_CHECKING:
@@ -152,27 +166,37 @@ def _plc_scope_set_id(
     )
 
 
-class _MappedPlcRootRelation(NamedTuple):
+@final
+class _MappedPlcRootRelation(StrictModule, NonTrainableState):
+    """Exact mapped ancestry with static rational metadata and dynamic arrays."""
+
     vertex_root_global_ids: np.ndarray
     segment_root_dimensions: np.ndarray
     segment_root_entity_ids: np.ndarray
     segment_root_cell_global_ids: np.ndarray
     segment_root_local_entity_indices: np.ndarray
-    segment_root_reference_vertices: np.ndarray
+    segment_root_reference_rational_tokens: SourceBoundaryRationalChartBank = eqx.field(
+        static=True
+    )
     segment_orientation_signs: np.ndarray
     polygon_source_facet_rows: np.ndarray
     polygon_root_face_global_ids: np.ndarray
     polygon_root_cell_global_ids: np.ndarray
     polygon_root_local_face_indices: np.ndarray
-    polygon_root_reference_vertices: np.ndarray
+    polygon_root_reference_rational_tokens: tuple[
+        SourceBoundaryRationalChartBank, ...
+    ] = eqx.field(static=True)
     polygon_orientation_signs: np.ndarray
     segment_source_entity_ids: np.ndarray
-    segment_source_entity_keys: tuple[str, ...]
-    segment_source_occurrence_paths: tuple[tuple[str, ...], ...]
+    segment_source_entity_keys: tuple[str, ...] = eqx.field(static=True)
+    segment_source_occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     polygon_source_entity_ids: np.ndarray
-    polygon_source_entity_keys: tuple[str, ...]
-    polygon_source_occurrence_paths: tuple[tuple[str, ...], ...]
-    relation_id: str
+    polygon_source_entity_keys: tuple[str, ...] = eqx.field(static=True)
+    polygon_source_occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
+    segment_source_parameter_rational_tokens: tuple[
+        tuple[tuple[int, int], tuple[int, int]], ...
+    ] = eqx.field(static=True)
+    relation_id: str = eqx.field(static=True)
 
 
 def _mapped_triangle_key(vertices: tuple[int, ...], /) -> tuple[int, int, int]:
@@ -186,39 +210,16 @@ def _mapped_triangle_key(vertices: tuple[int, ...], /) -> tuple[int, int, int]:
     )
 
 
-def _mapped_plc_root_relation(
-    reference: NativePlcSource,
+def _mapped_plc_bind_source_vertices(
     domain: MappedReferenceDomain,
     vertex_root_global_ids: ArrayLike | None,
+    reference: NativePlcSource,
+    complex_: PiecewiseLinearComplex,
+    reference_vertex_roots: tuple[int, ...],
+    mesh: CellMesh,
+    root_vertex_rows: dict[int, int],
     /,
-) -> _MappedPlcRootRelation:
-    complex_ = reference.complex
-    mesh = domain.reference_mesh
-    root_kinds = tuple(block.cell_kind for block in mesh.blocks)
-    if not root_kinds:
-        raise ValueError("Mapped PLC/root correspondence requires declared root cells.")
-    root_topology = reference_cell_topology(root_kinds[0])
-    root_families = {reference_cell_topology(kind).family for kind in root_kinds}
-    if (
-        (reference.source_id, reference.source_revision)
-        != (domain.source_id, domain.source_revision)
-        or complex_.region_ids != domain.region_ids
-        or len(root_families) != 1
-        or root_topology.family not in {"hexahedron", "tetrahedron"}
-    ):
-        raise ValueError(
-            "Mapped PLC/root correspondence requires one source revision, identical regions, and a homogeneous hexahedral or tetrahedral root family."
-        )
-    reference_vertex_roots = domain.reference_domain_vertex_root_ids
-    if reference_vertex_roots is None:
-        raise ValueError(
-            "Mapped PLC/root correspondence requires declared reference-domain vertex/root IDs."
-        )
-
-    root_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    root_vertex_rows = {
-        int(identifier): row for row, identifier in enumerate(root_vertex_ids.tolist())
-    }
+) -> tuple[np.ndarray, np.ndarray]:
     root_paths = {
         int(identifier): path
         for identifier, path in zip(
@@ -330,7 +331,16 @@ def _mapped_plc_root_relation(
             raise ValueError(
                 "PLC/root vertex relation changed an authored occurrence path."
             )
+    return plc_vertex_root_ids, plc_root_rows
 
+
+def _mapped_plc_validate_source_facets(
+    complex_: PiecewiseLinearComplex,
+    plc_vertex_root_ids: np.ndarray,
+    domain: MappedReferenceDomain,
+    reference_vertex_roots: tuple[int, ...],
+    /,
+) -> tuple[np.ndarray, list[tuple[int, int, int]], list[int]]:
     source_facet_regions = np.asarray(complex_.facet_regions, dtype=np.int64)
     if source_facet_regions.ndim != 2 or source_facet_regions.shape[1] != 2:
         raise ValueError("Mapped PLC facets require exactly two oriented region sides.")
@@ -408,6 +418,906 @@ def _mapped_plc_root_relation(
         raise ValueError(
             "PLC facets, source keys, orientations, and region sides do not match the declared mapped reference boundary."
         )
+    return source_facet_regions, polygon_root_vertices, polygon_source_facets
+
+
+@dataclass(frozen=True, slots=True)
+class _MappedRootInventory:
+    """Host-only source and root incidence used to derive exact overlay pieces."""
+
+    reference: NativePlcSource
+    domain: MappedReferenceDomain
+    complex: PiecewiseLinearComplex
+    root_faces: np.ndarray | tuple[np.ndarray, ...]
+    root_edges: np.ndarray
+    root_cells: np.ndarray
+    root_face_local_vertices: tuple[tuple[int, ...], ...]
+    root_edge_local_vertices: tuple[tuple[int, ...], ...]
+    root_cell_ids: np.ndarray
+    root_face_ids: np.ndarray
+    root_edge_ids: np.ndarray
+    root_cell_regions: np.ndarray
+    root_vertex_ids: np.ndarray
+    root_vertex_rows: dict[int, int]
+    face_owners: dict[int, list[tuple[int, int]]]
+    edge_owners: dict[int, list[tuple[int, int]]]
+    coordinates: tuple[tuple[Fraction, ...], ...]
+    reference_corners: tuple[tuple[Fraction, ...], ...]
+    root_reference_vertices: np.ndarray
+    plc_vertex_root_ids: np.ndarray
+    plc_root_rows: np.ndarray
+    polygon_root_vertices: list[tuple[int, int, int]]
+    polygon_source_facets: list[int]
+    source_facet_regions: np.ndarray
+
+
+type _MappedFaceOverlay = tuple[
+    list[int],
+    list[int],
+    list[tuple[int, int]],
+    list[tuple[int, int]],
+    tuple[SourceBoundaryRationalChartBank, ...],
+    list[tuple[int, int]],
+]
+type _MappedEdgePartition = tuple[
+    list[int],
+    list[int],
+    list[int],
+    list[int],
+    list[tuple[tuple[Fraction, ...], ...] | np.ndarray],
+    list[int],
+    list[int],
+    list[tuple[Fraction, Fraction]],
+]
+
+
+def _mapped_root_face_piece(
+    inventory: _MappedRootInventory,
+    source_triangle: tuple[tuple[Fraction, ...], ...],
+    vertices: tuple[int, int, int],
+    target_chart: tuple[tuple[Fraction, Fraction], ...],
+    order: tuple[int, int, int],
+    cell: int,
+    local: int,
+    side: int,
+    /,
+) -> tuple[tuple[tuple[Fraction, ...], ...], int]:
+    coordinates, root_cells = inventory.coordinates, inventory.root_cells
+    reference_corners = inventory.reference_corners
+    root_face_local_vertices = inventory.root_face_local_vertices
+    source_a = tuple(
+        source_triangle[1][axis] - source_triangle[0][axis] for axis in range(3)
+    )
+    source_b = tuple(
+        source_triangle[2][axis] - source_triangle[0][axis] for axis in range(3)
+    )
+    source_normal = (
+        source_a[1] * source_b[2] - source_a[2] * source_b[1],
+        source_a[2] * source_b[0] - source_a[0] * source_b[2],
+        source_a[0] * source_b[1] - source_a[1] * source_b[0],
+    )
+    center = tuple(
+        sum(
+            (coordinates[int(vertex)][axis] for vertex in root_cells[cell]),
+            Fraction(0),
+        )
+        / len(root_cells[cell])
+        for axis in range(3)
+    )
+    source_side = sum(
+        (
+            source_normal[axis] * (center[axis] - source_triangle[0][axis])
+            for axis in range(3)
+        ),
+        Fraction(0),
+    )
+    if (side == 0 and source_side <= 0) or (side == 1 and source_side >= 0):
+        raise ValueError("Mapped root cell lies on the wrong oriented source facet side.")
+    local_vertices = tuple(int(value) for value in root_cells[cell])
+    target_refs = tuple(
+        reference_corners[local_vertices.index(vertex)] for vertex in vertices
+    )
+    points = tuple(
+        tuple(
+            target_refs[0][axis]
+            + target_chart[index][0] * (target_refs[1][axis] - target_refs[0][axis])
+            + target_chart[index][1] * (target_refs[2][axis] - target_refs[0][axis])
+            for axis in range(3)
+        )
+        for index in order
+    )
+    face_refs = tuple(
+        reference_corners[index] for index in root_face_local_vertices[local]
+    )
+    first = tuple(face_refs[1][axis] - face_refs[0][axis] for axis in range(3))
+    second = tuple(face_refs[-1][axis] - face_refs[0][axis] for axis in range(3))
+    a = tuple(points[1][axis] - points[0][axis] for axis in range(3))
+    b = tuple(points[2][axis] - points[0][axis] for axis in range(3))
+    normal = (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+    piece_normal = (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+    dot = sum(
+        (x * y for x, y in zip(normal, piece_normal, strict=True)),
+        Fraction(0),
+    )
+    if not dot:
+        raise ValueError("Mapped source overlap piece is degenerate.")
+    return points, 1 if dot > 0 else -1
+
+
+def _mapped_overlay_face_piece(
+    inventory: _MappedRootInventory,
+    facet: int,
+    face: int,
+    vertices: tuple[int, int, int],
+    source_triangle: tuple[tuple[Fraction, ...], ...],
+    piece: CoplanarTrianglePiece,
+    /,
+) -> tuple[
+    int,
+    tuple[int, int],
+    tuple[int, int],
+    tuple[tuple[tuple[Fraction, ...], ...], ...],
+    tuple[int, int],
+]:
+    from ...geometry._planar_primitives import signed_area2
+
+    root_faces, coordinates, complex_ = (
+        inventory.root_faces,
+        inventory.coordinates,
+        inventory.complex,
+    )
+    face_owners, domain = inventory.face_owners, inventory.domain
+    source_facet_regions, root_cell_regions = (
+        inventory.source_facet_regions,
+        inventory.root_cell_regions,
+    )
+    root_cell_ids, root_face_ids = inventory.root_cell_ids, inventory.root_face_ids
+    face_vertices = tuple(int(value) for value in root_faces[face])
+    if len(face_vertices) == 4:
+        corners = tuple(coordinates[value] for value in face_vertices)
+        if any(
+            corners[0][axis] + corners[2][axis] != corners[1][axis] + corners[3][axis]
+            for axis in range(3)
+        ):
+            raise ValueError(
+                "Exact rational source/root overlay requires an affine root-face chart."
+            )
+    owners = face_owners[face]
+    side_regions = tuple(
+        None if int(value) < 0 else complex_.region_ids[int(value)]
+        for value in source_facet_regions[facet]
+    )
+    owner_by_region = {
+        domain.region_ids[int(root_cell_regions[cell])]: (cell, local)
+        for cell, local in owners
+    }
+    if set(owner_by_region) != {value for value in side_regions if value is not None}:
+        raise ValueError(
+            "Mapped root face material incidence differs from the source facet."
+        )
+    order = (0, 1, 2) if signed_area2(piece.source_chart) > 0 else (0, 2, 1)
+    cell_ids = [-1, -1]
+    local_faces = [-1, -1]
+    orientations = [0, 0]
+    reference_points = [
+        ((Fraction(0),) * 3,) * 3,
+        ((Fraction(0),) * 3,) * 3,
+    ]
+    for side, region in enumerate(side_regions):
+        if region is None:
+            continue
+        cell, local = owner_by_region[region]
+        points, orientation = _mapped_root_face_piece(
+            inventory,
+            source_triangle,
+            vertices,
+            piece.target_chart,
+            order,
+            cell,
+            local,
+            side,
+        )
+        cell_ids[side] = int(root_cell_ids[cell])
+        local_faces[side] = local
+        orientations[side] = orientation
+        reference_points[side] = points
+    return (
+        int(root_face_ids[face]),
+        (cell_ids[0], cell_ids[1]),
+        (local_faces[0], local_faces[1]),
+        tuple(reference_points),
+        (orientations[0], orientations[1]),
+    )
+
+
+def _mapped_plc_face_overlay(inventory: _MappedRootInventory, /) -> _MappedFaceOverlay:
+    from ...geometry._coplanar_overlap import exact_coplanar_triangle_partitions
+    from ...geometry._source_boundary_records import rational_chart_tokens
+
+    root_faces = inventory.root_faces
+    polygon_source_facets = inventory.polygon_source_facets
+    source_facet_regions = inventory.source_facet_regions
+    face_owners = inventory.face_owners
+    domain = inventory.domain
+    root_cell_regions = inventory.root_cell_regions
+    root_vertex_rows = inventory.root_vertex_rows
+    coordinates = inventory.coordinates
+    polygon_root_vertices = inventory.polygon_root_vertices
+    complex_ = inventory.complex
+
+    face_regions = {
+        row: tuple(
+            sorted(
+                domain.region_ids[int(root_cell_regions[cell])]
+                for cell, _ in face_owners.get(row, ())
+            )
+        )
+        for row in range(len(root_faces))
+    }
+    required_face_rows = {
+        row
+        for row, regions in face_regions.items()
+        if len(regions) == 1 or (len(regions) == 2 and regions[0] != regions[1])
+    }
+    source_groups: dict[tuple[str, ...], list[int]] = {}
+    for polygon, facet in enumerate(polygon_source_facets):
+        regions = tuple(
+            sorted(
+                complex_.region_ids[int(value)]
+                for value in source_facet_regions[facet]
+                if int(value) >= 0
+            )
+        )
+        source_groups.setdefault(regions, []).append(polygon)
+    target_groups: dict[tuple[str, ...], list[tuple[int, tuple[int, int, int]]]] = {}
+    for face in sorted(required_face_rows):
+        vertices = tuple(int(value) for value in root_faces[face])
+        for index in range(1, len(vertices) - 1):
+            target_groups.setdefault(face_regions[face], []).append(
+                (face, (vertices[0], vertices[index], vertices[index + 1]))
+            )
+    if source_groups.keys() != target_groups.keys():
+        raise ValueError("Mapped source and root material strata differ.")
+    polygon_root_face_ids: list[int] = []
+    polygon_root_cell_ids: list[tuple[int, int]] = []
+    polygon_root_local_faces: list[tuple[int, int]] = []
+    polygon_root_reference_points: list[tuple[tuple[tuple[Fraction, ...], ...], ...]] = []
+    polygon_orientation_signs: list[tuple[int, int]] = []
+    piece_facets: list[int] = []
+    for regions in sorted(source_groups):
+        source_rows = source_groups[regions]
+        targets = target_groups[regions]
+        source_triangles = tuple(
+            tuple(
+                coordinates[root_vertex_rows[vertex]]
+                for vertex in polygon_root_vertices[row]
+            )
+            for row in source_rows
+        )
+        target_triangles = tuple(
+            tuple(coordinates[vertex] for vertex in vertices) for _, vertices in targets
+        )
+        pieces = exact_coplanar_triangle_partitions(source_triangles, target_triangles)
+        for piece in pieces:
+            polygon = source_rows[piece.source_row]
+            facet = polygon_source_facets[polygon]
+            face, vertices = targets[piece.target_row]
+            face_id, cells, locals_, refs, signs = _mapped_overlay_face_piece(
+                inventory,
+                facet,
+                face,
+                vertices,
+                source_triangles[piece.source_row],
+                piece,
+            )
+            piece_facets.append(facet)
+            polygon_root_face_ids.append(face_id)
+            polygon_root_cell_ids.append(cells)
+            polygon_root_local_faces.append(locals_)
+            polygon_root_reference_points.append(refs)
+            polygon_orientation_signs.append(signs)
+    polygon_root_reference_tokens = tuple(
+        tuple(rational_chart_tokens((side,))[0] for side in row)
+        for row in polygon_root_reference_points
+    )
+    return (
+        piece_facets,
+        polygon_root_face_ids,
+        polygon_root_cell_ids,
+        polygon_root_local_faces,
+        polygon_root_reference_tokens,
+        polygon_orientation_signs,
+    )
+
+
+def _mapped_root_face_interval(
+    inventory: _MappedRootInventory,
+    first: tuple[Fraction, ...],
+    last: tuple[Fraction, ...],
+    face: int,
+    /,
+) -> tuple[Fraction, Fraction] | None:
+    from ...geometry._planar_primitives import (
+        cross,
+        plane_key,
+        project_polygon,
+        projection_axes,
+        signed_area2,
+    )
+
+    coordinates, root_faces = inventory.coordinates, inventory.root_faces
+    vertices = tuple(coordinates[int(row)] for row in root_faces[face])
+    plane = plane_key(vertices[:3])
+    if any(
+        sum(plane[axis] * point[axis] for axis in range(3)) + plane[3] != 0
+        for point in (*vertices, first, last)
+    ):
+        return None
+    axes = projection_axes(plane)
+    polygon = project_polygon(vertices, axes)
+    start, end = project_polygon((first, last), axes)
+    sign = 1 if signed_area2(polygon) > 0 else -1
+    low, high = Fraction(0), Fraction(1)
+    for index, a in enumerate(polygon):
+        b = polygon[(index + 1) % len(polygon)]
+        left, right = sign * cross(a, b, start), sign * cross(a, b, end)
+        if left < 0 and right < 0:
+            return None
+        if left < 0:
+            low = max(low, -left / (right - left))
+        elif right < 0:
+            high = min(high, left / (left - right))
+    return (low, high) if low < high else None
+
+
+def _mapped_root_edge_parameter(
+    inventory: _MappedRootInventory, point: tuple[Fraction, ...], edge: int, /
+) -> Fraction | None:
+    coordinates, root_edges = inventory.coordinates, inventory.root_edges
+    first, last = (coordinates[int(row)] for row in root_edges[edge])
+    direction = tuple(last[axis] - first[axis] for axis in range(3))
+    axis = next((axis for axis, value in enumerate(direction) if value), None)
+    if axis is None:
+        raise ValueError("Mapped root edge is degenerate.")
+    parameter = (point[axis] - first[axis]) / direction[axis]
+    if not 0 <= parameter <= 1 or any(
+        point[axis] != first[axis] + parameter * direction[axis] for axis in range(3)
+    ):
+        return None
+    return parameter
+
+
+def _mapped_root_face_reference_point(
+    inventory: _MappedRootInventory, point: tuple[Fraction, ...], face: int, cell: int, /
+) -> tuple[Fraction, ...]:
+    from ...geometry._planar_primitives import plane_key, projection_axes
+
+    root_faces, coordinates = inventory.root_faces, inventory.coordinates
+    root_cells, reference_corners = inventory.root_cells, inventory.reference_corners
+    vertices = tuple(int(value) for value in root_faces[face])
+    physical = tuple(coordinates[vertex] for vertex in vertices)
+    plane = plane_key(physical[:3])
+    axes = projection_axes(plane)
+    last = 3 if len(vertices) == 4 else 2
+    origin, first, second = (physical[index] for index in (0, 1, last))
+    x, y = axes
+    a, b = first[x] - origin[x], second[x] - origin[x]
+    c, d = first[y] - origin[y], second[y] - origin[y]
+    determinant = a * d - b * c
+    if not determinant:
+        raise ValueError("Mapped root face has a singular reference chart.")
+    u = ((point[x] - origin[x]) * d - (point[y] - origin[y]) * b) / determinant
+    v = (a * (point[y] - origin[y]) - c * (point[x] - origin[x])) / determinant
+    if any(
+        point[axis]
+        != origin[axis]
+        + u * (first[axis] - origin[axis])
+        + v * (second[axis] - origin[axis])
+        + (
+            u
+            * v
+            * (
+                physical[0][axis]
+                - physical[1][axis]
+                + physical[2][axis]
+                - physical[3][axis]
+            )
+            if len(vertices) == 4
+            else 0
+        )
+        for axis in range(3)
+    ):
+        raise ValueError(
+            "Mapped root face does not have the required exact affine inverse."
+        )
+    cell_vertices = tuple(int(value) for value in root_cells[cell])
+    refs = tuple(reference_corners[cell_vertices.index(vertex)] for vertex in vertices)
+    return tuple(
+        refs[0][axis]
+        + u * (refs[1][axis] - refs[0][axis])
+        + v * (refs[last][axis] - refs[0][axis])
+        for axis in range(3)
+    )
+
+
+def _mapped_unsplit_source_segment(
+    inventory: _MappedRootInventory,
+    segment: np.ndarray,
+    root_edge_rows_by_vertices: dict[frozenset[int], int],
+    /,
+) -> tuple[int, int, int, int, np.ndarray, int]:
+    plc_vertex_root_ids, root_vertex_ids = (
+        inventory.plc_vertex_root_ids,
+        inventory.root_vertex_ids,
+    )
+    root_faces, root_cells = inventory.root_faces, inventory.root_cells
+    root_edge_ids, root_face_ids, root_cell_ids = (
+        inventory.root_edge_ids,
+        inventory.root_face_ids,
+        inventory.root_cell_ids,
+    )
+    edge_owners, face_owners = inventory.edge_owners, inventory.face_owners
+    root_reference_vertices = inventory.root_reference_vertices
+    root_edge_local_vertices = inventory.root_edge_local_vertices
+    source_endpoints = tuple(int(plc_vertex_root_ids[int(row)]) for row in segment)
+    endpoint_set = frozenset(source_endpoints)
+    edge_row = root_edge_rows_by_vertices.get(endpoint_set)
+    selected_owner: tuple[int, int] | None = None
+    dimension = -1
+    entity_id = -1
+    local_entity = -1
+    if edge_row is not None:
+        owners = edge_owners.get(edge_row, ())
+        if owners:
+            selected_owner = min(owners, key=lambda item: int(root_cell_ids[item[0]]))
+            dimension = 1
+            entity_id = int(root_edge_ids[edge_row])
+            local_entity = selected_owner[1]
+    if selected_owner is None:
+        candidate_faces = tuple(
+            row
+            for row, face in enumerate(root_faces)
+            if endpoint_set.issubset({int(root_vertex_ids[int(value)]) for value in face})
+        )
+        if len(candidate_faces) == 1:
+            face_row = candidate_faces[0]
+            owners = face_owners.get(face_row, ())
+            if owners:
+                selected_owner = min(owners, key=lambda item: int(root_cell_ids[item[0]]))
+                dimension = 2
+                entity_id = int(root_face_ids[face_row])
+                local_entity = selected_owner[1]
+    if selected_owner is None:
+        cell_candidates = tuple(
+            row
+            for row, vertices in enumerate(root_cells.tolist())
+            if endpoint_set.issubset(
+                {int(root_vertex_ids[int(value)]) for value in vertices}
+            )
+        )
+        if len(cell_candidates) == 1:
+            selected_owner = (cell_candidates[0], -1)
+            dimension = 3
+            entity_id = int(root_cell_ids[cell_candidates[0]])
+    reference_points = np.zeros((2, 3), dtype=np.float64)
+    orientation = 0
+    if selected_owner is not None:
+        cell_row = selected_owner[0]
+        cell_vertex_ids = tuple(
+            int(root_vertex_ids[int(row)]) for row in root_cells[cell_row]
+        )
+        local_positions = tuple(
+            cell_vertex_ids.index(value) for value in source_endpoints
+        )
+        reference_points = root_reference_vertices[
+            np.asarray(local_positions, dtype=np.int64)
+        ]
+        if np.array_equal(reference_points[0], reference_points[1]):
+            raise ValueError("Mapped PLC segment collapses in its root-cell chart.")
+        if dimension == 1:
+            local_edge = root_edge_local_vertices[local_entity]
+            oriented_edge = tuple(cell_vertex_ids[position] for position in local_edge)
+            if source_endpoints == oriented_edge:
+                orientation = 1
+            elif source_endpoints == tuple(reversed(oriented_edge)):
+                orientation = -1
+            else:
+                raise ValueError(
+                    "Mapped PLC segment endpoint order changed its root edge."
+                )
+        else:
+            delta = reference_points[1] - reference_points[0]
+            varying = np.flatnonzero(delta)
+            orientation = 1 if delta[int(varying[0])] > 0.0 else -1
+    return (
+        dimension,
+        entity_id,
+        -1 if selected_owner is None else int(root_cell_ids[selected_owner[0]]),
+        local_entity,
+        reference_points,
+        orientation,
+    )
+
+
+def _mapped_split_edge_piece(
+    inventory: _MappedRootInventory,
+    points: tuple[tuple[Fraction, ...], ...],
+    intervals: tuple[tuple[int, tuple[Fraction, Fraction]], ...],
+    a: Fraction,
+    b: Fraction,
+    /,
+) -> tuple[int, int, int, int, tuple[tuple[Fraction, ...], ...], int]:
+    root_edges, root_edge_ids = inventory.root_edges, inventory.root_edge_ids
+    edge_owners, face_owners = inventory.edge_owners, inventory.face_owners
+    root_cell_ids, root_cells = inventory.root_cell_ids, inventory.root_cells
+    root_edge_local_vertices = inventory.root_edge_local_vertices
+    coordinates, reference_corners = inventory.coordinates, inventory.reference_corners
+    root_face_ids = inventory.root_face_ids
+    matching_edges = tuple(
+        edge
+        for edge in range(len(root_edges))
+        if all(
+            _mapped_root_edge_parameter(inventory, point, edge) is not None
+            for point in points
+        )
+    )
+    if matching_edges:
+        edge = min(matching_edges, key=lambda row: int(root_edge_ids[row]))
+        cell, local = min(edge_owners[edge], key=lambda item: int(root_cell_ids[item[0]]))
+        local_edge = root_edge_local_vertices[local]
+        edge_start = coordinates[int(root_cells[cell, local_edge[0]])]
+        edge_end = coordinates[int(root_cells[cell, local_edge[1]])]
+        direction = tuple(edge_end[axis] - edge_start[axis] for axis in range(3))
+        axis = next(axis for axis, value in enumerate(direction) if value)
+        parameters = tuple(
+            (point[axis] - edge_start[axis]) / direction[axis] for point in points
+        )
+        refs = tuple(
+            tuple(
+                reference_corners[local_edge[0]][axis]
+                + parameter
+                * (
+                    reference_corners[local_edge[1]][axis]
+                    - reference_corners[local_edge[0]][axis]
+                )
+                for axis in range(3)
+            )
+            for parameter in parameters
+        )
+        dimension, entity = 1, int(root_edge_ids[edge])
+        orientation = 1 if parameters[1] > parameters[0] else -1
+    else:
+        face = min(
+            (face for face, (low, high) in intervals if low <= a and b <= high),
+            key=lambda row: int(root_face_ids[row]),
+        )
+        cell, local = min(face_owners[face], key=lambda item: int(root_cell_ids[item[0]]))
+        refs = tuple(
+            _mapped_root_face_reference_point(inventory, point, face, cell)
+            for point in points
+        )
+        delta = tuple(refs[1][axis] - refs[0][axis] for axis in range(3))
+        orientation = 1 if next(value for value in delta if value) > 0 else -1
+        dimension, entity = 2, int(root_face_ids[face])
+    return dimension, entity, cell, local, refs, orientation
+
+
+def _mapped_plc_edge_partition(
+    inventory: _MappedRootInventory, /
+) -> _MappedEdgePartition:
+    root_edges = inventory.root_edges
+    complex_ = inventory.complex
+    root_faces = inventory.root_faces
+    coordinates = inventory.coordinates
+    root_cell_ids = inventory.root_cell_ids
+    root_vertex_ids = inventory.root_vertex_ids
+    plc_root_rows = inventory.plc_root_rows
+    # Explicit segment maps retain root-edge or root-face charts. Unmapped
+    # interior segments remain present in source identity but cannot satisfy a
+    # mapped feature request.
+    root_edge_rows_by_vertices: dict[frozenset[int], int] = {}
+    for edge_row, edge in enumerate(root_edges.tolist()):
+        root_edge_rows_by_vertices[
+            frozenset(int(root_vertex_ids[int(row)]) for row in edge)
+        ] = edge_row
+    segment_dimensions: list[int] = []
+    segment_entity_ids: list[int] = []
+    segment_cell_ids: list[int] = []
+    segment_local_entities: list[int] = []
+    segment_reference_points: list[tuple[tuple[Fraction, ...], ...] | np.ndarray] = []
+    segment_orientations: list[int] = []
+    segment_source_rows: list[int] = []
+    segment_source_parameters: list[tuple[Fraction, Fraction]] = []
+    for source_row, segment in enumerate(
+        np.asarray(complex_.plc_edge_vertices, dtype=np.int64)
+    ):
+        first, last = (coordinates[int(plc_root_rows[int(row)])] for row in segment)
+        intervals = tuple(
+            (face, interval)
+            for face in range(len(root_faces))
+            if (interval := _mapped_root_face_interval(inventory, first, last, face))
+            is not None
+        )
+        cuts = sorted(
+            {
+                Fraction(0),
+                Fraction(1),
+                *(value for _, interval in intervals for value in interval),
+            }
+        )
+        covered = all(
+            any(low <= a and b <= high for _, (low, high) in intervals)
+            for a, b in zip(cuts[:-1], cuts[1:], strict=True)
+        )
+        if covered and intervals:
+            for a, b in zip(cuts[:-1], cuts[1:], strict=True):
+                points = tuple(
+                    tuple(
+                        first[axis] + parameter * (last[axis] - first[axis])
+                        for axis in range(3)
+                    )
+                    for parameter in (a, b)
+                )
+                dimension, entity, cell, local, refs, orientation = (
+                    _mapped_split_edge_piece(
+                        inventory,
+                        points,
+                        intervals,
+                        a,
+                        b,
+                    )
+                )
+                segment_source_rows.append(source_row)
+                segment_source_parameters.append((a, b))
+                segment_dimensions.append(dimension)
+                segment_entity_ids.append(entity)
+                segment_cell_ids.append(int(root_cell_ids[cell]))
+                segment_local_entities.append(local)
+                segment_reference_points.append(refs)
+                segment_orientations.append(orientation)
+            continue
+        dimension, entity_id, cell_id, local_entity, reference_points, orientation = (
+            _mapped_unsplit_source_segment(inventory, segment, root_edge_rows_by_vertices)
+        )
+        segment_dimensions.append(dimension)
+        segment_entity_ids.append(entity_id)
+        segment_cell_ids.append(cell_id)
+        segment_local_entities.append(local_entity)
+        segment_reference_points.append(reference_points)
+        segment_orientations.append(orientation)
+        segment_source_rows.append(source_row)
+        segment_source_parameters.append((Fraction(0), Fraction(1)))
+    return (
+        segment_dimensions,
+        segment_entity_ids,
+        segment_cell_ids,
+        segment_local_entities,
+        segment_reference_points,
+        segment_orientations,
+        segment_source_rows,
+        segment_source_parameters,
+    )
+
+
+def _mapped_plc_assemble_relation(
+    inventory: _MappedRootInventory,
+    faces: _MappedFaceOverlay,
+    edges: _MappedEdgePartition,
+    /,
+) -> _MappedPlcRootRelation:
+    from ...geometry._source_boundary_records import rational_chart_tokens
+
+    plc_vertex_root_ids = inventory.plc_vertex_root_ids
+    complex_ = inventory.complex
+    reference = inventory.reference
+    domain = inventory.domain
+    (
+        segment_dimensions,
+        segment_entity_ids,
+        segment_cell_ids,
+        segment_local_entities,
+        segment_reference_points,
+        segment_orientations,
+        segment_source_rows,
+        segment_source_parameters,
+    ) = edges
+    (
+        polygon_source_facets,
+        polygon_root_face_ids,
+        polygon_root_cell_ids,
+        polygon_root_local_faces,
+        polygon_root_reference_tokens,
+        polygon_orientation_signs,
+    ) = faces
+
+    arrays = (
+        np.asarray(plc_vertex_root_ids, dtype=np.int64),
+        np.asarray(segment_dimensions, dtype=np.int8),
+        np.asarray(segment_entity_ids, dtype=np.int64),
+        np.asarray(segment_cell_ids, dtype=np.int64),
+        np.asarray(segment_local_entities, dtype=np.int32),
+        rational_chart_tokens(
+            tuple(
+                tuple(
+                    Fraction.from_float(float(value))
+                    if isinstance(value, (float, np.floating))
+                    else value
+                    for value in point
+                )
+                for point in row
+            )
+            for row in segment_reference_points
+        ),
+        np.asarray(segment_orientations, dtype=np.int8),
+        np.asarray(polygon_source_facets, dtype=np.int64),
+        np.asarray(polygon_root_face_ids, dtype=np.int64),
+        np.asarray(polygon_root_cell_ids, dtype=np.int64).reshape((-1, 2)),
+        np.asarray(polygon_root_local_faces, dtype=np.int32).reshape((-1, 2)),
+        polygon_root_reference_tokens,
+        np.asarray(polygon_orientation_signs, dtype=np.int8).reshape((-1, 2)),
+    )
+    segment_source_entity_ids = np.asarray(complex_.plc_edge_entity_ids, dtype=np.int64)[
+        np.asarray(segment_source_rows, dtype=np.int64)
+    ]
+    segment_source_keys = tuple(
+        reference.source_entity_key_for_scope(1, int(identifier))
+        for identifier in segment_source_entity_ids.tolist()
+    )
+    polygon_source_entity_ids = np.asarray(complex_.facet_entity_ids, dtype=np.int64)[
+        np.asarray(polygon_source_facets, dtype=np.int64)
+    ]
+    polygon_source_keys = tuple(
+        reference.source_entity_key_for_scope(2, int(identifier))
+        for identifier in polygon_source_entity_ids.tolist()
+    )
+    segment_source_entity_ids.setflags(write=False)
+    polygon_source_entity_ids.setflags(write=False)
+    segment_source_entity_keys = tuple(key for key, _ in segment_source_keys)
+    segment_source_occurrence_paths = tuple(path for _, path in segment_source_keys)
+    polygon_source_entity_keys = tuple(key for key, _ in polygon_source_keys)
+    polygon_source_occurrence_paths = tuple(path for _, path in polygon_source_keys)
+    for array in arrays:
+        if isinstance(array, np.ndarray):
+            array.setflags(write=False)
+    segment_source_parameter_rational_tokens = tuple(
+        (row[0].as_integer_ratio(), row[1].as_integer_ratio())
+        for row in segment_source_parameters
+    )
+    relation_id = canonical_fingerprint(
+        {
+            "kind": "mapped-plc-root-entity-relation",
+            "reference_source": reference.binding_id,
+            "mapped_domain": domain.domain_id,
+            "plc_vertex_root_ids": arrays[0],
+            "segment_root_dimensions": arrays[1],
+            "segment_root_entity_ids": arrays[2],
+            "segment_root_cell_ids": arrays[3],
+            "segment_root_local_entity_indices": arrays[4],
+            "segment_root_reference_rational_tokens": arrays[5],
+            "segment_orientations": arrays[6],
+            "polygon_source_facet_rows": arrays[7],
+            "polygon_root_face_ids": arrays[8],
+            "polygon_root_cell_ids": arrays[9],
+            "polygon_root_local_face_indices": arrays[10],
+            "polygon_root_reference_rational_tokens": arrays[11],
+            "polygon_orientation_signs": arrays[12],
+            "segment_source_entity_ids": segment_source_entity_ids,
+            "segment_source_entity_keys": segment_source_entity_keys,
+            "segment_source_occurrence_paths": segment_source_occurrence_paths,
+            "segment_source_parameter_rational_tokens": segment_source_parameter_rational_tokens,
+            "polygon_source_entity_ids": polygon_source_entity_ids,
+            "polygon_source_entity_keys": polygon_source_entity_keys,
+            "polygon_source_occurrence_paths": polygon_source_occurrence_paths,
+        }
+    )
+    return _MappedPlcRootRelation(
+        arrays[0],
+        arrays[1],
+        arrays[2],
+        arrays[3],
+        arrays[4],
+        arrays[5],
+        arrays[6],
+        arrays[7],
+        arrays[8],
+        arrays[9],
+        arrays[10],
+        arrays[11],
+        arrays[12],
+        segment_source_entity_ids,
+        segment_source_entity_keys,
+        segment_source_occurrence_paths,
+        polygon_source_entity_ids,
+        polygon_source_entity_keys,
+        polygon_source_occurrence_paths,
+        segment_source_parameter_rational_tokens,
+        relation_id,
+    )
+
+
+def _mapped_root_connectivity(
+    mesh: CellMesh, /
+) -> tuple[np.ndarray | tuple[np.ndarray, ...], np.ndarray]:
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, SimplicialConnectivity):
+        root_faces = np.asarray(connectivity.entities[2], dtype=np.int64)
+        root_edges = np.asarray(connectivity.entities[1], dtype=np.int64)
+    elif isinstance(connectivity, TetrahedralConnectivity):
+        root_faces = np.asarray(connectivity.faces, dtype=np.int64)
+        root_edges = np.asarray(connectivity.edges, dtype=np.int64)
+    elif isinstance(connectivity, HexahedralConnectivity):
+        root_faces = np.asarray(connectivity.faces, dtype=np.int64)
+        root_edges = np.asarray(connectivity.edges, dtype=np.int64)
+    elif isinstance(connectivity, PolyhedralConnectivity):
+        face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+        face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+        root_faces = tuple(
+            face_values[int(first) : int(last)]
+            for first, last in zip(face_offsets[:-1], face_offsets[1:], strict=True)
+        )
+        root_edges = np.asarray(connectivity.edges, dtype=np.int64)
+    else:
+        raise ValueError(
+            "Mapped root cells require canonical simplex, tetrahedron, hexahedron, or packed polyhedral incidence."
+        )
+    return root_faces, root_edges
+
+
+def _mapped_plc_root_relation(
+    reference: NativePlcSource,
+    domain: MappedReferenceDomain,
+    vertex_root_global_ids: ArrayLike | None,
+    /,
+) -> _MappedPlcRootRelation:
+    complex_ = reference.complex
+    mesh = domain.reference_mesh
+    root_kinds = tuple(block.cell_kind for block in mesh.blocks)
+    if not root_kinds:
+        raise ValueError("Mapped PLC/root correspondence requires declared root cells.")
+    root_topology = reference_cell_topology(root_kinds[0])
+    root_families = {reference_cell_topology(kind).family for kind in root_kinds}
+    if (
+        (reference.source_id, reference.source_revision)
+        != (domain.source_id, domain.source_revision)
+        or complex_.region_ids != domain.region_ids
+        or len(root_families) != 1
+        or root_topology.family not in {"hexahedron", "tetrahedron", "prism"}
+    ):
+        raise ValueError(
+            "Mapped PLC/root correspondence requires one source revision, identical regions, and a homogeneous hexahedral, tetrahedral, or prism root family."
+        )
+    reference_vertex_roots = domain.reference_domain_vertex_root_ids
+    if reference_vertex_roots is None:
+        raise ValueError(
+            "Mapped PLC/root correspondence requires declared reference-domain vertex/root IDs."
+        )
+
+    root_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    root_vertex_rows = {
+        int(identifier): row for row, identifier in enumerate(root_vertex_ids.tolist())
+    }
+    plc_vertex_root_ids, plc_root_rows = _mapped_plc_bind_source_vertices(
+        domain,
+        vertex_root_global_ids,
+        reference,
+        complex_,
+        reference_vertex_roots,
+        mesh,
+        root_vertex_rows,
+    )
+    source_facet_regions, polygon_root_vertices, polygon_source_facets = (
+        _mapped_plc_validate_source_facets(
+            complex_, plc_vertex_root_ids, domain, reference_vertex_roots
+        )
+    )
 
     root_reference_vertices = np.asarray(root_topology.vertices, dtype=np.float64)
     root_face_local_vertices = tuple(
@@ -426,49 +1336,25 @@ def _mapped_plc_root_relation(
         or root_cell_regions.shape != root_cell_ids.shape
     ):
         raise ValueError("Mapped root cell identity and region banks are misaligned.")
-    connectivity = mesh.connectivity
-    if isinstance(connectivity, SimplicialConnectivity):
-        root_faces = np.asarray(connectivity.entities[2], dtype=np.int64)
-        root_edges = np.asarray(connectivity.entities[1], dtype=np.int64)
-    elif isinstance(connectivity, TetrahedralConnectivity):
-        root_faces = np.asarray(connectivity.faces, dtype=np.int64)
-        root_edges = np.asarray(connectivity.edges, dtype=np.int64)
-    elif isinstance(connectivity, HexahedralConnectivity):
-        root_faces = np.asarray(connectivity.faces, dtype=np.int64)
-        root_edges = np.asarray(connectivity.edges, dtype=np.int64)
-    elif isinstance(connectivity, PolyhedralConnectivity):
-        face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-        face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
-        face_width = len(root_face_local_vertices[0])
-        if np.any(np.diff(face_offsets) != face_width):
-            raise ValueError(
-                "Mapped root faces must match the declared homogeneous reference cell."
-            )
-        root_faces = face_values.reshape((-1, face_width))
-        root_edges = np.asarray(connectivity.edges, dtype=np.int64)
-    else:
-        raise ValueError(
-            "Mapped root cells require canonical simplex, tetrahedron, hexahedron, or packed polyhedral incidence."
-        )
+    root_faces, root_edges = _mapped_root_connectivity(mesh)
     root_face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     root_edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
     if (
-        root_faces.ndim != 2
-        or root_edges.ndim != 2
-        or root_face_ids.shape != (root_faces.shape[0],)
+        root_edges.ndim != 2
+        or root_face_ids.shape != (len(root_faces),)
         or root_edge_ids.shape != (root_edges.shape[0],)
     ):
         raise ValueError("Mapped root entity connectivity and global IDs are misaligned.")
     face_row_by_vertices = {
         tuple(sorted(int(value) for value in face)): row
-        for row, face in enumerate(root_faces.tolist())
+        for row, face in enumerate(root_faces)
     }
     edge_row_by_vertices = {
         tuple(sorted(int(value) for value in edge)): row
         for row, edge in enumerate(root_edges.tolist())
     }
     if (
-        len(face_row_by_vertices) != root_faces.shape[0]
+        len(face_row_by_vertices) != len(root_faces)
         or len(edge_row_by_vertices) != root_edges.shape[0]
     ):
         raise ValueError("Mapped root entity incidence is not unique.")
@@ -506,12 +1392,6 @@ def _mapped_plc_root_relation(
         len(root_face_local_vertices),
     ) or cell_edge_rows.shape != (root_cell_ids.size, len(root_edge_local_vertices)):
         raise ValueError("Mapped root cell/entity relations are misaligned.")
-    face_vertices = {
-        int(face_id): tuple(int(root_vertex_ids[row]) for row in vertices)
-        for face_id, vertices in zip(
-            root_face_ids.tolist(), root_faces.tolist(), strict=True
-        )
-    }
     face_owners: dict[int, list[tuple[int, int]]] = {}
     edge_owners: dict[int, list[tuple[int, int]]] = {}
     for cell_row, (faces_for_cell, edges_for_cell) in enumerate(
@@ -521,346 +1401,47 @@ def _mapped_plc_root_relation(
             face_owners.setdefault(int(face_row), []).append((cell_row, local_face))
         for local_edge, edge_row in enumerate(edges_for_cell):
             edge_owners.setdefault(int(edge_row), []).append((cell_row, local_edge))
-    polygon_root_face_ids: list[int] = []
-    polygon_root_cell_ids: list[tuple[int, int]] = []
-    polygon_root_local_faces: list[tuple[int, int]] = []
-    polygon_root_reference_points: list[np.ndarray] = []
-    polygon_orientation_signs: list[tuple[int, int]] = []
-    root_face_for_polygon: list[int] = []
-    for polygon, (triangle, facet_row) in enumerate(
-        zip(polygon_root_vertices, polygon_source_facets, strict=True)
-    ):
-        candidates = tuple(
-            face_row
-            for face_row, face in enumerate(root_faces.tolist())
-            if set(triangle).issubset(
-                {int(root_vertex_ids[int(vertex)]) for vertex in face}
-            )
-        )
-        if len(candidates) != 1:
-            raise ValueError(
-                "Every PLC boundary triangle must lie on one declared root face."
-            )
-        root_face_row = candidates[0]
-        root_face_global_id = int(root_face_ids[root_face_row])
-        root_face_for_polygon.append(root_face_row)
-        owners = face_owners.get(root_face_row, ())
-        source_region_sides = tuple(
-            None if int(value) < 0 else complex_.region_ids[int(value)]
-            for value in np.asarray(complex_.facet_regions[facet_row], dtype=np.int64)
-        )
-        owner_by_region = {
-            domain.region_ids[int(root_cell_regions[cell_row])]: (cell_row, local_face)
-            for cell_row, local_face in owners
-        }
-        expected_regions = {value for value in source_region_sides if value is not None}
-        if set(owner_by_region) != expected_regions:
-            raise ValueError(
-                "Mapped root face material incidence does not match its PLC facet."
-            )
-        mapped_cell_ids = [-1, -1]
-        mapped_local_faces = [-1, -1]
-        mapped_reference_points = np.zeros((2, 3, 3), dtype=np.float64)
-        mapped_orientations = [0, 0]
-        for side, region_name in enumerate(source_region_sides):
-            if region_name is None:
-                continue
-            cell_row, local_face = owner_by_region[region_name]
-            local_face_cycle = root_face_local_vertices[local_face]
-            cell_vertex_rows = root_cells[cell_row]
-            cell_vertex_ids = tuple(
-                int(root_vertex_ids[int(row)]) for row in cell_vertex_rows
-            )
-            try:
-                local_positions = tuple(
-                    cell_vertex_ids.index(vertex) for vertex in triangle
-                )
-            except ValueError as error:
-                raise ValueError(
-                    "PLC source facet vertex is absent from its mapped root cell."
-                ) from error
-            if not set(local_positions).issubset(set(local_face_cycle)):
-                raise ValueError(
-                    "PLC source facet vertices leave the mapped root face chart."
-                )
-            mapped_reference_points[side] = root_reference_vertices[
-                np.asarray(local_positions, dtype=np.int64)
-            ]
-            face_reference = root_reference_vertices[
-                np.asarray(local_face_cycle, dtype=np.int64)
-            ]
-            face_normal = np.cross(
-                face_reference[1] - face_reference[0],
-                face_reference[-1] - face_reference[0],
-            )
-            triangle_normal = np.cross(
-                mapped_reference_points[side, 1] - mapped_reference_points[side, 0],
-                mapped_reference_points[side, 2] - mapped_reference_points[side, 0],
-            )
-            orientation = float(np.dot(face_normal, triangle_normal))
-            if orientation == 0.0:
-                raise ValueError(
-                    "PLC source facet is degenerate in its exact root-face chart."
-                )
-            mapped_orientations[side] = 1 if orientation > 0.0 else -1
-            mapped_cell_ids[side] = int(root_cell_ids[cell_row])
-            mapped_local_faces[side] = local_face
-        polygon_root_face_ids.append(root_face_global_id)
-        polygon_root_cell_ids.append((mapped_cell_ids[0], mapped_cell_ids[1]))
-        polygon_root_local_faces.append((mapped_local_faces[0], mapped_local_faces[1]))
-        polygon_root_reference_points.append(mapped_reference_points)
-        polygon_orientation_signs.append((mapped_orientations[0], mapped_orientations[1]))
+    # Intersect in the authored reference geometry.  A source facet is not
+    # required to fit one root face: preserve its occurrence and material
+    # incidence on every exact overlay piece.
 
-    # Every root boundary/material interface face is exhausted by a complete
-    # oriented triangle chain in its canonical root-face chart.
-    root_face_regions = {
-        row: tuple(
-            sorted(
-                domain.region_ids[int(root_cell_regions[cell_row])]
-                for cell_row, _ in face_owners.get(row, ())
-            )
-        )
-        for row in range(root_faces.shape[0])
-    }
-    required_face_rows = {
-        row
-        for row, regions in root_face_regions.items()
-        if len(regions) == 1 or (len(regions) == 2 and regions[0] != regions[1])
-    }
-    if set(root_face_for_polygon) != required_face_rows:
-        raise ValueError(
-            "Mapped PLC triangles do not cover the complete root boundary/interface face set."
-        )
-    source_polygons_by_face: dict[int, list[tuple[int, int, int]]] = {}
-    for face_row, triangle in zip(
-        root_face_for_polygon, polygon_root_vertices, strict=True
-    ):
-        source_polygons_by_face.setdefault(face_row, []).append(triangle)
-    for face_row in required_face_rows:
-        triangles = source_polygons_by_face.get(face_row, ())
-        ordered_face_vertices = face_vertices[int(root_face_ids[face_row])]
-        face_vertex_ids = set(ordered_face_vertices)
-        if (
-            len(ordered_face_vertices) < 3
-            or len(triangles) != len(ordered_face_vertices) - 2
-            or set().union(*(set(triangle) for triangle in triangles)) != face_vertex_ids
-        ):
-            raise ValueError(
-                "Mapped source face subdivision does not exhaust its declared root face."
-            )
-        boundary_edges = {
-            (
-                min(
-                    ordered_face_vertices[index],
-                    ordered_face_vertices[(index + 1) % len(ordered_face_vertices)],
-                ),
-                max(
-                    ordered_face_vertices[index],
-                    ordered_face_vertices[(index + 1) % len(ordered_face_vertices)],
-                ),
-            )
-            for index in range(len(ordered_face_vertices))
-        }
-        edge_counts: dict[tuple[int, int], int] = {}
-        for triangle in triangles:
-            for first, last in (
-                (triangle[0], triangle[1]),
-                (triangle[1], triangle[2]),
-                (triangle[2], triangle[0]),
-            ):
-                edge = (min(first, last), max(first, last))
-                edge_counts[edge] = edge_counts.get(edge, 0) + 1
-        if {
-            edge for edge, count in edge_counts.items() if count == 1
-        } != boundary_edges or any(count not in (1, 2) for count in edge_counts.values()):
-            raise ValueError(
-                "Mapped source face edge chain does not partition its root face."
-            )
-    # Explicit segment maps retain root-edge or root-face charts. Unmapped
-    # interior segments remain present in source identity but cannot satisfy a
-    # mapped feature request.
-    root_edge_rows_by_vertices: dict[frozenset[int], int] = {}
-    for edge_row, edge in enumerate(root_edges.tolist()):
-        root_edge_rows_by_vertices[
-            frozenset(int(root_vertex_ids[int(row)]) for row in edge)
-        ] = edge_row
-    segment_dimensions: list[int] = []
-    segment_entity_ids: list[int] = []
-    segment_cell_ids: list[int] = []
-    segment_local_entities: list[int] = []
-    segment_reference_points: list[np.ndarray] = []
-    segment_orientations: list[int] = []
-    for segment in np.asarray(complex_.plc_edge_vertices, dtype=np.int64):
-        source_endpoints = tuple(int(plc_vertex_root_ids[int(row)]) for row in segment)
-        endpoint_set = frozenset(source_endpoints)
-        edge_row = root_edge_rows_by_vertices.get(endpoint_set)
-        selected_owner: tuple[int, int] | None = None
-        dimension = -1
-        entity_id = -1
-        local_entity = -1
-        if edge_row is not None:
-            owners = edge_owners.get(edge_row, ())
-            if owners:
-                selected_owner = min(owners, key=lambda item: int(root_cell_ids[item[0]]))
-                dimension = 1
-                entity_id = int(root_edge_ids[edge_row])
-                local_entity = selected_owner[1]
-        if selected_owner is None:
-            candidate_faces = tuple(
-                row
-                for row, face in enumerate(root_faces.tolist())
-                if endpoint_set.issubset(
-                    {int(root_vertex_ids[int(value)]) for value in face}
-                )
-            )
-            if len(candidate_faces) == 1:
-                face_row = candidate_faces[0]
-                owners = face_owners.get(face_row, ())
-                if owners:
-                    selected_owner = min(
-                        owners, key=lambda item: int(root_cell_ids[item[0]])
-                    )
-                    dimension = 2
-                    entity_id = int(root_face_ids[face_row])
-                    local_entity = selected_owner[1]
-        if selected_owner is None:
-            cell_candidates = tuple(
-                row
-                for row, vertices in enumerate(root_cells.tolist())
-                if endpoint_set.issubset(
-                    {int(root_vertex_ids[int(value)]) for value in vertices}
-                )
-            )
-            if len(cell_candidates) == 1:
-                selected_owner = (cell_candidates[0], -1)
-                dimension = 3
-                entity_id = int(root_cell_ids[cell_candidates[0]])
-        reference_points = np.zeros((2, 3), dtype=np.float64)
-        orientation = 0
-        if selected_owner is not None:
-            cell_row = selected_owner[0]
-            cell_vertex_ids = tuple(
-                int(root_vertex_ids[int(row)]) for row in root_cells[cell_row]
-            )
-            local_positions = tuple(
-                cell_vertex_ids.index(value) for value in source_endpoints
-            )
-            reference_points = root_reference_vertices[
-                np.asarray(local_positions, dtype=np.int64)
-            ]
-            if np.array_equal(reference_points[0], reference_points[1]):
-                raise ValueError("Mapped PLC segment collapses in its root-cell chart.")
-            if dimension == 1:
-                local_edge = root_edge_local_vertices[local_entity]
-                oriented_edge = tuple(
-                    cell_vertex_ids[position] for position in local_edge
-                )
-                if source_endpoints == oriented_edge:
-                    orientation = 1
-                elif source_endpoints == tuple(reversed(oriented_edge)):
-                    orientation = -1
-                else:
-                    raise ValueError(
-                        "Mapped PLC segment endpoint order changed its root edge."
-                    )
-            else:
-                delta = reference_points[1] - reference_points[0]
-                varying = np.flatnonzero(delta)
-                orientation = 1 if delta[int(varying[0])] > 0.0 else -1
-        segment_dimensions.append(dimension)
-        segment_entity_ids.append(entity_id)
-        segment_cell_ids.append(
-            -1 if selected_owner is None else int(root_cell_ids[selected_owner[0]])
-        )
-        segment_local_entities.append(local_entity)
-        segment_reference_points.append(reference_points)
-        segment_orientations.append(orientation)
-
-    arrays = [
-        np.asarray(plc_vertex_root_ids, dtype=np.int64),
-        np.asarray(segment_dimensions, dtype=np.int8),
-        np.asarray(segment_entity_ids, dtype=np.int64),
-        np.asarray(segment_cell_ids, dtype=np.int64),
-        np.asarray(segment_local_entities, dtype=np.int32),
-        np.asarray(segment_reference_points, dtype=np.float64).reshape((-1, 2, 3)),
-        np.asarray(segment_orientations, dtype=np.int8),
-        np.asarray(polygon_source_facets, dtype=np.int64),
-        np.asarray(polygon_root_face_ids, dtype=np.int64),
-        np.asarray(polygon_root_cell_ids, dtype=np.int64).reshape((-1, 2)),
-        np.asarray(polygon_root_local_faces, dtype=np.int32).reshape((-1, 2)),
-        np.asarray(polygon_root_reference_points, dtype=np.float64).reshape(
-            (-1, 2, 3, 3)
-        ),
-        np.asarray(polygon_orientation_signs, dtype=np.int8).reshape((-1, 2)),
-    ]
-    segment_source_entity_ids = np.asarray(complex_.plc_edge_entity_ids, dtype=np.int64)
-    segment_source_keys = tuple(
-        reference.source_entity_key_for_scope(1, int(identifier))
-        for identifier in segment_source_entity_ids.tolist()
+    coordinates = tuple(
+        tuple(Fraction.from_float(float(value)) for value in point)
+        for point in np.asarray(mesh.coordinates, dtype=np.float64)
     )
-    polygon_source_entity_ids = np.asarray(complex_.facet_entity_ids, dtype=np.int64)[
-        np.asarray(polygon_source_facets, dtype=np.int64)
-    ]
-    polygon_source_keys = tuple(
-        reference.source_entity_key_for_scope(2, int(identifier))
-        for identifier in polygon_source_entity_ids.tolist()
+    reference_corners = tuple(
+        tuple(Fraction.from_float(float(value)) for value in point)
+        for point in root_reference_vertices
     )
-    segment_source_entity_ids.setflags(write=False)
-    polygon_source_entity_ids.setflags(write=False)
-    segment_source_entity_keys = tuple(key for key, _ in segment_source_keys)
-    segment_source_occurrence_paths = tuple(path for _, path in segment_source_keys)
-    polygon_source_entity_keys = tuple(key for key, _ in polygon_source_keys)
-    polygon_source_occurrence_paths = tuple(path for _, path in polygon_source_keys)
-    for array in arrays:
-        array.setflags(write=False)
-    relation_id = canonical_fingerprint(
-        {
-            "kind": "mapped-plc-root-entity-relation",
-            "reference_source": reference.binding_id,
-            "mapped_domain": domain.domain_id,
-            "plc_vertex_root_ids": arrays[0],
-            "segment_root_dimensions": arrays[1],
-            "segment_root_entity_ids": arrays[2],
-            "segment_root_cell_ids": arrays[3],
-            "segment_root_local_entity_indices": arrays[4],
-            "segment_root_reference_vertices": arrays[5],
-            "segment_orientations": arrays[6],
-            "polygon_source_facet_rows": arrays[7],
-            "polygon_root_face_ids": arrays[8],
-            "polygon_root_cell_ids": arrays[9],
-            "polygon_root_local_face_indices": arrays[10],
-            "polygon_root_reference_vertices": arrays[11],
-            "polygon_orientation_signs": arrays[12],
-            "segment_source_entity_ids": segment_source_entity_ids,
-            "segment_source_entity_keys": segment_source_entity_keys,
-            "segment_source_occurrence_paths": segment_source_occurrence_paths,
-            "polygon_source_entity_ids": polygon_source_entity_ids,
-            "polygon_source_entity_keys": polygon_source_entity_keys,
-            "polygon_source_occurrence_paths": polygon_source_occurrence_paths,
-        }
+    inventory = _MappedRootInventory(
+        reference=reference,
+        domain=domain,
+        complex=complex_,
+        root_faces=root_faces,
+        root_edges=root_edges,
+        root_cells=root_cells,
+        root_face_local_vertices=root_face_local_vertices,
+        root_edge_local_vertices=root_edge_local_vertices,
+        root_cell_ids=root_cell_ids,
+        root_face_ids=root_face_ids,
+        root_edge_ids=root_edge_ids,
+        root_cell_regions=root_cell_regions,
+        root_vertex_ids=root_vertex_ids,
+        root_vertex_rows=root_vertex_rows,
+        face_owners=face_owners,
+        edge_owners=edge_owners,
+        coordinates=coordinates,
+        reference_corners=reference_corners,
+        root_reference_vertices=root_reference_vertices,
+        plc_vertex_root_ids=plc_vertex_root_ids,
+        plc_root_rows=plc_root_rows,
+        polygon_root_vertices=polygon_root_vertices,
+        polygon_source_facets=polygon_source_facets,
+        source_facet_regions=source_facet_regions,
     )
-    return _MappedPlcRootRelation(
-        arrays[0],
-        arrays[1],
-        arrays[2],
-        arrays[3],
-        arrays[4],
-        arrays[5],
-        arrays[6],
-        arrays[7],
-        arrays[8],
-        arrays[9],
-        arrays[10],
-        arrays[11],
-        arrays[12],
-        segment_source_entity_ids,
-        segment_source_entity_keys,
-        segment_source_occurrence_paths,
-        polygon_source_entity_ids,
-        polygon_source_entity_keys,
-        polygon_source_occurrence_paths,
-        relation_id,
-    )
+    faces = _mapped_plc_face_overlay(inventory)
+    edges = _mapped_plc_edge_partition(inventory)
+    return _mapped_plc_assemble_relation(inventory, faces, edges)
 
 
 def _prepare_source_scope_bank(
@@ -1254,7 +1835,6 @@ class NativePlanarSource(StrictModule, NonTrainableState):
         /,
     ) -> None:
         from ...geometry._curve_boundary import ParametricCurveBoundarySource
-        from ...geometry.brep._patches import LineCurve
 
         if not isinstance(query, ParametricCurveBoundarySource):
             raise TypeError(
@@ -1307,12 +1887,24 @@ class NativePlanarSource(StrictModule, NonTrainableState):
             edge_row, key = expected[chart_id]
             first, last = (int(value) for value in edges[edge_row])
             curve = query.curves[query_row]
-            if not isinstance(curve, LineCurve):
-                raise TypeError("Planar source curve charts must be affine lines.")
-            if not np.array_equal(
-                np.asarray(curve.origin), points[first]
-            ) or not np.array_equal(
-                np.asarray(curve.direction), points[last] - points[first]
+            if not isinstance(curve, SegmentChartCurve):
+                raise TypeError(
+                    "Planar source curve charts must be authored segment charts."
+                )
+            first_exact = tuple(
+                Fraction.from_float(float(value)) for value in points[first]
+            )
+            last_exact = tuple(
+                Fraction.from_float(float(value)) for value in points[last]
+            )
+            if (
+                curve.first != 0.0
+                or curve.last != 1.0
+                or not np.array_equal(np.asarray(curve.start), points[first])
+                or not np.array_equal(np.asarray(curve.end), points[last])
+                or curve.origin_exact != first_exact
+                or curve.direction_exact
+                != tuple(b - a for a, b in zip(first_exact, last_exact, strict=True))
             ):
                 raise ValueError("Planar curve query changed its authored line geometry.")
             expected_endpoint_keys = (
@@ -2523,6 +3115,8 @@ class NativePlcSource(StrictModule, NonTrainableState):
         return self.fidelity_source
 
     def validate_restored(self, /) -> None:
+        from ...geometry._mesh_certificates import _same_tree_content
+
         fresh = type(self)(
             self.complex,
             self.source_id,
@@ -2532,7 +3126,9 @@ class NativePlcSource(StrictModule, NonTrainableState):
             maximum_deviation=self.maximum_deviation,
             plc_vertex_root_global_ids=self.plc_vertex_root_global_ids,
         )
-        if fresh.binding_id != self.binding_id:
+        if fresh.binding_id != self.binding_id or not _same_tree_content(
+            fresh.root_relation, self.root_relation
+        ):
             raise ValueError(
                 "Native PLC source no longer matches its exact mapped root relation."
             )
@@ -2803,6 +3399,8 @@ class NativeMappedHexSource(StrictModule, NonTrainableState):
             raise TypeError(
                 "stored_fields must have the registered mapped-hex source type."
             )
+        from ...geometry._mesh_certificates import _same_tree_content
+
         fresh = cls(
             value.reference,
             value.domain,
@@ -2818,7 +3416,7 @@ class NativeMappedHexSource(StrictModule, NonTrainableState):
             value.source_revision,
             value.binding_id,
             value.root_relation.relation_id,
-        ):
+        ) or not _same_tree_content(fresh.root_relation, value.root_relation):
             raise ValueError(
                 "Stored mapped PLC/root entity relation no longer validates."
             )
@@ -3539,15 +4137,35 @@ class NativeSweepSource(StrictModule, NonTrainableState):
         return self.scope_entity_key_banks[dimension][position]
 
 
+class _StoredOwnerDefault:
+    """Distinguish an omitted restored owner from an explicit None."""
+
+
+_STORED_OWNER = _StoredOwnerDefault()
+
+
 @final
 class NativeLayerCoreSource(StrictModule, NonTrainableState):
-    """Bind accepted layers and a PLC core by source and material ancestry."""
+    """Bind accepted layers and a PLC core by source and material ancestry.
+
+    Wall charts are rooted on the actual authored wall; boundary charts retain
+    the complete fidelity-query atlas and may have a different mesh and scope.
+    Projected wall rows retain their original B-Rep query and association policy
+    so their parameters and residuals can be independently reissued. Conforming
+    execution retains the exact control and policy that grew the wall.
+    ``noncap_refinement="conforming"`` permits source-bound core boundary
+    subdivision while preserving a fixed cap when ``cap_refinement="fixed"``.
+    """
 
     layers: BoundaryLayerMesh
+    layer_control: BoundaryLayerControl | None
+    layer_policy: BoundaryLayerPolicy | None
     complex: PiecewiseLinearComplex
     core_power_source: NativePolyhedralSource | None
     vertex_layer_ids: np.ndarray
     cap_polygon_ids: np.ndarray
+    cap_refinement: Literal["fixed", "conforming"] = eqx.field(static=True)
+    noncap_refinement: Literal["fixed", "conforming"] = eqx.field(static=True)
     layer_regions: np.ndarray
     region_ids: tuple[str, ...] = eqx.field(static=True)
     region_entity_ids: np.ndarray
@@ -3555,7 +4173,11 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
     core_region_map: np.ndarray
     source_boundary_scope: MeshingScope | None
     source_domain: MeshingDomain | PiecewiseLinearDomain | None
-    source_surface_charts: SurfaceSourceCharts | None
+    source_wall_charts: SurfaceSourceCharts | None
+    source_boundary_charts: SurfaceSourceCharts | None
+    source_boundary_schedule: NativeSurfaceSchedule | None
+    source_wall_projection: NativeBRepProjection | None
+    source_wall_association_policy: AssociationPropagationPolicy | None
     maximum_deviation: float | None = eqx.field(static=True)
     fidelity_source: SourceBoundaryQuery | None
     core_facet_source_ids: tuple[str | None, ...] = eqx.field(static=True)
@@ -3594,7 +4216,15 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         source_boundary_scope: MeshingScope | None = None,
         source_domain: MeshingDomain | PiecewiseLinearDomain | None = None,
         fidelity_source: SourceBoundaryQuery | None = None,
-        source_surface_charts: SurfaceSourceCharts | None = None,
+        source_wall_charts: SurfaceSourceCharts | None = None,
+        source_boundary_charts: SurfaceSourceCharts | None = None,
+        source_boundary_schedule: NativeSurfaceSchedule | None = None,
+        source_wall_projection: NativeBRepProjection | None = None,
+        source_wall_association_policy: AssociationPropagationPolicy | None = None,
+        cap_refinement: Literal["fixed", "conforming"] = "fixed",
+        noncap_refinement: Literal["fixed", "conforming"] = "fixed",
+        layer_control: BoundaryLayerControl | None = None,
+        layer_policy: BoundaryLayerPolicy | None = None,
         maximum_deviation: float | None = None,
         core_facet_source_ids: tuple[str | None, ...] | None = None,
         core_facet_source_occurrence_paths: tuple[tuple[str, ...] | None, ...]
@@ -3725,29 +4355,189 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
             raise ValueError("source_domain must bind source_id and source_revision.")
         if fidelity_source is not None:
             _bound_source_query(fidelity_source, source, revision)
-        source_charts = source_surface_charts
-        if source_charts is not None:
-            if not isinstance(source_charts, SurfaceSourceCharts):
-                raise TypeError("source_surface_charts must be SurfaceSourceCharts.")
-            if (source_charts.source_id, source_charts.source_revision) != (
+        if source_wall_charts is not None:
+            if not isinstance(source_wall_charts, SurfaceSourceCharts):
+                raise TypeError("source_wall_charts must be SurfaceSourceCharts or None.")
+            if (source_wall_charts.source_id, source_wall_charts.source_revision) != (
                 source,
                 revision,
             ):
-                raise ValueError("source_surface_charts must bind source identity.")
-            source_charts.require_root(source_wall, source_charts.geometry)
-            if fidelity_source is None:
+                raise ValueError("source_wall_charts must bind source identity.")
+            source_wall_charts.require_root(source_wall, source_wall_charts.geometry)
+            if source_domain is not None and (
+                not isinstance(source_domain, MeshingDomain)
+                or source_wall_charts.domain.domain_id != source_domain.domain_id
+            ):
                 raise ValueError(
-                    "source_surface_charts requires its original fidelity query."
+                    "source_wall_charts must retain the original source domain."
                 )
-            source_charts.require_bound(
-                source_wall, source_charts.geometry, fidelity_source
+        if source_boundary_charts is not None:
+            if not isinstance(source_boundary_charts, SurfaceSourceCharts):
+                raise TypeError(
+                    "source_boundary_charts must be SurfaceSourceCharts or None."
+                )
+            if (
+                fidelity_source is None
+                or (
+                    source_domain is not None
+                    and (
+                        not isinstance(source_domain, MeshingDomain)
+                        or source_boundary_charts.domain.domain_id
+                        != source_domain.domain_id
+                    )
+                )
+                or (
+                    source_wall_charts is not None
+                    and source_wall_charts.domain.domain_id
+                    != source_boundary_charts.domain.domain_id
+                )
+            ):
+                raise ValueError(
+                    "Full boundary charts require their original domain and query."
+                )
+            source_boundary_charts.require_root(
+                source_boundary_charts.mesh, source_boundary_charts.geometry
             )
+            source_boundary_charts.require_bound(
+                source_boundary_charts.mesh,
+                source_boundary_charts.geometry,
+                fidelity_source,
+            )
+        if source_boundary_schedule is not None:
+            if not isinstance(source_boundary_schedule, NativeSurfaceSchedule):
+                raise TypeError(
+                    "source_boundary_schedule must be NativeSurfaceSchedule or None."
+                )
+            if source_boundary_charts is None:
+                raise ValueError(
+                    "An original surface schedule requires its source boundary atlas."
+                )
+            stored_curve = source_boundary_schedule.curve_schedule
+            curve_schedule = NativeCurveSchedule(
+                quadrature_intervals=stored_curve.quadrature_intervals,
+                quadrature_order=stored_curve.quadrature_order,
+                fidelity_samples=stored_curve.fidelity_samples,
+            )
+            schedule = NativeSurfaceSchedule(
+                quality_angle_degrees=source_boundary_schedule.quality_angle_degrees,
+                spacing_fraction=source_boundary_schedule.spacing_fraction,
+                minimum_edge_samples=source_boundary_schedule.minimum_edge_samples,
+                normal_deviation_aim=source_boundary_schedule.normal_deviation_aim,
+                curve_schedule=curve_schedule,
+            )
+            if (
+                curve_schedule.schedule_id != stored_curve.schedule_id
+                or schedule.schedule_id != source_boundary_schedule.schedule_id
+            ):
+                raise ValueError("The original boundary surface schedule changed.")
         deviation = _source_deviation(maximum_deviation)
         if wall_association is not None and (
             wall_association.source_id != source
             or wall_association.source_revision != revision
         ):
             raise ValueError("wall_association must bind source_id and source_revision.")
+        if (source_wall_projection is None) != (source_wall_association_policy is None):
+            raise ValueError(
+                "Wall projection and association policy must be retained together."
+            )
+        if source_wall_projection is not None:
+            if not isinstance(
+                source_wall_projection, NativeBRepProjection
+            ) or not isinstance(
+                source_wall_association_policy, AssociationPropagationPolicy
+            ):
+                raise TypeError(
+                    "Projected wall authority requires its native BRep query and association policy."
+                )
+            if (
+                wall_association is None
+                or wall_association.association_kind is not GeometryAssociationKind.BREP
+                or not isinstance(source_domain, MeshingDomain)
+                or source_domain.brep_authority is None
+                or source_wall_projection.model_id
+                != source_domain.brep_authority.model_id
+                or source_wall_projection.source_id != source
+                or source_wall_projection.source_revision != revision
+                or source_wall_projection.ambient_dimension != 3
+            ):
+                raise ValueError(
+                    "Wall projection must bind the original BRep model and wall association."
+                )
+            stored_projection_policy = source_wall_projection.policy
+            projection_policy = BRepProjectionPolicy(
+                ambiguity_tolerance=stored_projection_policy.ambiguity_tolerance,
+                parametric_tolerance=stored_projection_policy.parametric_tolerance,
+                classifier_tolerance=stored_projection_policy.classifier_tolerance,
+            )
+            association_policy = AssociationPropagationPolicy(
+                classification_tolerance=source_wall_association_policy.classification_tolerance,
+                maximum_residual=source_wall_association_policy.maximum_residual,
+            )
+            if (
+                projection_policy.policy_id != stored_projection_policy.policy_id
+                or association_policy.policy_id
+                != source_wall_association_policy.policy_id
+            ):
+                raise ValueError("Wall projection or association policy changed.")
+        if cap_refinement not in ("fixed", "conforming"):
+            raise ValueError("cap_refinement must be 'fixed' or 'conforming'.")
+        if noncap_refinement not in ("fixed", "conforming"):
+            raise ValueError("noncap_refinement must be 'fixed' or 'conforming'.")
+        if (layer_control is None) != (layer_policy is None):
+            raise ValueError(
+                "Authored layer control and policy must be retained together."
+            )
+        if (cap_refinement == "conforming" or noncap_refinement == "conforming") and layer_control is None:
+            raise ValueError(
+                "Conforming execution requires the authored layer control and policy."
+            )
+        if layer_control is not None:
+            if not isinstance(layer_control, BoundaryLayerControl) or not isinstance(
+                layer_policy, BoundaryLayerPolicy
+            ):
+                raise TypeError(
+                    "Authored layers require BoundaryLayerControl and BoundaryLayerPolicy."
+                )
+            model = (
+                source_domain.brep_authority
+                if isinstance(source_domain, MeshingDomain)
+                else None
+            )
+            control = BoundaryLayerControl.from_stored_fields(
+                layer_control, source_model=model
+            )
+            from ...discretization._cell_geometry_validity import CellValidityPolicy
+
+            validity = CellValidityPolicy(
+                relative_determinant_floor=layer_policy.validity.relative_determinant_floor,
+                relative_planarity_tolerance=layer_policy.validity.relative_planarity_tolerance,
+            )
+            policy = BoundaryLayerPolicy(
+                proximity_samples=layer_policy.proximity_samples,
+                proximity_fraction=layer_policy.proximity_fraction,
+                curvature_fraction=layer_policy.curvature_fraction,
+                medial_tolerance=layer_policy.medial_tolerance,
+                reduction_factor=layer_policy.reduction_factor,
+                simplex_cap=layer_policy.simplex_cap,
+                validity=validity,
+            )
+            if (
+                control.control_id != layers.control_id
+                or validity.policy_id != layer_policy.validity.policy_id
+                or policy.policy_id != layer_policy.policy_id
+                or policy.policy_id != layers.policy_id
+            ):
+                raise ValueError(
+                    "Authored control and policy must match the accepted layers."
+                )
+        if (
+            reference_source is not None
+            and (reference_source.cap_refinement != cap_refinement
+                 or reference_source.noncap_refinement != noncap_refinement)
+        ):
+            raise ValueError(
+                "Mapped physical and reference sources must share cap refinement."
+            )
         if (reference_source is None) != (mapped_domain is None):
             raise ValueError(
                 "reference_source and mapped_domain must be supplied together."
@@ -3868,9 +4658,13 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         for array in (vertex_map, polygon_map, regions_array, core_map):
             array.setflags(write=False)
         self.layers = layers
+        self.layer_control = layer_control
+        self.layer_policy = layer_policy
         self.complex = complex_
         self.vertex_layer_ids = vertex_map
         self.cap_polygon_ids = polygon_map
+        self.cap_refinement = cap_refinement
+        self.noncap_refinement = noncap_refinement
         self.layer_regions = regions_array
         self.region_ids = names
         self.region_entity_ids = region_entity_ids_array
@@ -3879,7 +4673,11 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         self.source_boundary_scope = source_boundary_scope
         self.source_domain = source_domain
         self.fidelity_source = fidelity_source
-        self.source_surface_charts = source_charts
+        self.source_wall_charts = source_wall_charts
+        self.source_boundary_charts = source_boundary_charts
+        self.source_boundary_schedule = source_boundary_schedule
+        self.source_wall_projection = source_wall_projection
+        self.source_wall_association_policy = source_wall_association_policy
         self.maximum_deviation = deviation
         self.core_facet_source_ids = facet_sources
         self.core_facet_source_occurrence_paths = facet_paths
@@ -3901,6 +4699,12 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
                 "revision": revision,
                 "layers": layers.result_id,
                 "complex": complex_.complex_id,
+                "cap_refinement": cap_refinement,
+                **({"noncap_refinement": noncap_refinement} if noncap_refinement != "fixed" else {}),
+                "layer_control": None
+                if layer_control is None
+                else layer_control.control_id,
+                "layer_policy": None if layer_policy is None else layer_policy.policy_id,
                 "identity_maps": array_tree_fingerprint(
                     (vertex_map, polygon_map, regions_array)
                 ),
@@ -3917,9 +4721,21 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
                 "fidelity_source": None
                 if fidelity_source is None
                 else (fidelity_source.source_id, fidelity_source.source_revision),
-                "source_surface_charts": None
-                if source_charts is None
-                else source_charts.source_chart_id,
+                "source_wall_charts": None
+                if source_wall_charts is None
+                else source_wall_charts.source_chart_id,
+                "source_boundary_charts": None
+                if source_boundary_charts is None
+                else source_boundary_charts.source_chart_id,
+                "source_boundary_schedule": None
+                if source_boundary_schedule is None
+                else source_boundary_schedule.schedule_id,
+                "source_wall_projection": None
+                if source_wall_projection is None
+                else source_wall_projection.projection_id,
+                "source_wall_association_policy": None
+                if source_wall_association_policy is None
+                else source_wall_association_policy.policy_id,
                 "maximum_deviation": deviation,
                 "core_facet_source_ids": facet_sources,
                 "core_facet_source_occurrence_paths": facet_paths,
@@ -3938,6 +4754,232 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
                 else mapped_domain.domain_id,
             }
         )
+
+    @classmethod
+    def fixed_core(
+        cls: type[NativeLayerCoreSource],
+        layers: BoundaryLayerMesh,
+        outer: SurfaceModel,
+        coordinate_contract: SpatialCoordinateContract,
+        source_id: str,
+        source_revision: str,
+        /,
+        *,
+        region_id: str,
+        region_entity_id: int,
+        region_occurrence_path: tuple[str, ...],
+        wall_occurrence_path: tuple[str, ...],
+        outer_occurrence_path: tuple[str, ...],
+        layer_control: BoundaryLayerControl,
+        layer_policy: BoundaryLayerPolicy,
+    ) -> NativeLayerCoreSource:
+        """Bind a closed accepted layer cap to an independently authored outer shell."""
+        from ...geometry._mesh_certificates import _same_tree_content
+        from .._layer_core_topology import closed_fixed_core_source
+
+        if type(layers) is not BoundaryLayerMesh or type(outer) is not SurfaceModel:
+            raise TypeError("Fixed core requires accepted layers and an authoritative outer surface.")
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
+        if not _same_tree_content(coordinate_contract, outer.metadata.coordinate_contract):
+            raise ValueError("Outer surface and fixed core must use the same coordinate contract.")
+        if not isinstance(layers.source_wall, CellMesh):
+            raise ValueError("Fixed core must retain the actual authored layer wall.")
+        if isinstance(region_entity_id, bool) or not isinstance(region_entity_id, int):
+            raise TypeError("region_entity_id must be an integer.")
+        if region_entity_id < 0:
+            raise ValueError("region_entity_id must be non-negative.")
+        if (
+            not isinstance(wall_occurrence_path, tuple)
+            or not isinstance(outer_occurrence_path, tuple)
+            or not wall_occurrence_path
+            or not outer_occurrence_path
+        ):
+            raise ValueError("Fixed core requires explicit wall and outer occurrence paths.")
+        wall_path = (layers.source_wall.mesh_id, layers.source_wall.numeric_version, *wall_occurrence_path)
+        outer_path = (outer.metadata.source_id, outer.metadata.source_revision, *outer_occurrence_path)
+        return closed_fixed_core_source(
+            layers, outer.mesh, coordinate_contract, source_id, source_revision,
+            region_id=region_id, region_entity_id=region_entity_id,
+            region_occurrence_path=region_occurrence_path,
+            wall_occurrence_path=wall_path,
+            outer_occurrence_path=outer_path,
+            layer_control=layer_control, layer_policy=layer_policy,
+        )
+
+    @property
+    def conforming_execution(self) -> bool:
+        """Whether the core uses the source-authoritative conforming carrier."""
+        return self.cap_refinement == "conforming" or self.noncap_refinement == "conforming"
+
+    @classmethod
+    def from_stored_fields(
+        cls: type[NativeLayerCoreSource],
+        value: NativeLayerCoreSource,
+        /,
+        *,
+        layers: BoundaryLayerMesh | _StoredOwnerDefault = _STORED_OWNER,
+        complex_: PiecewiseLinearComplex | _StoredOwnerDefault = _STORED_OWNER,
+        layer_control: BoundaryLayerControl | None | _StoredOwnerDefault = _STORED_OWNER,
+        layer_policy: BoundaryLayerPolicy | None | _StoredOwnerDefault = _STORED_OWNER,
+        source_domain: MeshingDomain
+        | PiecewiseLinearDomain
+        | None
+        | _StoredOwnerDefault = _STORED_OWNER,
+        fidelity_source: SourceBoundaryQuery | None | _StoredOwnerDefault = _STORED_OWNER,
+        source_wall_charts: SurfaceSourceCharts
+        | None
+        | _StoredOwnerDefault = _STORED_OWNER,
+        source_boundary_charts: SurfaceSourceCharts
+        | None
+        | _StoredOwnerDefault = _STORED_OWNER,
+        source_boundary_schedule: NativeSurfaceSchedule
+        | None
+        | _StoredOwnerDefault = _STORED_OWNER,
+        source_wall_projection: NativeBRepProjection
+        | None
+        | _StoredOwnerDefault = _STORED_OWNER,
+        source_wall_association_policy: AssociationPropagationPolicy
+        | None
+        | _StoredOwnerDefault = _STORED_OWNER,
+        mapped_domain: MappedReferenceDomain | None | _StoredOwnerDefault = _STORED_OWNER,
+        core_power_source: NativePolyhedralSource
+        | None
+        | _StoredOwnerDefault = _STORED_OWNER,
+        reference_source: NativeLayerCoreSource
+        | None
+        | _StoredOwnerDefault = _STORED_OWNER,
+    ) -> NativeLayerCoreSource:
+        """Reconstruct the source from its retained owners and verify its identity."""
+        if type(value) is not cls:
+            raise TypeError(
+                "stored_fields must have the registered layer/core source type."
+            )
+        reference = (
+            value.reference_source
+            if isinstance(reference_source, _StoredOwnerDefault)
+            else reference_source
+        )
+        if reference is not None:
+            if type(reference) is not cls or reference.reference_source is not None:
+                raise ValueError(
+                    "Mapped layer/core reference ancestry must not be recursive."
+                )
+            reference = cls.from_stored_fields(reference)
+        stored_projection = (
+            value.source_wall_projection
+            if isinstance(source_wall_projection, _StoredOwnerDefault)
+            else source_wall_projection
+        )
+        if stored_projection is not None:
+            if not isinstance(stored_projection, NativeBRepProjection):
+                raise TypeError("Stored wall projection must be NativeBRepProjection.")
+            restored_domain = (
+                value.source_domain
+                if isinstance(source_domain, _StoredOwnerDefault)
+                else source_domain
+            )
+            if (
+                not isinstance(restored_domain, MeshingDomain)
+                or restored_domain.brep_authority is None
+            ):
+                raise ValueError(
+                    "Stored wall projection requires its original BRep model."
+                )
+            restored_projection = prepare_brep_projection(
+                restored_domain.brep_authority,
+                policy=stored_projection.policy,
+                embedding=stored_projection.embedding,
+            )
+            if restored_projection.projection_id != stored_projection.projection_id:
+                raise ValueError("Stored wall projection inputs changed identity.")
+        else:
+            restored_projection = None
+        fresh = cls(
+            value.layers if isinstance(layers, _StoredOwnerDefault) else layers,
+            value.complex if isinstance(complex_, _StoredOwnerDefault) else complex_,
+            value.source_id,
+            value.source_revision,
+            vertex_layer_ids=value.vertex_layer_ids,
+            cap_polygon_ids=value.cap_polygon_ids,
+            layer_regions=value.layer_regions,
+            region_entity_ids=value.region_entity_ids,
+            region_occurrence_paths=value.region_occurrence_paths,
+            region_ids=value.region_ids,
+            core_region_map=value.core_region_map,
+            source_boundary_scope=value.source_boundary_scope,
+            source_domain=value.source_domain
+            if isinstance(source_domain, _StoredOwnerDefault)
+            else source_domain,
+            fidelity_source=value.fidelity_source
+            if isinstance(fidelity_source, _StoredOwnerDefault)
+            else fidelity_source,
+            source_wall_charts=value.source_wall_charts
+            if isinstance(source_wall_charts, _StoredOwnerDefault)
+            else source_wall_charts,
+            source_boundary_charts=value.source_boundary_charts
+            if isinstance(source_boundary_charts, _StoredOwnerDefault)
+            else source_boundary_charts,
+            source_boundary_schedule=value.source_boundary_schedule
+            if isinstance(source_boundary_schedule, _StoredOwnerDefault)
+            else source_boundary_schedule,
+            source_wall_projection=restored_projection,
+            source_wall_association_policy=value.source_wall_association_policy
+            if isinstance(source_wall_association_policy, _StoredOwnerDefault)
+            else source_wall_association_policy,
+            layer_control=value.layer_control
+            if isinstance(layer_control, _StoredOwnerDefault)
+            else layer_control,
+            layer_policy=value.layer_policy
+            if isinstance(layer_policy, _StoredOwnerDefault)
+            else layer_policy,
+            cap_refinement=value.cap_refinement,
+            noncap_refinement=value.noncap_refinement,
+            maximum_deviation=value.maximum_deviation,
+            core_facet_source_ids=value.core_facet_source_ids,
+            core_facet_source_occurrence_paths=value.core_facet_source_occurrence_paths,
+            core_vertex_representatives=value.core_vertex_representatives,
+            core_vertex_shifts=value.core_vertex_shifts,
+            core_seam_polygon_pairs=value.core_seam_polygon_pairs,
+            reference_source=reference,
+            mapped_domain=value.mapped_domain
+            if isinstance(mapped_domain, _StoredOwnerDefault)
+            else mapped_domain,
+            core_power_source=value.core_power_source
+            if isinstance(core_power_source, _StoredOwnerDefault)
+            else core_power_source,
+        )
+        if (
+            fresh.binding_id != value.binding_id
+            or fresh.periodic_topology_id != value.periodic_topology_id
+            or fresh.scope_entity_key_banks != value.scope_entity_key_banks
+            or fresh.scope_entity_set_ids != value.scope_entity_set_ids
+            or len(fresh.scope_entity_id_banks) != len(value.scope_entity_id_banks)
+            or any(
+                not np.array_equal(current, stored)
+                for current, stored in zip(
+                    fresh.scope_entity_id_banks, value.scope_entity_id_banks, strict=True
+                )
+            )
+        ):
+            raise ValueError("Stored layer/core source identity no longer validates.")
+        from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+
+        query = fresh.fidelity_source
+        if isinstance(query, MappedReferenceBoundarySource):
+            query.require_current()
+            if fresh.mapped_domain is None or not isinstance(
+                query.authority, (NativePlcSource, NativeMappedHexSource)
+            ):
+                raise ValueError(
+                    "Mapped layer/core query requires its full PLC authority."
+                )
+            _mapped_layer_core_facet_relation(fresh, query.authority)
+        return fresh
+
+    def validate_restored(self, /) -> None:
+        """Reconstruct and validate the retained layer/core source authority."""
+        type(self).from_stored_fields(self)
 
     def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
         if isinstance(dimension, bool) or dimension not in (0, 1, 2, 3):
@@ -3961,6 +5003,145 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         if position >= ids.size or int(ids[position]) != entity_id:
             raise ValueError("entity_id is absent from the layer source dimension.")
         return self.scope_entity_key_banks[dimension][position]
+
+
+def _mapped_layer_core_facet_relation(
+    source: NativeLayerCoreSource, authority: NativePlcSource | NativeMappedHexSource, /
+) -> tuple[int, ...]:
+    """Prove fixed-core polygon ancestry in the independently authored full PLC.
+
+    Returns the full-PLC polygon row for each core polygon, or -1 for an
+    internal same-material polygon. No vertex identity is inferred from position.
+    """
+    from .. import _layer_core_topology as topology
+
+    reference = source.reference_source
+    domain = source.mapped_domain
+    authority_domain = (
+        authority.mapped_domain
+        if isinstance(authority, NativePlcSource)
+        else authority.domain
+    )
+    if reference is None or domain is None or authority_domain is None:
+        raise ValueError("Mapped core facet ancestry requires both retained authorities.")
+    if (
+        source.core_facet_source_ids != reference.core_facet_source_ids
+        or source.core_facet_source_occurrence_paths
+        != reference.core_facet_source_occurrence_paths
+        or source.region_ids != reference.region_ids
+        or source.region_occurrence_paths != reference.region_occurrence_paths
+        or not np.array_equal(source.core_region_map, reference.core_region_map)
+    ):
+        raise ValueError("Mapped core and reference source ancestry differs.")
+    if authority_domain.domain_id != domain.domain_id:
+        raise ValueError("Mapped core and full PLC have different root domains.")
+    authority.validate_restored()
+    mapping, cap_ids, polygons, points = topology.prepare_identity(
+        reference.layers,
+        reference.complex,
+        reference.vertex_layer_ids,
+        reference.cap_polygon_ids,
+    )
+    combined, layer_faces = topology.combined_domain(
+        reference.layers,
+        reference.complex,
+        np.asarray(reference.layer_regions, dtype=np.int64),
+        mapping,
+        cap_ids,
+        polygons,
+        points,
+        source.source_id,
+        reference.region_ids,
+        np.asarray(reference.core_region_map, dtype=np.int64),
+        reference.region_occurrence_paths,
+    )
+    if combined.domain_id != domain.reference_domain.domain_id:
+        raise ValueError(
+            "Mapped root domain is not the independently reconstructed layer/core domain."
+        )
+    roots = domain.reference_domain_vertex_root_ids
+    if roots is None or len(roots) != len(points):
+        raise ValueError(
+            "Mapped core requires complete declared domain/root vertex ancestry."
+        )
+    core_roots = np.asarray(roots, dtype=np.int64)[mapping]
+    relation = authority.root_relation
+    if relation is None:
+        raise ValueError("Full PLC authority has no mapped root relation.")
+    full = authority.complex
+    full_offsets = np.asarray(full.polygon_offsets, dtype=np.int64)
+    full_vertices = np.asarray(full.polygon_vertices, dtype=np.int64)
+    full_facets = np.asarray(full.polygon_facets, dtype=np.int64)
+    full_roots = np.asarray(relation.vertex_root_global_ids, dtype=np.int64)
+    full_rows: dict[tuple[int, ...], int] = {}
+    for row in range(len(full_facets)):
+        vertices = full_vertices[full_offsets[row] : full_offsets[row + 1]]
+        triangle = tuple(int(full_roots[int(vertex)]) for vertex in vertices)
+        key = tuple(sorted(triangle))
+        if len(triangle) != 3 or key in full_rows:
+            raise ValueError("Full mapped PLC has ambiguous triangular ancestry.")
+        full_rows[key] = row
+    cap_set = set(int(value) for value in cap_ids)
+    region_keys = tuple(
+        zip(reference.region_ids, reference.region_occurrence_paths, strict=True)
+    )
+    full_region_keys = tuple(
+        zip(full.region_ids, full.region_occurrence_paths, strict=True)
+    )
+    output: list[int] = []
+    matched_rows: set[int] = set()
+    for row, polygon in enumerate(polygons):
+        facet = int(reference.complex.polygon_facets[row])
+        positive, negative = (
+            int(value) for value in reference.complex.facet_regions[facet]
+        )
+        core_map = reference.core_region_map
+        positive = int(core_map[positive]) if positive >= 0 else -1
+        negative = int(core_map[negative]) if negative >= 0 else -1
+        if row in cap_set:
+            incidents = layer_faces[
+                tuple(sorted(int(value) for value in mapping[polygon]))
+            ]
+            if len(incidents) != 1:
+                raise ValueError("Core cap must have exactly one accepted layer side.")
+            negative = incidents[0].region
+        if positive == negative:
+            output.append(-1)
+            continue
+        triangle = tuple(int(core_roots[int(vertex)]) for vertex in polygon)
+        full_row = full_rows.get(tuple(sorted(triangle)))
+        if full_row is None:
+            raise ValueError("Core source polygon has no full PLC root triangle.")
+        if full_row in matched_rows:
+            raise ValueError("Multiple core polygons claim the same full PLC triangle.")
+        matched_rows.add(full_row)
+        source_key = (
+            reference.core_facet_source_ids[facet],
+            reference.core_facet_source_occurrence_paths[facet],
+        )
+        full_key = authority.source_entity_key_for_scope(
+            2, int(full.facet_entity_ids[int(full_facets[full_row])])
+        )
+        if source_key != full_key:
+            raise ValueError(
+                "Core facet changes its independently authored full source identity."
+            )
+        full_triangle = tuple(
+            int(full_roots[int(vertex)])
+            for vertex in full_vertices[
+                full_offsets[full_row] : full_offsets[full_row + 1]
+            ]
+        )
+        same = _mapped_triangle_key(triangle) == _mapped_triangle_key(full_triangle)
+        expected = (positive, negative) if same else (negative, positive)
+        actual = tuple(
+            -1 if int(value) < 0 else region_keys.index(full_region_keys[int(value)])
+            for value in full.facet_regions[full_facets[full_row]]
+        )
+        if expected != actual:
+            raise ValueError("Core/full PLC facet orientation or material sides differ.")
+        output.append(full_row)
+    return tuple(output)
 
 
 __all__ = [

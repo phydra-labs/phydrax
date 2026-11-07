@@ -19,7 +19,6 @@ from phydrax._execution_runtime import ExecutionGroup
 from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.discretization._distributed_field import DistributedHaloPlan
 from phydrax.discretization._mapped_locator import PreparedMappedCellLocator
-from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._polyhedral_locator import PreparedPolyhedralCellLocator
 from phydrax.discretization._view_support import OwnerLocalCellGeometry
 from phydrax.discretization.fem import prepare_finite_element_field_reconstruction
@@ -30,11 +29,7 @@ from phydrax.discretization.finite_volume import (
 )
 from phydrax.lifecycle import Composition
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
-from phydrax.meshing._contracts import (
-    CellFamilyPolicy,
-    CellMeshingTarget,
-    SurfaceMeshingSpec,
-)
+from phydrax.meshing._coupling import OversetCoupling
 from phydrax.meshing._overset import (
     OversetCellStatus,
     OversetConnectivityError,
@@ -45,15 +40,10 @@ from phydrax.meshing._overset import (
     prepare_overset_field_transfer,
     prepare_overset_motion_rebind,
 )
-from phydrax.meshing._periodic import PeriodicPointOrbits
-from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-from phydrax.meshing._sizing import SizeCompliancePolicy, UniformSizeControl
-from phydrax.meshing.providers._native_options import NativeMeshingOptions
-from phydrax.meshing.providers._native_periodic import (
-    NativePeriodicSource,
-    prepare_native_periodic,
-)
 from tests._support.volume_material_map_fixtures import make_curved_material_refinement
+from tools.meshing_qualification.scenarios.cold_owner_local_fv import (
+    _owner_local_periodic_assembly,
+)
 
 
 def test_owner_local_finite_volume_reconstruction_factory_is_exported() -> None:
@@ -108,6 +98,107 @@ def _native_pair() -> tuple[Any, Any, Any]:
         policy=OversetPolicy(fringe_layers=1),
     )
     return donor, receptor, connectivity
+
+
+def test_zero_weight_donor_vertices_remain_in_the_source_scope() -> None:
+    donor = _part("donor", ((0, 0), (2, 0), (0, 2)), ((0, 1, 2),))
+    receptor = _part("receptor", ((0.5, 0), (0.5, 0.25), (0.25, 0.25)), ((0, 1, 2),))
+    connectivity = prepare_overset_connectivity(
+        MeshAssembly((donor, receptor)),
+        (
+            OversetPartSpec("donor"),
+            OversetPartSpec("receptor", boundary=_boundary_facets(receptor)),
+        ),
+    )
+    connectivity.require_complete()
+    (overlay,) = connectivity.assembly.couplings
+    assert isinstance(overlay, OversetCoupling)
+    ids = np.asarray(overlay.donor_ids)
+    weights = np.asarray(overlay.donor_weights)
+    assert np.any((ids >= 0) & (weights == 0))
+    assert np.all(np.isin(ids[ids >= 0], np.asarray(overlay.source_scope.entity_ids)))
+
+
+def test_independent_donor_oracle_checks_each_retained_route() -> None:
+    from tools.meshing_qualification.scenarios.moving_overset_matrix import (
+        _independent_donor_oracle,
+    )
+
+    _, _, connectivity = _native_pair()
+    evidence = _independent_donor_oracle(connectivity)
+    assert evidence["receptor_routes_independently_contained"] == 3
+    residual = evidence["maximum_independent_donor_residual"]
+    assert isinstance(residual, (float, int))
+    assert residual <= 1.0e-10
+    assert evidence["orphan_count"] == 0
+
+
+def test_exact_partition_registration_refuses_forgery_and_stale_inputs() -> None:
+    import copy
+    from dataclasses import replace
+    from fractions import Fraction
+
+    donor, receptor, ordinary = _native_pair()
+    bound = prepare_overset_connectivity(
+        MeshAssembly((donor, receptor)),
+        ordinary.specs,
+        policy=ordinary.policy,
+        partition_priority=("receptor", "donor"),
+        partition_sources={},
+    )
+    bound.require_complete()
+    restored = bound.registration().prepare()
+    restored.require_complete()
+    assert restored.connectivity_id == bound.connectivity_id
+    assert restored.bound_partition == bound.bound_partition
+
+    forged = copy.copy(bound)
+    assert bound.bound_partition is not None
+    object.__setattr__(
+        forged,
+        "bound_partition",
+        replace(
+            bound.bound_partition,
+            total_area=bound.bound_partition.total_area + Fraction(1),
+        ),
+    )
+    with pytest.raises(ValueError, match="stale or has been altered"):
+        forged.require_complete()
+    stale = copy.copy(bound)
+    object.__setattr__(stale, "partition_priority", ("donor", "receptor"))
+    with pytest.raises(ValueError, match="stale or has been altered"):
+        stale.require_complete()
+
+
+@pytest.mark.parametrize(
+    ("wall_points", "expected_ambiguous"),
+    [
+        (((0.7, 0.7), (0.9, 0.7), (0.7, 0.9)), False),
+        (((0.7, 0.2), (0.9, 0.2), (0.8, 0.4)), True),
+    ],
+)
+def test_triangle_wall_blanking_distinguishes_box_overlap_from_real_cut(
+    wall_points: tuple[tuple[float, float], ...],
+    expected_ambiguous: bool,
+) -> None:
+    background = _part("background", ((0, 0), (1, 0), (0, 1)), ((0, 1, 2),))
+    wall = _part("wall", wall_points, ((0, 1, 2),))
+    connectivity = prepare_overset_connectivity(
+        MeshAssembly((background, wall)),
+        (
+            OversetPartSpec("background"),
+            OversetPartSpec("wall", wall=_boundary_facets(wall)),
+        ),
+    )
+    blanking = connectivity.blanking_of("background")
+    assert bool(np.asarray(blanking.ambiguous_cells)[0]) is expected_ambiguous
+    assert int(np.asarray(blanking.cell_status)[0]) == int(
+        OversetCellStatus.HOLE if expected_ambiguous else OversetCellStatus.ACTIVE
+    )
+    if expected_ambiguous:
+        assert not connectivity.complete
+        with pytest.raises(OversetConnectivityError, match="unproved ambiguous cells"):
+            connectivity.require_complete()
 
 
 def _poly_part(name: str, lower: Any, upper: Any) -> Any:
@@ -813,50 +904,6 @@ def test_owner_local_exchange_supports_search_only_owner_and_syncs_failure() -> 
         assert not transposed
 
 
-def _owner_local_periodic_assembly(
-    name: str,
-    fractional_points: np.ndarray,
-    point_owners: np.ndarray,
-    execution_group: ExecutionGroup,
-) -> MeshAssembly:
-    revision = f"{name}-revision-1"
-    cell = PeriodicCell(np.asarray(((1.0, 0.2), (0.3, 1.1)), dtype=np.float64))
-    point_ids = np.asarray((91, 4, 53, 17), dtype=np.int64)
-    local_rows = point_owners == jax.process_index()
-    source = NativePeriodicSource(
-        PeriodicPointOrbits(
-            cell,
-            np.asarray(cell.cartesian(fractional_points[local_rows]), dtype=np.float64),
-            point_ids[local_rows],
-        ),
-        name,
-        revision,
-        point_owner_ranks=point_owners[local_rows],
-    )
-    domain_scope = MeshingScope(
-        name,
-        revision,
-        MeshingEntityKind.GEOMETRY,
-        2,
-        source.scope_entity_set_id(2),
-        source.scope_entity_ids(2),
-    )
-    specification = SurfaceMeshingSpec(
-        CellMeshingTarget(
-            2,
-            2,
-            CellFamilyPolicy(required=("triangle",)),
-        ),
-        domain_scope,
-        size_controls=(UniformSizeControl(domain_scope, 0.35),),
-        size_compliance=SizeCompliancePolicy(relative_tolerance=0.5),
-    )
-    return prepare_native_periodic(
-        source,
-        specification,
-        NativeMeshingOptions("periodic_delaunay"),
-        phx.SpatialCoordinateContract.si(),
-    ).execute(execution_group=execution_group)
 
 
 def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose() -> None:

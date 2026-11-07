@@ -391,6 +391,7 @@ class SurfaceConstruction(StrictModule, NonTrainableState):
     boundary_occurrences: np.ndarray
     chart_triangulations: tuple[tuple[int, np.ndarray], ...]
     curve_parameters: tuple[tuple[int, np.ndarray], ...]
+    curve_intervals_exact: tuple[SourceParameterInterval, ...] = eqx.field(static=True)
     minimum_angle: float = eqx.field(static=True)
 
     def curve_vertex_chains(self) -> tuple[tuple[int, np.ndarray], ...]:
@@ -402,9 +403,19 @@ class SurfaceConstruction(StrictModule, NonTrainableState):
     def curve_edge_parameter_intervals(self) -> tuple[SourceParameterInterval, ...]:
         """Return exact represented source-parameter intervals per curve edge."""
         self.curve_vertex_chains()
-        return curve_edge_parameter_intervals(
+        projected = curve_edge_parameter_intervals(
             self.curve_parameters, self.curve_edge_curves
         )
+        if len(projected) != len(self.curve_intervals_exact) or any(
+            float(first) != float(projected_first)
+            or float(last) != float(projected_last)
+            or first >= last
+            for (first, last), (projected_first, projected_last) in zip(
+                self.curve_intervals_exact, projected, strict=True
+            )
+        ):
+            raise ValueError("Exact curve intervals must project to the construction chain.")
+        return self.curve_intervals_exact
 
 
 __all__ = [

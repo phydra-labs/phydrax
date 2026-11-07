@@ -15,12 +15,16 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
+from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+from ..geometry._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness
+from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..typing import checked
 from ._association import (
     AssociationEntityClasses,
     AssociationTransfer,
     GeometryAssociation,
 )
+from ._certification_inputs import ScopedFidelityInput
 from ._lineage import MeshLineage, VertexInterpolationStencil
 from ._result import CellMeshingResult
 
@@ -77,6 +81,7 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
     def __init__(self, transfers: tuple[AssociationTransfer, ...], /) -> None:
         from ._association import BRepAssociationTransfer
         from ._implicit_association_transfer import ImplicitAssociationTransfer
+        from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
         from ._mapped_reference_association import MappedReferenceAssociationTransfer
         from ._surface_association_transfer import SurfaceAssociationTransfer
 
@@ -84,6 +89,7 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
             BRepAssociationTransfer,
             ImplicitAssociationTransfer,
             MappedReferenceAssociationTransfer,
+            NativeLayerCoreAssociationTransfer,
             SurfaceAssociationTransfer,
             ComposedAssociationTransfer,
         )
@@ -161,6 +167,10 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         vertex_stencil: VertexInterpolationStencil | None,
+        geometry_transition: CellGeometryTransition | None,
+        target_fidelity_witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
+        validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):
@@ -173,6 +183,10 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
                 lineage,
                 target,
                 vertex_stencil=vertex_stencil,
+                geometry_transition=geometry_transition,
+                target_fidelity_witness=target_fidelity_witness,
+                target_scoped_fidelity=target_scoped_fidelity,
+                validated_fidelity=validated_fidelity,
             )
         )
         return tuple(

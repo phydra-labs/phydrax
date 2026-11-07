@@ -8,8 +8,9 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from fractions import Fraction
-from typing import overload, Protocol, runtime_checkable
+from typing import overload, Protocol, runtime_checkable, TYPE_CHECKING
 
+import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
@@ -46,9 +47,11 @@ from ._mapped_reference_domain import MappedReferenceDomain
 from ._planar_primitives import area2 as _area2, intersection as _intersection
 from ._rational import fraction_endpoint
 from ._source_boundary_records import (
+    rational_chart_tokens,
     SourceBoundaryChartCover,
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
+    SourceBoundaryRationalChartBank,
 )
 
 
@@ -97,7 +100,7 @@ class MappedPlcRootRelation(Protocol):
     polygon_root_face_global_ids: np.ndarray
     polygon_root_cell_global_ids: np.ndarray
     polygon_root_local_face_indices: np.ndarray
-    polygon_root_reference_vertices: np.ndarray
+    polygon_root_reference_rational_tokens: tuple[SourceBoundaryRationalChartBank, ...]
     polygon_orientation_signs: np.ndarray
     polygon_source_entity_keys: tuple[str, ...]
     polygon_source_occurrence_paths: tuple[tuple[str, ...], ...]
@@ -105,11 +108,14 @@ class MappedPlcRootRelation(Protocol):
     segment_root_entity_ids: np.ndarray
     segment_root_cell_global_ids: np.ndarray
     segment_root_local_entity_indices: np.ndarray
-    segment_root_reference_vertices: np.ndarray
+    segment_root_reference_rational_tokens: SourceBoundaryRationalChartBank
     segment_orientation_signs: np.ndarray
     segment_source_entity_ids: np.ndarray
     segment_source_entity_keys: tuple[str, ...]
     segment_source_occurrence_paths: tuple[tuple[str, ...], ...]
+    segment_source_parameter_rational_tokens: tuple[
+        tuple[tuple[int, int], tuple[int, int]], ...
+    ]
 
 
 @runtime_checkable
@@ -118,6 +124,12 @@ class _MappedPlcComplexInventory(Protocol):
 
     vertex_entity_ids: tuple[int, ...]
     vertex_occurrence_paths: tuple[tuple[str, ...], ...]
+    plc_edge_vertices: tuple[tuple[int, int], ...]
+    plc_edge_entity_ids: tuple[int, ...]
+    if TYPE_CHECKING:
+        # Structured face associations consume the retained PLC's material sides.
+        facet_regions: np.ndarray
+        region_ids: tuple[str, ...]
 
 
 @runtime_checkable
@@ -125,10 +137,16 @@ class MappedPlcRootAuthority(Protocol):
     """Current source owner that can reconstruct its checked root relation."""
 
     domain: MappedReferenceDomain
-    complex: _MappedPlcComplexInventory
+
+    @property
+    def complex(self) -> _MappedPlcComplexInventory: ...
+
     source_id: str
     source_revision: str
-    root_relation: MappedPlcRootRelation
+
+    @property
+    def root_relation(self) -> MappedPlcRootRelation: ...
+
     binding_id: str
 
     def validate_restored(self, /) -> None: ...
@@ -140,7 +158,7 @@ class MappedPlcRootAuthority(Protocol):
 
 def _mapped_root_entity_banks(
     mesh: CellMesh, /
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray | tuple[np.ndarray, ...], np.ndarray, np.ndarray]:
     """Return face vertices, reference-ordered cell faces, and edge vertices."""
     connectivity = mesh.connectivity
     if isinstance(connectivity, (HexahedralConnectivity, TetrahedralConnectivity)):
@@ -163,15 +181,28 @@ def _mapped_root_entity_banks(
             "tetrahedron" if block.cell_kind == "simplex:3" else block.cell_kind
             for block in mesh.blocks
         }
-        if len(kinds) != 1 or next(iter(kinds)) not in {"hexahedron", "tetrahedron"}:
+        if len(kinds) != 1 or next(iter(kinds)) not in {
+            "hexahedron",
+            "tetrahedron",
+            "prism",
+        }:
             raise TypeError("Mapped root polyhedral connectivity must be homogeneous.")
         topology = reference_cell_topology(next(iter(kinds)))
         offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
         values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
-        arity = len(topology.entities[2][0])
-        if np.any(np.diff(offsets) != arity):
-            raise TypeError("Mapped root polyhedral faces must have one reference arity.")
-        faces = values.reshape((-1, arity))
+        widths = np.diff(offsets)
+        if len({len(face) for face in topology.entities[2]}) == 1:
+            arity = len(topology.entities[2][0])
+            if np.any(widths != arity):
+                raise TypeError(
+                    "Mapped root polyhedral faces must match their reference arity."
+                )
+            faces = values.reshape((-1, arity))
+        else:
+            faces = tuple(
+                values[int(first) : int(last)]
+                for first, last in zip(offsets[:-1], offsets[1:], strict=True)
+            )
         rows_by_id = {
             int(identifier): vertices
             for block in mesh.blocks
@@ -199,8 +230,7 @@ def _mapped_root_entity_banks(
     # Local face indices follow the reference cell (simplex face i opposite
     # vertex i), as every mapped-root chart producer names them.
     face_rows = {
-        tuple(sorted(int(value) for value in face)): row
-        for row, face in enumerate(faces.tolist())
+        tuple(sorted(int(value) for value in face)): row for row, face in enumerate(faces)
     }
     local_faces = topology.entities[2]
     cell_faces = np.asarray(
@@ -242,9 +272,9 @@ def _mapped_boundary_query_identity(
     domain: MappedReferenceDomain,
     relation_id: str,
     root_vertex_global_ids: ArrayLike,
-    face_arrays: tuple[np.ndarray, ...],
+    face_arrays: tuple[object, ...],
     face_keys: tuple[tuple[str, tuple[str, ...]], ...],
-    edge_arrays: tuple[np.ndarray, ...],
+    edge_arrays: tuple[object, ...],
     edge_keys: tuple[tuple[str, tuple[str, ...]], ...],
     face_scope_keys: tuple[tuple[str, tuple[str, ...]], ...],
     edge_scope_keys: tuple[tuple[str, tuple[str, ...]], ...],
@@ -261,9 +291,9 @@ def _mapped_boundary_query_identity(
             "root_vertex_bindings": array_tree_fingerprint(
                 np.asarray(root_vertex_global_ids, dtype=np.int64)
             ),
-            "faces": array_tree_fingerprint(face_arrays),
+            "faces": canonical_fingerprint(face_arrays),
             "face_keys": face_keys,
-            "edges": array_tree_fingerprint(edge_arrays),
+            "edges": canonical_fingerprint(edge_arrays),
             "edge_keys": edge_keys,
             "scopes": (face_scope_keys, edge_scope_keys),
         }
@@ -282,7 +312,9 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
     polygon_root_face_global_ids: np.ndarray
     polygon_root_cell_global_ids: np.ndarray
     polygon_root_local_face_indices: np.ndarray
-    polygon_root_reference_vertices: np.ndarray
+    polygon_root_reference_rational_tokens: SourceBoundaryRationalChartBank = eqx.field(
+        static=True
+    )
     polygon_orientation_signs: np.ndarray
     polygon_source_entity_keys: tuple[str, ...]
     polygon_source_occurrence_paths: tuple[tuple[str, ...], ...]
@@ -290,11 +322,16 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
     segment_root_entity_global_ids: np.ndarray
     segment_root_cell_global_ids: np.ndarray
     segment_root_local_entity_indices: np.ndarray
-    segment_root_reference_vertices: np.ndarray
+    segment_root_reference_rational_tokens: SourceBoundaryRationalChartBank = eqx.field(
+        static=True
+    )
     segment_orientations: np.ndarray
     segment_source_entity_ids: np.ndarray
     segment_source_entity_keys: tuple[str, ...]
     segment_source_occurrence_paths: tuple[tuple[str, ...], ...]
+    segment_source_parameter_rational_tokens: tuple[
+        tuple[tuple[int, int], tuple[int, int]], ...
+    ] = eqx.field(static=True)
     face_chart_ids: tuple[str, ...]
     edge_chart_ids: tuple[str, ...]
     face_scope_keys: tuple[tuple[str, tuple[str, ...]], ...]
@@ -380,9 +417,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         polygon_faces = np.asarray(relation.polygon_root_face_global_ids)
         polygon_cells_all = np.asarray(relation.polygon_root_cell_global_ids)
         polygon_local_all = np.asarray(relation.polygon_root_local_face_indices)
-        polygon_refs_all = np.asarray(
-            relation.polygon_root_reference_vertices, dtype=np.float64
-        )
+        polygon_refs_all = tuple(relation.polygon_root_reference_rational_tokens)
         polygon_orientations_all = np.asarray(relation.polygon_orientation_signs)
         polygon_keys = tuple(
             canonical_identifier(value, "source_entity_id")
@@ -401,7 +436,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             or polygon_faces.shape != (polygon_count,)
             or polygon_cells_all.shape != (polygon_count, 2)
             or polygon_local_all.shape != (polygon_count, 2)
-            or polygon_refs_all.shape != (polygon_count, 2, 3, 3)
+            or len(polygon_refs_all) != polygon_count
             or polygon_orientations_all.shape != (polygon_count, 2)
             or len(polygon_keys) != polygon_count
             or len(polygon_paths) != polygon_count
@@ -410,7 +445,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             or polygon_cells_all.dtype.kind not in "iu"
             or polygon_local_all.dtype.kind not in "iu"
             or polygon_orientations_all.dtype.kind not in "iu"
-            or np.any(~np.isfinite(polygon_refs_all))
+            or any(len(row) != 2 for row in polygon_refs_all)
         ):
             raise ValueError("Mapped PLC polygon/root-face relation banks are malformed.")
         if polygon_entity_ids.dtype.kind == "u" and np.any(
@@ -426,12 +461,22 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         polygon_local_all = np.asarray(polygon_local_all, dtype=np.int64)
         polygon_orientations_all = np.asarray(polygon_orientations_all, dtype=np.int8)
         selected_sides = np.empty((polygon_count,), dtype=np.int8)
-        side_by_face: dict[int, int] = {}
+        cell_by_face: dict[int, int] = {}
         for row, face_id in enumerate(polygon_faces.tolist()):
-            side = side_by_face.get(int(face_id))
-            if side is None:
+            cell = cell_by_face.get(int(face_id))
+            if cell is None:
                 side = 0 if int(polygon_cells_all[row, 0]) >= 0 else 1
-                side_by_face[int(face_id)] = side
+                cell = int(polygon_cells_all[row, side])
+                cell_by_face[int(face_id)] = cell
+            else:
+                matching = [
+                    side for side in range(2) if int(polygon_cells_all[row, side]) == cell
+                ]
+                if len(matching) != 1:
+                    raise ValueError(
+                        "Mapped face pieces disagree on their incident cell."
+                    )
+                side = matching[0]
             if (
                 int(polygon_cells_all[row, side]) < 0
                 or int(polygon_local_all[row, side]) < 0
@@ -444,7 +489,23 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         rows = np.arange(polygon_count, dtype=np.int64)
         polygon_cells = polygon_cells_all[rows, selected_sides]
         polygon_local = polygon_local_all[rows, selected_sides]
-        polygon_refs = polygon_refs_all[rows, selected_sides]
+        polygon_refs = tuple(
+            polygon_refs_all[row][int(selected_sides[row])]
+            for row in range(polygon_count)
+        )
+        for row in polygon_refs:
+            if len(row) != 3 or any(len(point) != 3 for point in row):
+                raise ValueError("Mapped face piece requires three rational 3D corners.")
+            try:
+                decoded = tuple(
+                    tuple(Fraction(*value) for value in point) for point in row
+                )
+            except (TypeError, ValueError, ZeroDivisionError) as error:
+                raise ValueError(
+                    "Mapped face piece contains invalid rational tokens."
+                ) from error
+            if rational_chart_tokens((decoded,))[0] != row:
+                raise ValueError("Mapped face piece tokens must be canonical rationals.")
         polygon_orientations = polygon_orientations_all[rows, selected_sides]
         if (
             np.any(polygon_cells < 0)
@@ -461,9 +522,8 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         segment_ids_all = np.asarray(relation.segment_root_entity_ids)
         segment_cells_all = np.asarray(relation.segment_root_cell_global_ids)
         segment_local_all = np.asarray(relation.segment_root_local_entity_indices)
-        segment_refs_all = np.asarray(
-            relation.segment_root_reference_vertices, dtype=np.float64
-        )
+        segment_refs_all = tuple(relation.segment_root_reference_rational_tokens)
+        segment_parameters_all = tuple(relation.segment_source_parameter_rational_tokens)
         segment_orientations_all = np.asarray(relation.segment_orientation_signs)
         segment_source_entity_ids_all = np.asarray(relation.segment_source_entity_ids)
         segment_keys_all = tuple(
@@ -480,7 +540,8 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             or segment_ids_all.shape != (segment_count,)
             or segment_cells_all.shape != (segment_count,)
             or segment_local_all.shape != (segment_count,)
-            or segment_refs_all.shape != (segment_count, 2, 3)
+            or len(segment_refs_all) != segment_count
+            or len(segment_parameters_all) != segment_count
             or segment_orientations_all.shape != (segment_count,)
             or len(segment_keys_all) != segment_count
             or len(segment_paths_all) != segment_count
@@ -489,7 +550,6 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             or segment_cells_all.dtype.kind not in "iu"
             or segment_local_all.dtype.kind not in "iu"
             or segment_orientations_all.dtype.kind not in "iu"
-            or np.any(~np.isfinite(segment_refs_all))
         ):
             raise ValueError(
                 "Mapped PLC segment/root-entity relation banks are malformed."
@@ -520,13 +580,69 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         segment_ids = segment_ids_all[supported_segment_rows]
         segment_cells = segment_cells_all[supported_segment_rows]
         segment_local = segment_local_all[supported_segment_rows]
-        segment_refs = segment_refs_all[supported_segment_rows]
+        segment_refs = tuple(segment_refs_all[int(row)] for row in supported_segment_rows)
+        segment_parameters = tuple(
+            segment_parameters_all[int(row)] for row in supported_segment_rows
+        )
+        for interval in segment_parameters:
+            if len(interval) != 2:
+                raise ValueError(
+                    "Mapped source edge piece requires an exact parameter interval."
+                )
+            try:
+                values = tuple(Fraction(*token) for token in interval)
+            except (TypeError, ValueError, ZeroDivisionError) as error:
+                raise ValueError(
+                    "Mapped source edge interval has invalid rational tokens."
+                ) from error
+            if (
+                tuple(value.as_integer_ratio() for value in values) != interval
+                or not 0 <= values[0] < values[1] <= 1
+            ):
+                raise ValueError(
+                    "Mapped source edge interval is not canonical and increasing."
+                )
+        for row in segment_refs:
+            if len(row) != 2 or any(len(point) != 3 for point in row):
+                raise ValueError("Mapped edge piece requires two rational 3D corners.")
+            try:
+                decoded = tuple(
+                    tuple(Fraction(*value) for value in point) for point in row
+                )
+            except (TypeError, ValueError, ZeroDivisionError) as error:
+                raise ValueError(
+                    "Mapped edge piece contains invalid rational tokens."
+                ) from error
+            if rational_chart_tokens((decoded,))[0] != row:
+                raise ValueError("Mapped edge piece tokens must be canonical rationals.")
         segment_orientations = segment_orientations_all[supported_segment_rows]
         segment_source_entity_ids = segment_source_entity_ids_all[supported_segment_rows]
         segment_keys = tuple(segment_keys_all[int(row)] for row in supported_segment_rows)
         segment_paths = tuple(
             segment_paths_all[int(row)] for row in supported_segment_rows
         )
+        intervals_by_source: dict[
+            tuple[str, tuple[str, ...]], list[tuple[Fraction, Fraction]]
+        ] = {}
+        for key, path, interval in zip(
+            segment_keys, segment_paths, segment_parameters, strict=True
+        ):
+            intervals_by_source.setdefault((key, path), []).append(
+                (Fraction(*interval[0]), Fraction(*interval[1]))
+            )
+        for intervals in intervals_by_source.values():
+            ordered = sorted(intervals)
+            if (
+                ordered[0][0] != 0
+                or ordered[-1][1] != 1
+                or any(
+                    left[1] != right[0]
+                    for left, right in zip(ordered[:-1], ordered[1:], strict=True)
+                )
+            ):
+                raise ValueError(
+                    "Mapped source edge pieces do not partition the authored edge."
+                )
 
         face_keys = tuple(zip(polygon_keys, polygon_paths, strict=True))
         edge_keys = tuple(zip(segment_keys, segment_paths, strict=True))
@@ -550,13 +666,13 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         polygon_root_face_global_ids = _readonly(polygon_faces)
         polygon_root_cell_global_ids = _readonly(polygon_cells)
         polygon_root_local_face_indices = _readonly(polygon_local)
-        polygon_root_reference_vertices = _readonly(polygon_refs)
+        polygon_root_reference_rational_tokens = polygon_refs
         polygon_orientation_signs = _readonly(polygon_orientations)
         segment_root_dimensions = _readonly(segment_dims)
         segment_root_entity_global_ids = _readonly(segment_ids)
         segment_root_cell_global_ids = _readonly(segment_cells)
         segment_root_local_entity_indices = _readonly(segment_local)
-        segment_root_reference_vertices = _readonly(segment_refs)
+        segment_root_reference_rational_tokens = segment_refs
         segment_source_entity_ids = _readonly(segment_source_entity_ids)
         segment_orientations = _readonly(segment_orientations)
         face_chart_ids = tuple(
@@ -589,6 +705,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
                 segment_keys[row],
                 segment_paths[row],
                 segment_refs[row],
+                segment_parameters[row],
                 int(supported_segment_rows[row]),
                 int(segment_orientations[row]),
             )
@@ -596,19 +713,33 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         )
         face_selected_rows = tuple(int(face_rows[row]) for row in range(face_rows.size))
         edge_selected_rows = tuple(int(edge_rows[row]) for row in range(edge_rows.size))
+        internal_core = False
+        if type(authority).__module__ == "phydrax.meshing._layer_core_facet_authority":
+            from ..meshing._layer_core_facet_authority import MappedCoreFacetAuthority
+
+            internal_core = type(authority) is MappedCoreFacetAuthority
+            if internal_core:
+                authority.validate_restored()
         MappedReferenceBoundarySource._validate_root_relation(
             domain,
             polygon_root_face_global_ids,
             polygon_root_cell_global_ids,
             polygon_root_local_face_indices,
-            polygon_root_reference_vertices,
+            tuple(
+                tuple(tuple(Fraction(*value) for value in point) for point in row)
+                for row in polygon_root_reference_rational_tokens
+            ),
             polygon_orientation_signs,
             segment_root_dimensions,
             segment_root_entity_global_ids,
             segment_root_cell_global_ids,
             segment_root_local_entity_indices,
-            segment_root_reference_vertices,
+            tuple(
+                tuple(tuple(Fraction(*value) for value in point) for point in row)
+                for row in segment_root_reference_rational_tokens
+            ),
             segment_orientations,
+            internal_core,
         )
         face_arrays = (
             polygon_source_facet_rows,
@@ -616,7 +747,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             polygon_root_face_global_ids,
             polygon_root_cell_global_ids,
             polygon_root_local_face_indices,
-            polygon_root_reference_vertices,
+            polygon_root_reference_rational_tokens,
             polygon_orientation_signs,
         )
         edge_arrays = (
@@ -625,7 +756,8 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             segment_root_entity_global_ids,
             segment_root_cell_global_ids,
             segment_root_local_entity_indices,
-            segment_root_reference_vertices,
+            segment_root_reference_rational_tokens,
+            segment_parameters,
             segment_orientations,
         )
         source_query_id = _mapped_boundary_query_identity(
@@ -649,7 +781,9 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         self.polygon_root_face_global_ids = polygon_root_face_global_ids
         self.polygon_root_cell_global_ids = polygon_root_cell_global_ids
         self.polygon_root_local_face_indices = polygon_root_local_face_indices
-        self.polygon_root_reference_vertices = polygon_root_reference_vertices
+        self.polygon_root_reference_rational_tokens = (
+            polygon_root_reference_rational_tokens
+        )
         self.polygon_orientation_signs = polygon_orientation_signs
         self.polygon_source_entity_keys = polygon_keys
         self.polygon_source_occurrence_paths = polygon_paths
@@ -657,11 +791,14 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         self.segment_root_entity_global_ids = segment_root_entity_global_ids
         self.segment_root_cell_global_ids = segment_root_cell_global_ids
         self.segment_root_local_entity_indices = segment_root_local_entity_indices
-        self.segment_root_reference_vertices = segment_root_reference_vertices
+        self.segment_root_reference_rational_tokens = (
+            segment_root_reference_rational_tokens
+        )
         self.segment_source_entity_ids = segment_source_entity_ids
         self.segment_orientations = segment_orientations
         self.segment_source_entity_keys = segment_keys
         self.segment_source_occurrence_paths = segment_paths
+        self.segment_source_parameter_rational_tokens = segment_parameters
         self.face_scope_keys = face_scope
         self.edge_scope_keys = edge_scope
         self.face_chart_ids = face_chart_ids
@@ -732,7 +869,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
                 self.polygon_root_face_global_ids,
                 self.polygon_root_cell_global_ids,
                 self.polygon_root_local_face_indices,
-                self.polygon_root_reference_vertices,
+                self.polygon_root_reference_rational_tokens,
                 self.polygon_orientation_signs,
             ),
             tuple(
@@ -748,7 +885,8 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
                 self.segment_root_entity_global_ids,
                 self.segment_root_cell_global_ids,
                 self.segment_root_local_entity_indices,
-                self.segment_root_reference_vertices,
+                self.segment_root_reference_rational_tokens,
+                self.segment_source_parameter_rational_tokens,
                 self.segment_orientations,
             ),
             tuple(
@@ -772,9 +910,15 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             else int(self.segment_root_cell_global_ids[row])
         )
         reference_vertices = (
-            np.asarray(self.polygon_root_reference_vertices[row], dtype=np.float64)
+            tuple(
+                tuple(Fraction(*value) for value in point)
+                for point in self.polygon_root_reference_rational_tokens[row]
+            )
             if chart_dimension == 2
-            else np.asarray(self.segment_root_reference_vertices[row], dtype=np.float64)
+            else tuple(
+                tuple(Fraction(*value) for value in point)
+                for point in self.segment_root_reference_rational_tokens[row]
+            )
         )
         cell_rows = {
             int(identifier): (block_index, local_row)
@@ -799,11 +943,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
                 "Mapped root chart geometry requires a scalar coordinate element."
             )
         physical = coordinate_map_expressions(element, local, cell_row=cell_row)
-        exact_vertices = tuple(
-            tuple(Fraction.from_float(float(value)) for value in point)
-            for point in reference_vertices
-        )
-        arguments = _affine_chart_arguments(exact_vertices, chart_dimension)
+        arguments = _affine_chart_arguments(reference_vertices, chart_dimension)
         return tuple(compose_expression(value, arguments) for value in physical)
 
     def _selected_rows(self, chart_dimension: int, /) -> tuple[int, ...]:
@@ -1041,10 +1181,8 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         """Return the source PLC triangle in its root global-face-loop chart."""
         row = self.chart_row(2, chart_id)
         reference_vertices = tuple(
-            tuple(Fraction.from_float(float(value)) for value in point)
-            for point in np.asarray(
-                self.polygon_root_reference_vertices[row], dtype=np.float64
-            )
+            tuple(Fraction(*value) for value in point)
+            for point in self.polygon_root_reference_rational_tokens[row]
         )
         return self.root_face_uv(
             int(self.polygon_root_face_global_ids[row]),
@@ -1307,7 +1445,17 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         return SourceBoundaryDistance(lower_results, upper_results, "certified")
 
     def require_current(self, /) -> None:
-        self.authority.validate_restored()
+        # The scoped-core constructor below reconstructs and checks this authority.
+        internal_core = False
+        if (
+            type(self.authority).__module__
+            == "phydrax.meshing._layer_core_facet_authority"
+        ):
+            from ..meshing._layer_core_facet_authority import MappedCoreFacetAuthority
+
+            internal_core = type(self.authority) is MappedCoreFacetAuthority
+        if not internal_core:
+            self.authority.validate_restored()
         renewed_domain = MappedReferenceDomain(
             self.domain.reference_domain,
             self.domain.reference_mesh,
@@ -1346,14 +1494,17 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
         polygon_root_face_global_ids: np.ndarray,
         polygon_root_cell_global_ids: np.ndarray,
         polygon_root_local_face_indices: np.ndarray,
-        polygon_root_reference_vertices: np.ndarray,
+        polygon_root_reference_vertices: Sequence[Sequence[Sequence[Fraction]]]
+        | np.ndarray,
         polygon_orientation_signs: np.ndarray,
         segment_root_dimensions: np.ndarray,
         segment_root_entity_global_ids: np.ndarray,
         segment_root_cell_global_ids: np.ndarray,
         segment_root_local_entity_indices: np.ndarray,
-        segment_root_reference_vertices: np.ndarray,
+        segment_root_reference_vertices: Sequence[Sequence[Sequence[Fraction]]]
+        | np.ndarray,
         segment_orientations: np.ndarray,
+        internal_core: bool,
         /,
     ) -> None:
         root_mesh = domain.reference_mesh
@@ -1365,10 +1516,10 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             root_mesh.topological_dimension != 3
             or root_mesh.ambient_dimension != 3
             or len(cell_kinds) != 1
-            or next(iter(cell_kinds), None) not in {"hexahedron", "tetrahedron"}
+            or next(iter(cell_kinds), None) not in {"hexahedron", "tetrahedron", "prism"}
         ):
             raise ValueError(
-                "Mapped root surface query requires homogeneous hexahedral or three-dimensional simplex charts."
+                "Mapped root surface query requires homogeneous hexahedral, tetrahedral, or prism charts."
             )
         try:
             face_vertex_rows, face_rows, edge_vertices = _mapped_root_entity_banks(
@@ -1376,7 +1527,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             )
         except TypeError as error:
             raise ValueError(
-                "Mapped root surface query requires homogeneous hexahedral or three-dimensional simplex charts."
+                "Mapped root surface query requires homogeneous hexahedral, tetrahedral, or prism charts."
             ) from error
         root_cell_kind = next(iter(cell_kinds))
         topology = reference_cell_topology(root_cell_kind)
@@ -1408,37 +1559,30 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             for row in range(face_ids.size)
             if boundary[row] or len(face_region_sets[row]) > 1
         }
+        if internal_core:
+            expected_faces = set(int(value) for value in polygon_root_face_global_ids)
+            if not expected_faces:
+                raise ValueError("Original core facet scope must contain a root face.")
         if set(int(value) for value in polygon_root_face_global_ids) != expected_faces:
             raise ValueError(
                 "Mapped root boundary chart rows do not cover every source boundary/interface face."
             )
         vertex_ids = np.asarray(root_mesh.vertex_global_ids, dtype=np.int64)
-        if root_cell_kind == "hexahedron":
-            face_chart_corners = (
-                (Fraction(0), Fraction(0)),
-                (Fraction(1), Fraction(0)),
-                (Fraction(1), Fraction(1)),
-                (Fraction(0), Fraction(1)),
-            )
-            face_domain = (
-                (
-                    (Fraction(0), Fraction(0)),
-                    (Fraction(1), Fraction(0)),
-                    (Fraction(1), Fraction(1)),
-                ),
-                (
-                    (Fraction(0), Fraction(0)),
-                    (Fraction(1), Fraction(1)),
-                    (Fraction(0), Fraction(1)),
-                ),
-            )
-        else:
-            face_chart_corners = (
-                (Fraction(0), Fraction(0)),
-                (Fraction(1), Fraction(0)),
-                (Fraction(0), Fraction(1)),
-            )
-            face_domain = (face_chart_corners,)
+        quad_corners = (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0)),
+            (Fraction(1), Fraction(1)),
+            (Fraction(0), Fraction(1)),
+        )
+        triangle_corners = (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0)),
+            (Fraction(0), Fraction(1)),
+        )
+        quad_domain = (
+            (quad_corners[0], quad_corners[1], quad_corners[2]),
+            (quad_corners[0], quad_corners[2], quad_corners[3]),
+        )
         row_charts: dict[int, list[tuple[tuple[Fraction, Fraction], ...]]] = {}
         row_sides: dict[int, tuple[int, int]] = {}
         for row, face_id in enumerate(polygon_root_face_global_ids.tolist()):
@@ -1480,40 +1624,45 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
             canonical_face_ids = tuple(
                 int(vertex_ids[value]) for value in root_face_vertex_rows
             )
+            if len(canonical_face_ids) not in (3, 4):
+                raise ValueError("Mapped root faces must be triangles or quadrilaterals.")
             if set(face_vertex_global_ids) != set(canonical_face_ids):
                 raise ValueError(
                     "Mapped root local face changes canonical global face vertices."
                 )
-            face_chart_by_vertex = {
-                identifier: face_chart_corners[index]
-                for index, identifier in enumerate(canonical_face_ids)
-            }
+            # Map every piece corner through the actual face chart; overlay
+            # vertices need not be root mesh vertices.
             local_reference_vertices = tuple(
                 tuple(Fraction.from_float(float(value)) for value in point)
                 for point in np.asarray(topology.vertices, dtype=np.float64)
             )
-            local_vertex_by_reference = {
-                point: int(vertex_ids[int(cell_vertices[local])])
-                for local, point in enumerate(local_reference_vertices)
-            }
-            chart_triangle: list[tuple[Fraction, Fraction]] = []
-            for point in np.asarray(
-                polygon_root_reference_vertices[row], dtype=np.float64
+            chart_triangle = MappedReferenceBoundarySource._root_face_uv_for_domain(
+                domain,
+                int(face_id),
+                cell_id,
+                local_face,
+                polygon_root_reference_vertices[row],
+            )
+            if any(
+                not isinstance(value, Fraction)
+                for point in chart_triangle
+                for value in point
             ):
-                exact_point = tuple(Fraction.from_float(float(value)) for value in point)
-                vertex_id = local_vertex_by_reference.get(exact_point)
-                if vertex_id is None or vertex_id not in face_chart_by_vertex:
-                    raise ValueError(
-                        "Mapped root source triangle corner is not a root face vertex."
-                    )
-                chart_triangle.append(face_chart_by_vertex[vertex_id])
-            row_charts.setdefault(int(face_id), []).append(tuple(chart_triangle))
+                raise ValueError(
+                    "Rational root face corners require rational chart coordinates."
+                )
+            rational_triangle = tuple(
+                (point[0], point[1])
+                for point in chart_triangle
+                if isinstance(point[0], Fraction) and isinstance(point[1], Fraction)
+            )
+            row_charts.setdefault(int(face_id), []).append(rational_triangle)
             face_reference = tuple(
                 local_reference_vertices[int(index)]
                 for index in topology.entities[2][local_face]
             )
             triangle_reference = tuple(
-                tuple(Fraction.from_float(float(value)) for value in point)
+                tuple(_exact_scalar(value) for value in point)
                 for point in np.asarray(polygon_root_reference_vertices[row])
             )
             face_first = tuple(
@@ -1558,6 +1707,12 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
                     "Mapped PLC root-face orientation does not reproduce its exact chart order."
                 )
         for face_id in expected_faces:
+            face_row = face_row_by_id[face_id]
+            face_domain = (
+                quad_domain
+                if len(face_vertex_rows[face_row]) == 4
+                else (triangle_corners,)
+            )
             triangles = row_charts.get(face_id, ())
             if not triangles:
                 raise ValueError("Mapped root face has no declared PLC source triangles.")
@@ -1585,7 +1740,9 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Mapped PLC root-face triangles overlap with positive area."
                 )
-            if sum((_area2(triangle) for triangle in triangles), Fraction(0)) != sum(
+            if not internal_core and sum(
+                (_area2(triangle) for triangle in triangles), Fraction(0)
+            ) != sum(
                 (_area2(domain_triangle) for domain_triangle in face_domain),
                 Fraction(0),
             ):
@@ -1635,7 +1792,7 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
                 raise ValueError("Mapped source segment references an absent root cell.")
             block_index, cell_row = owner
             refs = tuple(
-                tuple(Fraction.from_float(float(value)) for value in point)
+                tuple(_exact_scalar(value) for value in point)
                 for point in np.asarray(segment_root_reference_vertices[row])
             )
             if refs[0] == refs[1]:
@@ -1663,14 +1820,28 @@ class MappedReferenceBoundarySource(StrictModule, NonTrainableState):
                         np.asarray(local_edges[local_entity], dtype=np.int64)
                     ]
                 )
-                if refs == endpoints:
-                    expected_orientation = 1
-                elif refs == endpoints[::-1]:
-                    expected_orientation = -1
-                else:
-                    raise ValueError(
-                        "Mapped root-edge segment endpoints change its exact edge chart."
+                direction = tuple(
+                    endpoints[1][axis] - endpoints[0][axis] for axis in range(3)
+                )
+                axis = next((axis for axis, value in enumerate(direction) if value), None)
+                if axis is None:
+                    raise ValueError("Mapped root edge has a degenerate reference chart.")
+                parameters = tuple(
+                    (point[axis] - endpoints[0][axis]) / direction[axis] for point in refs
+                )
+                if any(
+                    not 0 <= parameter <= 1
+                    or any(
+                        point[coordinate]
+                        != endpoints[0][coordinate] + parameter * direction[coordinate]
+                        for coordinate in range(3)
                     )
+                    for point, parameter in zip(refs, parameters, strict=True)
+                ):
+                    raise ValueError(
+                        "Mapped root-edge segment leaves its exact edge chart."
+                    )
+                expected_orientation = 1 if parameters[1] > parameters[0] else -1
             elif dimension == 2:
                 if local_entity < 0 or local_entity >= face_rows.shape[1]:
                     raise ValueError(
@@ -1737,7 +1908,11 @@ def _select_scope_keys(
         )
         for entity_id, path in requested
     )
-    if not keys or len(set(keys)) != len(keys) or not set(keys) <= set(all_keys):
+    if (
+        (not keys and all_keys)
+        or len(set(keys)) != len(keys)
+        or not set(keys) <= set(all_keys)
+    ):
         raise ValueError(
             f"{name}_scope_keys must be a nonempty subset of actual root relation keys."
         )

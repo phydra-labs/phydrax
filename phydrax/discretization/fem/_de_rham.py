@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
+from types import MappingProxyType
 from math import prod
-from typing import final, Literal, NamedTuple, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import final, Literal, NamedTuple, NoReturn, Protocol, runtime_checkable, SupportsIndex, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -56,6 +57,7 @@ from .._nested_reference_types import (
     NestedReferenceWitnesses,
     reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
+    ReferenceCellPartition,
     validate_reference_cell_map_witnesses,
 )
 from .._reference_cell import reference_cell_topology
@@ -70,9 +72,12 @@ from ._form_elements import (
     FormElementFamily,
 )
 from ._generic import (
+    _exact_prism_canonical_form_cell,
     _form_cell_orientation_sign,
     _linear_reference_element,
     _local_mass_tensor,
+    _prism_canonical_form_coordinates,
+    _prism_form_entity_chart_vertices,
     FiniteElementBlockGeometry,
     FiniteElementDiscretization,
     FiniteElementDofMap,
@@ -92,7 +97,9 @@ class _CurvedIntegrationPolicy(Protocol):
 
 if TYPE_CHECKING:
     from ...geometry._common_root_volume_overlap import CurvedOverlapIntegrationPolicy
+    from ...linalg._sparse_rank import SparseSupportRank
     from ._exact_form_moments import _PreparedReferenceChartOrientation
+    from ._partition_form_moments import PartitionCell
 else:
     CurvedOverlapIntegrationPolicy = _CurvedIntegrationPolicy
 
@@ -104,6 +111,8 @@ def _index_nested_reference_maps(
     source_mesh: CellMesh,
     target_mesh: CellMesh,
     /,
+    *,
+    partition_target_ids: frozenset[int] = frozenset(),
 ) -> tuple[dict[int, NestedSimplexMap | NestedCellReferenceMap], np.ndarray]:
     """Bind exact local maps to globally concatenated source and target rows."""
     source_cell_rows: dict[int, int] = {}
@@ -128,6 +137,9 @@ def _index_nested_reference_maps(
             target_cell_rows[cell_id] = target_offset + local
             target_cell_kinds[cell_id] = block.cell_kind
         target_offset += block.cell_count
+    if not partition_target_ids <= target_cell_rows.keys():
+        raise ValueError("Coarsening partitions reference absent target cells.")
+    partition_rows = {target_cell_rows[value] for value in partition_target_ids}
 
     records = (
         (witnesses,)
@@ -195,6 +207,10 @@ def _index_nested_reference_maps(
                 raise ValueError(
                     "Exact reference maps must cover present global cell IDs."
                 )
+            if target_row in partition_rows:
+                raise ValueError(
+                    "A target cell cannot have both direct and coarsening maps."
+                )
             target_kind = target_cell_kinds[target_id]
             source_kind = source_cell_kinds[source_id]
             if isinstance(reference_map, NestedCellReferenceMap):
@@ -235,12 +251,15 @@ def _index_nested_reference_maps(
                     continue
                 raise ValueError("Exact reference maps disagree for a target cell ID.")
             indexed[target_row] = reference_map
-    if len(indexed) != target_offset:
+    if set(indexed) | partition_rows != set(range(target_offset)):
         raise ValueError(
             "Exact reference maps must cover every target cell exactly once."
         )
     parents_by_target = []
     for index in range(target_offset):
+        if index in partition_rows:
+            parents_by_target.append(-1)
+            continue
         reference_map = indexed[index]
         if isinstance(reference_map, NestedCellReferenceMap):
             source_id = reference_map.source_cell_id
@@ -706,6 +725,7 @@ def _exact_form_cell_transform(
         tuple[tuple[Fraction, ...], ...],
     ]
     | None = None,
+    reference_gradient_cache: dict[str, np.ndarray] | None = None,
     /,
 ) -> tuple[tuple[Fraction, ...], ...]:
     basis = element.form_basis
@@ -715,17 +735,36 @@ def _exact_form_cell_transform(
     global_vertices = tuple(vertex_ids[cell_vertices].tolist())
     permutation = basis.canonical_permutation(global_vertices)
     sign = _form_cell_orientation_sign(
-        mesh, block, element, cell_vertices, global_vertices
+        mesh, block, element, cell_vertices, global_vertices, reference_gradient_cache
     )
     if sign not in (-1, 1):
         raise ValueError("Exact cell orientation must be nonzero and representable.")
-    key = (basis.basis_id, permutation, sign)
+    normalized_prism = basis.family == "prism-trimmed"
+    if normalized_prism:
+        rank = {
+            identifier: index for index, identifier in enumerate(sorted(global_vertices))
+        }
+        permutation = tuple(rank[identifier] for identifier in global_vertices)
+    key = (
+        basis.basis_id + (":normalized-prism" if normalized_prism else ""),
+        permutation,
+        sign,
+    )
     if cache is not None:
         cached = cache.get(key)
         if cached is not None:
             return cached
-    transform = basis.exact_entity_permutation_matrix(global_vertices)
-    if sign != 1:
+    if normalized_prism:
+        transform = _exact_prism_canonical_form_cell(
+            mesh,
+            block,
+            element,
+            cell_vertices,
+            *_prism_canonical_form_coordinates(element),
+        )
+    else:
+        transform = basis.exact_entity_permutation_matrix(global_vertices)
+    if sign != 1 and not normalized_prism:
         transform = tuple(
             tuple(sign * coefficient for coefficient in row) for row in transform
         )
@@ -882,9 +921,9 @@ def _require_complex_map_commutes(
 
     if len(entry_evidence) != len(map.maps):
         raise ValueError("Commuting checks require integration evidence in every degree.")
-    residuals = []
     epsilon = np.finfo(np.float64).eps
-    for degree in range(map.source.top_degree):
+
+    def check_degree(degree: int, /) -> SparseCommutingEvidence:
         target_differential = _periodic_matrix(map.target.differential(degree))
         target_map = _periodic_matrix(map.map(degree))
         next_map = _periodic_matrix(map.map(degree + 1))
@@ -892,6 +931,7 @@ def _require_complex_map_commutes(
         left = (target_differential @ target_map).tocsr()
         right = (next_map @ source_differential).tocsr()
         difference = (left - right).tocsr()
+        del left, right
         difference.eliminate_zeros()
         observed = abs(difference)
         current_error = _matrix_entry_error(entry_evidence[degree])
@@ -899,6 +939,7 @@ def _require_complex_map_commutes(
         left_integral_error = abs(target_differential) @ current_error
         right_integral_error = next_error @ abs(source_differential)
         integration_error = (left_integral_error + right_integral_error).tocsr()
+        del current_error, next_error, left_integral_error, right_integral_error
         integration_error.eliminate_zeros()
         left_magnitude = abs(target_differential) @ abs(target_map)
         right_magnitude = abs(next_map) @ abs(source_differential)
@@ -913,6 +954,7 @@ def _require_complex_map_commutes(
             _gamma_bound(2 * left_terms) * left_magnitude
             + _gamma_bound(2 * right_terms) * right_magnitude
         ).tocsr()
+        del left_magnitude, right_magnitude
         scale = max(
             1.0,
             float(np.max(scale_matrix.data, initial=0.0)),
@@ -930,6 +972,13 @@ def _require_complex_map_commutes(
             * integration_error
         )
         roundoff = (roundoff + integration_roundoff).tocsr()
+        del (
+            integration_roundoff,
+            target_differential,
+            source_differential,
+            target_map,
+            next_map,
+        )
         if integration_error.nnz:
             integration_error.data = np.nextafter(
                 np.maximum(integration_error.data, 0.0), np.inf
@@ -943,6 +992,7 @@ def _require_complex_map_commutes(
                 integration_policy.absolute_tolerance
                 + integration_policy.relative_tolerance * allowed.data
             )
+        del scale_matrix
         total_bound = (integration_error + roundoff).tocsr()
         excess = (observed - total_bound).tocsr()
         excess.eliminate_zeros()
@@ -950,6 +1000,7 @@ def _require_complex_map_commutes(
             raise ValueError(
                 f"FE transfer does not commute within its certified moment intervals in degree {degree}."
             )
+        del excess
         if allowed is not None:
             tolerance_excess = (total_bound - allowed).tocsr()
             tolerance_excess.eliminate_zeros()
@@ -960,33 +1011,39 @@ def _require_complex_map_commutes(
                 raise ValueError(
                     f"FE commuting enclosure exceeds integration_policy in degree {degree}."
                 )
+            del tolerance_excess
         union = (observed + total_bound).tocsr()
         union.eliminate_zeros()
+        del observed, total_bound, allowed
         coo = union.tocoo()
+        del union
         if coo.nnz:
             observed_values = np.asarray(difference.tocsr()[coo.row, coo.col]).reshape(-1)
+            del difference
             integration_values = np.asarray(
                 integration_error.tocsr()[coo.row, coo.col]
             ).reshape(-1)
+            del integration_error
             roundoff_values = np.asarray(roundoff.tocsr()[coo.row, coo.col]).reshape(-1)
+            del roundoff
         else:
             observed_values = integration_values = roundoff_values = np.zeros(
                 (0,), dtype=np.float64
             )
-        residuals.append(
-            SparseCommutingEvidence(
-                "commuting",
-                degree,
-                map.source.space(degree).size,
-                map.target.space(degree + 1).size,
-                np.asarray(coo.row, dtype=np.int32),
-                np.asarray(coo.col, dtype=np.int32),
-                observed_values,
-                integration_values,
-                roundoff_values,
-            )
+            del difference, integration_error, roundoff
+        return SparseCommutingEvidence(
+            "commuting",
+            degree,
+            map.source.space(degree).size,
+            map.target.space(degree + 1).size,
+            np.asarray(coo.row, dtype=np.int32),
+            np.asarray(coo.col, dtype=np.int32),
+            observed_values,
+            integration_values,
+            roundoff_values,
         )
-    return tuple(residuals)
+
+    return tuple(check_degree(degree) for degree in range(map.source.top_degree))
 
 
 def _periodic_quotient_transfer_action(
@@ -1121,8 +1178,77 @@ def _require_sparse_identity(
     return defect
 
 
+class _PeriodicFormTopology:
+    """Call-local incidence and orbit preparation for one actual periodic mesh.
+
+    These tables depend only on mesh connectivity and periodic topology. Form
+    degree, twist, coordinate geometry and field orientation remain checked by
+    each consumer, and are not inferred from this preparation.
+    """
+
+    __slots__ = ("mesh", "dimension", "ordered_vertices", "vertex_sets", "lookups", "orbit_maps")
+
+    def __init__(self, mesh: CellMesh, dimension: int, /) -> None:
+        from ...meshing._periodic import periodic_entity_orbit_map
+        from .._periodic_topology import _entity_vertex_rows
+        from ._generic import _topology_vertex_sets
+
+        if mesh.periodic_topology is None or dimension != mesh.topological_dimension:
+            raise ValueError("Periodic form topology requires its actual periodic mesh.")
+        self.mesh = mesh
+        self.dimension = dimension
+        self.ordered_vertices = _entity_vertex_rows(mesh)
+        self.vertex_sets = _topology_vertex_sets(mesh)
+        if len(self.ordered_vertices) != dimension + 1 or len(self.vertex_sets) != len(
+            self.ordered_vertices
+        ):
+            raise ValueError("Periodic entity corner tables do not span the cell complex.")
+        self.lookups = tuple(
+            MappingProxyType(
+                {tuple(sorted(vertices)): row for row, vertices in enumerate(level)}
+            )
+            for level in self.vertex_sets
+        )
+        self.orbit_maps = tuple(
+            periodic_entity_orbit_map(mesh, degree) for degree in range(dimension + 1)
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if hasattr(self, name):
+            raise AttributeError("Periodic form topology preparation is immutable.")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("Periodic form topology preparation is immutable.")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Periodic form topology preparation cannot be serialized.")
+
+    def require(self, mesh: CellMesh, dimension: int, /) -> None:
+        if self.mesh is not mesh or self.dimension != dimension:
+            raise ValueError("Periodic form topology binds a different actual mesh.")
+        for orbit in self.orbit_maps:
+            orbit.require_source(mesh)
+
+
+def _vertex_id_orientation(vertices: tuple[int, ...], vertex_ids: np.ndarray, /) -> int:
+    """Sign taking an entity's vertex-row orientation to its ascending-ID one.
+
+    Orbit signs orient entities by topology vertex rows, while form moments
+    orient them by ascending global vertex ID.
+    """
+    ids = [int(vertex_ids[vertex]) for vertex in vertices]
+    inversions = sum(
+        ids[first] > ids[second]
+        for first in range(len(ids))
+        for second in range(first + 1, len(ids))
+    )
+    return -1 if inversions % 2 else 1
+
+
 def _periodic_entity_coordinate_maps(
-    complex: FiniteElementDeRhamComplex, degree: int, /
+    complex: FiniteElementDeRhamComplex, degree: int, /, *,
+    _topology: _PeriodicFormTopology | None = None,
 ) -> tuple[
     SparseCoordinateOperator,
     SparseCoordinateOperator,
@@ -1132,9 +1258,6 @@ def _periodic_entity_coordinate_maps(
     """Build exact-form DOF lifts and representative collapses for every orbit."""
     from scipy import sparse as scipy_sparse
 
-    from ...meshing._periodic import periodic_entity_orbit_map
-    from .._periodic_topology import _entity_vertex_rows
-    from ._generic import _topology_vertex_sets
 
     mesh = complex.mesh
     periodic = mesh.periodic_topology
@@ -1147,20 +1270,14 @@ def _periodic_entity_coordinate_maps(
     elements = complex.discretization.elements[degree]
     if len(elements) != len(mesh.blocks):
         raise ValueError("Periodic form elements do not align with cell blocks.")
-    ordered_vertices = _entity_vertex_rows(mesh)
-    vertex_sets = _topology_vertex_sets(mesh)
-    if len(ordered_vertices) != complex.dimension + 1 or len(vertex_sets) != len(
-        ordered_vertices
-    ):
-        raise ValueError("Periodic entity corner tables do not span the cell complex.")
-    lookups = tuple(
-        {tuple(sorted(vertices)): row for row, vertices in enumerate(level)}
-        for level in vertex_sets
-    )
-    orbit_maps = tuple(
-        periodic_entity_orbit_map(mesh, entity_degree)
-        for entity_degree in range(complex.dimension + 1)
-    )
+    topology = _PeriodicFormTopology(mesh, complex.dimension) if _topology is None else _topology
+    if type(topology) is not _PeriodicFormTopology:
+        raise TypeError("Periodic form topology must be an operation-local preparation.")
+    topology.require(mesh, complex.dimension)
+    ordered_vertices = topology.ordered_vertices
+    vertex_sets = topology.vertex_sets
+    lookups = topology.lookups
+    orbit_maps = topology.orbit_maps
     for orbit in orbit_maps:
         signs = np.asarray(orbit.orientation_signs, dtype=np.int32)
         shifts = np.asarray(orbit.winding_shifts, dtype=np.int64)
@@ -1205,7 +1322,12 @@ def _periodic_entity_coordinate_maps(
                 zip(basis.entity_vertices, element.entity_dofs, strict=True)
             ):
                 for face, local_dofs in zip(faces, dof_groups, strict=True):
-                    local_vertices = tuple(int(cell[index]) for index in face)
+                    chart = (
+                        _prism_form_entity_chart_vertices(face)
+                        if basis.family == "prism-trimmed"
+                        else face
+                    )
+                    local_vertices = tuple(int(cell[index]) for index in chart)
                     entity_row = lookups[entity_degree].get(tuple(sorted(local_vertices)))
                     if entity_row is None:
                         raise ValueError("A form chart is absent from mesh incidence.")
@@ -1230,10 +1352,13 @@ def _periodic_entity_coordinate_maps(
     ]
     basis_cache: dict[tuple[int, int, int, str, str], FormBasis] = {}
     cell_transform_cache: dict[tuple[int, int], tuple[tuple[Fraction, ...], ...]] = {}
+    cell_sign_cache: dict[tuple[int, int], int] = {}
+    prism_normalizations: dict[str, tuple[tuple[Fraction, ...], ...]] = {}
     orientation_transform_cache: dict[
         tuple[str, tuple[int, ...], int],
         tuple[tuple[Fraction, ...], ...],
     ] = {}
+    reference_gradient_cache: dict[str, np.ndarray] = {}
 
     def exact_cell_transform(
         block_index: int, cell_row: int, /
@@ -1251,9 +1376,38 @@ def _periodic_entity_coordinate_maps(
             cell_row,
             vertex_ids,
             orientation_transform_cache,
+            reference_gradient_cache,
         )
+        if (
+            element_.form_basis is not None
+            and element_.form_basis.family == "prism-trimmed"
+        ):
+            normalization = prism_normalizations.get(element_.element_id)
+            if normalization is None:
+                normalization = _prism_canonical_form_coordinates(element_)[0]
+                prism_normalizations[element_.element_id] = normalization
+            result = tuple(tuple(row) for row in solve_exact(normalization, result))
         cell_transform_cache[key] = result
         return result
+
+    def cell_coorientation(block_index: int, cell_row: int, /) -> int:
+        key = (block_index, cell_row)
+        sign = cell_sign_cache.get(key)
+        if sign is None:
+            block_ = mesh.blocks[block_index]
+            cell_vertices = np.asarray(block_.vertices[cell_row], dtype=np.int64)
+            sign = _form_cell_orientation_sign(
+                mesh,
+                block_,
+                elements[block_index],
+                cell_vertices,
+                tuple(vertex_ids[cell_vertices].tolist()),
+                reference_gradient_cache,
+            )
+            if sign not in (-1, 1):
+                raise ValueError("Periodic cell coorientation must be nonzero.")
+            cell_sign_cache[key] = sign
+        return sign
 
     for block_index, (block, element) in enumerate(
         zip(mesh.blocks, elements, strict=True)
@@ -1298,7 +1452,12 @@ def _periodic_entity_coordinate_maps(
                 ):
                     if not local_dofs:
                         continue
-                    local_vertex_rows = tuple(int(cell[index]) for index in face)
+                    chart = (
+                        _prism_form_entity_chart_vertices(face)
+                        if cell_basis.family == "prism-trimmed"
+                        else face
+                    )
+                    local_vertex_rows = tuple(int(cell[index]) for index in chart)
                     entity_key = tuple(sorted(local_vertex_rows))
                     entity_row = lookups[entity_degree].get(entity_key)
                     if entity_row is None:
@@ -1393,12 +1552,32 @@ def _periodic_entity_coordinate_maps(
                             for row in range(local_dofs_array.size)
                         )
                     else:
+                        entity_family = (
+                            (
+                                "tensor-trimmed"
+                                if entity_degree == 2 and len(face) == 4
+                                else "trimmed"
+                                if entity_degree < complex.dimension
+                                else cell_basis.family
+                            )
+                            if cell_basis.family == "prism-trimmed"
+                            else cell_basis.family
+                        )
+                        # Cell transforms orient entity moments as ordinary traces;
+                        # the ambient cell coorientation owns the twist character.
+                        # Applying the twist again to an entity chart permutation
+                        # would introduce a spurious sign on reversed traces.
+                        entity_twist = (
+                            "untwisted"
+                            if entity_degree < complex.dimension
+                            else cell_basis.twist
+                        )
                         basis_key = (
                             entity_degree,
                             degree,
                             cell_basis.order,
-                            cell_basis.family,
-                            cell_basis.twist,
+                            entity_family,
+                            entity_twist,
                         )
                         entity_basis = basis_cache.get(basis_key)
                         if entity_basis is None:
@@ -1406,18 +1585,14 @@ def _periodic_entity_coordinate_maps(
                                 entity_degree,
                                 degree,
                                 cell_basis.order,
-                                cell_basis.family,
-                                cell_basis.twist,
+                                entity_family,
+                                entity_twist,
                             )
                             basis_cache[basis_key] = entity_basis
                         full_action = entity_basis.exact_permutation_matrix(
                             local_q_vertices
                         )
-                        vertex_count = (
-                            2**entity_degree
-                            if cell_basis.family == "tensor-trimmed"
-                            else entity_degree + 1
-                        )
+                        vertex_count = len(face)
                         interior = tuple(
                             _interior_dof_indices(entity_basis.dof_labels, vertex_count)
                         )
@@ -1432,6 +1607,20 @@ def _periodic_entity_coordinate_maps(
                     if len(representative_local_dofs_tuple) != local_dofs_array.size:
                         raise ValueError(
                             "Periodic representative and member moment spaces disagree."
+                        )
+                    if cell_basis.twist == "twisted" and entity_degree < complex.dimension:
+                        # The entity chart action is untwisted, while local
+                        # coefficients carry each ambient cell's coorientation.
+                        local_sign = cell_coorientation(block_index, cell_row)
+                        representative_cell_sign = cell_coorientation(
+                            representative_block, representative_cell
+                        )
+                        local_action_exact = tuple(
+                            tuple(
+                                local_sign * representative_cell_sign * value
+                                for value in row
+                            )
+                            for row in local_action_exact
                         )
                     representative_transform = _exact_matrix_subspace(
                         exact_cell_transform(representative_block, representative_cell),
@@ -1468,7 +1657,12 @@ def _periodic_entity_coordinate_maps(
                         and global_action.shape == (1, 1)
                         and cell_basis.twist == "untwisted"
                         and global_action_exact[0][0]
-                        != Fraction(orientation_sign * representative_sign)
+                        != Fraction(
+                            orientation_sign
+                            * representative_sign
+                            * _vertex_id_orientation(entity_vertices, vertex_ids)
+                            * _vertex_id_orientation(representative_vertices, vertex_ids)
+                        )
                     ):
                         raise ValueError(
                             "Periodic oriented scalar moment disagrees with its orbit sign."
@@ -1495,6 +1689,10 @@ def _periodic_entity_coordinate_maps(
                         raise ValueError(
                             "Incident cells disagree on a periodic entity moment action."
                         )
+
+    del exact_cell_transform, cell_coorientation
+    del entity_charts, entity_chart_owners, cell_transform_cache, cell_sign_cache
+    del basis_cache, prism_normalizations, orientation_transform_cache, reference_gradient_cache
 
     rows_by_entity: list[list[np.ndarray | None]] = []
     actions_by_entity: list[list[np.ndarray | None]] = []
@@ -1548,6 +1746,7 @@ def _periodic_entity_coordinate_maps(
         raise ValueError(
             "Periodic entity actions do not partition the FE coordinate space."
         )
+    del all_global_ids
 
     lift_rows: list[np.ndarray] = []
     lift_columns: list[np.ndarray] = []
@@ -1667,6 +1866,8 @@ def _periodic_entity_coordinate_maps(
             ),
         }
     )
+    del rows_by_entity, actions_by_entity, exact_actions_by_entity
+    del entity_dof_ids, entity_actions, entity_exact_actions, rows, actions, exact_actions
     lift_target_space = complex._absolute.space(degree)
     lift_matrix = scipy_sparse.coo_matrix(
         (
@@ -1682,28 +1883,6 @@ def _periodic_entity_coordinate_maps(
         ),
         shape=(global_count, quotient_count),
     ).tocsr()
-    from .._gram import sparse_gram_space
-
-    lifted_space = _require_array_space(lift_target_space)
-    lifted_gram = getattr(lifted_space.pairing, "operator", None)
-    if not isinstance(lifted_gram, SparseCoordinateOperator):
-        raise TypeError(
-            "Periodic FE quotients require the endpoint's physical Hodge metric."
-        )
-    quotient_gram = (lift_matrix.T @ _periodic_matrix(lifted_gram) @ lift_matrix).tocsr()
-    quotient_gram = ((quotient_gram + quotient_gram.T) * 0.5).tocsr()
-    quotient_gram /= covering_degree
-    gram_coo = quotient_gram.tocoo()
-    gram_keep = np.asarray(gram_coo.data) != 0
-    lift_source_space, _ = sparse_gram_space(
-        np.asarray(gram_coo.row[gram_keep], dtype=np.int32),
-        np.asarray(gram_coo.col[gram_keep], dtype=np.int32),
-        np.asarray(gram_coo.data[gram_keep]),
-        size=quotient_count,
-        dtype=lifted_space.dtype,
-        space_id=quotient_space_id,
-        gram_tolerance=1.0e-12,
-    )
     collapse_matrix = scipy_sparse.coo_matrix(
         (
             np.concatenate(collapse_values) if collapse_values else np.zeros((0,)),
@@ -1718,6 +1897,34 @@ def _periodic_entity_coordinate_maps(
         ),
         shape=(quotient_count, global_count),
     ).tocsr()
+    del lift_rows, lift_columns, lift_values
+    del collapse_rows, collapse_columns, collapse_values
+    from .._gram import sparse_gram_space
+
+    lifted_space = _require_array_space(lift_target_space)
+    lifted_gram = getattr(lifted_space.pairing, "operator", None)
+    if not isinstance(lifted_gram, SparseCoordinateOperator):
+        raise TypeError(
+            "Periodic FE quotients require the endpoint's physical Hodge metric."
+        )
+    quotient_gram = (lift_matrix.T @ _periodic_matrix(lifted_gram) @ lift_matrix).tocsr()
+    quotient_gram = ((quotient_gram + quotient_gram.T) * 0.5).tocsr()
+    quotient_gram /= covering_degree
+    gram_coo = quotient_gram.tocoo()
+    gram_keep = np.asarray(gram_coo.data) != 0
+    gram_rows = np.asarray(gram_coo.row[gram_keep], dtype=np.int32)
+    gram_columns = np.asarray(gram_coo.col[gram_keep], dtype=np.int32)
+    gram_values = np.asarray(gram_coo.data[gram_keep])
+    del quotient_gram, gram_coo, gram_keep
+    lift_source_space, _ = sparse_gram_space(
+        gram_rows,
+        gram_columns,
+        gram_values,
+        size=quotient_count,
+        dtype=lifted_space.dtype,
+        space_id=quotient_space_id,
+        gram_tolerance=1.0e-12,
+    )
     _require_sparse_identity(
         collapse_matrix @ lift_matrix,
         scipy_sparse.identity(quotient_count, format="csr"),
@@ -2361,6 +2568,14 @@ class FiniteElementTransferResult(StrictModule):
             dtype=jnp.float64,
         )
 
+    def support_report(self, /) -> tuple[SparseSupportRank, ...]:
+        """Report execution support and rigorous sparse rank bounds by form degree."""
+        from ._topology_transfer import _sparse_transfer_support
+
+        return tuple(
+            _sparse_transfer_support(operator) for operator in self.complex_map.maps
+        )
+
 
 @final
 class PeriodicFiniteElementTransfer(StrictModule):
@@ -2458,6 +2673,14 @@ class PeriodicFiniteElementTransfer(StrictModule):
 
     def map(self, degree: int, /) -> AbstractLinearOperator:
         return self.complex_map.map(degree)
+
+    def support_report(self, /) -> tuple[SparseSupportRank, ...]:
+        """Report sparse rank bounds and support on the periodic quotient."""
+        from ._topology_transfer import _sparse_transfer_support
+
+        return tuple(
+            _sparse_transfer_support(operator) for operator in self.complex_map.maps
+        )
 
     def lift_source(self, degree: int, values: ArrayLike, /) -> Array:
         operator = self.source_lifts[degree]
@@ -2710,6 +2933,7 @@ def _local_derivatives(
         tuple[str, tuple[int, ...], int],
         tuple[tuple[Fraction, ...], ...],
     ] = {}
+    reference_gradient_cache: dict[str, np.ndarray] = {}
     local_cache: dict[
         tuple[
             str,
@@ -2741,6 +2965,7 @@ def _local_derivatives(
                 cell,
                 vertex_ids,
                 transform_cache,
+                reference_gradient_cache,
             )
             target_transform = _exact_form_cell_transform(
                 discretization.mesh,
@@ -2749,6 +2974,7 @@ def _local_derivatives(
                 cell,
                 vertex_ids,
                 transform_cache,
+                reference_gradient_cache,
             )
             cache_key = (
                 first_basis.basis_id,
@@ -2807,6 +3033,13 @@ def _complex_fields(
     mesh: CellMesh, family: FormElementFamily, order: int, twist: FormTwist, /
 ) -> tuple[FiniteElementFieldSpec, ...]:
     fields = []
+    kinds = {block.cell_kind for block in mesh.blocks}
+    mixed_trimmed = (
+        family == "trimmed"
+        and "prism" in kinds
+        and bool(kinds & {"tetrahedron", "simplex:3"})
+        and kinds <= {"prism", "tetrahedron", "simplex:3"}
+    )
     for degree in range(mesh.topological_dimension + 1):
         polynomial_order = (
             order + mesh.topological_dimension - degree if family == "full" else order
@@ -2817,7 +3050,9 @@ def _complex_fields(
                 block.cell_kind,
                 degree,
                 polynomial_order,
-                family=family,
+                family="prism-trimmed"
+                if mixed_trimmed and block.cell_kind == "prism"
+                else family,
                 twist=twist,
                 proxy=proxy,
             )
@@ -2843,8 +3078,14 @@ def _absolute_fe_complex(
         for degree, hodge in enumerate(hodges)
     )
     differentials = []
+    # Topology incidences orient entities by vertex row while form DOFs orient by
+    # ascending vertex global ID; the two agree only when IDs ascend with rows
+    # (periodic rebinding, for one, reorders rows against their stable IDs).
+    row_ordered_ids = bool(
+        np.all(np.diff(np.asarray(discretization.mesh.vertex_global_ids)) > 0)
+    )
     for degree in range(discretization.mesh.topological_dimension):
-        if family in ("trimmed", "tensor-trimmed") and order == 1:
+        if family in ("trimmed", "tensor-trimmed") and order == 1 and row_ordered_ids:
             incidence = discretization.mesh.topology.incidences[degree]
             relation = incidence.relation
             valid = np.asarray(relation.valid, dtype=np.bool_)
@@ -3614,6 +3855,10 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         ``reference_maps`` supplies exact target-to-source charts by stable cell
         IDs. Nonlinear/higher-order geometry requires its bound
         ``geometry_transition``; no sampled physical inversion admits ancestry.
+        Coarsening requires the transition's complete ``coarsening_partition``
+        or, for nested simplex coarsening, its exact fine-to-coarse
+        ``coarsening`` witness, which is proved to be a complete partition;
+        target moments are integrated over uniquely owned fine-cell entity pieces.
         Nonconstant rational reference charts require an explicit
         ``integration_policy``. The result retains entrywise integral enclosures
         and coefficientwise commuting residual intervals; it carries no
@@ -3652,6 +3897,8 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 "FE transfer endpoints must use the same coordinate frame and measure."
             )
         geometry_map_transition = None
+        coarsening_partition = None
+        partition_target_ids: frozenset[int] = frozenset()
         if geometry_transition is not None:
             if not isinstance(geometry_transition, CellGeometryTransition):
                 raise TypeError(
@@ -3695,6 +3942,33 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             else:
                 direct_records = tuple(direct_maps)
             refinement_record = geometry_transition.refinement
+            coarsening_partition = geometry_transition.coarsening_partition
+            if (
+                coarsening_partition is None
+                and geometry_transition.coarsening is not None
+            ):
+                from .._cell_geometry_transition_types import _nested_reference_groups
+
+                # Nested fine→coarse rows are fine-target/coarse-source maps:
+                # exactly the partition orientation, proved complete below.
+                coarsening_partition = ReferenceCellPartition(
+                    _nested_reference_groups(
+                        geometry_transition.coarsening,
+                        self.mesh,
+                        target.mesh,
+                        reverse=True,
+                    )
+                )
+            if coarsening_partition is not None:
+                if parent_cells is not None:
+                    raise ValueError(
+                        "Coarsening requires partition witnesses, not one parent per target."
+                    )
+                partition_target_ids = frozenset(
+                    int(identifier)
+                    for group in coarsening_partition.maps
+                    for identifier in np.asarray(group.source_cell_ids, dtype=np.int64)
+                )
             retained_records = (
                 *direct_records,
                 *((refinement_record,) if refinement_record is not None else ()),
@@ -3755,7 +4029,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 selected: list[NestedReferenceWitnesses | ReferenceCellMapWitnesses] = (
                     list(direct_records)
                 )
-                covered_target_ids = set(direct_target_ids)
+                covered_target_ids = set(direct_target_ids) | set(partition_target_ids)
                 if refinement_record is not None:
                     refined_ids = target_ids_for_record(refinement_record)
                     refined_target_ids = set(refined_ids)
@@ -3781,7 +4055,10 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         declared_parents = None
         if reference_maps is not None:
             reference_by_target, declared_parents = _index_nested_reference_maps(
-                reference_maps, self.mesh, target.mesh
+                reference_maps,
+                self.mesh,
+                target.mesh,
+                partition_target_ids=partition_target_ids,
             )
         parents = None if parent_cells is None else np.asarray(parent_cells)
         if declared_parents is not None:
@@ -3813,7 +4090,8 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             if (
                 parents.shape != shape
                 or not np.issubdtype(parents.dtype, np.integer)
-                or np.any((parents < 0) | (parents >= count))
+                or np.any((parents < -1) | (parents >= count))
+                or (np.any(parents == -1) and coarsening_partition is None)
             ):
                 raise ValueError(
                     "parent_cells must assign each target child one valid source cell."
@@ -3861,6 +4139,8 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     )
                 for cell in range(block.cell_count):
                     target_row = target_offset + cell
+                    if target_row not in reference_by_target:
+                        continue
                     prepared_orientations[target_row] = (
                         _prepare_reference_chart_orientation(
                             reference_by_target[target_row],
@@ -3870,11 +4150,17 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                         )
                     )
                 target_offset += block.cell_count
+        partition_cells = None
+        if coarsening_partition is not None:
+            from ._partition_form_moments import index_reference_cell_partition
+
+            partition_cells = index_reference_cell_partition(coarsening_partition)
         degree_results = tuple(
             self._transfer_degree(
                 target,
                 degree,
                 parents,
+                partition_cells,
                 reference_by_target,
                 prepared_orientations,
                 integration_policy,
@@ -4029,14 +4315,22 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             integration_policy=integration_policy,
         )
         lifted_map = lifted_transfer_result.complex_map
+        source_topology = _PeriodicFormTopology(self.mesh, self.dimension)
+        target_topology = (
+            source_topology
+            if target.mesh is self.mesh
+            else _PeriodicFormTopology(target.mesh, target.dimension)
+        )
         source_actions = tuple(
-            _periodic_entity_coordinate_maps(self, degree)
+            _periodic_entity_coordinate_maps(self, degree, _topology=source_topology)
             for degree in range(self.dimension + 1)
         )
+        del source_topology
         target_actions = tuple(
-            _periodic_entity_coordinate_maps(target, degree)
+            _periodic_entity_coordinate_maps(target, degree, _topology=target_topology)
             for degree in range(self.dimension + 1)
         )
+        del target_topology
         source_lifts = tuple(action[0] for action in source_actions)
         source_collapses = tuple(action[1] for action in source_actions)
         target_lifts = tuple(action[0] for action in target_actions)
@@ -4348,6 +4642,13 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             for cell in range(block.cell_count):
                 target_row = target_offset + cell
                 parent = int(parents[target_row])
+                if parent == -1:
+                    if geometry_transition is None or (
+                        geometry_transition.coarsening_partition is None
+                        and geometry_transition.coarsening is None
+                    ):
+                        raise ValueError("Coarsened cells require a bound partition.")
+                    continue
                 source_block_index = int(
                     np.searchsorted(offsets[1:], parent, side="right")
                 )
@@ -4444,6 +4745,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         target: FiniteElementDeRhamComplex,
         degree: int,
         parents: np.ndarray | None,
+        partition_cells: Mapping[int, tuple[PartitionCell, ...]] | None,
         reference_by_target: dict[int, NestedSimplexMap | NestedCellReferenceMap] | None,
         prepared_orientations: (dict[int, _PreparedReferenceChartOrientation] | None),
         integration_policy: CurvedOverlapIntegrationPolicy | None,
@@ -4456,6 +4758,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
     ]:
         from ._exact_form_moments import (
             exact_reference_form_moments,
+            _reference_arguments,
             MomentIntegralMatrix,
         )
 
@@ -4471,6 +4774,15 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         source_cell_global_ids = np.concatenate(
             [np.asarray(block.global_ids, dtype=np.int64) for block in self.mesh.blocks]
         )
+        source_cell_lookup = (
+            {
+                int(identifier): (block_index, row)
+                for block_index, source_block in enumerate(self.mesh.blocks)
+                for row, identifier in enumerate(np.asarray(source_block.global_ids))
+            }
+            if partition_cells is not None
+            else {}
+        )
         target_offset = 0
         source_vertex_id_bank = np.asarray(self.mesh.vertex_global_ids, dtype=np.int64)
         target_vertex_id_bank = np.asarray(target.mesh.vertex_global_ids, dtype=np.int64)
@@ -4478,10 +4790,11 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             tuple[str, tuple[int, ...], int],
             tuple[tuple[Fraction, ...], ...],
         ] = {}
-        integration_policy_id = (
-            None if integration_policy is None else integration_policy.policy_id
-        )
-        moment_cache: dict[tuple[object, ...], MomentIntegralMatrix] = {}
+        reference_gradient_cache: dict[str, np.ndarray] = {}
+        moment_cache: dict[
+            tuple[object, ...],
+            tuple[FiniteElementSpec, FiniteElementSpec, object, MomentIntegralMatrix],
+        ] = {}
         for block_index, (block, element) in enumerate(
             zip(target.mesh.blocks, target.discretization.elements[degree], strict=True)
         ):
@@ -4492,6 +4805,107 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 target_id = target_offset + cell
                 target_global_rows = target_cell_dofs[cell]
                 if all(int(row) in owners for row in target_global_rows):
+                    continue
+                if parents is not None and parents[target_id] == -1:
+                    if partition_cells is None or element.form_basis is None:
+                        raise ValueError(
+                            "Coarsened FE cells require partitioned form moments."
+                        )
+                    from ._exact_form_moments import (
+                        exact_partitioned_reference_form_moments,
+                    )
+                    from ._partition_form_moments import (
+                        prepare_indexed_partitioned_reference_entities,
+                    )
+
+                    coarse_id = int(np.asarray(block.global_ids)[cell])
+                    records = prepare_indexed_partitioned_reference_entities(
+                        partition_cells.get(coarse_id, ()),
+                        coarse_id,
+                        element.form_basis,
+                    )
+                    if not records:
+                        raise ValueError("A coarsened FE cell has no source partition.")
+                    target_transform = _exact_form_cell_transform(
+                        target.mesh,
+                        block,
+                        element,
+                        cell,
+                        target_vertex_id_bank,
+                        cell_transform_cache,
+                        reference_gradient_cache,
+                    )
+                    pending_rows = tuple(
+                        local
+                        for local, global_row in enumerate(target_global_rows)
+                        if int(global_row) not in owners
+                    )
+                    for record in records:
+                        source_location = source_cell_lookup.get(int(record.fine_cell_id))
+                        if (
+                            source_location is None
+                            or int(record.coarse_cell_id) != coarse_id
+                        ):
+                            raise ValueError(
+                                "Partitioned moments reference absent or mismatched cells."
+                            )
+                        source_block, source_cell = source_location
+                        source_mesh_block = self.mesh.blocks[source_block]
+                        source_element = self.discretization.elements[degree][
+                            source_block
+                        ]
+                        if (
+                            source_mesh_block.cell_kind != record.fine_cell_kind
+                            or block.cell_kind != record.coarse_cell_kind
+                        ):
+                            raise ValueError(
+                                "Partitioned moment cell kinds disagree with mesh blocks."
+                            )
+                        source_transform = _exact_form_cell_transform(
+                            self.mesh,
+                            source_mesh_block,
+                            source_element,
+                            source_cell,
+                            source_vertex_id_bank,
+                            cell_transform_cache,
+                            reference_gradient_cache,
+                        )
+                        moments = exact_partitioned_reference_form_moments(
+                            source_element,
+                            element,
+                            record,
+                            source_transform,
+                            target_transform,
+                            integration_policy,
+                        )
+                        source_columns = np.asarray(
+                            source_dofs.cell_dofs[source_block][source_cell],
+                            dtype=np.int64,
+                        )
+                        for local_dof in pending_rows:
+                            global_row = int(target_global_rows[local_dof])
+                            local_values = moments.values[local_dof]
+                            local_errors = moments.errors[local_dof]
+                            keep = (local_values != 0.0) | (local_errors != 0.0)
+                            rows.extend([global_row] * int(np.count_nonzero(keep)))
+                            columns.extend(source_columns[keep].tolist())
+                            payload.append(local_values[keep])
+                            error_values.extend(local_errors[keep].tolist())
+                            exact_counts.extend(
+                                moments.exact[local_dof, keep].astype(np.int64).tolist()
+                            )
+                            enclosed_counts.extend(
+                                moments.enclosed[local_dof, keep]
+                                .astype(np.int64)
+                                .tolist()
+                            )
+                            exact_integral_count += int(
+                                np.count_nonzero(moments.exact[local_dof])
+                            )
+                            enclosed_integral_count += int(
+                                np.count_nonzero(moments.enclosed[local_dof])
+                            )
+                    owners.update(int(target_global_rows[row]) for row in pending_rows)
                     continue
                 reference_map = None
                 if parents is None:
@@ -4539,6 +4953,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     source_cell,
                     source_vertex_id_bank,
                     cell_transform_cache,
+                    reference_gradient_cache,
                 )
                 target_transform = _exact_form_cell_transform(
                     target.mesh,
@@ -4547,28 +4962,22 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     cell,
                     target_vertex_id_bank,
                     cell_transform_cache,
+                    reference_gradient_cache,
                 )
-                if reference_map is None and prepared_orientation is None:
-                    moment_key = (
-                        source_element.element_id,
-                        element.element_id,
-                        source_transform,
-                        target_transform,
-                        integration_policy_id,
+                if prepared_orientation is not None:
+                    prepared_orientation.require(
+                        _reference_arguments(reference_map, target_basis.dimension),
+                        target_basis.family,
                     )
-                    moments = moment_cache.get(moment_key)
-                    if moments is None:
-                        moments = exact_reference_form_moments(
-                            source_element,
-                            element,
-                            reference_map,
-                            source_transform,
-                            target_transform,
-                            integration_policy,
-                            prepared_orientation=prepared_orientation,
-                        )
-                        moment_cache[moment_key] = moments
-                else:
+                moment_key = (
+                    id(source_element),
+                    id(element),
+                    source_transform,
+                    target_transform,
+                    prepared_orientation,
+                )
+                cached = moment_cache.get(moment_key)
+                if cached is None:
                     moments = exact_reference_form_moments(
                         source_element,
                         element,
@@ -4578,6 +4987,17 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                         integration_policy,
                         prepared_orientation=prepared_orientation,
                     )
+                    moment_cache[moment_key] = (
+                        source_element, element, integration_policy, moments
+                    )
+                else:
+                    cached_source, cached_target, cached_policy, moments = cached
+                    if (
+                        cached_source is not source_element
+                        or cached_target is not element
+                        or cached_policy is not integration_policy
+                    ):
+                        raise RuntimeError("Exact form moment owners changed during transfer.")
                 source_columns = np.asarray(
                     source_dofs.cell_dofs[source_block][source_cell], dtype=np.int64
                 )
@@ -4590,7 +5010,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     keep = (local_values != 0.0) | (local_errors != 0.0)
                     rows.extend([int(global_row)] * int(np.count_nonzero(keep)))
                     columns.extend(source_columns[keep].tolist())
-                    payload.append(jnp.asarray(local_values[keep], dtype=jnp.float64))
+                    payload.append(local_values[keep])
                     error_values.extend(local_errors[keep].tolist())
                     exact_counts.extend(
                         moments.exact[local_dof, keep].astype(np.int64).tolist()
@@ -4608,12 +5028,35 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         raw_rows = np.asarray(rows, dtype=np.int32)
         raw_columns = np.asarray(columns, dtype=np.int32)
         raw_values = (
-            jnp.concatenate(payload)
+            jnp.asarray(np.concatenate(payload), dtype=jnp.float64)
             if payload
             else jnp.zeros(
                 (0,), dtype=_require_array_space(self._absolute.space(degree)).dtype
             )
         )
+        return self._finish_transfer_degree(
+            target, degree, raw_rows, raw_columns, raw_values,
+            error_values, exact_counts, enclosed_counts,
+            exact_integral_count, enclosed_integral_count,
+        )
+
+    def _finish_transfer_degree(
+        self,
+        target: FiniteElementDeRhamComplex,
+        degree: int,
+        raw_rows: np.ndarray,
+        raw_columns: np.ndarray,
+        raw_values: Array,
+        error_values: Sequence[float],
+        exact_counts: Sequence[int],
+        enclosed_counts: Sequence[int],
+        exact_integral_count: int,
+        enclosed_integral_count: int,
+        /,
+    ) -> tuple[SparseCoordinateOperator, SparseTransferEntryEvidence, int, int]:
+        """Finalize already prepared exact moment entries and their evidence."""
+        source_dofs = self.discretization.dof_maps[degree]
+        target_dofs = target.discretization.dof_maps[degree]
         row, column, values = _coalesce_entries(
             raw_rows,
             raw_columns,
@@ -5034,6 +5477,7 @@ def _reference_chart_form_action(
     target_transform_cache: dict[
         tuple[str, tuple[int, ...], int], tuple[tuple[Fraction, ...], ...]
     ] = {}
+    reference_gradient_cache: dict[str, np.ndarray] = {}
     source_routes_by_row: dict[int, np.ndarray] = {}
     source_cell_by_row: dict[int, tuple[int, int]] = {}
     for block_index, (block, element, routes) in enumerate(
@@ -5127,6 +5571,7 @@ def _reference_chart_form_action(
                     source_cell,
                     source_vertex_ids,
                     source_transform_cache,
+                    reference_gradient_cache,
                 )
                 source_transform = np.asarray(source_transform_exact, dtype=np.float64)
                 source_routes = source_routes_by_row[piece.source_row]
@@ -5183,6 +5628,7 @@ def _reference_chart_form_action(
                 target_cell,
                 target_vertex_ids,
                 target_transform_cache,
+                reference_gradient_cache,
             )
             target_transform_inverse = np.asarray(
                 solve_exact(

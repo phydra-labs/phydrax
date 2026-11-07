@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, product
+from typing import cast
 
 import numpy as np
 
@@ -36,7 +36,7 @@ from ..discretization._coordinate_enclosure import (
     subtract,
 )
 from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
-from ..linalg._exact import determinant_small_algebra, solve_exact
+from ..linalg._exact import solve_exact, symmetric_product_minors_exact
 from ._embedding_cells import EmbeddingCell
 
 
@@ -797,8 +797,12 @@ def monotone_preconditioner(
     integer_matrix = tuple(tuple(int(value) for value in row) for row in matrix)
     minors: list[list[str]] = [[] for _ in range(size)]
     for control in controls:
-        values = _rational_leading_minors(integer_matrix, control)
-        if values is None:
+        if all(isinstance(value, Fraction | int) for row in control for value in row):
+            values = symmetric_product_minors_exact(
+                integer_matrix,
+                cast(tuple[tuple[Fraction | int, ...], ...], control),
+            )
+        else:
             values = _leading_minors(matrix, control)
         for order, minor in enumerate(values):
             if _sign(minor) <= 0:
@@ -828,54 +832,6 @@ def _leading_minors(
     )
     return tuple(
         _exact_determinant(tuple(row[:order] for row in symmetric[:order]))
-        for order in range(1, size + 1)
-    )
-
-
-def _rational_leading_minors(
-    matrix: tuple[tuple[int, ...], ...], control: _ExactMatrix, /
-) -> tuple[Fraction, ...] | None:
-    """`_leading_minors` of a rational control over one shared denominator.
-
-    With ``C = N / d`` (integer ``N``), ``2 d sym(M C) = M N + (M N)^T`` is an
-    integer matrix, and its order-``k`` minor over ``(2 d)^k`` is the exact
-    minor. ``None`` when an entry is not rational.
-    """
-    rational_rows: list[tuple[Fraction, ...]] = []
-    for row in control:
-        rational_row: list[Fraction] = []
-        for value in row:
-            if not isinstance(value, Fraction | int):
-                return None
-            rational_row.append(Fraction(value))
-        rational_rows.append(tuple(rational_row))
-    denominator = math.lcm(*(value.denominator for row in rational_rows for value in row))
-    numerators = tuple(
-        tuple(value.numerator * (denominator // value.denominator) for value in row)
-        for row in rational_rows
-    )
-    size = len(control)
-    product = tuple(
-        tuple(
-            sum(matrix[row][inner] * numerators[inner][column] for inner in range(size))
-            for column in range(size)
-        )
-        for row in range(size)
-    )
-    doubled = tuple(
-        tuple(product[row][column] + product[column][row] for column in range(size))
-        for row in range(size)
-    )
-    return tuple(
-        Fraction(
-            determinant_small_algebra(
-                tuple(row[:order] for row in doubled[:order]),
-                add=int.__add__,
-                subtract=int.__sub__,
-                multiply=int.__mul__,
-            ),
-            (2 * denominator) ** order,
-        )
         for order in range(1, size + 1)
     )
 

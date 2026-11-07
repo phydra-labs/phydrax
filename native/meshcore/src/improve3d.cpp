@@ -17,6 +17,7 @@
 #include <map>
 #include <set>
 #include <utility>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -523,12 +524,17 @@ FlipQuality quality_from_measure(const CellMeasure& measure,
           ? 1.0
           : measure.minimum_angle / request.minimum_dihedral_degrees;
   const double radius_score =
-      measure.radius_edge_ratio <= request.radius_edge_bound
+      request.radius_edge_bound == 0.0 ||
+              measure.radius_edge_ratio <= request.radius_edge_bound
           ? 1.0
           : request.radius_edge_bound / measure.radius_edge_ratio;
   const double unresolved = std::min(angle_score, radius_score);
   const std::int8_t validity =
-      !(measure.relative_determinant > request.minimum_relative_determinant)
+      !(measure.relative_determinant > request.minimum_relative_determinant) ||
+              (request.radius_edge_bound == 0.0 &&
+               !std::isfinite(measure.radius_edge_ratio)) ||
+              (request.minimum_dihedral_degrees == 0.0 &&
+               !std::isfinite(measure.minimum_angle))
           ? kBelowDeterminantFloor
           : kAboveDeterminantFloor;
   const double quality_score =
@@ -558,11 +564,22 @@ double slots_size_target(const TetQualityRequest& request, const std::int32_t* s
 // as for a rounded cocircular sliver) has a radius-edge ratio above every
 // representable bound, so it is measured as +inf (score 0) rather than refused;
 // the exact orientation keeps its validity beyond doubt.
-bool measure_cell(const std::array<const double*, 4>& points, double size_target,
-                  CellMeasure& result) {
+bool measure_cell(const TetMesh& mesh, const std::array<const double*, 4>& points,
+                  double size_target, CellMeasure& result) {
   if (orient3d(points[0], points[1], points[2], points[3]) <= 0) return false;
+  std::array<std::array<double, 3>, 4> physical{};
+  std::array<const double*, 4> measured = points;
+  if (mesh.metric_active()) {
+    for (int corner = 0; corner < 4; ++corner) {
+      const std::array<double, 3> delta{points[corner][0] - points[0][0],
+                                        points[corner][1] - points[0][1],
+                                        points[corner][2] - points[0][2]};
+      physical[corner] = mesh.metric_transform(delta);
+      measured[corner] = physical[corner].data();
+    }
+  }
   geometry::TetrahedronShape shape;
-  if (geometry::tetrahedron_shape(points.data(), shape)) {
+  if (geometry::tetrahedron_shape(measured.data(), shape)) {
     result.radius_edge_ratio = shape.radius_edge_ratio;
     result.circumradius = shape.circumradius;
   } else {
@@ -570,8 +587,8 @@ bool measure_cell(const std::array<const double*, 4>& points, double size_target
     result.circumradius = std::numeric_limits<double>::infinity();
   }
   result.size_target = size_target;
-  result.minimum_angle = geometry::minimum_dihedral_degrees(points.data());
-  result.relative_determinant = geometry::relative_determinant(points.data());
+  result.minimum_angle = geometry::minimum_dihedral_degrees(measured.data());
+  result.relative_determinant = geometry::relative_determinant(measured.data());
   return std::isfinite(result.minimum_angle) &&
          std::isfinite(result.relative_determinant);
 }
@@ -603,7 +620,7 @@ bool cell_measure(const TetMesh& mesh, const Tetrahedron& tet,
     points[corner] = mesh.point(tet.v[corner]);
     if (points[corner] == nullptr) return false;
   }
-  return measure_cell(points, slots_size_target(request, tet.v), result);
+  return measure_cell(mesh, points, slots_size_target(request, tet.v), result);
 }
 
 bool interior_quality(const TetMesh& mesh, std::span<const std::int32_t> star,
@@ -661,7 +678,7 @@ bool collapsed_quality(const TetMesh& mesh, std::span<const std::int32_t> star,
       if (points[corner] == nullptr) return false;
     }
     CellMeasure measure;
-    if (!measure_cell(points, slots_size_target(request, local.data()), measure)) {
+    if (!measure_cell(mesh, points, slots_size_target(request, local.data()), measure)) {
       return false;
     }
     quality.push_back(quality_from_measure(measure, request));
@@ -696,8 +713,8 @@ bool prepare_relocation_plan(const TetMesh& mesh,
     // A relocated vertex keeps its own size target.
     cell.size_target = slots_size_target(request, tet.v);
     if (cell.moved_corner < 0 ||
-        !geometry::prepare_relocation_metric_cache(
-            cell.fixed_points.data(), cell.moved_corner, cell.metric_cache)) {
+        (!mesh.metric_active() && !geometry::prepare_relocation_metric_cache(
+            cell.fixed_points.data(), cell.moved_corner, cell.metric_cache))) {
       return false;
     }
   }
@@ -710,7 +727,7 @@ bool admissible_cell(const FlipQuality& quality, double size_excess_bound) noexc
 // first cell that is not measurable, not admissible under `size_excess_bound`
 // or scores below `score_floor`: no relocation creating such a cell can be
 // accepted against a sorted vector that starts at `score_floor`.
-bool relocated_quality(std::span<const PreparedRelocationCell> plan,
+bool relocated_quality(const TetMesh& mesh, std::span<const PreparedRelocationCell> plan,
                        const double* candidate, const TetQualityRequest& request,
                        double score_floor, double size_excess_bound,
                        QualityVector& quality) {
@@ -721,7 +738,8 @@ bool relocated_quality(std::span<const PreparedRelocationCell> plan,
     std::array<const double*, 4> points = cell.fixed_points;
     points[static_cast<std::size_t>(cell.moved_corner)] = candidate;
     CellMeasure measure;
-    if (!measure_relocated_cell(points, cell.metric_cache, cell.size_target, measure)) {
+    if (!(mesh.metric_active() ? measure_cell(mesh, points, cell.size_target, measure)
+                              : measure_relocated_cell(points, cell.metric_cache, cell.size_target, measure))) {
       return false;
     }
     const FlipQuality quality_of_cell = quality_from_measure(measure, request);
@@ -760,7 +778,7 @@ FlipQuality local_flip_quality(const TetMesh& mesh, const LocalCell& vertices,
         mesh.point(vertices[static_cast<std::size_t>(corner)]);
   }
   CellMeasure measure;
-  if (!measure_cell(points, slots_size_target(request, vertices.data()), measure) ||
+  if (!measure_cell(mesh, points, slots_size_target(request, vertices.data()), measure) ||
       measure.relative_determinant < 0.0) {
     return {};
   }
@@ -1616,6 +1634,11 @@ bool face_minimum_radius_apex(const TetMesh& mesh, const std::int32_t facet[3],
     ac[axis] = mesh.point(facet[2])[axis] - a[axis];
     toward[axis] = inside[axis] - a[axis];
   }
+  if (mesh.metric_active()) {
+    ab = mesh.metric_transform(ab);
+    ac = mesh.metric_transform(ac);
+    toward = mesh.metric_transform(toward);
+  }
   const std::array<double, 3> normal = cross(ab, ac);
   const double normal_squared = dot(normal, normal);
   if (!(normal_squared > 0.0) || !std::isfinite(normal_squared)) return false;
@@ -1628,9 +1651,10 @@ bool face_minimum_radius_apex(const TetMesh& mesh, const std::int32_t facet[3],
   }
   const double side = dot(normal, toward) > 0.0 ? 1.0 : -1.0;
   const double scale = side * std::sqrt(dot(offset, offset) / normal_squared);
-  for (int axis = 0; axis < 3; ++axis) {
-    apex[axis] = a[axis] + offset[axis] + scale * normal[axis];
-  }
+  std::array<double, 3> displacement{};
+  for (int axis = 0; axis < 3; ++axis) displacement[axis] = offset[axis] + scale * normal[axis];
+  if (mesh.metric_active()) displacement = mesh.metric_inverse_transform(displacement);
+  for (int axis = 0; axis < 3; ++axis) apex[axis] = a[axis] + displacement[axis];
   return std::all_of(apex.begin(), apex.end(), [](double value) { return std::isfinite(value); });
 }
 
@@ -1671,7 +1695,9 @@ bool cavity_kernel_point(const TetMesh& mesh, std::span<const std::int32_t> cell
       if (orient3d(points[0], points[1], points[2], points[3]) <= 0) {
         return -std::numeric_limits<double>::infinity();
       }
-      const double determinant = geometry::relative_determinant(points.data());
+      CellMeasure measure;
+      if (!measure_cell(mesh, points, 0.0, measure)) return -std::numeric_limits<double>::infinity();
+      const double determinant = measure.relative_determinant;
       if (!std::isfinite(determinant)) return -std::numeric_limits<double>::infinity();
       smallest = std::min(smallest, determinant);
     }
@@ -1697,7 +1723,10 @@ bool cavity_kernel_point(const TetMesh& mesh, std::span<const std::int32_t> cell
       bool moved = false;
       for (int direction = 0; direction < 6 && !moved; ++direction) {
         std::array<double, 3> candidate = point;
-        candidate[static_cast<std::size_t>(direction / 2)] += direction % 2 == 0 ? step : -step;
+        std::array<double, 3> displacement{};
+        displacement[static_cast<std::size_t>(direction / 2)] = direction % 2 == 0 ? step : -step;
+        if (mesh.metric_active()) displacement = mesh.metric_inverse_transform(displacement);
+        for (int axis = 0; axis < 3; ++axis) candidate[axis] += displacement[axis];
         const double value = clearance(candidate);
         if (value > best) {
           best = value;
@@ -1758,8 +1787,8 @@ std::int32_t flip_to_constrained_delaunay(
     const int back = neighbor_slot(mesh.tet(other), slot);
     if (back < 0) return PHX_MC_INTERNAL_ERROR;
     const std::int32_t apex = mesh.tet(other).v[back];
-    if (insphere(mesh.point(cell.v[0]), mesh.point(cell.v[1]), mesh.point(cell.v[2]),
-                 mesh.point(cell.v[3]), mesh.point(apex)) <= 0) {
+    if (mesh.metric_insphere(mesh.point(cell.v[0]), mesh.point(cell.v[1]), mesh.point(cell.v[2]),
+                             mesh.point(cell.v[3]), mesh.point(apex)) <= 0) {
       continue;
     }
     // 2-3: the shared face is crossed by the edge between the apexes.
@@ -1848,7 +1877,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   relocated_vertices = 0;
   unmet_cells = 0;
   if (!std::isfinite(requested.radius_edge_bound) ||
-      requested.radius_edge_bound <= 0.0 ||
+      requested.radius_edge_bound < 0.0 ||
       !std::isfinite(requested.minimum_dihedral_degrees) ||
       requested.minimum_dihedral_degrees < 0.0 ||
       requested.minimum_dihedral_degrees >= 70.5 ||
@@ -1859,7 +1888,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   }
 
   TetMeshSnapshot initial;
-  if (mesh.snapshot(initial) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
+  if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
   const std::int32_t installed = mesh.install_vertex_sizes(initial, vertex_sizes);
   if (installed != PHX_MC_OK) return installed;
   // Size targets by local vertex slot; slots are append-only during this run.
@@ -1920,7 +1949,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         points[3] = operation.changed_vertices.front().carrier.data();
         sizes[3] = center_size;
         CellMeasure measure;
-        if (!measure_cell(points, cell_size_target(sizes), measure)) return PHX_MC_INVALID_INPUT;
+        if (!measure_cell(mesh, points, cell_size_target(sizes), measure)) return PHX_MC_INVALID_INPUT;
         after_cavity_quality.push_back(quality_from_measure(measure, request));
       }
       sort_quality_vector(after_cavity_quality);
@@ -1946,13 +1975,14 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
           if (results.size() != 1 || results.front().status != TetEditStatus::kApplied) {
             return PHX_MC_INTERNAL_ERROR;
           }
-          if (mesh.snapshot(initial) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
+          if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
           if (center_size > 0.0) mesh.vertex_sizes_[center_id] = center_size;
           refresh_slot_sizes();
         }
       }
     }
   }
+  QualityVector{}.swap(before_cavity_quality);
   LocalIncidence incidence;
   if (initial.cells.size() >
       std::numeric_limits<std::size_t>::max() / 6) {
@@ -2063,6 +2093,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   for (const TetSnapshotCell& cell : initial.cells) {
     if (!enqueue_violating_cell(cell.id)) return PHX_MC_INVALID_INPUT;
   }
+  initial = TetMeshSnapshot{};
   for (std::uint64_t id : pending_cells) {
     const Tetrahedron& tet = mesh.tet(mesh.cell_slot(id));
     for (std::int32_t vertex : tet.v) pending_vertices.insert(mesh.vertex_id(vertex));
@@ -2092,7 +2123,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
               corner == face ? candidate_size : vertex_size(request, tetrahedron.v[corner]);
         }
         CellMeasure measure;
-        if (!measure_cell(points, cell_size_target(sizes), measure)) return false;
+        if (!measure_cell(mesh, points, cell_size_target(sizes), measure)) return false;
         quality.push_back(quality_from_measure(measure, request));
       }
     }
@@ -2232,9 +2263,13 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
           if (direction == 13) continue;  // the zero offset
           std::array<double, 3> trial = candidate;
           bool inside = true;
-          for (int axis = 0, code = direction; axis < 3; ++axis, code /= 3) {
-            trial[static_cast<std::size_t>(axis)] += static_cast<double>(code % 3 - 1) * step;
-            inside = inside && coordinate_in_domain(trial[static_cast<std::size_t>(axis)]);
+          std::array<double, 3> displacement{};
+          for (int axis = 0, code = direction; axis < 3; ++axis, code /= 3)
+            displacement[axis] = static_cast<double>(code % 3 - 1) * step;
+          if (mesh.metric_active()) displacement = mesh.metric_inverse_transform(displacement);
+          for (int axis = 0; axis < 3; ++axis) {
+            trial[axis] += displacement[axis];
+            inside = inside && coordinate_in_domain(trial[axis]);
           }
           if (!inside || !measure_cone(slot, trial.data(), cells, members, trial_quality)) {
             continue;
@@ -2275,15 +2310,15 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     std::array<std::array<double, 3>, 2> seeds{};
     const double* first_point = mesh.point(first);
     const double* second_point = mesh.point(second);
-    double edge_length_squared = 0.0;
+    std::array<double, 3> edge_delta{};
     for (int axis = 0; axis < 3; ++axis) {
       seeds[0][axis] = 0.5 * (first_point[axis] + second_point[axis]);
       double sum = first_point[axis] + second_point[axis];
       for (std::int32_t vertex : ring_vertices) sum += mesh.point(vertex)[axis];
       seeds[1][axis] = sum / static_cast<double>(ring_vertices.size() + 2);
-      const double delta = second_point[axis] - first_point[axis];
-      edge_length_squared += delta * delta;
+      edge_delta[axis] = second_point[axis] - first_point[axis];
     }
+    const double edge_length_squared = mesh.metric_dot(edge_delta, edge_delta);
     return try_kernel_cone(slot, ring_cells, ring_members, seeds,
                            0.25 * std::sqrt(edge_length_squared));
   };
@@ -2304,14 +2339,13 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     double longest_squared = 0.0;
     for (std::int32_t cell : star_cells) {
       for (std::int32_t corner : mesh.tet(cell).v) {
-        double length_squared = 0.0;
+        std::array<double, 3> delta{};
         for (int axis = 0; axis < 3; ++axis) {
           const double coordinate = mesh.point(corner)[axis];
           seeds[0][axis] += 0.25 * coordinate / static_cast<double>(star_cells.size());
-          const double delta = coordinate - center[axis];
-          length_squared += delta * delta;
+          delta[axis] = coordinate - center[axis];
         }
-        longest_squared = std::max(longest_squared, length_squared);
+        longest_squared = std::max(longest_squared, mesh.metric_dot(delta, delta));
       }
     }
     for (std::int32_t corner : mesh.tet(slot).v) {
@@ -2517,8 +2551,22 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         points[corner] = mesh.point(current[corner]);
         for (int axis = 0; axis < 3; ++axis) cell_centroid[axis] += 0.25 * points[corner][axis];
       }
+      std::array<std::array<double, 3>, 4> physical{};
+      std::array<const double*, 4> measured = points;
+      if (mesh.metric_active()) {
+        for (int corner = 1; corner < 4; ++corner) {
+          physical[corner] = mesh.metric_transform({points[corner][0] - points[0][0],
+                                                    points[corner][1] - points[0][1],
+                                                    points[corner][2] - points[0][2]});
+        }
+        for (int corner = 0; corner < 4; ++corner) measured[corner] = physical[corner].data();
+      }
       geometry::TetrahedronShape shape;
-      if (geometry::tetrahedron_shape(points.data(), shape)) {
+      if (geometry::tetrahedron_shape(measured.data(), shape)) {
+        if (mesh.metric_active()) {
+          shape.circumcenter = mesh.metric_inverse_transform(shape.circumcenter);
+          for (int axis = 0; axis < 3; ++axis) shape.circumcenter[axis] += points[0][axis];
+        }
         candidates[candidate_count++] = shape.circumcenter;
         for (const double fraction : {0.5, 0.25}) {
           std::array<double, 3>& off_center = candidates[candidate_count++];
@@ -2665,7 +2713,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
           distinct = distinct || candidate[axis] != original[axis];
         }
         if (!distinct) break;
-        if (relocated_quality(relocation_plan, candidate, request,
+        if (relocated_quality(mesh, relocation_plan, candidate, request,
                               before_quality.front().primary, size_excess_bound,
                               after_quality) &&
             relocation_makes_progress(before_quality, after_quality)) {
@@ -2752,7 +2800,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   }
 
   TetMeshSnapshot final_state;
-  if (mesh.snapshot(final_state) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
+  if (mesh.snapshot_internal(final_state, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
   // The records cover improvement's own targets. The size field is a
   // constraint on improvement's edits, not one of its targets: residual size
   // violations are refinement's records (and the route's size compliance).
@@ -2773,11 +2821,21 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   };
   std::map<std::array<std::uint64_t, 3>, ForcingFacet> unmeetable_faces;
   for (const TetSnapshotFacet& facet : final_state.constrained_facets) {
+    if (request.radius_edge_bound == 0.0) break;
     std::array<const double*, 3> corners{};
     for (int corner = 0; corner < 3; ++corner) {
       const std::int32_t slot = mesh.vertex_slot(facet.vertices[corner]);
       if (!mesh.live_vertex(slot)) return PHX_MC_INTERNAL_ERROR;
       corners[corner] = mesh.point(slot);
+    }
+    std::array<std::array<double, 3>, 3> physical{};
+    if (mesh.metric_active()) {
+      for (int corner = 1; corner < 3; ++corner) {
+        physical[corner] = mesh.metric_transform({corners[corner][0] - corners[0][0],
+                                                  corners[corner][1] - corners[0][1],
+                                                  corners[corner][2] - corners[0][2]});
+      }
+      for (int corner = 0; corner < 3; ++corner) corners[corner] = physical[corner].data();
     }
     const double ratio = triangle_radius_edge_ratio(corners[0], corners[1], corners[2]);
     if (ratio > request.radius_edge_bound) {
@@ -2820,16 +2878,28 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       ++unmet_cells;
       continue;
     }
+    std::array<std::array<double, 3>, 4> physical{};
+    if (mesh.metric_active()) {
+      for (int corner = 1; corner < 4; ++corner) {
+        physical[corner] = mesh.metric_transform({points[corner][0] - points[0][0],
+                                                  points[corner][1] - points[0][1],
+                                                  points[corner][2] - points[0][2]});
+      }
+      for (int corner = 0; corner < 4; ++corner) points[corner] = physical[corner].data();
+    }
     bool cell_unmet = false;
     geometry::TetrahedronShape shape;
     if (!geometry::tetrahedron_shape(points.data(), shape)) {
       // Exactly positive (checked above) with a circumsphere that floating
       // point cannot represent: the ratio exceeds every representable bound.
-      records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,
+      records.push_back({cell.id, request.radius_edge_bound == 0.0
+                                      ? PHX_MC_TET_UNMET_CONSTRUCTION
+                                      : PHX_MC_TET_UNMET_RADIUS_EDGE,
                          PHX_MC_TET_UNMET_NONREPRESENTABLE,
                          std::numeric_limits<double>::infinity()});
       cell_unmet = true;
-    } else if (shape.radius_edge_ratio > request.radius_edge_bound) {
+    } else if (request.radius_edge_bound > 0.0 &&
+               shape.radius_edge_ratio > request.radius_edge_bound) {
       const ForcingFacet forcing = forcing_facet(cell);
       TetUnmetRecord record{cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,
                             static_cast<std::int32_t>(forcing.id == kNoUnmetFacet
@@ -2866,6 +2936,332 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   }
   mesh.set_unmet_records(records);
   return unmet_cells == 0 ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
+std::int32_t repair_boundary_quality(
+    TetMesh& mesh, const TetQualityRequest& request, std::span<const double> vertex_sizes,
+    std::span<const std::uint64_t> original_vertex_ids,
+    std::int64_t& inserted_vertices, std::int64_t& collapsed_vertices,
+    std::int64_t& relocated_vertices, std::int64_t& unmet_cells, bool& applied) {
+  inserted_vertices = collapsed_vertices = relocated_vertices = unmet_cells = 0;
+  applied = false;
+  if (mesh.policy() != BoundaryPolicy::kConforming || mesh.periodic_identity().bound ||
+      original_vertex_ids.empty() || mesh.source_points_.size() % 3 != 0 ||
+      original_vertex_ids.size() != mesh.source_points_.size() / 3) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  std::unordered_set<std::uint64_t> original;
+  original.reserve(original_vertex_ids.size());
+  for (std::size_t row = 0; row < original_vertex_ids.size(); ++row) {
+    const std::uint64_t id = original_vertex_ids[row];
+    const std::int32_t slot = mesh.vertex_slot(id);
+    if (!mesh.live_vertex(slot) || !original.insert(id).second) return PHX_MC_INVALID_ARGUMENT;
+    for (int axis = 0; axis < 3; ++axis) {
+      if (std::bit_cast<std::uint64_t>(mesh.point(slot)[axis]) !=
+          std::bit_cast<std::uint64_t>(mesh.source_points_[3 * row + axis])) {
+        return PHX_MC_INVALID_ARGUMENT;
+      }
+    }
+  }
+  TetMeshSnapshot initial;
+  if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
+  if (!vertex_sizes.empty() && vertex_sizes.size() != initial.vertices.size()) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  std::unordered_map<std::uint64_t, double> supplied_sizes;
+  if (!vertex_sizes.empty()) {
+    for (std::size_t row = 0; row < vertex_sizes.size(); ++row) {
+      if (!std::isfinite(vertex_sizes[row]) || vertex_sizes[row] < 0.0) return PHX_MC_INVALID_ARGUMENT;
+      supplied_sizes.emplace(initial.vertices[row].id, vertex_sizes[row]);
+    }
+  }
+  std::vector<TetUnmetRecord> initial_quality;
+  std::int32_t query_status;
+  if (vertex_sizes.empty()) {
+    query_status = evaluate_mesh_quality(mesh, request, initial_quality);
+  } else {
+    // Caller-supplied targets are evaluated on a private copy: a rejected
+    // compound operation must not install or alter the live retained field.
+    TetMesh evaluation(mesh.policy());
+    mesh.copy_state_to(evaluation);
+    query_status = evaluation.install_vertex_sizes(initial, vertex_sizes);
+    if (query_status == PHX_MC_OK) {
+      query_status = evaluate_mesh_quality(evaluation, request, initial_quality);
+    }
+  }
+  if (query_status != PHX_MC_OK) return query_status;
+  if (initial_quality.empty()) {
+    mesh.set_unmet_records(initial_quality);
+    return PHX_MC_OK;
+  }
+  std::set<std::uint64_t> unmet_ids;
+  for (const auto& record : initial_quality) unmet_ids.insert(record.cell_id);
+  unmet_cells = static_cast<std::int64_t>(unmet_ids.size());
+  detail::LocalIncidence incidence;
+  if (!incidence.initialize(mesh, initial)) return PHX_MC_INTERNAL_ERROR;
+  using Face = std::array<std::uint64_t, 3>;
+  const auto face_key = [](Face face) { std::sort(face.begin(), face.end()); return face; };
+  std::map<Face, TetSnapshotFacet> facet_by_key;
+  std::unordered_set<std::uint64_t> segment_vertices;
+  for (const auto& facet : initial.constrained_facets) facet_by_key.emplace(face_key(facet.vertices), facet);
+  for (const auto& segment : initial.constrained_segments) {
+    segment_vertices.insert(segment.vertices[0]);
+    segment_vertices.insert(segment.vertices[1]);
+  }
+  std::set<std::uint64_t> sites;
+  for (const auto& facet : initial.constrained_facets) {
+    if (facet.protected_facet) continue;
+    std::array<const double*, 3> corners{};
+    for (int i = 0; i < 3; ++i) {
+      const auto slot = mesh.vertex_slot(facet.vertices[i]);
+      if (!mesh.live_vertex(slot)) return PHX_MC_INTERNAL_ERROR;
+      corners[i] = mesh.point(slot);
+    }
+    std::array<std::array<double, 3>, 3> physical{};
+    if (mesh.metric_active()) {
+      for (int i = 1; i < 3; ++i) {
+        physical[i] = mesh.metric_transform({corners[i][0] - corners[0][0],
+                                             corners[i][1] - corners[0][1],
+                                             corners[i][2] - corners[0][2]});
+      }
+      for (int i = 0; i < 3; ++i) corners[i] = physical[i].data();
+    }
+    if (request.radius_edge_bound == 0.0 ||
+        !(triangle_radius_edge_ratio(corners[0], corners[1], corners[2]) >
+          request.radius_edge_bound)) continue;
+    for (const auto id : facet.vertices) {
+      const auto slot = mesh.vertex_slot(id);
+      if (!original.contains(id) && !segment_vertices.contains(id) &&
+          mesh.vertex_dimension(slot) == 2 && !mesh.protected_vertex(slot) &&
+          mesh.protection_radius(slot) == 0.0 &&
+          mesh.witness(slot).stratum == SourceStratum::kFacet) {
+        sites.insert(id);
+      }
+    }
+  }
+  for (const auto site : sites) {
+    const auto site_slot = mesh.vertex_slot(site);
+    const auto star = incidence.vertex_star(site_slot);
+    std::set<std::uint64_t> neighbors;
+    for (const auto slot : star) {
+      for (const auto vertex : mesh.tet(slot).v) {
+        if (vertex != site_slot) neighbors.insert(mesh.vertex_id(vertex));
+      }
+    }
+    std::vector<TetSnapshotFacet> incident_facets;
+    for (const auto& facet : initial.constrained_facets) {
+      if (std::find(facet.vertices.begin(), facet.vertices.end(), site) == facet.vertices.end()) continue;
+      if (facet.protected_facet) { incident_facets.clear(); break; }
+      incident_facets.push_back(facet);
+    }
+    if (incident_facets.empty()) continue;
+    for (const auto keep : neighbors) {
+      const auto keep_slot = mesh.vertex_slot(keep);
+      if (!mesh.live_vertex(keep_slot) || mesh.vertex_dimension(keep_slot) != 2 ||
+          mesh.protected_vertex(keep_slot) || mesh.protection_radius(keep_slot) > 0.0) continue;
+      TetEdit operation;
+      operation.kind = TetEditKind::kCollapse;
+      operation.collapse_pairs.push_back({site, keep});
+      operation.removed_vertex_ids.push_back(site);
+      std::map<Face, std::int32_t> future_faces;
+      for (const auto& [key, facet] : facet_by_key) {
+        if (std::find(facet.vertices.begin(), facet.vertices.end(), site) == facet.vertices.end()) {
+          future_faces.emplace(key, facet.source);
+        }
+      }
+      bool valid = true;
+      for (const auto& facet : incident_facets) {
+        operation.removed_facet_ids.push_back(facet.id);
+        if (std::find(facet.vertices.begin(), facet.vertices.end(), keep) != facet.vertices.end()) continue;
+        if (mesh.next_facet_id_ > std::numeric_limits<std::uint64_t>::max() -
+                                     operation.replacement_facets.size() - 1) return PHX_MC_INDEX_RANGE_ERROR;
+        TetEditFacet replacement;
+        replacement.id = mesh.next_facet_id_ + operation.replacement_facets.size();
+        replacement.vertices = facet.vertices;
+        for (auto& id : replacement.vertices) if (id == site) id = keep;
+        replacement.source = facet.source;
+        replacement.orientation = facet.orientation;
+        if (!future_faces.emplace(face_key(replacement.vertices), replacement.source).second) {
+          valid = false;
+          break;
+        }
+        operation.replacement_facets.push_back(replacement);
+      }
+      if (!valid) continue;
+      for (const auto slot : star) {
+        const auto& old = mesh.tet(slot);
+        operation.removed_cell_ids.push_back(mesh.cell_id(slot));
+        if (std::find(old.v, old.v + 4, keep_slot) != old.v + 4) continue;
+        if (mesh.next_cell_id_ > std::numeric_limits<std::uint64_t>::max() -
+                                    operation.replacement_cells.size() - 1) return PHX_MC_INDEX_RANGE_ERROR;
+        TetEditCell replacement;
+        replacement.id = mesh.next_cell_id_ + operation.replacement_cells.size();
+        replacement.region = mesh.complex().region(slot);
+        replacement.ancestor_cell_ids.push_back(mesh.cell_id(slot));
+        for (int i = 0; i < 4; ++i) {
+          replacement.vertices[i] = old.v[i] == site_slot ? keep : mesh.vertex_id(old.v[i]);
+        }
+        for (int opposite = 0; opposite < 4; ++opposite) {
+          Face face{};
+          for (int i = 0, j = 0; i < 4; ++i) if (i != opposite) face[j++] = replacement.vertices[i];
+          const auto found = future_faces.find(face_key(face));
+          replacement.facet_sources[opposite] = found == future_faces.end() ? kNoConstraint : found->second;
+        }
+        operation.replacement_cells.push_back(std::move(replacement));
+      }
+      if (operation.replacement_cells.empty()) continue;
+      TetMesh staged(mesh.policy());
+      mesh.copy_state_to(staged);
+      TetEditBatch batch{staged.generation(), staged.source_revision(), staged.frame_id(),
+                         staged.identity_bound(), {std::move(operation)}, staged.source_id(),
+                         staged.source_map_id(), staged.periodic_identity(), std::nullopt};
+      std::vector<TetEditResult> results;
+      const TetEditStatus status = staged.apply_edit_batch(batch, results);
+      if (status == TetEditStatus::kAllocationFailure) return PHX_MC_ALLOCATION_FAILURE;
+      if (status == TetEditStatus::kIndexOverflow) return PHX_MC_INDEX_RANGE_ERROR;
+      if (status != TetEditStatus::kApplied) continue;
+      std::vector<double> staged_sizes;
+      if (!vertex_sizes.empty()) {
+        TetMeshSnapshot staged_snapshot;
+        if (staged.snapshot_internal(staged_snapshot, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
+        staged_sizes.reserve(staged_snapshot.vertices.size());
+        for (const auto& vertex : staged_snapshot.vertices) staged_sizes.push_back(supplied_sizes.at(vertex.id));
+      }
+      std::int64_t inserted = 0, collapsed = 0, relocated = 0, remaining = 0;
+      const auto improved = improve_mesh(staged, request, staged_sizes, inserted, collapsed, relocated, remaining);
+      if (improved != PHX_MC_OK && improved != PHX_MC_UNRESOLVED) return improved;
+      std::vector<TetUnmetRecord> final_quality;
+      const auto final_status = evaluate_mesh_quality(staged, request, final_quality);
+      if (final_status != PHX_MC_OK) return final_status;
+      if (!final_quality.empty()) continue;
+      for (const auto id : original_vertex_ids) {
+        const auto before = mesh.vertex_slot(id), after = staged.vertex_slot(id);
+        if (!mesh.live_vertex(before) || !staged.live_vertex(after)) return PHX_MC_INTERNAL_ERROR;
+        for (int axis = 0; axis < 3; ++axis) {
+          if (std::bit_cast<std::uint64_t>(mesh.point(before)[axis]) !=
+              std::bit_cast<std::uint64_t>(staged.point(after)[axis])) return PHX_MC_INTERNAL_ERROR;
+        }
+      }
+      mesh.swap_state(staged);
+      inserted_vertices = inserted;
+      collapsed_vertices = collapsed + 1;
+      relocated_vertices = relocated;
+      unmet_cells = 0;
+      applied = true;
+      return PHX_MC_OK;
+    }
+  }
+  mesh.set_unmet_records(initial_quality);
+  return PHX_MC_UNRESOLVED;
+}
+
+std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest& request,
+                                   std::vector<TetUnmetRecord>& records,
+                                   std::span<const double> snapshot_points) {
+  if (!std::isfinite(request.radius_edge_bound) || request.radius_edge_bound < 0.0 ||
+      !std::isfinite(request.minimum_dihedral_degrees) ||
+      request.minimum_dihedral_degrees < 0.0 || request.minimum_dihedral_degrees >= 70.5 ||
+      !std::isfinite(request.minimum_relative_determinant) ||
+      request.minimum_relative_determinant < 0.0 ||
+      request.minimum_relative_determinant >= 1.0) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  TetMeshSnapshot snapshot;
+  if (mesh.snapshot(snapshot) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
+  std::unordered_map<std::uint64_t, std::size_t> candidate_rows;
+  if (!snapshot_points.empty()) {
+    if (snapshot_points.size() != 3 * snapshot.vertices.size() ||
+        !std::all_of(snapshot_points.begin(), snapshot_points.end(),
+                     [](double value) { return std::isfinite(value); })) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    candidate_rows.reserve(snapshot.vertices.size());
+    for (std::size_t row = 0; row < snapshot.vertices.size(); ++row) {
+      candidate_rows.emplace(snapshot.vertices[row].id, row);
+    }
+  }
+  records.clear();
+  const double floor = std::max(request.minimum_relative_determinant, kMetricDeterminantFloor);
+  const auto& sizes = mesh.vertex_sizes();
+  for (const TetSnapshotCell& cell : snapshot.cells) {
+    std::array<const double*, 4> points{};
+    std::array<double, 4> corner_sizes{};
+    bool live = true;
+    bool sized = true;
+    for (int corner = 0; corner < 4; ++corner) {
+      const std::int32_t slot = mesh.vertex_slot(cell.vertices[corner]);
+      if (!mesh.live_vertex(slot)) {
+        live = false;
+        break;
+      }
+      points[corner] = snapshot_points.empty()
+          ? mesh.point(slot)
+          : snapshot_points.data() + 3 * candidate_rows.at(cell.vertices[corner]);
+      const auto found = sizes.find(cell.vertices[corner]);
+      if (found == sizes.end()) {
+        sized = false;
+      } else {
+        corner_sizes[corner] = found->second;
+      }
+    }
+    if (!live || orient3d(points[0], points[1], points[2], points[3]) <= 0) {
+      records.push_back({cell.id, PHX_MC_TET_UNMET_VALIDITY,
+                         PHX_MC_TET_UNMET_NONREPRESENTABLE, 0.0});
+      continue;
+    }
+    std::array<std::array<double, 3>, 4> physical{};
+    if (mesh.metric_active()) {
+      for (int corner = 1; corner < 4; ++corner) {
+        physical[corner] = mesh.metric_transform({points[corner][0] - points[0][0],
+                                                  points[corner][1] - points[0][1],
+                                                  points[corner][2] - points[0][2]});
+      }
+      for (int corner = 0; corner < 4; ++corner) points[corner] = physical[corner].data();
+    }
+    geometry::TetrahedronShape shape;
+    const bool representable = geometry::tetrahedron_shape(points.data(), shape);
+    if (!representable) {
+      records.push_back({cell.id, request.radius_edge_bound == 0.0
+                                      ? PHX_MC_TET_UNMET_CONSTRUCTION
+                                      : PHX_MC_TET_UNMET_RADIUS_EDGE,
+                         PHX_MC_TET_UNMET_NONREPRESENTABLE,
+                         std::numeric_limits<double>::infinity()});
+    } else if (request.radius_edge_bound > 0.0 &&
+               shape.radius_edge_ratio > request.radius_edge_bound) {
+      records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE,
+                         PHX_MC_TET_UNMET_NO_IMPROVEMENT, shape.radius_edge_ratio});
+    }
+    if (sized) {
+      const double target = cell_size_target(corner_sizes);
+      if (std::isfinite(target)) {
+        if (!representable) {
+          records.push_back({cell.id, PHX_MC_TET_UNMET_SIZE,
+                             PHX_MC_TET_UNMET_NONREPRESENTABLE,
+                             std::numeric_limits<double>::infinity()});
+        } else if (shape.circumradius > target) {
+          records.push_back({cell.id, PHX_MC_TET_UNMET_SIZE,
+                             PHX_MC_TET_UNMET_NO_IMPROVEMENT, shape.circumradius / target});
+        }
+      }
+    }
+    const double angle = geometry::minimum_dihedral_degrees(points.data());
+    if (!std::isfinite(angle)) {
+      records.push_back({cell.id, PHX_MC_TET_UNMET_CONSTRUCTION,
+                         PHX_MC_TET_UNMET_NONREPRESENTABLE, angle});
+    } else if (angle < request.minimum_dihedral_degrees) {
+      records.push_back({cell.id, PHX_MC_TET_UNMET_DIHEDRAL,
+                         PHX_MC_TET_UNMET_NO_IMPROVEMENT, angle});
+    }
+    const double determinant = geometry::relative_determinant(points.data());
+    if (!std::isfinite(determinant)) {
+      records.push_back({cell.id, PHX_MC_TET_UNMET_CONSTRUCTION,
+                         PHX_MC_TET_UNMET_NONREPRESENTABLE, determinant});
+    } else if (determinant <= floor) {
+      records.push_back({cell.id, PHX_MC_TET_UNMET_VALIDITY,
+                         PHX_MC_TET_UNMET_NO_IMPROVEMENT, determinant - floor});
+    }
+  }
+  return PHX_MC_OK;
 }
 
 }  // namespace phx::mc

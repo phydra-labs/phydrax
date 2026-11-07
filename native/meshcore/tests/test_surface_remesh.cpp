@@ -6,10 +6,12 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <random>
 #include <utility>
 #include <vector>
 
 #include "check.hpp"
+#include "intersections.hpp"
 #include "phydrax_meshcore.h"
 #include "surface_remesh.hpp"
 
@@ -391,11 +393,53 @@ void knife_edge_lens() {
   PHX_CHECK(phx::mc::remesh::forced_turn(NormalCone{}, side) == 0);
 }
 
+void exact_contact_parity() {
+  using phx::mc::remesh::legal_triangle_contact;
+  const std::array<Point, 3> first{{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}};
+  const Triangle first_ids{0, 1, 2};
+  std::mt19937_64 generator(461);
+  std::uniform_real_distribution<double> coordinate(-2.0, 2.0);
+  for (int sample = 0; sample < 2000; ++sample) {
+    std::array<Point, 3> second{{first[1], first[0],
+                                 {coordinate(generator), coordinate(generator),
+                                  sample % 4 == 0 ? 0.0 : coordinate(generator)}}};
+    Triangle second_ids{1, 0, 3};
+    if (sample % 17 == 0) second[0][0] += 0.25;  // inconsistent shared ID
+    if (sample % 19 == 0) second_ids[2] = second_ids[1];  // repeated ID
+    const double* a[3] = {first[0].data(), first[1].data(), first[2].data()};
+    const double* b[3] = {second[0].data(), second[1].data(), second[2].data()};
+    phx::mc::Contact contact;
+    const auto status = phx::mc::intersect_triangles(a, b, first_ids.data(), second_ids.data(), contact);
+    const bool expected = status == PHX_MC_OK &&
+        (contact.kind == PHX_MC_DISJOINT || contact.kind == PHX_MC_SHARED_VERTEX ||
+         contact.kind == PHX_MC_SHARED_EDGE);
+    PHX_CHECK(legal_triangle_contact(first, first_ids, second, second_ids) == expected);
+  }
+  for (int sample = 0; sample < 2000; ++sample) {
+    std::array<Point, 3> second{{first[0],
+                                 {coordinate(generator), coordinate(generator), coordinate(generator)},
+                                 {coordinate(generator), coordinate(generator), coordinate(generator)}}};
+    Triangle second_ids{0, 3, 4};
+    if (sample % 5 == 0) second[2] = second[1];  // degenerate face
+    if (sample % 7 == 0) second[1][2] = second[2][2] = 0;  // coplanar
+    if (sample % 17 == 0) second[0][0] += 0.25;  // inconsistent shared ID
+    const double* a[3] = {first[0].data(), first[1].data(), first[2].data()};
+    const double* b[3] = {second[0].data(), second[1].data(), second[2].data()};
+    phx::mc::Contact contact;
+    const auto status = phx::mc::intersect_triangles(a, b, first_ids.data(), second_ids.data(), contact);
+    const bool expected = status == PHX_MC_OK &&
+        (contact.kind == PHX_MC_DISJOINT || contact.kind == PHX_MC_SHARED_VERTEX ||
+         contact.kind == PHX_MC_SHARED_EDGE);
+    PHX_CHECK(legal_triangle_contact(first, first_ids, second, second_ids) == expected);
+  }
+}
+
 }  // namespace
 
 int main() {
   folded_cluster();
   sphere_band_quality();
   knife_edge_lens();
+  exact_contact_parity();
   return phx::mc::test::finish("test_surface_remesh");
 }

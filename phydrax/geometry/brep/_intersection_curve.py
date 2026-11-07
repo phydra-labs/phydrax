@@ -3383,8 +3383,17 @@ class IntersectionCurve(AbstractCurve):
                 axis_upper = math.nextafter(axis_upper, math.inf)
             if axis_lower == axis_upper:
                 # A point query keeps a proper interval for box-valued carriers.
-                axis_lower = math.nextafter(axis_lower, -math.inf)
-                axis_upper = math.nextafter(axis_upper, math.inf)
+                # The exact chart coordinate is this representable float, so a
+                # one-sided widening still contains it. Never widen across the
+                # side of the chart's source region the point lies on: a branch
+                # ending on its region boundary keeps its parameter enclosure
+                # inside the region, which SurfaceRegion holds in its patch domain.
+                region = self.first if axis < 2 else self.second
+                region_box = np.asarray(region.parameter_box, dtype=np.float64)
+                if axis_lower != float(region_box[0, axis % 2]):
+                    axis_lower = math.nextafter(axis_lower, -math.inf)
+                if axis_upper != float(region_box[1, axis % 2]):
+                    axis_upper = math.nextafter(axis_upper, math.inf)
             lower_box = np.asarray(self.chart_lower[chart], dtype=np.float64).copy()
             upper_box = np.asarray(self.chart_upper[chart], dtype=np.float64).copy()
             lower_box[axis], upper_box[axis] = axis_lower, axis_upper

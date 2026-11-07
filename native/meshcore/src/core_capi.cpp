@@ -129,12 +129,18 @@ int32_t validate_plc3d_prepare_request(const phx_mc_plc3d_prepare_source_request
 using PlcBuilder = int32_t (*)(const phx::mc::PlcInput&, phx::mc::PlcRecovery&);
 
 int32_t run_plc3d_request(const phx_mc_plc3d_prepare_source_request* request,
-                          PlcBuilder builder) {
+                          PlcBuilder builder, const double* affine_metric = nullptr,
+                          const uint8_t* protected_facets = nullptr) {
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   if (request->result != nullptr) *request->result = nullptr;
   return guarded([&]() -> int32_t {
     const int32_t valid = validate_plc3d_prepare_request(*request);
     if (valid != PHX_MC_OK) return valid;
+    if (protected_facets != nullptr) {
+      for (int64_t facet = 0; facet < request->facet_count; ++facet) {
+        if (protected_facets[facet] > 1) return PHX_MC_INVALID_ARGUMENT;
+      }
+    }
     phx::mc::PlcInput input;
     input.point_count = request->point_count;
     input.points = request->points;
@@ -154,6 +160,8 @@ int32_t run_plc3d_request(const phx_mc_plc3d_prepare_source_request* request,
     input.segment_tolerances = request->segment_tolerances;
     input.facet_planes = request->facet_planes;
     input.facet_plane_tolerances = request->facet_plane_tolerances;
+    input.affine_metric = affine_metric;
+    input.protected_facets = protected_facets;
     auto result = std::make_unique<phx_mc_plc3d_result>();
     const int32_t status = builder(input, result->recovery);
     if (status == PHX_MC_OK ||
@@ -522,6 +530,25 @@ int32_t phx_mc_plc3d_prepare_source(
 int32_t phx_mc_plc3d_recover(
     const phx_mc_plc3d_prepare_source_request* request) {
   return run_plc3d_request(request, phx::mc::recover_plc);
+}
+
+int32_t phx_mc_plc3d_recover_with_affine_metric(
+    const phx_mc_plc3d_prepare_source_request* request, const double* affine_metric) {
+  if (affine_metric == nullptr) {
+    if (request != nullptr && request->result != nullptr) *request->result = nullptr;
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return run_plc3d_request(request, phx::mc::recover_plc, affine_metric);
+}
+
+int32_t phx_mc_plc3d_recover_protected(
+    const phx_mc_plc3d_prepare_source_request* request,
+    const uint8_t* protected_facets, const double* affine_metric) {
+  if (protected_facets == nullptr) {
+    if (request != nullptr && request->result != nullptr) *request->result = nullptr;
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return run_plc3d_request(request, phx::mc::recover_plc, affine_metric, protected_facets);
 }
 
 int32_t phx_mc_plc3d_sizes(const phx_mc_plc3d_result* result, int64_t* sizes) {

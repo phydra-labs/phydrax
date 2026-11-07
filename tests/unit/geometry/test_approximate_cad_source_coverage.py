@@ -1,9 +1,12 @@
 import dataclasses
 from collections.abc import Sequence
 from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
+import pytest
 
+import phydrax.geometry._domain_boundary as domain_boundary
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_validity import (
@@ -15,7 +18,9 @@ from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.geometry._approximate_source_coverage import (
     _area2,
     _cad_chart_partition,
+    _covered_by_declared_triangles,
     _intersection_area,
+    _overlapping_self_pairs,
     _possibly_overlapping_pairs,
     _surface_point,
     approximate_source_coverage,
@@ -34,6 +39,7 @@ from phydrax.geometry._source_fidelity import (
     certify_source_fidelity,
 )
 from phydrax.geometry.brep import boolean_brep, brep_box, BRepGeometry, BRepModel
+from phydrax.geometry.brep._patches import PlaneCylinderSectionPCurve
 from phydrax.units import MILLIMETER
 
 
@@ -53,14 +59,152 @@ def test_exact_chart_intersection_handles_clockwise_root_and_target() -> None:
     zero, one, half = Fraction(0), Fraction(1), Fraction(1, 2)
     root = ((zero, zero), (one, zero), (zero, one))
     child = ((zero, zero), (half, zero), (zero, half))
-    for root_order in (root, tuple(reversed(root))):
-        for child_order in (child, tuple(reversed(child))):
+    for root_order in (root, (root[2], root[1], root[0])):
+        for child_order in (child, (child[2], child[1], child[0])):
             assert _intersection_area(child_order, root_order) == Fraction(1, 8)
             assert _intersection_area(root_order, child_order) == Fraction(1, 8)
             assert _possibly_overlapping_pairs((child_order,), (root_order,), False) == [
                 (0, 0)
             ]
     assert _intersection_area(child, (root[0], root[0], root[1])) == 0
+
+
+def test_bounded_cad_partition_screen_preserves_exact_coverage_and_overlap() -> None:
+    zero, one, half = Fraction(0), Fraction(1), Fraction(1, 2)
+    declared = (
+        ((zero, zero), (one, zero), (zero, one)),
+        ((one, one), (zero, one), (one, zero)),
+    )
+    valid = (
+        ((zero, zero), (half, zero), (zero, one)),
+        ((half, zero), (one, zero), (zero, one)),
+        declared[1],
+    )
+    outside = (((one, zero), (one + half, zero), (one, half)),)
+    assert _covered_by_declared_triangles(valid, declared)
+    assert not _covered_by_declared_triangles(outside, declared)
+    assert all(
+        _intersection_area(valid[a], valid[b]) == 0
+        for a, b in _overlapping_self_pairs(valid)
+    )
+    overlap = (*valid, valid[0])
+    assert any(
+        _intersection_area(overlap[a], overlap[b]) > 0
+        for a, b in _overlapping_self_pairs(overlap)
+    )
+    gap = valid[:-1]
+    assert sum((abs(_area2(row)) for row in gap), Fraction(0)) != sum(
+        (abs(_area2(row)) for row in declared), Fraction(0)
+    )
+
+
+def test_bounded_cad_overlap_pairs_keep_lexicographic_order_across_blocks() -> None:
+    triangle = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    rows = (triangle,) * 66
+    assert list(_overlapping_self_pairs(rows)) == [
+        (first, second) for first in range(66) for second in range(first + 1, 66)
+    ]
+
+
+def test_exact_trim_triangulation_is_scoped_to_requested_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=SpatialCoordinateContract(MILLIMETER),
+        source_id="scoped-trim",
+    )
+    domain = MeshingDomain.from_brep(model)
+    source = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
+    expected = dict(source.boundary_parameter_triangles())[0]
+    original = domain_boundary._rooted_patch_chart_junctions
+
+    def uncertain_other_patch(
+        domain: MeshingDomain, patch: int, /
+    ) -> tuple[tuple[domain_boundary._RootedJunction, ...], ...]:
+        if patch == 1:
+            point = (Fraction(0), Fraction(0))
+            upper = (Fraction(1), Fraction(0))
+            return ((domain_boundary._RootedJunction(point, point, upper),),)
+        return original(domain, patch)
+
+    monkeypatch.setattr(
+        domain_boundary, "_rooted_patch_chart_junctions", uncertain_other_patch
+    )
+    source.require_current()
+    assert source._boundary_parameter_triangles_unchecked(0) == expected
+    with pytest.raises(ValueError, match="exact source-root junctions"):
+        source._boundary_parameter_triangles_unchecked(1)
+    with pytest.raises(ValueError, match="exact source-root junctions"):
+        source.boundary_parameter_triangles()
+    with pytest.raises(ValueError, match="outside the selected boundary scope"):
+        source._boundary_parameter_triangles_unchecked(len(domain.patches))
+
+
+def test_external_affine_full_circle_trim_partition(tmp_path: Path) -> None:
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _external_case
+
+    model, _, _, _ = _external_case("external-routine", "step", tmp_path)
+    domain = MeshingDomain.from_brep(model)
+    source = MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
+    # This authored annulus consists of two complete periodic circle uses;
+    # its endpoint-only polygon has zero area for both loops.
+    patch = 1
+    uses = [loop[0] for loop in domain.patches[patch].loops]
+    assert len(uses) == 2 and all(len(loop) == 1 for loop in domain.patches[patch].loops)
+    polygon = domain_boundary._patch_chart_polygon(domain, patch)
+    assert polygon is not None
+    assert all(domain_boundary._signed_area2(loop) == 0 for loop in polygon[2])
+    directions = (
+        (Fraction(1), Fraction(0)),
+        (Fraction(3, 5), Fraction(4, 5)),
+        (Fraction(0), Fraction(1)),
+        (Fraction(-3, 5), Fraction(4, 5)),
+        (Fraction(-1), Fraction(0)),
+        (Fraction(-3, 5), Fraction(-4, 5)),
+        (Fraction(0), Fraction(-1)),
+        (Fraction(3, 5), Fraction(-4, 5)),
+    )
+    rings: list[tuple[_Point2, ...]] = []
+    for use in uses:
+        curve = use.pcurve
+        assert isinstance(curve, PlaneCylinderSectionPCurve)
+        offset, cos_coeff, sin_coeff = (
+            curve.offset_exact,
+            curve.cosine_exact,
+            curve.sine_exact,
+        )
+        assert isinstance(offset[0], Fraction) and isinstance(offset[1], Fraction)
+        assert isinstance(cos_coeff[0], Fraction) and isinstance(cos_coeff[1], Fraction)
+        assert isinstance(sin_coeff[0], Fraction) and isinstance(sin_coeff[1], Fraction)
+        rings.append(
+            tuple(
+                (
+                    offset[0] + cosine * cos_coeff[0] + sine * sin_coeff[0],
+                    offset[1] + cosine * cos_coeff[1] + sine * sin_coeff[1],
+                )
+                for cosine, sine in directions
+            )
+        )
+    outer, inner = rings
+    triangles = []
+    for index in range(len(directions)):
+        following = (index + 1) % len(directions)
+        for triangle in (
+            (outer[index], outer[following], inner[following]),
+            (outer[index], inner[following], inner[index]),
+        ):
+            triangles.append(triangle if _area2(triangle) > 0 else triangle[::-1])
+    declared, lenses = source.trim_partition_reference(patch, tuple(triangles))
+    assert declared and lenses
+    assert sum((abs(_area2(row)) for row in declared), Fraction(0)) == sum(
+        (abs(_area2(row)) for row in triangles), Fraction(0)
+    )
 
 
 def _cross(first: _Point3, second: _Point3, /) -> _Point3:

@@ -60,7 +60,7 @@ from ..discretization import CellMesh
 from ..discretization._adaptive_simplex import bisection_label_tables
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._lineage import EntityLineageKind
-from ._periodic import PeriodicRefinementEdgeLock
+from ._periodic import periodic_entity_orbit_map, PeriodicRefinementEdgeLock
 from ._topology_edit import (
     CellTopologyEdit,
     entity_keys,
@@ -1702,8 +1702,13 @@ def _removable_family(
     facets: Any,
     dimension: int,
     /,
+    *,
+    orbits: np.ndarray | None = None,
 ) -> _Family | None:
-    """Good vertices: unprotected, star = marked sibling pairs of their bisections."""
+    """Good vertices: unprotected, star = marked sibling pairs of their bisections.
+
+    With periodic ``orbits`` a vertex is good only with every lifted copy.
+    """
 
     if records.parent_ids.size == 0:
         return None
@@ -1730,7 +1735,7 @@ def _removable_family(
         & record_agrees[np.maximum(record, 0)]
     )
     spoiled = np.bincount(creator[member & ~eligible], minlength=vertex_count) > 0
-    good = candidate & ~spoiled
+    good = _orbit_all(candidate & ~spoiled, orbits)
     removed = member & good[np.maximum(creator, 0)]
     if not np.any(removed):
         return None
@@ -1801,13 +1806,16 @@ def _undone_subdivisions(
     facets: Any,
     dimension: int,
     /,
+    *,
+    orbits: np.ndarray | None = None,
 ) -> Any:
     """Restore every subdivided source cell whose children and created stars undo.
 
     A subdivision is removable when all its children are active, marked,
     unblocked, and of one class, its facet pieces agree in class, and the star of
     each created vertex consists only of children of removable subdivisions; the
-    last condition is iterated to its fixed point. Returns ``None`` when nothing
+    last condition is iterated to its fixed point, and with periodic ``orbits``
+    holds for a vertex only with every lifted copy. Returns ``None`` when nothing
     is removable.
     """
 
@@ -1838,7 +1846,7 @@ def _undone_subdivisions(
             cells.rows[position[candidate].reshape((-1,))].reshape((-1,)),
             minlength=vertex_count,
         )
-        good = (star == covered) & ~protected
+        good = _orbit_all((star == covered) & ~protected, orbits)
         kept = candidate & np.all(good[subdivisions.vertices], axis=1)
         if np.array_equal(kept, candidate):
             break
@@ -1918,6 +1926,34 @@ def _reverse_supports(steps: Any, vertex_count: int, dimension: int, /) -> np.nd
     return supports
 
 
+def _vertex_orbits(source: _Source, count: int, /) -> np.ndarray | None:
+    """Periodic vertex-orbit label of every front vertex row; ``None`` if aperiodic.
+
+    Vertices issued after the source (``count`` exceeds the source rows) are
+    protected and keep singleton labels.
+    """
+    if source.mesh.periodic_topology is None:
+        return None
+    orbit_map = periodic_entity_orbit_map(source.mesh, 0)
+    lifted_ids = np.asarray(orbit_map.lifted_entity_ids, dtype=np.int64)
+    order = np.argsort(lifted_ids, kind="stable")
+    position = np.searchsorted(lifted_ids[order], source.vertex_ids)
+    labels = np.asarray(orbit_map.lifted_to_quotient, dtype=np.int64)[order[position]]
+    quotient = int(np.max(labels, initial=-1)) + 1
+    return np.concatenate(
+        (labels, quotient + np.arange(count - labels.size, dtype=np.int64))
+    )
+
+
+def _orbit_all(mask: np.ndarray, orbits: np.ndarray | None, /) -> np.ndarray:
+    """Keep a vertex only when its whole periodic orbit is kept."""
+    if orbits is None:
+        return mask
+    whole = np.ones((int(np.max(orbits, initial=-1)) + 1,), dtype=np.bool_)
+    np.logical_and.at(whole, orbits, mask)
+    return whole[orbits]
+
+
 def _coarsening(
     source: _Source,
     start: _Start,
@@ -1941,13 +1977,16 @@ def _coarsening(
             np.ones((start.front.growth.levels.size,), dtype=np.bool_),
         )
     )
+    orbits = _vertex_orbits(source, protected.size)
     width = dimension + 1
     steps, children, parents, undone = [], [], [], []
     while request.coarsen_ids.size:
-        family = _removable_family(cells, flags, records, protected, facets, dimension)
+        family = _removable_family(
+            cells, flags, records, protected, facets, dimension, orbits=orbits
+        )
         if family is None:
             roots = _undone_subdivisions(
-                cells, flags, subdivisions, protected, facets, dimension
+                cells, flags, subdivisions, protected, facets, dimension, orbits=orbits
             )
             if roots is None:
                 break
@@ -2036,10 +2075,11 @@ def _undone_epoch_subdivisions(
 
     protected = np.ones((vertex_count,), dtype=np.bool_)
     protected[: source.vertex_ids.size] = request.protected_vertices
+    orbits = _vertex_orbits(source, vertex_count)
     steps, children, parents, undone = [], [], [], []
     while True:
         roots = _undone_subdivisions(
-            cells, flags, subdivisions, protected, facets, source.dimension
+            cells, flags, subdivisions, protected, facets, source.dimension, orbits=orbits
         )
         if roots is None:
             break

@@ -12,10 +12,8 @@ from .cold_restore import native_cold_restore
 
 
 def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
-    import jax.numpy as jnp
 
     import phydrax as phx
-    from phydrax._model._structure import FiniteVolumeRuntimeStateArchiveRecipe
     from phydrax.discretization import CellMesh
     from phydrax.discretization.finite_volume import (
         PiecewiseConstantReconstruction,
@@ -31,38 +29,12 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
         EulerSystem,
         IdealGasMaterial,
     )
-    from phydrax.meshing._model_codec import read_model_artifact, write_model_artifact
     from phydrax.solver._finite_volume_runtime import (
         FiniteVolumeRunStatus,
         FiniteVolumeRuntimeState,
         FiniteVolumeStepPolicy,
         PreparedFiniteVolumeRuntime,
     )
-    from phydrax.solver._finite_volume_topology_events import (
-        FiniteVolumeTopologyEventJournal,
-    )
-
-    def restore_runtime_recipe(
-        value: FiniteVolumeRuntimeStateArchiveRecipe,
-    ) -> FiniteVolumeRuntimeStateArchiveRecipe:
-        return FiniteVolumeRuntimeStateArchiveRecipe(
-            value.content_state,
-            dict(value.topology_journal_record),
-            dict(value.topology_journal_arrays),
-            value.accepted_step,
-            value.step_size,
-            value.last_status,
-            value.controller_state,
-            value.integrator_state,
-            value.output_cursor,
-            value.sliding_shift,
-            value.sliding_event_id,
-            value.sliding_coupling_id,
-            value.source_cell_ids,
-            value.expected_runtime_id,
-            value.expected_epoch_id,
-            value.expected_state_id,
-        )
 
     mesh = CellMesh.from_triangles(
         np.asarray(
@@ -82,8 +54,13 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
     )
     cell_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     system = EulerSystem(2, material=IdealGasMaterial(1.4, 1.0))
-    discretization = UnstructuredFiniteVolumePlan.from_cell_mesh(
-        mesh, component_names=system.component_names
+    discretization = UnstructuredFiniteVolumePlan(
+        mesh.coordinates,
+        triangles=mesh.blocks[0].vertices,
+        vertex_global_ids=mesh.vertex_global_ids,
+        cell_global_ids=cell_ids,
+        field_name="conservative",
+        component_names=system.component_names,
     ).prepare()
     patch_names = tuple(discretization.boundary_patch_names)
     boundaries = UnstructuredFiniteVolumeBoundarySet(
@@ -109,6 +86,12 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
         ),
         FiniteVolumeStepPolicy(cfl=0.2),
     )
+    case = phx.solver.FiniteVolumeCaseSpec(
+        "native-cold-euler",
+        runtime,
+        phx.solver.FiniteVolumeExecutionSpec(1.0, 1000),
+    )
+    checkpoint_plan = phx.solver.FiniteVolumeCheckpointPlan(case, runtime=runtime)
     centers = np.asarray(discretization.cell_centers, dtype=np.float64)
     density = 1.0 + 0.15 * np.exp(
         -((centers[:, 0] - 0.5) ** 2 + (centers[:, 1] - 0.5) ** 2) / 0.08
@@ -130,26 +113,10 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
                 "Cold FV producer did not accept its first Euler solve step."
             )
         state = first.runtime_state
-        state_id = runtime.accepted_state_id(state, cell_ids)
-        recipe = FiniteVolumeRuntimeStateArchiveRecipe(
-            state.content_state,
-            state.topology_journal.to_archive_record(),
-            state.topology_journal.archive_arrays(),
-            state.accepted_step,
-            state.step_size,
-            state.last_status,
-            state.controller_state,
-            state.integrator_state,
-            state.output_cursor,
-            state.sliding_shift,
-            state.sliding_event_id,
-            state.sliding_coupling_id,
-            jnp.asarray(cell_ids),
-            runtime.runtime_id,
-            runtime.topology_epoch_id,
-            state_id,
+        checkpoint = phx.solver.write_finite_volume_checkpoint(
+            archive, checkpoint_plan, state
         )
-        write_model_artifact(archive, recipe, limits=None)
+        state_id = checkpoint.payload_id
         ledger = first.accepted_flux_integrals
         source_integral, boundary_integral, net_integral = ledger.conservation_sums()
         return {
@@ -173,44 +140,12 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
         }
     if phase != "read":
         raise ValueError(f"Unknown cold FV worker phase {phase!r}.")
-    recipe = read_model_artifact(
-        archive,
-        expected_type=FiniteVolumeRuntimeStateArchiveRecipe,
-        restore=restore_runtime_recipe,
-        limits=None,
-    )
-    if not isinstance(recipe, FiniteVolumeRuntimeStateArchiveRecipe):
-        raise TypeError(
-            "Cold FV archive did not decode its canonical runtime-state recipe."
-        )
-    if (
-        recipe.expected_runtime_id != runtime.runtime_id
-        or recipe.expected_epoch_id != runtime.topology_epoch_id
-        or not np.array_equal(np.asarray(recipe.source_cell_ids), cell_ids)
-        or recipe.sliding_coupling_id is not None
-    ):
-        raise RuntimeError(
-            "Cold FV archive source/runtime/epoch authority changed during reconstruction."
-        )
-    journal = FiniteVolumeTopologyEventJournal.from_archive_record(
-        dict(recipe.topology_journal_record), dict(recipe.topology_journal_arrays)
-    )
-    restored = FiniteVolumeRuntimeState(
-        recipe.content_state,
-        journal,
-        recipe.step_size,
-        accepted_step=recipe.accepted_step,
-        last_status=recipe.last_status,
-        controller_state=recipe.controller_state,
-        integrator_state=recipe.integrator_state,
-        output_cursor=recipe.output_cursor,
-        sliding_shift=recipe.sliding_shift,
-        sliding_event_id=recipe.sliding_event_id,
-    )
-    if runtime.accepted_state_id(restored, cell_ids) != recipe.expected_state_id:
-        raise RuntimeError(
-            "Cold FV accepted-state identity changed during canonical reconstruction."
-        )
+    checkpoint = phx.solver.read_finite_volume_checkpoint(archive, checkpoint_plan)
+    restored = checkpoint.runtime_state
+    if not isinstance(restored, FiniteVolumeRuntimeState):
+        raise TypeError("Cold FV checkpoint did not restore its ordinary runtime state.")
+    if restored.topology_journal.current_epoch_id != runtime.topology_epoch_id:
+        raise RuntimeError("Cold FV checkpoint changed its runtime epoch.")
     if int(np.asarray(restored.last_status)) not in (
         int(FiniteVolumeRunStatus.SUCCESS),
         int(FiniteVolumeRunStatus.RECOVERED_REJECTION),
@@ -230,6 +165,15 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
     )
     ledger = continued.accepted_flux_integrals
     source_integral, boundary_integral, net_integral = ledger.conservation_sums()
+    ledger_defect = continued_content - previous_content - np.asarray(net_integral)
+    ledger_scale = np.maximum(
+        1.0, np.maximum(np.abs(previous_content), np.abs(continued_content))
+    )
+    ledger_tolerance = 128 * np.finfo(continued_content.dtype).eps
+    if not np.all(np.abs(ledger_defect) <= ledger_tolerance * ledger_scale):
+        raise RuntimeError(
+            "Cold FV continuation violates its accepted conservation ledger."
+        )
     if (
         int(np.asarray(state.accepted_step))
         != int(np.asarray(restored.accepted_step)) + 1
@@ -250,7 +194,7 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
         "pid": __import__("os").getpid(),
         "runtime_id": runtime.runtime_id,
         "epoch_id": runtime.topology_epoch_id,
-        "restored_state_id": recipe.expected_state_id,
+        "restored_state_id": checkpoint.payload_id,
         "accepted_step": int(np.asarray(state.accepted_step)),
         "time": float(np.asarray(state.time)),
         "source_cell_ids": cell_ids.tolist(),
@@ -258,6 +202,7 @@ def _fv_worker(phase: str, archive: Path, /) -> dict[str, object]:
         "continued_total_content": continued_content.tolist(),
         "source_integral": np.asarray(source_integral).tolist(),
         "boundary_integral": np.asarray(boundary_integral).tolist(),
+        "conservation_ledger_defect": ledger_defect.tolist(),
         "net_integral": np.asarray(net_integral).tolist(),
         "positivity_valid": positivity_valid,
         "accepted": bool(np.asarray(continued.accepted)),
@@ -293,18 +238,156 @@ def _run_child(phase: str, archive: Path, /) -> dict[str, object]:
     return record
 
 
+def _owner_local_fv_continuation() -> dict[str, object]:
+    import os
+    import socket
+
+    from phydrax import config as pxconfig
+    from phydrax._execution_launch import (
+        launch_local_processes,
+        LocalProcessLaunchPlan,
+    )
+
+    repository = Path(__file__).resolve().parents[3]
+    base = dict(os.environ)
+    for name in (
+        "PHYDRAX_COORDINATOR_ADDRESS",
+        "PHYDRAX_NUM_PROCESSES",
+        "PHYDRAX_PROCESS_ID",
+        "PHYDRAX_LOCAL_DEVICE_IDS",
+        "PHYDRAX_COORDINATOR_BIND_ADDRESS",
+    ):
+        base.pop(name, None)
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(
+            enable_x64=True,
+            platforms=("cpu",),
+            cpu_device_count=1,
+            cpu_collectives_implementation="gloo",
+        ),
+        base=base,
+    )
+    environment.update(
+        PYTHONPATH=str(repository),
+        OMP_NUM_THREADS="1",
+        OPENBLAS_NUM_THREADS="1",
+        XLA_PYTHON_CLIENT_PREALLOCATE="false",
+    )
+
+    def launch(root: Path, phase: str) -> list[dict[str, object]]:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        results = launch_local_processes(
+            (
+                sys.executable,
+                "-m",
+                "tools.meshing_qualification.scenarios.cold_owner_local_fv",
+                str(root),
+                phase,
+            ),
+            LocalProcessLaunchPlan(3, f"127.0.0.1:{port}", devices_per_process=1),
+            environment=environment,
+            cwd=str(repository),
+            timeout_seconds=3600.0,
+        )
+        reports = [
+            json.loads(result.stdout.decode().strip().splitlines()[-1])
+            for result in results
+        ]
+        if (
+            any(not isinstance(report, dict) for report in reports)
+            or [report.get("rank") for report in reports] != [0, 1, 2]
+            or any(report.get("phase") != phase for report in reports)
+        ):
+            raise RuntimeError(f"Malformed owner-local FV {phase} reports.")
+        return reports
+
+    with TemporaryDirectory(prefix="phydrax-native-owner-local-fv-") as temporary:
+        root = Path(temporary)
+        writers = launch(root, "write")
+        archives = [root / f"owner-local-fv-state-{rank}.phx" for rank in range(3)]
+        if any(not path.is_file() or path.stat().st_size == 0 for path in archives):
+            raise RuntimeError("Owner-local FV writer omitted a canonical archive.")
+        archive_bytes = [path.stat().st_size for path in archives]
+        readers = launch(root, "read")
+    writer_pids = {report["pid"] for report in writers}
+    reader_pids = {report["pid"] for report in readers}
+    if len(writer_pids) != 3 or len(reader_pids) != 3 or writer_pids & reader_pids:
+        raise RuntimeError("Owner-local FV producer and reader processes are not independent.")
+    for writer, reader in zip(writers, readers, strict=True):
+        if any(
+            writer[key] != reader[key]
+            for key in ("state_id", "source_runtime_id", "target_connectivity_id")
+        ):
+            raise RuntimeError("Owner-local FV cold restore changed scientific authority.")
+        if reader["source_partition"] == reader["target_partition"]:
+            raise RuntimeError("Owner-local FV continuation did not change placement.")
+    return {
+        "status": "passed",
+        "producer_processes_exited_before_reader": True,
+        "archive_bytes_by_rank": archive_bytes,
+        "producer": writers,
+        "reader": readers,
+    }
+
+
 def native_cold_fe_fv_continuation() -> dict[str, object]:
     from .cold_owner_local import native_cold_owner_local
 
     component_failures: list[str] = []
     try:
         fe = native_cold_restore()
+        if fe.get("status") != "passed" or not fe.get("fresh_process"):
+            raise RuntimeError(f"Serial FE restore did not pass: {fe!r}")
     except Exception as error:
         fe = {"status": "failed", "error": f"{type(error).__name__}: {error}"}
         component_failures.append(f"serial FE restore: {fe['error']}")
 
     try:
         owner_local_fe = native_cold_owner_local()
+        profiles = owner_local_fe.get("profiles")
+        if (
+            owner_local_fe.get("status") != "passed"
+            or not owner_local_fe.get("producer_processes_exited_before_each_reader")
+            or not isinstance(profiles, list)
+            or not profiles
+            or any(
+                not isinstance(profile, dict)
+                or profile.get("status") != "passed"
+                or not isinstance(profile.get("physical_cone_continuation_by_rank"), list)
+                or len(profile["physical_cone_continuation_by_rank"]) != 3
+                or any(
+                    not isinstance(cone, dict)
+                    or not all(
+                        cone.get(key) is True
+                        for key in (
+                            "changed_placement",
+                            "independent_reference",
+                            "newmark",
+                            "linear_momentum",
+                            "material_commit_trial_version",
+                            "rollback",
+                            "history_velocity_acceleration_timestep_sensitive",
+                        )
+                    )
+                    for cone in profile["physical_cone_continuation_by_rank"]
+                )
+                or not isinstance(profile.get("collective_oracles"), dict)
+                or not all(
+                    profile["collective_oracles"].get(key) is True
+                    for key in (
+                        "stale_migration_refused_without_partial_commit",
+                        "one_rank_restart_layout_refusal_without_partial_commit",
+                        "saved_source_reused_after_both_refusals",
+                        "history_clock_integrator_rng_material_rebound",
+                        "next_compiled_fe_solve_accepted",
+                    )
+                )
+                for profile in profiles
+            )
+        ):
+            raise RuntimeError("Owner-local FE physical restart evidence is incomplete.")
     except Exception as error:
         owner_local_fe = {
             "status": "failed",
@@ -333,6 +416,7 @@ def native_cold_fe_fv_continuation() -> dict[str, object]:
             writer["runtime_id"] != reader["runtime_id"]
             or writer["epoch_id"] != reader["epoch_id"]
             or writer["state_id"] != reader["restored_state_id"]
+            or writer["cell_ids"] != reader["source_cell_ids"]
             or reader["phase"] != "read"
         ):
             raise RuntimeError(
@@ -347,24 +431,41 @@ def native_cold_fe_fv_continuation() -> dict[str, object]:
             f"serial FV continuation: {type(error).__name__}: {error}"
         )
 
-    missing_contracts = [
-        "FE material/history/auxiliary/integrator state is not present in the archived composition or changed-placement owner-local repartition; the completed FE witnesses carry only the P1 u field",
-        "FV owner-local material/history/RNG/clock state migration through a changed-placement fresh restart and continued physical solve is not implemented; the FV runtime-state archive is serial",
-    ]
+    try:
+        owner_local_fv = _owner_local_fv_continuation()
+        if (
+            owner_local_fv.get("status") != "passed"
+            or not owner_local_fv.get("producer_processes_exited_before_reader")
+        ):
+            raise RuntimeError(f"Owner-local FV restart did not pass: {owner_local_fv!r}")
+    except Exception as error:
+        owner_local_fv = {
+            "status": "failed",
+            "error": f"{type(error).__name__}: {error}",
+        }
+        component_failures.append(
+            f"owner-local FV continuation: {owner_local_fv['error']}"
+        )
     return {
-        "status": "failed",
-        "workflow": "fresh-process FE and FV physical solve continuation, including owner-local FE repartition",
+        "status": "failed" if component_failures else "passed",
+        "workflow": "fresh-process FE and FV physical solve continuation, including owner-local FE and FV repartition",
         "source_registry": "tools/meshing_qualification/native_case_migration.json#cold-fe-fv-continuation",
         "fe_cold_continuation": fe,
         "owner_local_fe_continuation": owner_local_fe,
+        "owner_local_fv_continuation": owner_local_fv,
         "consumer": fe.get("consumer"),
         "producer_process_exited_before_consumer": bool(
-            isinstance(owner_local_fe, dict)
-            and owner_local_fe.get("producer_process_exited_before_reader")
+            fe.get("producer_process_exited_before_consumer")
+            and owner_local_fe.get("producer_processes_exited_before_each_reader")
+            and owner_local_fv.get("producer_processes_exited_before_reader")
+            and writer is not None
+            and reader is not None
+            and writer.get("pid") != reader.get("pid")
         ),
         "fresh_process": bool(
-            isinstance(owner_local_fe, dict)
-            and owner_local_fe.get("fresh_process")
+            fe.get("fresh_process")
+            and owner_local_fe.get("producer_processes_exited_before_each_reader")
+            and owner_local_fv.get("producer_processes_exited_before_reader")
             and writer is not None
             and reader is not None
             and writer.get("pid") != reader.get("pid")
@@ -377,6 +478,7 @@ def native_cold_fe_fv_continuation() -> dict[str, object]:
             "fe_affine_harmonic_solution_tolerance": 2.0e-9,
             "fe_transfer_and_conservative_integral_tolerance": 1.0e-12,
             "owner_local_fe_changed_placement_continuation": owner_local_fe,
+            "fv_state_identity_kind": "finite-volume-checkpoint-payload-id",
             "fv_accepted_state_identity": None
             if writer is None
             else writer.get("state_id"),
@@ -388,7 +490,7 @@ def native_cold_fe_fv_continuation() -> dict[str, object]:
             else reader.get("net_integral"),
         },
         "component_failures": component_failures,
-        "missing_production_contracts": missing_contracts,
+        "missing_production_contracts": [],
     }
 
 

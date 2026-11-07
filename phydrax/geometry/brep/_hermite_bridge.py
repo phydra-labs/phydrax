@@ -35,6 +35,7 @@ from ...linalg._exact import (
     ExactLinearSolveEvidence,
     factor_exact,
 )
+from ...typing import parse
 from ._patches import _require_exact_numeric_shadow, BSplineSurfacePatch
 
 
@@ -92,8 +93,7 @@ def _source(
 ) -> tuple[int, tuple[Fraction, ...], list[list[list[ExactScalar]]], list[Array], Array]:
     if not isinstance(patch, BSplineSurfacePatch):
         raise TypeError("Bridge sources must be BSplineSurfacePatch instances.")
-    if side not in ("u0", "u1", "v0", "v1"):
-        raise ValueError("A source side must be u0, u1, v0, or v1.")
+    side = parse(side, Side, "source side")
     if not isinstance(along, tuple) or len(along) != 2:
         raise TypeError("An along map must be a pair of Fractions.")
     a, b = (_fraction(x, "along map") for x in along)

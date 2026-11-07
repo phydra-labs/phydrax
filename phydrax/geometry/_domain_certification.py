@@ -22,6 +22,7 @@ from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._exact_algebraic_geometry import ExactScalar
 from ..typing import Dim, HostInt64
+from ._affine_plc_domain import AffinePlcDomain
 from ._approximate_source_coverage import ExactCadSourceBoundary
 from ._domain_coverage import PiecewiseLinearDomain
 from ._domain_preparation import CellCoverageAssignment, DomainCoveragePreparation
@@ -30,7 +31,7 @@ from ._embedding_state import (
     MeshCertificateFinding,
     MeshFindingStatus,
 )
-from ._global_embedding import GlobalEmbeddingCertificate
+from ._global_embedding import GlobalEmbeddingCertificate, ValidatedGlobalEmbedding
 from ._mapped_reference_domain import MappedReferenceDomain
 from ._mesh_certificates import (
     _same_tree_content,
@@ -56,6 +57,7 @@ from .implicit._restricted_delaunay_coverage import (
 
 type CoverageDomain = (
     PiecewiseLinearDomain
+    | AffinePlcDomain
     | MappedReferenceDomain
     | MeshingDomain
     | AdaptiveImplicitSurface
@@ -69,10 +71,13 @@ type CoverageMethod = Literal[
 
 def require_coverage_domain(value: object, /) -> CoverageDomain:
     """Admit only concrete source owners with revalidatable coverage premises."""
+    if isinstance(value, AffinePlcDomain):
+        value.require_current()
     if isinstance(
         value,
         (
             PiecewiseLinearDomain,
+            AffinePlcDomain,
             MappedReferenceDomain,
             MeshingDomain,
             AdaptiveImplicitSurface,
@@ -81,8 +86,8 @@ def require_coverage_domain(value: object, /) -> CoverageDomain:
     ):
         return value
     raise TypeError(
-        "domain must be PiecewiseLinearDomain, MappedReferenceDomain, MeshingDomain, "
-        "AdaptiveImplicitSurface, or AnalyticImplicitProfile."
+        "domain must be a PLC, mapped reference, meshing, adaptive implicit, "
+        "or analytic implicit domain."
     )
 
 
@@ -91,7 +96,7 @@ def coverage_region_occurrence_paths(
 ) -> tuple[tuple[str, ...], ...]:
     """Return current occurrence paths aligned with unchanged raw region IDs."""
     region_ids = tuple(domain.region_ids)
-    if isinstance(domain, PiecewiseLinearDomain):
+    if isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain)):
         paths = domain.region_occurrence_paths
     elif isinstance(domain, MappedReferenceDomain):
         paths = domain.reference_domain.region_occurrence_paths
@@ -303,6 +308,8 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         source: SourceBoundaryQuery | None = None,
         fidelity: SourceFidelityCertificate | None = None,
         source_coverage_witness: SourceCoverageWitness | None = None,
+        chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+        _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
     ) -> None:
         if fidelity is not None and source is None:
             source = fidelity.source
@@ -315,6 +322,8 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             source=source,
             fidelity=fidelity,
             source_coverage_witness=source_coverage_witness,
+            chart_parent=chart_parent,
+            _validated_parent_embedding=_validated_parent_embedding,
         )
         self.binding = proof.binding
         self.domain = domain
@@ -511,6 +520,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         source: SourceBoundaryQuery | None = None,
         fidelity: SourceFidelityCertificate | None = None,
         source_coverage_witness: SourceCoverageWitness | None = None,
+        chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> None:
         """Recompute embedding and coverage before accepting a restored report."""
         current_embedding = self.embedding if embedding is None else embedding
@@ -541,7 +551,14 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             source=source_,
             fidelity=fidelity_,
             source_coverage_witness=source_coverage_witness_,
+            chart_parent=chart_parent,
         )
+        if any(
+            finding.check == "mapped_chart_parent_premise" for finding in fresh.findings
+        ):
+            raise ValueError(
+                "Mapped child coverage requires its actual parent mesh and geometry."
+            )
         if fresh.certificate_id != self.certificate_id or not _same_tree_content(
             self, fresh
         ):
@@ -555,6 +572,8 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         value: DomainCoverageCertificate,
         domain: CoverageDomain | None = None,
         /,
+        *,
+        chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> DomainCoverageCertificate:
         """Cold-recompute all claims from retained mesh, map, source, and embedding."""
         if not isinstance(value, cls):
@@ -586,7 +605,14 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             source_coverage_witness=value.source_coverage_witness,
             source=value.source,
             fidelity=value.fidelity,
+            chart_parent=chart_parent,
         )
+        if any(
+            finding.check == "mapped_chart_parent_premise" for finding in fresh.findings
+        ):
+            raise ValueError(
+                "Mapped child coverage requires its actual parent mesh and geometry."
+            )
         if fresh.certificate_id != value.certificate_id or not _same_tree_content(
             value, fresh
         ):
@@ -707,7 +733,7 @@ def _source_region_measures(
                 None if region in unresolved_source_regions else measure
                 for region, measure in enumerate(source_totals)
             )
-        if isinstance(domain, PiecewiseLinearDomain):
+        if isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain)):
             return tuple(domain.exact_region_measures())
     except (TypeError, ValueError, ZeroDivisionError) as error:
         findings.append(
@@ -807,7 +833,7 @@ def _target_region_measures(
 
 
 def _exact_region_degree_ids(
-    source_domain: PiecewiseLinearDomain,
+    source_domain: PiecewiseLinearDomain | AffinePlcDomain,
     region_ids: tuple[str, ...],
     region_occurrence_paths: tuple[tuple[str, ...], ...],
     overlaps: tuple[FacetOverlap, ...],
@@ -891,6 +917,8 @@ def _coverage_boundary_partition(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     source_coverage_witness: SourceCoverageWitness | None,
+    chart_parent: tuple[CellMesh, CellGeometrySpec] | None,
+    validated_parent_embedding: ValidatedGlobalEmbedding | None,
 ) -> _BoundaryCoverageProof:
     """Prove exact chain equality or an explicit source-boundary homotopy."""
     from ..discretization._coordinate_enclosure import affine_map
@@ -1012,7 +1040,7 @@ def _coverage_boundary_partition(
         )
     if source_coverage_witness is not None and not (
         isinstance(source_coverage_witness, PlcSourcePointWitness)
-        and isinstance(domain, PiecewiseLinearDomain)
+        and isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain))
     ):
         findings.append(
             _coverage_finding(
@@ -1028,7 +1056,8 @@ def _coverage_boundary_partition(
         from ._domain_chart_chain import certify_child_chart_partition
 
         chart_proof = certify_child_chart_partition(
-            domain, mesh, geometry, preparation.cell_regions
+            domain, mesh, geometry, preparation.cell_regions, chart_parent=chart_parent,
+            _validated_parent_embedding=validated_parent_embedding,
         )
         findings.extend(chart_proof.findings)
         facet_overlaps = chart_proof.facet_overlaps
@@ -1063,10 +1092,11 @@ def _coverage_boundary_partition(
                 premise_id=chart_certificate_id,
             )
         coverage_method: CoverageMethod = "mapped_reference_charts"
-    elif isinstance(domain, (PiecewiseLinearDomain, MeshingDomain)) and (
-        isinstance(domain, PiecewiseLinearDomain) or exact_cad is not None
+    elif isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain, MeshingDomain)) and (
+        isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain))
+        or exact_cad is not None
     ):
-        if isinstance(domain, PiecewiseLinearDomain):
+        if isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain)):
             source_domain = domain
             cad_boundary_id = None
         else:
@@ -1145,7 +1175,7 @@ def _coverage_boundary_partition(
             from ._domain_planar_boundary import oriented_target_facets
 
             if isinstance(source_coverage_witness, PlcSourcePointWitness) and isinstance(
-                domain, PiecewiseLinearDomain
+                domain, (PiecewiseLinearDomain, AffinePlcDomain)
             ):
                 source_points = _plc_source_points(
                     mesh, domain, preparation, source_coverage_witness, findings
@@ -1369,7 +1399,7 @@ def _coverage_boundary_partition(
 
 def _plc_source_points(
     mesh: CellMesh,
-    domain: PiecewiseLinearDomain,
+    domain: PiecewiseLinearDomain | AffinePlcDomain,
     preparation: DomainCoveragePreparation,
     witness: PlcSourcePointWitness,
     findings: list[MeshCertificateFinding],
@@ -1427,6 +1457,8 @@ def _prove_coverage(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     source_coverage_witness: SourceCoverageWitness | None,
+    chart_parent: tuple[CellMesh, CellGeometrySpec] | None,
+    _validated_parent_embedding: ValidatedGlobalEmbedding | None,
 ) -> _CoverageProof:
     """Recompute exact source chains or a witnessed source-boundary homotopy."""
     from ._approximate_source_coverage import (
@@ -1440,6 +1472,12 @@ def _prove_coverage(
             "certify_domain_coverage requires CellMesh and CellGeometrySpec inputs."
         )
     domain = require_coverage_domain(domain)
+    if _validated_parent_embedding is not None and (
+        type(_validated_parent_embedding) is not ValidatedGlobalEmbedding
+        or not isinstance(domain, MappedReferenceDomain)
+        or chart_parent is None
+    ):
+        raise ValueError("Validated parent embedding requires its mapped chart parent.")
     if not domain.region_ids:
         raise ValueError(
             "Domain coverage requires an established source material region."
@@ -1548,6 +1586,8 @@ def _prove_coverage(
         source=source,
         fidelity=fidelity_for_coverage,
         source_coverage_witness=source_coverage_witness,
+        chart_parent=chart_parent,
+        validated_parent_embedding=_validated_parent_embedding,
     )
     achieved = _target_region_measures(
         mesh,
@@ -1612,6 +1652,8 @@ def certify_domain_coverage(
     source: SourceBoundaryQuery | None = None,
     fidelity: SourceFidelityCertificate | None = None,
     source_coverage_witness: SourceCoverageWitness | None = None,
+    chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+    _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
 ) -> DomainCoverageCertificate:
     """Compute exact or witnessed bounded coverage from source authority."""
     return DomainCoverageCertificate(
@@ -1623,6 +1665,8 @@ def certify_domain_coverage(
         source=source,
         fidelity=fidelity,
         source_coverage_witness=source_coverage_witness,
+        chart_parent=chart_parent,
+        _validated_parent_embedding=_validated_parent_embedding,
     )
 
 

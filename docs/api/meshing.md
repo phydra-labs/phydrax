@@ -77,6 +77,7 @@ certification, and topology-transition contracts.
         - AssociationPropagationPolicy
         - AssociationPropagationError
         - BRepAssociationTransfer
+        - NativeLayerCoreAssociationTransfer
         - associate_mesh_vertices
         - associate_mesh_entities
         - propagate_association

@@ -713,11 +713,18 @@ def periodic_seam_vertex_pairs(
 
 def _triangle_measures(cell_points: Array, /) -> tuple[Array, Array]:
     """Signed areas (positive counterclockwise) and centroids of ``(..., 3, 2)``."""
-    cross = (cell_points[..., 1, 0] - cell_points[..., 0, 0]) * (
-        cell_points[..., 2, 1] - cell_points[..., 0, 1]
-    ) - (cell_points[..., 1, 1] - cell_points[..., 0, 1]) * (
-        cell_points[..., 2, 0] - cell_points[..., 0, 0]
+    # Materialize both products before subtraction. Otherwise CPU vector and
+    # scalar-tail code can fuse different multiply-adds for different local
+    # batch lengths, changing the area of an unchanged migrated cell by an ulp.
+    products = jax.lax.optimization_barrier(
+        (
+            (cell_points[..., 1, 0] - cell_points[..., 0, 0])
+            * (cell_points[..., 2, 1] - cell_points[..., 0, 1]),
+            (cell_points[..., 1, 1] - cell_points[..., 0, 1])
+            * (cell_points[..., 2, 0] - cell_points[..., 0, 0]),
+        )
     )
+    cross = products[0] - products[1]
     return 0.5 * cross, jnp.mean(cell_points, axis=-2)
 
 
@@ -999,6 +1006,9 @@ def evaluate_unstructured_fv_geometry(
         )
     # ty: ignore[invalid-argument-type]
     return _tetrahedral_geometry(vertices, tetrahedra, connectivity, owner, owner_sign)
+
+
+_prepare_unstructured_fv_geometry = eqx.filter_jit(evaluate_unstructured_fv_geometry)
 
 
 # Facet opposite each local vertex, ordered so the edge normal ``(t_y, -t_x)`` of
@@ -2408,7 +2418,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 closure,
                 quadrature_points,
                 quadrature_weights,
-            ) = evaluate_unstructured_fv_geometry(
+            ) = _prepare_unstructured_fv_geometry(
                 plan.vertices,
                 plan.triangles,
                 plan.quadrilaterals,

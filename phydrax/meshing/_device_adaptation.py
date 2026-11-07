@@ -5054,6 +5054,7 @@ class OwnerLocalPeriodicAdaptiveResult(NamedTuple):
             current_view.owned_cell_ids,
             execution_group,
             axis_name="periodic_live_restore_replicas",
+            validate_replicas=True,
         )
         _owner_group_fail_if_any(
             None
@@ -6513,12 +6514,24 @@ def _adapt_owner_local_periodic(
             )
             local_error = None
             try:
-                update = refine_adaptive_simplex(layout, state, marks)
-                require_applied_status(
-                    int(np.asarray(jax.device_get(update.report.status))),
-                    DeviceEpoch.BISECTION,
-                )
-                host_state = jax.device_get(update.state)
+                # Empty owners still participate in every collective and
+                # validate the accepted epoch, but have no local bisection.
+                active_cells = np.asarray(state.mesh.cell_active, dtype=np.bool_)
+                if np.any(active_cells):
+                    update = refine_adaptive_simplex(layout, state, marks)
+                    require_applied_status(
+                        int(np.asarray(jax.device_get(update.report.status))),
+                        DeviceEpoch.BISECTION,
+                    )
+                    next_layout, next_state = update.layout, update.state
+                else:
+                    if np.any(np.asarray(marks, dtype=np.bool_)):
+                        raise ValueError("An empty periodic owner cannot mark a cell.")
+                    require_applied_status(
+                        int(np.asarray(state.status_flags)), DeviceEpoch.BISECTION
+                    )
+                    next_layout, next_state = layout, state
+                host_state = jax.device_get(next_state)
                 vertex_count, cell_count = map(
                     int, np.asarray(host_state.cursors, dtype=np.int64)[:2]
                 )
@@ -6533,14 +6546,14 @@ def _adapt_owner_local_periodic(
                 )
             except Exception as error:
                 local_error = f"{type(error).__name__}: {error}"
-                update = None
+                next_state = None
             _owner_group_fail_if_any(
                 local_error, execution_group, axis_name, "periodic bisection acceptance"
             )
-            if update is None:
+            if next_state is None:
                 raise ValueError("Periodic bisection failed collectively.")
-            layout = update.layout
-            state = update.state
+            layout = next_layout
+            state = next_state
             local_error = None
             try:
                 assigned = _owner_local_periodic_assign_new_ids(

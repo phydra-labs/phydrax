@@ -402,6 +402,30 @@ def test_location_finds_points_where_curved_cells_bulge_past_their_nodes() -> No
     assert outside.status.tolist() == [int(CellLocationStatus.OUTSIDE)]
 
 
+def test_mapped_host_bvh_traverses_all_leaves_and_respects_masks() -> None:
+    origins = np.column_stack((2.0 * np.arange(20), np.zeros(20)))
+    vertices = (origins[:, None, :] + np.asarray(((0, 0), (1, 0), (0, 1)))).reshape(-1, 2)
+    mesh = phx.discretization.CellMesh.from_triangles(
+        vertices, np.arange(60, dtype=np.int32).reshape(-1, 3)
+    )
+    geometry = phx.discretization.CellGeometrySpec(
+        {"triangles": phx.discretization.lagrange_element("triangle", 1)},
+        {"triangles": np.arange(60, dtype=np.int32).reshape(-1, 3)},
+        vertices,
+    )
+    locator = PreparedMappedCellLocator.from_cell_geometry(mesh, geometry, 0)
+    points = np.concatenate((origins + (0.2, 0.2), [[-1.0, 0.0], [np.nan, 0.0]]))
+    mask = np.arange(20) % 2 == 0
+    result = locator.locate(points, cell_mask=mask)
+    assert result.cell_ids.tolist() == [
+        *(index if mask[index] else -1 for index in range(20)),
+        -1,
+        -1,
+    ]
+    assert np.all(np.asarray(result.candidates_complete)[:-1])
+    assert result.status[-1] == int(CellLocationStatus.NONFINITE)
+
+
 class _TemperatureModel(phx.AbstractArrayModel):
     weight: jax.Array
     output_port: phx.ValuePort = eqx.field(static=True)

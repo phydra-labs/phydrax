@@ -448,6 +448,13 @@ def _outward_cast(
     return cast_lower, cast_upper
 
 
+def _transfer_private_indices(values: np.ndarray, /) -> Array:
+    """Stage private int32 BVH indices without shape-specific device casts."""
+    private = values.astype(np.int32)
+    private.setflags(write=False)
+    return jax.device_put(private, may_alias=True)
+
+
 def _pack(
     lower: np.ndarray,
     upper: np.ndarray,
@@ -487,11 +494,11 @@ def _pack(
     return PackedBVH(
         bbox_min=jnp.asarray(node_lower, dtype=dtype),
         bbox_max=jnp.asarray(node_upper, dtype=dtype),
-        left=jnp.asarray(left, dtype=jnp.int32),
-        right=jnp.asarray(right, dtype=jnp.int32),
-        leaf_id=jnp.asarray(leaf_id, dtype=jnp.int32),
-        leaf_items=jnp.asarray(leaf_items, dtype=jnp.int32),
-        leaf_node=jnp.asarray(leaf_node, dtype=jnp.int32),
+        left=_transfer_private_indices(left),
+        right=_transfer_private_indices(right),
+        leaf_id=_transfer_private_indices(leaf_id),
+        leaf_items=_transfer_private_indices(leaf_items),
+        leaf_node=_transfer_private_indices(leaf_node),
         item_bbox_min=jnp.asarray(item_lower, dtype=dtype),
         item_bbox_max=jnp.asarray(item_upper, dtype=dtype),
         leaf_size=policy.leaf_size,
@@ -1690,6 +1697,7 @@ def _host_pair_blocks(
     first: tuple[np.ndarray, ...],
     second: tuple[np.ndarray, ...],
     test: Callable[..., np.ndarray],
+    item_block: int,
     /,
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     first_min, first_max, first_left, first_right, first_leaf, first_items = first[:6]
@@ -1701,7 +1709,7 @@ def _host_pair_blocks(
     first_size = np.sum(first_max - first_min, axis=-1)
     second_size = np.sum(second_max - second_min, axis=-1)
     leaf_pair_block = max(
-        1, _HOST_ITEM_PAIR_BLOCK // (first_items.shape[1] * second_items.shape[1])
+        1, item_block // (first_items.shape[1] * second_items.shape[1])
     )
     root = np.zeros((1,), dtype=np.int64)
     pending = (
@@ -1813,13 +1821,21 @@ def bvh_overlap_pair_blocks(
     include_touching: bool = False,
     absolute_tolerance: float = 0.0,
     relative_tolerance: float = 0.0,
+    item_block: int | None = None,
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     """Enumerate exact overlapping item pairs in bounded host blocks.
 
     Blocks arrive in deterministic traversal order and together contain every
-    overlapping pair exactly once; consumers may stop early to enforce resource
-    limits.  See `bvh_overlap_pairs_host` for the overlap predicate.
+    overlapping pair exactly once. ``item_block`` controls traversal batching,
+    not the set of pairs or a scientific limit. See `bvh_overlap_pairs_host`
+    for the overlap predicate.
     """
+    if item_block is None:
+        item_block = _HOST_ITEM_PAIR_BLOCK
+    if isinstance(item_block, bool) or not isinstance(item_block, (int, np.integer)):
+        raise TypeError("item_block must be an integer.")
+    if item_block < 1:
+        raise ValueError("item_block must be positive.")
     test = _validate_host_pair_arguments(
         first, second, include_touching, absolute_tolerance, relative_tolerance
     )
@@ -1839,10 +1855,10 @@ def bvh_overlap_pair_blocks(
             include_touching=include_touching,
             absolute_tolerance=float(absolute_tolerance),
             relative_tolerance=float(relative_tolerance),
-            item_block=_HOST_ITEM_PAIR_BLOCK,
+            item_block=int(item_block),
             node_block=_HOST_NODE_PAIR_BLOCK,
         )
-    return _host_pair_blocks(first_arrays, second_arrays, test)
+    return _host_pair_blocks(first_arrays, second_arrays, test, int(item_block))
 
 
 def bvh_overlap_pairs_host(

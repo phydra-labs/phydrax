@@ -38,7 +38,16 @@ _DEFERRED_EXPORTS = {
     "OwnerLocalFiniteVolumeOverset": "._overset_finite_volume",
     "prepare_owner_local_finite_volume_overset": "._overset_finite_volume",
     "providers": "module:.providers",
+    "SurfaceCrossField": "._dual_extraction",
+    "SurfaceQuadLayout": "._dual_extraction",
+    "SurfaceQuadFieldEvent": "._dual_extraction",
+    "DualExtraction": "._dual_extraction",
+    "QuadLayoutObstruction": "._dual_extraction",
+    "prepare_surface_cross_field": "._quad_generation",
+    "prepare_surface_quad_layout": "._quad_generation",
+    "extract_surface_quads": "._quad_generation",
     "AdaptationAction": "._decision",
+    "AdaptationIntent": "._decision",
     "ErrorQuantity": "._decision",
     "FixedEpochDerivativeEvidence": "._decision",
     "MeasuredAdaptationCost": "._decision",
@@ -125,8 +134,14 @@ _DEFERRED_EXPORTS = {
     "SurfaceRemeshingSpec": "._contracts",
     "VolumeFillStrategy": "._contracts",
     "VolumeMeshingSpec": "._contracts",
+    "PiecewiseLinearComplex": "._plc_source",
+    "PlcAssociationTransfer": "._plc_association_transfer",
+    "NativePolyhedralSchedule": "._polyhedral_generation",
+    "NativeVolumeSchedule": "._volume_generation",
+    "TransfiniteBlock": "._structured",
     "BackgroundMetricControl": "._controls",
     "BackgroundMetricMode": "._controls",
+    "BlockInterfaceControl": "._controls",
     "BoundaryLayerCollisionPolicy": "._controls",
     "BoundaryLayerControl": "._controls",
     "BoundaryLayerCornerPolicy": "._controls",
@@ -140,6 +155,7 @@ _DEFERRED_EXPORTS = {
     "RegionControl": "._controls",
     "RegionSeed": "._controls",
     "SurfaceReconstructionControl": "._controls",
+    "TransfiniteCurveControl": "._controls",
     "ConformalCoupling": "._coupling",
     "ContactCoupling": "._coupling",
     "CouplingSearchError": "._coupling",
@@ -198,6 +214,7 @@ _DEFERRED_EXPORTS = {
     "ImplicitAssociationTransfer": "._implicit_association_transfer",
     "BoundaryLayerExtrusion": "._layer_extrusion",
     "prepare_boundary_layer_extrusion": "._layer_extrusion",
+    "NativeLayerCoreAssociationTransfer": "._layer_core_association_transfer",
     "prepare_periodic_layer_core_source": "._layer_core_periodic",
     "CellMeshTransition": "._lineage",
     "EntityLineage": "._lineage",
@@ -231,6 +248,7 @@ _DEFERRED_EXPORTS = {
     "normalize_mesh_metric": "._metric",
     "advance_mesh_motion": "._motion",
     "MeshMotionAdvance": "._motion",
+    "NativePlanarMotionSource": "._motion_source",
     "advance_owner_local_mesh_motion": "._motion",
     "MeshMotionAssessment": "._motion",
     "MeshMotionDecision": "._motion",
@@ -457,6 +475,7 @@ if TYPE_CHECKING:
     from ._controls import (
         BackgroundMetricControl,
         BackgroundMetricMode,
+        BlockInterfaceControl,
         BoundaryLayerCollisionPolicy,
         BoundaryLayerControl,
         BoundaryLayerCornerPolicy,
@@ -470,6 +489,7 @@ if TYPE_CHECKING:
         RegionControl,
         RegionSeed,
         SurfaceReconstructionControl,
+        TransfiniteCurveControl,
     )
     from ._coupling import (
         ConformalCoupling,
@@ -492,6 +512,7 @@ if TYPE_CHECKING:
     )
     from ._decision import (
         AdaptationAction,
+        AdaptationIntent,
         ErrorQuantity,
         FixedEpochDerivativeEvidence,
         MeasuredAdaptationCost,
@@ -531,6 +552,13 @@ if TYPE_CHECKING:
         prepare_distribution_transition,
         prepare_mesh_distribution,
     )
+    from ._dual_extraction import (
+        DualExtraction,
+        QuadLayoutObstruction,
+        SurfaceCrossField,
+        SurfaceQuadFieldEvent,
+        SurfaceQuadLayout,
+    )
     from ._implicit_association_transfer import ImplicitAssociationTransfer
     from ._interface_binding import MeshInterfaceAttachment
     from ._interop import (
@@ -542,6 +570,7 @@ if TYPE_CHECKING:
         MeshInteropPolicy,
         read_mesh_array_artifact,
     )
+    from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
     from ._layer_core_periodic import prepare_periodic_layer_core_source
     from ._layer_curving import (
         LayerCurvingConstructionResult,
@@ -613,6 +642,7 @@ if TYPE_CHECKING:
         MeshMotionMonitor,
         MeshMotionMonitorPolicy,
     )
+    from ._motion_source import NativePlanarMotionSource
     from ._optimization import (
         CellGeometryOptimizationResult,
         MeshOptimizationResult,
@@ -675,6 +705,8 @@ if TYPE_CHECKING:
         PlanarBandResult,
         prepare_planar_bands,
     )
+    from ._plc_association_transfer import PlcAssociationTransfer
+    from ._plc_source import PiecewiseLinearComplex
     from ._polyhedral_adaptation import (
         adapt_polyhedral_mesh,
         PolyhedralAdaptationEvidence,
@@ -683,6 +715,7 @@ if TYPE_CHECKING:
         PolyhedralAdaptationOutcome,
         PolyhedralAdaptationRequest,
     )
+    from ._polyhedral_generation import NativePolyhedralSchedule
     from ._projected_material_map import material_source_map_from_cell_association
     from ._proposals import (
         AbstractMeshProposer,
@@ -699,6 +732,11 @@ if TYPE_CHECKING:
         MeshSizeProposal,
         prepare_mesh_proposal,
         project_mesh_proposal,
+    )
+    from ._quad_generation import (
+        extract_surface_quads,
+        prepare_surface_cross_field,
+        prepare_surface_quad_layout,
     )
     from ._quality import (
         CellQualityEvaluation,
@@ -732,6 +770,7 @@ if TYPE_CHECKING:
         SizeResolutionReport,
         UniformSizeControl,
     )
+    from ._structured import TransfiniteBlock
     from ._surface_association_transfer import SurfaceAssociationTransfer
     from ._surface_envelope import SurfaceEnvelopeSource as SurfaceEnvelopeSource
     from ._trace import (
@@ -742,6 +781,7 @@ if TYPE_CHECKING:
         MeshingStageStatus,
         MeshingTrace,
     )
+    from ._volume_generation import NativeVolumeSchedule
     from .providers import (
         FTetWildMeshingPlan,
         FTetWildOptions,
@@ -806,6 +846,13 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "BlockInterfaceControl",
+    "NativePolyhedralSchedule",
+    "NativeVolumeSchedule",
+    "PiecewiseLinearComplex",
+    "PlcAssociationTransfer",
+    "TransfiniteBlock",
+    "TransfiniteCurveControl",
     "OversetCellStatus",
     "OversetConnectivity",
     "OversetConnectivityError",
@@ -832,6 +879,15 @@ __all__ = [
     "AbstractMeshProposer",
     "AbstractMeshingSession",
     "AdaptationAction",
+    "AdaptationIntent",
+    "DualExtraction",
+    "QuadLayoutObstruction",
+    "SurfaceCrossField",
+    "SurfaceQuadFieldEvent",
+    "SurfaceQuadLayout",
+    "extract_surface_quads",
+    "prepare_surface_cross_field",
+    "prepare_surface_quad_layout",
     "AssociationEntityClasses",
     "AssociationPropagationError",
     "AssociationPropagationPolicy",
@@ -862,6 +918,7 @@ __all__ = [
     "MeshCertificationInputs",
     "MeshCertificationReport",
     "MeshCertificationSchedule",
+    "NativeLayerCoreAssociationTransfer",
     "NativeMeshingProvider",
     "NativeMeshingPlan",
     "NativeMeshingOptions",
@@ -961,6 +1018,7 @@ __all__ = [
     "MeshMotionDecision",
     "MeshMotionMonitor",
     "MeshMotionMonitorPolicy",
+    "NativePlanarMotionSource",
     "MeshOptimizationResult",
     "MeshOptimizationStatus",
     "MeshPart",

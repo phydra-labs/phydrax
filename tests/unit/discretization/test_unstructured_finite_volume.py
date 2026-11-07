@@ -24,6 +24,26 @@ def _polygon_centroid(vertices: Any) -> Any:
     return area, center
 
 
+def test_triangle_areas_are_independent_of_local_batch_length() -> None:
+    import jax
+
+    from phydrax.discretization.finite_volume._unstructured import _triangle_measures
+
+    with jax.enable_x64():
+        points = jnp.asarray(
+            (
+                (0.631, 0.30300000000000005),
+                (0.7709999999999999, -0.08499999999999996),
+                (1.149, 0.365),
+            ),
+            dtype=jnp.float64,
+        )
+        areas = jax.jit(lambda cells: _triangle_measures(cells)[0])
+        short = np.asarray(areas(jnp.broadcast_to(points, (14, 3, 2))))
+        long = np.asarray(areas(jnp.broadcast_to(points, (38, 3, 2))))
+    np.testing.assert_array_equal(short, long[:14])
+
+
 def test_unstructured_finite_volume_scenario_1() -> None:
     vertices = np.asarray(
         (

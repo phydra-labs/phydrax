@@ -47,7 +47,6 @@ from ...variational import FunctionalContext, LocalFieldJet, LocalGeometry
 from .._finite_element_variational import (
     _action_domain,
     _action_output_fields,
-    _action_rule,
     _interval_rule,
     _reference_rule_data,
     _triangle_rule,
@@ -897,36 +896,61 @@ def _restricted_workset_rows(
     from ...discretization.fem._local_provider import (
         FiniteElementGeometryActions,
         FiniteElementReferenceActions,
+        SourceSurfaceGeometryActions,
     )
 
     region = workset.local_region
-    if region is None or not isinstance(
-        region.geometry_actions, FiniteElementGeometryActions
-    ):
+    if region is None:
         return None
     geometry = region.geometry_actions
-    per_cell_geometry = geometry.coordinate_basis.ndim == 3
-    geometry = eqx.tree_at(
-        lambda value: (
-            value.coordinate_gathers,
-            value.coordinate_basis,
-            value.coordinate_gradients,
-            value.coordinate_hessians,
-        ),
-        geometry,
-        (
-            geometry.coordinate_gathers[rows],
-            geometry.coordinate_basis[rows]
-            if per_cell_geometry
-            else geometry.coordinate_basis,
-            geometry.coordinate_gradients[rows]
-            if per_cell_geometry
-            else geometry.coordinate_gradients,
-            geometry.coordinate_hessians[rows]
-            if per_cell_geometry and geometry.coordinate_hessians.size
-            else geometry.coordinate_hessians,
-        ),
-    )
+    if isinstance(geometry, FiniteElementGeometryActions):
+        per_cell_geometry = geometry.coordinate_basis.ndim == 3
+        geometry = eqx.tree_at(
+            lambda value: (
+                value.coordinate_gathers,
+                value.coordinate_basis,
+                value.coordinate_gradients,
+                value.coordinate_hessians,
+            ),
+            geometry,
+            (
+                geometry.coordinate_gathers[rows],
+                geometry.coordinate_basis[rows]
+                if per_cell_geometry
+                else geometry.coordinate_basis,
+                geometry.coordinate_gradients[rows]
+                if per_cell_geometry
+                else geometry.coordinate_gradients,
+                geometry.coordinate_hessians[rows]
+                if per_cell_geometry and geometry.coordinate_hessians.size
+                else geometry.coordinate_hessians,
+            ),
+        )
+    elif isinstance(geometry, SourceSurfaceGeometryActions):
+        geometry = eqx.tree_at(
+            lambda value: (
+                value.rows,
+                value.cached_points,
+                value.cached_jacobian,
+                value.cached_inverse_jacobian,
+                value.cached_measure,
+                value.cache_reference,
+            ),
+            geometry,
+            (
+                geometry.rows[rows],
+                geometry.cached_points[rows],
+                geometry.cached_jacobian[rows],
+                geometry.cached_inverse_jacobian[rows],
+                geometry.cached_measure[rows],
+                tuple(
+                    value[rows] if index < 4 or index == 6 else value
+                    for index, value in enumerate(geometry.cache_reference)
+                ),
+            ),
+        )
+    else:
+        return None
     references = []
     for reference in region.reference_actions:
         if not isinstance(reference, FiniteElementReferenceActions):
@@ -1034,12 +1058,16 @@ def _blocked_prepared_local_volume_residual(
     the last cell and its rows are dropped). The caller scatters all rows
     once in their original order, preserving global accumulation ordering.
     """
-    from ...discretization.fem._local_provider import FiniteElementGeometryActions
+    from ...discretization.fem._local_provider import (
+        FiniteElementGeometryActions,
+        SourceSurfaceGeometryActions,
+    )
 
     count = int(workset.entity_indices.shape[0])
     region = workset.local_region
     if region is None or not isinstance(
-        region.geometry_actions, FiniteElementGeometryActions
+        region.geometry_actions,
+        (FiniteElementGeometryActions, SourceSurfaceGeometryActions),
     ):
         return _prepared_local_volume_residual(
             action, discretization, workset, state_by_field, context
@@ -1195,9 +1223,14 @@ def _cell_functional_problem(
     context: FiniteElementExecutionContext,
     /,
 ) -> _CellFunctionalProblem:
-    block = discretization.mesh.blocks[block_index]
-    rule = _action_rule(action, block.name, block.cell_kind)
-    rule_data = _reference_rule_data(rule)
+    if workset.reference is not None:
+        reference_points = workset.reference.volume_rule.points
+        reference_weights = workset.reference.volume_rule.weights
+    else:
+        reference_points = workset.volume_points
+        reference_weights = workset.volume_weights
+        if reference_points is None or reference_weights is None:
+            raise ValueError("Dense cell functional lost its prepared volume quadrature.")
     gathers = dict(workset.gathers)
     local_inputs = []
     local_dofs = []
@@ -1213,8 +1246,8 @@ def _cell_functional_problem(
             field_name,
             block_index,
             _runtime_coordinates(context),
-            rule_data.points,
-            rule_data.weights,
+            reference_points,
+            reference_weights,
         )
         dofs = gathers[field_name]
         local = state_by_field[field_name][dofs]
@@ -1307,7 +1340,7 @@ def _cell_functional_problem(
                 LocalGeometry(
                     physical_points,
                     entity_indices=jnp.asarray(workset.owner_cells),
-                    block_name=block.name,
+                    block_name=workset.signature.block_name,
                 ),
                 functional_context,
             )
@@ -1598,7 +1631,6 @@ def _accumulate_finite_element_workset(
     if not isinstance(discretization, FiniteElementDiscretization):
         raise ValueError("Facet and legacy volume worksets require finite elements.")
     block_index = block_names.index(workset.signature.block_name)
-    block = discretization.mesh.blocks[block_index]
     work_cells = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
     local_cells = work_cells - int(cell_offsets[block_index])
     gathers = dict(workset.gathers)
@@ -1749,16 +1781,20 @@ def _accumulate_finite_element_workset(
                 )
             residual_by_field[output_field] = output_residual + facet_residual
             continue
-        rule = _action_rule(action, block.name, block.cell_kind)
-        rule_data = _reference_rule_data(rule)
         reference = workset.reference
         if reference is None:
+            reference_points = workset.volume_points
+            reference_weights = workset.volume_weights
+            if reference_points is None or reference_weights is None:
+                raise ValueError(
+                    "Dense cell workset lost its prepared volume quadrature."
+                )
             output_geometry = discretization.evaluate_block_geometry(
                 output_field,
                 block_index,
                 _runtime_coordinates(context),
-                rule_data.points,
-                rule_data.weights,
+                reference_points,
+                reference_weights,
             )
             physical_points = output_geometry.physical_points[local_cells]
             physical_gradients = output_geometry.physical_gradients[local_cells]
@@ -1768,6 +1804,8 @@ def _accumulate_finite_element_workset(
                 basis_values = basis_values[local_cells]
             metric = None
         else:
+            reference_points = reference.volume_rule.points
+            reference_weights = reference.volume_rule.weights
             metric = _cell_metric(
                 discretization,
                 block_index,
@@ -1804,9 +1842,6 @@ def _accumulate_finite_element_workset(
                 metric = eqx.tree_at(
                     lambda value: value.weighted_measure, metric, physical_weights
                 )
-        reference_points = (
-            rule_data.points if reference is None else reference.volume_rule.points
-        )
         dofs = gathers[output_field]
         local_state = output_state[dofs]
         output_orientation = output_dof_map.orientations[block_index][local_cells]
@@ -2043,8 +2078,8 @@ def _accumulate_finite_element_workset(
                     input_field,
                     block_index,
                     _runtime_coordinates(context),
-                    rule_data.points,
-                    rule_data.weights,
+                    reference_points,
+                    reference_weights,
                 )
                 input_dofs = gathers[input_field]
                 local_input = state_by_field[input_field][input_dofs]

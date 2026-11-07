@@ -39,7 +39,11 @@ from phydrax.meshing._association import (
     GeometryAssociationKind,
     GeometrySourceEntityRole,
 )
-from phydrax.meshing._boundary_layer import BoundaryLayerMesh, prepare_boundary_layers
+from phydrax.meshing._boundary_layer import (
+    BoundaryLayerMesh,
+    BoundaryLayerPolicy,
+    prepare_boundary_layers,
+)
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -692,6 +696,8 @@ def _mapped_layer_core_construction_for_fixture() -> tuple[
     BoundaryLayerMesh,
     NativeLayerCoreSource,
     LayerCoreConstruction,
+    BoundaryLayerControl,
+    BoundaryLayerPolicy,
 ]:
     mapped_source, domain, reference_mesh = _mapped_cube_source_for_layer()
     query = mapped_source.boundary_query()
@@ -700,12 +706,9 @@ def _mapped_layer_core_construction_for_fixture() -> tuple[
             "Mapped layer fixture requires the native mapped-root boundary query."
         )
     wall = _mapped_cube_wall(mapped_source, domain, physical=False)
-    layers = _layer_mesh(
-        wall,
-        None,
-        thickness=0.02,
-        corner=BoundaryLayerCornerPolicy.SMOOTH,
-    )
+    control = _boundary_layer_control(wall, 0.02, corner=BoundaryLayerCornerPolicy.SMOOTH)
+    policy = BoundaryLayerPolicy()
+    layers = prepare_boundary_layers(wall, control, policy=policy)
     core_complex, _ = _mapped_core_cap_complex(
         layers,
         mapped_source.reference.complex,
@@ -792,11 +795,15 @@ def _mapped_layer_core_construction_for_fixture() -> tuple[
         layers,
         source,
         construction,
+        control,
+        policy,
     )
 
 
-def make_mapped_layer_curving_archive_case() -> LayerCurvingConstructionResult:
-    mapped_source, domain, _, query, _, layers, source, construction = (
+def make_mapped_layer_curving_archive_case() -> tuple[
+    LayerCurvingConstructionResult, BoundaryLayerMesh, BoundaryLayerControl, BoundaryLayerPolicy
+]:
+    mapped_source, domain, _, query, _, layers, source, construction, control, policy = (
         _mapped_layer_core_construction_for_fixture()
     )
     witness = _mapped_layer_surface_chart_witness(source, construction, query)
@@ -821,13 +828,15 @@ def make_mapped_layer_curving_archive_case() -> LayerCurvingConstructionResult:
             "Mapped layer archive case requires certified original-root chart evidence: "
             + (result.failure or result.status.value)
         )
-    return result
+    return result, layers, control, policy
 
 
 def make_layer_curving_archive_case(
     degree: int = 2,
-) -> LayerCurvingConstructionResult:
-    mapped_source, _, _, _, wall, layers, _, construction = (
+) -> tuple[
+    LayerCurvingConstructionResult, BoundaryLayerMesh, BoundaryLayerControl, BoundaryLayerPolicy
+]:
+    mapped_source, _, _, _, wall, layers, _, construction, control, policy = (
         _mapped_layer_core_construction_for_fixture()
     )
     _, charts = _mapped_cube_surface_charts(
@@ -849,12 +858,14 @@ def make_layer_curving_archive_case(
             "The layer-curving archive fixture requires accepted source evidence: "
             + (result.failure or result.status.value)
         )
-    return result
+    return result, layers, control, policy
 
 
-def make_restricted_layer_curving_archive_case() -> LayerCurvingConstructionResult:
+def make_restricted_layer_curving_archive_case() -> tuple[
+    LayerCurvingConstructionResult, BoundaryLayerMesh, BoundaryLayerControl, BoundaryLayerPolicy
+]:
     """Return accepted layer evidence on an exact per-cell restricted map."""
-    original = make_layer_curving_archive_case()
+    original, layers, control, policy = make_layer_curving_archive_case()
     evidence = original.source_evidence
     source_geometry = original.candidate_geometry
     if evidence is None or source_geometry is None:
@@ -962,7 +973,7 @@ def make_restricted_layer_curving_archive_case() -> LayerCurvingConstructionResu
         raise ValueError(
             "Restricted layer fixture lost its direct source-chart authority."
         )
-    return result
+    return result, layers, control, policy
 
 
 __all__ = [

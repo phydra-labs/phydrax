@@ -16,7 +16,7 @@ from phydrax.geometry._meshing_domain import (
 )
 from phydrax.geometry.brep import brep_box
 from phydrax.geometry.brep._assembly import BRepAffinePlacement
-from phydrax.geometry.brep._patches import TorusPatch
+from phydrax.geometry.brep._patches import CylinderPatch, SpherePatch, TorusPatch
 
 
 F = Fraction
@@ -200,6 +200,117 @@ def test_placed_source_program_encloses_exact_affine_torus(
                 _assert_enclosed(lower[0], upper[0], exact)
 
 
+def test_placed_sphere_program_encloses_binary_source_and_derivatives(
+    preparation: SourcePreparation,
+) -> None:
+    center = (0.1, -0.2, 0.3)
+    first = (0.7, 0.2, -0.1)
+    second = (-0.4, 0.8, 0.2)
+    axis = (0.1, -0.3, 1.2)
+    radius = 1.3
+    sphere = SpherePatch(center, first, second, axis, radius)
+    surface = _PlacedSurfacePatch(sphere, PLACEMENT)
+    low, high = np.asarray(((-0.4, 0.2), (0.7, 1.1)))
+    with mp.workdps(100):
+        for order in range(3):
+            program = preparation.derivative_program(
+                surface, cast(Literal[0, 1, 2], order)
+            )
+            lower, upper = program.evaluate(low[None, :], high[None, :])
+            for u, v in (low, high, (low + high) / 2):
+                cu, su = mp.cos(mp.mpf(u)), mp.sin(mp.mpf(u))
+                cv, sv = mp.cos(mp.mpf(v)), mp.sin(mp.mpf(v))
+                values = np.empty(((3,), (3, 2), (3, 2, 2))[order], dtype=object)
+                for i in range(3):
+                    c, a, b, z, r = map(mp.mpf, (center[i], first[i], second[i], axis[i], radius))
+                    radial, tangent = cu * a + su * b, -su * a + cu * b
+                    if order == 0:
+                        values[i] = c + r * (cv * radial + sv * z)
+                    elif order == 1:
+                        values[i, 0] = r * cv * tangent
+                        values[i, 1] = r * (-sv * radial + cv * z)
+                    else:
+                        values[i, 0, 0] = -r * cv * radial
+                        values[i, 0, 1] = values[i, 1, 0] = -r * sv * tangent
+                        values[i, 1, 1] = -r * (cv * radial + sv * z)
+                _assert_enclosed(lower[0], upper[0], _placed_reference(values, order))
+    inconsistent = eqx.tree_at(
+        lambda value: value.linear, surface, surface.linear.at[0, 0].set(9.0)
+    )
+    with pytest.raises(ValueError, match="shadow"):
+        preparation.derivative_program(inconsistent, 0)
+
+
+def _cylinder() -> CylinderPatch:
+    return CylinderPatch(
+        tuple(map(float, CENTER)),
+        tuple(map(float, FIRST)),
+        tuple(map(float, SECOND)),
+        tuple(map(float, AXIS)),
+        float(MINOR),
+        origin_exact=CENTER,
+        first_axis_exact=FIRST,
+        second_axis_exact=SECOND,
+        axis_exact=AXIS,
+        radius_exact=MINOR,
+    )
+
+
+def _cylinder_exact_values(
+    u: float, v: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    u, v = mp.mpf(u), mp.mpf(v)
+    cu, su = mp.cos(u), mp.sin(u)
+    radius = _mp_fraction(MINOR)
+    point = np.empty(3, dtype=object)
+    jac = np.empty((3, 2), dtype=object)
+    hess = np.empty((3, 2, 2), dtype=object)
+    for i in range(3):
+        origin, first, second, axis = map(
+            _mp_fraction, (CENTER[i], FIRST[i], SECOND[i], AXIS[i])
+        )
+        radial = cu * first + su * second
+        tangent = -su * first + cu * second
+        point[i] = origin + radius * radial + v * axis
+        jac[i, 0], jac[i, 1] = radius * tangent, axis
+        hess[i, 0, 0] = -radius * radial
+        hess[i, 0, 1] = hess[i, 1, 0] = hess[i, 1, 1] = mp.mpf(0)
+    return point, jac, hess
+
+
+@pytest.mark.parametrize("placed", (False, True))
+@pytest.mark.parametrize(
+    "box",
+    [((0.0, 0.0), (0.0, 0.0)), ((-0.4, 0.2), (0.7, 1.1))],
+)
+def test_cylinder_source_program_encloses_exact_jet(
+    preparation: SourcePreparation, box: tuple[tuple[float, float], ...], placed: bool
+) -> None:
+    patch = _cylinder()
+    surface = _PlacedSurfacePatch(patch, PLACEMENT) if placed else patch
+    low, high = np.asarray(box, dtype=np.float64)
+    with mp.workdps(100):
+        for order in range(3):
+            program = preparation.derivative_program(
+                surface, cast(Literal[0, 1, 2], order)
+            )
+            lower, upper = program.evaluate(low[None, :], high[None, :])
+            for point in (low, high, (low + high) / 2):
+                exact = _cylinder_exact_values(*point)[order]
+                if placed:
+                    exact = _placed_reference(exact, order)
+                _assert_enclosed(lower[0], upper[0], exact)
+
+
+def test_cylinder_source_program_refuses_mutated_radius_shadow(
+    preparation: SourcePreparation,
+) -> None:
+    patch = _cylinder()
+    inconsistent = eqx.tree_at(lambda p: p.radius, patch, jnp.asarray(9.0))
+    with pytest.raises(ValueError, match="shadow"):
+        preparation.derivative_program(inconsistent, 0)
+
+
 @pytest.mark.parametrize("field", ("linear", "offset"))
 def test_placed_source_program_refuses_mutated_placement_shadow(
     preparation: SourcePreparation, field: str
@@ -260,3 +371,37 @@ def test_repaired_external_boolean_torus_cover_and_fidelity(tmp_path: Path) -> N
         assert jacobian is not None
         assert np.all(np.isfinite(jacobian[0]))
         assert np.all(np.isfinite(jacobian[1]))
+
+
+def test_repaired_step_cylinder_cover_uses_exact_source(tmp_path: Path) -> None:
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.geometry._source_fidelity import _surface_jacobian_bounds
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _external_case
+
+    model, _, _, _ = _external_case("external-routine", "step", tmp_path)
+    domain = MeshingDomain.from_brep(model)
+    preparation = SourcePreparation(domain)
+    cylinder_faces = [
+        (index, patch.surface)
+        for index, patch in enumerate(domain.patches)
+        if isinstance(
+            patch.surface.source
+            if isinstance(patch.surface, _PlacedSurfacePatch)
+            else patch.surface,
+            CylinderPatch,
+        )
+    ]
+    assert len(cylinder_faces) == 2
+    cover = MeshingDomainBoundarySource(
+        domain, tuple(range(len(domain.patches)))
+    ).boundary_chart_cover(preparation=preparation)
+    assert cover.complete and cover.semantics == "certified"
+    assert not cover.findings
+    triangle = ((F(0), F(0)), (F(1, 10), F(0)), (F(0), F(1, 10)))
+    charts = np.asarray([[tuple(map(float, point)) for point in triangle]])
+    for index, surface in cylinder_faces:
+        interpolation = domain.interpolation_bounds(index, charts, preparation=preparation)
+        assert np.all(np.isfinite(interpolation))
+        jacobian = _surface_jacobian_bounds(surface, triangle, preparation)
+        assert jacobian is not None
+        assert np.all(np.isfinite(jacobian[0])) and np.all(np.isfinite(jacobian[1]))

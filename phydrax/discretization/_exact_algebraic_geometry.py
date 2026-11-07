@@ -3,8 +3,21 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
+import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
+
+from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from ._periodic_cell import PeriodicCell
 
 
 type RationalScalar = int | np.integer | Fraction
@@ -124,7 +137,11 @@ def _difference_sign(
 
 
 class RadicalElement:
-    """Exact real multiquadratic scalar in a canonical square-free radical basis."""
+    """Exact real multiquadratic scalar in a canonical square-free radical basis.
+
+    Instances are immutable values: ``terms`` is assigned once by the canonical
+    constructors and attribute assignment or deletion is refused afterwards.
+    """
 
     __slots__ = ("terms",)
 
@@ -143,7 +160,7 @@ class RadicalElement:
             coefficients.append((1, rational))
         for radicand, coefficient in terms:
             coefficients.append((int(radicand), _rational(coefficient)))
-        self.terms = _canonical(coefficients)
+        object.__setattr__(self, "terms", _canonical(coefficients))
 
     @classmethod
     def _from_canonical(cls, terms: Iterable[tuple[int, Fraction]], /) -> RadicalElement:
@@ -151,8 +168,27 @@ class RadicalElement:
         coefficients: dict[int, Fraction] = {}
         for radicand, coefficient in terms:
             coefficients[radicand] = coefficients.get(radicand, Fraction(0)) + coefficient
-        result.terms = tuple(sorted((n, c) for n, c in coefficients.items() if c))
+        object.__setattr__(
+            result,
+            "terms",
+            tuple(sorted((n, c) for n, c in coefficients.items() if c)),
+        )
         return result
+
+    def __setattr__(self, name: str, value: object, /) -> None:
+        raise AttributeError("RadicalElement values are immutable.")
+
+    def __delattr__(self, name: str, /) -> None:
+        raise AttributeError("RadicalElement values are immutable.")
+
+    def __reduce__(self) -> tuple[object, tuple[RadicalTerms]]:
+        return _restore_radical, (self.terms,)
+
+    def __copy__(self) -> RadicalElement:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object], /) -> RadicalElement:
+        return self
 
     @classmethod
     def sqrt(cls, value: RationalScalar, /) -> RadicalElement:
@@ -393,6 +429,32 @@ class RadicalElement:
         return -math.floor(-self)
 
 
+def _restore_radical(terms: RadicalTerms, /) -> RadicalElement:
+    """Rebuild one pickled or copied radical, refusing noncanonical terms."""
+    restored = RadicalElement(terms=terms)
+    if restored.terms != tuple(terms):
+        raise ValueError("Stored radical terms are not canonical.")
+    return restored
+
+
+def canonical_exact_scalar(value: ExactScalar, /, *, role: str) -> ExactScalar:
+    """Return the canonical exact scalar: rational values as ``Fraction``.
+
+    A ``RadicalElement`` with a purely rational value is the same field element
+    as its ``Fraction``; only genuinely irrational values keep radical terms.
+    """
+    if isinstance(value, Fraction):
+        return value
+    if type(value) is RadicalElement:
+        radical = RadicalElement.from_stored_fields(value)
+        if not radical.terms:
+            return Fraction(0)
+        if len(radical.terms) == 1 and radical.terms[0][0] == 1:
+            return radical.terms[0][1]
+        return radical
+    raise TypeError(f"{role} must be Fraction or RadicalElement values.")
+
+
 def rational_coefficient(value: ExactScalar, /, *, role: str) -> Fraction:
     if isinstance(value, Fraction):
         return value
@@ -476,10 +538,201 @@ def coefficient_bits(value: ExactScalar | int | np.integer, /) -> int:
     return max(1, abs(rational.numerator).bit_length(), rational.denominator.bit_length())
 
 
+class ExactPeriodicAlgebraicSource(StrictModule, NonTrainableState):
+    """Immutable exact vertex bank witnessing a periodic affine deck action.
+
+    The retained bank consists of canonical JSON-compatible scalar payloads that
+    also form its source identity. Accessors reconstruct exact scalar leaves.
+    """
+
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    vertex_global_ids: Array
+    rounded_vertices: Array
+    _coefficient_payloads: tuple = eqx.field(static=True)
+    source_map_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        coefficients: Iterable[Iterable[ExactScalar | RationalScalar]],
+        vertex_global_ids: ArrayLike,
+        source_id: str,
+        source_revision: str,
+        /,
+    ) -> None:
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError("Exact periodic source ID must be nonempty.")
+        if not isinstance(source_revision, str) or not source_revision.strip():
+            raise ValueError("Exact periodic source revision must be nonempty.")
+        ids = np.asarray(vertex_global_ids)
+        rows = tuple(tuple(row) for row in coefficients)
+        if (
+            ids.ndim != 1
+            or ids.dtype.kind not in "iu"
+            or ids.size == 0
+            or np.any(ids < 0)
+            or np.any(ids > np.iinfo(np.int64).max)
+            or np.unique(ids).size != ids.size
+            or len(rows) != ids.size
+            or not rows[0]
+            or any(len(row) != len(rows[0]) for row in rows)
+        ):
+            raise ValueError("Exact periodic coordinate rows and vertex IDs must align.")
+        exact = tuple(
+            tuple(
+                RadicalElement.from_stored_fields(value)
+                if isinstance(value, RadicalElement)
+                else RadicalElement(value)
+                for value in row
+            )
+            for row in rows
+        )
+        payloads = tuple(
+            tuple(coefficient_payload(value) for value in row) for row in exact
+        )
+        rounded = np.asarray(
+            [[float(value) for value in row] for row in exact], dtype=np.float64
+        )
+        if not np.all(np.isfinite(rounded)):
+            raise ValueError(
+                "Exact periodic coordinates require finite binary64 shadows."
+            )
+        self.source_id = source_id.strip()
+        self.source_revision = source_revision.strip()
+        self.vertex_global_ids = jnp.asarray(ids, dtype=jnp.int64)
+        self.rounded_vertices = jnp.asarray(rounded)
+        self._coefficient_payloads = payloads
+        self.source_map_id = canonical_fingerprint(
+            {
+                "kind": "exact-periodic-algebraic-source",
+                "source_id": self.source_id,
+                "source_revision": self.source_revision,
+                "vertex_global_ids": tuple(int(value) for value in ids),
+                "coefficients": payloads,
+            }
+        )
+
+    @property
+    def coefficients(self) -> tuple[tuple[RadicalElement, ...], ...]:
+        return tuple(
+            tuple(
+                RadicalElement(Fraction(payload[1], payload[2]))
+                if payload[0] == "rational"
+                else RadicalElement(
+                    terms=((n, Fraction(num, den)) for n, num, den in payload[1])
+                )
+                for payload in row
+            )
+            for row in self._coefficient_payloads
+        )
+
+    def source_coordinates(
+        self, indices: ArrayLike | None = None, /
+    ) -> tuple[tuple[RadicalElement, ...], ...]:
+        exact = self.coefficients
+        if indices is None:
+            return exact
+        rows = np.asarray(indices)
+        if rows.ndim != 1 or rows.dtype.kind not in "iu":
+            raise TypeError(
+                "Exact periodic coordinate selection must be an integer vector."
+            )
+        if np.any(rows < 0) or np.any(rows >= len(exact)):
+            raise IndexError(
+                "Exact periodic coordinate selection is outside the vertex bank."
+            )
+        return tuple(exact[int(row)] for row in rows)
+
+    def require_periodic_lift(
+        self,
+        coordinates: ArrayLike,
+        cell: PeriodicCell,
+        representatives: ArrayLike,
+        shifts: ArrayLike,
+        /,
+    ) -> None:
+        """Prove the full integer-winding deck action on exact source rows."""
+        from ._periodic_exact import exact_periodic_element, identification_orders
+
+        current = type(self).from_stored_fields(self)
+        exact = current.source_coordinates()
+        points = np.asarray(coordinates, dtype=np.float64)
+        if (
+            points.shape != (len(exact), len(exact[0]))
+            or points.shape[1] != cell.ambient_dimension
+            or not np.array_equal(points, np.asarray(current.rounded_vertices))
+        ):
+            raise ValueError(
+                "Exact periodic coordinates differ from their canonical shadows."
+            )
+        roots = np.asarray(representatives)
+        exponents = np.asarray(shifts)
+        rank = len(identification_orders(cell))
+        if (
+            roots.shape != (len(exact),)
+            or roots.dtype.kind not in "iu"
+            or exponents.shape != (len(exact), rank)
+            or exponents.dtype.kind not in "iu"
+            or np.any(roots < 0)
+            or np.any(roots >= len(exact))
+        ):
+            raise ValueError("Exact periodic orbit rows are malformed.")
+        roots = roots.astype(np.int64)
+        if np.any(roots[roots] != roots) or np.any(exponents[roots] != 0):
+            raise ValueError("Periodic representatives must be zero-winding roots.")
+        transforms = {}
+        for row, root in enumerate(roots):
+            key = tuple(int(value) for value in exponents[row])
+            if key not in transforms:
+                transforms[key] = exact_periodic_element(cell, exponents[row])
+            matrix = transforms[key]
+            base = exact[int(root)] + (RadicalElement(1),)
+            expected = tuple(
+                sum(
+                    (
+                        matrix[axis][column] * base[column]
+                        for column in range(points.shape[1] + 1)
+                    ),
+                    RadicalElement(),
+                )
+                for axis in range(points.shape[1])
+            )
+            if expected != exact[row]:
+                raise ValueError(
+                    "Exact periodic coordinates violate their declared deck action."
+                )
+
+    @classmethod
+    def from_stored_fields(
+        cls, value: ExactPeriodicAlgebraicSource, /
+    ) -> ExactPeriodicAlgebraicSource:
+        if type(value) is not cls:
+            raise TypeError("value must be ExactPeriodicAlgebraicSource.")
+        rebuilt = cls(
+            value.coefficients,
+            value.vertex_global_ids,
+            value.source_id,
+            value.source_revision,
+        )
+        if (
+            rebuilt._coefficient_payloads != value._coefficient_payloads
+            or rebuilt.source_map_id != value.source_map_id
+            or not np.array_equal(
+                np.asarray(rebuilt.rounded_vertices), np.asarray(value.rounded_vertices)
+            )
+        ):
+            raise ValueError(
+                "Stored exact periodic source does not reproduce its source leaves."
+            )
+        return rebuilt
+
+
 __all__ = [
     "AlgebraicCoordinateBank",
+    "ExactPeriodicAlgebraicSource",
     "ExactScalar",
     "RadicalElement",
+    "canonical_exact_scalar",
     "coefficient_bits",
     "coefficient_endpoint",
     "coefficient_interval",

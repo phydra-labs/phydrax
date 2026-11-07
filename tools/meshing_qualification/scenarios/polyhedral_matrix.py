@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from fractions import Fraction
 from typing import Any
 
@@ -18,12 +19,15 @@ from phydrax.discretization.finite_volume import (
 )
 from phydrax.discretization.vem import prepare_polyhedral_h1_virtual_element_3d
 from phydrax.geometry import CommonRefinementStatus, prepare_common_refinement
+from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.linalg import (
     ConjugateGradient,
     FunctionLinearOperator,
+    GMRES,
     LinearSolvePolicy,
     LinearSystem,
     OperatorProperties,
+    TolerancePolicy,
 )
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
@@ -621,6 +625,58 @@ def _material_cell_regions(
     return assignments
 
 
+def _declared_source_triangle_ids(
+    domain: PiecewiseLinearDomain,
+    source: NativePolyhedralSource,
+    /,
+) -> set[int]:
+    """Bind domain-local triangle rows to every original oriented PLC polygon."""
+    complex_ = source.complex
+    if domain.source_id != source.source_id or not np.array_equal(
+        domain.vertices, complex_.vertices
+    ):
+        raise RuntimeError(
+            "Coverage changed the authored PLC source vertices or identity."
+        )
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    vertices = np.asarray(complex_.polygon_vertices, dtype=np.int64)
+    polygons = tuple(
+        tuple(vertices[start:end].tolist())
+        for start, end in zip(offsets[:-1], offsets[1:], strict=True)
+    )
+    vertex_sets = tuple(frozenset(polygon) for polygon in polygons)
+    chains: list[Counter[tuple[int, int]]] = [Counter() for _ in polygons]
+    for triangle_row in range(len(domain.facets)):
+        points = tuple(int(domain.facets[triangle_row, axis]) for axis in range(3))
+        regions = domain.facet_regions[triangle_row, :]
+        owners = [
+            row for row, members in enumerate(vertex_sets) if members.issuperset(points)
+        ]
+        if len(owners) != 1:
+            raise RuntimeError(
+                "A coverage source triangle lacks one authored PLC polygon."
+            )
+        owner = owners[0]
+        facet = complex_.polygon_facets[owner]
+        if not np.array_equal(regions, complex_.facet_regions[facet][::-1]):
+            raise RuntimeError(
+                "Coverage changed an authored PLC polygon's material sides."
+            )
+        for left, right in zip(points, points[1:] + points[:1], strict=True):
+            edge = (min(left, right), max(left, right))
+            chains[owner][edge] += 1 if left < right else -1
+    for polygon, actual in zip(polygons, chains, strict=True):
+        expected: Counter[tuple[int, int]] = Counter()
+        for left, right in zip(polygon, polygon[1:] + polygon[:1], strict=True):
+            edge = (min(left, right), max(left, right))
+            expected[edge] += 1 if left < right else -1
+        if actual != expected:
+            raise RuntimeError(
+                "Coverage source triangles changed an authored PLC boundary chain."
+            )
+    return set(range(len(domain.facets)))
+
+
 def _profile_geometry_oracle(
     result: phx.meshing.CellMeshingResult,
     source: NativePolyhedralSource | NativePeriodicSource,
@@ -687,7 +743,12 @@ def _profile_geometry_oracle(
                 raise RuntimeError(
                     f"Output face-loop region measure for {region} differs from exact source measure {exact_measure}."
                 )
-        source_facet_ids = set(map(int, source.complex.facet_entity_ids))
+        domain = coverage.domain
+        if not isinstance(domain, PiecewiseLinearDomain):
+            raise TypeError(
+                "The original L-source requires an affine PLC coverage domain."
+            )
+        source_facet_ids = _declared_source_triangle_ids(domain, source)
         overlapped_facet_ids = {
             int(overlap.source_facet_id) for overlap in coverage.facet_source_overlaps
         }
@@ -810,7 +871,11 @@ def _polyhedral_fv(
     }
     boundary = HybridDiffusionBoundary(discretization, dirichlet=dirichlet)
     system = HybridMimeticDiffusion(discretization)
-    solved = system.solve(1.0, boundary)
+    policy = LinearSolvePolicy(
+        GMRES(restart=40, stagnation_iterations=40),
+        tolerance=TolerancePolicy(relative=1e-12, absolute=1e-14),
+    )
+    solved = system.solve(1.0, boundary, policy=policy)
     cell_count = int(discretization.cell_volumes.shape[0])
     cell_values = np.asarray(solved.value[:cell_count], dtype=np.float64)
     exact = (
@@ -843,6 +908,8 @@ def _polyhedral_fv(
         "exact_field": "u=1+0.2x-0.3y+0.4z",
         "tolerance_affine_error": _TOLERANCES["fv_affine_error"],
         "tolerance_normalized_residual": _TOLERANCES["fv_normalized_residual"],
+        "solver_relative_tolerance": policy.tolerance.relative,
+        "solver_absolute_tolerance": policy.tolerance.absolute,
     }
 
 

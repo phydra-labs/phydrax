@@ -14,12 +14,19 @@
 #include "tet_mesh.hpp"
 
 namespace {
+struct TetGeometrySnapshot {
+  std::vector<double> points;
+  std::vector<uint64_t> cell_ids;
+  std::vector<uint64_t> cell_vertices;
+};
+
 void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
                                   std::vector<uint64_t>& vertex_ids,
                                   std::vector<int8_t>& witness_present,
                                   std::vector<uint64_t>& witness_endpoints,
                                   std::vector<double>& witness_parameters,
-                                  uint64_t& generation) {
+                                  uint64_t& generation,
+                                  TetGeometrySnapshot* geometry = nullptr) {
   std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> sizes{};
   const int32_t sizes_status = phx_mc_tet_mesh_snapshot_sizes(mesh, sizes.data());
   PHX_CHECK(sizes_status == PHX_MC_OK);
@@ -38,6 +45,8 @@ void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
   witness_endpoints.resize(2 * vertices);
   witness_parameters.resize(vertices);
   std::vector<double> points(3 * vertices);
+  std::vector<double> snapshot_vertex_sizes(vertices);
+  std::vector<double> snapshot_cell_sizes(cells);
   std::vector<int8_t> witness_strata(vertices), vertex_dimensions(vertices),
       protected_vertices(vertices), facet_orientations(facets),
       protected_facets(facets), protected_segments(segments);
@@ -79,6 +88,7 @@ void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
   snapshot.cell_ancestor_capacity = sizes[18];
   snapshot.vertex_ids = vertex_ids.data();
   snapshot.points = points.data();
+  snapshot.vertex_size_targets = snapshot_vertex_sizes.data();
   snapshot.witness_strata = witness_strata.data();
   snapshot.witness_entities = witness_entities.data();
   snapshot.witness_parameters = witness_values.data();
@@ -99,6 +109,7 @@ void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
   snapshot.cell_ids = cells_ids.data();
   snapshot.cell_vertices = cell_vertices.data();
   snapshot.cell_regions = cell_regions.data();
+  snapshot.cell_size_targets = snapshot_cell_sizes.data();
   snapshot.facet_ids = facet_ids.data();
   snapshot.facet_vertices = facet_vertices.data();
   snapshot.facet_sources = facet_sources.data();
@@ -123,6 +134,11 @@ void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
   snapshot.generation = &generation;
   const int32_t snapshot_status = phx_mc_tet_mesh_snapshot(mesh, &snapshot);
   PHX_CHECK(snapshot_status == PHX_MC_OK);
+  if (snapshot_status == PHX_MC_OK && geometry != nullptr) {
+    geometry->points.swap(points);
+    geometry->cell_ids.swap(cells_ids);
+    geometry->cell_vertices.swap(cell_vertices);
+  }
 }
 void persistent_create_snapshot_and_rejection() {
   constexpr std::array<double, 12> points{
@@ -183,6 +199,14 @@ void persistent_create_snapshot_and_rejection() {
   PHX_CHECK(mesh == nullptr);
   create.protected_vertices = initial_protected_vertices.data();
   create.vertex_ids = initial_vertex_ids.data();
+  std::array<double, 4> bad_initial_sizes{0.1, 0.2, -0.1, 0.4};
+  create.initial_vertex_sizes = bad_initial_sizes.data();
+  PHX_CHECK(phx_mc_tet_mesh_create(&create) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(mesh == nullptr);
+  bad_initial_sizes[2] = std::numeric_limits<double>::quiet_NaN();
+  PHX_CHECK(phx_mc_tet_mesh_create(&create) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(mesh == nullptr);
+  create.initial_vertex_sizes = nullptr;
   PHX_CHECK(phx_mc_tet_mesh_create(&create) == PHX_MC_OK);
   PHX_CHECK(mesh != nullptr);
   if (mesh == nullptr) return;
@@ -201,6 +225,7 @@ void persistent_create_snapshot_and_rejection() {
   std::array<double, 4> witness_deviations{};
   std::array<int8_t, 4> vertex_dimensions{};
   std::array<double, 4> protection_radii{};
+  std::array<double, 4> snapshot_vertex_sizes{};
   std::array<int8_t, 4> protected_vertices{};
   std::array<int8_t, 4> edge_witness_present{};
   std::array<uint64_t, 8> edge_witness_endpoints{};
@@ -211,6 +236,7 @@ void persistent_create_snapshot_and_rejection() {
   std::array<uint64_t, 1> cell_ids{};
   std::array<uint64_t, 4> cell_vertices{};
   std::array<int32_t, 1> cell_regions{};
+  std::array<double, 1> snapshot_cell_sizes{};
   std::array<uint64_t, 4> facet_ids{};
   std::array<uint64_t, 12> facet_vertices{};
   std::array<int32_t, 4> facet_sources{};
@@ -232,6 +258,7 @@ void persistent_create_snapshot_and_rejection() {
   snapshot.source_face_capacity = 4;
   snapshot.vertex_ids = vertex_ids.data();
   snapshot.points = copied_points.data();
+  snapshot.vertex_size_targets = snapshot_vertex_sizes.data();
   snapshot.witness_strata = witness_strata.data();
   snapshot.witness_entities = witness_entities.data();
   snapshot.witness_parameters = witness_parameters.data();
@@ -248,6 +275,7 @@ void persistent_create_snapshot_and_rejection() {
   snapshot.cell_ids = cell_ids.data();
   snapshot.cell_vertices = cell_vertices.data();
   snapshot.cell_regions = cell_regions.data();
+  snapshot.cell_size_targets = snapshot_cell_sizes.data();
   snapshot.facet_ids = facet_ids.data();
   snapshot.facet_vertices = facet_vertices.data();
   snapshot.facet_sources = facet_sources.data();
@@ -475,6 +503,7 @@ void persistent_create_snapshot_and_rejection() {
   const std::size_t refined_cell_ancestry = static_cast<std::size_t>(refined_sizes[18]);
   std::vector<uint64_t> refined_vertex_ids(refined_vertex_count);
   std::vector<double> refined_points(3 * refined_vertex_count);
+  std::vector<double> refined_vertex_size_targets(refined_vertex_count);
   std::vector<int8_t> refined_witness_strata(refined_vertex_count);
   std::vector<int32_t> refined_witness_entities(refined_vertex_count);
   std::vector<double> refined_witness_parameters(2 * refined_vertex_count);
@@ -492,6 +521,7 @@ void persistent_create_snapshot_and_rejection() {
   std::vector<uint64_t> refined_cell_ids(refined_cell_count);
   std::vector<uint64_t> refined_cell_vertices(4 * refined_cell_count);
   std::vector<int32_t> refined_cell_regions(refined_cell_count);
+  std::vector<double> refined_cell_size_targets(refined_cell_count);
   std::vector<int64_t> refined_cell_ancestry_offsets(refined_cell_count + 1);
   std::vector<uint64_t> refined_cell_ancestor_ids(refined_cell_ancestry + 1);
   std::vector<int32_t> refined_cell_ancestry_edit_kinds(refined_cell_count);
@@ -506,6 +536,7 @@ void persistent_create_snapshot_and_rejection() {
   refined_snapshot.cell_ancestor_capacity = refined_sizes[18];
   refined_snapshot.vertex_ids = refined_vertex_ids.data();
   refined_snapshot.points = refined_points.data();
+  refined_snapshot.vertex_size_targets = refined_vertex_size_targets.data();
   refined_snapshot.witness_strata = refined_witness_strata.data();
   refined_snapshot.witness_entities = refined_witness_entities.data();
   refined_snapshot.witness_parameters = refined_witness_parameters.data();
@@ -523,6 +554,7 @@ void persistent_create_snapshot_and_rejection() {
   refined_snapshot.cell_ids = refined_cell_ids.data();
   refined_snapshot.cell_vertices = refined_cell_vertices.data();
   refined_snapshot.cell_regions = refined_cell_regions.data();
+  refined_snapshot.cell_size_targets = refined_cell_size_targets.data();
   refined_snapshot.cell_ancestry_offsets = refined_cell_ancestry_offsets.data();
   refined_snapshot.cell_ancestor_ids = refined_cell_ancestor_ids.data();
   refined_snapshot.cell_ancestry_edit_kinds = refined_cell_ancestry_edit_kinds.data();
@@ -617,7 +649,7 @@ void persistent_create_snapshot_and_rejection() {
                 mesh, refined_generation, identity_bound, source_id, sizeof(source_id) - 1,
                 source_revision, sizeof(source_revision) - 1, source_map_id,
                 sizeof(source_map_id) - 1, frame_id, sizeof(frame_id) - 1,
-                2.0, 0.0, 0.0, 0, nullptr, &edit_status, &run_status, &inserted_vertices,
+                2.0, 0.0, 0.0, 0, 0, nullptr, 0, nullptr, &edit_status, &run_status, &inserted_vertices,
                 &collapsed_vertices, &relocated_vertices, &remaining_cells,
                 &score_quantum) == PHX_MC_OK);
   PHX_CHECK(score_quantum == 0x1p-20);
@@ -974,6 +1006,7 @@ void persistent_periodic_state_and_atomic_relocation() {
   std::array<double, 5> witness_deviations{};
   std::array<int8_t, 5> vertex_dimensions{};
   std::array<double, 5> protection_radii{};
+  std::array<double, 5> snapshot_vertex_size_targets{};
   std::array<int8_t, 5> protected_vertices{};
   std::array<int8_t, 5> edge_witness_present{};
   std::array<uint64_t, 10> edge_witness_endpoints{};
@@ -984,6 +1017,7 @@ void persistent_periodic_state_and_atomic_relocation() {
   std::array<int32_t, 4> cell_ancestry_edit_kinds{};
   std::array<uint64_t, 4> snapshot_cell_ids{};
   std::array<uint64_t, 16> snapshot_cell_vertices{};
+  std::array<double, 4> snapshot_cell_size_targets{};
   std::array<int32_t, 4> snapshot_regions{};
   std::array<uint64_t, 4> snapshot_facet_ids{};
   std::array<uint64_t, 12> snapshot_facet_vertices{};
@@ -1029,6 +1063,7 @@ void persistent_periodic_state_and_atomic_relocation() {
   snapshot.cell_ancestor_capacity = 4;
   snapshot.vertex_ids = snapshot_vertex_ids.data();
   snapshot.points = snapshot_points.data();
+  snapshot.vertex_size_targets = snapshot_vertex_size_targets.data();
   snapshot.witness_strata = witness_strata.data();
   snapshot.witness_entities = witness_entities.data();
   snapshot.witness_parameters = witness_parameters.data();
@@ -1058,6 +1093,7 @@ void persistent_periodic_state_and_atomic_relocation() {
   snapshot.cell_ids = snapshot_cell_ids.data();
   snapshot.cell_vertices = snapshot_cell_vertices.data();
   snapshot.cell_regions = snapshot_regions.data();
+  snapshot.cell_size_targets = snapshot_cell_size_targets.data();
   snapshot.facet_ids = snapshot_facet_ids.data();
   snapshot.facet_vertices = snapshot_facet_vertices.data();
   snapshot.facet_sources = snapshot_facet_sources.data();
@@ -1354,7 +1390,7 @@ void persistent_joint_quality_transition_preserves_identity() {
   // No `sizes`: refinement's retained size field gates every improvement edit.
   PHX_CHECK(phx_mc_tet_mesh_improve_quality(
                 mesh, generation_before_quality, identity_bound, nullptr, 0,
-                nullptr, 0, nullptr, 0, nullptr, 0, 2.0, 10.0, 1.0e-12, 0, nullptr,
+                nullptr, 0, nullptr, 0, nullptr, 0, 2.0, 10.0, 1.0e-12, 0, 0, nullptr, 0, nullptr,
                 &edit_status, &run_status, &inserted, &collapsed, &relocated,
                 &improve_unmet, &score_quantum) == PHX_MC_OK);
   PHX_CHECK(score_quantum == 0x1p-20);
@@ -1468,6 +1504,7 @@ void persistent_collapse_replaces_vertex_star() {
   std::array<double, 4> witness_deviations{};
   std::array<int8_t, 4> vertex_dimensions{};
   std::array<double, 4> protection_radii{};
+  std::array<double, 4> snapshot_vertex_size_targets{};
   std::array<int8_t, 4> protected_vertices{};
   std::array<int8_t, 4> edge_witness_present{};
   std::array<uint64_t, 8> edge_witness_endpoints{};
@@ -1479,6 +1516,7 @@ void persistent_collapse_replaces_vertex_star() {
   std::array<uint64_t, 1> snapshot_cell_ids{};
   std::array<uint64_t, 4> snapshot_cell_vertices{};
   std::array<int32_t, 1> snapshot_regions{};
+  std::array<double, 1> snapshot_cell_size_targets{};
   std::array<uint64_t, 4> snapshot_facet_ids{};
   std::array<uint64_t, 12> snapshot_facet_vertices{};
   std::array<int32_t, 4> snapshot_facet_sources{};
@@ -1501,6 +1539,7 @@ void persistent_collapse_replaces_vertex_star() {
   snapshot.cell_ancestor_capacity = 4;
   snapshot.vertex_ids = snapshot_vertex_ids.data();
   snapshot.points = snapshot_points.data();
+  snapshot.vertex_size_targets = snapshot_vertex_size_targets.data();
   snapshot.witness_strata = witness_strata.data();
   snapshot.witness_entities = witness_entities.data();
   snapshot.witness_parameters = witness_parameters.data();
@@ -1518,6 +1557,7 @@ void persistent_collapse_replaces_vertex_star() {
   snapshot.cell_ids = snapshot_cell_ids.data();
   snapshot.cell_vertices = snapshot_cell_vertices.data();
   snapshot.cell_regions = snapshot_regions.data();
+  snapshot.cell_size_targets = snapshot_cell_size_targets.data();
   snapshot.facet_ids = snapshot_facet_ids.data();
   snapshot.facet_vertices = snapshot_facet_vertices.data();
   snapshot.facet_sources = snapshot_facet_sources.data();
@@ -1613,6 +1653,194 @@ void refinement_preserves_source_region_conflict_refusal() {
   std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> sizes{};
   PHX_CHECK(phx_mc_tet_mesh_snapshot_sizes(mesh, sizes.data()) == PHX_MC_OK);
   PHX_CHECK(sizes[0] == 8 && sizes[1] == 2);
+  phx_mc_tet_mesh_free(mesh);
+}
+
+void persistent_quality_query_is_read_only() {
+  constexpr std::array<double, 12> points{
+      0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  constexpr std::array<int32_t, 4> tetrahedra{0, 1, 2, 3};
+  constexpr std::array<int32_t, 12> faces{
+      1, 3, 2, 0, 2, 3, 0, 3, 1, 0, 1, 2};
+  constexpr std::array<int32_t, 4> sources{0, 1, 2, 3};
+  constexpr std::array<double, 4> loose_sizes{2.0, 2.0, 2.0, 2.0};
+  constexpr std::array<double, 4> target_sizes{0.1, 0.1, 0.1, 0.1};
+  phx_mc_tet_mesh* mesh = nullptr;
+  phx_mc_tet_mesh_create_request create{};
+  create.point_count = 4;
+  create.points = points.data();
+  create.tetrahedron_count = 1;
+  create.tetrahedra = tetrahedra.data();
+  create.face_count = 4;
+  create.faces = faces.data();
+  create.face_sources = sources.data();
+  create.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_FIXED;
+  create.result = &mesh;
+  PHX_CHECK(phx_mc_tet_mesh_create(&create) == PHX_MC_OK);
+  PHX_CHECK(mesh != nullptr);
+  if (mesh == nullptr) return;
+  int32_t edit_status = -1, run_status = -1;
+  int64_t inserted = -1, unmet = -1, quality_count = -1;
+  PHX_CHECK(phx_mc_tet_mesh_refine(
+                mesh, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+                2.0, 4, loose_sizes.data(), &edit_status, &run_status, &inserted,
+                &unmet) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED && run_status == PHX_MC_OK &&
+            inserted == 0 && unmet == 0);
+  PHX_CHECK(phx_mc_tet_mesh_evaluate_quality(
+                mesh, 0, 2.0, 10.0, 0.0, 0, &quality_count,
+                nullptr, nullptr, nullptr, nullptr) == PHX_MC_OK);
+  PHX_CHECK(quality_count == 0);
+  PHX_CHECK(phx_mc_tet_mesh_refine(
+                mesh, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+                0.5, 4, target_sizes.data(), &edit_status, &run_status, &inserted,
+                &unmet) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
+  uint64_t generation = 99;
+  int32_t identity_bound = -1;
+  int64_t source_length = -1, revision_length = -1, map_length = -1, frame_length = -1;
+  PHX_CHECK(phx_mc_tet_mesh_identity_sizes(
+                mesh, &generation, &identity_bound, &source_length,
+                &revision_length, &map_length, &frame_length) == PHX_MC_OK);
+  std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> sizes{};
+  PHX_CHECK(phx_mc_tet_mesh_snapshot_sizes(mesh, sizes.data()) == PHX_MC_OK);
+  int64_t prior_count = 0;
+  PHX_CHECK(phx_mc_tet_mesh_unmet_count(mesh, &prior_count) == PHX_MC_OK);
+  PHX_CHECK(prior_count > 0);
+  const auto n = static_cast<std::size_t>(prior_count);
+  std::vector<uint64_t> prior_cells(n), prior_apexes(n), prior_facets(n);
+  std::vector<int32_t> prior_criteria(n), prior_reasons(n);
+  std::vector<double> prior_values(n), prior_angles(n), prior_ratios(n);
+  PHX_CHECK(phx_mc_tet_mesh_unmet(
+                mesh, prior_count, prior_cells.data(), prior_criteria.data(),
+                prior_reasons.data(), prior_values.data(), prior_apexes.data(),
+                prior_angles.data(), prior_facets.data(), prior_ratios.data()) == PHX_MC_OK);
+
+  std::vector<uint64_t> vertex_ids_before, vertex_ids_after;
+  std::vector<int8_t> edge_present_before, edge_present_after;
+  std::vector<uint64_t> edge_endpoints_before, edge_endpoints_after;
+  std::vector<double> edge_parameters_before, edge_parameters_after;
+  uint64_t before_generation = 99, after_generation = 99;
+  TetGeometrySnapshot geometry_before, geometry_after;
+  capture_vertex_edge_witnesses(mesh, vertex_ids_before, edge_present_before,
+                                edge_endpoints_before, edge_parameters_before,
+                                before_generation, &geometry_before);
+
+  // A loose shape request still reports the retained, unsatisfied size field.
+  quality_count = -1;
+  PHX_CHECK(phx_mc_tet_mesh_evaluate_quality(
+                mesh, generation, 2.0, 10.0, 0.0, 0, &quality_count,
+                nullptr, nullptr, nullptr, nullptr) == PHX_MC_OK);
+  PHX_CHECK(quality_count > 0);
+  std::vector<uint64_t> quality_cells(static_cast<std::size_t>(quality_count));
+  std::vector<int32_t> quality_criteria(static_cast<std::size_t>(quality_count));
+  std::vector<int32_t> quality_reasons(static_cast<std::size_t>(quality_count));
+  std::vector<double> quality_values(static_cast<std::size_t>(quality_count));
+  PHX_CHECK(phx_mc_tet_mesh_evaluate_quality(
+                mesh, generation, 2.0, 10.0, 0.0, quality_count, &quality_count,
+                quality_cells.data(), quality_criteria.data(), quality_reasons.data(),
+                quality_values.data()) == PHX_MC_OK);
+  bool saw_size = false;
+  for (std::size_t row = 0; row < quality_cells.size(); ++row) {
+    PHX_CHECK(quality_reasons[row] == PHX_MC_TET_UNMET_NO_IMPROVEMENT ||
+              quality_reasons[row] == PHX_MC_TET_UNMET_NONREPRESENTABLE);
+    if (quality_criteria[row] == PHX_MC_TET_UNMET_SIZE) {
+      saw_size = true;
+      PHX_CHECK(quality_values[row] > 1.0);
+    }
+  }
+  PHX_CHECK(saw_size);
+
+  // Strict shape thresholds independently expose all three geometric criteria.
+  int64_t strict_count = 0;
+  PHX_CHECK(phx_mc_tet_mesh_evaluate_quality(
+                mesh, generation, 0.5, 70.0, 0.9, 0, &strict_count,
+                nullptr, nullptr, nullptr, nullptr) == PHX_MC_OK);
+  PHX_CHECK(strict_count > 1);
+  if (strict_count <= 1) {
+    phx_mc_tet_mesh_free(mesh);
+    return;
+  }
+  std::vector<uint64_t> strict_cells(static_cast<std::size_t>(strict_count));
+  std::vector<int32_t> strict_criteria(static_cast<std::size_t>(strict_count));
+  std::vector<int32_t> strict_reasons(static_cast<std::size_t>(strict_count));
+  std::vector<double> strict_values(static_cast<std::size_t>(strict_count));
+  std::vector<uint64_t> short_cells(static_cast<std::size_t>(strict_count), 987);
+  std::vector<int32_t> short_criteria(static_cast<std::size_t>(strict_count), -7);
+  std::vector<int32_t> short_reasons(static_cast<std::size_t>(strict_count), -8);
+  std::vector<double> short_values(static_cast<std::size_t>(strict_count), -9.0);
+  int64_t short_count = -1;
+  PHX_CHECK(phx_mc_tet_mesh_evaluate_quality(
+                mesh, generation, 0.5, 70.0, 0.9, strict_count - 1, &short_count,
+                short_cells.data(), short_criteria.data(), short_reasons.data(),
+                short_values.data()) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(short_count == strict_count);
+  PHX_CHECK(std::all_of(short_cells.begin(), short_cells.end(),
+                        [](uint64_t value) { return value == 987; }));
+  PHX_CHECK(std::all_of(short_criteria.begin(), short_criteria.end(),
+                        [](int32_t value) { return value == -7; }));
+  PHX_CHECK(std::all_of(short_reasons.begin(), short_reasons.end(),
+                        [](int32_t value) { return value == -8; }));
+  PHX_CHECK(std::all_of(short_values.begin(), short_values.end(),
+                        [](double value) { return value == -9.0; }));
+  PHX_CHECK(phx_mc_tet_mesh_evaluate_quality(
+                mesh, generation + 1, 0.5, 70.0, 0.9, strict_count, &short_count,
+                strict_cells.data(), strict_criteria.data(), strict_reasons.data(),
+                strict_values.data()) == PHX_MC_STALE_GENERATION);
+  PHX_CHECK(phx_mc_tet_mesh_evaluate_quality(
+                mesh, generation, 0.5, 70.0, 0.9, strict_count, &strict_count,
+                strict_cells.data(), strict_criteria.data(), strict_reasons.data(),
+                strict_values.data()) == PHX_MC_OK);
+  std::array<int, 5> criterion_counts{};
+  for (std::size_t row = 0; row < strict_cells.size(); ++row) {
+    const int32_t criterion = strict_criteria[row];
+    PHX_CHECK(strict_reasons[row] == PHX_MC_TET_UNMET_NO_IMPROVEMENT ||
+              strict_reasons[row] == PHX_MC_TET_UNMET_NONREPRESENTABLE);
+    if (criterion >= 0 && criterion < static_cast<int32_t>(criterion_counts.size())) {
+      ++criterion_counts[static_cast<std::size_t>(criterion)];
+    }
+    if (criterion == PHX_MC_TET_UNMET_RADIUS_EDGE) PHX_CHECK(strict_values[row] > 0.5);
+    if (criterion == PHX_MC_TET_UNMET_SIZE) PHX_CHECK(strict_values[row] > 1.0);
+    if (criterion == PHX_MC_TET_UNMET_DIHEDRAL) PHX_CHECK(strict_values[row] < 70.0);
+    if (criterion == PHX_MC_TET_UNMET_VALIDITY) PHX_CHECK(strict_values[row] <= 0.0);
+  }
+  PHX_CHECK(criterion_counts[PHX_MC_TET_UNMET_RADIUS_EDGE] > 0);
+  PHX_CHECK(criterion_counts[PHX_MC_TET_UNMET_SIZE] > 0);
+  PHX_CHECK(criterion_counts[PHX_MC_TET_UNMET_DIHEDRAL] > 0);
+  PHX_CHECK(criterion_counts[PHX_MC_TET_UNMET_VALIDITY] > 0);
+
+  int64_t after_count = -1;
+  PHX_CHECK(phx_mc_tet_mesh_unmet_count(mesh, &after_count) == PHX_MC_OK);
+  PHX_CHECK(after_count == prior_count);
+  std::vector<uint64_t> after_cells(n), after_apexes(n), after_facets(n);
+  std::vector<int32_t> after_criteria(n), after_reasons(n);
+  std::vector<double> after_values(n), after_angles(n), after_ratios(n);
+  PHX_CHECK(phx_mc_tet_mesh_unmet(
+                mesh, prior_count, after_cells.data(), after_criteria.data(),
+                after_reasons.data(), after_values.data(), after_apexes.data(),
+                after_angles.data(), after_facets.data(), after_ratios.data()) == PHX_MC_OK);
+  PHX_CHECK(after_cells == prior_cells && after_criteria == prior_criteria &&
+            after_reasons == prior_reasons && after_values == prior_values &&
+            after_apexes == prior_apexes && after_facets == prior_facets);
+  for (std::size_t row = 0; row < n; ++row) {
+    PHX_CHECK(after_angles[row] == prior_angles[row] ||
+              (std::isnan(after_angles[row]) && std::isnan(prior_angles[row])));
+    PHX_CHECK(after_ratios[row] == prior_ratios[row] ||
+              (std::isnan(after_ratios[row]) && std::isnan(prior_ratios[row])));
+  }
+  std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> after_sizes{};
+  PHX_CHECK(phx_mc_tet_mesh_snapshot_sizes(mesh, after_sizes.data()) == PHX_MC_OK);
+  capture_vertex_edge_witnesses(mesh, vertex_ids_after, edge_present_after,
+                                edge_endpoints_after, edge_parameters_after,
+                                after_generation, &geometry_after);
+  PHX_CHECK(after_sizes == sizes && before_generation == generation &&
+            after_generation == generation && vertex_ids_after == vertex_ids_before &&
+            edge_present_after == edge_present_before &&
+            edge_endpoints_after == edge_endpoints_before &&
+            edge_parameters_after == edge_parameters_before);
+  PHX_CHECK(geometry_before.points == geometry_after.points &&
+            geometry_before.cell_ids == geometry_after.cell_ids &&
+            geometry_before.cell_vertices == geometry_after.cell_vertices);
   phx_mc_tet_mesh_free(mesh);
 }
 
@@ -3181,14 +3409,395 @@ void periodic_closure_accepts_edit_touching_one_orbit_copy() {
   phx_mc_tet_mesh_free(mesh);
 }
 
+void affine_create_c_api_guards() {
+  const std::array<double, 12> points{0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  const std::array<int32_t, 4> tets{0, 1, 2, 3};
+  const std::array<int32_t, 12> faces{1, 3, 2, 0, 2, 3, 0, 3, 1, 0, 1, 2};
+  const std::array<int32_t, 4> sources{0, 1, 2, 3};
+  const std::array<double, 9> identity{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  const std::array<double, 9> reflected{-1, 0, 0, 0, 2, 0, 0, 0, 1};
+  const std::array<double, 9> singular{1, 0, 0, 0, 1, 0, 0, 0, 0};
+  auto nonfinite = identity;
+  phx_mc_tet_mesh* mesh = nullptr;
+  phx_mc_tet_mesh_create_request request{};
+  request.point_count = 4;
+  request.points = points.data();
+  request.tetrahedron_count = 1;
+  request.tetrahedra = tets.data();
+  request.face_count = 4;
+  request.faces = faces.data();
+  request.face_sources = sources.data();
+  request.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_FIXED;
+  request.result = &mesh;
+
+  PHX_CHECK(phx_mc_tet_mesh_create_with_affine_metric(nullptr, identity.data()) ==
+            PHX_MC_INVALID_ARGUMENT);
+  auto invalid = [&](const phx_mc_tet_mesh_create_request& bad, const double* matrix) {
+    mesh = reinterpret_cast<phx_mc_tet_mesh*>(static_cast<uintptr_t>(1));
+    PHX_CHECK(phx_mc_tet_mesh_create_with_affine_metric(&bad, matrix) ==
+              PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(mesh == nullptr);
+  };
+  invalid(request, singular.data());
+  nonfinite[0] = std::numeric_limits<double>::quiet_NaN();
+  invalid(request, nonfinite.data());
+  nonfinite[0] = std::numeric_limits<double>::infinity();
+  invalid(request, nonfinite.data());
+  auto bad = request;
+  bad.points = nullptr;
+  invalid(bad, identity.data());
+  bad = request;
+  bad.tetrahedra = nullptr;
+  invalid(bad, identity.data());
+  bad = request;
+  bad.point_count = -1;
+  invalid(bad, identity.data());
+  bad = request;
+  bad.point_count = std::numeric_limits<int32_t>::max();
+  invalid(bad, identity.data());
+  const std::array<int32_t, 4> bad_tets{0, 1, 2, 4};
+  bad = request;
+  bad.tetrahedra = bad_tets.data();
+  mesh = nullptr;
+  PHX_CHECK(phx_mc_tet_mesh_create_with_affine_metric(&bad, identity.data()) ==
+            PHX_MC_INVALID_INPUT);
+  PHX_CHECK(mesh == nullptr);
+  bad = request;
+  bad.result = nullptr;
+  PHX_CHECK(phx_mc_tet_mesh_create_with_affine_metric(&bad, identity.data()) ==
+            PHX_MC_INVALID_ARGUMENT);
+
+  for (const double* matrix : {static_cast<const double*>(nullptr), identity.data(),
+                               reflected.data()}) {
+    mesh = nullptr;
+    PHX_CHECK(phx_mc_tet_mesh_create_with_affine_metric(&request, matrix) == PHX_MC_OK);
+    PHX_CHECK(mesh != nullptr);
+    phx_mc_tet_mesh_free(mesh);
+  }
+  mesh = nullptr;
+  PHX_CHECK(phx_mc_tet_mesh_create(&request) == PHX_MC_OK);
+  PHX_CHECK(mesh != nullptr);
+  phx_mc_tet_mesh_free(mesh);
+}
+
+void selective_facet_protection_is_atomic_and_source_bound() {
+  using phx::mc::BoundaryPolicy;
+  using phx::mc::TetEditStatus;
+  using phx::mc::TetMesh;
+  using phx::mc::TetMeshSnapshot;
+  constexpr std::array<double, 12> points{
+      0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  constexpr std::array<std::int32_t, 4> tetrahedra{0, 1, 2, 3};
+  constexpr std::array<std::int32_t, 1> regions{0};
+  constexpr std::array<std::int32_t, 12> faces{
+      1, 3, 2, 0, 2, 3, 0, 3, 1, 0, 1, 2};
+  constexpr std::array<std::int32_t, 4> sources{0, 1, 2, 3};
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  PHX_CHECK(mesh.build(points, tetrahedra, regions, faces, sources, {}, {}) == PHX_MC_OK);
+  const std::array<std::int32_t, 1> absent{99};
+  PHX_CHECK(!mesh.protect_facet_sources(absent));
+  PHX_CHECK(mesh.generation() == 0);
+  const std::array<std::int32_t, 1> selected{0};
+  PHX_CHECK(mesh.protect_facet_sources(selected));
+  TetMeshSnapshot snapshot;
+  PHX_CHECK(mesh.snapshot(snapshot) == TetEditStatus::kApplied);
+  PHX_CHECK(snapshot.generation == 1);
+  for (const auto& facet : snapshot.constrained_facets) {
+    PHX_CHECK(facet.protected_facet == (facet.source == 0));
+  }
+  std::size_t protected_count = 0;
+  for (const auto& vertex : snapshot.vertices) {
+    if (vertex.protected_vertex) ++protected_count;
+  }
+  PHX_CHECK(protected_count == 3);
+}
+
+void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
+  constexpr std::array<double, 12> points{
+      0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  constexpr std::array<int32_t, 4> tetrahedra{0, 1, 2, 3};
+  constexpr std::array<int32_t, 12> faces{
+      1, 3, 2, 0, 2, 3, 0, 3, 1, 0, 1, 2};
+  constexpr std::array<int32_t, 4> face_sources{0, 1, 2, 3};
+  constexpr char source_id[] = "implicit-source";
+  constexpr char binding[] = "binding";
+  constexpr char revision[] = "revision";
+  constexpr char frame[] = "world-frame";
+  phx_mc_tet_mesh_create_request request{};
+  request.point_count = 4;
+  request.points = points.data();
+  request.tetrahedron_count = 1;
+  request.tetrahedra = tetrahedra.data();
+  request.face_count = 4;
+  request.faces = faces.data();
+  request.face_sources = face_sources.data();
+  request.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_CONFORMING;
+  request.identity_bound = 1;
+  request.source_id = source_id;
+  request.source_id_length = sizeof(source_id) - 1;
+  request.source_revision = revision;
+  request.source_revision_length = sizeof(revision) - 1;
+  request.source_map_id = binding;
+  request.source_map_id_length = sizeof(binding) - 1;
+  request.frame_id = frame;
+  request.frame_id_length = sizeof(frame) - 1;
+  phx_mc_tet_mesh* mesh = nullptr;
+  request.result = &mesh;
+  PHX_CHECK(phx_mc_tet_mesh_create(&request) == PHX_MC_OK);
+  if (mesh == nullptr) return;
+
+  // f(x,y,z)=z, grad f=(0,0,1); the selected source facet lies on z=0.
+  std::array<int64_t, 8> value_code{2, 4, 1, 2, -1, 3, -1, 0};
+  std::array<double, 5> value_workspace{0, 0, 0, 0, 0};
+  std::array<int64_t, 1> value_outputs{4};
+  std::array<double, 6> gradient_workspace{0, 0, 0, 0, 0, 1};
+  std::array<int64_t, 3> gradient_outputs{3, 4, 5};
+  std::array<int32_t, 1> groups{3};
+  phx_mc_tet_implicit_source source{};
+  source.value = {value_code.data(), 1, nullptr, 0, nullptr, 0, value_workspace.data(),
+                  value_workspace.data(), 5, value_outputs.data(), 1, nullptr, 0};
+  source.gradient = {nullptr, 0, nullptr, 0, nullptr, 0, gradient_workspace.data(),
+                     gradient_workspace.data(), 6, gradient_outputs.data(), 3, nullptr, 0};
+  source.groups = groups.data();
+  source.group_count = 1;
+  source.tolerance = 0.01;
+  source.orientation = -1;
+  source.source_id = source_id;
+  source.source_id_length = sizeof(source_id) - 1;
+  source.source_revision = revision;
+  source.source_revision_length = sizeof(revision) - 1;
+  source.binding_id = binding;
+  source.binding_id_length = sizeof(binding) - 1;
+  source.frame_id = frame;
+  source.frame_id_length = sizeof(frame) - 1;
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(mesh, &source) == PHX_MC_INVALID_INPUT);
+  source.orientation = 0;
+  constexpr char wrong_frame[] = "wrong-frame";
+  source.frame_id = wrong_frame;
+  source.frame_id_length = sizeof(wrong_frame) - 1;
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(mesh, &source) == PHX_MC_INVALID_ARGUMENT);
+  source.frame_id = frame;
+  source.frame_id_length = sizeof(frame) - 1;
+  constexpr char wrong_identity[] = "different";
+  source.source_id = wrong_identity;
+  source.source_id_length = sizeof(wrong_identity) - 1;
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(mesh, &source) == PHX_MC_INVALID_ARGUMENT);
+  source.source_id = source_id;
+  source.source_id_length = sizeof(source_id) - 1;
+  source.source_revision = wrong_identity;
+  source.source_revision_length = sizeof(wrong_identity) - 1;
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(mesh, &source) == PHX_MC_INVALID_ARGUMENT);
+  source.source_revision = revision;
+  source.source_revision_length = sizeof(revision) - 1;
+  source.binding_id = wrong_identity;
+  source.binding_id_length = sizeof(wrong_identity) - 1;
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(mesh, &source) == PHX_MC_INVALID_ARGUMENT);
+  source.binding_id = binding;
+  source.binding_id_length = sizeof(binding) - 1;
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(mesh, &source) == PHX_MC_OK);
+  phx_mc_tet_implicit_source snapshot{};
+  PHX_CHECK(phx_mc_tet_mesh_implicit_source(mesh, &snapshot) == PHX_MC_OK);
+  PHX_CHECK(snapshot.group_count == 1 && snapshot.groups[0] == 3);
+  PHX_CHECK(snapshot.orientation == 1 && snapshot.tolerance == 0.01);
+  PHX_CHECK(std::string_view(snapshot.frame_id, snapshot.frame_id_length) == frame);
+  PHX_CHECK(snapshot.value.instruction_count == 1 && snapshot.value.instructions[0] == 2);
+  value_code[0] = 99;
+  groups[0] = 99;
+  PHX_CHECK(snapshot.value.instructions[0] == 2 && snapshot.groups[0] == 3);
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(mesh, &source) != PHX_MC_OK);
+  value_code[0] = 2;
+  groups[0] = 3;
+  phx_mc_tet_mesh* restored = nullptr;
+  request.result = &restored;
+  source.orientation = snapshot.orientation;
+  PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&request, &source) == PHX_MC_OK);
+  PHX_CHECK(restored != nullptr);
+  phx_mc_tet_mesh_free(restored);
+  restored = nullptr;
+  value_workspace[3] = 1.0;
+  PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&request, &source) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(restored == nullptr);
+  value_workspace[3] = 0.0;
+  constexpr std::array<double, 9> reflection{-1, 0, 0, 0, 1, 0, 0, 0, 1};
+  PHX_CHECK(phx_mc_tet_mesh_create_with_affine_metric(&request, reflection.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(restored, &source) == PHX_MC_INVALID_ARGUMENT);
+  phx_mc_tet_mesh_free(restored);
+  // Restore a locally moved implicit face against its original non-moved PWL
+  // source bank: the PWL constructor refuses, while the source-bound interval
+  // owner admits every actual replacement face within the declared band.
+  std::array<double, 15> source_points{0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, .25, .25, 0};
+  auto moved_points = source_points;
+  moved_points[14] = 0.001;
+  constexpr std::array<int32_t, 12> cells{0, 1, 4, 3, 1, 2, 4, 3, 2, 0, 4, 3};
+  constexpr std::array<int32_t, 18> moved_faces{
+      0, 1, 4, 1, 2, 4, 2, 0, 4, 1, 3, 2, 0, 2, 3, 0, 3, 1};
+  constexpr std::array<int32_t, 6> moved_groups{0, 0, 0, 1, 2, 3};
+  constexpr std::array<int64_t, 6> moved_source_ids{0, 0, 0, 1, 2, 3};
+  std::array<double, 54> planes;
+  planes.fill(std::numeric_limits<double>::quiet_NaN());
+  constexpr std::array<double, 9> base_plane{0, 0, 0, 1, 0, 0, 0, 1, 0};
+  constexpr std::array<double, 9> side_plane{1, 0, 0, -1, 0, 1, -1, 1, 0};
+  for (std::size_t row = 0; row < 3; ++row) {
+    std::copy(base_plane.begin(), base_plane.end(), planes.begin() + 9 * row);
+  }
+  std::copy(side_plane.begin(), side_plane.end(), planes.begin() + 27);
+  constexpr std::array<double, 6> plane_tolerances{};
+  phx_mc_tet_mesh_create_request moved{};
+  moved.point_count = 5;
+  moved.points = moved_points.data();
+  moved.tetrahedron_count = 3;
+  moved.tetrahedra = cells.data();
+  moved.face_count = 6;
+  moved.faces = moved_faces.data();
+  moved.face_sources = moved_groups.data();
+  moved.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_CONFORMING;
+  moved.identity_bound = 1;
+  moved.source_id = source_id;
+  moved.source_id_length = sizeof(source_id) - 1;
+  moved.source_revision = revision;
+  moved.source_revision_length = sizeof(revision) - 1;
+  moved.source_map_id = binding;
+  moved.source_map_id_length = sizeof(binding) - 1;
+  moved.frame_id = frame;
+  moved.frame_id_length = sizeof(frame) - 1;
+  moved.source_point_count = 5;
+  moved.source_points = source_points.data();
+  moved.source_face_count = 6;
+  moved.source_faces = moved_faces.data();
+  moved.source_face_groups = moved_groups.data();
+  moved.source_face_ids = moved_source_ids.data();
+  moved.source_face_planes = planes.data();
+  moved.source_face_plane_tolerances = plane_tolerances.data();
+  restored = nullptr;
+  moved.result = &restored;
+  PHX_CHECK(phx_mc_tet_mesh_create(&moved) == PHX_MC_INVALID_INPUT);
+  groups[0] = 0;
+  source.orientation = 1;
+  PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&moved, &source) == PHX_MC_OK);
+  PHX_CHECK(restored != nullptr);
+  phx_mc_tet_mesh_free(restored);
+  restored = nullptr;
+  moved_points[3] = 1.001;
+  PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&moved, &source) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(restored == nullptr);
+  moved_points[3] = 1.0;
+  restored = nullptr;
+  moved_points[14] = 0.1;
+  PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&moved, &source) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(restored == nullptr);
+  using namespace phx::mc;
+  constexpr std::array<int32_t, 3> regions{0, 0, 0};
+  constexpr std::array<int8_t, 6> orientations{1, 1, 1, 1, 1, 1};
+  constexpr std::array<double, 6> tolerances{};
+  constexpr std::array<int32_t, 0> no_segments{};
+  constexpr std::array<int64_t, 0> no_segment_ids{};
+  constexpr std::array<double, 0> no_segment_tolerances{};
+  constexpr std::array<SourceWitness, 0> no_witnesses{};
+  const SourceComplexView source_view{
+      source_points, moved_faces, moved_groups, moved_source_ids, tolerances,
+      no_segments, no_segments, no_segment_ids, no_segment_tolerances, no_witnesses};
+  const auto make_owner = [&]() {
+    auto result = std::make_shared<TetImplicitSource>();
+    const auto bind = [](remesh::IntervalBoxProgram& destination,
+                         const phx_mc_interval_box_program& program) {
+      return destination.bind(program.instructions, program.instruction_count,
+                              program.indices, program.index_count, program.parameters,
+                              program.parameter_count, program.workspace_lower,
+                              program.workspace_upper, program.workspace_size,
+                              program.outputs, program.output_count, program.guards,
+                              program.guard_count);
+    };
+    PHX_CHECK(bind(result->value, source.value) == PHX_MC_OK);
+    PHX_CHECK(bind(result->gradient, source.gradient) == PHX_MC_OK);
+    result->groups = {0};
+    result->tolerance = source.tolerance;
+    result->source_id = source_id;
+    result->source_revision = revision;
+    result->binding_id = binding;
+    result->frame_id = frame;
+    return result;
+  };
+  TetMesh tracked(BoundaryPolicy::kConforming);
+  PHX_CHECK(tracked.bind_source_identity(source_id, revision, binding, frame, true));
+  PHX_CHECK(tracked.build(source_points, cells, regions, moved_faces, moved_groups,
+                          orientations, no_segments, no_segments, {}, &source_view) == PHX_MC_OK);
+  TetEditBatch stale{};
+  stale.expected_generation = tracked.generation();
+  stale.identity_bound = tracked.identity_bound();
+  stale.source_id = tracked.source_id();
+  stale.source_revision = tracked.source_revision();
+  stale.source_map_id = tracked.source_map_id();
+  stale.frame_id = tracked.frame_id();
+  stale.periodic_identity = tracked.periodic_identity();
+  PHX_CHECK(tracked.bind_implicit_source(make_owner()) == PHX_MC_OK);
+  PHX_CHECK(tracked.generation() == stale.expected_generation + 1);
+  std::vector<TetEditResult> stale_results;
+  PHX_CHECK(tracked.apply_edit_batch(stale, stale_results) == TetEditStatus::kStaleGeneration);
+  PHX_CHECK(!tracked.bind_source_identity("different", revision, binding, frame, true));
+  TetEditVertex candidate{};
+  candidate.id = 4;
+  candidate.carrier = {.25, .25, .001};
+  constexpr std::array<std::uint64_t, 3> star{0, 1, 2};
+  PHX_CHECK(tracked.relocate(std::span(&candidate, 1), star) == TetEditStatus::kApplied);
+  const auto accepted_generation = tracked.generation();
+  candidate.carrier[2] = 0.1;
+  PHX_CHECK(tracked.relocate(std::span(&candidate, 1), star) == TetEditStatus::kUncertainPredicate);
+  PHX_CHECK(tracked.generation() == accepted_generation);
+  PHX_CHECK(tracked.implicit_source()->distance_refusals > 0);
+  TetMeshSnapshot accepted_snapshot;
+  PHX_CHECK(tracked.snapshot(accepted_snapshot) == TetEditStatus::kApplied);
+  PHX_CHECK(accepted_snapshot.vertices[4].carrier[2] == .001);
+  TetEdit collapse{};
+  collapse.kind = TetEditKind::kCollapse;
+  collapse.collapse_pairs.push_back({4, 0});
+  collapse.removed_vertex_ids = {4};
+  collapse.removed_cell_ids = {0, 1, 2};
+  TetEditCell coarse{};
+  coarse.id = 3;
+  coarse.vertices = {1, 2, 0, 3};
+  coarse.facet_sources = {2, 3, 1, 0};
+  coarse.region = 0;
+  coarse.ancestor_cell_ids = {0, 1, 2};
+  collapse.replacement_cells = {coarse};
+  collapse.removed_facet_ids = {0, 1, 2};
+  collapse.replacement_facets = {{6, {1, 2, 0}, 0, 1, false}};
+  TetEditBatch batch{};
+  batch.expected_generation = tracked.generation();
+  batch.identity_bound = tracked.identity_bound();
+  batch.source_id = tracked.source_id();
+  batch.source_revision = tracked.source_revision();
+  batch.source_map_id = tracked.source_map_id();
+  batch.frame_id = tracked.frame_id();
+  batch.periodic_identity = tracked.periodic_identity();
+  batch.operations.push_back(collapse);
+  std::vector<TetEditResult> results;
+  PHX_CHECK(tracked.apply_edit_batch(batch, results) == TetEditStatus::kApplied);
+  PHX_CHECK(results.size() == 1 && results.front().status == TetEditStatus::kApplied);
+  TetMesh protected_mesh(BoundaryPolicy::kConforming);
+  PHX_CHECK(protected_mesh.bind_source_identity(source_id, revision, binding, frame, true));
+  constexpr std::array<int8_t, 5> protected_vertices{0, 0, 0, 0, 1};
+  PHX_CHECK(protected_mesh.build(source_points, cells, regions, moved_faces, moved_groups,
+                                orientations, no_segments, no_segments, {}, &source_view,
+                                protected_vertices) == PHX_MC_OK);
+  PHX_CHECK(protected_mesh.bind_implicit_source(make_owner()) == PHX_MC_OK);
+  candidate.carrier[2] = .001;
+  PHX_CHECK(protected_mesh.relocate(std::span(&candidate, 1), star) ==
+            TetEditStatus::kRejectedProtected);
+  phx_mc_tet_mesh_free(mesh);
+}
+
 }  // namespace
 
 int main() {
+  implicit_source_binding_owns_programs_and_refuses_wrong_orientation();
+  selective_facet_protection_is_atomic_and_source_bound();
+  affine_create_c_api_guards();
   persistent_create_snapshot_and_rejection();
   persistent_periodic_state_and_atomic_relocation();
   persistent_joint_quality_transition_preserves_identity();
   persistent_collapse_replaces_vertex_star();
   refinement_preserves_source_region_conflict_refusal();
+  persistent_quality_query_is_read_only();
   retriangulation_rejects_undeclared_region_jumps();
   retriangulation_rejects_closed_interface_region_relabel();
   grouped_orthogonal_source_faces_validate_each_contributor();

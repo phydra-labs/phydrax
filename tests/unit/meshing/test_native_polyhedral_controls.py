@@ -212,6 +212,106 @@ def _assert_reciprocal_internal_faces(mesh: CellMesh, /) -> None:
         )
 
 
+@pytest.mark.parametrize("hard", (False, True), ids=("soft", "hard"))
+@pytest.mark.parametrize("dimension", (2, 3), ids=("facet", "region"))
+def test_polyhedral_controls_resolve_scientific_source_scope_ids(
+    dimension: int, hard: bool
+) -> None:
+    source, _ = _periodic_box_source((2.0, 3.0, 1.5))
+    source_ids = (
+        source.complex.facet_entity_ids
+        if dimension == 2
+        else source.complex.region_entity_ids
+    )
+    scope = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        dimension,
+        source.scope_entity_set_id(dimension),
+        np.asarray((source_ids[0],), dtype=np.int64),
+    )
+    control = phx.meshing.UniformSizeControl(
+        scope,
+        10.0,
+        strength=(
+            phx.meshing.SizeControlStrength.HARD
+            if hard
+            else phx.meshing.SizeControlStrength.SOFT
+        ),
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
+        MeshingScope.whole(source, 2),
+        VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(control,),
+        size_compliance=phx.meshing.SizeCompliancePolicy(
+            relative_tolerance=0.1, absolute_tolerance=0.0, target_statistics=("p50",)
+        ),
+        region_controls=(
+            phx.meshing.RegionControl(
+                MeshingScope.whole(source, 3), "bulk", "bulk-material", RegionRole.SOLID
+            ),
+        ),
+        patch_controls=(
+            (phx.meshing.PatchControl("selected-bottom", scope, ("bulk",)),)
+            if dimension == 2
+            else ()
+        ),
+        region_seeds=(
+            RegionSeed(
+                np.asarray((1.0, 1.5, 0.75), dtype=np.float64),
+                "bulk",
+                "bulk-material",
+                RegionRole.SOLID,
+            ),
+        ),
+    )
+    plan = phx.meshing.NativeMeshingProvider(
+        phx.meshing.NativeMeshingOptions(
+            "plc_restricted_power",
+            polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+        )
+    ).plan(source, specification, coordinate_contract=phx.SpatialCoordinateContract.si())
+    if hard:
+        with pytest.raises(phx.meshing.MeshingFailure) as failure:
+            plan.execute()
+        assert (
+            failure.value.category is phx.meshing.MeshingFailureCategory.COMPLIANCE_FAILED
+        )
+        return
+    result = plan.execute()
+    connectivity = result.mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
+        raise TypeError("The scoped power result must retain polyhedral connectivity.")
+    coordinates = np.asarray(result.mesh.coordinates, dtype=np.float64)
+    edges = np.asarray(connectivity.edges, dtype=np.int64)
+    if dimension == 2:
+        edges = edges[np.all(coordinates[edges, 2] == 0.0, axis=1)]
+    lengths = np.sqrt(
+        np.sum((coordinates[edges[:, 1]] - coordinates[edges[:, 0]]) ** 2, axis=1)
+    )
+    expected = float(np.median(lengths))
+    observations = dict(result.compliance.achieved)
+    lower = observations[f"size:{control.control_id}:p50_edge_lower"]
+    upper = observations[f"size:{control.control_id}:p50_edge_upper"]
+    assert lower <= expected <= upper
+    np.testing.assert_allclose((lower, upper), (expected, expected), rtol=0.0, atol=1e-12)
+    if dimension == 2:
+        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+        vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+        bottom = [
+            face
+            for face in range(offsets.size - 1)
+            if np.all(coordinates[vertices[offsets[face] : offsets[face + 1]], 2] == 0.0)
+        ]
+        patch = next(patch for patch in result.patches if patch.name == "selected-bottom")
+        np.testing.assert_array_equal(
+            np.sort(np.asarray(patch.scope.entity_ids)),
+            np.sort(np.asarray(connectivity.face_global_ids)[bottom]),
+        )
+
+
 def test_restricted_power_periodic_plc_preserves_quotient_and_fv_measure() -> None:
     lengths = (2.0, 3.0, 1.5)
     source, constraints = _periodic_box_source(lengths)

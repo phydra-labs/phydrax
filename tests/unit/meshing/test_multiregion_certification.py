@@ -2,6 +2,7 @@ from dataclasses import replace
 from typing import Literal
 
 import equinox as eqx
+import jax
 import numpy as np
 import pytest
 
@@ -369,4 +370,251 @@ def test_cad_plc_rejects_ambiguous_repeated_shared_copy(
     with pytest.raises(ValueError, match="Repeated coincident"):
         _require_unambiguous_cad_copies(
             repeated, source.source_id, source.source_revision
+        )
+
+
+def test_cad_plc_handoffs_fresh_surface_proof(
+    multiregion_surface: tuple[
+        MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+    ],
+    cad_plc: PiecewiseLinearComplex,
+) -> None:
+    import copy
+    import pickle
+
+    from phydrax.meshing import _plc_source
+    from phydrax.meshing._model_codec import _same_model_content
+
+    report, _, result = multiregion_surface
+    charts = result.surface_source
+    domain = report.inputs.feature_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    assert isinstance(domain, MeshingDomain)
+    # Exercise the producer path that must compute a missing fidelity proof.
+    without_fidelity = eqx.tree_at(lambda value: value.fidelity, report, None)
+    source = eqx.tree_at(lambda value: value.certification, result, without_fidelity)
+    rebuilt = _cad_plc_data(domain, source, charts, "conforming", 0.05).complex
+    assert _same_model_content(rebuilt.cad_embedding, cad_plc.cad_embedding)
+    assert _same_model_content(rebuilt.cad_fidelity, cad_plc.cad_fidelity)
+    assert rebuilt.complex_id == cad_plc.complex_id
+    assert rebuilt.cad_embedding is not None
+    assert rebuilt.cad_fidelity_tolerance is not None
+    junctions = np.asarray(
+        rebuilt.cad_embedding.binding.junction_vertices, dtype=np.int64
+    )
+    artifact = _plc_source._ValidatedCadSurface(
+        charts,
+        rebuilt.cad_fidelity_tolerance,
+        rebuilt.cad_maximum_normal_deviation,
+        junctions,
+    )
+    assert all(value is not artifact for value in vars(rebuilt).values())
+    with pytest.raises(ValueError, match="different proof operands"):
+        artifact.require(
+            charts,
+            rebuilt.cad_fidelity_tolerance + 1.0,
+            rebuilt.cad_maximum_normal_deviation,
+            junctions,
+        )
+    with pytest.raises(ValueError, match="different proof operands"):
+        artifact.require(
+            charts,
+            rebuilt.cad_fidelity_tolerance,
+            rebuilt.cad_maximum_normal_deviation,
+            np.append(junctions, -1),
+        )
+    with pytest.raises(ValueError, match="different proof operands"):
+        artifact.require(
+            copy.copy(charts),
+            rebuilt.cad_fidelity_tolerance,
+            rebuilt.cad_maximum_normal_deviation,
+            junctions,
+        )
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(artifact)
+    # The constructor's verification binds only this exact, unchanged object.
+    assert PiecewiseLinearComplex.from_stored_fields(rebuilt) is rebuilt
+    # A copy or pytree rebuild is untrusted even in this process and must replay.
+    for untrusted in (
+        jax.tree_util.tree_map(lambda leaf: leaf, rebuilt),
+        copy.copy(rebuilt),
+    ):
+        assert untrusted is not rebuilt
+        restored = PiecewiseLinearComplex.from_stored_fields(untrusted)
+        assert restored is not untrusted
+        assert restored.complex_id == rebuilt.complex_id
+        assert restored.cad_embedding is not rebuilt.cad_embedding
+        assert _same_model_content(restored.cad_embedding, rebuilt.cad_embedding)
+    # An in-place content change voids the reuse: the full replay refuses it.
+    vertices = rebuilt.vertices
+    chain = [vertices]
+    while isinstance(chain[-1].base, np.ndarray):
+        chain.append(chain[-1].base)
+    original = float(vertices[0, 0])
+    for array in reversed(chain):
+        array.setflags(write=True)
+    vertices[0, 0] = original + 0.125
+    try:
+        with pytest.raises(ValueError):
+            PiecewiseLinearComplex.from_stored_fields(rebuilt)
+    finally:
+        vertices[0, 0] = original
+        for array in chain:
+            array.setflags(write=False)
+    assert PiecewiseLinearComplex.from_stored_fields(rebuilt) is rebuilt
+
+
+def test_cad_curve_ancestry_replay_binds_its_exact_live_charts(
+    multiregion_surface: tuple[
+        MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import copy
+
+    import phydrax.geometry._surface_source_support as support
+
+    _, _, result = multiregion_surface
+    charts = result.surface_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    replays: list[None] = []
+    original = support._cad_root_edges
+
+    def counted(value: SurfaceSourceCharts, /) -> object:
+        replays.append(None)
+        return original(value)
+
+    monkeypatch.setattr(support, "_cad_root_edges", counted)
+    first = support.validate_cad_curve_ancestry(charts, 0.05)
+    count = len(replays)
+    first[-1] = ()
+    again = support.validate_cad_curve_ancestry(charts, 0.05)
+    # The same live, unchanged charts at the same tolerance reuse the replay,
+    # and callers own their result mappings.
+    assert len(replays) == count
+    assert -1 not in again
+    # Another tolerance or a copy of the charts replays in full.
+    support.validate_cad_curve_ancestry(charts, 0.1)
+    assert len(replays) == count + 1
+    copied = support.validate_cad_curve_ancestry(copy.copy(charts), 0.05)
+    assert len(replays) == count + 2
+    assert copied == again
+
+
+def test_native_surface_producer_hands_its_proofs_to_cad_plc(
+    multiregion_surface: tuple[
+        MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
+    ],
+) -> None:
+    from phydrax._meshcore import meshcore_identity
+    from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
+    from phydrax.meshing._certification import _ComputedSurfaceAcceptance
+    from phydrax.meshing._model_codec import _same_model_content
+    from phydrax.meshing._native_construction import NativeMeshConstruction
+
+    report, _, _ = multiregion_surface
+    domain = report.inputs.feature_source
+    assert isinstance(domain, MeshingDomain)
+    model = domain.brep_authority
+    assert model is not None
+    scope = phx.meshing.MeshingScope.whole(model, 2)
+    specification = phx.meshing.SurfaceMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            2, 3, phx.meshing.CellFamilyPolicy(required=("triangle",))
+        ),
+        scope,
+        size_controls=(phx.meshing.UniformSizeControl(scope, 0.5),),
+        maximum_deviation=0.05,
+    )
+    plan = phx.meshing.NativeMeshingProvider().plan(model, specification)
+    construction = plan.prepared.execute()
+    assert isinstance(construction, NativeMeshConstruction)
+    assert type(construction.certification.validity_parent) is tuple
+    assert len(construction.certification.validity_parent) == 0
+    computed: list[_ComputedSurfaceAcceptance] = []
+    result = _accept_native_construction(
+        construction,
+        specification,
+        _NATIVE_PROVIDER,
+        meshcore_identity(),
+        plan.plan_id,
+        plan.route,
+        computed_surface_out=computed,
+    )
+    assert len(computed) == 1
+    charts = result.surface_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    accepted_domain = charts.domain
+    live = _cad_plc_data(
+        accepted_domain,
+        result,
+        charts,
+        "conforming",
+        0.05,
+        computed_surface=computed[0],
+    ).complex
+    assert live.cad_embedding is computed[0].report.embedding
+    assert live.cad_fidelity is computed[0].report.fidelity
+    # The constructor verified the handed-off proofs for this exact object.
+    assert PiecewiseLinearComplex.from_stored_fields(live) is live
+    renewed = PiecewiseLinearComplex.from_stored_fields(
+        jax.tree_util.tree_map(lambda leaf: leaf, live)
+    )
+    assert renewed.complex_id == live.complex_id
+    assert _same_model_content(renewed.cad_embedding, live.cad_embedding)
+    assert _same_model_content(renewed.cad_fidelity, live.cad_fidelity)
+    assert renewed.cad_embedding is not live.cad_embedding
+    assert renewed.cad_fidelity is not live.cad_fidelity
+    # The live handoff is process-local and bound to its actual scientific owners.
+    import copy
+    import pickle
+
+    from phydrax.discretization._surface_chart_records import SurfaceChartWitness
+
+    acceptance = computed[0]
+    changed = eqx.tree_at(
+        lambda value: value.mesh, acceptance.inputs, copy.copy(acceptance.inputs.mesh)
+    )
+    assert not acceptance.matches(changed)
+    changed = eqx.tree_at(
+        lambda value: value.geometry,
+        acceptance.inputs,
+        copy.copy(acceptance.inputs.geometry),
+    )
+    assert not acceptance.matches(changed)
+    assert acceptance.inputs.source is not None
+    changed = eqx.tree_at(
+        lambda value: value.source,
+        acceptance.inputs,
+        copy.copy(acceptance.inputs.source),
+    )
+    assert not acceptance.matches(changed)
+    witness = acceptance.inputs.fidelity_witness
+    assert isinstance(witness, SurfaceChartWitness)
+    altered_charts = np.asarray(witness.charts).copy()
+    altered_charts[0, 0, 0] += 0.25
+    altered_witness = eqx.tree_at(lambda value: value.charts, witness, altered_charts)
+    changed = eqx.tree_at(
+        lambda value: value.fidelity_witness, acceptance.inputs, altered_witness
+    )
+    assert not acceptance.matches(changed)
+    assert acceptance.inputs.fidelity_tolerance is not None
+    changed = eqx.tree_at(
+        lambda value: value.fidelity_tolerance,
+        acceptance.inputs,
+        acceptance.inputs.fidelity_tolerance + 1.0,
+    )
+    assert not acceptance.matches(changed)
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(acceptance)
+    _, _, another_result = multiregion_surface
+    assert another_result.surface_source is not None
+    with pytest.raises(ValueError, match="another report"):
+        _cad_plc_data(
+            domain,
+            another_result,
+            another_result.surface_source,
+            "conforming",
+            0.05,
+            computed_surface=acceptance,
         )

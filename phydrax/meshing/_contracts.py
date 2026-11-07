@@ -30,6 +30,7 @@ from ._controls import (
     RegionControl,
     RegionSeed,
 )
+from ._dual_extraction import SurfaceCrossField
 from ._scope import MeshingScope
 from ._sizing import (
     CurvatureSizeControl,
@@ -619,6 +620,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
     maximum_deviation: float | None = eqx.field(static=True)
     maximum_normal_deviation: float | None = eqx.field(static=True)
     quality_target: MeshQualityTarget | None
+    cross_field: SurfaceCrossField | None
     background_metric: BackgroundMetricControl | None
     deterministic: bool = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
@@ -642,6 +644,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         maximum_normal_deviation: float | None = None,
         quality_target: MeshQualityTarget | None = None,
         background_metric: BackgroundMetricControl | None = None,
+        cross_field: SurfaceCrossField | None = None,
         deterministic: bool = True,
     ) -> None:
         if not isinstance(target, CellMeshingTarget) or target.topological_dimension != 2:
@@ -717,6 +720,13 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
                 raise ValueError(
                     "The background metric must use the target ambient space."
                 )
+        if cross_field is not None:
+            if not isinstance(cross_field, SurfaceCrossField):
+                raise TypeError("cross_field must be SurfaceCrossField or None.")
+            if cross_field.source.ambient_dimension != target.ambient_dimension:
+                raise ValueError("The cross field must use the target ambient space.")
+            if cross_field.field_id != cross_field._scientific_id():
+                raise ValueError("The cross field does not match its scientific identity.")
         self.target = target
         self.planar_embedding = planar_embedding
         self.scope = scope
@@ -732,6 +742,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         self.maximum_normal_deviation = normal_deviation
         self.quality_target = quality_target
         self.background_metric = background_metric
+        self.cross_field = cross_field
         self.deterministic = bool(deterministic)
         self.specification_id = canonical_fingerprint(
             {
@@ -757,6 +768,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
                 "background_metric": (
                     None if background_metric is None else background_metric.control_id
                 ),
+                "cross_field": None if cross_field is None else cross_field.field_id,
                 "deterministic": bool(deterministic),
             }
         )
@@ -813,6 +825,11 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
                 value.background_metric, source_model=source_model
             )
         )
+        cross_field = (
+            None
+            if value.cross_field is None
+            else SurfaceCrossField.from_stored_fields(value.cross_field)
+        )
         rebuilt = cls(
             target,
             scope,
@@ -829,6 +846,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             maximum_normal_deviation=value.maximum_normal_deviation,
             quality_target=quality_target,
             background_metric=background_metric,
+            cross_field=cross_field,
             deterministic=value.deterministic,
         )
         if (
@@ -881,6 +899,10 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
                 if value.background_metric is None
                 else value.background_metric.control_id
             )
+            or (
+                None if rebuilt.cross_field is None else rebuilt.cross_field.field_id
+            )
+            != (None if value.cross_field is None else value.cross_field.field_id)
             or rebuilt.deterministic is not value.deterministic
         ):
             raise ValueError(

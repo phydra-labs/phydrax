@@ -425,6 +425,16 @@ class GmshProvider:
                 )
             case _:
                 raise TypeError("specification must be a Gmsh meshing specification.")
+        surface_specification = (
+            specification.surface
+            if isinstance(specification, SurfaceRemeshingSpec)
+            else specification
+        )
+        if (
+            isinstance(surface_specification, SurfaceMeshingSpec)
+            and surface_specification.cross_field is not None
+        ):
+            unsupported.append("source-bound surface cross fields")
         return ProviderSupportReport(
             self.info,
             descriptor,

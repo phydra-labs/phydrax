@@ -220,6 +220,7 @@ class _ChartMesh:
     root_cells: tuple[_SurfaceRootChart, ...] = ()
     split_proposals: tuple[_SourceSplitProposal, ...] = ()
     native_proposal_rows: frozenset[tuple[int, int]] = frozenset()
+    trim_roots: tuple[surface_support_owner.SurfaceTrimRoot, ...] = ()
 
     def edge_parameters(
         self,
@@ -1839,6 +1840,16 @@ def _make_chart_mesh(
         ),
         split_proposals=tuple(split_proposals),
         native_proposal_rows=frozenset(native_proposal_rows),
+        trim_roots=tuple(
+            surface_support_owner.SurfaceTrimRoot(
+                *occurrence, first, last, first_uv, last_uv
+            )
+            for curve, occurrence, (first, last), (first_uv, last_uv) in zip(
+                segment_curves, segment_occurrences, segment_parameters,
+                segment_chart_endpoints, strict=True,
+            )
+            if curve >= 0 and domain.brep_authority is None
+        ),
     )
 
 
@@ -2981,13 +2992,21 @@ class _CurveChordBounds:
                     )
                     self.use_point_bounds[key] = bounds
                     return bounds
-            _, bounds = _surface_mapped_curve_bounds(
-                self.domain.patches[patch].surface,
-                use.pcurve,
-                float(fraction_endpoint(native, upper=False)),
-                float(fraction_endpoint(native, upper=True)),
-                self.preparation,
-            )
+            try:
+                _, bounds = _surface_mapped_curve_bounds(
+                    self.domain.patches[patch].surface,
+                    use.pcurve,
+                    float(fraction_endpoint(native, upper=False)),
+                    float(fraction_endpoint(native, upper=True)),
+                    self.preparation,
+                )
+            except (ArithmeticError, NotImplementedError, TypeError, ValueError) as error:
+                raise _failure(
+                    "source p-curve endpoint has no finite mapped continuous point "
+                    f"enclosure on patch {patch} at native parameter {native}: {error}",
+                    category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    entity_ids=(int(use.curve),),
+                ) from error
             self.use_point_bounds[key] = bounds
         return bounds
 
@@ -3397,7 +3416,7 @@ def _pole_graded_rings(
     ring_distance: Callable[[Fraction], tuple[float, float]],
     inner_alpha: Fraction,
     alpha_limit: Fraction,
-    stops: tuple[Fraction, ...],
+    stops: tuple[tuple[Fraction, Fraction], ...],
     inner_parameters: list[Fraction],
     edge_limit: float,
     /,
@@ -3408,11 +3427,13 @@ def _pole_graded_rings(
     ``alpha`` of the pole-to-interior span and its physical distance from the
     pole. Without these rings the chart-isotropic quality triangulation would
     join the small cap ring to vertices far from the pole by needle triangles.
-    ``stops`` are the increasing offsets of source-curve samples on the strip
-    ends; a ring snaps onto a stop within its step (or within half a step
-    beyond it), so no curve sample sits just beside a ring.
+    ``stops`` pair source-curve offsets with their exact fixed chart coordinates.
+    A ring may select a stop within its step (or within half a step beyond it),
+    retaining that coordinate without reconstructing it from a rounded float.
     """
     free_axis = 1 - fixed_axis
+    stop_points = dict(stops)
+    stop_offsets = tuple(stop_points)
     free_values: dict[Fraction, Fraction] = {}
 
     def free_value(parameter: Fraction, /) -> Fraction:
@@ -3469,8 +3490,8 @@ def _pole_graded_rings(
         # no stop sits just beside a ring. Stops denser than the rings stay
         # radial side points of their band cells.
         step = next_radius - radius
-        within = [stop for stop in stops if alpha < stop <= next_alpha]
-        beyond = next((stop for stop in stops if stop > next_alpha), None)
+        within = [stop for stop in stop_offsets if alpha < stop <= next_alpha]
+        beyond = next((stop for stop in stop_offsets if stop > next_alpha), None)
         if within:
             next_alpha = within[-1]
             next_value, next_radius = ring_distance(next_alpha)
@@ -3492,7 +3513,9 @@ def _pole_graded_rings(
         gap = next_radius - radius
         if next_alpha == alpha or gap <= 0.0 or next_value == value:
             break
-        fixed = Fraction.from_float(next_value)
+        fixed = stop_points.get(next_alpha)
+        if fixed is None:
+            fixed = Fraction.from_float(next_value)
         chord_limit = min(edge_limit, _POLE_RING_CHORD_RATIO * gap)
         physical = evaluate(parameters, fixed)
         while True:
@@ -3530,14 +3553,14 @@ def _pole_ring_stops(
     alpha_limit: Fraction,
     parameters_by_curve: dict[int, set[Fraction]],
     /,
-) -> tuple[Fraction, ...]:
-    """Offsets of the samples of the trims leaving the pole along its strip ends."""
+) -> tuple[tuple[Fraction, Fraction], ...]:
+    """Source trim stop offsets paired with their exact fixed chart coordinates."""
     use = loop[use_index]
     free_axis = 1 - fixed_axis
     ends = {point[free_axis] for point in _canonical_use_endpoints(use)}
     pole = Fraction.from_float(pole_fixed)
     span = Fraction.from_float(inside_fixed) - pole
-    stops: set[Fraction] = set()
+    stops: dict[Fraction, Fraction] = {}
     for neighbor in (loop[use_index - 1], loop[(use_index + 1) % len(loop)]):
         if not isinstance(neighbor, domain_owner.PatchCurveUse):
             continue
@@ -3545,8 +3568,8 @@ def _pole_ring_stops(
             point = _use_chart_point(neighbor, parameter)
             offset = (point[fixed_axis] - pole) / span
             if point[free_axis] in ends and 0 < offset < alpha_limit:
-                stops.add(offset)
-    return tuple(sorted(stops))
+                stops[offset] = point[fixed_axis]
+    return tuple(sorted(stops.items()))
 
 
 def _pole_sampling(
@@ -4313,6 +4336,24 @@ def _chart_curve_bounds(
     return bounds
 
 
+def _apply_curve_edge_bounds(
+    triangles: list[tuple[int, int, int]],
+    bounds: dict[tuple[int, int], float],
+    deviations: np.ndarray,
+    /,
+) -> None:
+    """Raise each cell bound by every incident source-trim bound in linear time."""
+    for row, triangle in enumerate(triangles):
+        for first, last in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
+            bound = bounds.get(_edge_key(first, last))
+            if bound is not None:
+                deviations[row] = max(float(deviations[row]), bound)
+
+
 _FOLD_PROBE_STEP = 1.0e-6
 # A normal aim also probes each cell this far from a corner toward its centroid.
 _CORNER_PROBE_WEIGHT = 0.9
@@ -4961,15 +5002,9 @@ def _refine_charts(
             vertex_pair = tuple(sorted((first_global, last_global)))
             key = (curve, vertex_pair[0], vertex_pair[1])
             curve_edge_bounds[key] = max(curve_edge_bounds.get(key, 0.0), bound)
-            for local_cell, triangle in enumerate(chart.triangles):
-                if edge in (
-                    _edge_key(triangle[0], triangle[1]),
-                    _edge_key(triangle[1], triangle[2]),
-                    _edge_key(triangle[2], triangle[0]),
-                ):
-                    deviations[cell_offset + local_cell] = max(
-                        float(deviations[cell_offset + local_cell]), bound
-                    )
+        _apply_curve_edge_bounds(
+            chart.triangles, bounds, deviations[cell_offset : cell_offset + len(chart.triangles)]
+        )
         cell_offset += len(chart.triangles)
     return _RefinedSurface(
         tuple(charts),
@@ -5294,6 +5329,7 @@ def _surface_construction(
             for chart in refined.charts
         ),
         curve_parameters,
+        tuple((lower, upper) for _, lower, upper in intervals),
         refined.minimum_angle,
     )
 
@@ -5592,16 +5628,20 @@ def _domain_curve_source_query(
         ]
     ] = []
     endpoint_bounds = []
+    endpoint_parameter_bounds = []
     for numeric_id in available.tolist():
         identifier = int(numeric_id)
         if identifier not in selected_set:
             continue
         entity_id, occurrence = domain.source_entity_key_for_scope(1, identifier)
         chart_uses = domain.source_curve_chart_uses(identifier)
-        for chart_id, patch_row, _loop_row, _use_row, use in chart_uses:
+        for chart_id, patch_row, loop_row, use_row, use in chart_uses:
             curve = SurfaceMappedCurve(domain.patches[patch_row].surface, use.pcurve)
             curves.append(curve)
             ranges.append((float(use.first), float(use.last)))
+            endpoint_parameter_bounds.append(
+                domain.source_curve_endpoint_parameter_bounds(patch_row, loop_row, use_row)
+            )
             curve_entity_ids.append(entity_id)
             occurrences.append(occurrence)
             chart_ids.append(chart_id)
@@ -5628,7 +5668,7 @@ def _domain_curve_source_query(
             )
     if not curves:
         raise ValueError("Selected MeshingDomain curve scope has no authored trim uses.")
-    return ParametricCurveBoundarySource(
+    query = ParametricCurveBoundarySource(
         tuple(curves),
         tuple(ranges),
         source_id=domain.source_id,
@@ -5638,7 +5678,10 @@ def _domain_curve_source_query(
         chart_ids=tuple(chart_ids),
         endpoint_source_keys=tuple(endpoint_keys),
         endpoint_point_bounds=tuple(endpoint_bounds),
+        endpoint_parameter_bounds=tuple(endpoint_parameter_bounds),
     )
+    domain.validate_curve_boundary_query(query, selected)
+    return query
 
 
 def _surface_curve_chart_witness(
@@ -6086,6 +6129,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             source_piece_ids=construction.triangle_source_pieces,
             root_parameter_exact=root_parameter_exact,
             boundary_occurrences=construction.boundary_occurrences,
+            trim_roots=tuple(root for chart in refined.charts for root in chart.trim_roots),
         )
         organization = _organization(
             domain,
@@ -6203,12 +6247,20 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             scoped_fidelity.append(
                 (feature_query, feature_witness, feature.maximum_deviation)
             )
+        proof_tolerance = refined.fidelity_tolerance
+        if proof_tolerance is None:
+            from ...geometry._source_interpolation import exact_affine_boundary_source
+
+            if exact_affine_boundary_source(self.boundary_source):
+                # This is an internal zero-distance proof obligation, not an
+                # authored meshing control; acceptance still proves the chart.
+                proof_tolerance = 0.0
         certification = NativeCertificationRequest(
             MeshCertificationSchedule("surface"),
             domain.source_id,
             domain.source_revision,
             fidelity_source=self.boundary_source,
-            fidelity_tolerance=refined.fidelity_tolerance,
+            fidelity_tolerance=proof_tolerance,
             junction_vertices=junction_ids if junction_ids.size else None,
             protected_features=self.specification.protected_features,
             maximum_normal_deviation=self.specification.maximum_normal_deviation,

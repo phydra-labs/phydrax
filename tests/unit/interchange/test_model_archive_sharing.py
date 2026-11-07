@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 from pathlib import Path
 from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -124,6 +127,45 @@ def test_pack_and_restore_reuse_one_validated_descriptor_tree(
     )
     assert calls == 2
     assert restored.entries[0].value.mesh_id == value.entries[0].value.mesh_id
+
+
+def test_model_array_recipe_releases_restored_strict_owner() -> None:
+    import weakref
+
+    from phydrax._model._structure import (
+        model_from_array_recipe,
+        model_structure_recipe,
+        pack_model_array_tree,
+    )
+    from phydrax.geometry._mesh_certificates import _same_tree_content
+    from phydrax.meshing._model_codec import _register_model_archive_types
+
+    _register_model_archive_types()
+    mesh = _mesh()
+    recipe = model_structure_recipe(mesh)
+    arrays = pack_model_array_tree(mesh, recipe, prefix="model")
+    restored = model_from_array_recipe(recipe, arrays, prefix="model")
+    assert _same_tree_content(restored, mesh)
+    assert restored.mesh_id == mesh.mesh_id
+    assert restored.topology_id == mesh.topology_id
+    with pytest.raises((AttributeError, TypeError)):
+        restored.mesh_id = "invalid"
+    owner = weakref.ref(restored)
+    del restored
+    assert owner() is None
+
+
+def test_row_restore_preserves_aliases_without_retaining_owners() -> None:
+    import weakref
+
+    from phydrax._model._structure import restore_row_record_recipes
+
+    mesh = _mesh()
+    owner = weakref.ref(mesh)
+    restored = restore_row_record_recipes((mesh, mesh))
+    assert restored[0] is mesh and restored[1] is mesh
+    del mesh, restored
+    assert owner() is None
 
 
 def test_selected_archive_fields_retain_shared_payloads_and_refuse_wrong_root(
@@ -292,8 +334,25 @@ def test_cad_graph_columns_preserve_inventory_and_reject_tampering() -> None:
     with pytest.raises(ValueError, match="identity changed"):
         restore_row_record_recipes(raw._replace(graph_id="forged"))
 
+    import weakref
 
-@pytest.mark.parametrize("tamper", ("definition", "duplicate", "unresolved"))
+    owner = _mesh()
+    owner_ref = weakref.ref(owner)
+
+    def refuse_after_owner(value: CellMesh, /) -> None:
+        try:
+            restore_row_record_recipes((value, raw._replace(graph_id="forged")))
+        except ValueError as error:
+            assert "identity changed" in str(error)
+        else:
+            pytest.fail("Forged graph was accepted.")
+
+    refuse_after_owner(owner)
+    del owner
+    assert owner_ref() is None
+
+
+@pytest.mark.parametrize("tamper", ("definition", "duplicate", "unresolved", "cycle"))
 def test_shared_archive_nodes_refuse_changed_or_noncanonical_definitions(
     tmp_path: Path, tamper: str
 ) -> None:
@@ -313,8 +372,10 @@ def test_shared_archive_nodes_refuse_changed_or_noncanonical_definitions(
     elif tamper == "duplicate":
         reference.clear()
         reference.update(copy.deepcopy(definition))
-    else:
+    elif tamper == "unresolved":
         reference["key"] = "0" * 64
+    else:
+        definition["fields"]["coordinates"] = dict(reference)
     changed = tmp_path / "changed"
     changed.mkdir()
     write_array_archive(
@@ -325,6 +386,20 @@ def test_shared_archive_nodes_refuse_changed_or_noncanonical_definitions(
     ) as refused:
         _read(changed / "source.phx")
     assert "Shared model recipe" in str(refused.value.__cause__)
+
+
+def test_shared_archive_raw_manifest_depth_is_bounded(tmp_path: Path) -> None:
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS
+
+    path = write_model_artifact(tmp_path / "depth.phx", _composition(_mesh()), limits=None)
+    limits = dataclasses.replace(MODEL_ARCHIVE_LIMITS, max_manifest_nesting=3)
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_artifact(
+            path,
+            expected_type=Composition,
+            restore=restore_model_archive_value,
+            limits=limits,
+        )
 
 
 def test_model_archive_readers_see_only_expanded_recipes(tmp_path: Path) -> None:
@@ -360,3 +435,124 @@ def test_model_archive_readers_see_only_expanded_recipes(tmp_path: Path) -> None
     assert set(restored_arrays) == set(arrays)
     for name, value in restored_arrays.items():
         np.testing.assert_array_equal(value, changed_arrays[name])
+
+
+def test_pack_charges_only_proven_immutable_owners() -> None:
+    from phydrax._array_archive import ArrayArchiveLimits
+    from phydrax._model._structure import _pack_owned_model_array_tree, model_structure_recipe
+
+    limits = ArrayArchiveLimits(max_total_array_elements=8, max_manifest_nesting=64)
+    shared = jnp.arange(8)
+    value = (shared, shared)
+    recipe = model_structure_recipe(value)
+    packed = _pack_owned_model_array_tree(value, recipe, prefix="leaves", limits=limits)
+    assert packed["leaves/000000"] is packed["leaves/000001"]
+
+    distinct = (jnp.arange(8), jnp.arange(8))
+    with pytest.raises(ValueError, match="total element limit"):
+        _pack_owned_model_array_tree(
+            distinct, model_structure_recipe(distinct), prefix="leaves", limits=limits
+        )
+    mutable = np.arange(8)
+    with pytest.raises(ValueError, match="total element limit"):
+        _pack_owned_model_array_tree(
+            (mutable, mutable),
+            model_structure_recipe((mutable, mutable)),
+            prefix="leaves",
+            limits=limits,
+        )
+    immutable = np.frombuffer(mutable.tobytes(), dtype=mutable.dtype)
+    packed = _pack_owned_model_array_tree(
+        (immutable, immutable),
+        model_structure_recipe((immutable, immutable)),
+        prefix="leaves",
+        limits=limits,
+    )
+    assert packed["leaves/000000"] is packed["leaves/000001"]
+
+
+def test_model_immutable_shared_admission_preserves_wire_and_records(tmp_path: Path) -> None:
+    from phydrax._model._structure import model_archive_root_projection
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, model_archive_content_id
+
+    mesh = _mesh()
+    value = _composition(mesh, mesh)
+    projected = model_archive_root_projection(model_archive_root_projection(value))
+    leaves = jax.tree_util.tree_leaves(projected)
+    seen: set[int] = set()
+    physical = logical = 0
+    for leaf in leaves:
+        if not isinstance(leaf, (jax.Array, np.ndarray)):
+            continue
+        count = int(leaf.size)
+        logical += count
+        backing: object = leaf
+        while isinstance(backing, np.ndarray) and not backing.flags.writeable:
+            backing = backing.base
+        if isinstance(leaf, jax.Array) or isinstance(backing, bytes):
+            if id(leaf) in seen:
+                continue
+            seen.add(id(leaf))
+        physical += count
+    assert 0 < physical < logical
+    limits = dataclasses.replace(MODEL_ARCHIVE_LIMITS, max_total_array_elements=physical)
+    bounded = write_model_artifact(tmp_path / "bounded.phx", value, limits=limits)
+    baseline = write_model_artifact(tmp_path / "baseline.phx", value, limits=None)
+    assert bounded.read_bytes() == baseline.read_bytes()
+    assert model_archive_content_id(bounded, limits=limits) == model_archive_content_id(
+        baseline, limits=None
+    )
+    restored = read_model_artifact(
+        bounded,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=limits,
+    )
+    assert restored.entries[0].value is not restored.entries[1].value
+    assert [entry.value.mesh_id for entry in restored.entries] == [mesh.mesh_id] * 2
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive(bounded, limits=limits)
+
+    distinct = write_model_artifact(
+        tmp_path / "distinct-records.phx", _composition(mesh, _mesh()), limits=None
+    )
+    decoded = _read(distinct)
+    assert decoded.entries[0].value is not decoded.entries[1].value
+
+
+def test_shared_payloads_still_bound_logical_expanded_bytes() -> None:
+    from phydrax._array_archive import ArrayArchiveLimits
+    from phydrax._model._structure import (
+        _expand_shared_immutable_model_archive_recipe,
+        _pack_owned_model_array_tree,
+        model_structure_recipe,
+        pack_model_array_tree,
+        share_model_archive_recipe,
+    )
+
+    payload = np.frombuffer(bytes(range(32)), dtype=np.uint8)
+    value = ((payload,), (payload,), (payload,))
+    recipe = model_structure_recipe(value)
+    arrays = pack_model_array_tree(value, recipe, prefix="leaves", limits=None)
+    shared, members = share_model_archive_recipe(recipe, arrays, prefix="leaves")
+    assert _nodes(shared, "shared")
+    limits = ArrayArchiveLimits(
+        max_total_array_elements=32, max_aggregate_bytes=64, max_manifest_nesting=64
+    )
+    with pytest.raises(ValueError, match="total array-byte limit"):
+        _pack_owned_model_array_tree(value, recipe, prefix="leaves", limits=limits)
+    with pytest.raises(ValueError, match="total array-byte limit"):
+        _expand_shared_immutable_model_archive_recipe(shared, members, "leaves", limits)
+
+    distinct = ((payload,), (np.frombuffer(bytes(range(32, 64)), dtype=np.uint8),))
+    distinct_recipe = model_structure_recipe(distinct)
+    distinct_arrays = pack_model_array_tree(
+        distinct, distinct_recipe, prefix="leaves", limits=None
+    )
+    distinct_shared, distinct_members = share_model_archive_recipe(
+        distinct_recipe, distinct_arrays, prefix="leaves"
+    )
+    with pytest.raises(ValueError, match="total element limit"):
+        _expand_shared_immutable_model_archive_recipe(
+            distinct_shared, distinct_members, "leaves", limits
+        )

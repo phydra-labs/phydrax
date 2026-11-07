@@ -327,6 +327,9 @@ def layer_wall_associations(
             source_parameter_intervals=tuple(
                 parent.source_parameter_intervals[row] for row in rows
             ),
+            target_parameter_intervals=tuple(
+                parent.target_parameter_intervals[row] for row in rows
+            ),
             source_parameter_points=tuple(
                 parent.source_parameter_points[row] for row in rows
             ),
@@ -373,6 +376,101 @@ def composite_region_identity(
         region_id,
         occurrence_path=region_path,
     )
+
+
+def _is_exact_closed_cap_facet(
+    source: sources_owner.NativeLayerCoreSource, facet: int, /
+) -> bool:
+    """Prove one internal PLC facet against its actual accepted layer cap."""
+    layers, complex_ = source.layers, source.complex
+    cap = layers.cap
+    if (
+        not layers.closed_cap
+        or cap is None
+        or source.source_boundary_charts is None
+        or source.source_boundary_scope is not None
+        or len(source.region_ids) != 1
+    ):
+        return False
+    polygons = np.asarray(source.cap_polygon_ids, dtype=np.int64)
+    facet_rows = np.asarray(complex_.polygon_facets, dtype=np.int64)
+    matches = np.flatnonzero(facet_rows[polygons] == facet)
+    if matches.size == 0:
+        return False
+    if matches.size != 1:
+        raise ValueError("An internal cap facet must bind one accepted cap cell.")
+    cap_row = int(matches[0])
+    cap_index = cap_row
+    polygon = int(polygons[cap_row])
+    for block in cap.blocks:
+        if cap_row < block.cell_count:
+            cap_vertices = np.asarray(block.vertices[cap_row], dtype=np.int64)
+            cap_id = int(np.asarray(block.global_ids)[cap_row])
+            break
+        cap_row -= block.cell_count
+    else:
+        raise ValueError("An internal cap facet names an absent accepted cap cell.")
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    plc_vertices = np.asarray(complex_.polygon_vertices, dtype=np.int64)[
+        offsets[polygon] : offsets[polygon + 1]
+    ]
+    vertex_map = np.asarray(source.vertex_layer_ids, dtype=np.int64)
+    if plc_vertices.shape != (3,) or np.any(vertex_map[plc_vertices] < 0):
+        raise ValueError("An internal cap must retain its accepted triangle vertices.")
+    layer_rows = vertex_map[plc_vertices]
+    expected_rows = np.asarray(layers.cap_vertices, dtype=np.int64)[cap_vertices]
+    if layer_topology.cycle(tuple(layer_rows.tolist())) != layer_topology.cycle(
+        tuple(expected_rows.tolist())
+    ) or not layer_topology.bitwise_equal_points(
+        np.asarray(complex_.vertices, dtype=np.float64)[plc_vertices],
+        np.asarray(layers.mesh.coordinates, dtype=np.float64)[layer_rows],
+    ):
+        raise ValueError("An internal cap differs from its accepted layer triangle.")
+    layer_ids = np.asarray(layers.mesh.vertex_global_ids, dtype=np.int64)
+    path = tuple(complex_.facet_occurrence_paths[facet])
+    wall = layers.source_wall
+    cap_only = len(polygons) == len(facet_rows) and np.all(vertex_map >= 0)
+    if cap_only:
+        expected_facet = f"{source.source_id}:cap-facet:{cap_index}"
+        cap_vertex_ids = np.asarray(cap.vertex_global_ids, dtype=np.int64)
+        expected_vertices = tuple(
+            f"{source.source_id}:cap-vertex:{int(cap_vertex_ids[int(vertex)])}"
+            for vertex in plc_vertices
+        )
+        identity_matches = (
+            isinstance(wall, CellMesh)
+            and (source.source_id, source.source_revision)
+            == (str(wall.mesh_id), str(wall.numeric_version))
+            and path == ()
+            and source.source_wall_charts is not None
+        )
+    else:
+        expected_facet = f"cap-cell:{cap_id}"
+        expected_vertices = tuple(
+            f"cap-vertex:{int(layer_ids[int(owner)])}" for owner in layer_rows
+        )
+        identity_matches = (
+            isinstance(wall, CellMesh)
+            and path[:2] == (wall.mesh_id, wall.numeric_version)
+            and len(path) >= 3
+            and source.source_wall_charts is None
+        )
+    if (
+        not identity_matches
+        or complex_.facet_ids[facet] != expected_facet
+        or tuple(complex_.facet_regions[facet]) != (0, -1)
+        or not np.array_equal(np.asarray(source.core_region_map), np.asarray((0,)))
+        or np.any(np.asarray(source.layer_regions) != 0)
+        or any(
+            complex_.vertex_ids[int(vertex)] != expected
+            or tuple(complex_.vertex_occurrence_paths[int(vertex)]) != path
+            for vertex, expected in zip(plc_vertices, expected_vertices, strict=True)
+        )
+    ):
+        raise ValueError(
+            "An internal cap lost its actual source identity or material sides."
+        )
+    return True
 
 
 def _core_source_identity(
@@ -467,6 +565,8 @@ def _core_source_identity(
             identifier,
             occurrence_path=path,
         )
+        if _is_exact_closed_cap_facet(source, row):
+            return identity, path
         return bind(identity, path)
     if dimension == 3:
         region_rows = {
@@ -608,6 +708,8 @@ def _polyhedral_core_source_associations(
         association_owner.GeometrySourceEntityRole.REGION: 3,
     }
     for dimension, record in enumerate(records):
+        if record.source_boundary_witness_id is not None:
+            raise ValueError("Power-core face pieces require a composed target witness.")
         role_values = record.source_roles
         source_entities: list[str] = []
         source_paths: list[tuple[str, ...]] = []
@@ -682,6 +784,7 @@ def _polyhedral_core_source_associations(
                 source_occurrence_paths=tuple(source_paths),
                 source_region_sides=tuple(region_sides),
                 source_parameter_intervals=record.source_parameter_intervals,
+                target_parameter_intervals=record.target_parameter_intervals,
                 source_parameter_points=record.source_parameter_points,
                 parameters=np.asarray(record.parameters, dtype=np.float64),
                 orientations=np.asarray(record.orientations, dtype=np.int8),
@@ -709,6 +812,17 @@ def core_source_associations(
     /,
 ) -> tuple[association_owner.GeometryAssociation, ...]:
     """Compose exact PLC ancestry onto the mixed layer/core mesh."""
+    internal_cap: frozenset[int] = frozenset()
+    if (
+        source.layers.closed_cap
+        and source.source_boundary_charts is not None
+        and any(value is None for value in source.core_facet_source_ids)
+    ):
+        layer_topology.validate_closed_boundary_source(source)
+        facets = np.asarray(source.complex.polygon_facets, dtype=np.int64)
+        internal_cap = frozenset(
+            int(facets[int(polygon)]) for polygon in source.cap_polygon_ids
+        )
     if isinstance(core, polyhedral_generation_owner.PolyhedralConstruction):
         return _polyhedral_core_source_associations(
             source, core, target, core_vertex_map, core_cell_ids
@@ -987,16 +1101,21 @@ def core_source_associations(
         )
         face_entities.append(face_identity)
         positive, negative = (int(value) for value in complex_.facet_regions[int(facet)])
-        face_sides.append(
-            (
-                None
-                if negative < 0
-                else composite_region_ids[int(core_region_map[negative])],
-                None
-                if positive < 0
-                else composite_region_ids[int(core_region_map[positive])],
+        if int(facet) in internal_cap:
+            # The cap is a retained PLC stratum, not an exterior source patch.
+            # Its two actual incident cells have the one certified material.
+            face_sides.append((composite_region_ids[0], composite_region_ids[0]))
+        else:
+            face_sides.append(
+                (
+                    None
+                    if negative < 0
+                    else composite_region_ids[int(core_region_map[negative])],
+                    None
+                    if positive < 0
+                    else composite_region_ids[int(core_region_map[positive])],
+                )
             )
-        )
         face_paths.append(face_path)
     if face_targets:
         target_ids = np.asarray(face_targets, dtype=np.int64)

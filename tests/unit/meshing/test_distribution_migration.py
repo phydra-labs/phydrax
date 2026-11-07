@@ -779,6 +779,7 @@ def _distributed_live_family_worker(
     group: ExecutionGroup, rank: int, /
 ) -> dict[str, object]:
     from fractions import Fraction
+
     from phydrax.discretization import coarsen_adaptive_simplex
     from phydrax.meshing._distribution_forest import PeriodicSimplexForest
     from phydrax.meshing._distribution_migration import migrate_periodic_simplex_forest
@@ -826,6 +827,56 @@ def _distributed_live_family_worker(
     split_fields = split.records.cell_field_map()
     split_active = np.asarray(split_fields["active"], dtype=np.bool_)
     assert np.unique(np.asarray(split.records.cell_owner_ranks)[split_active]).size == 3
+
+    # A stored source-owner assignment need not equal migration's minimum
+    # incident leaf owner. Replay must preserve it while comparing replicas.
+    def with_vertex_owners(owners: np.ndarray) -> PeriodicSimplexForest:
+        records = split.records
+        return PeriodicSimplexForest(
+            SimplexForestRecords(
+                records.cell_ids,
+                records.cell_owner_ranks,
+                dict(records.cell_fields),
+                records.vertex_ids,
+                owners,
+                dict(records.vertex_fields),
+                records.protected_edge_ids,
+                records.dimension,
+                records.ambient_dimension,
+                records.next_vertex_id,
+                records.next_cell_id,
+            ),
+            split.vertex_source_ids,
+            split.vertex_absolute_windings,
+            split.exact_vertex_coordinates,
+            split.block_names,
+            split.source_id,
+            split.source_revision,
+            split.periodic_cell_id,
+        )
+
+    source_owned = with_vertex_owners(
+        np.full(split.records.vertex_ids.shape, 2, dtype=np.int32)
+    )
+    validated = migrate_periodic_simplex_forest(
+        source_owned,
+        split_ids,
+        group,
+        axis_name="live_family_validate_source_owners",
+        validate_replicas=True,
+    )
+    assert validated.forest_id == source_owned.forest_id
+    forged_owners = np.full(split.records.vertex_ids.shape, 2, dtype=np.int32)
+    if rank == 0:
+        forged_owners[0] = 1
+    with pytest.raises(ValueError):
+        migrate_periodic_simplex_forest(
+            with_vertex_owners(forged_owners),
+            split_ids,
+            group,
+            axis_name="live_family_validate_forged_replica",
+            validate_replicas=True,
+        )
     reunited_ids = active_ids[roots % 2 == rank]
     reunited = migrate_periodic_simplex_forest(
         split, reunited_ids, group, axis_name="live_family_reunite"

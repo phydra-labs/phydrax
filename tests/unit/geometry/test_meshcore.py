@@ -18,8 +18,10 @@ from scipy.spatial import ConvexHull
 from phydrax._meshcore import (
     arrange_tetrahedra_exact,
     clip_reference_tetrahedron_exact,
+    IntervalBoxProgram,
     meshcore_available,
     meshcore_identity,
+    MeshcoreError,
     MeshcoreStatus,
     mixed_template,
     mixed_template_counts,
@@ -42,6 +44,7 @@ from phydrax._meshcore import (
     TetMeshEdit,
     TetMeshEditKind,
     TetMeshEditStatus,
+    TetMeshImplicitSource,
     TetMeshPlaneRefusal,
     TetMeshSourceComplex,
     TetMeshSourceEvidence,
@@ -599,7 +602,9 @@ def test_triangle_dual_quads_validates_and_preserves_shared_node_ids() -> None:
         triangle_dual_quads(duplicate, 7)
 
 
-def _declared_unit_tet(plane: np.ndarray, tolerance: float) -> TetMesh3D:
+def _declared_unit_tet(
+    plane: np.ndarray, tolerance: float, initial_vertex_sizes: object | None = None
+) -> TetMesh3D:
     # Face row 3 (z = 0) declares `plane`; the other rows declare none.
     faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
     face_ids = np.asarray((101, 102, 103, 104), dtype=np.int64)
@@ -630,8 +635,206 @@ def _declared_unit_tet(plane: np.ndarray, tolerance: float) -> TetMesh3D:
         np.empty((0, 2), dtype=np.int32),
         np.empty((0,), dtype=np.int64),
         boundary_policy=PlcBoundaryPolicy.CONFORMING,
+        initial_vertex_sizes=initial_vertex_sizes,
         source=source,
     )
+
+
+def test_tet_candidate_quality_rechecks_geometry_and_retained_sizes() -> None:
+    plane = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    with _declared_unit_tet(plane, 0.0) as state:
+        state.refine(radius_edge_bound=10.0, sizes=np.full((4,), 2.0))
+        snapshot = state.arrays()
+        points, vertex_ids = snapshot.points, snapshot.vertex_ids
+        current = state.evaluate_quality(radius_edge_bound=10.0, min_dihedral_degrees=0.0)
+        candidate = state.evaluate_candidate_quality(
+            points,
+            vertex_ids=vertex_ids,
+            radius_edge_bound=10.0,
+            min_dihedral_degrees=0.0,
+        )
+        np.testing.assert_array_equal(candidate.criteria, current.criteria)
+        np.testing.assert_array_equal(candidate.reasons, current.reasons)
+        np.testing.assert_array_equal(candidate.values, current.values)
+        stretched = points.copy()
+        stretched[3, 2] = 10.0
+        larger = state.evaluate_candidate_quality(
+            stretched,
+            vertex_ids=vertex_ids,
+            radius_edge_bound=10.0,
+            min_dihedral_degrees=0.0,
+        )
+        assert 1 in larger.criteria  # Retained SIZE target.
+        inverted = points.copy()
+        inverted[3, 2] = -1.0
+        invalid = state.evaluate_candidate_quality(
+            inverted,
+            vertex_ids=vertex_ids,
+            radius_edge_bound=10.0,
+            min_dihedral_degrees=0.0,
+        )
+        assert np.any((invalid.criteria == 4) & (invalid.reasons == 2))
+        assert (
+            len({candidate.candidate_id, larger.candidate_id, invalid.candidate_id}) == 3
+        )
+        assert candidate.historical_identity == state.identity
+        np.testing.assert_array_equal(state.arrays().points, points)
+        with pytest.raises(ValueError, match="vertex IDs"):
+            state.evaluate_candidate_quality(
+                points,
+                vertex_ids=vertex_ids[::-1],
+                radius_edge_bound=10.0,
+                min_dihedral_degrees=0.0,
+            )
+        with pytest.raises(ValueError, match="align"):
+            state.evaluate_candidate_quality(
+                points[:-1],
+                vertex_ids=vertex_ids,
+                radius_edge_bound=10.0,
+                min_dihedral_degrees=0.0,
+            )
+        nonfinite = points.copy()
+        nonfinite[0, 0] = np.nan
+        with pytest.raises(ValueError, match="finite"):
+            state.evaluate_candidate_quality(
+                nonfinite,
+                vertex_ids=vertex_ids,
+                radius_edge_bound=10.0,
+                min_dihedral_degrees=0.0,
+            )
+
+
+def test_tet_quality_can_omit_radius_without_omitting_validity() -> None:
+    plane = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    with _declared_unit_tet(plane, 0.0) as state:
+        points = state.arrays().points
+        identifiers = state.arrays().vertex_ids
+        quality = state.evaluate_quality(
+            radius_edge_bound=None, min_dihedral_degrees=0.0
+        )
+        assert not np.any(quality.criteria == 0)
+        candidate = state.evaluate_candidate_quality(
+            points, vertex_ids=identifiers, radius_edge_bound=None,
+            min_dihedral_degrees=0.0,
+        )
+        np.testing.assert_array_equal(candidate.criteria, quality.criteria)
+        bounded = state.evaluate_candidate_quality(
+            points, vertex_ids=identifiers, radius_edge_bound=2.0,
+            min_dihedral_degrees=0.0,
+        )
+        assert bounded.candidate_id != candidate.candidate_id
+        sliver = points.copy()
+        sliver[3, 2] = 0.01
+        angle_quality = state.evaluate_candidate_quality(
+            sliver, vertex_ids=identifiers, radius_edge_bound=None,
+            min_dihedral_degrees=10.0,
+        )
+        assert 2 in angle_quality.criteria
+        assert not np.any(angle_quality.criteria == 0)
+        inverted = points.copy()
+        inverted[3, 2] = -1.0
+        invalid = state.evaluate_candidate_quality(
+            inverted, vertex_ids=identifiers, radius_edge_bound=None,
+            min_dihedral_degrees=0.0,
+        )
+        assert np.any((invalid.criteria == 4) & (invalid.reasons == 2))
+        assert candidate.candidate_id != invalid.candidate_id
+        with pytest.raises(ValueError, match="radius_edge_bound"):
+            state.evaluate_quality(radius_edge_bound=0.0, min_dihedral_degrees=0.0)
+        with pytest.raises(ValueError, match="radius_edge_bound"):
+            state.evaluate_candidate_quality(
+                points, vertex_ids=identifiers, radius_edge_bound=0.0,
+                min_dihedral_degrees=0.0,
+            )
+        with pytest.raises(ValueError, match="radius_edge_bound"):
+            state.refine(radius_edge_bound=0.0)
+        with pytest.raises(ValueError, match="radius_edge_bound"):
+            state.improve(radius_edge_bound=0.0, min_dihedral_degrees=0.0)
+        run = state.refine(radius_edge_bound=None, sizes=np.full((4,), 2.0))
+        assert run.edit_status is TetMeshEditStatus.APPLIED
+        updated = state.arrays()
+        stretched = updated.points.copy()
+        stretched[3, 2] = 10.0
+        sized = state.evaluate_candidate_quality(
+            stretched, vertex_ids=updated.vertex_ids, radius_edge_bound=None,
+            min_dihedral_degrees=0.0,
+        )
+        assert 1 in sized.criteria
+        improvement = state.improve(radius_edge_bound=None, min_dihedral_degrees=0.0)
+        assert improvement.edit_status is TetMeshEditStatus.APPLIED
+
+
+def test_tet_mesh_retains_and_restores_initial_vertex_sizes() -> None:
+    plane = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    sizes = np.asarray((0.0, 0.25, 0.5, 1.0))
+    with _declared_unit_tet(plane, 0.0, sizes) as state:
+        arrays = state.arrays()
+        np.testing.assert_array_equal(arrays.vertex_size_targets, sizes)
+        with _restored_tet_mesh(arrays, arrays.witness_parameters) as restored:
+            np.testing.assert_array_equal(restored.arrays().vertex_size_targets, sizes)
+        with pytest.raises(ValueError, match="original vertex"):
+            state.improve(
+                radius_edge_bound=2.0,
+                min_dihedral_degrees=10.0,
+                boundary_collapse_quality=True,
+            )
+    for bad in ([-1.0, 0.0, 0.0, 0.0], [float("nan")] * 4, [1.0]):
+        with pytest.raises(ValueError, match="initial_vertex_sizes"):
+            _declared_unit_tet(plane, 0.0, bad)
+
+
+def test_plc_selective_facet_recovery_validates_and_preserves_protected_face() -> None:
+    offsets = np.arange(0, 13, 3, dtype=np.int64)
+    polygons = np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)))
+    facets = np.arange(4, dtype=np.int64)
+    regions = np.tile(np.asarray((-1, 1)), (4, 1))
+    with pytest.raises(ValueError, match="one boolean flag per facet"):
+        recover_plc_3d(
+            UNIT_TET,
+            offsets,
+            polygons.reshape(-1),
+            facets,
+            regions,
+            protected_facets=np.asarray((True, False)),
+        )
+    result = recover_plc_3d(
+        UNIT_TET,
+        offsets,
+        polygons.reshape(-1),
+        facets,
+        regions,
+        protected_facets=np.asarray((False, False, False, True)),
+        affine_metric=np.eye(3),
+    )
+    assert result.status is MeshcoreStatus.OK
+    source_rows = result.input_polygons[result.face_sources]
+    selected = result.faces[source_rows == 3]
+    assert selected.shape == (1, 3)
+    np.testing.assert_array_equal(np.sort(selected[0]), np.sort(polygons[3]))
+
+
+def test_tet_mesh_selectively_protects_source_facet_groups() -> None:
+    plane = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    with _declared_unit_tet(plane, 0.0) as state:
+        before = state.arrays()
+        with pytest.raises(ValueError):
+            state.protect_facet_group_rows(np.asarray((99,), dtype=np.int32))
+        assert state.arrays().generation == before.generation
+        state.protect_facet_group_rows(np.asarray((3,), dtype=np.int32))
+        protected = state.arrays()
+        np.testing.assert_array_equal(
+            protected.protected_facets, protected.face_sources == 104
+        )
+        assert np.count_nonzero(protected.protected_vertices) == 3
+        state.refine(radius_edge_bound=2.0, sizes=np.full((4,), 0.2))
+        refined = state.arrays()
+        selected = refined.face_sources == 104
+        assert np.count_nonzero(selected) == 1
+        assert refined.protected_facets[selected].all()
+        np.testing.assert_array_equal(
+            np.sort(refined.vertex_ids[refined.faces[selected][0]]),
+            np.sort(before.vertex_ids[before.faces[before.face_sources == 104][0]]),
+        )
 
 
 def test_declared_facet_plane_admits_records_and_refuses_boundary_vertices() -> None:
@@ -700,6 +903,7 @@ def _restored_tet_mesh(
         boundary_policy=PlcBoundaryPolicy.CONFORMING,
         protection_radii=arrays.protection_radii,
         protected_vertices=arrays.protected_vertices,
+        initial_vertex_sizes=arrays.vertex_size_targets,
         vertex_ids=arrays.vertex_ids,
         cell_ids=arrays.cell_ids,
         facet_ids=arrays.facet_ids,
@@ -721,7 +925,95 @@ def _restored_tet_mesh(
             arrays.source_face_planes,
             arrays.source_face_plane_tolerances,
         ),
+        implicit_source=None
+        if arrays.implicit_source is None
+        else arrays.implicit_source.source,
+        source_id=arrays.source_id,
+        source_revision=arrays.source_revision,
+        source_map_id=arrays.source_map_id,
+        frame_id=arrays.frame_id,
     )
+
+
+def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> None:
+    value = IntervalBoxProgram(
+        np.asarray([[2, 4, 1, 2, -1, 3, -1, 0]], dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        np.zeros(5),
+        np.zeros(5),
+        np.asarray([4]),
+        np.empty(0, dtype=np.int64),
+    )
+    gradient = IntervalBoxProgram(
+        np.empty((0, 8), dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        np.asarray([3, 4, 5]),
+        np.empty(0, dtype=np.int64),
+    )
+    source = TetMeshImplicitSource(
+        value,
+        gradient,
+        np.asarray([3], dtype=np.int32),
+        0.01,
+        0,
+        "implicit",
+        "revision",
+        "binding",
+        "world",
+    )
+    faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
+    with TetMesh3D(
+        UNIT_TET,
+        np.asarray([[0, 1, 2, 3]]),
+        None,
+        faces,
+        np.arange(4),
+        np.empty((0, 2), dtype=np.int32),
+        np.empty(0, dtype=np.int32),
+        boundary_policy=PlcBoundaryPolicy.CONFORMING,
+        source_id="implicit",
+        source_revision="revision",
+        source_map_id="binding",
+        frame_id="world",
+        implicit_source=source,
+    ) as state:
+        value.instructions[0, 0] = 99
+        arrays = state.arrays()
+        assert arrays.implicit_source is not None
+        assert arrays.implicit_source.source.value.instructions[0, 0] == 2
+        assert arrays.implicit_source.source.orientation == 1
+    with _restored_tet_mesh(arrays, arrays.witness_parameters) as restored:
+        restored_source = restored.arrays().implicit_source
+        assert restored_source is not None
+        assert restored_source.source.binding_id == "binding"
+        np.testing.assert_array_equal(restored_source.source.group_rows, [3])
+    bad = arrays.implicit_source.source._replace(orientation=-1)
+    tampered = arrays._replace(
+        implicit_source=arrays.implicit_source._replace(source=bad)
+    )
+    with pytest.raises(ValueError, match="INVALID_INPUT"):
+        _restored_tet_mesh(tampered, tampered.witness_parameters)
+    bad_frame = arrays.implicit_source.source._replace(frame_id="wrong")
+    tampered = arrays._replace(
+        implicit_source=arrays.implicit_source._replace(source=bad_frame)
+    )
+    with pytest.raises(ValueError, match="identity and frame"):
+        _restored_tet_mesh(tampered, tampered.witness_parameters)
+    program = arrays.implicit_source.source.value
+    low, high = program.workspace_lower.copy(), program.workspace_upper.copy()
+    low[3] = high[3] = 1.0
+    off_band = arrays.implicit_source.source._replace(
+        value=program._replace(workspace_lower=low, workspace_upper=high)
+    )
+    tampered = arrays._replace(
+        implicit_source=arrays.implicit_source._replace(source=off_band)
+    )
+    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+        _restored_tet_mesh(tampered, tampered.witness_parameters)
 
 
 def test_plane_witnesses_and_records_round_trip_through_tet_mesh_arrays() -> None:
@@ -842,6 +1134,19 @@ def test_persistent_tet_mesh_owns_source_and_exposes_runs() -> None:
         assert evidence.requested_bound == 0.4
         assert evidence.achieved_bound == 0.0
         assert isinstance(evidence, TetMeshSourceEvidence)
+
+        identity = state.identity
+        before_unmet = state.unmet()
+        quality = state.evaluate_quality(
+            radius_edge_bound=0.5,
+            min_dihedral_degrees=0.0,
+            minimum_relative_determinant=0.0,
+        )
+        assert quality.identity == identity
+        assert quality.cell_ids.size > 0
+        assert state.identity == identity
+        np.testing.assert_array_equal(state.unmet().cell_ids, before_unmet.cell_ids)
+        np.testing.assert_array_equal(state.arrays().tetrahedra, arrays.tetrahedra)
 
         stale = state.apply_edit(
             TetMeshEdit(

@@ -15,13 +15,12 @@ import numpy as np
 import phydrax.discretization as cell_mesh_owner
 import phydrax.meshing._association as association_owner
 from phydrax.geometry import ConstrainedDelaunayTriangulation
-from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
+from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource, SegmentChartCurve
 from phydrax.geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
     SourceBoundaryPointWitness,
 )
-from phydrax.geometry.brep._patches import LineCurve
 from phydrax.meshing._contracts import (
     MeshingFailure,
     MeshingFailureCategory,
@@ -367,7 +366,7 @@ def _planar_curve_source_query(
     chart_ids = []
     for edge_row, (entity_id, occurrence) in zip(range(edge_rows.shape[0]), keys, strict=True):
         first, last = int(edge_rows[edge_row, 0]), int(edge_rows[edge_row, 1])
-        curves.append(LineCurve(points[first], points[last] - points[first]))
+        curves.append(SegmentChartCurve(points[first], points[last], 0.0, 1.0))
         endpoint_keys.append(
             (
                 source.source_entity_key_for_scope(0, int(vertex_ids[first])),

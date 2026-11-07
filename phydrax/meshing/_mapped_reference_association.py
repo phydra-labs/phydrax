@@ -15,9 +15,16 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
+from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..geometry._mapped_reference_domain import MappedReferenceDomain
+from ..geometry._source_boundary_records import (
+    SourceBoundaryChartWitness,
+    SourceBoundaryFaceImageWitness,
+)
+from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..typing import checked
+from ._certification_inputs import ScopedFidelityInput
 from ._association import (
     AssociationEntityClasses,
     GeometryAssociation,
@@ -181,6 +188,14 @@ class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
         )
         root_dimension = self.domain.reference_mesh.topological_dimension
         declared_roots = set(self.domain.root_cell_ids)
+        root_paths = dict(
+            zip(self.domain.root_cell_ids, self.domain.root_cell_occurrence_paths, strict=True)
+        )
+        root_role = (
+            GeometrySourceEntityRole.REGION
+            if root_dimension == 3
+            else GeometrySourceEntityRole.FACET
+        )
         for association in tables:
             dimensions = np.asarray(association.source_dimensions, dtype=np.int64)
             indices = np.asarray(association.source_indices, dtype=np.int64)
@@ -194,6 +209,14 @@ class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
                 if dimension == root_dimension and index not in declared_roots:
                     raise ValueError(
                         "Mapped-reference source cell IDs must name declared root cells."
+                    )
+                if dimension == root_dimension and (
+                    association.source_occurrence_paths[row] != root_paths[index]
+                    or association.source_roles[row] is not root_role
+                    or association.source_region_sides[row] != (None, None)
+                ):
+                    raise ValueError(
+                        "Mapped-reference root occurrence and role must match its declared source."
                     )
                 if association.source_entity_ids[row] != self.domain.image_entity_id(
                     dimension, index
@@ -267,6 +290,10 @@ class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         vertex_stencil: VertexInterpolationStencil | None,
+        geometry_transition: CellGeometryTransition | None,
+        target_fidelity_witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
+        validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):

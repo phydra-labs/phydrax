@@ -36,6 +36,7 @@ from phydrax.linalg._exact import solve_exact
 from phydrax.meshing import (
     CellFamilyPolicy,
     CellMeshingTarget,
+    MeshQualityTarget,
     MeshingScope,
     NativeMeshingOptions,
     NativeMeshingProvider,
@@ -407,6 +408,7 @@ def test_public_planar_dual_quad_route_executes_feature_guided_acceptance() -> N
         size_controls=(
             UniformSizeControl(scope, 1.0, strength=SizeControlStrength.SOFT),
         ),
+        quality_target=MeshQualityTarget(minimum_angle=0.01, hard=True),
     )
     plan = NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad")).plan(
         source, specification, coordinate_contract=_COORDINATES
@@ -418,6 +420,8 @@ def test_public_planar_dual_quad_route_executes_feature_guided_acceptance() -> N
     _accepted_public_result(result, source)
     assert {block.cell_kind for block in result.mesh.blocks} == {"quadrilateral"}
     assert result.mesh.connectivity.cell_count >= 12
+    assert dict(result.compliance.requested)["minimum_angle"] == 0.01
+    assert dict(result.compliance.achieved)["minimum_angle"] >= 0.01
 
 
 def test_public_plc_dual_hex_route_keeps_material_and_facet_ancestry() -> None:

@@ -28,6 +28,7 @@ from ...equations import (
     PreparedMixedDimensionalTransport,
 )
 from ...geometry import CompartmentMeshingSource
+from ...geometry._affine_plc_domain import AffinePlcDomain
 from ...imaging import DiffusionTensorImage, MedicalImageAsset
 from ...meshing import CellMeshingResult, GeometryAssociationKind
 from ...meshing._association import GeometrySourceEntityRole
@@ -142,15 +143,20 @@ def _require_compartment_mesh_binding(
         or inputs.topology_id != mesh.topology_id
         or inputs.source_id != source.source_id
         or inputs.source_revision != source.source_revision
-        or inputs.schedule.route != "volume_plc"
-        or domain is None
+        or inputs.schedule.route != "mapped_volume"
+        or not isinstance(domain, AffinePlcDomain)
         or domain.source_id != source.source_id
+        or domain.source_revision != source.source_revision
+        or domain.authority is None
+        or domain.authority.source_id != source.source_id
+        or domain.authority.source_revision != source.source_revision
         or inputs.cell_regions is None
         or coverage is None
     ):
         raise ValueError(
             "Neurofluid bulk certification must bind this source's volume regions."
         )
+    domain.require_current()
     domain_region_ids = tuple(domain.region_ids)
     if (
         len(set(domain_region_ids)) != len(domain_region_ids)

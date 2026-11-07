@@ -23,6 +23,9 @@ from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureMapEvaluatio
 from ._topology import TriangleTopology
 
 
+_VALIDATION_BATCH_SIZE = 16384
+
+
 if TYPE_CHECKING:
     from ._bvh import TriangleBVH
 
@@ -74,47 +77,56 @@ class TriangleMesh(StrictModule):
             raise ValueError("TriangleMesh requires at least one vertex.")
         if faces_host.shape[0] == 0:
             raise ValueError("TriangleMesh requires at least one face.")
-        if not np.all(np.isfinite(vertices_host)):
-            raise ValueError("vertices must contain only finite values.")
-        if np.any(faces_host < 0) or np.any(faces_host >= vertices_host.shape[0]):
-            raise ValueError("faces contain out-of-range vertex indices.")
-        if np.any(
-            (faces_host[:, 0] == faces_host[:, 1])
-            | (faces_host[:, 1] == faces_host[:, 2])
-            | (faces_host[:, 2] == faces_host[:, 0])
-        ):
-            raise ValueError("Every triangle must reference three distinct vertices.")
-        triangles = vertices_host[faces_host]
-        doubled_area = np.linalg.norm(
-            np.cross(
-                triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
-            ),
-            axis=-1,
-        )
-        edge_scale_squared = np.max(
-            np.sum(
-                np.stack(
-                    (
-                        triangles[:, 1] - triangles[:, 0],
-                        triangles[:, 2] - triangles[:, 1],
-                        triangles[:, 0] - triangles[:, 2],
-                    ),
-                    axis=1,
-                )
-                ** 2,
+        # Keep validation temporary storage bounded without changing the
+        # precedence of the original whole-mesh checks.
+        for start in range(0, len(vertices_host), _VALIDATION_BATCH_SIZE):
+            if not np.all(
+                np.isfinite(vertices_host[start : start + _VALIDATION_BATCH_SIZE])
+            ):
+                raise ValueError("vertices must contain only finite values.")
+        for start in range(0, len(faces_host), _VALIDATION_BATCH_SIZE):
+            batch = faces_host[start : start + _VALIDATION_BATCH_SIZE]
+            if np.any(batch < 0) or np.any(batch >= vertices_host.shape[0]):
+                raise ValueError("faces contain out-of-range vertex indices.")
+        for start in range(0, len(faces_host), _VALIDATION_BATCH_SIZE):
+            batch = faces_host[start : start + _VALIDATION_BATCH_SIZE]
+            if np.any(
+                (batch[:, 0] == batch[:, 1])
+                | (batch[:, 1] == batch[:, 2])
+                | (batch[:, 2] == batch[:, 0])
+            ):
+                raise ValueError("Every triangle must reference three distinct vertices.")
+        for start in range(0, len(faces_host), _VALIDATION_BATCH_SIZE):
+            triangles = vertices_host[faces_host[start : start + _VALIDATION_BATCH_SIZE]]
+            doubled_area = np.linalg.norm(
+                np.cross(
+                    triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+                ),
                 axis=-1,
-            ),
-            axis=1,
-        )
-        tolerance = np.finfo(np.float64).eps * edge_scale_squared * 64.0
-        if np.any(doubled_area <= tolerance):
-            raise ValueError("TriangleMesh contains a degenerate face.")
+            )
+            edge_scale_squared = np.max(
+                np.sum(
+                    np.stack(
+                        (
+                            triangles[:, 1] - triangles[:, 0],
+                            triangles[:, 2] - triangles[:, 1],
+                            triangles[:, 0] - triangles[:, 2],
+                        ),
+                        axis=1,
+                    )
+                    ** 2,
+                    axis=-1,
+                ),
+                axis=1,
+            )
+            tolerance = np.finfo(np.float64).eps * edge_scale_squared * 64.0
+            if np.any(doubled_area <= tolerance):
+                raise ValueError("TriangleMesh contains a degenerate face.")
         if source_id is not None and not source_id:
             raise ValueError("source_id must be non-empty.")
         self.vertices = jnp.asarray(vertices_host, dtype=jnp.float64)
         self.faces = jnp.asarray(faces_host, dtype=jnp.int32)
-        # ty: ignore[invalid-argument-type]
-        self.topology = TriangleTopology(faces_host, num_vertices=vertices_host.shape[0])
+        self.topology = TriangleTopology(self.faces, num_vertices=vertices_host.shape[0])
         self.source_id = source_id or f"triangle-mesh-{uuid4().hex}"
 
     @property

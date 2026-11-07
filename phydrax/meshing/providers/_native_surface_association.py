@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import numpy as np
 
 import phydrax.discretization._cell_complex as cell_complex_owner
@@ -12,10 +14,7 @@ import phydrax.geometry._meshing_domain as domain_owner
 import phydrax.meshing._association as association_owner
 
 from ...typing import checked
-from .._surface_construction import (
-    curve_edge_parameter_intervals,
-    SurfaceConstruction,
-)
+from .._surface_construction import SurfaceConstruction
 
 
 def simplex_rows(canonical: np.ndarray, pairs: np.ndarray, /) -> np.ndarray:
@@ -181,7 +180,6 @@ def _validate_shared_junctions(
             )
 
 
-
 def _face_orientations(
     points: np.ndarray, faces: np.ndarray, normals: np.ndarray, /
 ) -> np.ndarray:
@@ -240,6 +238,7 @@ def _curve_orientations(
         * senses
     )
 
+
 @checked
 def associations(
     domain: domain_owner.MeshingDomain,
@@ -283,9 +282,7 @@ def associations(
     triangles = np.asarray(construction.triangles)
     triangle_patches = np.asarray(construction.triangle_patches)
     triangle_charts = np.asarray(construction.triangle_charts, dtype=np.float64)
-    triangle_deviations = np.asarray(
-        construction.triangle_deviations, dtype=np.float64
-    )
+    triangle_deviations = np.asarray(construction.triangle_deviations, dtype=np.float64)
     source_cells = np.asarray(construction.triangle_source_cells)
     source_pieces = construction.triangle_source_pieces
     source_parameters = np.asarray(construction.triangle_parameters, dtype=np.float64)
@@ -306,9 +303,7 @@ def associations(
         or any(
             not piece
             or any(
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value < 0
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
                 for value in piece
             )
             for piece in source_pieces
@@ -390,9 +385,7 @@ def associations(
             np.full(curves.shape, 1, dtype=np.int8),
             curves,
         )
-        edge_parameter_intervals = curve_edge_parameter_intervals(
-            construction.curve_parameters, construction.curve_edge_curves
-        )
+        edge_parameter_intervals = construction.curve_edge_parameter_intervals()
         if len(edge_parameter_intervals) != edge_ids.size:
             raise ValueError(
                 "NativeSurfaceAssociation.curve_parameters must align exact physical-edge intervals; got mismatched rows."
@@ -414,9 +407,7 @@ def associations(
                 source_parameter_intervals=tuple(
                     edge_parameter_intervals[int(row)] for row in order
                 ),
-                orientations=_curve_orientations(
-                    points, canonical, along, source_senses
-                ),
+                orientations=_curve_orientations(points, canonical, along, source_senses),
             )
         )
 
@@ -437,6 +428,32 @@ def associations(
         raise ValueError(
             "NativeSurfaceAssociation.vertices must align source classification with mesh vertex IDs; got mismatched rows."
         )
+    parameters = np.array(construction.vertex_parameters, dtype=np.float64, copy=True)
+    curve_rows = np.asarray(construction.vertex_source_indices, dtype=np.int64)
+    exact_by_vertex: dict[tuple[int, int], Fraction] = {}
+    for edge, curve, interval in zip(
+        np.asarray(construction.curve_edges, dtype=np.int64).tolist(),
+        np.asarray(construction.curve_edge_curves, dtype=np.int64),
+        construction.curve_edge_parameter_intervals(),
+        strict=True,
+    ):
+        for vertex, parameter in zip(edge, interval, strict=True):
+            if int(vertex_dimensions[int(vertex)]) != 1:
+                continue
+            key = (int(vertex), int(curve))
+            previous = exact_by_vertex.setdefault(key, parameter)
+            if previous != parameter:
+                raise ValueError("Curve vertex has conflicting exact source parameters.")
+    for row in np.flatnonzero(vertex_dimensions == 1):
+        curve = int(curve_rows[row])
+        parameter = exact_by_vertex.get((int(row), curve))
+        if parameter is None:
+            raise ValueError("Curve vertex lacks its exact source parameter.")
+        parameters[row, 0] = float(
+            domain.curve_native_parameter(curve, parameter)
+            if kind is association_owner.GeometryAssociationKind.BREP
+            else parameter
+        )
     associations.append(
         association_owner.GeometryAssociation(
             kind,
@@ -453,7 +470,7 @@ def associations(
             source_indices=vertex_indices,
             source_occurrence_paths=vertex_occurrences,
             source_parameter_intervals=(None,) * vertex_ids.size,
-            parameters=np.asarray(construction.vertex_parameters, dtype=np.float64),
+            parameters=parameters,
         )
     )
     return tuple(associations)

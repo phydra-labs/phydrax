@@ -99,6 +99,32 @@ def test_adapter_batched_jit_and_directional_tangent() -> None:
     )
 
 
+def test_cell_quadrature_material_site_identity() -> None:
+    make = phx.equations.MaterialSiteId.for_cell_quadrature
+    site = make(17, "reference-a", domain_id="mesh", quadrature_rule_id="rule-a")
+    assert (
+        site.site_id
+        == make(17, "reference-a", domain_id="mesh", quadrature_rule_id="rule-a").site_id
+    )
+    for other in (
+        make(18, "reference-a", domain_id="mesh", quadrature_rule_id="rule-a"),
+        make(17, "reference-b", domain_id="mesh", quadrature_rule_id="rule-a"),
+        make(17, "reference-a", domain_id="other", quadrature_rule_id="rule-a"),
+        make(17, "reference-a", domain_id="mesh", quadrature_rule_id="rule-b"),
+    ):
+        assert site.site_id != other.site_id
+    for cell, quadrature, domain, rule in (
+        (-1, "reference-a", "mesh", "rule-a"),
+        (1, "", "mesh", "rule-a"),
+        (1, "reference-a", "", "rule-a"),
+        (1, "reference-a", "mesh", ""),
+    ):
+        with pytest.raises(ValueError, match="identity"):
+            make(cell, quadrature, domain_id=domain, quadrature_rule_id=rule)
+    with pytest.raises(TypeError, match="identity"):
+        make(17, 2, domain_id="mesh", quadrature_rule_id="rule-a")  # ty: ignore[invalid-argument-type]
+
+
 def test_adapter_material_transaction_commit_and_rollback() -> None:
     material = phx.applications.solid_mechanics.FiniteStrainJ2MPMConstitutivePlan()
     adapter = phx.applications.solid_mechanics.FiniteStrainConstitutiveModel(

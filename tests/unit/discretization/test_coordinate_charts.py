@@ -21,6 +21,7 @@ from phydrax.discretization._cell_geometry_validity import (
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._coordinate_enclosure import (
     evaluate_expression,
+    linear_combinations,
     normalize_pyramid_reference_expression,
     Polynomial,
     RationalPolynomial,
@@ -30,6 +31,22 @@ from phydrax.discretization._nested_reference_types import (
     ReferenceCellMapWitnesses,
 )
 from phydrax.discretization.fem._reference import lagrange_element
+
+
+def test_shared_rational_basis_linear_combination_retains_poles() -> None:
+    denominator: dict[tuple[int, ...], Fraction] = {(0,): Fraction(1), (1,): Fraction(-1)}
+    basis = (
+        RationalPolynomial({(0,): Fraction(1)}, denominator),
+        RationalPolynomial({(1,): Fraction(1)}, denominator),
+    )
+    combined, zero = linear_combinations(
+        basis, ((Fraction(2), Fraction(-2)), (Fraction(0), Fraction(0)))
+    )
+    assert isinstance(combined, RationalPolynomial)
+    assert combined.denominator == denominator
+    assert combined.numerator == {(0,): Fraction(2), (1,): Fraction(-2)}
+    assert isinstance(zero, RationalPolynomial)
+    assert zero.numerator == {} and zero.denominator == denominator
 
 
 def _rational_chart() -> RationalComposedCellGeometryElement:
@@ -142,16 +159,12 @@ def test_pyramid_unique_value_evaluates_without_nonunique_exact_gradient() -> No
         np.asarray((31,), dtype=np.int64),
         np.asarray(((0.5, 0.5, 1.0),)),
     )
-    exact = geometry.evaluate_exact(
-        mesh, np.asarray((31,), dtype=np.int64), ((apex,),)
-    )
+    exact = geometry.evaluate_exact(mesh, np.asarray((31,), dtype=np.int64), ((apex,),))
 
     np.testing.assert_allclose(actual, (((0.5, 0.5, 1.0),),), atol=1.0e-14)
     assert exact == ((apex,),)
     with pytest.raises(ValueError, match="pyramid-apex continuation"):
-        element.tabulate(
-            jnp.asarray(((0.5, 0.5, 1.0),), dtype=jnp.float64)
-        )
+        element.tabulate(jnp.asarray(((0.5, 0.5, 1.0),), dtype=jnp.float64))
 
 
 def test_hybrid_pyramid_source_basis_has_exact_nodal_conversion() -> None:
@@ -162,9 +175,7 @@ def test_hybrid_pyramid_source_basis_has_exact_nodal_conversion() -> None:
         for point in np.asarray(element.reference_nodes)
     )
 
-    def evaluate_basis(
-        expression: Any, point: tuple[Fraction, ...]
-    ) -> Any:
+    def evaluate_basis(expression: Any, point: tuple[Fraction, ...]) -> Any:
         if isinstance(expression, RationalPolynomial) and not evaluate_expression(
             expression.denominator, point
         ):
@@ -176,10 +187,8 @@ def test_hybrid_pyramid_source_basis_has_exact_nodal_conversion() -> None:
     for node_index, node in enumerate(nodes):
         values = tuple(evaluate_basis(expression, node) for expression in basis)
         assert values == tuple(
-            Fraction(int(basis_index == node_index))
-            for basis_index in range(len(basis))
+            Fraction(int(basis_index == node_index)) for basis_index in range(len(basis))
         )
-
 
 
 def test_rational_reference_composition_retains_exact_geometry_and_validity() -> None:

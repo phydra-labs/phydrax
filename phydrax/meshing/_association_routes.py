@@ -307,6 +307,10 @@ def inherit_association_table(
     ):
         source_dimensions = None
         source_indices = None
+    if any(association.target_parameter_intervals[int(row)] is not None for row in parent_rows):
+        raise ValueError("Partial target-edge associations require an exact child interval map.")
+    if association.source_boundary_witness_id is not None:
+        raise ValueError("Witness-bound target faces require a composed child witness.")
     return GeometryAssociation(
         association.association_kind,
         association.source_id,
@@ -372,6 +376,14 @@ def association_classes(
         for association in associations:
             if target_dimension(mesh, association) != dimension:
                 continue
+            if any(interval is not None for interval in association.target_parameter_intervals):
+                raise ValueError(
+                    "Partial target-edge support cannot be lowered to whole-entity classes."
+                )
+            if association.source_boundary_witness_id is not None:
+                raise ValueError(
+                    "Witness-bound face pieces cannot be lowered to whole-entity classes."
+                )
             rows = entity_rows(
                 mesh, dimension, np.asarray(association.target_global_ids, dtype=np.int64)
             )

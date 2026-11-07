@@ -61,7 +61,7 @@ from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import UniformSizeControl
-from phydrax.meshing._volume_generation import NativeVolumeSchedule
+from phydrax.meshing._volume_generation import NativeVolumeSchedule, VolumeConstruction
 from phydrax.meshing.providers import _native_cad_volume as cad_volume
 from phydrax.meshing.providers._native_cad_volume import (
     NativeCadVolumeSource,
@@ -434,6 +434,27 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
     return domain, surface
 
 
+def test_surface_source_projected_recipe_reconstructs_canonical_owners() -> None:
+    from phydrax._model._structure import model_archive_projection
+    from phydrax.discretization._cell_geometry_transition_types import cell_geometry_id
+    from phydrax.geometry._surface_source_archive import restore_surface_source_charts
+
+    _, surface = _cad_surface()
+    source = surface.surface_source
+    assert source is not None
+    recipe = model_archive_projection(source)
+    restored = restore_surface_source_charts(recipe)
+    assert restored.source_chart_id == source.source_chart_id
+    assert restored.mesh.mesh_id == source.mesh.mesh_id
+    assert cell_geometry_id(restored.geometry) == cell_geometry_id(source.geometry)
+    assert tuple(item.association_id for item in restored.associations) == tuple(
+        item.association_id for item in source.associations
+    )
+    restored.require_current()
+    with pytest.raises(TypeError, match="CellGeometrySpec"):
+        restore_surface_source_charts(recipe._replace(geometry=None))
+
+
 def test_exact_plane_trim_does_not_use_authored_chart_junctions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -451,27 +472,50 @@ def test_exact_plane_trim_does_not_use_authored_chart_junctions(
     def reject_authored(*args: object) -> None:
         raise AssertionError("Alternate chart must not inspect authored UV roots.")
 
-    monkeypatch.setattr(_domain_boundary, "_rooted_patch_chart_junctions", reject_authored)
-    assert _domain_boundary._patch_chart_polygon(
-        domain, patch, trim_loops=plane.loops
-    ) is not None
+    monkeypatch.setattr(
+        _domain_boundary, "_rooted_patch_chart_junctions", reject_authored
+    )
+    assert (
+        _domain_boundary._patch_chart_polygon(domain, patch, trim_loops=plane.loops)
+        is not None
+    )
     with pytest.raises(AssertionError, match="authored UV roots"):
         _domain_boundary._patch_chart_polygon(domain, patch)
 
 
-def test_cad_pole_lens_uses_exact_collapsed_corner_only() -> None:
-    from types import SimpleNamespace
+@pytest.fixture(scope="module")
+def cylinder_charts() -> SurfaceSourceCharts:
+    contract = phx.SpatialCoordinateContract.si()
+    model = brep_cylinder(0.5, 1.0, coordinate_contract=contract)
+    domain = MeshingDomain.from_brep(model)
+    scope = MeshingScope.whole(model, 2)
+    specification = phx.meshing.SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(UniformSizeControl(scope, 0.3),),
+        maximum_deviation=0.05,
+    )
+    result = (
+        phx.meshing.NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
+        .plan(domain, specification, coordinate_contract=contract)
+        .execute()
+    )
+    assert isinstance(result.surface_source, SurfaceSourceCharts)
+    return result.surface_source
 
+
+def test_cad_pole_lens_uses_exact_collapsed_corner_only(
+    cylinder_charts: SurfaceSourceCharts,
+) -> None:
     from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
     from phydrax.geometry._meshing_domain import PatchCurveUse, PatchPoleUse
     from phydrax.geometry._surface_source_support import _cad_pole_lens_endpoint
     from phydrax.geometry.brep._source_shell_admissibility import _single_shell_topology
 
-    domain = MeshingDomain.from_brep(
-        brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
-    )
+    charts = cylinder_charts
+    domain = charts.domain
+    assert domain.brep_authority is not None
     assert _single_shell_topology(domain.brep_authority, domain)
-    charts = SimpleNamespace(domain=domain)
     for patch, surface in enumerate(domain.patches):
         for loop_index, uses in enumerate(surface.loops):
             for index, use in enumerate(uses):
@@ -484,67 +528,120 @@ def test_cad_pole_lens_uses_exact_collapsed_corner_only() -> None:
                 start, stop = endpoints[previous]
                 midpoint = ((start[0] + stop[0]) / 2, (start[1] + stop[1]) / 2)
                 parameter = Fraction(0 if use.sense > 0 else 1)
+                cache = {}
+                for candidate, candidate_parameter in (
+                    (midpoint, parameter),
+                    ((midpoint[0], midpoint[1] + 1), parameter),
+                    (midpoint, Fraction(1, 2)),
+                ):
+                    assert _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, index, candidate, candidate_parameter,
+                        endpoints_by_patch=cache,
+                    ) == _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, index, candidate, candidate_parameter,
+                    )
+                assert cache[patch] == _rooted_patch_chart_endpoints(domain, patch)
+                for candidate_cache in (None, {}):
+                    with pytest.raises(IndexError):
+                        _cad_pole_lens_endpoint(
+                            charts, patch, len(surface.loops), index, midpoint, parameter,
+                            endpoints_by_patch=candidate_cache,
+                        )
                 junction = endpoints[index][0]
-                assert _cad_pole_lens_endpoint(
-                    charts, patch, loop_index, index, midpoint, parameter
-                ) == junction
+                assert (
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, index, midpoint, parameter
+                    )
+                    == junction
+                )
                 off_side = (midpoint[0], midpoint[1] + 1)
-                assert _cad_pole_lens_endpoint(
-                    charts, patch, loop_index, index, off_side, parameter
-                ) == off_side
-                assert _cad_pole_lens_endpoint(
-                    charts, patch, loop_index, index, midpoint, Fraction(1, 2)
-                ) == midpoint
+                assert (
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, index, off_side, parameter
+                    )
+                    == off_side
+                )
+                assert (
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, index, midpoint, Fraction(1, 2)
+                    )
+                    == midpoint
+                )
                 return
     pytest.fail("Cylinder has no regular coedge following a pole side.")
 
 
 @pytest.mark.parametrize("reverse", (False, True))
 def test_cad_plane_seam_side_uses_oriented_source_chart(reverse: bool) -> None:
-    from phydrax.geometry._domain_boundary import ExactPlaneChart, _TURN
+    from phydrax.geometry._domain_boundary import _TURN, ExactPlaneChart
     from phydrax.geometry._surface_source_support import _cad_plane_seam_side
 
     zero, one, two = Fraction(0), Fraction(1), Fraction(2)
     turn = Fraction.from_float(_TURN)
     plane = ExactPlaneChart(
-        "plane", (zero, zero, zero), (one, zero, zero), (zero, one, zero),
-        (), zero, 1,
+        "plane",
+        (zero, zero, zero),
+        (one, zero, zero),
+        (zero, one, zero),
+        (),
+        zero,
+        1,
     )
     target = ((one, zero), (two, zero), (one, -one))
     edge = (1, 0) if reverse else (0, 1)
     parameters = (one, zero) if reverse else (zero, one)
     for angle, interior, expected in ((zero, one, True), (turn, turn - one, False)):
         root = ((interior, one), (angle, one), (angle, two))
-        assert _cad_plane_seam_side(
-            plane, root, 0, (root[1], root[2]), target, edge,
-            (zero, one), parameters,
-        ) is expected
+        assert (
+            _cad_plane_seam_side(
+                plane,
+                root,
+                0,
+                (root[1], root[2]),
+                target,
+                edge,
+                (zero, one),
+                parameters,
+            )
+            is expected
+        )
     other_side = ((one, zero), (two, zero), (one, one))
     root = ((turn - one, one), (turn, one), (turn, two))
     assert _cad_plane_seam_side(
-        plane, root, 0, (root[1], root[2]), other_side, edge,
-        (zero, one), parameters,
+        plane,
+        root,
+        0,
+        (root[1], root[2]),
+        other_side,
+        edge,
+        (zero, one),
+        parameters,
     )
     pole_root = ((one, one), (zero, zero), (zero, one))
     pole_target = ((zero, zero), (one, zero), (one, -one))
     assert _cad_plane_seam_side(
-        plane, pole_root, 0, (pole_root[1], pole_root[2]), pole_target, edge,
-        (zero, one), parameters,
+        plane,
+        pole_root,
+        0,
+        (pole_root[1], pole_root[2]),
+        pole_target,
+        edge,
+        (zero, one),
+        parameters,
     )
 
 
-def test_cad_pole_fan_interior_edge_requires_exact_common_fiber() -> None:
-    from types import SimpleNamespace
-
+def test_cad_pole_fan_interior_edge_requires_exact_common_fiber(
+    cylinder_charts: SurfaceSourceCharts,
+) -> None:
     from phydrax.geometry._domain_boundary import _rooted_patch_chart_endpoints
     from phydrax.geometry._meshing_domain import PatchPoleUse
     from phydrax.geometry._surface_source_support import (
         _validate_cad_chart_edge_incidence,
     )
 
-    domain = MeshingDomain.from_brep(
-        brep_cylinder(0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si())
-    )
+    charts = cylinder_charts
+    domain = charts.domain
     for patch, surface in enumerate(domain.patches):
         for loop_index, loop in enumerate(surface.loops):
             for use_index, use in enumerate(loop):
@@ -556,16 +653,44 @@ def test_cad_pole_fan_interior_edge_requires_exact_common_fiber() -> None:
                 one = ((2 * start[0] + stop[0]) / 3, (2 * start[1] + stop[1]) / 3)
                 two = ((start[0] + 2 * stop[0]) / 3, (start[1] + 2 * stop[1]) / 3)
                 apex = (one[0], one[1] + 1)
-                charts = SimpleNamespace(
-                    domain=domain,
-                    cell_global_ids=(10, 11),
-                    root_patches=np.asarray((patch, patch)),
-                    boundary_occurrences=np.full((2, 3, 3), -1),
-                )
-                adjacent = {1: ((10, 0, one, apex), (11, 0, two, apex))}
+                rows = [
+                    (identifier, slot)
+                    for row, identifier in enumerate(charts.cell_global_ids)
+                    if int(charts.root_patches[row]) == patch
+                    for slot in range(3)
+                    if charts.boundary_occurrences.size == 0
+                    or tuple(charts.boundary_occurrences[row, slot]) == (-1, -1, -1)
+                ]
+                first = rows[0]
+                second = next(row for row in rows if row[0] != first[0])
+                adjacent: dict[
+                    int,
+                    tuple[
+                        tuple[
+                            int, int, tuple[Fraction, Fraction], tuple[Fraction, Fraction]
+                        ],
+                        ...,
+                    ],
+                ] = {
+                    1: (
+                        (first[0], first[1], one, apex),
+                        (second[0], second[1], two, apex),
+                    )
+                }
                 _validate_cad_chart_edge_incidence(charts, adjacent, set())
-                forged = {
-                    1: ((10, 0, one, apex), (11, 0, (two[0], two[1] + 1), apex))
+                forged: dict[
+                    int,
+                    tuple[
+                        tuple[
+                            int, int, tuple[Fraction, Fraction], tuple[Fraction, Fraction]
+                        ],
+                        ...,
+                    ],
+                ] = {
+                    1: (
+                        (first[0], first[1], one, apex),
+                        (second[0], second[1], (two[0], two[1] + 1), apex),
+                    )
                 }
                 with pytest.raises(ValueError, match="unbound or unproved"):
                     _validate_cad_chart_edge_incidence(charts, forged, set())
@@ -573,24 +698,53 @@ def test_cad_pole_fan_interior_edge_requires_exact_common_fiber() -> None:
     pytest.fail("Cylinder has no pole side.")
 
 
-def test_cad_periodic_coedge_pair_requires_both_occurrences_and_opposite_sense() -> None:
-    from fractions import Fraction
-    from types import SimpleNamespace
-
+def test_cad_periodic_coedge_pair_requires_both_occurrences_and_opposite_sense(
+    cylinder_charts: SurfaceSourceCharts,
+) -> None:
     from phydrax.geometry._approximate_source_coverage import (
         _cad_validate_coedge_pair,
         SourceCoverageUnavailable,
     )
+    from phydrax.geometry._meshing_domain import PatchCurveUse
 
-    curve = ("curve", ("instance",))
-    first = (curve, Fraction(0), Fraction(1, 2), SimpleNamespace(sense=1))
-    opposite = (curve, Fraction(0), Fraction(1, 2), SimpleNamespace(sense=-1))
+    uses = [
+        use
+        for patch in cylinder_charts.domain.patches
+        for loop in patch.loops
+        for use in loop
+        if isinstance(use, PatchCurveUse)
+    ]
+    authored_first, authored_opposite = next(
+        (first_use, second_use)
+        for first_use in uses
+        for second_use in uses
+        if first_use.curve == second_use.curve and first_use.sense == -second_use.sense
+    )
+    domain = cylinder_charts.domain
+    curve = (
+        domain.entity_id(1, authored_first.curve),
+        domain.source_occurrences[1][authored_first.curve],
+    )
+    first = (curve, Fraction(0), Fraction(1, 2), authored_first)
+    opposite = (curve, Fraction(0), Fraction(1, 2), authored_opposite)
     _cad_validate_coedge_pair(first, opposite, 1, 1)
     with pytest.raises(SourceCoverageUnavailable, match="lacks bound"):
         _cad_validate_coedge_pair(first, None, 1, 1)
     with pytest.raises(SourceCoverageUnavailable, match="same authored"):
         _cad_validate_coedge_pair(
             first, (curve, Fraction(0), Fraction(1, 3), opposite[3]), 1, 1
+        )
+    with pytest.raises(SourceCoverageUnavailable, match="same authored"):
+        _cad_validate_coedge_pair(
+            first,
+            (
+                (curve[0], (*curve[1], "forged")),
+                Fraction(0),
+                Fraction(1, 2),
+                authored_opposite,
+            ),
+            1,
+            1,
         )
     with pytest.raises(SourceCoverageUnavailable, match="opposite"):
         _cad_validate_coedge_pair(first, first, 1, 1)
@@ -878,6 +1032,8 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance(
     assert source.plc_source.complex.boundary == "fixed"
     assert source.plc_source.complex.geometry is None
     assert source.plc_source.complex.cad_source_charts is source.surface_source
+    assert source.plc_source.complex.cad_embedding is not None
+    assert source.plc_source.complex.cad_fidelity is not None
     assert source.plc_source.complex.cad_embedding.status == "certified"
     assert source.plc_source.complex.cad_fidelity.status == "certified"
     assert source.plc_source.complex.cad_fidelity_tolerance == 0.1
@@ -1304,7 +1460,7 @@ def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnes
     generated = []
     generate = cad_volume.generate_plc_volume
 
-    def capture(*args: Any, **kwargs: Any) -> NativeMeshConstruction:
+    def capture(*args: Any, **kwargs: Any) -> VolumeConstruction:
         result = generate(*args, **kwargs)
         generated.append(result)
         return result
@@ -1548,8 +1704,10 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
         if not isinstance(use, PatchCurveUse):
             continue
         alternatives = [
-            index for index, other in enumerate(uses)
-            if index != use_index and isinstance(other, PatchCurveUse)
+            index
+            for index, other in enumerate(uses)
+            if index != use_index
+            and isinstance(other, PatchCurveUse)
             and other.curve == use.curve
         ]
         if alternatives:
@@ -1558,9 +1716,15 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
             break
     assert swapped
     forged_charts = SurfaceSourceCharts(
-        charts.domain, charts.mesh, charts.geometry, charts.coordinate_contract,
-        charts.root_parameters, charts.root_patches, charts.associations,
-        charts.boundary_source, source_root_cell_ids=charts.source_root_cell_ids,
+        charts.domain,
+        charts.mesh,
+        charts.geometry,
+        charts.coordinate_contract,
+        charts.root_parameters,
+        charts.root_patches,
+        charts.associations,
+        charts.boundary_source,
+        source_root_cell_ids=charts.source_root_cell_ids,
         source_piece_ids=charts.source_piece_ids,
         root_parameter_exact=charts.root_parameter_exact,
         boundary_occurrences=occurrences,

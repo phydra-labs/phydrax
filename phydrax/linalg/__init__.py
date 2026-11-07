@@ -704,9 +704,11 @@ from ._sparse_providers import (
 )
 from ._sparse_rank import (
     prepare_sparse_row_rank,
+    sparse_support_rank,
     SparseRowRankEvidence,
     SparseRowRankPolicy,
     SparseRowRankRefusal,
+    SparseSupportRank,
 )
 from ._sparse_supernodal import SupernodalAnalysis
 from ._sparse_triangular import (
@@ -1265,6 +1267,8 @@ __all__ = [
     "SparseRowRankEvidence",
     "SparseRowRankPolicy",
     "SparseRowRankRefusal",
+    "sparse_support_rank",
+    "SparseSupportRank",
     "SparseStorage",
     "SparseTriangularAnalysis",
     "SparseTriangularFactor",

@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import ceil, floor, pi, sqrt, tau
-from typing import cast, final
+from typing import Any, cast, final
 
 import equinox as eqx
 import jax
@@ -103,6 +103,17 @@ class _AffineProjectionFrame:
     factorization: ExactLinearFactorization[ExactScalar] | None
 
 
+@dataclass(slots=True)
+class _ProjectionPreparation:
+    """Source-bound reusable proof preparation; no query coordinates are retained."""
+
+    model: BRepModel
+    boxes: dict[int, np.ndarray]
+    enclosures: dict[int, TrimEnclosures] = field(default_factory=dict)
+    lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
+    angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
+
+
 @dataclass(frozen=True, slots=True)
 class _Hit:
     dimension: int
@@ -117,6 +128,7 @@ class _Hit:
     path: tuple[str, ...]
     piece_id: tuple[object, ...] | None = None
     root_id: tuple[object, ...] | None = None
+    pending_frame: bool = False
 
 
 def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, float]:
@@ -420,13 +432,15 @@ def _face_normal_and_frame(
     *,
     embedding: PlanarEmbedding | None,
     profile_interval: tuple[float, float] | None = None,
+    jacobian: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, bool]:
-    jacobian = np.asarray(
-        jax.jacfwd(lambda uv: patch.evaluate(uv))(
-            jnp.asarray(parameters, dtype=jnp.float64)
-        ),
-        dtype=np.float64,
-    )
+    if jacobian is None:
+        jacobian = np.asarray(
+            jax.jacfwd(lambda uv: patch.evaluate(uv))(
+                jnp.asarray(parameters, dtype=jnp.float64)
+            ),
+            dtype=np.float64,
+        )
     normal = np.cross(jacobian[:, 0], jacobian[:, 1])
     length = float(np.linalg.norm(normal))
     if not np.isfinite(length) or length <= 128.0 * np.finfo(np.float64).eps:
@@ -718,6 +732,8 @@ def _line_curve_hit(
     path: tuple[str, ...],
     policy: BRepProjectionPolicy,
     /,
+    *,
+    frame: bool = True,
 ) -> _Hit:
     geometry = model.geometry
     carrier = geometry.edge_curves[edge]
@@ -841,15 +857,17 @@ def _line_curve_hit(
         lower, upper = _distance_bounds(point, closest)
         status = _SEAM if parameter == first or parameter == last else _UNIQUE
     parameter = float(parameter)
-    derivative = np.asarray(
-        jax.jacfwd(lambda value: curve.evaluate(value))(jnp.asarray(parameter)),
-        dtype=np.float64,
-    )
-    derivative_length = float(np.linalg.norm(derivative))
-    tangent = derivative / derivative_length if derivative_length else _NAN3.copy()
-    tangents = np.stack((tangent, _NAN3))
-    if derivative_length == 0.0 and status != _AMBIGUOUS:
-        status = _SINGULAR
+    tangents = _NAN_FRAME3.copy()
+    if frame:
+        derivative = np.asarray(
+            jax.jacfwd(lambda value: curve.evaluate(value))(jnp.asarray(parameter)),
+            dtype=np.float64,
+        )
+        derivative_length = float(np.linalg.norm(derivative))
+        tangent = derivative / derivative_length if derivative_length else _NAN3.copy()
+        tangents = np.stack((tangent, _NAN3))
+        if derivative_length == 0.0 and status != _AMBIGUOUS:
+            status = _SINGULAR
     return _Hit(
         1,
         edge,
@@ -1442,7 +1460,8 @@ def _cylindrical_support_data(
             line_origin = rational_source(curve.first_exact)
             last = rational_source(curve.last_exact)
             direction = (
-                None if line_origin is None or last is None
+                None
+                if line_origin is None or last is None
                 else tuple(b - a for a, b in zip(line_origin, last, strict=True))
             )
         if line_origin is None or direction is None:
@@ -1468,6 +1487,85 @@ def _cylindrical_support_data(
     return x, y, parameter, radial_squared, radius_squared
 
 
+def _native_chart_bounds(
+    model: BRepModel,
+    face: int,
+    /,
+    *,
+    cache: dict[int, tuple[float, float] | None] | None = None,
+) -> tuple[float, float] | None:
+    """Enclose native-period source endpoints without inferring a full turn."""
+    from ._boolean_core import chart_add, chart_scale, line_chart_coefficients
+    from ._carrier_pieces import carrier_payload
+    from ._intersection import NativePeriodEndpoint
+    from ._trim_helpers import period_scalar_bounds
+
+    if cache is not None and face in cache:
+        return cache[face]
+    patch = model.patches[face]
+    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    lower, upper = float(bounds[0, 0]), float(bounds[1, 0])
+    geometry = model.geometry
+    patch_payload = carrier_payload(patch)
+    for loop in geometry.face_loops[face]:
+        for coedge in loop:
+            curve = geometry.pcurves[coedge]
+            for root in geometry.coedge_endpoint_roots[coedge]:
+                if not (
+                    isinstance(root, NativePeriodEndpoint)
+                    and root.patch is not None
+                    and root.axis == 0
+                    and carrier_payload(root.patch) == patch_payload
+                    and carrier_payload(root.curve) == carrier_payload(curve)
+                ):
+                    continue
+                coefficients = line_chart_coefficients(curve)
+                if coefficients is None:
+                    if cache is not None:
+                        cache[face] = None
+                    return None
+                origin, direction = coefficients
+                angle = chart_add(
+                    origin[0], chart_scale(root.exact_parameter, direction[0])
+                )
+                endpoint_lower, endpoint_upper = period_scalar_bounds(angle)
+                lower = min(lower, float(endpoint_lower))
+                upper = max(upper, float(endpoint_upper))
+    # A periodic p-curve may carry its exact turn in its chart offset rather
+    # than in a NativePeriodEndpoint. The authoritative segment boxes include
+    # those offsets and rooted endpoints, including their directed enclosures.
+    domain = model.trim_domains[face]
+    if domain is not None and domain.curve_loops:
+        for loop in domain.curve_loops:
+            for segment in loop:
+                try:
+                    box = np.asarray(segment.bounding_box(0.0, 1.0), dtype=np.float64)
+                except (
+                    AttributeError,
+                    NotImplementedError,
+                    TypeError,
+                    ValueError,
+                    RuntimeError,
+                ):
+                    if cache is not None:
+                        cache[face] = None
+                    return None
+                if (
+                    box.shape != (2, 2)
+                    or not np.all(np.isfinite(box))
+                    or np.any(box[0] > box[1])
+                ):
+                    if cache is not None:
+                        cache[face] = None
+                    return None
+                lower = min(lower, float(box[0, 0]))
+                upper = max(upper, float(box[1, 0]))
+    result = lower, upper
+    if cache is not None:
+        cache[face] = result
+    return result
+
+
 def _cylindrical_support_outside(
     model: BRepModel,
     face: int,
@@ -1475,10 +1573,10 @@ def _cylindrical_support_outside(
     /,
     *,
     enclosures: dict[int, TrimEnclosures] | None,
+    distance_threshold: float | None = None,
+    angle_bounds: dict[int, tuple[float, float] | None] | None = None,
 ) -> tuple[float, bool]:
     """Bound support distance and prove exclusion of every exact angle lift."""
-    from mpmath.libmp import to_rational
-
     from ._intersection_curve import interval_context
     from ._intersection_projection import _bounds, _scalar
 
@@ -1492,18 +1590,20 @@ def _cylindrical_support_outside(
         _scalar(context, radius_squared)
     )
     support_lower = max(0.0, _bounds(context.sqrt(radial_distance**2))[0])
-    angle = context.atan2(_scalar(context, y), _scalar(context, x))
-    # Each representative of the exact angle in the authored chart must be
-    # outside. Interval arithmetic includes the transcendental period itself.
-    period = 2 * context.pi
-    lower_turn = (
-        _scalar(context, Fraction.from_float(float(chart_bounds[0, 0]))) - angle
-    ) / period
-    upper_turn = (
-        _scalar(context, Fraction.from_float(float(chart_bounds[1, 0]))) - angle
-    ) / period
-    first_turn = ceil(Fraction(*to_rational(lower_turn._mpi_[0])))
-    last_turn = floor(Fraction(*to_rational(upper_turn._mpi_[1])))
+    if distance_threshold is not None and support_lower > distance_threshold:
+        return support_lower, False
+    native = _native_chart_bounds(model, face, cache=angle_bounds)
+    if native is None:
+        return support_lower, False
+    boxes = _cylinder_chart_lifts(
+        context,
+        context.atan2(_scalar(context, y), _scalar(context, x)),
+        _scalar(context, parameter),
+        chart_bounds,
+        native,
+    )
+    if boxes is None:
+        return support_lower, False
     outside = True
     domain = model.trim_domains[face]
     prepared = None
@@ -1512,13 +1612,8 @@ def _cylindrical_support_outside(
         if prepared is None:
             prepared = domain.prepare_enclosures()
             enclosures[face] = prepared
-    for turn in range(first_turn, last_turn + 1):
-        angle_lower, angle_upper = _bounds(angle + turn * 2 * context.pi)
-        v_lower, v_upper = _bounds(_scalar(context, parameter))
-        box = np.array(((angle_lower, v_lower), (angle_upper, v_upper)))
-        if np.any(box[1] < chart_bounds[0]) or np.any(box[0] > chart_bounds[1]):
-            continue
-        if domain is None or not domain.curve_loops:
+    for box in boxes:
+        if domain is None or domain.numeric_only or not domain.curve_loops:
             outside = False
             break
         result = domain.classify_boxes(box[None], enclosures=prepared)
@@ -1532,9 +1627,87 @@ def _cylindrical_support_outside(
     return support_lower, outside
 
 
-def _cylindrical_boundary_bounds(
-    model: BRepModel, face: int, point: np.ndarray, path: tuple[str, ...],
-    policy: BRepProjectionPolicy, /,
+def _exact_line_boundary_parameter(
+    model: BRepModel,
+    face: int,
+    point: np.ndarray,
+    /,
+    *,
+    lifts: dict[tuple[int, int], bool] | None,
+) -> tuple[int, Fraction] | None:
+    """Prove a query is on the interior of an exactly lifted line coedge."""
+    from ._correspondence import exact_source_lift
+    from ._intersection_curve import SurfaceRegion
+
+    geometry = model.geometry
+    query = tuple(Fraction.from_float(float(value)) for value in point)
+    region = SurfaceRegion(model.patches[face], np.asarray(model.parameter_bounds[face]))
+    for loop in geometry.face_loops[face]:
+        for coedge in loop:
+            edge = geometry.coedge_edges[coedge]
+            carrier = geometry.edge_curves[edge]
+            if carrier < 0:
+                continue
+            curve = geometry.curves[carrier]
+            if isinstance(curve, LineCurve):
+                origin, direction = curve.origin_exact, curve.direction_exact
+            elif isinstance(curve, ExactLineCurve):
+                origin = curve.first_exact
+                direction = tuple(
+                    b - a
+                    for a, b in zip(curve.first_exact, curve.last_exact, strict=True)
+                )
+            else:
+                continue
+            if not all(isinstance(value, Fraction) for value in (*origin, *direction)):
+                continue
+            axis = next((i for i, value in enumerate(direction) if value != 0), None)
+            if axis is None:
+                continue
+            parameter = (query[axis] - origin[axis]) / direction[axis]
+            if not isinstance(parameter, Fraction) or any(
+                origin[i] + parameter * direction[i] != query[i] for i in range(3)
+            ):
+                continue
+            first, last = map(float, geometry.edge_ranges[edge])
+            if not Fraction.from_float(first) < parameter < Fraction.from_float(last):
+                continue
+            endpoints = geometry.coedge_endpoint_roots[coedge]
+            if all(root is not None for root in endpoints):
+                intervals = sorted(
+                    root.parameter_enclosure() for root in endpoints if root is not None
+                )
+                if not (
+                    Fraction.from_float(float(intervals[0][1]))
+                    < parameter
+                    < Fraction.from_float(float(intervals[1][0]))
+                ):
+                    continue
+            elif any(root is not None for root in endpoints):
+                continue
+            admitted = None if lifts is None else lifts.get((face, coedge))
+            if admitted is None:
+                admitted = exact_source_lift(
+                    curve, geometry.pcurves[coedge], region, first, last
+                )
+                if lifts is not None:
+                    lifts[face, coedge] = admitted
+            if admitted:
+                return coedge, parameter
+    return None
+
+
+def _source_boundary_bounds(
+    model: BRepModel,
+    face: int,
+    point: np.ndarray,
+    path: tuple[str, ...],
+    policy: BRepProjectionPolicy,
+    /,
+    *,
+    lifts: dict[tuple[int, int], bool] | None = None,
+    boxes: dict[int, np.ndarray] | None = None,
+    distance_threshold: float | None = None,
 ) -> tuple[float, float] | None:
     """Combine native edge distance evidence only for exact coedge lifts."""
     from ._correspondence import exact_source_lift
@@ -1555,36 +1728,169 @@ def _cylindrical_boundary_bounds(
                 lowers.append(0.0)
                 continue
             first_parameter, last_parameter = map(float, geometry.edge_ranges[edge])
-            if not exact_source_lift(
-                geometry.curves[carrier],
-                geometry.pcurves[coedge],
-                region,
-                first_parameter,
-                last_parameter,
-            ):
+            admitted = None if lifts is None else lifts.get((face, coedge))
+            if admitted is None:
+                admitted = exact_source_lift(
+                    geometry.curves[carrier],
+                    geometry.pcurves[coedge],
+                    region,
+                    first_parameter,
+                    last_parameter,
+                )
+                if lifts is not None:
+                    lifts[face, coedge] = admitted
+            if not admitted:
                 lowers.append(0.0)
                 continue
-            hit = _line_curve_hit(model, edge, point, path, policy)
-            lowers.append(hit.lower if hit.status != _FAILED else 0.0)
+            edge_boxes = None if boxes is None else boxes.get(edge)
+            box_lower = 0.0
+            if edge_boxes is not None:
+                box_lower = min(
+                    _distance_bounds(point, np.clip(point, box[0], box[1]))[0]
+                    for box in edge_boxes
+                )
+                if distance_threshold is not None and box_lower > distance_threshold:
+                    lowers.append(box_lower)
+                    continue
+            hit = _line_curve_hit(model, edge, point, path, policy, frame=False)
+            lowers.append(max(box_lower, hit.lower if hit.status != _FAILED else 0.0))
             uppers.append(hit.upper)
     if not lowers:
         return None
     return min(lowers), min(uppers, default=np.inf)
 
 
+def _source_boundary_hit_near_minimum(
+    model: BRepModel,
+    face: int,
+    point: np.ndarray,
+    path: tuple[str, ...],
+    orientation: float,
+    policy: BRepProjectionPolicy,
+    minimum_lower_bound: float,
+    /,
+    *,
+    embedding: PlanarEmbedding | None,
+    lifts: dict[tuple[int, int], bool] | None,
+) -> _Hit | None:
+    """Prove a boundary candidate lies within the declared minimum tie band."""
+    from ._correspondence import exact_source_lift
+    from ._intersection_curve import SurfaceRegion
+
+    geometry = model.geometry
+    patch = model.patches[face]
+    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    region = SurfaceRegion(patch, bounds)
+    best: tuple[_Hit, np.ndarray] | None = None
+    for loop in geometry.face_loops[face]:
+        for coedge in loop:
+            edge = geometry.coedge_edges[coedge]
+            carrier = geometry.edge_curves[edge]
+            if carrier < 0:
+                continue
+            admitted = None if lifts is None else lifts.get((face, coedge))
+            if admitted is None:
+                first, last = map(float, geometry.edge_ranges[edge])
+                admitted = exact_source_lift(
+                    geometry.curves[carrier],
+                    geometry.pcurves[coedge],
+                    region,
+                    first,
+                    last,
+                )
+                if lifts is not None:
+                    lifts[face, coedge] = admitted
+            if not admitted:
+                continue
+            hit = _line_curve_hit(model, edge, point, path, policy, frame=False)
+            if (
+                hit.status not in (_UNIQUE, _SEAM)
+                or hit.upper - minimum_lower_bound > policy.ambiguity_tolerance
+                or (best is not None and hit.upper >= best[0].upper)
+            ):
+                continue
+            uv = np.asarray(
+                geometry.pcurves[coedge].evaluate(
+                    jnp.asarray(hit.parameters[0], dtype=jnp.float64)
+                ),
+                dtype=np.float64,
+            )
+            if np.all(np.isfinite(uv)):
+                best = hit, uv
+    if best is None:
+        return None
+    hit, uv = best
+    normal, tangents, regular = _face_normal_and_frame(
+        patch,
+        uv,
+        orientation,
+        embedding=embedding,
+        profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+    )
+    closest = hit.point if embedding is None else embedding.to_planar(hit.point)
+    return _Hit(
+        2,
+        face,
+        closest,
+        uv,
+        minimum_lower_bound,
+        hit.upper,
+        _SEAM if regular else _SINGULAR,
+        normal,
+        tangents,
+        path,
+    )
+
+
 def _cylindrical_trim_distance(
-    model: BRepModel, face: int, point: np.ndarray, path: tuple[str, ...],
-    policy: BRepProjectionPolicy, /, *,
+    model: BRepModel,
+    face: int,
+    point: np.ndarray,
+    path: tuple[str, ...],
+    policy: BRepProjectionPolicy,
+    /,
+    *,
     enclosures: dict[int, TrimEnclosures] | None,
+    lifts: dict[tuple[int, int], bool] | None = None,
+    boxes: dict[int, np.ndarray] | None = None,
+    distance_threshold: float | None = None,
+    angle_bounds: dict[int, tuple[float, float] | None] | None = None,
 ) -> _Hit | None:
     """Bound trimmed distance without inventing a nearest point or frame."""
     support = _cylindrical_support_data(model.patches[face], point)
     if support is None:
         return None
     support_lower, outside = _cylindrical_support_outside(
-        model, face, support, enclosures=enclosures
+        model,
+        face,
+        support,
+        enclosures=enclosures,
+        distance_threshold=distance_threshold,
+        angle_bounds=angle_bounds,
     )
-    boundary = _cylindrical_boundary_bounds(model, face, point, path, policy)
+    if distance_threshold is not None and support_lower > distance_threshold:
+        return _Hit(
+            2,
+            face,
+            _NAN3.copy(),
+            _NAN2.copy(),
+            support_lower,
+            np.inf,
+            _UNRESOLVED,
+            _NAN3.copy(),
+            _NAN_FRAME3.copy(),
+            path,
+        )
+    boundary = _source_boundary_bounds(
+        model,
+        face,
+        point,
+        path,
+        policy,
+        lifts=lifts,
+        boxes=boxes,
+        distance_threshold=distance_threshold if outside else None,
+    )
     if boundary is None:
         return None
     # The only interior local minimum for a non-axis query is the support
@@ -1617,10 +1923,16 @@ def _project_face(
     embedding: PlanarEmbedding | None,
     affine_frame: _AffineProjectionFrame | None,
     enclosures: dict[int, TrimEnclosures] | None = None,
+    lifts: dict[tuple[int, int], bool] | None = None,
+    boxes: dict[int, np.ndarray] | None = None,
+    distance_threshold: float | None = None,
+    angle_bounds: dict[int, tuple[float, float] | None] | None = None,
+    defer_frame: bool = False,
 ) -> _Hit:
     patch = model.patches[face]
     candidate: np.ndarray | None = None
     uv: np.ndarray | None = None
+    exact_uv: tuple[ExactScalar, ExactScalar] | None = None
     nonisolated = False
     affine_spline = False
     # Straight-ruled revolutions and cylinders: the candidate is the closest
@@ -2148,7 +2460,16 @@ def _project_face(
             )
             if representative is None:
                 return _cylindrical_trim_distance(
-                    model, face, point, path, policy, enclosures=enclosures
+                    model,
+                    face,
+                    point,
+                    path,
+                    policy,
+                    enclosures=enclosures,
+                    lifts=lifts,
+                    boxes=boxes,
+                    distance_threshold=distance_threshold,
+                    angle_bounds=angle_bounds,
                 ) or _unresolved(2, face, path)
             uv[axis] = representative
     outside_bounds = np.any(uv < bounds[0]) or np.any(uv > bounds[1])
@@ -2167,6 +2488,57 @@ def _project_face(
             else _trim_classification(model, face, uv, enclosures=enclosures)
         )
     if trim is None or trim == 0:
+        # A carrier minimum whose periodic representative lies on a chart seam
+        # bound (e.g. a rounded angle just across the seam) leaves trim
+        # membership undecidable there, as does an interval-enclosed torus seam.
+        on_periodic_seam = any(
+            period is not None and uv[axis] in (bounds[0, axis], bounds[1, axis])
+            for axis, period in enumerate(periods)
+        )
+        if (isinstance(patch, TorusPatch) or on_periodic_seam) and not nonisolated:
+            # A proved coedge point within the carrier minimum's tie band
+            # supplies an actual source point, not a snapped UV guess.
+            boundary = _source_boundary_hit_near_minimum(
+                model,
+                face,
+                point,
+                path,
+                orientation,
+                policy,
+                _distance_bounds(point, candidate)[0],
+                embedding=embedding,
+                lifts=lifts,
+            )
+            if boundary is not None:
+                return boundary
+        boundary_line = _exact_line_boundary_parameter(model, face, point, lifts=lifts)
+        if boundary_line is not None:
+            coedge, parameter = boundary_line
+            boundary_uv = np.asarray(
+                model.geometry.pcurves[coedge].evaluate(jnp.asarray(float(parameter))),
+                dtype=np.float64,
+            )
+            normal, tangents, regular = _face_normal_and_frame(
+                patch,
+                boundary_uv,
+                orientation,
+                embedding=embedding,
+                profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+            )
+            lower, upper = _distance_bounds(point, point)
+            closest = point if embedding is None else embedding.to_planar(point)
+            return _Hit(
+                2,
+                face,
+                closest,
+                boundary_uv,
+                lower,
+                upper,
+                _SEAM if regular else _SINGULAR,
+                normal,
+                tangents,
+                path,
+            )
         if (
             isinstance(patch, PlanePatch)
             or affine_spline
@@ -2210,8 +2582,72 @@ def _project_face(
                         boundary_hit.tangents,
                         path,
                     )
+            if isinstance(patch, PlanePatch) and exact_uv is not None:
+                intervals = tuple(coefficient_interval(value) for value in exact_uv)
+                uv_box = np.asarray(
+                    (
+                        tuple(
+                            fraction_endpoint(pair[0], upper=False, saturate=True)
+                            for pair in intervals
+                        ),
+                        tuple(
+                            fraction_endpoint(pair[1], upper=True, saturate=True)
+                            for pair in intervals
+                        ),
+                    )
+                )
+                outside = bool(
+                    np.any(uv_box[1] < bounds[0]) or np.any(uv_box[0] > bounds[1])
+                )
+                domain = model.trim_domains[face]
+                if not outside and domain is not None and not domain.numeric_only:
+                    prepared = None
+                    if enclosures is not None and domain.curve_loops:
+                        prepared = enclosures.get(face)
+                        if prepared is None:
+                            prepared = domain.prepare_enclosures()
+                            enclosures[face] = prepared
+                    decision = domain.classify_boxes(uv_box[None], enclosures=prepared)
+                    outside = bool(
+                        np.asarray(decision.resolved[0])
+                        and not np.asarray(decision.inside[0])
+                        and not np.asarray(decision.boundary[0])
+                    )
+                if outside:
+                    boundary = _source_boundary_bounds(
+                        model,
+                        face,
+                        point,
+                        path,
+                        policy,
+                        lifts=lifts,
+                        boxes=boxes,
+                        distance_threshold=distance_threshold,
+                    )
+                    if boundary is not None:
+                        return _Hit(
+                            2,
+                            face,
+                            _NAN3.copy(),
+                            _NAN2.copy(),
+                            boundary[0],
+                            boundary[1],
+                            _UNRESOLVED,
+                            _NAN3.copy(),
+                            _NAN_FRAME3.copy(),
+                            path,
+                        )
         return _cylindrical_trim_distance(
-            model, face, point, path, policy, enclosures=enclosures
+            model,
+            face,
+            point,
+            path,
+            policy,
+            enclosures=enclosures,
+            lifts=lifts,
+            boxes=boxes,
+            distance_threshold=distance_threshold,
+            angle_bounds=angle_bounds,
         ) or _unresolved(2, face, path)
     if nonisolated and trim > 0:
         if affine_distance_squared is None:
@@ -2230,13 +2666,16 @@ def _project_face(
             _NAN_FRAME3.copy(),
             path,
         )
-    normal, tangents, regular = _face_normal_and_frame(
-        patch,
-        uv,
-        orientation,
-        embedding=embedding,
-        profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
-    )
+    if defer_frame:
+        normal, tangents, regular = _NAN3.copy(), _NAN_FRAME3.copy(), True
+    else:
+        normal, tangents, regular = _face_normal_and_frame(
+            patch,
+            uv,
+            orientation,
+            embedding=embedding,
+            profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+        )
     if affine_distance_squared is None:
         lower, upper = _distance_bounds(point, candidate)
     else:
@@ -2265,7 +2704,19 @@ def _project_face(
         status = _SEAM
     if embedding is not None:
         candidate = embedding.to_planar(candidate)
-    return _Hit(2, face, candidate, uv, lower, upper, status, normal, tangents, path)
+    return _Hit(
+        2,
+        face,
+        candidate,
+        uv,
+        lower,
+        upper,
+        status,
+        normal,
+        tangents,
+        path,
+        pending_frame=defer_frame,
+    )
 
 
 # Cranley-Patterson shift of the Sobol points: 40-bit dyadic images of
@@ -2324,8 +2775,7 @@ class _ExactCylinder:
     axis: tuple[Fraction, Fraction, Fraction]
     axis_squared: Fraction
     radius: Fraction
-    period: float
-    middle: float
+    native_angle_bounds: tuple[float, float]
 
 
 # A containment ray carrier: an exact cylinder, or a plane frame with its normal.
@@ -2341,22 +2791,38 @@ def _rational_dot(left: Sequence[Fraction], right: Sequence[Fraction], /) -> Fra
 def _exact_cylinder(model: BRepModel, face: int, /) -> _ExactCylinder | None:
     """Exact rational frame of a periodic cylinder face, or ``None``."""
     patch = model.patches[face]
-    if not isinstance(patch, CylinderPatch):
+    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    if isinstance(patch, CylinderPatch):
+        cylinder, rate = patch, Fraction(1)
+    elif isinstance(patch, RevolutionSurface):
+        from ._intersection import _revolution_cylinder_view
+        from ._intersection_curve import SurfaceRegion
+
+        view = _revolution_cylinder_view(SurfaceRegion(patch, bounds))
+        if view is None or not isinstance(view[0].patch, CylinderPatch):
+            return None
+        cylinder, rate = view[0].patch, view[1]
+    else:
         return None
     vectors = (
-        patch.origin_exact,
-        patch.first_axis_exact,
-        patch.second_axis_exact,
-        patch.axis_exact,
+        cylinder.origin_exact,
+        cylinder.first_axis_exact,
+        cylinder.second_axis_exact,
+        cylinder.axis_exact,
     )
     if any(
         not all(isinstance(value, Fraction) for value in vector) for vector in vectors
-    ) or not isinstance(patch.radius_exact, Fraction):
+    ) or not isinstance(cylinder.radius_exact, Fraction):
         return None
-    origin, first, second, axis = (
+    origin, first, second, unit_axis = (
         cast(tuple[Fraction, Fraction, Fraction], tuple(vector)) for vector in vectors
     )
-    radius = patch.radius_exact
+    # The canonical proxy uses physical axial distance. Restore the source
+    # profile parameter, including a negative or non-unit authored rate.
+    axis = cast(
+        tuple[Fraction, Fraction, Fraction], tuple(rate * value for value in unit_axis)
+    )
+    radius = cylinder.radius_exact
     axis_squared = _rational_dot(axis, axis)
     period = patch.periods[0]
     if (
@@ -2370,7 +2836,9 @@ def _exact_cylinder(model: BRepModel, face: int, /) -> _ExactCylinder | None:
         or _rational_dot(second, axis) != 0
     ):
         return None
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    native = _native_chart_bounds(model, face)
+    if native is None:
+        return None
     return _ExactCylinder(
         origin,
         first,
@@ -2378,27 +2846,95 @@ def _exact_cylinder(model: BRepModel, face: int, /) -> _ExactCylinder | None:
         axis,
         axis_squared,
         radius,
-        float(period),
-        0.5 * (float(bounds[0, 0]) + float(bounds[1, 0])),
+        native,
     )
 
 
-def _cylinder_trim(
+def _cylinder_chart_lifts(
+    context: Any,
+    angle: Any,
+    height: Any,
+    chart: np.ndarray,
+    native_bounds: tuple[float, float],
+    /,
+) -> tuple[np.ndarray, ...] | None:
+    """Enclose all possible lifts, refusing source-root endpoint gaps."""
+    from mpmath.libmp import to_rational
+
+    from ._intersection_projection import _bounds, _scalar
+
+    angle_bounds = _bounds(angle)
+    height_bounds = _bounds(height)
+    if not np.all(np.isfinite((*angle_bounds, *height_bounds))):
+        return None
+    if angle_bounds[1] - angle_bounds[0] >= pi:
+        return None
+    native_lower, native_upper = native_bounds
+    period = 2 * context.pi
+    first = (_scalar(context, Fraction.from_float(native_lower)) - angle) / period
+    last = (_scalar(context, Fraction.from_float(native_upper)) - angle) / period
+    first_turn = ceil(Fraction(*to_rational(first._mpi_[0])))
+    last_turn = floor(Fraction(*to_rational(last._mpi_[1])))
+    boxes: list[np.ndarray] = []
+    for turn in range(first_turn, last_turn + 1):
+        angle_lower, angle_upper = _bounds(angle + turn * period)
+        if (angle_upper > chart[1, 0] and angle_lower <= native_upper) or (
+            angle_lower < chart[0, 0] and angle_upper >= native_lower
+        ):
+            return None
+        box = np.asarray(
+            ((angle_lower, height_bounds[0]), (angle_upper, height_bounds[1]))
+        )
+        if np.any(box[1] < chart[0]) or np.any(box[0] > chart[1]):
+            continue
+        if np.any(box[0] < chart[0]) or np.any(box[1] > chart[1]):
+            return None
+        boxes.append(box)
+    return tuple(boxes)
+
+
+def _cylinder_trim_interval(
     model: BRepModel,
     face: int,
     cylinder: _ExactCylinder,
-    x: float,
-    y: float,
-    height: float,
+    context: Any,
+    x: Any,
+    y: Any,
+    height: Any,
     /,
+    *,
+    enclosures: dict[int, TrimEnclosures] | None = None,
 ) -> int | None:
-    """Trim state of the cylinder point with frame coordinates ``(x, y, height)``."""
-    angle = float(np.arctan2(y, x))
-    angle += round((cylinder.middle - angle) / cylinder.period) * cylinder.period
-    uv = np.asarray((angle, height), dtype=np.float64)
-    if not np.all(np.isfinite(uv)):
+    """Classify every possible native chart lift of a certified ray crossing."""
+    if model.patches[face].native_period_symbols()[0] != "two_pi":
         return None
-    return _trim_classification(model, face, uv)
+    try:
+        chart = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+        boxes = _cylinder_chart_lifts(
+            context, context.atan2(y, x), height, chart, cylinder.native_angle_bounds
+        )
+        if boxes is None:
+            return None
+        domain = model.trim_domains[face]
+        if domain is None or domain.numeric_only:
+            return None
+        prepared = None
+        if enclosures is not None and domain.curve_loops:
+            prepared = enclosures.get(face)
+            if prepared is None:
+                prepared = domain.prepare_enclosures()
+                enclosures[face] = prepared
+        inside = False
+        for box in boxes:
+            decision = domain.classify_boxes(box[None], enclosures=prepared)
+            if not bool(np.asarray(decision.resolved[0])) or bool(
+                np.asarray(decision.boundary[0])
+            ):
+                return None
+            inside = inside or bool(np.asarray(decision.inside[0]))
+        return int(inside)
+    except (ValueError, OverflowError, ZeroDivisionError):
+        return None
 
 
 def _cylinder_frame_point(
@@ -2421,13 +2957,31 @@ def _cylinder_contains_origin(
     cylinder: _ExactCylinder,
     ray_origin: tuple[Fraction, Fraction, Fraction],
     /,
+    *,
+    enclosures: dict[int, TrimEnclosures] | None = None,
 ) -> bool:
     """Whether the ray origin lies on (or float-undecidably near) the trimmed face."""
     relative, x, y, constant = _cylinder_frame_point(cylinder, ray_origin)
     if constant != 0:
         return False
-    height = float(_rational_dot(relative, cylinder.axis) / cylinder.axis_squared)
-    return _cylinder_trim(model, face, cylinder, float(x), float(y), height) != 0
+    from ._intersection_curve import interval_context
+    from ._intersection_projection import _scalar
+
+    context = interval_context(80)
+    height = _rational_dot(relative, cylinder.axis) / cylinder.axis_squared
+    return (
+        _cylinder_trim_interval(
+            model,
+            face,
+            cylinder,
+            context,
+            _scalar(context, x),
+            _scalar(context, y),
+            _scalar(context, height),
+            enclosures=enclosures,
+        )
+        != 0
+    )
 
 
 def _ray_cylinder_crossings(
@@ -2437,6 +2991,8 @@ def _ray_cylinder_crossings(
     ray_origin: tuple[Fraction, Fraction, Fraction],
     ray_direction: tuple[Fraction, Fraction, Fraction],
     /,
+    *,
+    enclosures: dict[int, TrimEnclosures] | None = None,
 ) -> int | None:
     """Count transversal crossings of an exact ray with a trimmed cylinder face.
 
@@ -2448,6 +3004,10 @@ def _ray_cylinder_crossings(
     ``None``. The origin is off the trimmed face (`_cylinder_contains_origin`),
     so a root ``t = 0`` is not a crossing.
     """
+    from ._intersection_curve import interval_context
+    from ._intersection_projection import _scalar
+
+    context = interval_context(80)
     relative, x, y, constant = _cylinder_frame_point(cylinder, ray_origin)
     rate = (
         _rational_dot(ray_direction, cylinder.first),
@@ -2458,14 +3018,14 @@ def _ray_cylinder_crossings(
     if quadratic == 0:
         # A ray parallel to the axis never crosses unless it runs along the wall.
         return None if constant == 0 else 0
-    parameters: list[float] = []
+    parameters: list[Any] = []
     if constant == 0:
         # The origin lies on the cylinder outside the face: the only other root
         # is t = -B / A, a tangent ray when B = 0.
         if linear == 0:
             return None
         if linear < 0:
-            parameters.append(float(-linear / quadratic))
+            parameters.append(_scalar(context, -linear / quadratic))
     else:
         discriminant = linear * linear - 4 * quadratic * constant
         if discriminant < 0:
@@ -2473,14 +3033,15 @@ def _ray_cylinder_crossings(
         if discriminant == 0:
             return None
         # With A > 0: t+ > 0 iff B < 0 or C < 0, and t- > 0 iff B < 0 and C > 0.
-        root_discriminant = sqrt(float(discriminant))
+        root_discriminant = context.sqrt(_scalar(context, discriminant))
         for sign, positive in (
             (1, linear < 0 or constant < 0),
             (-1, linear < 0 and constant > 0),
         ):
             if positive:
                 parameters.append(
-                    (-float(linear) + sign * root_discriminant) / (2.0 * float(quadratic))
+                    (-_scalar(context, linear) + sign * root_discriminant)
+                    / _scalar(context, 2 * quadratic)
                 )
     axial = (
         _rational_dot(relative, cylinder.axis),
@@ -2488,14 +3049,16 @@ def _ray_cylinder_crossings(
     )
     crossings = 0
     for parameter in parameters:
-        trim = _cylinder_trim(
+        trim = _cylinder_trim_interval(
             model,
             face,
             cylinder,
-            float(x) + parameter * float(rate[0]),
-            float(y) + parameter * float(rate[1]),
-            (float(axial[0]) + parameter * float(axial[1]))
-            / float(cylinder.axis_squared),
+            context,
+            _scalar(context, x) + parameter * _scalar(context, rate[0]),
+            _scalar(context, y) + parameter * _scalar(context, rate[1]),
+            (_scalar(context, axial[0]) + parameter * _scalar(context, axial[1]))
+            / _scalar(context, cylinder.axis_squared),
+            enclosures=enclosures,
         )
         if trim is None or trim < 0:
             return None
@@ -3193,23 +3756,34 @@ class NativeBRepProjection(AbstractBRepProjection):
         if vertices.size:
             boxes[: counts[0], 0] = vertices
             boxes[: counts[0], 1] = vertices
-        # A certified source branch encloses its whole edge, even when closest
-        # point projection on that carrier is unsupported. Such an unresolved
-        # edge can only affect classifications near its actual source box.
+        # Certified source boxes bound whole edges, independently of whether
+        # closest-point projection on the carrier can resolve the query.
+        from .._interval_enclosure import IntervalExtensionError
         from ._intersection_curve import IntersectionCurve
 
         for edge, carrier in enumerate(model.geometry.edge_curves):
             if carrier < 0:
                 continue
             curve = model.geometry.curves[carrier]
-            if not isinstance(curve, IntersectionCurve) or not curve.fully_certified:
+            if isinstance(curve, IntersectionCurve) and not curve.fully_certified:
+                continue
+            if not isinstance(
+                curve,
+                (LineCurve, ExactLineCurve, CircleCurve, BSplineCurve, IntersectionCurve),
+            ):
                 continue
             first, last = np.asarray(model.geometry.edge_ranges[edge], dtype=np.float64)
             try:
                 box = np.asarray(
                     curve.bounding_box(float(first), float(last)), dtype=np.float64
                 )
-            except (ValueError, TypeError, NotImplementedError, RuntimeError):
+            except (
+                ValueError,
+                TypeError,
+                NotImplementedError,
+                RuntimeError,
+                IntervalExtensionError,
+            ):
                 continue
             if (
                 box.shape == (2, 3)
@@ -3217,7 +3791,6 @@ class NativeBRepProjection(AbstractBRepProjection):
                 and np.all(box[0] <= box[1])
             ):
                 boxes[counts[0] + edge] = box
-        from .._interval_enclosure import IntervalExtensionError
 
         for face, patch in enumerate(model.patches):
             try:
@@ -3296,6 +3869,16 @@ class NativeBRepProjection(AbstractBRepProjection):
 
     def _ambient(self, points: np.ndarray, /) -> np.ndarray:
         return points if self.embedding is None else self.embedding.to_planar(points)
+
+    def _source_edge_boxes(self) -> dict[int, np.ndarray]:
+        """Source-local certified edge boxes, prepared once per query call."""
+        boxes = np.asarray(self.entity_boxes)
+        offset = self.entity_counts[0]
+        return {
+            edge: boxes[offset + edge][None, :, :]
+            for edge in range(self.entity_counts[1])
+            if np.all(np.isfinite(boxes[offset + edge]))
+        }
 
     def _belongs(self, dimension: int, index: int, solid: int, /) -> bool:
         geometry = self.model.geometry
@@ -3524,11 +4107,21 @@ class NativeBRepProjection(AbstractBRepProjection):
         /,
         *,
         enclosures: dict[int, TrimEnclosures] | None = None,
+        lifts: dict[tuple[int, int], bool] | None = None,
+        boxes: dict[int, np.ndarray] | None = None,
+        distance_threshold: float | None = None,
+        angle_bounds: dict[int, tuple[float, float] | None] | None = None,
+        defer_frame: bool = False,
+        _occurrence: _Occurrence | None = None,
     ) -> _Hit:
         count = self.entity_counts[dimension]
         if index < 0 or index >= count:
             raise ValueError("Entity index lies outside its B-Rep dimension.")
-        targets = self._target_occurrences(dimension, index, occurrence_path)
+        targets = (
+            (_occurrence,)
+            if _occurrence is not None
+            else self._target_occurrences(dimension, index, occurrence_path)
+        )
         if not targets:
             return _failed(self.ambient_dimension)
         hits: list[_Hit] = []
@@ -3571,6 +4164,11 @@ class NativeBRepProjection(AbstractBRepProjection):
                     embedding=None,
                     affine_frame=self.affine_projection_frames[index],
                     enclosures=enclosures,
+                    lifts=lifts,
+                    boxes=boxes,
+                    distance_threshold=distance_threshold,
+                    angle_bounds=angle_bounds,
+                    defer_frame=defer_frame and len(targets) == 1,
                 )
                 if hit.status == _UNRESOLVED:
                     source_box = (
@@ -3610,6 +4208,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     occurrence.path,
                     hit.piece_id,
                     hit.root_id,
+                    hit.pending_frame,
                 )
             hits.append(hit)
         if len(hits) == 1:
@@ -3715,6 +4314,31 @@ class NativeBRepProjection(AbstractBRepProjection):
         *,
         occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
     ) -> BRepProjectionResult:
+        return self._project_prepared(
+            points,
+            dimensions,
+            indices,
+            occurrence_paths=occurrence_paths,
+            preparation=self._prepare_project(),
+        )
+
+    def _prepare_project(self) -> _ProjectionPreparation:
+        return _ProjectionPreparation(self.model, self._source_edge_boxes())
+
+    def _project_prepared(
+        self,
+        points: ArrayLike,
+        dimensions: ArrayLike,
+        indices: ArrayLike,
+        /,
+        *,
+        occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
+        preparation: _ProjectionPreparation,
+    ) -> BRepProjectionResult:
+        if preparation.model is not self.model:
+            raise ValueError(
+                "Projection preparation belongs to a different source model."
+            )
         queries = np.asarray(points, dtype=np.float64)
         dims = np.asarray(dimensions)
         rows = np.asarray(indices)
@@ -3747,10 +4371,19 @@ class NativeBRepProjection(AbstractBRepProjection):
         )
         world = self._world(queries)
         hits = []
-        enclosures: dict[int, TrimEnclosures] = {}
+        enclosures = preparation.enclosures
+        lifts = preparation.lifts
+        angle_bounds = preparation.angle_bounds
+        boxes = preparation.boxes
         for row, (dimension, index) in enumerate(zip(dims, rows, strict=True)):
             if row % 64 == 0:
-                enclosures.clear()
+                for trim_cache in enclosures.values():
+                    trim_cache.retain_coarse()
+            patch = (
+                self.model.patches[int(index)]
+                if int(dimension) == 2 and 0 <= int(index) < len(self.model.patches)
+                else None
+            )
             hits.append(
                 self._project_one(
                     int(dimension),
@@ -3758,8 +4391,61 @@ class NativeBRepProjection(AbstractBRepProjection):
                     world[row],
                     requested[row],
                     enclosures=enclosures,
+                    lifts=lifts,
+                    boxes=boxes,
+                    angle_bounds=angle_bounds,
+                    defer_frame=(
+                        isinstance(
+                            patch, (ConePatch, CylinderPatch, SpherePatch, TorusPatch)
+                        )
+                        or (
+                            isinstance(patch, RevolutionSurface)
+                            and isinstance(patch.curve, (LineCurve, ExactLineCurve))
+                        )
+                    ),
                 )
             )
+        # The source map and its derivative program are shared per patch;
+        # evaluate bounded query batches rather than tracing one JAX derivative
+        # for every requested point. Occurrence transforms remain per hit.
+        from ._patches import _QUERY_BUCKETS, bucketed_query_rows
+
+        pending: dict[int, list[int]] = {}
+        for row, hit in enumerate(hits):
+            if hit.pending_frame:
+                pending.setdefault(hit.index, []).append(row)
+        for face, selected in pending.items():
+            patch = self.model.patches[face]
+            derivative = jax.vmap(jax.jacfwd(patch.evaluate))
+            bounds = np.asarray(self.model.parameter_bounds[face], dtype=np.float64)
+            for start in range(0, len(selected), _QUERY_BUCKETS[-1]):
+                batch = selected[start : start + _QUERY_BUCKETS[-1]]
+                parameters = np.asarray([hits[row].parameters for row in batch])
+                jacobians = bucketed_query_rows(derivative, parameters)
+                for row, jacobian in zip(batch, jacobians, strict=True):
+                    hit = hits[row]
+                    occurrence = self._target_occurrences(2, face, hit.path)[0]
+                    normal, tangents, regular = _face_normal_and_frame(
+                        patch,
+                        hit.parameters,
+                        self._face_orientation(face, occurrence.solid),
+                        embedding=None,
+                        profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+                        jacobian=jacobian,
+                    )
+                    if occurrence.path:
+                        rotation = np.asarray(occurrence.rotation, dtype=np.float64)
+                        normal = (
+                            rotation @ normal if np.all(np.isfinite(normal)) else normal
+                        )
+                        tangents = _map_frame(tangents, rotation.T)
+                    hits[row] = replace(
+                        hit,
+                        normal=normal,
+                        tangents=tangents,
+                        status=hit.status if regular else _SINGULAR,
+                        pending_frame=False,
+                    )
         return self._result(queries, hits)
 
     def project_boundary(
@@ -3814,7 +4500,14 @@ class NativeBRepProjection(AbstractBRepProjection):
             raise ValueError("occurrence_paths must select an occurrence of this source.")
         world = self._world(queries)
         hits: list[_Hit] = []
+        enclosures: dict[int, TrimEnclosures] = {}
+        lifts: dict[tuple[int, int], bool] = {}
+        angle_bounds: dict[int, tuple[float, float] | None] = {}
+        boxes = self._source_edge_boxes()
         for row, query in enumerate(world):
+            if row % 64 == 0:
+                for trim_cache in enclosures.values():
+                    trim_cache.retain_coarse()
             path = None if occurrence_paths is None else occurrence_paths[row]
             eligible = tuple(
                 entity for entity in candidates if path is None or entity.path == path
@@ -3834,6 +4527,10 @@ class NativeBRepProjection(AbstractBRepProjection):
                     entity.index,
                     query,
                     entity.path,
+                    enclosures=enclosures,
+                    lifts=lifts,
+                    boxes=boxes,
+                    angle_bounds=angle_bounds,
                 )
                 if hit.status == _UNRESOLVED:
                     unresolved.append(hit)
@@ -4069,7 +4766,7 @@ class NativeBRepProjection(AbstractBRepProjection):
             and np.array_equal(np.asarray(occurrence.translation), np.zeros(3))
             for occurrence in self.occurrences
         )
-        branch_boxes: dict[int, np.ndarray] = {}
+        branch_boxes = self._source_edge_boxes()
         if identity_occurrences:
             from ._intersection_curve import IntersectionCurve
 
@@ -4168,9 +4865,12 @@ class NativeBRepProjection(AbstractBRepProjection):
                 candidates.append(hit)
 
         enclosures: dict[int, TrimEnclosures] = {}
+        lifts: dict[tuple[int, int], bool] = {}
+        angle_bounds: dict[int, tuple[float, float] | None] = {}
         for row, query in enumerate(world):
             if row % 64 == 0:
-                enclosures.clear()
+                for trim_cache in enclosures.values():
+                    trim_cache.retain_coarse()
             candidates: list[_Hit] = []
             unresolved: list[_Hit] = []
             if group_values is None:
@@ -4197,10 +4897,32 @@ class NativeBRepProjection(AbstractBRepProjection):
                 if key in seen:
                     continue
                 seen.add(key)
-                if dimension == 1 and path is None and branch_is_far(index, query):
+                if identity_occurrences and dimension == 2:
+                    box = entity_boxes[offsets[dimension] + index]
+                    if np.all(np.isfinite(box)):
+                        closest = np.clip(query, box[0], box[1])
+                        if _distance_bounds(query, closest)[0] > radius:
+                            if path is not None:
+                                self._target_occurrences(dimension, index, path)
+                            continue
+                if (
+                    identity_occurrences
+                    and dimension == 1
+                    and branch_is_far(index, query)
+                ):
+                    if path is not None:
+                        self._target_occurrences(dimension, index, path)
                     continue
                 hit = self._project_one(
-                    dimension, index, query, path, enclosures=enclosures
+                    dimension,
+                    index,
+                    query,
+                    path,
+                    enclosures=enclosures,
+                    lifts=lifts,
+                    boxes=branch_boxes,
+                    distance_threshold=radius,
+                    angle_bounds=angle_bounds,
                 )
                 add_hit(hit, query, candidates, unresolved)
                 if candidates:
@@ -4225,6 +4947,7 @@ class NativeBRepProjection(AbstractBRepProjection):
             int, tuple[_RevolutionProfile | None, tuple[_RayCarrier, ...] | None]
         ]
         | None = None,
+        enclosures: dict[int, TrimEnclosures] | None = None,
     ) -> bool | None:
         """Exact ray-parity containment; ``None`` on the boundary or unsupported faces.
 
@@ -4254,7 +4977,9 @@ class NativeBRepProjection(AbstractBRepProjection):
         ray_origin = (origin_values[0], origin_values[1], origin_values[2])
         for face, carrier in carriers:
             if isinstance(carrier, _ExactCylinder):
-                if _cylinder_contains_origin(self.model, face, carrier, ray_origin):
+                if _cylinder_contains_origin(
+                    self.model, face, carrier, ray_origin, enclosures=enclosures
+                ):
                     return None
                 continue
             frame, _ = carrier
@@ -4269,7 +4994,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                 ):
                     return None
         for direction in _containment_ray_directions():
-            parity = self._ray_parity(carriers, ray_origin, direction)
+            parity = self._ray_parity(
+                carriers, ray_origin, direction, enclosures=enclosures
+            )
             if parity is not None:
                 return bool(parity)
         raise AssertionError("the containment ray sequence is unbounded")
@@ -4286,7 +5013,10 @@ class NativeBRepProjection(AbstractBRepProjection):
             patch = self.model.patches[face]
             if _trim_classification(self.model, face, far) is None:
                 return None
-            if isinstance(patch, CylinderPatch):
+            if isinstance(patch, (CylinderPatch, RevolutionSurface)):
+                domain = self.model.trim_domains[face]
+                if domain is None or domain.numeric_only:
+                    return None
                 cylinder = _exact_cylinder(self.model, face)
                 if cylinder is None:
                     return None
@@ -4312,6 +5042,8 @@ class NativeBRepProjection(AbstractBRepProjection):
         ray_origin: tuple[Fraction, Fraction, Fraction],
         ray_direction: tuple[Fraction, Fraction, Fraction],
         /,
+        *,
+        enclosures: dict[int, TrimEnclosures] | None = None,
     ) -> int | None:
         """Crossing parity of one exact ray, or ``None`` when it is not generic.
 
@@ -4321,7 +5053,12 @@ class NativeBRepProjection(AbstractBRepProjection):
         for face, carrier in carriers:
             if isinstance(carrier, _ExactCylinder):
                 cylinder_crossings = _ray_cylinder_crossings(
-                    self.model, face, carrier, ray_origin, ray_direction
+                    self.model,
+                    face,
+                    carrier,
+                    ray_origin,
+                    ray_direction,
+                    enclosures=enclosures,
                 )
                 if cylinder_crossings is None:
                     return None
@@ -4371,7 +5108,15 @@ class NativeBRepProjection(AbstractBRepProjection):
         /,
         *,
         occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
+        solid_indices: ArrayLike | None = None,
     ) -> BRepProjectionResult:
+        """Locate points, optionally restricting each query to one native solid.
+
+        ``solid_indices`` supplies one definition-solid index per point. When
+        paired with ``occurrence_paths``, both the index and path must match;
+        an empty path selects that solid in the unplaced definition frame.
+        Omitting the indices retains the unscoped location behavior.
+        """
         queries = np.asarray(points, dtype=np.float64)
         if (
             queries.ndim != 2
@@ -4387,6 +5132,20 @@ class NativeBRepProjection(AbstractBRepProjection):
             or any(not isinstance(path, tuple) for path in occurrence_paths)
         ):
             raise ValueError("occurrence_paths must contain one tuple path per query.")
+        if solid_indices is None:
+            selected_solids: tuple[int | None, ...] = (None,) * queries.shape[0]
+        else:
+            indices = np.asarray(solid_indices)
+            if (
+                indices.shape != (queries.shape[0],)
+                or not np.issubdtype(indices.dtype, np.integer)
+                or np.any(indices < 0)
+                or np.any(indices >= self.entity_counts[3])
+            ):
+                raise ValueError(
+                    "solid_indices must contain one valid solid index per query."
+                )
+            selected_solids = tuple(int(index) for index in indices)
         requested = (
             (None,) * queries.shape[0] if occurrence_paths is None else occurrence_paths
         )
@@ -4396,9 +5155,15 @@ class NativeBRepProjection(AbstractBRepProjection):
             int, tuple[_RevolutionProfile | None, tuple[_RayCarrier, ...] | None]
         ] = {}
         enclosures: dict[int, TrimEnclosures] = {}
-        for row, (query, selected_path) in enumerate(zip(world, requested, strict=True)):
+        lifts: dict[tuple[int, int], bool] = {}
+        angle_bounds: dict[int, tuple[float, float] | None] = {}
+        boxes = self._source_edge_boxes()
+        for row, (query, selected_path, selected_solid) in enumerate(
+            zip(world, requested, selected_solids, strict=True)
+        ):
             if row % 64 == 0:
-                enclosures.clear()
+                for trim_cache in enclosures.values():
+                    trim_cache.retain_coarse()
             if selected_path == ():
                 targets = tuple(
                     _Occurrence((), solid, _IDENTITY_ROTATION, _ZERO_TRANSLATION)
@@ -4412,6 +5177,16 @@ class NativeBRepProjection(AbstractBRepProjection):
                 )
             if selected_path is not None and selected_path and not targets:
                 raise ValueError("occurrence_path does not belong to the B-Rep source.")
+            if selected_solid is not None:
+                targets = tuple(
+                    occurrence
+                    for occurrence in targets
+                    if occurrence.solid == selected_solid
+                )
+                if not targets:
+                    raise ValueError(
+                        "The requested solid index and occurrence_path must name a source solid."
+                    )
             inside: list[_Hit] = []
             boundary: list[_Hit] = []
             unresolved: list[_Hit] = []
@@ -4429,6 +5204,11 @@ class NativeBRepProjection(AbstractBRepProjection):
                         query,
                         occurrence.path,
                         enclosures=enclosures,
+                        boxes=boxes,
+                        lifts=lifts,
+                        distance_threshold=self.policy.classifier_tolerance,
+                        angle_bounds=angle_bounds,
+                        _occurrence=occurrence if selected_solid is not None else None,
                     )
                     for face in self.model.topology.solid_faces[occurrence.solid]
                 ]
@@ -4463,7 +5243,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     unresolved.append(_unresolved(3, occurrence.solid, occurrence.path))
                     continue
                 contained = self._contains_solid(
-                    local, occurrence.solid, prepared=prepared
+                    local, occurrence.solid, prepared=prepared, enclosures=enclosures
                 )
                 if contained is None:
                     unresolved.append(_unresolved(3, occurrence.solid, occurrence.path))

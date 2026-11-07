@@ -189,6 +189,31 @@ def _parameter_midpoint(first: float, last: float, /) -> float:
     return lower
 
 
+def _endpoint_interval(
+    first: float,
+    last: float,
+    endpoint_bounds: tuple[tuple[float, float], tuple[float, float]],
+    /,
+) -> tuple[float, float]:
+    """Include a root whenever the numerical interval intersects its bracket."""
+    lower, upper = sorted((first, last))
+    for root_lower, root_upper in endpoint_bounds:
+        if lower <= root_upper and root_lower <= upper:
+            lower = min(lower, root_lower)
+            upper = max(upper, root_upper)
+    return lower, upper
+
+
+def _interior_interval(
+    parameter_range: tuple[float, float],
+    endpoint_bounds: tuple[tuple[float, float], tuple[float, float]],
+    /,
+) -> tuple[float, float]:
+    if parameter_range[0] < parameter_range[1]:
+        return endpoint_bounds[0][1], endpoint_bounds[1][0]
+    return endpoint_bounds[1][1], endpoint_bounds[0][0]
+
+
 def _prepare_curve(
     curve: AbstractCurve, first: float, last: float, /
 ) -> PreparedIntervalFunction | None:
@@ -261,11 +286,19 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
     representatives with interval-bounded evaluation error. Sampling is only a
     consumer-facing view of the same continuous cover and never establishes
     interval authority on its own.
+    Endpoint parameter brackets enclose mathematical roots in the chart's own
+    gauge; range endpoints are numerical shadows, not replacements for those
+    roots. A source owner must validate non-singleton brackets against its
+    retained endpoint authority. Interval boxes include the brackets, while
+    distance upper-bound representatives remain in the certified interior.
     """
 
     curves: tuple[AbstractCurve, ...]
     interval_evaluators: tuple[PreparedIntervalFunction | None, ...]
     parameter_ranges: tuple[tuple[float, float], ...] = eqx.field(static=True)
+    endpoint_parameter_bounds: tuple[
+        tuple[tuple[float, float], tuple[float, float]], ...
+    ] = eqx.field(static=True)
     curve_entity_ids: tuple[str, ...] = eqx.field(static=True)
     occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     chart_ids: tuple[str, ...] = eqx.field(static=True)
@@ -309,6 +342,10 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
             tuple[tuple[tuple[float, ...], tuple[float, ...]] | None, ...], ...
         ]
         | None = None,
+        endpoint_parameter_bounds: tuple[
+            tuple[tuple[float, float], tuple[float, float]], ...
+        ]
+        | None = None,
     ) -> None:
         if (
             not isinstance(curves, tuple)
@@ -322,6 +359,37 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
                 "Source curve charts must share one positive ambient dimension."
             )
         ranges = _parameter_ranges(curves, parameter_ranges)
+        raw_parameter_bounds = (
+            tuple(((first, first), (last, last)) for first, last in ranges)
+            if endpoint_parameter_bounds is None
+            else endpoint_parameter_bounds
+        )
+        if len(raw_parameter_bounds) != len(ranges):
+            raise ValueError("Endpoint parameter bounds must align with curve charts.")
+        bounds_list: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        for chart_range, pair in zip(ranges, raw_parameter_bounds, strict=True):
+            if len(pair) != 2 or any(len(bound) != 2 for bound in pair):
+                raise ValueError("Each curve requires two parameter-root brackets.")
+            normalized = (
+                (float(pair[0][0]), float(pair[0][1])),
+                (float(pair[1][0]), float(pair[1][1])),
+            )
+            if any(
+                not np.isfinite(lower)
+                or not np.isfinite(upper)
+                or not lower <= parameter <= upper
+                for parameter, (lower, upper) in zip(chart_range, normalized, strict=True)
+            ):
+                raise ValueError(
+                    "Endpoint parameter roots must enclose their finite shadows."
+                )
+            inner_lower, inner_upper = _interior_interval(chart_range, normalized)
+            if inner_lower >= inner_upper:
+                raise ValueError(
+                    "Endpoint roots must leave a nonempty certified interior."
+                )
+            bounds_list.append(normalized)
+        parameter_bounds = tuple(bounds_list)
         identifiers = tuple(
             canonical_identifier(value, "curve_entity_id") for value in curve_entity_ids
         )
@@ -411,8 +479,10 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
         normalized_endpoint_bounds = tuple(normalized_endpoint_bounds)
 
         programs = tuple(
-            _prepare_curve(curve, first, last)
-            for curve, (first, last) in zip(curves, ranges, strict=True)
+            _prepare_curve(curve, *_endpoint_interval(first, last, bounds))
+            for curve, (first, last), bounds in zip(
+                curves, ranges, parameter_bounds, strict=True
+            )
         )
         boxes = np.empty((len(curves), 2, dimensions[0]), dtype=np.float64)
         representatives = np.empty((len(curves), dimensions[0]), dtype=np.float64)
@@ -421,8 +491,11 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
         for row, (curve, evaluator, (first, last)) in enumerate(
             zip(curves, programs, ranges, strict=True)
         ):
-            boxes[row, 0], boxes[row, 1] = _interval_bounds(curve, evaluator, first, last)
-            midpoint = _parameter_midpoint(first, last)
+            outer = _endpoint_interval(first, last, parameter_bounds[row])
+            boxes[row, 0], boxes[row, 1] = _interval_bounds(curve, evaluator, *outer)
+            midpoint = _parameter_midpoint(
+                *_interior_interval((first, last), parameter_bounds[row])
+            )
             sample = np.asarray(
                 curve.evaluate(jnp.asarray(midpoint, dtype=jnp.float64)),
                 dtype=np.float64,
@@ -465,6 +538,26 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
                 if key is None:
                     continue
                 lower, upper = _interval_bounds(curve, evaluator, parameter, parameter)
+                sample = np.asarray(
+                    curve.evaluate(jnp.asarray(parameter, dtype=jnp.float64)),
+                    dtype=np.float64,
+                )
+                # The numerical realization is checked against its own interval,
+                # not against the potentially tighter mathematical source-root
+                # enclosure.  A symbolic native period need not evaluate to the
+                # exact source vertex in floating point.
+                if (
+                    sample.shape != (dimensions[0],)
+                    or not np.all(np.isfinite(sample))
+                    or np.any(lower > sample)
+                    or np.any(sample > upper)
+                ):
+                    raise ValueError(
+                        "Source endpoint evaluation disagrees with the continuous curve chart."
+                    )
+                lower, upper = _interval_bounds(
+                    curve, evaluator, *parameter_bounds[row][endpoint]
+                )
                 if supplied_bounds is not None:
                     lower = np.maximum(
                         lower, np.asarray(supplied_bounds[0], dtype=np.float64)
@@ -472,17 +565,7 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
                     upper = np.minimum(
                         upper, np.asarray(supplied_bounds[1], dtype=np.float64)
                     )
-                sample = np.asarray(
-                    curve.evaluate(jnp.asarray(parameter, dtype=jnp.float64)),
-                    dtype=np.float64,
-                )
-                if (
-                    np.any(lower > upper)
-                    or sample.shape != (dimensions[0],)
-                    or not np.all(np.isfinite(sample))
-                    or np.any(lower > sample)
-                    or np.any(sample > upper)
-                ):
+                if np.any(lower > upper):
                     raise ValueError(
                         "Source endpoint bounds disagree with the continuous curve chart."
                     )
@@ -524,6 +607,7 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
         revision = canonical_identifier(source_revision, "source_revision")
         self.curves = curves
         self.parameter_ranges = ranges
+        self.endpoint_parameter_bounds = parameter_bounds
         self.curve_entity_ids = identifiers
         self.occurrence_paths = occurrences
         self.chart_ids = charts
@@ -552,6 +636,7 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
                         occurrences[row],
                         charts[row],
                         ranges[row],
+                        parameter_bounds[row],
                     )
                     for row in range(len(curves))
                 ),
@@ -710,8 +795,9 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
             (self.curves[row],),
             ((first, last),),
         )[0]
+        outer = _endpoint_interval(*interval, self.endpoint_parameter_bounds[row])
         lower, upper = _interval_bounds(
-            self.curves[row], self.interval_evaluators[row], interval[0], interval[1]
+            self.curves[row], self.interval_evaluators[row], *outer
         )
         lower = np.array(lower, dtype=np.float64, copy=True)
         upper = np.array(upper, dtype=np.float64, copy=True)
@@ -729,8 +815,9 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
             raise ValueError(
                 "Curve point parameter lies outside its authored chart range."
             )
+        outer = _endpoint_interval(value, value, self.endpoint_parameter_bounds[row])
         lower, upper = _interval_bounds(
-            self.curves[row], self.interval_evaluators[row], value, value
+            self.curves[row], self.interval_evaluators[row], *outer
         )
         lower = np.array(lower, dtype=np.float64, copy=True)
         upper = np.array(upper, dtype=np.float64, copy=True)
@@ -749,6 +836,7 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
             chart_ids=self.chart_ids,
             endpoint_source_keys=self.endpoint_source_keys,
             endpoint_point_bounds=self.endpoint_point_bounds,
+            endpoint_parameter_bounds=self.endpoint_parameter_bounds,
         )
         if rebuilt.query_id != self.query_id:
             raise ValueError("Parametric curve boundary query content changed.")
@@ -767,17 +855,22 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
         points: list[np.ndarray] = []
         covering_radii: list[float] = []
         point_errors: list[float] = []
-        for curve, evaluator, (first, last) in zip(
-            self.curves, self.interval_evaluators, self.parameter_ranges, strict=True
+        for curve, evaluator, (first, last), root_bounds in zip(
+            self.curves,
+            self.interval_evaluators,
+            self.parameter_ranges,
+            self.endpoint_parameter_bounds,
+            strict=True,
         ):
             lower, upper = sorted((first, last))
             intervals = [(lower, upper)]
             while intervals:
                 interval_first, interval_last = intervals.pop()
-                bounds_lower, bounds_upper = _interval_bounds(
-                    curve, evaluator, interval_first, interval_last
-                )
-                parameter = _parameter_midpoint(interval_first, interval_last)
+                outer = _endpoint_interval(interval_first, interval_last, root_bounds)
+                bounds_lower, bounds_upper = _interval_bounds(curve, evaluator, *outer)
+                split = _parameter_midpoint(interval_first, interval_last)
+                inner_lower, inner_upper = _interior_interval((first, last), root_bounds)
+                parameter = min(max(split, inner_lower), inner_upper)
                 sample = np.asarray(
                     curve.evaluate(jnp.asarray(parameter, dtype=jnp.float64)),
                     dtype=np.float64,
@@ -803,12 +896,12 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
                     covering_radii.append(cover_radius)
                     point_errors.append(point_error)
                     continue
-                if not interval_first < parameter < interval_last:
+                if not interval_first < split < interval_last:
                     raise ArithmeticError(
                         "Curve boundary cover cannot subdivide further at the requested physical radius."
                     )
-                intervals.append((parameter, interval_last))
-                intervals.append((interval_first, parameter))
+                intervals.append((split, interval_last))
+                intervals.append((interval_first, split))
         return SourceBoundarySamples(
             np.asarray(points, dtype=np.float64).reshape((-1, self.ambient_dimension)),
             np.asarray(covering_radii, dtype=np.float64),

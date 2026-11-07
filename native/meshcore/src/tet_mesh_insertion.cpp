@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "dyadic.hpp"
+#include "exact_scalar.hpp"
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -62,6 +63,24 @@ std::uint64_t edge_key(std::int32_t a, std::int32_t b) {
 bool same_point(const double* a, const double* b) {
   return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
 }
+
+bool measurable_cone(const TetMesh& mesh, const std::array<const double*, 4>& cone) {
+  std::array<std::array<double, 3>, 4> world{};
+  std::array<const double*, 4> points = cone;
+  if (mesh.metric_active()) {
+    for (int i = 0; i < 4; ++i) {
+      world[i] = mesh.metric_transform({cone[i][0] - cone[0][0], cone[i][1] - cone[0][1],
+                                        cone[i][2] - cone[0][2]});
+      points[i] = world[i].data();
+    }
+    if (mesh.metric_orientation() < 0) std::swap(points[1], points[2]);
+  }
+  geometry::TetrahedronShape shape;
+  return geometry::tetrahedron_shape(points.data(), shape) &&
+         geometry::relative_determinant(points.data()) > 0.0 &&
+         std::isfinite(geometry::minimum_dihedral_degrees(points.data()));
+}
+
 Dyadic exact_oriented_determinant(const TetMesh& mesh,
                                   const std::int32_t* vertices) {
   std::array<Dyadic, 3> first{};
@@ -274,6 +293,29 @@ bool collect_source_regions(
 }
 
 }  // namespace
+
+int TetMesh::metric_insphere(const double* a, const double* b, const double* c,
+                             const double* d, const double* e) const {
+  if (!metric_active_) return insphere(a, b, c, d, e);
+  const double* points[4]{a, b, c, d};
+  std::array<std::array<Dyadic, 3>, 4> delta{};
+  std::array<Dyadic, 4> lift{};
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 3; ++j) delta[i][j] = Dyadic(points[i][j]) - Dyadic(e[j]);
+    for (int row = 0; row < 3; ++row) {
+      Dyadic component;
+      for (int col = 0; col < 3; ++col) {
+        component = component + Dyadic(metric_[3 * row + col]) * delta[i][col];
+      }
+      lift[i] = lift[i] + component * component;
+    }
+  }
+  const auto det = [&](int i, int j, int k) {
+    return exact::det3(delta[i].data(), delta[j].data(), delta[k].data());
+  };
+  return (lift[0] * det(1, 2, 3) - lift[1] * det(0, 2, 3) +
+          lift[2] * det(0, 1, 3) - lift[3] * det(0, 1, 2)).sign();
+}
 
 TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
                                         std::vector<TetEditResult>& results) {
@@ -597,7 +639,7 @@ TetEditStatus TetMesh::relocate_impl(
         check.source = facet.source;
         check.orientation = facet.orientation;
         if (!source_face_valid(check, &overlay)) {
-          return TetEditStatus::kInvalidGeometry;
+          return source_face_refusal_status();
         }
       }
       for (const TetSnapshotSegment& segment : segments_) {
@@ -619,6 +661,13 @@ TetEditStatus TetMesh::relocate_impl(
       // positive checks below keep the moved point inside its link polyhedron's
       // kernel, so its star union is unchanged and no disjoint source entity can
       // be crossed.
+    }
+    if (implicit_source_ && !star_verified) {
+      std::unordered_set<std::uint64_t> changed;
+      for (const auto& vertex : moved_vertices) changed.insert(vertex.id);
+      if (!implicit_facets_embedded(facets_, implicit_source_->groups, nullptr, &changed, &overlay)) {
+        return TetEditStatus::kInvalidGeometry;
+      }
     }
     for (std::int32_t slot : affected_slots) {
       if (!positive_with_relocation(tet(slot).v, overlay)) {
@@ -836,7 +885,7 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation) {
         cell_slots_.emplace(cell.id, -1);
         cell_ancestry_.emplace(
             cell.id, TetCellAncestryRecord{static_cast<std::int32_t>(operation.kind),
-                                           cell.ancestor_cell_ids});
+                                           std::make_shared<const std::vector<std::uint64_t>>(cell.ancestor_cell_ids)});
       }
       committed = edit_.commit();
     } catch (...) {
@@ -1037,6 +1086,8 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
       const std::size_t extra = created > cavity.size() ? created - cavity.size() : 0;
       const std::size_t fresh = extra - std::min(extra, complex_.free_slots.size());
       cell_ids_.resize(complex_.tets.size() + fresh, std::numeric_limits<std::uint64_t>::max());
+      const auto shared_ancestors =
+          std::make_shared<const std::vector<std::uint64_t>>(std::move(ancestors));
       while (staged_cells < created) {
         const std::uint64_t id = next_cell_id_ + staged_cells++;
         if (used_cell_ids_.contains(id)) {
@@ -1048,7 +1099,7 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
         cell_slots_.emplace(id, -1);
         cell_ancestry_.emplace(
             id, TetCellAncestryRecord{static_cast<std::int32_t>(TetEditKind::kRefineCell),
-                                      ancestors});
+                                      shared_ancestors});
       }
       created_cells.reserve(created);
       inserted = insert_checked_cone(
@@ -1130,7 +1181,8 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
   try {
     if (policy_ == BoundaryPolicy::kFixed) return TetEditStatus::kRejectedProtected;
     if (periodic_identity_.bound || !periodic_orbits_.empty() || !quotient_cells_.empty() ||
-        cavity.empty() || facet_rows.empty() || segment_rows.size() > 1) {
+        cavity.empty() || (facet_rows.empty() && segment_rows.empty()) ||
+        segment_rows.size() > 1) {
       return TetEditStatus::kRejectedTopology;
     }
     const SourceStratum stratum =
@@ -1220,7 +1272,13 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
         polygon_sources.emplace(key, directed[key].source);
       }
     }
-    if (split[0] >= 0 && !edge_uses.contains(split_key)) return TetEditStatus::kRejectedTopology;
+    // A split segment on facets is an edge of their disks; an embedded one
+    // (no facet rows) lies on no constrained face, which the cavity checks
+    // below enforce: such a face inside the cavity is no disk face, and one
+    // on its boundary keeps the split segment.
+    if (split[0] >= 0 && !facet_rows.empty() && !edge_uses.contains(split_key)) {
+      return TetEditStatus::kRejectedTopology;
+    }
     if (polygon.size() < facet_rows.size()) return TetEditStatus::kRejectedTopology;
     std::vector<BoundaryFacet> boundary;
     std::vector<std::int32_t> finite;
@@ -1360,12 +1418,26 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
         record.vertices = {vertex_id(edge.from), vertex_id(edge.to), vertex.id};
         record.source = edge.source;
         record.orientation = edge.orientation;
-        if (!source_face_valid(record)) return reject(TetEditStatus::kInvalidGeometry);
+        if (!source_face_valid(record)) return reject(source_face_refusal_status());
         TetSnapshotFacet facet;
         facet.vertices = record.vertices;
         facet.source = edge.source;
         facet.orientation = edge.orientation;
         fan.push_back(facet);
+      }
+      if (implicit_source_) {
+        std::vector<TetSnapshotFacet> future_facets;
+        future_facets.reserve(facets_.size() - facet_rows.size() + fan.size());
+        for (std::size_t row = 0; row < facets_.size(); ++row) {
+          if (std::find(facet_rows.begin(), facet_rows.end(), row) == facet_rows.end()) {
+            future_facets.push_back(facets_[row]);
+          }
+        }
+        future_facets.insert(future_facets.end(), fan.begin(), fan.end());
+        const std::unordered_set<std::uint64_t> changed{vertex.id};
+        if (!implicit_facets_embedded(future_facets, implicit_source_->groups, nullptr, &changed)) {
+          return reject(TetEditStatus::kInvalidGeometry);
+        }
       }
       if (split[0] >= 0) {
         for (int half = 0; half < 2; ++half) {
@@ -1437,6 +1509,8 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
         used_segment_ids_.insert(next_segment_id_ + staged_segments++);
       }
       created_cells.reserve(finite_cone);
+      const auto shared_ancestors =
+          std::make_shared<const std::vector<std::uint64_t>>(std::move(ancestors));
       while (staged_cells < finite_cone) {
         const std::uint64_t id = next_cell_id_ + staged_cells++;
         if (used_cell_ids_.contains(id)) {
@@ -1447,7 +1521,7 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
         cell_slots_.emplace(id, -1);
         cell_ancestry_.emplace(
             id, TetCellAncestryRecord{static_cast<std::int32_t>(TetEditKind::kRefineCell),
-                                      ancestors});
+                                      shared_ancestors});
       }
       const EditStatus committed = edit_.commit();
       if (committed != EditStatus::kOk) return reject(translate_edit_status(committed));
@@ -1575,8 +1649,8 @@ TetCavityStatus TetMesh::insertion_cavity(std::int32_t start, const double* poin
         continue;
       }
       const Tetrahedron& candidate = tet(next);
-      if (insphere(this->point(candidate.v[0]), this->point(candidate.v[1]),
-                   this->point(candidate.v[2]), this->point(candidate.v[3]), point) > 0) {
+      if (metric_insphere(this->point(candidate.v[0]), this->point(candidate.v[1]),
+                          this->point(candidate.v[2]), this->point(candidate.v[3]), point) > 0) {
         members.insert(next);
         cells.push_back(next);
         stack.push_back(next);
@@ -1597,11 +1671,8 @@ TetCavityStatus TetMesh::insertion_cavity(std::int32_t start, const double* poin
           cone[static_cast<std::size_t>(corner)] =
               corner == face ? point : this->point(tetrahedron.v[corner]);
         }
-        geometry::TetrahedronShape cone_shape;
         if (orient3d(cone[0], cone[1], cone[2], cone[3]) <= 0 ||
-            !geometry::tetrahedron_shape(cone.data(), cone_shape) ||
-            !(geometry::relative_determinant(cone.data()) > 0.0) ||
-            !std::isfinite(geometry::minimum_dihedral_degrees(cone.data()))) {
+            !measurable_cone(*this, cone)) {
           drop = cell;
           break;
         }
@@ -1657,6 +1728,8 @@ TetCavityStatus TetMesh::insertion_cavity(std::int32_t start, const double* poin
 // The cavity of a constrained boundary point: the cells on both sides of the
 // disk faces (`disk_sides`, each a finite cell and its face slot; the other
 // side is the neighbor across it, a hull ghost when the facet is on the hull),
+// or for a point on an embedded segment (no disk faces) the finite cells
+// around the segment (`segment_star`), which must all go with it,
 // grown by Bowyer-Watson across unconstrained faces into finite cells whose
 // circumspheres strictly contain the point's carrier, then made star-shaped:
 // while a finite cone cell over the cavity boundary is not positive (the
@@ -1668,11 +1741,16 @@ TetCavityStatus TetMesh::insertion_cavity(std::int32_t start, const double* poin
 // is dropped likewise. Refused when a disk cell would have to go.
 TetCavityStatus TetMesh::boundary_insertion_cavity(
     const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
-    std::array<std::int32_t, 2> split_segment, std::vector<std::int32_t>& cells) const {
+    std::array<std::int32_t, 2> split_segment, std::span<const std::int32_t> segment_star,
+    std::vector<std::int32_t>& cells) const {
   const double* point = vertex.carrier.data();
   cells.clear();
   std::unordered_set<std::int32_t> members;
   std::unordered_set<std::int32_t> disk_cells;
+  if (disk_sides.empty() == segment_star.empty() ||
+      (!segment_star.empty() && split_segment[0] < 0)) {
+    return TetCavityStatus::kRefused;
+  }
   for (const auto& [cell, face] : disk_sides) {
     if (!complex_.live(cell) || is_ghost(tet(cell)) || face < 0 || face > 3 ||
         complex_.constraint(cell, face) == kNoConstraint) {
@@ -1682,6 +1760,15 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
     if (!complex_.live(other)) return TetCavityStatus::kRefused;
     disk_cells.insert(cell);
     disk_cells.insert(other);
+  }
+  for (std::int32_t cell : segment_star) {
+    if (!complex_.live(cell) || is_ghost(tet(cell))) return TetCavityStatus::kRefused;
+    const Tetrahedron& tetrahedron = tet(cell);
+    if (std::find(tetrahedron.v, tetrahedron.v + 4, split_segment[0]) == tetrahedron.v + 4 ||
+        std::find(tetrahedron.v, tetrahedron.v + 4, split_segment[1]) == tetrahedron.v + 4) {
+      return TetCavityStatus::kRefused;
+    }
+    disk_cells.insert(cell);
   }
   std::vector<std::int32_t> stack;
   for (std::int32_t cell : disk_cells) {
@@ -1698,8 +1785,8 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
         continue;
       }
       const Tetrahedron& candidate = tet(next);
-      if (insphere(this->point(candidate.v[0]), this->point(candidate.v[1]),
-                   this->point(candidate.v[2]), this->point(candidate.v[3]), point) > 0) {
+      if (metric_insphere(this->point(candidate.v[0]), this->point(candidate.v[1]),
+                          this->point(candidate.v[2]), this->point(candidate.v[3]), point) > 0) {
         members.insert(next);
         stack.push_back(next);
       }
@@ -1732,11 +1819,7 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
           cone[static_cast<std::size_t>(corner)] =
               corner == face ? point : this->point(tetrahedron.v[corner]);
         }
-        geometry::TetrahedronShape cone_shape;
-        if (!cone_positive(tetrahedron.v, face, vertex) ||
-            !geometry::tetrahedron_shape(cone.data(), cone_shape) ||
-            !(geometry::relative_determinant(cone.data()) > 0.0) ||
-            !std::isfinite(geometry::minimum_dihedral_degrees(cone.data()))) {
+        if (!cone_positive(tetrahedron.v, face, vertex) || !measurable_cone(*this, cone)) {
           drop = cell;
           drop_face = face;
         }
@@ -1882,8 +1965,26 @@ bool TetMesh::validate_regions_and_constraints(
           directed_edge_found = true;
           break;
         }
-        if (!directed_edge_found ||
-            !exact_split_coverage(*this, face, first_child, second_child)) {
+        if (!directed_edge_found) return false;
+        bool implicit_boundary = false;
+        if (implicit_source_ && is_ghost(tet(parent.n[face_slot]))) {
+          const auto parent_key = sorted_face(face);
+          for (const TetSnapshotFacet& facet : facets_) {
+            if (!std::binary_search(implicit_source_->groups.begin(), implicit_source_->groups.end(),
+                                    facet.source)) continue;
+            std::int32_t source_slots[3];
+            for (int corner = 0; corner < 3; ++corner) {
+              source_slots[corner] = vertex_slot(facet.vertices[static_cast<std::size_t>(corner)]);
+            }
+            if (sorted_face(source_slots) == parent_key) {
+              implicit_boundary = true;
+              break;
+            }
+          }
+        }
+        // An implicit boundary may move by carrier rounding: both replacement
+        // facets are separately admitted by its interval source below.
+        if (!implicit_boundary && !exact_split_coverage(*this, face, first_child, second_child)) {
           return false;
         }
         return replacement_oriented_face(first_child, region) &&
@@ -2375,9 +2476,9 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
         return facet.protected_facet || mesh.policy_ == BoundaryPolicy::kFixed
                    ? TetEditStatus::kRejectedProtected : TetEditStatus::kRejectedTopology;
       }
-      // Source facet and segment validity are exact predicates (expansion
-      // arithmetic): a refusal is certain invalid geometry, never uncertainty.
-      if (!mesh.source_face_valid(facet)) return TetEditStatus::kInvalidGeometry;
+      // Exact PWL refusals are invalid; interval-source undecidability remains
+      // an uncertain predicate and is retained in the source refusal counters.
+      if (!mesh.source_face_valid(facet)) return mesh.source_face_refusal_status();
       TetSnapshotFacet record;
       record.id = facet.id;
       record.vertices = facet.vertices;
@@ -2446,7 +2547,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       check.vertices = facet.vertices;
       check.source = facet.source;
       check.orientation = facet.orientation;
-      if (!mesh.source_face_valid(check)) return TetEditStatus::kInvalidGeometry;
+      if (!mesh.source_face_valid(check)) return mesh.source_face_refusal_status();
     }
     for (const TetSnapshotSegment& segment : future_segments) {
       if (std::none_of(segment.vertices.begin(), segment.vertices.end(), moved)) continue;
@@ -2458,6 +2559,14 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     }
   }
 
+  if (!relocation && mesh.implicit_source_) {
+    std::unordered_set<std::uint64_t> changed_facets;
+    for (const auto& facet : operation.replacement_facets) changed_facets.insert(facet.id);
+    if (!mesh.implicit_facets_embedded(future_facets, mesh.implicit_source_->groups,
+                                       &changed_facets, &changed_vertex_ids)) {
+      return TetEditStatus::kInvalidGeometry;
+    }
+  }
   if (!relocation) {
     const bool boundary_valid =
         mesh.validate_regions_and_constraints(operation, removed_slots, future_facets);
@@ -2506,7 +2615,7 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       check.source = facet.source;
       check.orientation = facet.orientation;
       if (!mesh.periodic_seam_facet(facet, seam_members) && !mesh.source_face_valid(check)) {
-        return TetEditStatus::kInvalidGeometry;
+        return mesh.source_face_refusal_status();
       }
     }
     for (const TetSnapshotSegment& segment : mesh.segments_) {
@@ -2519,6 +2628,11 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       check.vertices = segment.vertices;
       check.source = segment.source;
       if (!mesh.source_segment_valid(check)) return TetEditStatus::kInvalidGeometry;
+    }
+    if (mesh.implicit_source_ &&
+        !mesh.implicit_facets_embedded(mesh.facets_, mesh.implicit_source_->groups,
+                                       nullptr, &changed_vertex_ids)) {
+      return TetEditStatus::kInvalidGeometry;
     }
     for (std::int32_t slot : removed_slots) {
       const Tetrahedron& tet = mesh.tet(slot);
@@ -2756,7 +2870,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
     result.accepted_cell_ids.push_back(id);
     mesh.cell_ancestry_.emplace(
         id, TetCellAncestryRecord{static_cast<std::int32_t>(operation.kind),
-                                  operation.replacement_cells[i].ancestor_cell_ids});
+                                  std::make_shared<const std::vector<std::uint64_t>>(
+                                      operation.replacement_cells[i].ancestor_cell_ids)});
   }
   for (std::size_t i = operation.replacement_cells.size();
        i < mesh.edit_.created().size(); ++i) {

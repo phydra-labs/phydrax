@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from enum import StrEnum
 from fractions import Fraction
 from typing import final, NamedTuple
@@ -62,7 +63,7 @@ from ._polyhedral_generation import (
 )
 from ._polyhedral_plane_restriction import restrict_polyhedral_plane
 from ._topology_edit import assemble_topology_edit, CellTopologyEdit
-from ._volume_generation import NativeVolumeSchedule
+from ._volume_generation import _shape_targets_gated, NativeVolumeSchedule
 from .providers._native_sources import NativePolyhedralSource
 
 
@@ -141,6 +142,10 @@ class PolyhedralAdaptationRequest(StrictModule, NonTrainableState):
             raise TypeError("schedule must be NativePolyhedralSchedule.")
         if volume_schedule is not None and not isinstance(volume_schedule, NativeVolumeSchedule):
             raise TypeError("volume_schedule must be NativeVolumeSchedule or None.")
+        if volume_schedule is not None and not _shape_targets_gated(volume_schedule):
+            raise ValueError(
+                "Polyhedral regeneration carriers require a hard-strength volume_schedule."
+            )
         if volume_specification is not None and not isinstance(
             volume_specification, VolumeMeshingSpec
         ):
@@ -253,6 +258,7 @@ class PolyhedralAdaptationOutcome(NamedTuple):
     common_refinement: PreparedCommonRefinement
     conservative_remap: UnstructuredConservativeRemapPlan
     coverage_renewal: PolyhedralCoverageRenewal | None
+    construction: PolyhedralConstruction | None
 
 
 @final
@@ -1116,6 +1122,37 @@ def adapt_polyhedral_mesh(
             refinement, source_fv, target_fv, remap = _physical_transfer(
                 mesh, target, policy
             )
+    if construction is not None:
+        candidate_connectivity = candidate.connectivity
+        target_connectivity = target.connectivity
+        if (
+            not isinstance(candidate_connectivity, PolyhedralConnectivity)
+            or not isinstance(target_connectivity, PolyhedralConnectivity)
+            or not np.array_equal(
+                candidate_connectivity.cell_global_ids, target_connectivity.cell_global_ids
+            )
+            or not np.array_equal(candidate.coordinates, target.coordinates)
+            or not np.array_equal(candidate.vertex_global_ids, target.vertex_global_ids)
+        ):
+            raise ValueError("Regenerated construction rows do not match the target mesh.")
+        generated_connectivity = construction.mesh.connectivity
+        if not isinstance(generated_connectivity, PolyhedralConnectivity) or any(
+            not np.array_equal(
+                getattr(generated_connectivity, field), getattr(target_connectivity, field)
+            )
+            for field in (
+                "edges",
+                "face_vertex_offsets",
+                "face_vertex_values",
+                "cell_face_offsets",
+                "cell_face_values",
+                "cell_face_sign_values",
+                "face_owner",
+                "face_neighbor",
+            )
+        ):
+            raise ValueError("Regenerated source incidence changed during target binding.")
+        construction = replace(construction, mesh=target, geometry=target_geometry)
     target_connectivity = target.connectivity
     if not isinstance(target_connectivity, PolyhedralConnectivity):
         raise TypeError("An adapted target lost polyhedral connectivity.")
@@ -1212,6 +1249,7 @@ def adapt_polyhedral_mesh(
         refinement,
         remap,
         coverage_renewal,
+        construction,
     )
 
 

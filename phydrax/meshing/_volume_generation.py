@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from fractions import Fraction
+from itertools import product
 from typing import final
 
 import equinox as eqx
@@ -19,12 +21,18 @@ from .._meshcore import (
     MeshcoreStatus,
     PlcBoundaryPolicy as NativePlcBoundaryPolicy,
     PlcRecovery3D,
+    PlcSuppressionSearch,
     recover_plc_3d,
     TetMesh3D,
     TetMeshArrays,
+    TetMeshCandidateQuality,
     TetMeshEditStatus,
+    TetMeshIdentity,
+    TetMeshQuality,
     TetMeshSourceComplex,
     TetMeshSourceEvidence,
+    TetMeshUnmet,
+    TetMeshUnmetReason,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -35,8 +43,12 @@ from ..discretization._nested_reference import (
     exact_reference_chart_controls,
     ExactReferenceChartControl,
 )
+from ..geometry._affine_plc_domain import AffinePlcDomain
+from ..geometry._compartments import CompartmentMeshingSource
 from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..geometry._mapped_reference_domain import MappedReferenceDomain
+from ..linalg._exact import solve_exact
+from ..typing import parse
 from ._contracts import VolumeMeshingSpec
 from ._plc_source import PiecewiseLinearComplex, PlcBoundaryPolicy
 from ._sizing import (
@@ -60,27 +72,48 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
     refinement and improvement return their actual unmet numerical criteria.
     Native improvement receives the CellValidityPolicy floor for its affine
     tetrahedron metric. High-order Bernstein validity is checked independently.
+    ``radius_edge_bound=None`` omits only that shape target; zero is not a
+    valid explicit bound. A zero dihedral aim similarly requests no angle
+    threshold. Both retain numerical validity and representability checks.
+
+    ``shape_strength`` selects how acceptance treats the two shape targets
+    (radius-edge bound and minimum dihedral). ``HARD`` gates every unmet
+    shape row except the approved input-forced exemptions. ``SOFT`` refines
+    and improves toward the identical targets but publishes each unmet shape
+    row (criterion, achieved value, native reason, cell) as compliance
+    evidence instead of an issue. Validity, determinant, orientation,
+    representability, size, fidelity and coverage stay hard for both. Soft
+    strength enters ``schedule_id``; hard schedules keep their identity.
     """
 
-    radius_edge_bound: float = eqx.field(static=True)
+    radius_edge_bound: float | None = eqx.field(static=True)
     minimum_dihedral_degrees: float = eqx.field(static=True)
     minimum_relative_determinant: float = eqx.field(static=True)
+    shape_strength: SizeControlStrength = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        radius_edge_bound: float = 2.0,
+        radius_edge_bound: float | None = 2.0,
         minimum_dihedral_degrees: float = 10.0,
+        shape_strength: SizeControlStrength = SizeControlStrength.HARD,
     ) -> None:
-        radius_edge = finite_real_scalar(
-            float(radius_edge_bound), "NativeVolumeSchedule.radius_edge_bound"
+        strength = parse(
+            shape_strength, SizeControlStrength, "NativeVolumeSchedule.shape_strength"
+        )
+        radius_edge = (
+            None
+            if radius_edge_bound is None
+            else finite_real_scalar(
+                float(radius_edge_bound), "NativeVolumeSchedule.radius_edge_bound"
+            )
         )
         dihedral = finite_real_scalar(
             float(minimum_dihedral_degrees),
             "NativeVolumeSchedule.minimum_dihedral_degrees",
         )
-        if radius_edge < 1.0:
+        if radius_edge is not None and radius_edge < 1.0:
             raise ValueError("radius_edge_bound must be at least one.")
         if not 0.0 <= dihedral < 70.0:
             raise ValueError("minimum_dihedral_degrees must lie in [0, 70).")
@@ -89,14 +122,27 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
         self.minimum_relative_determinant = (
             _VOLUME_VALIDITY_POLICY.relative_determinant_floor
         )
-        self.schedule_id = canonical_fingerprint(
-            {
-                "kind": "native-volume-schedule",
-                "radius_edge_bound": radius_edge,
-                "minimum_dihedral_degrees": dihedral,
-                "minimum_relative_determinant": self.minimum_relative_determinant,
-            }
-        )
+        self.shape_strength = strength
+        identity: dict[str, object] = {
+            "kind": "native-volume-schedule",
+            "radius_edge_bound": radius_edge,
+            "minimum_dihedral_degrees": dihedral,
+            "minimum_relative_determinant": self.minimum_relative_determinant,
+        }
+        if not _shape_targets_gated(self):
+            identity["shape_strength"] = strength.value
+        self.schedule_id = canonical_fingerprint(identity)
+
+
+def _shape_targets_gated(schedule: NativeVolumeSchedule, /) -> bool:
+    """Whether unmet radius-edge and dihedral rows are acceptance issues."""
+    match schedule.shape_strength:
+        case SizeControlStrength.HARD:
+            return True
+        case SizeControlStrength.SOFT:
+            return False
+        case invalid:
+            raise ValueError(f"Unknown native volume shape strength {invalid!r}.")
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -109,8 +155,10 @@ class VolumeConstruction:
     """
 
     mesh: CellMesh
-    domain: PiecewiseLinearDomain | MappedReferenceDomain
+    domain: PiecewiseLinearDomain | MappedReferenceDomain | AffinePlcDomain
     cell_regions: np.ndarray
+    # Native TetMesh cell IDs aligned with mesh rows; quality rows name these.
+    native_cell_ids: np.ndarray
     source_id: str
     source_revision: str
     complex_id: str
@@ -165,8 +213,34 @@ class VolumeConstruction:
     improvement_status: MeshcoreStatus
     refinement_unmet: tuple[tuple[str, str, int, float], ...]
     improvement_unmet: tuple[tuple[str, str, int, float], ...]
+    refinement_inserted_vertices: int
+    improvement_inserted_vertices: int
+    improvement_collapsed_vertices: int
+    improvement_relocated_vertices: int
+    final_quality_identity: TetMeshIdentity | None
+    final_quality_unmet: tuple[tuple[str, str, int, float], ...]
     stages: tuple[MeshingStageReport, ...]
+    # With root fields, witness_* and source_evidence describe historical
+    # execution coordinates, not the normalized candidate.
+    root_vertex_stencils: tuple[tuple[tuple[int, Fraction], ...] | None, ...] = ()
+    root_exact_points: tuple[tuple[Fraction, Fraction, Fraction] | None, ...] = ()
+    candidate_quality_id: str | None = None
+    historical_quality_identity: TetMeshIdentity | None = None
+    mapped_quality_predecessor_identity: TetMeshIdentity | None = None
+    boundary_quality_repair_status: MeshcoreStatus | None = None
+    boundary_quality_repair_unmet: tuple[tuple[str, str, int, float], ...] = ()
+    boundary_quality_predecessor_identity: TetMeshIdentity | None = None
     reference_chart_controls: tuple[ExactReferenceChartControl, ...] = ()
+
+    @property
+    def final_quality_schedule_unmet(self) -> tuple[tuple[str, str, int, float], ...]:
+        """Geometric residuals; native SIZE rows are sizing preferences.
+
+        The retained field combines controls of both strengths. Its residuals
+        cannot be attributed to individual hard controls; consumers evaluate
+        those controls independently with their declared compliance policies.
+        """
+        return _schedule_quality_rows(self.final_quality_unmet)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -659,7 +733,12 @@ def _source_tables(
 
 
 def _region_seed_points(
-    complex_: PiecewiseLinearComplex, specification: VolumeMeshingSpec, /
+    complex_: PiecewiseLinearComplex,
+    specification: VolumeMeshingSpec,
+    /,
+    *,
+    affine: np.ndarray | None = None,
+    affine_source: CompartmentMeshingSource | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     points: list[tuple[float, float, float]] = []
     regions: list[int] = []
@@ -678,10 +757,60 @@ def _region_seed_points(
     for seed in specification.hole_seeds:
         points.append((float(seed.point[0]), float(seed.point[1]), float(seed.point[2])))
         regions.append(-1)
-    return (
-        np.asarray(points, dtype=np.float64).reshape((-1, 3)),
-        np.asarray(regions, dtype=np.int32),
-    )
+    result = np.asarray(points, dtype=np.float64).reshape((-1, 3))
+    if affine is not None and result.size:
+        matrix = tuple(
+            tuple(Fraction.from_float(float(value)) for value in row)
+            for row in affine[:3, :3]
+        )
+        offset = tuple(Fraction.from_float(float(value)) for value in affine[:3, 3])
+        exact_points = tuple(
+            tuple(
+                row[0]
+                for row in solve_exact(
+                    matrix,
+                    tuple(
+                        (Fraction.from_float(float(value)) - shift,)
+                        for value, shift in zip(point, offset, strict=True)
+                    ),
+                )
+            )
+            for point in result
+        )
+        result = np.asarray(
+            [[float(value) for value in point] for point in exact_points],
+            dtype=np.float64,
+        )
+        if not np.all(np.isfinite(result)):
+            raise ValueError("A world seed has no finite index-space carrier.")
+        if affine_source is None:
+            raise ValueError("Affine seed inversion requires its categorical authority.")
+        from ._compartments import _compartment_codes
+
+        codes, region_ids, _ = _compartment_codes(affine_source)
+        if region_ids != complex_.region_ids:
+            raise ValueError("Affine seed regions differ from the categorical authority.")
+
+        def seed_regions(point: tuple[Fraction, ...]) -> set[int]:
+            axes = []
+            for value in point:
+                shifted = value + Fraction(1, 2)
+                lower = shifted.numerator // shifted.denominator
+                axes.append((lower - 1, lower) if shifted.denominator == 1 else (lower,))
+            return {
+                int(codes[index])
+                if all(0 <= index[axis] < codes.shape[axis] for axis in range(3))
+                else -1
+                for index in product(*axes)
+            }
+
+        for exact, carrier, region in zip(exact_points, result, regions, strict=True):
+            rounded = tuple(Fraction.from_float(float(value)) for value in carrier)
+            if seed_regions(exact) != {region} or seed_regions(rounded) != {region}:
+                raise ValueError(
+                    "A world seed and its index carrier must lie in the same declared material interior."
+                )
+    return result, np.asarray(regions, dtype=np.int32)
 
 
 def declared_plc_domain(
@@ -733,6 +862,8 @@ def _size_field(
     recovery: PlcRecovery3D,
     tables: _SourceTables,
     /,
+    *,
+    affine: np.ndarray | None = None,
 ) -> np.ndarray | None:
     requested_controls = tuple(specification.size_controls)
     controls = tuple(
@@ -786,7 +917,9 @@ def _size_field(
     edges = np.asarray(sorted(adjacency), dtype=np.int64).reshape((-1, 2))
     field, report = resolve_size_controls(
         controls,
-        tables.points[sample_vertices],
+        tables.points[sample_vertices]
+        if affine is None
+        else tables.points[sample_vertices] @ affine[:3, :3].T + affine[:3, 3],
         sample_facets,
         SizeFieldDomain.EUCLIDEAN_VOLUME,
         adjacency=edges,
@@ -906,8 +1039,88 @@ def _size_field(
     return radii
 
 
-def _unmet_rows(state: TetMesh3D, /) -> tuple[tuple[str, str, int, float], ...]:
-    unmet = state.unmet()
+def _schedule_quality_rows(
+    rows: tuple[tuple[str, str, int, float], ...], /
+) -> tuple[tuple[str, str, int, float], ...]:
+    # PHX_MC_TET_UNMET_SIZE = 1. Keep every raw row in final_quality_unmet.
+    return tuple(row for row in rows if row[0] != "1")
+
+
+# PHX_MC_TET_UNMET_RADIUS_EDGE = 0 and PHX_MC_TET_UNMET_DIHEDRAL = 2 are the
+# schedule's shape targets, named as they appear in soft evidence keys.
+_SHAPE_TARGET_CRITERIA = {"0": "radius_edge_ratio", "2": "dihedral_degrees"}
+
+
+def _split_shape_target_rows(
+    schedule: NativeVolumeSchedule,
+    rows: tuple[tuple[str, str, int, float], ...],
+    /,
+) -> tuple[
+    tuple[tuple[str, str, int, float], ...], tuple[tuple[str, str, int, float], ...]
+]:
+    """Partition schedule rows into gated rows and soft shape-target rows.
+
+    A hard schedule gates every row. A soft schedule moves each radius-edge or
+    dihedral row whose native reason is not NONREPRESENTABLE out of the gate;
+    validity, determinant, construction and nonrepresentable rows stay gated.
+    """
+    if _shape_targets_gated(schedule):
+        return rows, ()
+    gated: list[tuple[str, str, int, float]] = []
+    soft: list[tuple[str, str, int, float]] = []
+    for row in rows:
+        if (
+            row[0] in _SHAPE_TARGET_CRITERIA
+            and int(row[1]) != TetMeshUnmetReason.NONREPRESENTABLE
+        ):
+            soft.append(row)
+        else:
+            gated.append(row)
+    return tuple(gated), tuple(soft)
+
+
+def _soft_shape_target_evidence(
+    construction: VolumeConstruction,
+    rows: tuple[tuple[str, str, int, float], ...],
+    /,
+) -> tuple[tuple[str, float], ...]:
+    """Publish soft shape rows by published cell ID, criterion and native reason.
+
+    Each row becomes ``soft_shape_target:cell:<id>:<criterion>:<reason>`` with
+    its achieved value, after ``soft_shape_target_unmet_count``.
+    """
+    native_ids = np.asarray(construction.native_cell_ids, dtype=np.int64)
+    published = np.concatenate(
+        [
+            np.asarray(block.global_ids, dtype=np.int64)
+            for block in construction.mesh.blocks
+        ]
+    )
+    if published.shape != native_ids.shape:
+        raise ValueError("Native cell IDs must align with the published mesh rows.")
+    cell_by_native = dict(zip(native_ids.tolist(), published.tolist(), strict=True))
+    evidence: list[tuple[str, float]] = [
+        ("soft_shape_target_unmet_count", float(len(rows)))
+    ]
+    for criterion, reason, native_cell, value in rows:
+        cell = cell_by_native.get(int(native_cell))
+        if cell is None:
+            raise ValueError(
+                "A soft shape row names a cell absent from the construction."
+            )
+        evidence.append(
+            (
+                f"soft_shape_target:cell:{cell}:{_SHAPE_TARGET_CRITERIA[criterion]}:"
+                f"{TetMeshUnmetReason(int(reason)).name.lower()}",
+                value,
+            )
+        )
+    return tuple(evidence)
+
+
+def _unmet_rows(
+    unmet: TetMeshUnmet | TetMeshQuality | TetMeshCandidateQuality, /
+) -> tuple[tuple[str, str, int, float], ...]:
     return tuple(
         (
             str(int(criterion)),
@@ -925,11 +1138,145 @@ def _unmet_rows(state: TetMesh3D, /) -> tuple[tuple[str, str, int, float], ...]:
     )
 
 
+def compose_plc_root_point(
+    root_points: tuple[tuple[Fraction, Fraction, Fraction], ...],
+    vertex_stencils: tuple[tuple[tuple[int, Fraction], ...], ...],
+    vertices: tuple[int, ...],
+    coefficients: tuple[Fraction, ...],
+    /,
+) -> tuple[tuple[tuple[int, Fraction], ...], tuple[Fraction, Fraction, Fraction]]:
+    """Compose an execution-simplex point against the original PLC roots.
+
+    Coefficients and source stencils are exact, so the returned point has not
+    passed through the rounded execution vertex coordinates. Root indices name
+    rows of the original PLC, not rows of the execution complex.
+    """
+    if len(vertices) != len(coefficients) or not vertices:
+        raise ValueError(
+            "A source point must have matching simplex vertices and weights."
+        )
+    if (
+        any(not isinstance(weight, Fraction) or weight < 0 for weight in coefficients)
+        or sum(coefficients, Fraction(0)) != 1
+    ):
+        raise ValueError(
+            "Source simplex coefficients must be nonnegative exact weights summing to one."
+        )
+    weights: dict[int, Fraction] = {}
+    for vertex, coefficient in zip(vertices, coefficients, strict=True):
+        if not isinstance(vertex, int) or not 0 <= vertex < len(vertex_stencils):
+            raise ValueError(
+                "A source simplex vertex is absent from the execution stencils."
+            )
+        stencil = vertex_stencils[vertex]
+        if (
+            not stencil
+            or any(
+                not isinstance(root, int)
+                or not 0 <= root < len(root_points)
+                or not isinstance(weight, Fraction)
+                or weight < 0
+                for root, weight in stencil
+            )
+            or sum((weight for _, weight in stencil), Fraction(0)) != 1
+            or len({root for root, _ in stencil}) != len(stencil)
+        ):
+            raise ValueError(
+                "Execution stencils must be unique, nonnegative exact root weights summing to one."
+            )
+        for root, weight in stencil:
+            weights[root] = weights.get(root, Fraction(0)) + coefficient * weight
+    terms = tuple(sorted((root, weight) for root, weight in weights.items() if weight))
+    point = tuple(
+        sum((weight * root_points[root][axis] for root, weight in terms), Fraction(0))
+        for axis in range(3)
+    )
+    return terms, (point[0], point[1], point[2])
+
+
+def _root_normalized_candidate(
+    arrays: TetMeshArrays,
+    tables: _SourceTables,
+    root_points: tuple[tuple[Fraction, Fraction, Fraction], ...],
+    vertex_stencils: tuple[tuple[tuple[int, Fraction], ...], ...],
+    /,
+) -> tuple[
+    np.ndarray,
+    tuple[tuple[tuple[int, Fraction], ...] | None, ...],
+    tuple[tuple[Fraction, Fraction, Fraction] | None, ...],
+]:
+    """Construct the actual candidate directly from original-root stencils."""
+    points = np.asarray(arrays.points, dtype=np.float64).copy()
+    stencils: list[tuple[tuple[int, Fraction], ...] | None] = [None] * len(points)
+    exact: list[tuple[Fraction, Fraction, Fraction] | None] = [None] * len(points)
+    boundary = set(map(int, np.asarray(arrays.faces).reshape(-1)))
+    boundary.update(map(int, np.asarray(arrays.segments).reshape(-1)))
+    boundary.update(range(min(len(vertex_stencils), len(points))))
+    for row in sorted(boundary):
+        if row < len(vertex_stencils):
+            vertices, coefficients = (row,), (Fraction(1),)
+        else:
+            kind = int(arrays.witness_strata[row])
+            entity = int(arrays.witness_entities[row])
+            if kind == 1 and 0 <= entity < len(tables.source_segment_vertices):
+                t = Fraction(float(arrays.witness_parameters[row, 0]))
+                vertices = tuple(map(int, tables.source_segment_vertices[entity]))
+                coefficients = (1 - t, t)
+            elif kind == 2 and 0 <= entity < len(tables.faces):
+                u, v = (
+                    Fraction(float(value)) for value in arrays.witness_parameters[row]
+                )
+                vertices = tuple(map(int, tables.faces[entity]))
+                coefficients = (1 - u - v, u, v)
+            else:
+                raise ValueError(
+                    "A generated boundary point lacks an exact execution-simplex witness."
+                )
+        terms, point = compose_plc_root_point(
+            root_points, vertex_stencils, vertices, coefficients
+        )
+        rounded = np.asarray(tuple(float(value) for value in point), dtype=np.float64)
+        if row < len(vertex_stencils):
+            # A rational zero has no sign. Keep authored input bits, including
+            # signed zero, after checking the correctly rounded numeric value.
+            if not np.array_equal(rounded, points[row]):
+                raise ValueError(
+                    "An execution input vertex disagrees with its original root stencil."
+                )
+        else:
+            points[row] = rounded
+        stencils[row] = terms
+        exact[row] = point
+    return points, tuple(stencils), tuple(exact)
+
+
+def _mapped_plc_region_rows(
+    complex_: PiecewiseLinearComplex, domain: MappedReferenceDomain, /
+) -> np.ndarray:
+    """Resolve core-local materials against the complete mapped source bank."""
+    declared = tuple(
+        zip(
+            domain.reference_domain.region_ids,
+            domain.reference_domain.region_occurrence_paths,
+            strict=True,
+        )
+    )
+    rows: list[int] = []
+    for key in zip(complex_.region_ids, complex_.region_occurrence_paths, strict=True):
+        matches = [row for row, candidate in enumerate(declared) if candidate == key]
+        if len(matches) != 1:
+            raise ValueError(
+                "Mapped PLC regions must retain unique declared root identities and occurrences."
+            )
+        rows.append(matches[0])
+    return np.asarray(rows, dtype=np.int64)
+
+
 def _make_construction(
     complex_: PiecewiseLinearComplex,
     source_id: str,
     source_revision: str,
-    domain: PiecewiseLinearDomain | MappedReferenceDomain,
+    domain: PiecewiseLinearDomain | MappedReferenceDomain | AffinePlcDomain,
     tables: _SourceTables,
     arrays: TetMeshArrays,
     evidence: TetMeshSourceEvidence,
@@ -937,6 +1284,16 @@ def _make_construction(
     improvement_status: MeshcoreStatus,
     refinement_unmet: tuple[tuple[str, str, int, float], ...],
     improvement_unmet: tuple[tuple[str, str, int, float], ...],
+    refinement_inserted_vertices: int,
+    improvement_inserted_vertices: int,
+    improvement_collapsed_vertices: int,
+    improvement_relocated_vertices: int,
+    final_quality_identity: TetMeshIdentity | None,
+    final_quality_unmet: tuple[tuple[str, str, int, float], ...],
+    root_vertex_stencils: tuple[tuple[tuple[int, Fraction], ...] | None, ...] = (),
+    root_exact_points: tuple[tuple[Fraction, Fraction, Fraction] | None, ...] = (),
+    candidate_quality_id: str | None = None,
+    historical_quality_identity: TetMeshIdentity | None = None,
 ) -> VolumeConstruction:
     cells = np.asarray(arrays.tetrahedra, dtype=np.int64)
     used = np.unique(
@@ -968,17 +1325,10 @@ def _make_construction(
     )
     reference_chart_controls: tuple[ExactReferenceChartControl, ...] = ()
     if isinstance(domain, MappedReferenceDomain):
-        if (
-            complex_.region_ids != domain.reference_domain.region_ids
-            or complex_.region_occurrence_paths
-            != domain.reference_domain.region_occurrence_paths
-        ):
-            raise ValueError(
-                "Mapped PLC regions must retain their declared root identities and occurrences."
-            )
+        mapped_region_rows = _mapped_plc_region_rows(complex_, domain)
         target_geometry = CellGeometrySpec.affine(mesh)
         reference_chart_controls = exact_reference_chart_controls(
-            domain, mesh, target_geometry, cell_regions
+            domain, mesh, target_geometry, mapped_region_rows[cell_regions]
         )
         if len(reference_chart_controls) != cell_regions.size:
             raise ValueError(
@@ -1121,10 +1471,7 @@ def _make_construction(
         MeshingStageReport(
             MeshingStageKind.OPTIMIZATION,
             MeshingStageStatus.WARNING
-            if refinement_status is not MeshcoreStatus.OK
-            or improvement_status is not MeshcoreStatus.OK
-            or refinement_unmet
-            or improvement_unmet
+            if _schedule_quality_rows(final_quality_unmet)
             else MeshingStageStatus.PASSED,
             input_ids=(mesh.mesh_id,),
             output_ids=(mesh.mesh_id,),
@@ -1134,6 +1481,7 @@ def _make_construction(
         mesh=mesh,
         domain=domain,
         cell_regions=cell_regions,
+        native_cell_ids=np.asarray(arrays.cell_ids, dtype=np.uint64).copy(),
         source_id=source_id,
         source_revision=source_revision,
         complex_id=complex_.complex_id,
@@ -1188,8 +1536,288 @@ def _make_construction(
         improvement_status=improvement_status,
         refinement_unmet=refinement_unmet,
         improvement_unmet=improvement_unmet,
+        refinement_inserted_vertices=refinement_inserted_vertices,
+        improvement_inserted_vertices=improvement_inserted_vertices,
+        improvement_collapsed_vertices=improvement_collapsed_vertices,
+        improvement_relocated_vertices=improvement_relocated_vertices,
+        final_quality_identity=final_quality_identity,
+        final_quality_unmet=final_quality_unmet,
         stages=stages,
+        root_vertex_stencils=tuple(root_vertex_stencils[int(row)] for row in used)
+        if root_vertex_stencils
+        else (),
+        root_exact_points=tuple(root_exact_points[int(row)] for row in used)
+        if root_exact_points
+        else (),
+        candidate_quality_id=candidate_quality_id,
+        historical_quality_identity=historical_quality_identity,
         reference_chart_controls=reference_chart_controls,
+    )
+
+
+def _rebind_mapped_quality_proposal(
+    arrays: TetMeshArrays,
+    normalized: np.ndarray,
+    proposal: TetMeshArrays,
+    represented: np.ndarray,
+    size_targets: np.ndarray,
+    tables: _SourceTables,
+    protected_facets: np.ndarray,
+    root_rows: tuple[tuple[tuple[int, Fraction], ...] | None, ...],
+    root_exact: tuple[tuple[Fraction, Fraction, Fraction] | None, ...],
+    schedule: NativeVolumeSchedule,
+    /,
+    *,
+    source_id: str,
+    source_revision: str,
+    source_map_id: str,
+    frame_id: str,
+) -> tuple[
+    TetMeshArrays,
+    TetMeshSourceEvidence,
+    TetMeshCandidateQuality,
+    tuple[tuple[tuple[int, Fraction], ...] | None, ...],
+    tuple[tuple[Fraction, Fraction, Fraction] | None, ...],
+]:
+    """Rebuild proposal topology against the original reference source banks.
+
+    Native source evidence is recomputed on the original native boundary
+    coordinates. The separately evaluated candidate uses the exact-root
+    represented reference coordinates, as in the ordinary PLC path.
+    """
+    old_ids = np.asarray(arrays.vertex_ids, dtype=np.int64)
+    new_ids = np.asarray(proposal.vertex_ids, dtype=np.int64)
+    old_rows = {int(identifier): row for row, identifier in enumerate(old_ids)}
+    new_rows = {int(identifier): row for row, identifier in enumerate(new_ids)}
+    input_count = len(tables.points)
+    if (
+        len(old_rows) != len(old_ids)
+        or len(new_rows) != len(new_ids)
+        or input_count > len(old_ids)
+        or len(root_rows) != len(old_ids)
+        or len(root_exact) != len(old_ids)
+        or np.asarray(represented).shape != proposal.points.shape
+    ):
+        raise ValueError("Mapped proposal has inconsistent source or vertex ancestry.")
+    input_ids = tuple(int(identifier) for identifier in old_ids[:input_count])
+    if any(identifier not in new_rows for identifier in input_ids):
+        raise ValueError("Mapped proposal removed an authored execution vertex.")
+    first = [new_rows[identifier] for identifier in input_ids]
+    input_set = set(first)
+    if np.asarray(size_targets).shape != new_ids.shape:
+        raise ValueError("Mapped proposal size targets are not bound to its vertex rows.")
+    order = np.asarray(
+        first + [row for row in range(len(new_ids)) if row not in input_set],
+        dtype=np.int64,
+    )
+    inverse = np.empty(order.shape, dtype=np.int64)
+    inverse[order] = np.arange(order.size, dtype=np.int64)
+    target = np.asarray(represented, dtype=np.float64)[order]
+    native_points = target.copy()
+    strata = np.zeros(order.size, dtype=np.int8)
+    entities = np.full(order.size, -1, dtype=np.int32)
+    parameters = np.zeros((order.size, 2), dtype=np.float64)
+    radii = np.zeros(order.size, dtype=np.float64)
+    protected_vertices = np.zeros(order.size, dtype=np.bool_)
+    new_root_rows: list[tuple[tuple[int, Fraction], ...] | None] = []
+    new_root_exact: list[tuple[Fraction, Fraction, Fraction] | None] = []
+    for new_row, proposal_row in enumerate(order):
+        identifier = int(new_ids[int(proposal_row)])
+        old_row = old_rows.get(identifier)
+        if old_row is None:
+            new_root_rows.append(None)
+            new_root_exact.append(None)
+            continue
+        source_stencil = root_rows[old_row]
+        source_point = root_exact[old_row]
+        if source_stencil is not None:
+            if source_point is None or not np.array_equal(
+                target[new_row].view(np.uint64),
+                np.asarray(normalized[old_row], dtype=np.float64).view(np.uint64),
+            ):
+                raise ValueError(
+                    "Mapped proposal changed a retained exact source vertex."
+                )
+            native_points[new_row] = arrays.points[old_row]
+        elif int(arrays.witness_strata[old_row]) != 0:
+            raise ValueError(
+                "A constrained mapped proposal vertex lacks original-root ancestry."
+            )
+        strata[new_row] = arrays.witness_strata[old_row]
+        entities[new_row] = arrays.witness_entities[old_row]
+        parameters[new_row] = arrays.witness_parameters[old_row]
+        radii[new_row] = arrays.protection_radii[old_row]
+        protected_vertices[new_row] = arrays.protected_vertices[old_row]
+        new_root_rows.append(source_stencil)
+        new_root_exact.append(source_point)
+    original_source = TetMeshSourceComplex(
+        arrays.source_points,
+        arrays.source_faces,
+        arrays.source_face_group_rows,
+        arrays.source_face_tolerances,
+        arrays.source_segments,
+        arrays.source_segment_group_rows,
+        arrays.source_segment_tolerances,
+        strata,
+        entities,
+        parameters,
+        face_ids=arrays.source_face_ids,
+        segment_ids=arrays.source_segment_ids,
+        face_planes=arrays.source_face_planes,
+        face_plane_tolerances=arrays.source_face_plane_tolerances,
+    )
+    state = TetMesh3D(
+        native_points,
+        inverse[np.asarray(proposal.tetrahedra, dtype=np.int64)].astype(np.int32),
+        proposal.tetrahedron_regions,
+        inverse[np.asarray(proposal.faces, dtype=np.int64)].astype(np.int32),
+        proposal.face_sources,
+        inverse[np.asarray(proposal.segments, dtype=np.int64)].astype(np.int32),
+        proposal.segment_sources,
+        boundary_policy=NativePlcBoundaryPolicy.CONFORMING,
+        initial_vertex_sizes=np.asarray(size_targets, dtype=np.float64)[order],
+        protection_radii=radii,
+        protected_vertices=protected_vertices,
+        vertex_ids=new_ids[order],
+        cell_ids=proposal.cell_ids,
+        facet_ids=proposal.facet_ids,
+        face_orientations=proposal.facet_orientations,
+        segment_ids=proposal.segment_ids,
+        source=original_source,
+        implicit_source=None
+        if arrays.implicit_source is None
+        else arrays.implicit_source.source,
+        source_id=source_id,
+        source_revision=source_revision,
+        source_map_id=source_map_id,
+        frame_id=frame_id,
+    )
+    try:
+        if np.any(protected_facets):
+            groups = np.searchsorted(
+                tables.face_ids, tables.facet_labels[protected_facets]
+            )
+            state.protect_facet_group_rows(groups.astype(np.int32))
+        current = state.arrays()
+        if not np.array_equal(current.vertex_ids, new_ids[order]):
+            raise ValueError("Mapped source rebind changed the represented vertex order.")
+        if not np.array_equal(
+            np.asarray(current.vertex_size_targets, dtype=np.float64).view(np.uint64),
+            np.asarray(size_targets, dtype=np.float64)[order].view(np.uint64),
+        ):
+            raise ValueError(
+                "Mapped source rebind changed the validated vertex size targets."
+            )
+        evidence = state.source_evidence()
+        candidate_quality = state.evaluate_candidate_quality(
+            target,
+            vertex_ids=current.vertex_ids,
+            radius_edge_bound=schedule.radius_edge_bound,
+            min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+            minimum_relative_determinant=schedule.minimum_relative_determinant,
+        )
+        if np.any((candidate_quality.criteria == 4) & (candidate_quality.reasons == 2)):
+            raise ValueError(
+                "Mapped proposal has nonpositive represented reference orientation."
+            )
+        return (
+            current._replace(points=target),
+            evidence,
+            candidate_quality,
+            tuple(new_root_rows),
+            tuple(new_root_exact),
+        )
+    finally:
+        state.close()
+
+
+def _kept_carrier_recovery(
+    complex_: PiecewiseLinearComplex,
+    carrier: tuple[np.ndarray, np.ndarray],
+    segments: np.ndarray,
+    /,
+) -> PlcRecovery3D:
+    """Present a kept conforming carrier as its Steiner-free PLC recovery.
+
+    The carrier tetrahedralizes the one region of a closed triangle PLC: its
+    vertex bank starts with the PLC vertices bitwise, its remaining vertices are
+    region-interior points, and its exterior faces are exactly the PLC
+    triangles. Nothing is recovered, so every triangle is one output face in
+    its declared orientation and every active segment one output segment. The
+    native state revalidates orientation, manifoldness and conformity.
+    """
+    points = np.asarray(carrier[0], dtype=np.float64)
+    tetrahedra = np.asarray(carrier[1])
+    source_points = np.asarray(complex_.vertices, dtype=np.float64)
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    sides = np.sort(np.asarray(complex_.facet_regions, dtype=np.int64), axis=1)
+    count = source_points.shape[0]
+    if (
+        len(complex_.region_ids) != 1
+        or np.any(np.diff(offsets) != 3)
+        or not np.array_equal(sides, np.tile((-1, 0), (sides.shape[0], 1)))
+        or points.ndim != 2
+        or points.shape[1] != 3
+        or points.shape[0] < count
+        or not np.array_equal(
+            points[:count].view(np.uint64), source_points.view(np.uint64)
+        )
+        or tetrahedra.ndim != 2
+        or tetrahedra.shape[1] != 4
+        or tetrahedra.shape[0] == 0
+        or tetrahedra.dtype.kind not in "iu"
+    ):
+        raise ValueError(
+            "A kept carrier must tetrahedralize one closed triangle PLC region whose vertex bank it extends."
+        )
+    cells = np.asarray(tetrahedra, dtype=np.int64)
+    if (
+        np.any(cells < 0)
+        or np.any(cells >= points.shape[0])
+        or np.unique(cells).size != points.shape[0]
+    ):
+        raise ValueError("A kept carrier must use exactly its own vertex bank.")
+    triangles = np.asarray(complex_.polygon_vertices, dtype=np.int64).reshape((-1, 3))
+    cell_faces = np.sort(
+        np.concatenate(
+            [
+                cells[:, (1, 2, 3)],
+                cells[:, (0, 2, 3)],
+                cells[:, (0, 1, 3)],
+                cells[:, (0, 1, 2)],
+            ]
+        ),
+        axis=1,
+    )
+    unique_faces, face_counts = np.unique(cell_faces, axis=0, return_counts=True)
+    if np.any(face_counts > 2) or not np.array_equal(
+        unique_faces[face_counts == 1], np.unique(np.sort(triangles, axis=1), axis=0)
+    ):
+        raise ValueError("A kept carrier exterior must be exactly the PLC triangles.")
+    segment_rows = np.asarray(segments, dtype=np.int32).reshape((-1, 2))
+    vertex_count = points.shape[0]
+    vertex_dimensions = np.full((vertex_count,), 3, dtype=np.int8)
+    vertex_dimensions[:count] = 0
+    return PlcRecovery3D(
+        MeshcoreStatus.OK,
+        points,
+        cells.astype(np.int32),
+        np.zeros((cells.shape[0],), dtype=np.int32),
+        triangles.astype(np.int32),
+        np.asarray(complex_.polygon_facets, dtype=np.int32),
+        np.ones((triangles.shape[0],), dtype=np.int8),
+        segment_rows,
+        np.arange(segment_rows.shape[0], dtype=np.int32),
+        np.zeros((vertex_count,), dtype=np.float64),
+        vertex_dimensions,
+        segment_rows,
+        triangles.astype(np.int32),
+        np.arange(triangles.shape[0], dtype=np.int32),
+        np.zeros((vertex_count,), dtype=np.int8),
+        np.full((vertex_count,), -1, dtype=np.int32),
+        np.zeros((vertex_count, 2), dtype=np.float64),
+        np.zeros((vertex_count,), dtype=np.float64),
+        PlcSuppressionSearch(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
     )
 
 
@@ -1204,8 +1832,77 @@ def generate_plc_volume(
     source_map_id: str,
     frame_id: str,
     source_domain: MappedReferenceDomain | None = None,
+    global_affine: np.ndarray | None = None,
+    affine_source: CompartmentMeshingSource | None = None,
+    protected_facets: np.ndarray | None = None,
+    boundary_collapse_quality: bool = False,
+    root_points: object | None = None,
+    root_vertex_stencils: tuple[tuple[tuple[int, Fraction], ...], ...] | None = None,
+    carrier: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> VolumeConstruction:
-    """Recover constraints, classify every region, and refine the PLC fill."""
+    """Recover constraints, classify every region, and refine the PLC fill.
+
+    ``carrier`` replaces constraint recovery by a kept conforming
+    tetrahedralization of a one-region triangle PLC (see
+    ``_kept_carrier_recovery``), refined and improved in place.
+    """
+    if carrier is not None and (
+        source_domain is not None
+        or global_affine is not None
+        or protected_facets is not None
+        or boundary_collapse_quality
+        or root_points is not None
+    ):
+        raise ValueError("A kept carrier is refined only in its own Cartesian PLC frame.")
+    if not isinstance(boundary_collapse_quality, bool):
+        raise TypeError("boundary_collapse_quality must be bool.")
+    if boundary_collapse_quality and (
+        complex_.boundary != "conforming" or protected_facets is None
+    ):
+        raise ValueError(
+            "Boundary quality repair requires an explicitly conforming protected-facet policy."
+        )
+    if (root_points is None) != (root_vertex_stencils is None):
+        raise ValueError("Root points and execution stencils must be supplied together.")
+    if root_points is not None and global_affine is not None:
+        raise ValueError("Root-normalized execution cannot use a global affine carrier.")
+    exact_roots = None
+    if root_points is not None:
+        root_array = np.asarray(root_points, dtype=np.float64)
+        if (
+            root_array.ndim != 2
+            or root_array.shape[1] != 3
+            or not np.all(np.isfinite(root_array))
+        ):
+            raise ValueError(
+                "Original PLC root points must be finite three-dimensional coordinates."
+            )
+        if root_vertex_stencils is None or len(root_vertex_stencils) != len(
+            complex_.vertices
+        ):
+            raise ValueError(
+                "Execution root stencils must align with every PLC input vertex."
+            )
+        exact_roots = tuple(
+            (
+                Fraction(float(point[0])),
+                Fraction(float(point[1])),
+                Fraction(float(point[2])),
+            )
+            for point in root_array
+        )
+    if (global_affine is None) != (affine_source is None) or (
+        global_affine is not None and source_domain is not None
+    ):
+        raise ValueError(
+            "A global affine PLC requires its source authority and no rooted map."
+        )
+    if protected_facets is not None:
+        protected_facets = np.asarray(protected_facets)
+        if protected_facets.shape != (
+            complex_.facet_count,
+        ) or protected_facets.dtype != np.dtype(np.bool_):
+            raise ValueError("protected_facets must contain one boolean per PLC facet.")
     canonical_source_edges = np.asarray(
         complex_.plc_edge_vertices, dtype=np.int64
     ).reshape((-1, 2))
@@ -1249,13 +1946,20 @@ def generate_plc_volume(
     ):
         raise ValueError("Explicit PLC segment identities changed their endpoint rows.")
 
-    seeds, seed_regions = _region_seed_points(complex_, specification)
     facet_tolerances = np.full((complex_.facet_count,), np.inf, dtype=np.float64)
     segment_tolerances = np.full(
         (canonical_source_edges.shape[0],), np.inf, dtype=np.float64
     )
     active_segment_rows = {int(row) for row in explicit_segment_rows.tolist()}
-    active_segment_rows.update(_authored_coplanar_edge_rows(complex_).tolist())
+    if protected_facets is None:
+        active_segment_rows.update(_authored_coplanar_edge_rows(complex_).tolist())
+    else:
+        # The selective conforming layer route independently replays exact
+        # source-facet overlap; its coplanar triangulation edges are not
+        # necessarily physical or authored protected features.
+        from ._layer_core_edge_policy import conforming_physical_edge_rows
+
+        active_segment_rows.update(conforming_physical_edge_rows(complex_))
     for feature in specification.protected_features:
         identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
         match feature.scope.entity_dimension, feature.feature_kind.value:
@@ -1287,41 +1991,58 @@ def generate_plc_volume(
     # rounding. Authored segments, requested curve features and the
     # coplanar-pair edges of undeclared facets are passed as explicit 1D
     # constraints.
-    recovery = recover_plc_3d(
-        complex_.vertices,
-        complex_.polygon_offsets,
-        complex_.polygon_vertices,
-        complex_.polygon_facets,
-        complex_.facet_regions,
-        segments=active_segment_vertices,
-        seeds=seeds,
-        seed_regions=seed_regions,
-        facet_tolerances=facet_tolerances,
-        segment_tolerances=active_segment_tolerances,
-        boundary_policy=native_boundary_policy,
-        facet_planes=complex_.facet_planes,
-        facet_plane_tolerances=complex_.facet_plane_tolerances,
-    )
+    if carrier is None:
+        seeds, seed_regions = _region_seed_points(
+            complex_, specification, affine=global_affine, affine_source=affine_source
+        )
+        recovery = recover_plc_3d(
+            complex_.vertices,
+            complex_.polygon_offsets,
+            complex_.polygon_vertices,
+            complex_.polygon_facets,
+            complex_.facet_regions,
+            segments=active_segment_vertices,
+            seeds=seeds,
+            seed_regions=seed_regions,
+            facet_tolerances=facet_tolerances,
+            segment_tolerances=active_segment_tolerances,
+            boundary_policy=native_boundary_policy,
+            facet_planes=complex_.facet_planes,
+            affine_metric=None if global_affine is None else global_affine[:3, :3],
+            protected_facets=protected_facets,
+            facet_plane_tolerances=complex_.facet_plane_tolerances,
+        )
+    else:
+        recovery = _kept_carrier_recovery(complex_, carrier, active_segment_vertices)
     tables = _source_tables(complex_, specification, recovery)
     if complex_.geometry is not None and source_domain is None:
         raise ValueError(
             "Mapped PLC geometry requires its independently declared MappedReferenceDomain."
         )
     if source_domain is None:
-        domain: PiecewiseLinearDomain | MappedReferenceDomain = declared_plc_domain(
+        reference_domain = declared_plc_domain(
             complex_, tables.faces, tables.face_polygons, source_id
+        )
+        domain = (
+            reference_domain
+            if global_affine is None
+            else AffinePlcDomain(
+                reference_domain,
+                global_affine[:3, :3],
+                global_affine[:3, 3],
+                source_revision=source_revision,
+                authority=affine_source,
+            )
         )
     else:
         if (
             source_domain.source_id != source_id
             or source_domain.source_revision != source_revision
-            or source_domain.reference_domain.region_ids != complex_.region_ids
-            or source_domain.reference_domain.region_occurrence_paths
-            != complex_.region_occurrence_paths
         ):
             raise ValueError(
                 "Mapped PLC domain must bind the source identity, revision and declared regions."
             )
+        _mapped_plc_region_rows(complex_, source_domain)
         domain = source_domain
     face_rows = np.asarray(recovery.face_sources, dtype=np.int64)
     carrier_rows = np.asarray(recovery.segment_sources, dtype=np.int64)
@@ -1347,7 +2068,7 @@ def generate_plc_volume(
     face_sources = tables.facet_labels[face_rows]
     segments = np.asarray(recovery.segments, dtype=np.int64)
     segment_sources = tables.source_segment_labels[carrier_source_rows]
-    sizes = _size_field(complex_, specification, recovery, tables)
+    sizes = _size_field(complex_, specification, recovery, tables, affine=global_affine)
     state = TetMesh3D(
         recovery.points,
         recovery.tetrahedra,
@@ -1364,8 +2085,37 @@ def generate_plc_volume(
         source_revision=source_revision,
         source_map_id=source_map_id,
         frame_id=frame_id,
+        affine_metric=None if global_affine is None else global_affine[:3, :3],
     )
+    mapped_proposal_run = None
+    mapped_predecessor_identity = None
+    mapped_predecessor_candidate_id = None
+    mapped_physical_quality = None
+    boundary_repair = None
+    boundary_repair_unmet: tuple[tuple[str, str, int, float], ...] = ()
+    boundary_predecessor = None
     try:
+        original_vertex_ids = None
+        if boundary_collapse_quality:
+            initial = state.arrays()
+            input_count = len(tables.points)
+            if input_count > len(initial.points) or not np.array_equal(
+                np.asarray(initial.points[:input_count], dtype=np.float64).view(
+                    np.uint64
+                ),
+                np.asarray(tables.points, dtype=np.float64).view(np.uint64),
+            ):
+                raise ValueError(
+                    "Native recovery changed the authored execution vertex bank."
+                )
+            original_vertex_ids = np.asarray(
+                initial.vertex_ids[:input_count], dtype=np.uint64
+            ).copy()
+        if protected_facets is not None and np.any(protected_facets):
+            groups = np.searchsorted(
+                tables.face_ids, tables.facet_labels[protected_facets]
+            )
+            state.protect_facet_group_rows(groups.astype(np.int32))
         refinement = state.refine(
             radius_edge_bound=schedule.radius_edge_bound,
             sizes=sizes,
@@ -1380,7 +2130,7 @@ def generate_plc_volume(
                 refinement.status,
                 "tet_mesh_refine could not complete its native pass.",
             )
-        refinement_unmet = _unmet_rows(state)
+        refinement_unmet = _unmet_rows(state.unmet())
         # Refinement retained `sizes` (interpolated to its inserted vertices) on
         # the mesh; improvement gates every edit by that field.
         improvement = state.improve(
@@ -1398,12 +2148,164 @@ def generate_plc_volume(
                 improvement.status,
                 "tet_mesh_improve_quality could not complete its native pass.",
             )
-        improvement_unmet = _unmet_rows(state)
+        improvement_unmet = _unmet_rows(state.unmet())
+        # Query the retained field on the current mesh without modifying it.
+        # Its source identity and generation travel with the final evidence.
+        quality = state.evaluate_quality(
+            radius_edge_bound=schedule.radius_edge_bound,
+            min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+            minimum_relative_determinant=schedule.minimum_relative_determinant,
+        )
+        final_quality_unmet = _unmet_rows(quality)
+        if boundary_collapse_quality and _schedule_quality_rows(final_quality_unmet):
+            if original_vertex_ids is None:
+                raise ValueError(
+                    "Boundary quality repair lost its authored input vertex bank."
+                )
+            boundary_predecessor = quality.identity
+            boundary_repair = state.improve(
+                radius_edge_bound=schedule.radius_edge_bound,
+                min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+                minimum_relative_determinant=schedule.minimum_relative_determinant,
+                boundary_collapse_quality=True,
+                original_vertex_ids=original_vertex_ids,
+            )
+            if boundary_repair.edit_status is not TetMeshEditStatus.APPLIED:
+                if (
+                    boundary_repair.edit_status is not TetMeshEditStatus.REJECTED_TOPOLOGY
+                    or boundary_repair.status is not MeshcoreStatus.UNRESOLVED
+                    or state.identity != boundary_predecessor
+                ):
+                    raise MeshcoreError(
+                        MeshcoreStatus.INTERNAL_ERROR,
+                        f"Boundary quality repair edit status was {boundary_repair.edit_status.name}.",
+                    )
+            if boundary_repair.status not in (
+                MeshcoreStatus.OK,
+                MeshcoreStatus.UNRESOLVED,
+            ):
+                raise MeshcoreError(
+                    boundary_repair.status, "Boundary quality repair failed."
+                )
+            boundary_repair_unmet = _unmet_rows(state.unmet())
+            quality = state.evaluate_quality(
+                radius_edge_bound=schedule.radius_edge_bound,
+                min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+                minimum_relative_determinant=schedule.minimum_relative_determinant,
+            )
+            final_quality_unmet = _unmet_rows(quality)
         arrays = state.arrays()
         evidence = state.source_evidence()
+        if state.identity != quality.identity:
+            raise MeshcoreError(
+                MeshcoreStatus.INTERNAL_ERROR,
+                "Final quality evidence does not match the exported mesh generation.",
+            )
+        root_rows: tuple[tuple[tuple[int, Fraction], ...] | None, ...] = ()
+        root_exact: tuple[tuple[Fraction, Fraction, Fraction] | None, ...] = ()
+        candidate_quality_id = None
+        historical_identity = None
+        final_identity: TetMeshIdentity | None = quality.identity
+        if exact_roots is not None:
+            assert root_vertex_stencils is not None
+            candidate, root_rows, root_exact = _root_normalized_candidate(
+                arrays, tables, exact_roots, root_vertex_stencils
+            )
+            candidate_quality = state.evaluate_candidate_quality(
+                candidate,
+                vertex_ids=arrays.vertex_ids,
+                radius_edge_bound=schedule.radius_edge_bound,
+                min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+                minimum_relative_determinant=schedule.minimum_relative_determinant,
+            )
+            if candidate_quality.historical_identity != quality.identity:
+                raise MeshcoreError(
+                    MeshcoreStatus.INTERNAL_ERROR,
+                    "Candidate quality was not evaluated against the exported native history.",
+                )
+            # Native VALIDITY/NONREPRESENTABLE includes nonpositive exact
+            # orient3d; such a candidate must never be published.
+            if np.any(
+                (candidate_quality.criteria == 4) & (candidate_quality.reasons == 2)
+            ):
+                raise ValueError(
+                    "A root-normalized tetrahedron has nonpositive orientation."
+                )
+            final_quality_unmet = _unmet_rows(candidate_quality)
+            historical_identity = quality.identity
+            candidate_quality_id = candidate_quality.candidate_id
+            final_identity = None
+            if source_domain is not None:
+                if protected_facets is None:
+                    raise ValueError(
+                        "Mapped conforming quality requires its protected facet policy."
+                    )
+                from ._layer_core_mapped import (
+                    _propose_mapped_physical_improvement,
+                    _validate_mapped_atomic_size_candidate,
+                )
+
+                proposed = _propose_mapped_physical_improvement(
+                    source_domain,
+                    arrays._replace(points=candidate),
+                    _mapped_plc_region_rows(complex_, source_domain),
+                    np.asarray(arrays.vertex_ids[: len(tables.points)], dtype=np.int64),
+                    schedule,
+                )
+                if proposed is not None:
+                    (
+                        proposal_arrays,
+                        represented,
+                        mapped_proposal_run,
+                        mapped_physical_quality,
+                    ) = proposed
+                    try:
+                        proposal_sizes = _validate_mapped_atomic_size_candidate(
+                            state,
+                            quality.identity,
+                            tables,
+                            exact_roots,
+                            root_vertex_stencils,
+                            candidate,
+                            proposal_arrays,
+                            represented,
+                            schedule,
+                        )
+                    except ValueError as error:
+                        raise MeshcoreError(
+                            MeshcoreStatus.UNRESOLVED,
+                            f"Mapped quality proposal could not prove retained size constraints: {error}",
+                        ) from error
+                    mapped_predecessor_identity = quality.identity
+                    mapped_predecessor_candidate_id = candidate_quality.candidate_id
+                    arrays, evidence, candidate_quality, root_rows, root_exact = (
+                        _rebind_mapped_quality_proposal(
+                            arrays,
+                            candidate,
+                            proposal_arrays,
+                            represented,
+                            proposal_sizes,
+                            tables,
+                            protected_facets,
+                            root_rows,
+                            root_exact,
+                            schedule,
+                            source_id=source_id,
+                            source_revision=source_revision,
+                            source_map_id=source_map_id,
+                            frame_id=frame_id,
+                        )
+                    )
+                    final_quality_unmet = _unmet_rows(candidate_quality)
+                    historical_identity = candidate_quality.historical_identity
+                    candidate_quality_id = candidate_quality.candidate_id
+                else:
+                    arrays = arrays._replace(points=candidate)
+            else:
+                arrays = arrays._replace(points=candidate)
     finally:
         state.close()
-    return _make_construction(
+    construction = _make_construction(
         complex_,
         source_id,
         source_revision,
@@ -1415,6 +2317,67 @@ def generate_plc_volume(
         improvement.status,
         refinement_unmet,
         improvement_unmet,
+        refinement.inserted_vertices,
+        improvement.inserted_vertices,
+        improvement.collapsed_vertices,
+        improvement.relocated_vertices,
+        final_identity,
+        final_quality_unmet,
+        root_rows,
+        root_exact,
+        candidate_quality_id,
+        historical_identity,
+    )
+    if boundary_repair is not None:
+        if boundary_predecessor is None:
+            raise ValueError(
+                "Boundary quality repair lost its predecessor native identity."
+            )
+        repair_stage = MeshingStageReport(
+            MeshingStageKind.OPTIMIZATION,
+            MeshingStageStatus.WARNING
+            if boundary_repair.status is MeshcoreStatus.UNRESOLVED
+            else MeshingStageStatus.PASSED,
+            input_ids=(complex_.complex_id,),
+            output_ids=(construction.mesh.mesh_id,),
+            created_count=boundary_repair.inserted_vertices,
+            modified_count=boundary_repair.relocated_vertices,
+            deleted_count=boundary_repair.collapsed_vertices,
+        )
+        construction = replace(
+            construction,
+            stages=(*construction.stages, repair_stage),
+            boundary_quality_repair_status=boundary_repair.status,
+            boundary_quality_repair_unmet=boundary_repair_unmet,
+            boundary_quality_predecessor_identity=boundary_predecessor,
+        )
+    if mapped_proposal_run is None:
+        return construction
+    if (
+        mapped_predecessor_identity is None
+        or mapped_predecessor_candidate_id is None
+        or mapped_physical_quality is None
+        or candidate_quality_id is None
+    ):
+        raise ValueError(
+            "Mapped quality proposal lost its native history or final evaluation."
+        )
+    proposal_stage = MeshingStageReport(
+        MeshingStageKind.OPTIMIZATION,
+        MeshingStageStatus.WARNING
+        if mapped_proposal_run.status is MeshcoreStatus.UNRESOLVED
+        or len(mapped_physical_quality.cell_ids)
+        else MeshingStageStatus.PASSED,
+        input_ids=(mapped_predecessor_candidate_id,),
+        output_ids=(candidate_quality_id,),
+        created_count=mapped_proposal_run.inserted_vertices,
+        modified_count=mapped_proposal_run.relocated_vertices,
+        deleted_count=mapped_proposal_run.collapsed_vertices,
+    )
+    return replace(
+        construction,
+        stages=(*construction.stages, proposal_stage),
+        mapped_quality_predecessor_identity=mapped_predecessor_identity,
     )
 
 

@@ -12,42 +12,70 @@ from pathlib import Path
 from typing import Any
 
 from .._array_archive import (
+    _read_array_archive,
+    array_collection_digest,
     array_payload_digest,
     ArrayArchiveCorruptionError,
     ArrayArchiveLimits,
     read_array_archive,
     write_array_archive,
 )
+from .._fingerprint import canonical_fingerprint
 from .._model._artifacts import artifact_value, artifact_value_id
 from .._model._structure import (
     _canonical_recipe_payload,
+    _expand_shared_immutable_model_archive_recipe,
+    _model_from_shared_immutable_array_recipe,
+    _pack_owned_model_array_tree,
     _pack_projected_model_array_tree,
     _recipe_array_nodes,
+    _require_model_array_content,
     _row_record_recipe_types,
     AdaptiveImplicitBoundarySourceArchiveRecipe,
+    AffinePlcBoundarySourceArchiveRecipe,
+    AffinePlcDomainArchiveRecipe,
+    AffinePlcGeometrySourceArchiveRecipe,
     AnalyticImplicitProfileArchiveRecipe,
     CADGraphArchiveRecipe,
     CADRevisionArchiveRecipe,
     CADTransactionArchiveRecipe,
+    CompartmentMeshingSourceArchiveRecipe,
     DistributedFiniteElementTransferArchiveRecipe,
     expand_shared_model_archive_recipe,
     FiniteElementAcceptedStateArchiveRecipe,
+    FiniteElementFieldBanksArchiveRecipe,
     FiniteVolumeOversetPartSpecArchiveRecipe,
     FiniteVolumeOversetPolicyArchiveRecipe,
     FiniteVolumeOwnerLocalCellStateBankArchiveRecipe,
     FiniteVolumeOwnerLocalRepartitionContextArchiveRecipe,
     FiniteVolumeRuntimeStateArchiveRecipe,
+    ImageFieldSpecArchiveRecipe,
+    ImageIndexAffineArchiveRecipe,
+    ImageQualityFlagArchiveRecipe,
+    ImageUncertaintyArchiveRecipe,
+    LabelVolumeArchiveRecipe,
+    LayerCoreAcceptedAdaptationArchiveRecipe,
+    LayerCoreAcceptedResultArchiveRecipe,
+    LayerCoreFidelitySourceReferenceArchiveRecipe,
+    LayerCoreSourceReferenceArchiveRecipe,
+    MappedCoreFacetAuthorityArchiveRecipe,
     MappedReferenceBoundarySourceArchiveRecipe,
     MeshingDomainArchiveRecipe,
     MeshingDomainBoundarySourceArchiveRecipe,
+    MixedAdaptationPolicyArchiveRecipe,
     model_archive_projection,
     model_archive_root_projection,
     model_from_array_recipe,
     model_structure_matches_recipe,
     model_structure_recipe,
     NativeImplicitBoundaryQueryArchiveRecipe,
+    NativeLayerCoreAuthoringArchiveRecipe,
+    NativeLayerMappedBoundaryArchiveRecipe,
     NativeMappedHexSourceArchiveRecipe,
+    NativePlanarMotionSourceArchiveRecipe,
+    NativePlanarSourceArchiveRecipe,
     NativePlcSourceArchiveRecipe,
+    OversetRegistrationArchiveRecipe,
     pack_model_array_tree,
     ParametricCurveBoundarySourceArchiveRecipe,
     PartitionOperandArchiveRecipe,
@@ -56,11 +84,15 @@ from .._model._structure import (
     PeriodicFiniteElementTransferArchiveRecipe,
     PiecewiseLinearBoundarySourceArchiveRecipe,
     PiecewiseLinearComplexArchiveRecipe,
+    PlanarMotionAdvanceArchiveRecipe,
+    PlcCurveAuthorityArchiveRecipe,
     PreparedSphereChartDeformationArchiveRecipe,
     PreparedSurfaceSourceSupportArchiveRecipe,
     ReconstructedTriangleBoundarySourceArchiveRecipe,
     restore_row_record_recipes,
     share_model_archive_recipe,
+    SourceBoundaryFaceImageWitnessArchiveRecipe,
+    SourceBoundaryImagePullbackArchiveRecipe,
     SparseCoordinateOperatorArchiveRecipe,
     SphereMaterialCellAtlasArchiveRecipe,
     SurfaceChartBoundarySourceArchiveRecipe,
@@ -68,7 +100,6 @@ from .._model._structure import (
     SurfaceNativeRestrictionBoundarySourceArchiveRecipe,
     SurfaceSourceChartsArchiveRecipe,
     SurfaceSubdivisionBoundarySourceArchiveRecipe,
-    validate_model_structure_recipe,
 )
 from .._strict import Strict
 from .._typing_plan import validate_tree
@@ -84,18 +115,24 @@ _MODEL_ARRAYS = "model/leaves"
 # surface patch, profile curve, exact rational coordinate, with their tuple
 # containers) uses 12 recipe nodes and 25 manifest levels; placements and offsets
 # add one node each. Model recipes store one archive member per dynamic array leaf,
-# so composite models admit 4,096 leaves (plus the manifest); the central-directory,
-# member, and aggregate byte limits still bound every allocation. Every other
-# admission bound keeps its conservative default.
-MODEL_ARCHIVE_LIMITS = ArrayArchiveLimits(max_manifest_nesting=64, max_members=4097)
+# so composite models admit 4,096 leaves (plus the manifest). Occurrence-qualified
+# source identities and exact evidence also occupy manifest space: a complete
+# layer/core model can exceed the generic 1 MiB allowance without large arrays.
+# Bound that model metadata separately at 16 MiB; central-directory, member,
+# aggregate-byte, dtype and shape limits retain their conservative defaults.
+MODEL_ARCHIVE_LIMITS = ArrayArchiveLimits(
+    max_manifest_nesting=64, max_members=4097, max_manifest_bytes=16_777_216
+)
+
 
 def _same_model_content(left: Any, right: Any, /) -> bool:
     """Compare canonical recipes and array payloads, streaming fidelity fields."""
-    import numpy as np
-
     from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 
-    if type(left) is SourceFidelityCertificate and type(right) is SourceFidelityCertificate:
+    if (
+        type(left) is SourceFidelityCertificate
+        and type(right) is SourceFidelityCertificate
+    ):
         from ._archive_layer_columns import _COLUMNS, _encode_column
 
         columns = _COLUMNS["SourceFidelityCertificate"]
@@ -126,7 +163,8 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
         right, recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
     )
     return left_arrays.keys() == right_arrays.keys() and all(
-        np.array_equal(left_arrays[key], right_arrays[key]) for key in left_arrays
+        array_payload_digest(left_arrays[key]) == array_payload_digest(right_arrays[key])
+        for key in left_arrays
     )
 
 
@@ -138,6 +176,14 @@ def _register_model_archive_types() -> None:
         StaticColumnArchiveRecipe,
         TextColumnArchiveRecipe,
         TextRowsArchiveRecipe,
+    )
+    from .._differentiation import (
+        DerivativeContract,
+        DerivativeRegularity,
+        DerivativeRoute,
+        DerivativeSurface,
+        GradientLevel,
+        SurfaceDerivative,
     )
     from .._geometry_predicates import PredicateMode
     from .._identity import SemanticProvenance
@@ -182,6 +228,7 @@ def _register_model_archive_types() -> None:
         _TransferExchange,
         DistributedSparseTransfer,
     )
+    from ..discretization._exact_algebraic_geometry import ExactPeriodicAlgebraicSource
     from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
     from ..discretization._exact_power_geometry import (
         ExactPeriodicPowerSourceContext,
@@ -194,6 +241,7 @@ def _register_model_archive_types() -> None:
     from ..discretization._nested_reference_types import (
         NestedReferenceWitnesses,
         ReferenceCellMapWitnesses,
+        ReferenceCellPartition,
     )
     from ..discretization._partition import CellPartition
     from ..discretization._periodic_cell import PeriodicCell
@@ -241,7 +289,9 @@ def _register_model_archive_types() -> None:
         PreparedOwnerLocalConservativeRemap,
     )
     from ..equations._finite_element_material import (
+        MaterialCheckpointPayload,
         MaterialSiteId,
+        MaterialSiteOwnership,
         MaterialState,
         MaterialTransaction,
     )
@@ -264,8 +314,15 @@ def _register_model_archive_types() -> None:
         MaterialReferenceVolumeOverlap,
         MaterialReferenceVolumeWitness,
     )
+    from ..geometry._compartments import (
+        CompartmentDefinition,
+        CompartmentInterfaceDefinition,
+    )
     from ..geometry._contracts import CompiledGeometry, GeometryTolerance
-    from ..geometry._curve_boundary import ParametricCurveBoundarySource
+    from ..geometry._curve_boundary import (
+        ParametricCurveBoundarySource,
+        SegmentChartCurve,
+    )
     from ..geometry._domain_boundary import MeshingDomainBoundarySource
     from ..geometry._domain_certification import DomainCoverageCertificate
     from ..geometry._domain_coverage import PiecewiseLinearDomain
@@ -293,6 +350,7 @@ def _register_model_archive_types() -> None:
     )
     from ..geometry._periodic_mapped_restriction import PeriodicMappedRestrictionEvidence
     from ..geometry._periodic_restriction import PeriodicRestrictionPremise
+    from ..geometry._piecewise_linear_boundary import PiecewiseLinearDomainBoundaryOwner
     from ..geometry._planar_coverage import FacetOverlap, PlcSourcePointWitness
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._source_boundary_records import (
@@ -300,6 +358,8 @@ def _register_model_archive_types() -> None:
         SourceBoundaryChartWitness,
         SourceBoundaryDistance,
         SourceBoundaryDistanceWitness,
+        SourceBoundaryFaceImageWitness,
+        SourceBoundaryImagePullback,
         SourceBoundaryPointWitness,
         SourceBoundarySamples,
         SurfaceEnvelopeDistanceWitness,
@@ -337,6 +397,7 @@ def _register_model_archive_types() -> None:
         VolumeMaterialChain,
         VolumeMaterialMap,
     )
+    from ..geometry.analytic._expressions import _UnionKernel
     from ..geometry.analytic._extended import _TorusKernel
     from ..geometry.analytic._primitives import _BallKernel
     from ..geometry.brep._constructors import BRepTessellationPolicy
@@ -347,7 +408,10 @@ def _register_model_archive_types() -> None:
         BRepPartitionResult,
         BRepPartitionResultArchiveRecipe,
     )
-    from ..geometry.brep._projection_contracts import BRepProjectionResult
+    from ..geometry.brep._projection_contracts import (
+        BRepProjectionPolicy,
+        BRepProjectionResult,
+    )
     from ..geometry.design._continuation import SketchContinuationReferenceArchiveRecipe
     from ..geometry.design._reduced import (
         _SketchDistanceRigidityWitness,
@@ -406,6 +470,7 @@ def _register_model_archive_types() -> None:
         SamplingCoverageEvidence,
         ThinFeatureEvidence,
     )
+    from ..geometry.reconstruction._sheet import AuthoredTriangleSheetArchiveRecipe
     from ..geometry.simplicial._regions import MeshRegion, PlanarMeshRegion
     from ..geometry.surface._contracts import (
         SurfaceInterface,
@@ -417,6 +482,15 @@ def _register_model_archive_types() -> None:
     from ..geometry.surface._model import SurfaceModel
     from ..graph._distributed_partition import DistributedGraphPartitionResult
     from ..graph._partition import GraphPartitionPlan
+    from ..imaging._asset import ImageFieldSpec
+    from ..imaging._core import (
+        DeidentificationEvidence,
+        ImageAxisConvention,
+        ImageIndexAffine,
+        LabelDefinition,
+        LabelOntology,
+        VoxelReference,
+    )
     from ..lifecycle._composition_rebind import (
         Composition,
         CompositionDependency,
@@ -442,9 +516,25 @@ def _register_model_archive_types() -> None:
     )
     from ..linalg._properties import OperatorCapabilities, OperatorProperties
     from ..linalg._spaces import ArraySpace, ArraySpaceArchiveRecipe
+    from ..measurement._asset import (
+        AcquisitionIdentity,
+        DataOrigin,
+        DataStage,
+        DerivationRecord,
+    )
+    from ..measurement._field import (
+        IndependentStandardUncertainty,
+        QualityFlag,
+        SamplingSemantics,
+        SpatialSamplingKind,
+    )
+    from ..measurement._quantity import QuantitySpec, ValueKind, ValueLayout
+    from ..measurement._time import TemporalSampling, TemporalSamplingKind
     from ..meshing._association import (
+        AssociationPropagationPolicy,
         GeometryAssociation,
         GeometryAssociationArchiveRecipe,
+        GeometryAssociationBankArchiveRecipe,
         GeometryAssociationKind,
         GeometryAssociationProvenance,
         GeometrySourceEntityRole,
@@ -455,6 +545,7 @@ def _register_model_archive_types() -> None:
     from ..meshing._controls import (
         BackgroundMetricControl,
         BackgroundMetricMode,
+        BlockInterfaceControl,
         BoundaryLayerCollisionPolicy,
         BoundaryLayerControl,
         BoundaryLayerCornerPolicy,
@@ -467,6 +558,8 @@ def _register_model_archive_types() -> None:
         ProtectedFeature,
         RegionControl,
         RegionSeed,
+        TransfiniteCurveControl,
+        TransfiniteSurfaceControl,
     )
     from ..meshing._metric import MeshMetricField
     from ..meshing._organization import (
@@ -492,6 +585,7 @@ def _register_model_archive_types() -> None:
         SurfaceChartBoundarySource,
         SurfaceSubdivisionBoundarySource,
     )
+    from ..qualification._reference import ReferenceArtifactManifest
     from ..solver._finite_element_schedule import (
         FiniteElementAcceptedElementRecipe,
         FiniteElementAcceptedFieldLayoutRecipe,
@@ -508,7 +602,12 @@ def _register_model_archive_types() -> None:
     from ..sparse._relation import EdgeRelation
     from ..units._dimension import DimensionSignature
     from ..units._unit import UnitDefinition
-    from ._adaptation import MeshAdaptationStatus
+    from ._adaptation import (
+        MarkedMeshAdaptation,
+        MeshAdaptationResult,
+        MeshAdaptationRoute,
+        MeshAdaptationStatus,
+    )
     from ._archive_layer_columns import (
         ExactExpressionRowsArchiveRecipe,
         ImplicitChartRowsArchiveRecipe,
@@ -516,7 +615,11 @@ def _register_model_archive_types() -> None:
     )
     from ._assembly import MeshCarrierKind, MeshPart
     from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy, CellMeshAuditReport
-    from ._boundary_layer import BoundaryLayerEvidence
+    from ._boundary_layer import (
+        BoundaryLayerEvidence,
+        BoundaryLayerMesh,
+        BoundaryLayerPolicy,
+    )
     from ._contracts import (
         CellFamilyPolicy,
         CellMeshingTarget,
@@ -550,11 +653,24 @@ def _register_model_archive_types() -> None:
     )
     from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
     from ._distribution_migration import OwnerLocalMigrationState
-    from ._dual_extraction import _RestrictedCoordinateMap
+    from ._dual_extraction import (
+        _RestrictedCoordinateMap,
+        SurfaceCrossField,
+        SurfaceQuadFieldArchiveRecipe,
+    )
     from ._hex_cut_generation import _CutCoordinateMap
     from ._hex_cut_preparation import BalancedCutGridPlan
+    from ._hex_dominant import _HexDominantCoordinateMap
     from ._hex_frame_records import HexFrameIntegerLayout
     from ._hex_schedule import NativeHexGridSchedule
+    from ._layer_core_carrier_witness import NativeLayerCoreCarrierWitness
+    from ._layer_core_root_geometry import LayerCoreRootGeometry
+    from ._layer_core_subdivision import (
+        NearestWallPointEvidence,
+        OverlapSourceStencils,
+        RefinedColumnCertification,
+        RefinedColumnEvidence,
+    )
     from ._layer_curving_records import (
         LayerColumnProjectionIdentity,
         LayerCurvingImplicitRootTrace,
@@ -570,8 +686,21 @@ def _register_model_archive_types() -> None:
         MeshTransitionKind,
         VertexInterpolationStencil,
     )
-    from ._periodic import PeriodicPointOrbits
+    from ._mixed_adaptation import (
+        _RetainedCoordinateBank,
+        MixedActiveCell,
+        MixedAdaptationEvidence,
+        MixedAdaptationHierarchy,
+        MixedCellContentTransfer,
+        MixedForestRoot,
+        MixedLayerColumns,
+        MixedSibling,
+    )
+    from ._motion import MeshMotionMonitorPolicy
+    from ._optimization import MeshQualityObjective
+    from ._periodic import PeriodicPointOrbits, PeriodicQuotientHistory
     from ._plc_source import PiecewiseLinearComplex
+    from ._polyhedral_generation import NativePolyhedralSchedule
     from ._quality import (
         CellQualityEvaluation,
         CellQualityReport,
@@ -582,6 +711,8 @@ def _register_model_archive_types() -> None:
         MeshingComplianceReport,
         MeshingRuntimeInfo,
     )
+    from ._structured import TransfiniteBlock
+    from ._sweep import SweepControl, SweepMapKind
     from ._trace import (
         MeshingDiagnostic,
         MeshingDiagnosticSeverity,
@@ -590,9 +721,42 @@ def _register_model_archive_types() -> None:
         MeshingStageStatus,
         MeshingTrace,
     )
+    from ._volume_generation import NativeVolumeSchedule
+    from .providers._native_options import NativeMeshingOptions
     from .providers._native_periodic import NativePeriodicSource
+    from .providers._native_schedules import NativeCurveSchedule, NativeSurfaceSchedule
+    from .providers._native_sources import NativeStructuredSource, NativeSweepSource
 
     types = (
+        ("phydrax.geometry", CompartmentDefinition),
+        ("phydrax.geometry", CompartmentInterfaceDefinition),
+        ("phydrax.imaging", ImageFieldSpec),
+        ("phydrax.imaging", DeidentificationEvidence),
+        ("phydrax.imaging", ImageAxisConvention),
+        ("phydrax.imaging", ImageIndexAffine),
+        ("phydrax.imaging", LabelDefinition),
+        ("phydrax.imaging", LabelOntology),
+        ("phydrax.imaging", VoxelReference),
+        ("phydrax.measurement", AcquisitionIdentity),
+        ("phydrax.measurement", DataOrigin),
+        ("phydrax.measurement", DataStage),
+        ("phydrax.measurement", DerivationRecord),
+        ("phydrax.measurement", IndependentStandardUncertainty),
+        ("phydrax.measurement", QualityFlag),
+        ("phydrax.measurement", SamplingSemantics),
+        ("phydrax.measurement", SpatialSamplingKind),
+        ("phydrax.measurement", QuantitySpec),
+        ("phydrax.measurement", ValueKind),
+        ("phydrax.measurement", ValueLayout),
+        ("phydrax.measurement", TemporalSampling),
+        ("phydrax.measurement", TemporalSamplingKind),
+        ("phydrax.qualification", ReferenceArtifactManifest),
+        ("phydrax", DerivativeContract),
+        ("phydrax", DerivativeRegularity),
+        ("phydrax", DerivativeRoute),
+        ("phydrax", DerivativeSurface),
+        ("phydrax", GradientLevel),
+        ("phydrax", SurfaceDerivative),
         ("phydrax.geometry", CompiledGeometry),
         ("phydrax.geometry", GeometryTolerance),
         ("phydrax.geometry.design", DesignState),
@@ -602,6 +766,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.design", ParameterSpec),
         ("phydrax.geometry.analytic.internal", _BallKernel),
         ("phydrax.geometry.analytic.internal", _TorusKernel),
+        ("phydrax.geometry.analytic.internal", _UnionKernel),
         ("phydrax.geometry.implicit", AdaptiveImplicitSurfaceArchiveRecipe),
         ("phydrax.geometry.implicit", AdaptiveImplicitSurfacePolicy),
         ("phydrax.geometry.implicit", ImplicitChartPremise),
@@ -609,9 +774,19 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.implicit", ImplicitChartRows),
         ("phydrax.geometry.reconstruction", ReconstructionReport),
         ("phydrax.geometry.reconstruction", ReconstructedGeometrySourceArchiveRecipe),
+        ("phydrax.geometry.reconstruction", AuthoredTriangleSheetArchiveRecipe),
         ("phydrax.geometry.reconstruction.internal", _ReconstructedTrianglePatch),
         ("phydrax.geometry.reconstruction.internal", SurfaceEnvelopeReproduction),
         ("phydrax.model.archive", AdaptiveImplicitBoundarySourceArchiveRecipe),
+        ("phydrax.model.archive", AffinePlcBoundarySourceArchiveRecipe),
+        ("phydrax.model.archive", AffinePlcDomainArchiveRecipe),
+        ("phydrax.model.archive", AffinePlcGeometrySourceArchiveRecipe),
+        ("phydrax.model.archive", LabelVolumeArchiveRecipe),
+        ("phydrax.model.archive", CompartmentMeshingSourceArchiveRecipe),
+        ("phydrax.model.archive", ImageFieldSpecArchiveRecipe),
+        ("phydrax.model.archive", ImageIndexAffineArchiveRecipe),
+        ("phydrax.model.archive", ImageQualityFlagArchiveRecipe),
+        ("phydrax.model.archive", ImageUncertaintyArchiveRecipe),
         ("phydrax.model.archive", MeshingDomainArchiveRecipe),
         ("phydrax.model.archive", MeshingDomainBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", NativeImplicitBoundaryQueryArchiveRecipe),
@@ -628,8 +803,23 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", PreparedSphereChartDeformationArchiveRecipe),
         ("phydrax.model.archive", SurfaceEnvelopeSourceArchiveRecipe),
         ("phydrax.model.archive", PiecewiseLinearBoundarySourceArchiveRecipe),
+        ("phydrax.model.archive", PlcCurveAuthorityArchiveRecipe),
         ("phydrax.model.archive", NativePlcSourceArchiveRecipe),
+        ("phydrax.model.archive", NativePlanarSourceArchiveRecipe),
+        ("phydrax.model.archive", NativePlanarMotionSourceArchiveRecipe),
+        ("phydrax.model.archive", PlanarMotionAdvanceArchiveRecipe),
+        ("phydrax.model.archive", NativeLayerCoreAuthoringArchiveRecipe),
+        ("phydrax.model.archive", LayerCoreAcceptedResultArchiveRecipe),
+        ("phydrax.model.archive", LayerCoreAcceptedAdaptationArchiveRecipe),
+        ("phydrax.model.archive", LayerCoreSourceReferenceArchiveRecipe),
+        ("phydrax.model.archive", LayerCoreFidelitySourceReferenceArchiveRecipe),
+        ("phydrax.model.archive", SourceBoundaryImagePullbackArchiveRecipe),
+        ("phydrax.model.archive", SourceBoundaryFaceImageWitnessArchiveRecipe),
+        ("phydrax.model.archive", NativeLayerMappedBoundaryArchiveRecipe),
+        ("phydrax.model.archive", MixedAdaptationPolicyArchiveRecipe),
+        ("phydrax.model.archive", OversetRegistrationArchiveRecipe),
         ("phydrax.model.archive", NativeMappedHexSourceArchiveRecipe),
+        ("phydrax.model.archive", MappedCoreFacetAuthorityArchiveRecipe),
         ("phydrax.model.archive", MappedReferenceBoundarySourceArchiveRecipe),
         ("phydrax.model.archive", SparseCoordinateOperatorArchiveRecipe),
         ("phydrax.model.archive", PeriodicFiniteElementTransferArchiveRecipe),
@@ -679,11 +869,15 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry.internal", _PlacedSurfacePatch),
         ("phydrax.geometry", MappedReferenceDomain),
         ("phydrax.geometry", ParametricCurveBoundarySource),
+        ("phydrax.geometry", SegmentChartCurve),
         ("phydrax.geometry", PatchCurveUse),
         ("phydrax.geometry", PatchPoleUse),
         ("phydrax.geometry", PiecewiseLinearDomain),
+        ("phydrax.geometry", PiecewiseLinearDomainBoundaryOwner),
         ("phydrax.geometry", SourceBoundaryChartCover),
         ("phydrax.geometry", SourceBoundaryChartWitness),
+        ("phydrax.geometry", SourceBoundaryFaceImageWitness),
+        ("phydrax.geometry", SourceBoundaryImagePullback),
         ("phydrax.geometry", SourceBoundaryDistance),
         ("phydrax.geometry", SourceBoundaryPointWitness),
         ("phydrax.geometry", SourceBoundarySamples),
@@ -695,6 +889,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry", FacetOverlap),
         ("phydrax.geometry", PlcSourcePointWitness),
         ("phydrax.geometry.brep", BRepProjectionResult),
+        ("phydrax.geometry.brep", BRepProjectionPolicy),
         ("phydrax.geometry.implicit", RestrictedDelaunayBoundaryWitness),
         ("phydrax.geometry.implicit", RestrictedDelaunayCoverageTransportWitness),
         ("phydrax.geometry.simplicial", MeshRegion),
@@ -709,6 +904,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.discretization", EmptyLocalCellMeshAuthority),
         ("phydrax.discretization", CellComplexTopology),
         ("phydrax.discretization", CellGeometryRestrictionSource),
+        ("phydrax.discretization", ExactPeriodicAlgebraicSource),
         ("phydrax.discretization", ExactPlcCellGeometrySource),
         ("phydrax.discretization", ExactPowerCellGeometrySource),
         ("phydrax.discretization", ExactPeriodicPowerSourceContext),
@@ -729,10 +925,12 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", BalancedCutGridPlan),
         ("phydrax.meshing", PiecewiseLinearComplex),
         ("phydrax.meshing.internal", _CutCoordinateMap),
+        ("phydrax.meshing.internal", _HexDominantCoordinateMap),
         ("phydrax.meshing", NativeHexGridSchedule),
         ("phydrax.meshing", HexFrameIntegerLayout),
         ("phydrax.meshing.internal", _RestrictedCoordinateMap),
         ("phydrax.meshing.internal", _ExactCoordinateBankMap),
+        ("phydrax.meshing.internal", _RetainedCoordinateBank),
         ("phydrax.discretization", RationalComposedCellGeometryElement),
         ("phydrax.discretization", CellValidityPolicy),
         ("phydrax.discretization", CellGeometryTransition),
@@ -809,7 +1007,9 @@ def _register_model_archive_types() -> None:
         ("phydrax.linalg._materialization", MaterializationPolicy),
         ("phydrax.linalg._preconditioning", PreconditioningPolicy),
         ("phydrax.linalg._preconditioning", JacobiPreconditionerBuilder),
+        ("phydrax.equations", MaterialCheckpointPayload),
         ("phydrax.equations", MaterialSiteId),
+        ("phydrax.equations", MaterialSiteOwnership),
         ("phydrax.equations", MaterialState),
         ("phydrax.equations", MaterialTransaction),
         ("phydrax.exterior", FormType),
@@ -853,18 +1053,42 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", LayerCurvingImplicitRootTrace),
         ("phydrax.meshing", LayerCurvingMappedChartTrace),
         ("phydrax.meshing", LayerCurvingSourceEvidence),
+        ("phydrax.meshing", NativeLayerCoreCarrierWitness),
+        ("phydrax.meshing", LayerCoreRootGeometry),
+        ("phydrax.meshing", NearestWallPointEvidence),
+        ("phydrax.meshing", OverlapSourceStencils),
+        ("phydrax.meshing", RefinedColumnCertification),
+        ("phydrax.meshing", RefinedColumnEvidence),
         ("phydrax.meshing", BoundaryLayerCollisionPolicy),
         ("phydrax.meshing", BoundaryLayerEvidence),
+        ("phydrax.meshing", BoundaryLayerMesh),
+        ("phydrax.meshing", BoundaryLayerPolicy),
+        ("phydrax.meshing", MeshMotionMonitorPolicy),
+        ("phydrax.meshing", MeshQualityObjective),
         ("phydrax.meshing", SimplexForestRecords),
         ("phydrax.meshing", PeriodicSimplexForest),
         ("phydrax.meshing", OwnerLocalMigrationState),
         ("phydrax.meshing", CellMeshTransition),
+        ("phydrax.meshing", SurfaceQuadFieldArchiveRecipe),
+        ("phydrax.meshing", SurfaceCrossField),
         ("phydrax.meshing", EntityLineage),
         ("phydrax.meshing", EntityLineageKind),
         ("phydrax.meshing", MeshLineage),
         ("phydrax.meshing", MeshTransitionKind),
         ("phydrax.meshing", VertexInterpolationStencil),
+        ("phydrax.meshing", MixedActiveCell),
+        ("phydrax.meshing", MixedAdaptationHierarchy),
+        ("phydrax.meshing", MixedLayerColumns),
+        ("phydrax.meshing", MixedAdaptationEvidence),
+        ("phydrax.meshing", MixedCellContentTransfer),
+        ("phydrax.meshing", MeshAdaptationResult),
+        ("phydrax.meshing", MeshAdaptationRoute),
+        ("phydrax.meshing", MixedForestRoot),
+        ("phydrax.meshing", MixedSibling),
+        ("phydrax.discretization", ReferenceCellPartition),
+        ("phydrax.meshing", MarkedMeshAdaptation),
         ("phydrax.meshing", MeshAdaptationStatus),
+        ("phydrax.meshing", PeriodicQuotientHistory),
         ("phydrax.meshing.internal", OwnerLocalPeriodicAdaptiveResult),
         ("phydrax.meshing.internal", OwnerLocalPeriodicCellMetadata),
         ("phydrax.meshing.internal", OwnerLocalPeriodicSizeEvidence),
@@ -890,6 +1114,14 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", MeshCertificationInputs),
         ("phydrax.meshing", MeshCertificationSchedule),
         ("phydrax.meshing", MeshCertificationReport),
+        ("phydrax.meshing", BlockInterfaceControl),
+        ("phydrax.meshing", TransfiniteCurveControl),
+        ("phydrax.meshing", TransfiniteSurfaceControl),
+        ("phydrax.meshing", TransfiniteBlock),
+        ("phydrax.meshing", NativeStructuredSource),
+        ("phydrax.meshing", SweepControl),
+        ("phydrax.meshing", SweepMapKind),
+        ("phydrax.meshing", NativeSweepSource),
         ("phydrax.meshing", ProtectedFeature),
         ("phydrax.meshing", MeshingEntityKind),
         ("phydrax.meshing", MeshingScope),
@@ -923,6 +1155,8 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", VolumeMeshingSpec),
         ("phydrax.meshing", GeometryAssociation),
         ("phydrax.meshing", GeometryAssociationArchiveRecipe),
+        ("phydrax.meshing", GeometryAssociationBankArchiveRecipe),
+        ("phydrax.meshing", AssociationPropagationPolicy),
         ("phydrax.meshing", GeometryAssociationKind),
         ("phydrax.meshing", GeometryAssociationProvenance),
         ("phydrax.meshing", GeometrySourceEntityRole),
@@ -960,6 +1194,11 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", MeshingSourceKind),
         ("phydrax.meshing", MeshingRuntimeInfo),
         ("phydrax.meshing", MeshingStageKind),
+        ("phydrax.meshing", NativeMeshingOptions),
+        ("phydrax.meshing", NativePolyhedralSchedule),
+        ("phydrax.meshing", NativeVolumeSchedule),
+        ("phydrax.meshing", NativeCurveSchedule),
+        ("phydrax.meshing", NativeSurfaceSchedule),
         ("phydrax.meshing", NativePeriodicSource),
         ("phydrax.graph", GraphPartitionPlan),
         ("phydrax.graph", DistributedGraphPartitionResult),
@@ -973,6 +1212,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.solver", FiniteElementRestartStateLayout),
         ("phydrax.solver", FiniteElementRestartStateRole),
         ("phydrax.solver", FiniteElementAcceptedStateArchiveRecipe),
+        ("phydrax.solver", FiniteElementFieldBanksArchiveRecipe),
         ("phydrax.solver", FiniteElementFieldTransferSemantics),
         ("phydrax.solver", FiniteElementAcceptedFieldLayoutRecipe),
         ("phydrax.solver", FiniteElementAcceptedElementRecipe),
@@ -1012,6 +1252,133 @@ def _register_model_archive_types() -> None:
     _register_brep_types()
 
 
+def _rebuild_compiled_analytic_geometry(value: object, /) -> Any:
+    import numpy as np
+
+    from .._fingerprint import array_tree_fingerprint
+    from ..geometry._contracts import CompiledGeometry, GeometryKernel, GeometryTolerance
+    from ..geometry.analytic._expressions import _UnionKernel
+    from ..geometry.analytic._extended import _TorusKernel
+    from ..geometry.analytic._primitives import _BallKernel
+    from ..geometry.design._schema import (
+        DesignState,
+        ParameterBinding,
+        ParameterId,
+        ParameterSchema,
+        ParameterSpec,
+    )
+
+    if not isinstance(value, CompiledGeometry):
+        raise TypeError("Analytic implicit profile requires a compiled geometry owner.")
+    stored_schema = value.state.schema
+    if value.schema != stored_schema:
+        raise ValueError(
+            "Compiled analytic geometry has inconsistent state and schema owners."
+        )
+    schema = ParameterSchema(
+        tuple(
+            ParameterSpec(
+                ParameterId(spec.parameter_id.feature_id, spec.parameter_id.name),
+                spec.shape,
+                spec.dtype,
+                spec.role,
+                spec.physical_scale,
+                spec.bounds,
+                spec.trainable,
+            )
+            for spec in stored_schema.specs
+        )
+    )
+
+    def rebuild_binding(binding: ParameterBinding, /) -> ParameterBinding:
+        parameter_id = ParameterId(
+            binding.parameter_id.feature_id,
+            binding.parameter_id.name,
+        )
+        if (
+            binding.index < 0
+            or binding.index >= len(schema.specs)
+            or schema.specs[binding.index].parameter_id != parameter_id
+        ):
+            raise ValueError(
+                "Compiled analytic parameter bindings differ from their schema."
+            )
+        return ParameterBinding(parameter_id, binding.index)
+
+    def rebuild_kernel(kernel_owner: GeometryKernel, /) -> GeometryKernel:
+        if type(kernel_owner) is _BallKernel:
+            return _BallKernel(
+                rebuild_binding(kernel_owner.center),
+                rebuild_binding(kernel_owner.radius),
+                dimension=kernel_owner.dimension,
+                source_id=kernel_owner.source_id,
+            )
+        if type(kernel_owner) is _TorusKernel:
+            return _TorusKernel(
+                rebuild_binding(kernel_owner.center),
+                rebuild_binding(kernel_owner.major),
+                rebuild_binding(kernel_owner.minor),
+                rebuild_binding(kernel_owner.angle),
+                full=kernel_owner.full,
+                source_id=kernel_owner.source_id,
+            )
+        if type(kernel_owner) is _UnionKernel:
+            if type(kernel_owner.children) is not tuple or len(kernel_owner.children) < 2:
+                raise ValueError(
+                    "Compiled union must retain at least two geometry children."
+                )
+            children = tuple(rebuild_kernel(child) for child in kernel_owner.children)
+            if any(
+                child.ambient_dimension != children[0].ambient_dimension
+                for child in children
+            ):
+                raise ValueError(
+                    "Compiled union children must share an ambient dimension."
+                )
+            return _UnionKernel(children)
+        raise TypeError("Analytic implicit profile uses an unsupported geometry kernel.")
+
+    kernel = rebuild_kernel(value.kernel)
+    state = DesignState(schema, value.state.values)
+    tolerance = GeometryTolerance(value.tolerance.absolute, value.tolerance.relative)
+    geometry = CompiledGeometry(kernel, state, tolerance=tolerance)
+    if array_tree_fingerprint(geometry) != array_tree_fingerprint(value):
+        raise ValueError("Compiled analytic source fields differ after reconstruction.")
+    if not bool(np.asarray(geometry.validity().accepted)):
+        raise ValueError(
+            "Reconstructed analytic geometry does not have accepted validity."
+        )
+    return geometry
+
+
+def _restore_owner_local_dependencies(
+    value: Any, restore: Callable[[Any], Any], /
+) -> Any:
+    """Rebuild executable dependencies before the owner replays geometry."""
+    import jax
+
+    from .._model._structure import (
+        _FiniteElementSpecArchiveProjection,
+        SparseCoordinateOperatorArchiveRecipe,
+    )
+    from ..linalg._operator_pairing import OperatorPairingArchiveRecipe
+    from ..linalg._spaces import ArraySpaceArchiveRecipe
+    from ._distribution_forest import PeriodicSimplexForest
+
+    recipe_types = (
+        ArraySpaceArchiveRecipe,
+        _FiniteElementSpecArchiveProjection,
+        OperatorPairingArchiveRecipe,
+        SparseCoordinateOperatorArchiveRecipe,
+        PeriodicSimplexForest,
+    )
+    return jax.tree_util.tree_map(
+        lambda node: restore(node) if type(node) in recipe_types else node,
+        value,
+        is_leaf=lambda node: type(node) in recipe_types,
+    )
+
+
 def restore_model_archive_value(
     value: Any,
     /,
@@ -1022,12 +1389,24 @@ def restore_model_archive_value(
     import inspect
     from collections.abc import Mapping
 
-    import jax
     import numpy as np
 
     from .._model._structure import _FiniteElementSpecArchiveProjection
+    from .._physical import SpatialCoordinateContract
+    from ..discretization._cell_geometry_transition_types import (
+        CellGeometryTransition,
+        CellGeometryTransitionEvidence,
+    )
     from ..discretization._cell_mesh import CellMesh
+    from ..discretization._exact_algebraic_geometry import ExactPeriodicAlgebraicSource
+    from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
     from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
+    from ..discretization._nested_reference_types import (
+        ReferenceCellMapWitnesses,
+        ReferenceCellPartition,
+        validate_reference_cell_map_witnesses,
+        validate_reference_cell_partition,
+    )
     from ..discretization.fem._de_rham import (
         _distribute_transfer_result,
         DistributedFiniteElementTransfer,
@@ -1036,6 +1415,16 @@ def restore_model_archive_value(
         SparseCommutingEvidence,
         SparseTransferEntryEvidence,
     )
+    from ..equations._finite_element_material import (
+        MaterialCheckpointPayload,
+        MaterialSiteId,
+        MaterialSiteOwnership,
+        MaterialState,
+        MaterialTransaction,
+    )
+    from ..geometry._affine_plc_boundary import AffinePlcBoundarySource
+    from ..geometry._affine_plc_domain import AffinePlcDomain
+    from ..geometry._affine_plc_geometry import AffinePlcGeometrySource
     from ..geometry._cad_revision import (
         _restore_association_graph,
         _restore_cad_selection,
@@ -1051,9 +1440,27 @@ def restore_model_archive_value(
     from ..geometry._common_root_volume_overlap import (
         CurvedOverlapIntegrationPolicy,
     )
+    from ..geometry._compartments import CompartmentMeshingSource
+    from ..geometry._curve_boundary import (
+        ParametricCurveBoundarySource,
+        SegmentChartCurve,
+    )
+    from ..geometry._domain_boundary import MeshingDomainBoundarySource
+    from ..geometry._domain_coverage import PiecewiseLinearDomain
+    from ..geometry._planar_coverage import PlcSourcePointWitness
     from ..geometry._planar_embedding import PlanarEmbedding
-    from ..geometry._surface_source_archive import restore_surface_source_charts
-    from ..geometry._surface_source_support import SurfaceSourceCharts
+    from ..geometry._source_boundary_records import SurfaceEnvelopeDistanceWitness
+    from ..geometry._surface_source_archive import (
+        _domain,
+        _geometry,
+        restore_surface_source_charts,
+    )
+    from ..geometry._surface_source_support import (
+        PreparedSurfaceSourceSupport,
+        SurfaceNativeRestrictionBoundarySource,
+        SurfaceSourceCharts,
+        SurfaceSourceRootAtlas,
+    )
     from ..geometry.brep._constructors import BRepTessellationPolicy
     from ..geometry.brep._model import BRepEntityId, BRepModel
     from ..geometry.brep._partition import (
@@ -1074,7 +1481,12 @@ def restore_model_archive_value(
         PlanarPartitionOperand,
         PlanarPartitionPlan,
     )
-    from ..geometry.simplicial._regions import PlanarMeshRegion
+    from ..geometry.reconstruction._core import ReconstructedGeometrySourceArchiveRecipe
+    from ..geometry.reconstruction._sheet import AuthoredTriangleSheetArchiveRecipe
+    from ..geometry.simplicial._regions import PlanarMeshRegion, SegmentMesh
+    from ..geometry.surface._model import SurfaceModel
+    from ..imaging._asset import ImageFieldSpec
+    from ..imaging._core import ImageIndexAffine, LabelVolume, MedicalImageAsset
     from ..interchange._cad_archive import _reconstruct_brep_graph
     from ..lifecycle._composition_rebind import (
         Composition,
@@ -1088,14 +1500,49 @@ def restore_model_archive_value(
     from ..linalg._preconditioning import PreconditioningPolicy
     from ..linalg._properties import OperatorProperties
     from ..linalg._spaces import ArraySpaceArchiveRecipe
+    from ..measurement._field import (
+        IndependentStandardUncertainty,
+        QualityFlag,
+        SamplingSemantics,
+    )
+    from ..measurement._quantity import QuantitySpec, ValueLayout
+    from ..measurement._time import TemporalSampling
     from ..meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
     from ..meshing._controls import PatchControl
     from ..meshing._scope import MeshingScope, MeshingScopeSide
     from ..sparse._linear import SparseCoordinateOperator
     from ..sparse._relation import EdgeRelation
+    from ..units._unit import UnitDefinition
+    from ._adaptation import MarkedMeshAdaptation
+    from ._controls import (
+        BlockInterfaceControl,
+        LayerSchedule,
+        TransfiniteCurveControl,
+        TransfiniteSurfaceControl,
+    )
     from ._distribution_forest import PeriodicSimplexForest, SimplexForestRecords
     from ._distribution_migration import OwnerLocalMigrationState
+    from ._mixed_adaptation import (
+        _require_retained_bank_origin,
+        MixedAdaptationHierarchy,
+        MixedLayerColumns,
+    )
+    from ._motion_source import NativePlanarMotionSource
+    from ._periodic import PeriodicQuotientHistory
     from ._plc_source import PiecewiseLinearComplex
+    from ._polyhedral_generation import NativePolyhedralSchedule
+    from ._result import CellMeshingResult
+    from ._structured import TransfiniteBlock
+    from ._sweep import SweepControl
+    from ._volume_generation import NativeVolumeSchedule
+    from .providers._native_options import NativeMeshingOptions
+    from .providers._native_schedules import NativeCurveSchedule, NativeSurfaceSchedule
+    from .providers._native_sources import (
+        NativePlanarSource,
+        NativePlcSource,
+        NativeStructuredSource,
+        NativeSweepSource,
+    )
 
     _register_model_archive_types()
     in_composition = False
@@ -1277,6 +1724,911 @@ def restore_model_archive_value(
 
     def restore(item: Any, /) -> Any:
         nonlocal in_composition
+        if type(item) in (
+            LayerCoreAcceptedResultArchiveRecipe,
+            LayerCoreAcceptedAdaptationArchiveRecipe,
+            NativeLayerCoreAuthoringArchiveRecipe,
+            OversetRegistrationArchiveRecipe,
+        ):
+            # These are declarative replay inputs; their endpoint owners are
+            # reconstructed together by the generation/adaptation replay APIs.
+            return item
+        from ._dual_extraction import (
+            restore_surface_quad_field_event,
+            SurfaceCrossField,
+            SurfaceQuadFieldArchiveRecipe,
+        )
+
+        if type(item) is SurfaceQuadFieldArchiveRecipe:
+            item = restore_row_record_recipes(item)
+            source = CellMesh.from_stored_fields(item.source)
+            geometry = _geometry(item.source_geometry, source)
+            return restore_surface_quad_field_event(item, source, geometry)
+        if type(item) is SurfaceCrossField:
+            return SurfaceCrossField.from_stored_fields(item)
+        if type(item) is SurfaceMeshingSpec:
+            return item if in_composition else SurfaceMeshingSpec.from_stored_fields(item)
+        from ..geometry._mapped_reference_domain import MappedReferenceDomain
+
+        if type(item) is MappedReferenceDomain:
+            from ..geometry._surface_source_archive import _mapped_reference
+
+            return _mapped_reference(item)
+        from ..geometry.implicit._adaptive_discovery import (
+            AdaptiveImplicitBoundarySource,
+            AdaptiveImplicitSurfaceArchiveRecipe,
+            restore_adaptive_implicit_surface,
+        )
+        from ..geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
+
+        if type(item) is AdaptiveImplicitSurfaceArchiveRecipe:
+            geometry = _rebuild_compiled_analytic_geometry(item.geometry)
+            stored_policy = item.policy
+            if type(stored_policy) is not AdaptiveImplicitSurfacePolicy:
+                raise TypeError("Adaptive implicit source lost its discovery policy.")
+            policy = AdaptiveImplicitSurfacePolicy(
+                enclosure=stored_policy.enclosure,
+                relative_cell_diameter=stored_policy.relative_cell_diameter,
+                root_tolerance=stored_policy.root_tolerance,
+                allow_approximate_zero_set=stored_policy.allow_approximate_zero_set,
+                allow_nonsmooth_field=stored_policy.allow_nonsmooth_field,
+            )
+            if not _same_model_content(policy, stored_policy):
+                raise ValueError("Stored adaptive implicit policy changed.")
+            return restore_adaptive_implicit_surface(item, geometry, policy)
+        if type(item) is AdaptiveImplicitBoundarySourceArchiveRecipe:
+            surface = restore(item.surface)
+            query = AdaptiveImplicitBoundarySource(
+                surface, frame_id=item.frame_id or None
+            )
+            if (
+                query.source_id != item.expected_source_id
+                or query.source_revision != item.expected_source_revision
+                or query.frame_id != item.frame_id
+            ):
+                raise ValueError("Stored adaptive implicit query changed.")
+            query.require_current()
+            return query
+        if type(item) is AnalyticImplicitProfileArchiveRecipe:
+            from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
+
+            geometry = _rebuild_compiled_analytic_geometry(item.geometry)
+            contract = SpatialCoordinateContract.from_dict(
+                item.coordinate_contract.to_dict()
+            )
+            profile = AnalyticImplicitProfile(
+                geometry,
+                contract,
+                tube_radius=item.tube_radius,
+                cover_radius=item.cover_radius,
+                source_id=item.source_id,
+                source_revision=item.source_revision,
+            )
+            if profile.profile_id != item.expected_profile_id:
+                raise ValueError("Stored analytic implicit profile changed.")
+            return profile
+        if type(item) is NativeImplicitBoundaryQueryArchiveRecipe:
+            from .providers._native_implicit import _NativeImplicitBoundaryQuery
+
+            query = _NativeImplicitBoundaryQuery(
+                restore(item.query),
+                item.source_id,
+                item.source_revision,
+                item.frame_id,
+                authoring_profile=restore(item.authoring_profile),
+            )
+            if query.query_id != item.expected_query_id:
+                raise ValueError("Stored native implicit query changed.")
+            query.require_current()
+            return query
+        if type(item) is LayerSchedule:
+            return LayerSchedule.from_stored_fields(item)
+        if type(item) is SweepControl:
+            schedule = LayerSchedule.from_stored_fields(item.schedule)
+            from ._sweep import SweepMapKind
+
+            frames = item.frames if item.kind is SweepMapKind.FRAMES else None
+            translations = item.translations if item.kind is SweepMapKind.FRAMES else None
+            rebuilt = SweepControl(
+                item.kind,
+                schedule,
+                item.map_id,
+                origin=item.origin,
+                axis=item.axis,
+                frames=frames,
+                translations=translations,
+                closed=item.closed,
+                tolerance=item.tolerance,
+            )
+            if not _same_model_content(rebuilt, item):
+                raise ValueError("Stored sweep control changed.")
+            return rebuilt
+        if type(item) is SurfaceEnvelopeDistanceWitness:
+            # The kernel-run record is evidence of the writer process only; a
+            # restored witness reproduces its envelope by rerunning the kernel.
+            envelope_witness = SurfaceEnvelopeDistanceWitness(
+                mesh_id=item.mesh_id,
+                geometry_id=item.geometry_id,
+                topology_id=item.topology_id,
+                source_id=item.source_id,
+                source_revision=item.source_revision,
+                source_query_id=item.source_query_id,
+                offset=item.offset,
+                spacing=item.spacing,
+                certificate_spacing=item.certificate_spacing,
+                envelope_mode=item.envelope_mode,
+                bounds=np.asarray(item.bounds),
+                envelope_vertices=np.asarray(item.envelope_vertices),
+                envelope_triangles=np.asarray(item.envelope_triangles),
+                target_vertex_global_ids=np.asarray(item.target_vertex_global_ids),
+                target_facet_global_ids=np.asarray(item.target_facet_global_ids),
+                derived_source=None
+                if item.derived_source is None
+                else restore(item.derived_source),
+                derived_witness=None
+                if item.derived_witness is None
+                else restore(item.derived_witness),
+            )
+            if envelope_witness.witness_id != item.witness_id:
+                raise ValueError("Stored surface-envelope witness changed.")
+            return envelope_witness
+        if type(item) is AuthoredTriangleSheetArchiveRecipe:
+            from ..geometry.reconstruction._sheet import AuthoredTriangleSheet
+
+            sheet = AuthoredTriangleSheet(
+                np.asarray(item.vertices, dtype=np.float64),
+                np.asarray(item.triangles, dtype=np.int64),
+                feature_id=item.feature_id,
+            )
+            if (sheet.source_id, sheet.source_revision) != (
+                item.expected_source_id,
+                item.expected_source_revision,
+            ):
+                raise ValueError("Stored authored triangle sheet changed its identity.")
+            return sheet
+        if type(item) is ReconstructedGeometrySourceArchiveRecipe:
+            from ..geometry.reconstruction._core import ReconstructedGeometrySource
+
+            reconstructed = ReconstructedGeometrySource(
+                restore(item.source),
+                restore(item.report),
+                persistent_vertex_ids=np.asarray(
+                    item.persistent_vertex_ids, dtype=np.int64
+                ),
+                persistent_edge_ids=np.asarray(item.persistent_edge_ids, dtype=np.int64),
+                persistent_facet_ids=np.asarray(
+                    item.persistent_facet_ids, dtype=np.int64
+                ),
+                persistent_region_id=item.persistent_region_id,
+            )
+            if (reconstructed.source_id, reconstructed.source_revision) != (
+                item.expected_source_id,
+                item.expected_source_revision,
+            ):
+                raise ValueError("Stored reconstructed geometry source changed.")
+            return reconstructed
+        if type(item) is ReconstructedTriangleBoundarySourceArchiveRecipe:
+            from ..geometry.reconstruction._boundary import (
+                ReconstructedTriangleBoundarySource,
+            )
+
+            triangle_query = ReconstructedTriangleBoundarySource(restore(item.source))
+            if (triangle_query.source_id, triangle_query.source_revision) != (
+                item.expected_source_id,
+                item.expected_source_revision,
+            ):
+                raise ValueError("Stored reconstructed triangle query changed.")
+            return triangle_query
+        if type(item) is SurfaceEnvelopeSourceArchiveRecipe:
+            from ..geometry.reconstruction._envelope import parse_envelope_mode
+            from ._surface_envelope import SurfaceEnvelopeSource
+
+            envelope = SurfaceEnvelopeSource(
+                restore(item.original),
+                source_id=item.source_id,
+                coordinate_contract=restore(item.coordinate_contract),
+                offset=item.offset,
+                spacing=item.spacing,
+                certificate_spacing=item.certificate_spacing,
+                maximum_deviation=item.maximum_deviation,
+                envelope_mode=parse_envelope_mode(item.envelope_mode),
+            )
+            if (envelope.source_revision, envelope.envelope_id) != (
+                item.expected_source_revision,
+                item.expected_envelope_id,
+            ):
+                raise ValueError("Stored surface envelope does not recompute.")
+            return envelope
+        if type(item) is PiecewiseLinearBoundarySourceArchiveRecipe:
+            from ..geometry._piecewise_linear_boundary import (
+                PiecewiseLinearBoundarySource,
+                PiecewiseLinearDomainBoundaryOwner,
+            )
+
+            if type(item.owner) in (
+                PiecewiseLinearDomainBoundaryOwner,
+                PlcCurveAuthorityArchiveRecipe,
+                SurfaceEnvelopeSourceArchiveRecipe,
+            ):
+                owner = restore(item.owner)
+                query = PiecewiseLinearBoundarySource(
+                    owner,
+                    item.entity_dimension,
+                    entity_ids=item.entity_ids,
+                )
+                if query.source_query_id != item.expected_source_query_id:
+                    raise ValueError("Stored PWL domain query changed.")
+                query.require_current()
+                return query
+        if type(item) is PlcCurveAuthorityArchiveRecipe:
+            from .providers._native_plc_geometry import _PlcCurveAuthority
+
+            owner = _PlcCurveAuthority(restore(item.source), restore(item.reference_domain))
+            if owner.domain.domain_id != item.expected_domain_id:
+                raise ValueError("Stored PLC curve authority changed its exact domain.")
+            return owner
+        from ..geometry._piecewise_linear_boundary import (
+            PiecewiseLinearDomainBoundaryOwner,
+        )
+
+        if type(item) is PiecewiseLinearDomainBoundaryOwner:
+            owner = PiecewiseLinearDomainBoundaryOwner(restore(item.domain))
+            if not _same_model_content(owner, item):
+                raise ValueError("Stored PWL domain boundary owner changed.")
+            return owner
+        if type(item) is NativeSweepSource:
+            from ..discretization._cell_geometry import CellGeometryRestrictionSource
+
+            profile = CellMesh.from_stored_fields(item.profile)
+            geometry = _geometry(item.profile_geometry, profile)
+            domain = restore(item.domain)
+            from ..geometry._mapped_reference_boundary import (
+                MappedReferenceBoundarySource,
+            )
+            from ..geometry._piecewise_linear_boundary import (
+                PiecewiseLinearBoundarySource,
+            )
+
+            query = restore(item.fidelity_source)
+            if (
+                type(query)
+                in (PiecewiseLinearBoundarySource, MappedReferenceBoundarySource)
+                and domain is not None
+            ):
+                if not _same_model_content(query.domain, domain):
+                    raise ValueError("Stored sweep query binds a different domain.")
+                domain = query.domain
+            restriction = item.root_correspondence
+            if restriction is not None:
+                if type(domain) is not MappedReferenceDomain:
+                    raise TypeError(
+                        "Sweep root correspondence requires its mapped domain."
+                    )
+                maps = {}
+                for name, witness in restriction.block_parent_reference_maps.items():
+                    if witness is None:
+                        maps[name] = None
+                        continue
+                    if type(witness) is not ReferenceCellMapWitnesses:
+                        raise TypeError("Sweep restriction lost its reference maps.")
+                    rebuilt_witness = ReferenceCellMapWitnesses(
+                        witness.target_cell_ids,
+                        witness.source_cell_ids,
+                        witness.target_cell_kind,
+                        witness.source_cell_kind,
+                        witness.source_reference_vertices,
+                        witness.source_reference_exact_vertices,
+                        witness.source_reference_chart_arguments,
+                    )
+                    validate_reference_cell_map_witnesses(rebuilt_witness)
+                    maps[name] = rebuilt_witness
+                carrier = (
+                    None
+                    if restriction.carrier_geometry is None
+                    else _geometry(restriction.carrier_geometry, domain.reference_mesh)
+                )
+                rebuilt_restriction = CellGeometryRestrictionSource(
+                    restriction.source_geometry_id,
+                    restriction.source_topology_id,
+                    restriction.block_parent_cell_ids,
+                    restriction.block_parent_vertex_ids,
+                    block_source_blocks=restriction.block_source_blocks,
+                    carrier_publication=restriction.carrier_publication,
+                    block_parent_reference_maps=maps,
+                    carrier_geometry=carrier,
+                )
+                if not _same_model_content(rebuilt_restriction, restriction):
+                    raise ValueError("Stored sweep root correspondence changed.")
+                restriction = rebuilt_restriction
+            rebuilt = NativeSweepSource(
+                profile,
+                restore(item.control),
+                item.source_id,
+                item.source_revision,
+                fidelity_source=query,
+                maximum_deviation=item.maximum_deviation,
+                domain=domain,
+                block_regions=item.block_regions,
+                domain_vertex_map=item.domain_vertex_map,
+                profile_geometry=geometry,
+                root_correspondence=restriction,
+            )
+            if not _same_model_content(rebuilt, item):
+                raise ValueError("Stored sweep source changed.")
+            return rebuilt
+        if type(item) in (
+            TransfiniteCurveControl,
+            TransfiniteSurfaceControl,
+            BlockInterfaceControl,
+            TransfiniteBlock,
+            NativeStructuredSource,
+        ):
+            if type(item) is TransfiniteCurveControl:
+                curve = (
+                    restore(item.curve)
+                    if type(item.curve) is SegmentChartCurve
+                    else _reconstruct_brep_graph(item.curve)
+                )
+                rebuilt = TransfiniteCurveControl(
+                    curve,
+                    item.source_id,
+                    item.parameter_range,
+                    item.intervals,
+                    reversed=item.reversed,
+                )
+            elif type(item) is TransfiniteSurfaceControl:
+                rebuilt = TransfiniteSurfaceControl(
+                    _reconstruct_brep_graph(item.surface),
+                    item.source_id,
+                    item.parameter_box,
+                    item.intervals,
+                    permutation=item.permutation,
+                    flips=item.flips,
+                )
+            elif type(item) is BlockInterfaceControl:
+                rebuilt = BlockInterfaceControl(
+                    item.first_block,
+                    item.first_face,
+                    item.second_block,
+                    item.second_face,
+                    item.permutation,
+                    item.flips,
+                    conforming=item.conforming,
+                    tolerance=item.tolerance,
+                )
+            elif type(item) is TransfiniteBlock:
+                rebuilt = TransfiniteBlock(
+                    item.name,
+                    restore(item.boundaries),
+                    tolerance=item.tolerance,
+                )
+            else:
+                from ..geometry._mapped_reference_boundary import (
+                    MappedReferenceBoundarySource,
+                )
+                from ..geometry._piecewise_linear_boundary import (
+                    PiecewiseLinearBoundarySource,
+                )
+
+                query = restore(item.fidelity_source)
+                domain = restore(item.domain)
+                if (
+                    type(query)
+                    in (PiecewiseLinearBoundarySource, MappedReferenceBoundarySource)
+                    and domain is not None
+                ):
+                    if not _same_model_content(query.domain, domain):
+                        raise ValueError(
+                            "Stored structured query binds a different domain."
+                        )
+                    domain = query.domain
+                rebuilt = NativeStructuredSource(
+                    restore(item.blocks),
+                    restore(item.interfaces),
+                    item.source_id,
+                    item.source_revision,
+                    fidelity_source=query,
+                    maximum_deviation=item.maximum_deviation,
+                    domain=domain,
+                    block_regions=item.block_regions,
+                )
+            if not _same_model_content(rebuilt, item):
+                raise ValueError("Stored structured source or control changed.")
+            return rebuilt
+        if type(item) is CellMeshingResult:
+            return CellMeshingResult.from_stored_fields(restore_row_record_recipes(item))
+        if type(item) is ImageIndexAffineArchiveRecipe:
+            contract = SpatialCoordinateContract.from_dict(
+                item.coordinate_contract.to_dict()
+            )
+            affine = ImageIndexAffine(
+                item.matrix,
+                item.source_frame_id,
+                contract,
+                item.axis_convention,
+                item.voxel_reference,
+                item.provenance,
+            )
+            if affine.affine_id != item.expected_affine_id:
+                raise ValueError("Stored image index affine identity changed.")
+            return affine
+        if type(item) is ImageFieldSpecArchiveRecipe:
+            quantity = item.quantity
+            unit = UnitDefinition.from_dict(quantity.unit.to_dict())
+            renewed_quantity = QuantitySpec(
+                quantity.namespace,
+                quantity.name,
+                quantity.quantity_kind,
+                unit,
+                quantity.compatibility_key,
+                quantity.axes,
+                quantity.sign_convention,
+                quantity.support_association,
+                quantity.reference_configuration,
+            )
+            layout = item.layout
+            renewed_layout = ValueLayout(
+                layout.kind,
+                layout.component_shape,
+                layout.component_labels,
+                layout.component_frame_id,
+            )
+            interval_unit = (
+                None
+                if item.interval_unit is None
+                else UnitDefinition.from_dict(item.interval_unit.to_dict())
+            )
+            temporal = TemporalSampling(
+                item.temporal_kind,
+                item.interval_bounds,
+                interval_unit,
+                item.temporal_origin,
+            )
+            sampling = SamplingSemantics(
+                item.spatial_kind, temporal, item.footprint_id, item.normalization
+            )
+            spec = ImageFieldSpec(renewed_quantity, renewed_layout, sampling)
+            if (
+                renewed_quantity.quantity_id != quantity.quantity_id
+                or renewed_quantity.compatibility_id != quantity.compatibility_id
+                or renewed_layout.layout_id != layout.layout_id
+                or temporal.temporal_sampling_id != item.expected_temporal_id
+                or sampling.sampling_id != item.expected_sampling_id
+                or spec.spec_id != item.expected_spec_id
+            ):
+                raise ValueError("Stored image field specification changed.")
+            return spec
+        if type(item) is ImageUncertaintyArchiveRecipe:
+            value = IndependentStandardUncertainty(
+                item.values, UnitDefinition.from_dict(item.unit.to_dict())
+            )
+            if value.uncertainty_id != item.expected_uncertainty_id:
+                raise ValueError("Stored image uncertainty changed.")
+            return value
+        if type(item) is ImageQualityFlagArchiveRecipe:
+            value = QualityFlag(item.name, item.mask, item.meaning)
+            if value.flag_id != item.expected_flag_id:
+                raise ValueError("Stored image quality flag changed.")
+            return value
+        if type(item) is ImageIndexAffine:
+            contract = SpatialCoordinateContract.from_dict(
+                item.coordinate_contract.to_dict()
+            )
+            affine = ImageIndexAffine(
+                item.matrix,
+                item.source_frame_id,
+                contract,
+                item.axis_convention,
+                item.voxel_reference,
+                item.provenance,
+            )
+            if affine.affine_id != item.affine_id:
+                raise ValueError("Stored image index affine identity changed.")
+            return affine
+        if type(item) is LabelVolumeArchiveRecipe:
+            asset = MedicalImageAsset(**restore(item.asset_fields))
+            if asset.content_id != item.expected_asset_id:
+                raise ValueError("Stored categorical image asset identity changed.")
+            labels = LabelVolume(asset, item.ontology)
+            if labels.label_volume_id != item.expected_label_volume_id:
+                raise ValueError("Stored categorical label volume identity changed.")
+            return LabelVolume.from_stored_fields(labels)
+        if type(item) is CompartmentMeshingSourceArchiveRecipe:
+            labels = restore(item.labels)
+            surface = restore_row_record_recipes(item.outer_surface)
+            if type(surface) is not SurfaceModel:
+                raise TypeError("Stored compartment source lost its outer surface owner.")
+            stored_geometry = restore_row_record_recipes(item.outer_geometry)
+            geometry = (
+                None
+                if stored_geometry is None
+                else _geometry(stored_geometry, restore(surface.mesh))
+            )
+            return CompartmentMeshingSource.from_archive_inputs(
+                labels,
+                item.compartments,
+                item.interfaces,
+                surface,
+                item.interpretation,
+                geometry,
+                expected_source_id=item.expected_source_id,
+                expected_source_revision=item.expected_source_revision,
+                expected_scope_ids=item.expected_scope_ids,
+            )
+        if type(item) is PiecewiseLinearDomain:
+            domain = PiecewiseLinearDomain(
+                item.vertices,
+                item.facets,
+                item.facet_regions,
+                item.region_ids,
+                source_id=item.source_id,
+                region_occurrence_paths=item.region_occurrence_paths,
+            )
+            if (
+                domain.domain_id != item.domain_id
+                or domain.source_revision != item.source_revision
+            ):
+                raise ValueError("Stored piecewise-linear domain changed.")
+            return domain
+        if type(item) is MeshingDomainArchiveRecipe:
+            return _domain(item)
+        if type(item) is MeshingDomainBoundarySourceArchiveRecipe:
+            domain = _domain(item.domain)
+            query = MeshingDomainBoundarySource(
+                domain,
+                item.patches,
+                resolution=item.resolution,
+                boundary_occurrences=item.boundary_occurrences,
+                boundary_cell_ids=item.boundary_cell_ids,
+                boundary_patch_ids=item.boundary_patch_ids,
+            )
+            if query.source_scope_id != item.expected_source_scope_id:
+                raise ValueError("Stored meshing-domain boundary scope changed.")
+            query.require_current()
+            return query
+        if type(item) is SurfaceSourceRootAtlas:
+            atlas_domain = restore(item.domain)
+            atlas_mesh = CellMesh.from_stored_fields(
+                restore_row_record_recipes(item.mesh)
+            )
+            atlas_geometry = _geometry(
+                restore_row_record_recipes(item.geometry), atlas_mesh
+            )
+            atlas = SurfaceSourceRootAtlas(
+                atlas_domain,
+                atlas_mesh,
+                atlas_geometry,
+                item.root_parameters,
+                item.root_patches,
+                item.coordinate_contract,
+                root_source_cell_ids=item.root_source_cell_ids,
+                root_parameter_bounds=item.root_parameter_bounds,
+            )
+            if (
+                atlas.atlas_id != item.atlas_id
+                or atlas.root_cell_ids != item.root_cell_ids
+                or (atlas.source_id, atlas.source_revision)
+                != (item.source_id, item.source_revision)
+            ):
+                raise ValueError("Stored surface root atlas does not reproduce.")
+            return atlas
+        if type(item) is PreparedSurfaceSourceSupportArchiveRecipe:
+            domain = restore(item.domain)
+            root_query = restore(item.root_boundary_source)
+            original = restore(item.original)
+            support = PreparedSurfaceSourceSupport(
+                domain, original, item.root_parameters, root_query
+            )
+            if support.support_id != item.expected_support_id:
+                raise ValueError("Stored surface source support does not reproduce.")
+            return support
+        if type(item) is SurfaceNativeRestrictionBoundarySourceArchiveRecipe:
+            root = restore(item.root)
+            support = restore(item.support)
+            mesh = CellMesh.from_stored_fields(restore_row_record_recipes(item.mesh))
+            geometry = _geometry(restore_row_record_recipes(item.geometry), mesh)
+            query = SurfaceNativeRestrictionBoundarySource(root, support, mesh, geometry)
+            if (query.source_id, query.source_revision, query.source_scope_id) != (
+                item.source_id,
+                item.source_revision,
+                item.source_scope_id,
+            ):
+                raise ValueError("Stored surface restriction source does not reproduce.")
+            return query
+        if type(item) is NativePlcSourceArchiveRecipe and item.fidelity_source is None:
+            from ..geometry._surface_source_archive import _mapped_reference
+
+            mapped = (
+                None
+                if item.mapped_domain is None
+                else _mapped_reference(item.mapped_domain)
+            )
+            source = NativePlcSource(
+                restore(item.complex),
+                item.source_id,
+                item.source_revision,
+                mapped_domain=mapped,
+                maximum_deviation=item.maximum_deviation,
+                plc_vertex_root_global_ids=item.plc_vertex_root_global_ids,
+            )
+            if source.binding_id != item.expected_binding_id:
+                raise ValueError("Stored native PLC source identity changed.")
+            if mapped is not None:
+                source.validate_restored()
+            return source
+        if type(item) is NativeMappedHexSourceArchiveRecipe:
+            from ..geometry._surface_source_archive import _mapped_reference
+            from .providers._native_sources import NativeMappedHexSource
+
+            reference = restore(item.reference)
+            if type(reference) is not NativePlcSource:
+                raise TypeError("Mapped source lost its native PLC reference owner.")
+            domain = _mapped_reference(item.domain)
+            source = NativeMappedHexSource(
+                reference,
+                domain,
+                plc_vertex_root_global_ids=item.plc_vertex_root_global_ids,
+            )
+            if (
+                source.source_id != item.expected_source_id
+                or source.source_revision != item.expected_source_revision
+                or source.binding_id != item.expected_binding_id
+                or source.root_relation.relation_id != item.expected_relation_id
+            ):
+                raise ValueError(
+                    "Mapped source differs from its retained root authority."
+                )
+            source.validate_restored()
+            return source
+        if type(item) is MappedReferenceBoundarySourceArchiveRecipe:
+            from ..geometry._mapped_reference_boundary import (
+                MappedPlcRootAuthority,
+                MappedReferenceBoundarySource,
+            )
+
+            authority = restore(item.authority)
+            if not isinstance(authority, MappedPlcRootAuthority):
+                raise TypeError("Mapped query lost its native root authority.")
+            query = MappedReferenceBoundarySource(
+                authority,
+                face_scope_keys=item.face_scope_keys,
+                edge_scope_keys=item.edge_scope_keys,
+            )
+            if query.source_query_id != item.expected_source_query_id:
+                raise ValueError("Mapped query differs from its retained source scope.")
+            query.require_current()
+            return query
+        if type(item) is AffinePlcBoundarySourceArchiveRecipe:
+            query = AffinePlcBoundarySource(
+                restore(item.owner), restore(item.domain), item.facet_rows
+            )
+            if query.source_query_id != item.expected_source_query_id:
+                raise ValueError("Stored affine PLC boundary query changed.")
+            return query
+        if type(item) is PlcSourcePointWitness:
+            witness = PlcSourcePointWitness(
+                item.vertex_global_ids,
+                item.vertex_kinds,
+                item.vertex_entities,
+                item.vertex_parameters,
+                segments=item.segments,
+                faces=item.faces,
+                face_groups=item.face_groups,
+                face_planes=item.face_planes,
+                face_plane_tolerances=item.face_plane_tolerances,
+                domain_face_rows=item.domain_face_rows,
+                domain_id=item.domain_id,
+                vertex_deviations=item.vertex_deviations,
+            )
+            if witness.witness_id != item.witness_id:
+                raise ValueError("Stored PLC source-point witness identity changed.")
+            return witness
+        if type(item) is AffinePlcDomainArchiveRecipe:
+            reference = item.reference_domain
+            if type(reference) is not PiecewiseLinearDomain:
+                raise TypeError("Affine PLC source lost its reference domain.")
+            domain = PiecewiseLinearDomain(
+                reference.vertices,
+                reference.facets,
+                reference.facet_regions,
+                reference.region_ids,
+                source_id=reference.source_id,
+                region_occurrence_paths=reference.region_occurrence_paths,
+            )
+            if (
+                domain.domain_id != reference.domain_id
+                or domain.source_revision != reference.source_revision
+            ):
+                raise ValueError("Stored affine PLC reference domain changed.")
+            authority = None if item.authority is None else restore(item.authority)
+            if authority is not None and type(authority) is not CompartmentMeshingSource:
+                raise TypeError(
+                    "Affine PLC authority must be a replayed categorical source."
+                )
+            affine = AffinePlcDomain(
+                domain,
+                item.matrix,
+                item.offset,
+                source_revision=item.source_revision,
+                authority=authority,
+            )
+            if affine.domain_id != item.expected_domain_id:
+                raise ValueError("Stored affine PLC map identity changed.")
+            return affine
+        if type(item) is AffinePlcGeometrySourceArchiveRecipe:
+            geometry_source = AffinePlcGeometrySource(
+                restore(item.domain),
+                restore(item.reference_mesh),
+                witness=restore(item.witness),
+            )
+            if (
+                geometry_source.source_id != item.expected_source_id
+                or geometry_source.source_revision != item.expected_source_revision
+                or geometry_source.source_map_id != item.expected_source_map_id
+            ):
+                raise ValueError("Stored affine PLC geometry source changed.")
+            geometry_source.source_coordinates()
+            return geometry_source
+        if type(item) is SegmentChartCurve:
+            curve = SegmentChartCurve(item.start, item.end, item.first, item.last)
+            if (
+                curve.origin_exact != item.origin_exact
+                or curve.direction_exact != item.direction_exact
+            ):
+                raise ValueError("Stored segment chart exact coefficients changed.")
+            return curve
+        if type(item) is ParametricCurveBoundarySourceArchiveRecipe:
+            curves = tuple(
+                restore(curve)
+                if type(curve) is SegmentChartCurve
+                else _reconstruct_brep_graph(curve)
+                for curve in item.curves
+            )
+            query = ParametricCurveBoundarySource(
+                curves,
+                item.parameter_ranges,
+                source_id=item.source_id,
+                source_revision=item.source_revision,
+                curve_entity_ids=item.curve_entity_ids,
+                occurrence_paths=item.occurrence_paths,
+                chart_ids=item.chart_ids,
+                endpoint_source_keys=item.endpoint_source_keys,
+                endpoint_point_bounds=item.endpoint_point_bounds,
+                endpoint_parameter_bounds=item.endpoint_parameter_bounds,
+            )
+            if query.query_id != item.expected_query_id:
+                raise ValueError("Stored source curve query does not reproduce.")
+            query.require_current()
+            return query
+        if type(item) is NativePlanarSourceArchiveRecipe:
+            edges = np.asarray(item.edges)
+            offsets = np.asarray(item.loop_offsets)
+            if (
+                edges.ndim != 2
+                or edges.shape[1] != 2
+                or edges.dtype.kind not in "iu"
+                or offsets.ndim != 1
+                or offsets.dtype.kind not in "iu"
+                or len(offsets) < 2
+                or offsets[0] != 0
+                or offsets[-1] != len(edges)
+                or np.any(np.diff(offsets) < 3)
+            ):
+                raise ValueError("Stored planar source loops are malformed.")
+            loops = tuple(
+                tuple(int(index) for index in edges[int(a) : int(b), 0])
+                for a, b in zip(offsets[:-1], offsets[1:], strict=True)
+            )
+            region = PlanarMeshRegion(item.vertices, loops, feature_id=item.source_id)
+            if not np.array_equal(np.asarray(region.edges), edges) or not np.array_equal(
+                np.asarray(region.loop_offsets), offsets
+            ):
+                raise ValueError(
+                    "Stored planar source edges do not form their declared loops."
+                )
+            embedded_inputs = (
+                item.embedded_vertices,
+                item.embedded_edges,
+                item.embedded_source_id,
+                item.embedded_vertex_entity_ids,
+                item.embedded_edge_entity_ids,
+            )
+            if all(value is None for value in embedded_inputs):
+                embedded = None
+            elif any(value is None for value in embedded_inputs):
+                raise ValueError("Stored embedded source strata are incomplete.")
+            else:
+                embedded = SegmentMesh(
+                    item.embedded_vertices,
+                    item.embedded_edges,
+                    source_id=item.embedded_source_id,
+                )
+            source = NativePlanarSource(
+                region,
+                item.declared_source_revision,
+                embedded=embedded,
+                region_scope_entity_ids=item.region_scope_entity_ids,
+                vertex_entity_ids=item.vertex_entity_ids,
+                edge_entity_ids=item.edge_entity_ids,
+                embedded_vertex_entity_ids=item.embedded_vertex_entity_ids,
+                embedded_edge_entity_ids=item.embedded_edge_entity_ids,
+            )
+            if source.binding_id != item.expected_binding_id:
+                raise ValueError("Stored planar source binding does not reproduce.")
+            return source
+        if type(item) is NativePlanarMotionSourceArchiveRecipe:
+            source = restore(item.source)
+            motion = NativePlanarMotionSource(source, item.translation)
+            if (
+                motion.transition_id != item.expected_transition_id
+                or motion.successor.binding_id != item.expected_successor_binding_id
+            ):
+                raise ValueError("Stored planar source motion does not reproduce.")
+            return motion
+        if type(item) is MaterialSiteId:
+            site = MaterialSiteId(
+                item.key,
+                domain_id=item.domain_id,
+                cell_id=item.cell_id,
+                quadrature_rule_id=item.quadrature_rule_id,
+                reference_site_id=item.reference_site_id,
+            )
+            if site.site_id != item.site_id:
+                raise ValueError("Stored material site identity does not reproduce.")
+            return site
+        if type(item) is MaterialSiteOwnership:
+            if len(item.site_ids) != len(item.owners):
+                raise ValueError("Stored material ownership rows differ in length.")
+            ownership = MaterialSiteOwnership(
+                tuple(
+                    (restore(site), owner)
+                    for site, owner in zip(item.site_ids, item.owners, strict=True)
+                ),
+                part_count=item.part_count,
+            )
+            if (
+                ownership.ownership_id != item.ownership_id
+                or tuple(site.key for site in ownership.site_ids)
+                != tuple(site.key for site in item.site_ids)
+                or ownership.owners != item.owners
+            ):
+                raise ValueError("Stored material ownership does not reproduce.")
+            return ownership
+        if type(item) is MaterialState:
+            state = MaterialState(
+                restore(item.site_id),
+                item.model_id,
+                item.committed,
+                trial=item.trial,
+                state_version=item.state_version,
+            )
+            if state.layout_id != item.layout_id or state.state_id != item.state_id:
+                raise ValueError("Stored material state identity does not reproduce.")
+            return state
+        if type(item) is MaterialTransaction:
+            transaction = MaterialTransaction(
+                tuple(restore(state) for state in item.states),
+                ownership=None if item.ownership is None else restore(item.ownership),
+                owner_rank=item.owner_rank,
+            )
+            if (
+                transaction.layout_id != item.layout_id
+                or transaction.transaction_id != item.transaction_id
+                or tuple(state.site_id.key for state in transaction.states)
+                != tuple(state.site_id.key for state in item.states)
+            ):
+                raise ValueError(
+                    "Stored material transaction identity does not reproduce."
+                )
+            return transaction
+        if type(item) is MaterialCheckpointPayload:
+            payload = MaterialCheckpointPayload(restore(item.state), plan_id=item.plan_id)
+            if (
+                payload.layout_id != item.layout_id
+                or payload.payload_id != item.payload_id
+            ):
+                raise ValueError("Stored material checkpoint payload does not reproduce.")
+            return payload
         if type(item) is BRepModel:
             return _reconstruct_brep_graph(item)
         if type(item) is MeshingScope:
@@ -1567,6 +2919,199 @@ def restore_model_archive_value(
             return rebuild_policy(item)
         if type(item) is CellMesh:
             return CellMesh.from_stored_fields(item)
+        if type(item) is NativeCurveSchedule:
+            schedule = NativeCurveSchedule(
+                quadrature_intervals=item.quadrature_intervals,
+                quadrature_order=item.quadrature_order,
+                fidelity_samples=item.fidelity_samples,
+            )
+            if schedule.schedule_id != item.schedule_id:
+                raise ValueError("Stored native curve schedule changed.")
+            return schedule
+        if type(item) is NativeSurfaceSchedule:
+            schedule = NativeSurfaceSchedule(
+                quality_angle_degrees=item.quality_angle_degrees,
+                spacing_fraction=item.spacing_fraction,
+                minimum_edge_samples=item.minimum_edge_samples,
+                normal_deviation_aim=item.normal_deviation_aim,
+                curve_schedule=restore(item.curve_schedule),
+            )
+            if schedule.schedule_id != item.schedule_id:
+                raise ValueError("Stored native surface schedule changed.")
+            return schedule
+        if type(item) is NativeVolumeSchedule:
+            schedule = NativeVolumeSchedule(
+                radius_edge_bound=item.radius_edge_bound,
+                minimum_dihedral_degrees=item.minimum_dihedral_degrees,
+                shape_strength=item.shape_strength,
+            )
+            if schedule.schedule_id != item.schedule_id:
+                raise ValueError("Stored native volume schedule changed.")
+            return schedule
+        if type(item) is NativePolyhedralSchedule:
+            schedule = NativePolyhedralSchedule(
+                item.maximum_cell_diameter,
+                item.target_site_volumes,
+                item.relative_volume_tolerance,
+                item.feature_tolerance,
+                item.protected_site_ids,
+                item.require_every_site,
+                item.lloyd_steps,
+            )
+            if schedule.schedule_id != item.schedule_id:
+                raise ValueError("Stored native polyhedral schedule changed.")
+            return schedule
+        if type(item) is NativeMeshingOptions:
+            if (
+                item.route not in ("layer_core", "image_material_tetrahedral")
+                or (
+                    item.route == "image_material_tetrahedral"
+                    and item.polyhedral_schedule is not None
+                )
+                or any(
+                    value is not None
+                    for value in (
+                        item.implicit_policy,
+                        item.curve_schedule,
+                        item.surface_schedule,
+                        item.structured_schedule,
+                        item.hex_core_fraction,
+                        item.grid_schedule,
+                    )
+                )
+            ):
+                raise ValueError("Stored native options need their route-specific owner.")
+            options = NativeMeshingOptions(
+                item.route,
+                volume_schedule=restore(item.volume_schedule),
+                polyhedral_schedule=restore(item.polyhedral_schedule),
+            )
+            if options.options_id != item.options_id:
+                raise ValueError("Stored native meshing options changed.")
+            return options
+        if type(item) is MixedLayerColumns:
+            columns = MixedLayerColumns(
+                item.cell_ids,
+                item.column_ids,
+                item.interval_indices,
+                hard_first_thickness=item.hard_first_thickness,
+                axial_refinement=item.axial_refinement,
+                allow_schedule_change=item.allow_schedule_change,
+            )
+            if columns.columns_id != item.columns_id:
+                raise ValueError("Stored mixed layer columns identity changed.")
+            return columns
+        if type(item) is PeriodicQuotientHistory:
+            history = PeriodicQuotientHistory(
+                item.identification_id,
+                item.source_mesh_id,
+                item.entity_keys_by_degree,
+                item.allocator_next_ids,
+                item.occurrences_by_degree,
+                item.vertex_actions_by_id,
+            )
+            if (
+                history.history_id != item.history_id
+                or history.entity_keys_by_degree != item.entity_keys_by_degree
+                or history.occurrences_by_degree != item.occurrences_by_degree
+                or history.vertex_actions_by_id != item.vertex_actions_by_id
+            ):
+                raise ValueError("Stored periodic quotient history changed.")
+            return history
+        if type(item) is MixedAdaptationHierarchy:
+            hierarchy = MixedAdaptationHierarchy(
+                item.siblings,
+                item.active_cells,
+                item.forest_roots,
+                item.vertex_points,
+                item.retired_entities,
+                item.layer_policy,
+                item.next_cell_id,
+                item.next_vertex_id,
+                restore(item.periodic_quotient_history),
+                item.active_lifted_topology_id,
+            )
+            if hierarchy.hierarchy_id != item.hierarchy_id or not _same_model_content(
+                hierarchy, item
+            ):
+                raise ValueError("Stored mixed adaptation hierarchy identity changed.")
+            return hierarchy
+        if type(item) is MarkedMeshAdaptation:
+            if item.periodic_edge_lock is not None:
+                raise ValueError("Periodic edge locks require their own archive owner.")
+            if (
+                item.hierarchy is not None
+                and type(item.hierarchy) is not MixedAdaptationHierarchy
+            ):
+                raise ValueError("Stored marked request requires a mixed hierarchy.")
+            request = MarkedMeshAdaptation(
+                item.refine_cell_ids,
+                item.coarsen_cell_ids,
+                hierarchy=restore(item.hierarchy),
+                layer_columns=restore(item.layer_columns),
+            )
+            if request.request_id != item.request_id:
+                raise ValueError("Stored marked adaptation request changed.")
+            return request
+        if type(item) is ReferenceCellMapWitnesses:
+            witness = ReferenceCellMapWitnesses(
+                item.target_cell_ids,
+                item.source_cell_ids,
+                item.target_cell_kind,
+                item.source_cell_kind,
+                item.source_reference_vertices,
+                item.source_reference_exact_vertices,
+                item.source_reference_chart_arguments,
+            )
+            validate_reference_cell_map_witnesses(witness)
+            return witness
+        if type(item) is ReferenceCellPartition:
+            partition = ReferenceCellPartition(
+                tuple(restore(group) for group in item.maps)
+            )
+            validate_reference_cell_partition(partition)
+            return partition
+        if type(item) is CellGeometryTransition:
+            source = restore(item.source_mesh)
+            target = restore(item.target_mesh)
+            stored_evidence = item.evidence
+            evidence = CellGeometryTransitionEvidence(
+                stored_evidence.kind,
+                reference_map_count=stored_evidence.reference_map_count,
+                refinement_map_count=stored_evidence.refinement_map_count,
+                coarsening_map_count=stored_evidence.coarsening_map_count,
+                continuity_residual=stored_evidence.continuity_residual,
+                approximation_bound=stored_evidence.approximation_bound,
+            )
+            if evidence.evidence_id != stored_evidence.evidence_id:
+                raise ValueError("Stored geometry transition evidence changed.")
+            source_geometry = _geometry(item.source_geometry, source)
+            target_geometry = _geometry(item.target_geometry, target)
+            _require_retained_bank_origin(source_geometry, target_geometry)
+            transition = CellGeometryTransition(
+                source,
+                source_geometry,
+                target,
+                target_geometry,
+                evidence=evidence,
+                reference_map=restore(item.reference_map),
+                refinement=restore(item.refinement),
+                coarsening=restore(item.coarsening),
+                coarsening_partition=restore(item.coarsening_partition),
+            )
+            if transition.transition_id != item.transition_id:
+                raise ValueError("Stored geometry transition identity changed.")
+            return transition
+        if type(item) is ExactPeriodicAlgebraicSource:
+            source = ExactPeriodicAlgebraicSource.from_stored_fields(item)
+            if not _same_model_content(source, item):
+                raise ValueError("Stored exact periodic algebraic source differs from its constructor.")
+            return source
+        if type(item) is ExactPlcCellGeometrySource:
+            source = ExactPlcCellGeometrySource.from_stored_fields(item)
+            if not _same_model_content(source, item):
+                raise ValueError("Stored exact PLC source differs from its constructor.")
+            return source
         if type(item) is MappedPowerCellGeometrySource:
             return MappedPowerCellGeometrySource.from_stored_fields(item)
         if type(item) is HilbertComplex:
@@ -1819,23 +3364,6 @@ def restore_model_archive_value(
                     raise TypeError(
                         "Owner-local adaptive archive lost its compact source view."
                     )
-                # The compact replay evidence (adaptive result vertex transfer)
-                # stores its sparse maps' spaces and operators as archive
-                # projections; decode them before the view replays them.
-                nested_recipe_types = (
-                    ArraySpaceArchiveRecipe,
-                    _FiniteElementSpecArchiveProjection,
-                    OperatorPairingArchiveRecipe,
-                    SparseCoordinateOperatorArchiveRecipe,
-                    PeriodicSimplexForest,
-                )
-                stored_view = jax.tree_util.tree_map(
-                    lambda node: (
-                        restore(node) if type(node) in nested_recipe_types else node
-                    ),
-                    stored_view,
-                    is_leaf=lambda node: type(node) in nested_recipe_types,
-                )
                 view = OwnerLocalCellGeometry.from_stored_fields(
                     stored_view,
                     execution_group,
@@ -1995,6 +3523,8 @@ def restore_model_archive_value(
                         return type(value).from_stored_fields(
                             value, source_model=owners[0]
                         )
+                    if type(value) is SurfaceMeshingSpec:
+                        return SurfaceMeshingSpec.from_stored_fields(value)
                 return value
 
             entries = tuple(
@@ -2250,8 +3780,22 @@ def read_model_archive(
     node), and ``arrays`` is its exact per-occurrence inventory. No reader of a
     native model archive sees a shared reference.
     """
+    return _read_model_archive(path, limits=limits, immutable_arrays=False)
+
+
+def _read_model_archive(
+    path: str | Path,
+    /,
+    *,
+    limits: ArrayArchiveLimits | None,
+    immutable_arrays: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     _register_model_archive_types()
-    manifest, members = read_array_archive(path, limits=limits)
+    manifest, members = (
+        _read_array_archive(path, limits=limits, immutable_arrays=True)
+        if immutable_arrays
+        else read_array_archive(path, limits=limits)
+    )
     if (
         set(manifest) != {"arrays", "kind", "model_recipe"}
         or manifest["kind"] != _MODEL_KIND
@@ -2263,9 +3807,14 @@ def read_model_archive(
     if not isinstance(shared_recipe, dict) or shared_recipe.get("kind") != "dataclass":
         raise ArrayArchiveCorruptionError("Native model archive has no dataclass recipe.")
     try:
-        recipe, arrays = expand_shared_model_archive_recipe(
-            shared_recipe, members, prefix=_MODEL_ARRAYS, limits=limits
-        )
+        if immutable_arrays:
+            recipe, arrays = _expand_shared_immutable_model_archive_recipe(
+                shared_recipe, members, _MODEL_ARRAYS, limits
+            )
+        else:
+            recipe, arrays = expand_shared_model_archive_recipe(
+                shared_recipe, members, prefix=_MODEL_ARRAYS, limits=limits
+            )
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise ArrayArchiveCorruptionError(
             "Native model archive is incompatible with its registered recipe."
@@ -2416,6 +3965,24 @@ def read_model_archive_fields(
         ) from error
 
 
+def _model_archive_content_id(manifest: dict[str, Any], arrays: dict[str, Any], /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": _MODEL_KIND,
+            "model_recipe": manifest["model_recipe"],
+            "arrays": array_collection_digest(arrays),
+        }
+    )
+
+
+def model_archive_content_id(
+    path: str | Path, /, *, limits: ArrayArchiveLimits | None
+) -> str:
+    """Return the canonical content ID of an admitted native model archive."""
+    manifest, arrays = _read_model_archive(path, limits=limits, immutable_arrays=True)
+    return _model_archive_content_id(manifest, arrays)
+
+
 def write_model_artifact(
     path: str | Path,
     model: Any,
@@ -2435,9 +4002,8 @@ def write_model_artifact(
         raise TypeError(
             "Native model recipe does not identify its exact registered root type."
         )
-    validate_model_structure_recipe(recipe, limits=limits)
-    arrays = pack_model_array_tree(
-        archive_model, recipe, prefix=_MODEL_ARRAYS, limits=limits
+    arrays = _pack_owned_model_array_tree(
+        model_archive_root_projection(archive_model), recipe, prefix=_MODEL_ARRAYS, limits=limits
     )
     # model_structure_recipe creates a distinct node for every occurrence;
     # unlike an expanded shared archive, it needs no unaliasing copy.
@@ -2451,20 +4017,26 @@ def read_model_artifact(
     expected_type: type,
     restore: Callable[[Any], Any],
     limits: ArrayArchiveLimits | None,
+    expected_content_id: str | None = None,
 ) -> Any:
     """Restore a root recipe, then delegate scientific reconstruction to its owner."""
     _register_model_archive_types()
     _require_model_type(expected_type)
     if not callable(restore):
         raise TypeError("restore must be the owning model's reconstruction function.")
-    manifest, arrays = read_model_archive(path, limits=limits)
+    manifest, arrays = _read_model_archive(path, limits=limits, immutable_arrays=True)
+    if expected_content_id is not None and (
+        not isinstance(expected_content_id, str)
+        or _model_archive_content_id(manifest, arrays) != expected_content_id
+    ):
+        raise ArrayArchiveCorruptionError("Native model archive content ID differs.")
     recipe = manifest["model_recipe"]
     try:
         declared_type = artifact_value(recipe["type"])
         _require_model_type(declared_type)
         if declared_type is not expected_type:
             raise ValueError("Native model archive has a different registered root type.")
-        raw = model_from_array_recipe(
+        raw = _model_from_shared_immutable_array_recipe(
             recipe,
             arrays,
             prefix=_MODEL_ARRAYS,
@@ -2486,15 +4058,9 @@ def read_model_artifact(
             raise ValueError(
                 "The owning constructor graph did not reproduce the model recipe."
             )
-        rebuilt_arrays = pack_model_array_tree(
-            rebuilt, recipe, prefix=_MODEL_ARRAYS, limits=limits
+        _require_model_array_content(
+            model_archive_root_projection(rebuilt), recipe, arrays, prefix=_MODEL_ARRAYS
         )
-        if set(rebuilt_arrays) != set(arrays) or any(
-            array_payload_digest(rebuilt_arrays[name])
-            != array_payload_digest(arrays[name])
-            for name in arrays
-        ):
-            raise ValueError("Owning constructors changed a serialized model array.")
     except ArrayArchiveCorruptionError:
         raise
     except (KeyError, TypeError, ValueError, OverflowError) as error:
@@ -2502,6 +4068,1744 @@ def read_model_artifact(
             "Native model archive is incompatible with its registered recipe."
         ) from error
     return rebuilt
+
+
+def overset_registration_recipe(registration: Any, /) -> OversetRegistrationArchiveRecipe:
+    """Capture the serial registration and source partition, excluding search caches."""
+    from ._overset import OversetRegistration
+
+    if type(registration) is not OversetRegistration:
+        raise TypeError("Expected the actual overset registration owner.")
+    if registration.assembly.owner_local or registration.assembly.couplings:
+        raise ValueError("This archive requires an independently owned serial assembly.")
+    return OversetRegistrationArchiveRecipe(
+        tuple((part.name, part.part_id) for part in registration.assembly.parts),
+        tuple(model_archive_projection(spec) for spec in registration.specs),
+        model_archive_projection(registration.policy),
+        registration.epoch,
+        registration.predecessor_id,
+        registration.connectivity_id,
+        registration.partition_priority,
+        model_archive_projection(registration.partition_sources),
+        registration.assembly.assembly_id,
+    )
+
+
+def restore_overset_registration(
+    recipe: OversetRegistrationArchiveRecipe, parts: tuple[Any, ...], /
+) -> Any:
+    """Bind declarative overset registration to independently restored accepted parts.
+
+    The caller must invoke ``prepare()`` to rebuild and verify the actual
+    connectivity and source-bound exact partition against the stored identity.
+    """
+    from ..solver._finite_volume_archive_context import (
+        _finite_volume_archive_overset_part_spec,
+        _finite_volume_archive_overset_policy,
+    )
+    from ._assembly import MeshAssembly, MeshPart
+    from ._overset import OversetRegistration
+
+    if type(recipe) is not OversetRegistrationArchiveRecipe:
+        raise TypeError("Expected a canonical overset registration recipe.")
+    if not isinstance(parts, tuple) or any(type(part) is not MeshPart for part in parts):
+        raise TypeError(
+            "Overset registration requires independently restored mesh parts."
+        )
+    by_name = {part.name: part for part in parts}
+    if len(by_name) != len(parts) or set(by_name) != {
+        name for name, _ in recipe.part_bindings
+    }:
+        raise ValueError("Stored overset part inventory differs from the restored parts.")
+    ordered = tuple(by_name[name] for name, _ in recipe.part_bindings)
+    if tuple((part.name, part.part_id) for part in ordered) != recipe.part_bindings:
+        raise ValueError("Stored overset part revisions differ from the restored parts.")
+    assembly = MeshAssembly(ordered)
+    if assembly.assembly_id != recipe.assembly_id:
+        raise ValueError("Stored overset assembly identity changed.")
+    specifications = []
+    for stored in recipe.specifications:
+        if type(stored) is not FiniteVolumeOversetPartSpecArchiveRecipe:
+            raise TypeError("Stored overset specification lacks its canonical recipe.")
+        renewed = stored._replace(
+            wall=restore_model_archive_value(stored.wall),
+            boundary=restore_model_archive_value(stored.boundary),
+            excluded=restore_model_archive_value(stored.excluded),
+        )
+        specifications.append(_finite_volume_archive_overset_part_spec(renewed))
+    policy = _finite_volume_archive_overset_policy(recipe.policy)
+    sources = restore_model_archive_value(recipe.partition_sources)
+    return OversetRegistration(
+        assembly,
+        tuple(specifications),
+        policy,
+        recipe.epoch,
+        recipe.predecessor_id,
+        recipe.connectivity_id,
+        partition_priority=recipe.partition_priority,
+        partition_sources=sources,
+    )
+
+
+def planar_motion_advance_recipe(
+    monitor: Any,
+    source: Any,
+    coordinates: Any,
+    advance: Any,
+    /,
+    *,
+    boundary_residual: float,
+    fixed_vertices: Any | None,
+    numeric_version: str,
+    adaptation_policy: Any | None,
+    remesh_metric: Any | None,
+    prior_transition: Any | None,
+    source_transition: Any,
+) -> PlanarMotionAdvanceArchiveRecipe:
+    """Capture the actual operands of one accepted planar source translation."""
+    import numpy as np
+
+    from ._motion import MeshMotionAdvance, MeshMotionDecision, MeshMotionMonitor
+    from ._motion_source import NativePlanarMotionSource
+
+    if (
+        adaptation_policy is not None
+        or remesh_metric is not None
+        or prior_transition is not None
+        or type(monitor) is not MeshMotionMonitor
+        or type(advance) is not MeshMotionAdvance
+        or advance.decision is not MeshMotionDecision.ACCEPT_MOTION
+        or not advance.accepted
+        or type(advance.source_transition) is not NativePlanarMotionSource
+        or type(source_transition) is not NativePlanarMotionSource
+        or source_transition.transition_id != advance.source_transition.transition_id
+        or advance.source_result_id != source.result_id
+        or advance.source_mesh_id != source.mesh.mesh_id
+        or monitor.reference.mesh_id != source.mesh.mesh_id
+        or advance.result is None
+        or advance.result.certification is None
+        or advance.geometry_transition is None
+        or advance.relocation is not None
+        or advance.adaptation is not None
+        or advance.material_transition is not None
+        or monitor.policy.relocation_termination is not None
+        or len(advance.assessments) != 1
+        or float(boundary_residual) != advance.assessments[0].boundary_residual
+        or not np.array_equal(
+            np.asarray(coordinates), np.asarray(advance.result.mesh.coordinates)
+        )
+    ):
+        raise ValueError("Planar motion archive requires its actual accepted proposal.")
+    return PlanarMotionAdvanceArchiveRecipe(
+        source_transition,
+        monitor.policy,
+        coordinates,
+        float(boundary_residual),
+        fixed_vertices,
+        numeric_version,
+        source.result_id,
+        monitor.monitor_id,
+        advance.advance_id,
+        advance.result.result_id,
+        advance.geometry_transition.transition_id,
+        advance.result.certification.inputs.fidelity_witness,
+    )
+
+
+def restore_planar_motion_advance(
+    recipe: PlanarMotionAdvanceArchiveRecipe, source: Any, /
+) -> Any:
+    """Rebuild the monitor and execute a retained translated source proposal."""
+    import numpy as np
+
+    from ..discretization._cell_geometry_validity import CellValidityPolicy
+    from ._motion import (
+        advance_mesh_motion,
+        MeshMotionDecision,
+        MeshMotionMonitor,
+        MeshMotionMonitorPolicy,
+    )
+    from ._motion_source import NativePlanarMotionSource
+
+    if type(recipe) is not PlanarMotionAdvanceArchiveRecipe:
+        raise TypeError("Expected canonical planar motion inputs.")
+    if source.result_id != recipe.source_result_id:
+        raise ValueError("Planar motion source differs from the accepted predecessor.")
+    stored = recipe.monitor_policy
+    if (
+        type(stored) is not MeshMotionMonitorPolicy
+        or stored.relocation_termination is not None
+    ):
+        raise TypeError("Stored motion policy requires its canonical owner.")
+    validity = CellValidityPolicy(
+        relative_determinant_floor=stored.validity.relative_determinant_floor,
+        relative_planarity_tolerance=stored.validity.relative_planarity_tolerance,
+    )
+    if validity.policy_id != stored.validity.policy_id:
+        raise ValueError("Stored motion validity policy changed.")
+    policy = MeshMotionMonitorPolicy(
+        relocation_jacobian_ratio=stored.relocation_jacobian_ratio,
+        remesh_jacobian_ratio=stored.remesh_jacobian_ratio,
+        relocation_quality_ratio=stored.relocation_quality_ratio,
+        remesh_quality_ratio=stored.remesh_quality_ratio,
+        relocation_displacement_fraction=stored.relocation_displacement_fraction,
+        remesh_displacement_fraction=stored.remesh_displacement_fraction,
+        maximum_boundary_residual=stored.maximum_boundary_residual,
+        relocation_objective=stored.relocation_objective,
+        validity=validity,
+        accept_valid_nonconverged_relocation=stored.accept_valid_nonconverged_relocation,
+    )
+    if policy.policy_id != stored.policy_id:
+        raise ValueError("Stored motion monitor policy changed.")
+    monitor = MeshMotionMonitor(source.mesh, policy=policy)
+    if monitor.monitor_id != recipe.monitor_id:
+        raise ValueError("Rebuilt motion monitor does not bind the predecessor.")
+    transition = recipe.source_transition
+    if type(transition) is NativePlanarMotionSourceArchiveRecipe:
+        transition = restore_model_archive_value(transition)
+    elif type(transition) is NativePlanarMotionSource:
+        transition = NativePlanarMotionSource.from_stored_fields(transition)
+    else:
+        raise TypeError("Stored planar motion lost its source transition.")
+    advance = advance_mesh_motion(
+        monitor,
+        source,
+        np.asarray(recipe.proposal_coordinates),
+        boundary_residual=recipe.boundary_residual,
+        fixed_vertices=None
+        if recipe.fixed_vertices is None
+        else np.asarray(recipe.fixed_vertices),
+        numeric_version=recipe.numeric_version,
+        source_transition=transition,
+    )
+    if (
+        advance.decision is not MeshMotionDecision.ACCEPT_MOTION
+        or not advance.accepted
+        or advance.advance_id != recipe.advance_id
+        or advance.result is None
+        or advance.result.result_id != recipe.target_result_id
+        or advance.result.certification is None
+        or advance.geometry_transition is None
+        or advance.geometry_transition.transition_id != recipe.geometry_transition_id
+        or not _same_model_content(
+            advance.result.certification.inputs.fidelity_witness, recipe.fidelity_witness
+        )
+    ):
+        raise ValueError("Replayed planar motion differs from its accepted advance.")
+    return advance
+
+
+def layer_core_authoring_recipe(
+    source: Any, control: Any, policy: Any, /
+) -> NativeLayerCoreAuthoringArchiveRecipe:
+    """Capture actual advancing-layer state and its independent authoring inputs."""
+    from ._boundary_layer import BoundaryLayerPolicy
+    from ._controls import BoundaryLayerControl
+    from .providers._native_sources import NativeLayerCoreSource
+
+    if type(source) is not NativeLayerCoreSource:
+        raise TypeError("Layer/core archive requires the canonical source owner.")
+    if (
+        type(control) is not BoundaryLayerControl
+        or type(policy) is not BoundaryLayerPolicy
+    ):
+        raise TypeError("Layer/core archive requires its actual control and policy.")
+    if (
+        source.layers.control_id != control.control_id
+        or source.layers.policy_id != policy.policy_id
+    ):
+        raise ValueError("Layer source does not bind the supplied authoring inputs.")
+    if (source.layer_control is None) != (source.layer_policy is None):
+        raise ValueError("Layer source must retain control and policy together.")
+    if source.layer_control is not None and (
+        source.layer_control.control_id != control.control_id
+        or source.layer_policy.policy_id != policy.policy_id
+    ):
+        raise ValueError("Retained layer controls differ from the authoring inputs.")
+    if source.core_power_source is not None:
+        raise ValueError("Power-mapped layer sources require their own input recipe.")
+    mapped = source.mapped_domain is not None
+    if mapped != (source.reference_source is not None):
+        raise ValueError("Mapped layer authoring requires both original owners.")
+    if mapped:
+        from ._layer_core_source_restore import validate_mapped_layer_core_source
+
+        validate_mapped_layer_core_source(source)
+        reference = source.reference_source
+        if any(
+            value is not None
+            for value in (
+                source.layers.wall_association,
+                source.source_boundary_scope,
+                source.source_wall_charts,
+                source.source_boundary_charts,
+                source.source_boundary_schedule,
+                source.source_wall_projection,
+                source.source_wall_association_policy,
+                reference.source_domain,
+                reference.source_boundary_scope,
+                reference.source_wall_charts,
+                reference.source_boundary_charts,
+                reference.source_boundary_schedule,
+                reference.source_wall_projection,
+                reference.source_wall_association_policy,
+                reference.fidelity_source,
+                reference.maximum_deviation,
+                reference.core_power_source,
+            )
+        ):
+            raise ValueError("Mapped layer reference has unsupported source owners.")
+        if (
+            (reference.layer_control is None) != (source.layer_control is None)
+            or (reference.layer_policy is None) != (source.layer_policy is None)
+            or (
+                reference.layer_control is not None
+                and (
+                    reference.layer_control.control_id != control.control_id
+                    or reference.layer_policy.policy_id != policy.policy_id
+                )
+            )
+        ):
+            raise ValueError("Mapped layer reference has different authoring controls.")
+    if source.layers.wall_association is None and source.source_boundary_charts is not None:
+        from ._layer_core_topology import validate_closed_boundary_source
+
+        validate_closed_boundary_source(source)
+    elif any(
+        value is not None
+        for value in (
+            source.layers.wall_association,
+            source.source_wall_charts,
+            source.source_boundary_charts,
+            source.source_wall_projection,
+            source.source_wall_association_policy,
+        )
+    ) and (
+        source.layers.wall_association is None
+        or source.source_wall_charts is None
+        or source.source_boundary_charts is None
+    ):
+        raise ValueError(
+            "Charted layer authoring requires both source atlases and wall association."
+        )
+    projection = source.source_wall_projection
+    domain = model_archive_projection(source.source_domain)
+    query = model_archive_projection(source.fidelity_source)
+    if mapped:
+        if (
+            domain is not None
+            or type(query) is not MappedReferenceBoundarySourceArchiveRecipe
+        ):
+            raise TypeError(
+                "Mapped layer source requires its full mapped boundary authority."
+            )
+        authority = query.authority
+        if (
+            type(authority) is not NativePlcSourceArchiveRecipe
+            or authority.mapped_domain is None
+            or authority.fidelity_source is not None
+        ):
+            raise TypeError(
+                "Mapped layer query requires its original full PLC authority."
+            )
+        query = NativeLayerMappedBoundaryArchiveRecipe(
+            authority.complex,
+            authority.source_id,
+            authority.source_revision,
+            authority.maximum_deviation,
+            authority.plc_vertex_root_global_ids,
+            authority.expected_binding_id,
+            query.face_scope_keys,
+            query.edge_scope_keys,
+            query.expected_source_query_id,
+        )
+    elif (
+        type(domain) is not MeshingDomainArchiveRecipe
+        or type(query) is not MeshingDomainBoundarySourceArchiveRecipe
+    ):
+        raise TypeError("Layer/core authoring requires an exact meshing-domain query.")
+    return NativeLayerCoreAuthoringArchiveRecipe(
+        source.layers.source_wall,
+        source.layers,
+        control,
+        policy,
+        source.layer_control is not None,
+        source.complex,
+        domain,
+        query,
+        source.mapped_domain,
+        None if source.reference_source is None else source.reference_source.binding_id,
+        source.layers.wall_association,
+        source.source_boundary_scope,
+        model_archive_projection(source.source_wall_charts),
+        model_archive_projection(source.source_boundary_charts),
+        source.source_boundary_schedule,
+        None if projection is None else projection.policy,
+        None if projection is None else projection.embedding,
+        None if projection is None else projection.projection_id,
+        source.source_wall_association_policy,
+        source.source_id,
+        source.source_revision,
+        source.cap_refinement,
+        source.noncap_refinement,
+        source.vertex_layer_ids,
+        source.cap_polygon_ids,
+        source.layer_regions,
+        source.region_ids,
+        source.region_entity_ids,
+        source.region_occurrence_paths,
+        source.core_region_map,
+        source.maximum_deviation,
+        source.core_facet_source_ids,
+        source.core_facet_source_occurrence_paths,
+        source.core_vertex_representatives,
+        source.core_vertex_shifts,
+        source.core_seam_polygon_pairs,
+        source.layers.result_id,
+        source.binding_id,
+    )
+
+
+def restore_boundary_layer_state(
+    stored_layers: Any, stored_control: Any, stored_policy: Any, /
+) -> tuple[Any, Any, Any]:
+    """Reconstruct and independently reprove an actual retained advancing layer."""
+    from copy import copy
+
+    from ..discretization._cell_geometry_validity import (
+        CellValidityCertificate,
+        CellValidityPolicy,
+    )
+    from ..discretization._cell_mesh import CellMesh
+    from ..geometry._surface_source_archive import _geometry
+    from ._association import GeometryAssociation
+    from ._boundary_layer import (
+        _reprove_retained_boundary_layers,
+        BoundaryLayerEvidence,
+        BoundaryLayerMesh,
+        BoundaryLayerPolicy,
+    )
+    from ._controls import BoundaryLayerControl
+
+    if type(stored_policy) is not BoundaryLayerPolicy:
+        raise TypeError("Stored layer policy has the wrong owner.")
+    validity = CellValidityPolicy(
+        relative_determinant_floor=stored_policy.validity.relative_determinant_floor,
+        relative_planarity_tolerance=stored_policy.validity.relative_planarity_tolerance,
+    )
+    if validity.policy_id != stored_policy.validity.policy_id:
+        raise ValueError("Stored layer validity policy changed.")
+    policy = BoundaryLayerPolicy(
+        proximity_samples=stored_policy.proximity_samples,
+        proximity_fraction=stored_policy.proximity_fraction,
+        curvature_fraction=stored_policy.curvature_fraction,
+        medial_tolerance=stored_policy.medial_tolerance,
+        reduction_factor=stored_policy.reduction_factor,
+        simplex_cap=stored_policy.simplex_cap,
+        validity=validity,
+    )
+    if policy.policy_id != stored_policy.policy_id:
+        raise ValueError("Stored layer policy changed.")
+    if type(stored_control) is not BoundaryLayerControl:
+        raise TypeError("Stored layer control has the wrong owner.")
+    control = BoundaryLayerControl.from_stored_fields(stored_control)
+    stored_layers = restore_row_record_recipes(stored_layers)
+    if type(stored_layers) is not BoundaryLayerMesh:
+        raise TypeError("Stored layer source lost its actual accepted layer state.")
+    wall = restore_model_archive_value(stored_layers.source_wall)
+    wall_association = restore_row_record_recipes(
+        model_archive_projection(stored_layers.wall_association)
+    )
+    if wall_association is not None and type(wall_association) is not GeometryAssociation:
+        raise TypeError("Stored wall association lost its canonical owner.")
+    if not _same_model_content(
+        stored_layers.source_wall, wall
+    ) or not _same_model_content(stored_layers.wall_association, wall_association):
+        raise ValueError(
+            "Stored layer source wall or association differs from its authoring."
+        )
+    layer_mesh = CellMesh.from_stored_fields(stored_layers.mesh)
+    cap = (
+        None
+        if stored_layers.cap is None
+        else CellMesh.from_stored_fields(stored_layers.cap)
+    )
+    obstacles = (
+        None
+        if stored_layers.obstacles is None
+        else CellMesh.from_stored_fields(stored_layers.obstacles)
+    )
+    geometry = _geometry(stored_layers.validity.geometry, layer_mesh)
+    if not _same_model_content(stored_layers.validity.geometry, geometry):
+        raise ValueError("Stored layer validity geometry changed.")
+    stored_validity = copy(stored_layers.validity)
+    object.__setattr__(stored_validity, "geometry", geometry)
+    certificate = CellValidityCertificate.from_stored_fields(
+        stored_validity,
+        layer_mesh,
+        geometry,
+        policy=policy.validity,
+    )
+    evidence = BoundaryLayerEvidence(
+        **{
+            field.name: getattr(stored_layers.evidence, field.name)
+            for field in dataclasses.fields(stored_layers.evidence)
+            if field.name != "evidence_id"
+        }
+    )
+    if not _same_model_content(evidence, stored_layers.evidence):
+        raise ValueError("Stored layer evidence fields changed.")
+    positional = {
+        "mesh",
+        "cap",
+        "wall_vertices",
+        "cap_vertices",
+        "layer_index",
+        "validity",
+        "evidence",
+        "source_wall",
+        "wall_association",
+        "obstacles",
+        "result_id",
+    }
+    layer_fields = {
+        field.name: getattr(stored_layers, field.name)
+        for field in dataclasses.fields(stored_layers)
+        if field.name not in positional
+    }
+    layers = BoundaryLayerMesh(
+        layer_mesh,
+        cap,
+        stored_layers.wall_vertices,
+        stored_layers.cap_vertices,
+        stored_layers.layer_index,
+        certificate,
+        evidence,
+        source_wall=wall,
+        wall_association=wall_association,
+        obstacles=obstacles,
+        **layer_fields,
+    )
+    if not _same_model_content(layers, stored_layers):
+        raise ValueError(
+            "Stored actual layer state differs from its canonical constructors."
+        )
+    layers = _reprove_retained_boundary_layers(
+        layers,
+        wall,
+        control,
+        policy=policy,
+        wall_association=wall_association,
+        obstacles=obstacles,
+    )
+    return layers, control, policy
+
+
+def restore_layer_core_authoring(
+    recipe: NativeLayerCoreAuthoringArchiveRecipe, /, *, specification: Any | None = None
+) -> Any:
+    """Restore the actual retained layers and their fixed-core source authority."""
+    import numpy as np
+
+    from ..geometry._domain_boundary import MeshingDomainBoundarySource
+    from ..geometry._planar_embedding import PlanarEmbedding
+    from ..geometry._surface_source_archive import _domain, restore_surface_source_charts
+    from ..geometry.brep._projection import prepare_brep_projection
+    from ..geometry.brep._projection_contracts import BRepProjectionPolicy
+    from ._association import AssociationPropagationPolicy
+    from ._contracts import VolumeMeshingSpec
+    from ._layer_core_topology import validate_staged_layer_domain
+    from ._scope import MeshingScope
+    from .providers._native_sources import NativeLayerCoreSource
+
+    _register_model_archive_types()
+
+    if type(recipe) is not NativeLayerCoreAuthoringArchiveRecipe:
+        raise TypeError("Expected exact layer/core authoring inputs.")
+    if type(recipe.source_controls_bound) is not bool:
+        raise TypeError("Stored source control binding must be boolean.")
+    layers, control, policy = restore_boundary_layer_state(
+        recipe.layers,
+        recipe.control,
+        recipe.policy,
+    )
+    wall = layers.source_wall
+    wall_association = layers.wall_association
+    if (
+        layers.result_id != recipe.expected_layers_id
+        or not _same_model_content(recipe.wall, wall)
+        or not _same_model_content(recipe.wall_association, wall_association)
+    ):
+        raise ValueError(
+            "Stored layer source wall or association differs from its authoring."
+        )
+    complex_ = restore_model_archive_value(recipe.complex)
+    mapped = recipe.mapped_domain is not None
+    if mapped:
+        from ..geometry._surface_source_archive import _mapped_reference
+
+        if recipe.source_domain is not None or not isinstance(
+            recipe.reference_binding_id, str
+        ):
+            raise ValueError(
+                "Mapped layer source lost its original reference declaration."
+            )
+        if type(recipe.fidelity_source) is not NativeLayerMappedBoundaryArchiveRecipe:
+            raise TypeError("Mapped layer source lost its exact full boundary query.")
+        if any(
+            value is not None
+            for value in (
+                wall_association,
+                recipe.source_boundary_scope,
+                recipe.wall_charts,
+                recipe.boundary_charts,
+                recipe.boundary_schedule,
+                recipe.wall_projection_policy,
+                recipe.wall_projection_embedding,
+                recipe.wall_projection_id,
+                recipe.wall_association_policy,
+            )
+        ):
+            raise ValueError("Mapped layer reference has unsupported wall source owners.")
+        domain = None
+        mapped_domain = _mapped_reference(recipe.mapped_domain)
+        from ..geometry._mapped_reference_boundary import (
+            MappedPlcRootAuthority,
+            MappedReferenceBoundarySource,
+        )
+        from .providers._native_sources import NativePlcSource
+
+        stored_query = recipe.fidelity_source
+        authority = NativePlcSource(
+            restore_model_archive_value(stored_query.complex),
+            stored_query.source_id,
+            stored_query.source_revision,
+            mapped_domain=mapped_domain,
+            maximum_deviation=stored_query.maximum_deviation,
+            plc_vertex_root_global_ids=np.asarray(
+                stored_query.plc_vertex_root_global_ids
+            ),
+        )
+        if authority.binding_id != stored_query.authority_binding_id:
+            raise ValueError("Original mapped PLC authority binding changed.")
+        authority.validate_restored()
+        if not isinstance(authority, MappedPlcRootAuthority):
+            raise TypeError("Mapped PLC source lost its root authority.")
+        query = MappedReferenceBoundarySource(
+            authority,
+            face_scope_keys=stored_query.face_scope_keys,
+            edge_scope_keys=stored_query.edge_scope_keys,
+        )
+        if query.source_query_id != stored_query.query_id:
+            raise ValueError("Original mapped boundary query scope changed.")
+        query.require_current()
+    else:
+        if recipe.reference_binding_id is not None:
+            raise ValueError("Unmapped layer source cannot name a mapped reference.")
+        if (
+            type(recipe.source_domain) is not MeshingDomainArchiveRecipe
+            or type(recipe.fidelity_source)
+            is not MeshingDomainBoundarySourceArchiveRecipe
+        ):
+            raise TypeError("Stored source lost its exact domain and query recipes.")
+        if not _same_model_content(recipe.source_domain, recipe.fidelity_source.domain):
+            raise ValueError("Stored source query names a different domain.")
+        domain = _domain(recipe.source_domain)
+        mapped_domain = None
+        stored_query = recipe.fidelity_source
+        query = MeshingDomainBoundarySource(
+            domain,
+            stored_query.patches,
+            resolution=stored_query.resolution,
+            boundary_occurrences=None
+            if stored_query.boundary_occurrences is None
+            else np.asarray(stored_query.boundary_occurrences),
+            boundary_cell_ids=None
+            if stored_query.boundary_cell_ids is None
+            else np.asarray(stored_query.boundary_cell_ids),
+            boundary_patch_ids=None
+            if stored_query.boundary_patch_ids is None
+            else np.asarray(stored_query.boundary_patch_ids),
+        )
+        if query.source_scope_id != stored_query.expected_source_scope_id:
+            raise ValueError("Stored source boundary scope changed.")
+        query.require_current()
+
+    def restore_charts(value: Any, /) -> Any:
+        if value is None:
+            return None
+        if type(value) is not SurfaceSourceChartsArchiveRecipe:
+            raise TypeError("Stored layer charts have the wrong owner.")
+        return restore_surface_source_charts(value)
+
+    wall_charts = restore_charts(recipe.wall_charts)
+    boundary_charts = restore_charts(recipe.boundary_charts)
+    boundary_schedule = restore_model_archive_value(recipe.boundary_schedule)
+    wall_projection = None
+    projection_inputs = (recipe.wall_projection_policy, recipe.wall_projection_id)
+    if any(value is not None for value in projection_inputs):
+        if (
+            type(recipe.wall_projection_policy) is not BRepProjectionPolicy
+            or not isinstance(recipe.wall_projection_id, str)
+            or domain is None
+            or domain.brep_authority is None
+        ):
+            raise ValueError("Stored wall projection lost its original model or policy.")
+        old = recipe.wall_projection_policy
+        projection_policy = BRepProjectionPolicy(
+            ambiguity_tolerance=old.ambiguity_tolerance,
+            parametric_tolerance=old.parametric_tolerance,
+            classifier_tolerance=old.classifier_tolerance,
+        )
+        if projection_policy.policy_id != old.policy_id:
+            raise ValueError("Stored wall projection policy changed.")
+        embedding = recipe.wall_projection_embedding
+        if embedding is not None:
+            if type(embedding) is not PlanarEmbedding:
+                raise TypeError("Stored wall projection embedding has the wrong owner.")
+            rebuilt_embedding = PlanarEmbedding(
+                embedding.origin, embedding.x_axis, embedding.y_axis, embedding.normal
+            )
+            if rebuilt_embedding.embedding_id != embedding.embedding_id:
+                raise ValueError("Stored wall projection embedding changed.")
+            embedding = rebuilt_embedding
+        wall_projection = prepare_brep_projection(
+            domain.brep_authority, policy=projection_policy, embedding=embedding
+        )
+        if wall_projection.projection_id != recipe.wall_projection_id:
+            raise ValueError("Stored original wall projection changed.")
+    elif recipe.wall_projection_embedding is not None:
+        raise ValueError("Wall projection embedding has no original projection.")
+    association_policy = recipe.wall_association_policy
+    if association_policy is not None:
+        if type(association_policy) is not AssociationPropagationPolicy:
+            raise TypeError("Stored wall association policy has the wrong owner.")
+        old = association_policy
+        association_policy = AssociationPropagationPolicy(
+            classification_tolerance=old.classification_tolerance,
+            maximum_residual=old.maximum_residual,
+        )
+        if association_policy.policy_id != old.policy_id:
+            raise ValueError("Stored wall association policy changed.")
+    if (
+        recipe.source_boundary_scope is not None
+        and type(recipe.source_boundary_scope) is not MeshingScope
+    ):
+        raise TypeError("Stored boundary scope has the wrong owner.")
+    boundary_scope = (
+        None
+        if recipe.source_boundary_scope is None
+        else MeshingScope.from_stored_fields(
+            recipe.source_boundary_scope,
+            source_model=None if domain is None else domain.brep_authority,
+        )
+    )
+    source_inputs: dict[str, Any] = dict(
+        vertex_layer_ids=recipe.vertex_layer_ids,
+        cap_polygon_ids=recipe.cap_polygon_ids,
+        layer_regions=recipe.layer_regions,
+        region_ids=recipe.region_ids,
+        region_entity_ids=recipe.region_entity_ids,
+        region_occurrence_paths=recipe.region_occurrence_paths,
+        core_region_map=recipe.core_region_map,
+        source_domain=domain,
+        source_boundary_scope=boundary_scope,
+        source_wall_charts=wall_charts,
+        source_boundary_charts=boundary_charts,
+        source_boundary_schedule=boundary_schedule,
+        source_wall_projection=wall_projection,
+        source_wall_association_policy=association_policy,
+        maximum_deviation=recipe.maximum_deviation,
+        core_facet_source_ids=recipe.core_facet_source_ids,
+        core_facet_source_occurrence_paths=recipe.core_facet_source_occurrence_paths,
+        core_vertex_representatives=recipe.core_vertex_representatives,
+        core_vertex_shifts=recipe.core_vertex_shifts,
+        cap_refinement=recipe.cap_refinement,
+        noncap_refinement=recipe.noncap_refinement,
+        layer_control=control if recipe.source_controls_bound else None,
+        layer_policy=policy if recipe.source_controls_bound else None,
+        core_seam_polygon_pairs=recipe.core_seam_polygon_pairs,
+    )
+    reference = None
+    if mapped:
+        reference_inputs = dict(source_inputs)
+        reference_inputs["maximum_deviation"] = None
+        reference = NativeLayerCoreSource(
+            layers, complex_, recipe.source_id, recipe.source_revision, **reference_inputs
+        )
+        if reference.binding_id != recipe.reference_binding_id:
+            raise ValueError("Rebuilt original layer reference binding changed.")
+    source = NativeLayerCoreSource(
+        layers,
+        complex_,
+        recipe.source_id,
+        recipe.source_revision,
+        **source_inputs,
+        fidelity_source=query,
+        reference_source=reference,
+        mapped_domain=mapped_domain,
+    )
+    if source.binding_id != recipe.expected_binding_id:
+        raise ValueError("Rebuilt layer/core source binding changed.")
+    if mapped:
+        from ._layer_core_source_restore import validate_mapped_layer_core_source
+
+        validate_mapped_layer_core_source(source)
+    elif layers.wall_association is None and boundary_charts is not None:
+        from ._layer_core_topology import validate_closed_boundary_source
+
+        validate_closed_boundary_source(source)
+    elif wall_charts is None and boundary_charts is None:
+        validate_staged_layer_domain(source)
+    else:
+        from ._layer_core_brep import restrict_wall_charts
+        from ._layer_wall_source_replay import (
+            validate_full_boundary_charts,
+            validate_wall_source,
+        )
+
+        if wall_charts is None or boundary_charts is None:
+            raise ValueError(
+                "Charted source requires both original boundary and wall atlases."
+            )
+        if not _same_model_content(wall_charts, boundary_charts):
+            restricted = restrict_wall_charts(boundary_charts, wall)
+            # Inward-wall construction and general restriction retain the same
+            # source strata in different association tuple orders. Preserve the
+            # stored order, but compare every actual owner, not only its ID.
+            derived = {item.association_id: item for item in restricted.associations}
+            if (
+                len(derived) != len(restricted.associations)
+                or len(wall_charts.associations) != len(derived)
+                or len({item.association_id for item in wall_charts.associations})
+                != len(derived)
+                or any(
+                    item.association_id not in derived
+                    or not _same_model_content(item, derived[item.association_id])
+                    for item in wall_charts.associations
+                )
+                or any(
+                    not _same_model_content(
+                        getattr(restricted, field.name), getattr(wall_charts, field.name)
+                    )
+                    for field in dataclasses.fields(wall_charts)
+                    if field.name not in ("associations", "source_chart_id")
+                )
+            ):
+                raise ValueError(
+                    "Stored wall atlas is not the exact original boundary restriction."
+                )
+
+        if type(specification) is not VolumeMeshingSpec:
+            raise TypeError(
+                "Charted source replay requires its actual volume specification."
+            )
+        specification = VolumeMeshingSpec.from_stored_fields(specification)
+        tolerances = tuple(
+            value
+            for value in (source.maximum_deviation, specification.maximum_deviation)
+            if value is not None
+        )
+        if tolerances:
+            tolerance = min(tolerances)
+        elif domain is None:
+            raise ValueError("Charted layer source lost its domain.")
+        elif domain.accuracy == "exact_represented":
+            # Exact represented source fidelity proves zero; no control is added.
+            tolerance = 0.0
+        else:
+            raise ValueError(
+                "Nonexact source fidelity requires an authored deviation tolerance."
+            )
+        validate_full_boundary_charts(source, tolerance)
+        validate_wall_source(source, tolerance)
+    return source
+
+
+def restore_mapped_layer_core_boundary_source(recipe: Any, source: Any, /) -> Any:
+    """Rebind a scoped internal-facet query to its restored original layer source."""
+    from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+    from ._layer_core_facet_authority import MappedCoreFacetAuthority
+    from ._layer_core_source_restore import validate_mapped_layer_core_source
+    from .providers._native_sources import NativeLayerCoreSource
+
+    if (
+        type(recipe) is not MappedReferenceBoundarySourceArchiveRecipe
+        or type(recipe.authority) is not MappedCoreFacetAuthorityArchiveRecipe
+        or type(source) is not NativeLayerCoreSource
+    ):
+        raise TypeError("Mapped internal-facet query requires its original layer owner.")
+    stored = recipe.authority
+    if (
+        stored.source_id != source.source_id
+        or stored.source_revision != source.source_revision
+        or stored.source_binding_id != source.binding_id
+    ):
+        raise ValueError("Mapped internal-facet query belongs to another layer source.")
+    validate_mapped_layer_core_source(source)
+    authority = MappedCoreFacetAuthority(source, stored.facet_rows)
+    if (
+        authority.binding_id != stored.expected_binding_id
+        or authority.root_relation.relation_id != stored.expected_relation_id
+    ):
+        raise ValueError(
+            "Mapped internal-facet relation changed from the original source."
+        )
+    query = MappedReferenceBoundarySource(
+        authority,
+        face_scope_keys=recipe.face_scope_keys,
+        edge_scope_keys=recipe.edge_scope_keys,
+    )
+    if query.source_query_id != recipe.expected_source_query_id:
+        raise ValueError("Mapped internal-facet query scope changed.")
+    query.require_current()
+    return query
+
+
+def _require_layer_root_transfer(
+    result: Any, transfer: Any, /, *, computed_root: Any | None = None
+) -> None:
+    root = result.layer_core_root_geometry
+    if root is None:
+        if computed_root is not None:
+            raise ValueError("A computed layer root requires its actual retained root.")
+        if (
+            result.layer_core_overlap_stencils is not None
+            or result.layer_core_column_certification is not None
+        ):
+            raise ValueError("Layer overlap evidence requires its original root owner.")
+        return
+    from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+    from ._layer_core_subdivision import (
+        require_descendant_overlap_source_provenance,
+        require_refined_column_certification,
+    )
+
+    if type(transfer) is not NativeLayerCoreAssociationTransfer:
+        raise TypeError(
+            "Layer root evidence requires its original source-bound transfer."
+        )
+    if computed_root is not None:
+        from ._layer_core_root_geometry import ComputedLayerCoreRoot
+
+        if type(computed_root) is not ComputedLayerCoreRoot:
+            raise TypeError("Layer root replay requires a computed root proof.")
+    if transfer.source.mapped_domain is not None:
+        if (
+            root.reference_mesh is None
+            or result.layer_core_overlap_stencils is not None
+            or result.layer_core_column_certification is not None
+        ):
+            raise ValueError(
+                "Mapped layer endpoints require their actual reference root."
+            )
+        # Endpoint replay still checks the complete current mapped geometry and
+        # associations; a fresh root proof may be reused only for exact operands.
+        if computed_root is None:
+            transfer.validate_source(result)
+        else:
+            transfer._validate_source(result, computed_root=computed_root)
+        return
+    if computed_root is None:
+        root.require_current(transfer.source, transfer.specification)
+    else:
+        computed_root.require(
+            transfer.source, transfer.specification, root.mesh, root.geometry, root
+        )
+    require_descendant_overlap_source_provenance(transfer.source, result)
+    if result.layer_core_column_certification is None:
+        raise ValueError("Layer descendant lost its current column certification.")
+    require_refined_column_certification(
+        transfer.source,
+        result.mesh,
+        result.geometry,
+        transfer.specification,
+        result.layer_core_column_certification,
+    )
+
+
+def _require_layer_result_recipe_inputs(
+    result: Any, source: Any, specification: Any, /
+) -> None:
+    """Require the actual accepted endpoint and its typed authoring inputs."""
+    from ._contracts import VolumeMeshingSpec
+    from ._result import CellMeshingResult
+    from .providers._native_sources import NativeLayerCoreSource
+
+    if (
+        type(result) is not CellMeshingResult
+        or type(source) is not NativeLayerCoreSource
+        or type(specification) is not VolumeMeshingSpec
+        or result.certification is None
+        or not result.certification.passed
+    ):
+        raise TypeError(
+            "Layer snapshot requires its actual certified result and authoring."
+        )
+
+
+def layer_core_accepted_result_recipe(
+    result: Any, source: Any, specification: Any, /
+) -> LayerCoreAcceptedResultArchiveRecipe:
+    """Retain an actual accepted result with its original source/request binding."""
+    from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+
+    _require_layer_result_recipe_inputs(result, source, specification)
+    transfer = NativeLayerCoreAssociationTransfer(source, specification)
+    if result.layer_core_root_geometry is None or source.mapped_domain is None:
+        transfer.validate_source(result)
+    _require_layer_root_transfer(result, transfer)
+    return LayerCoreAcceptedResultArchiveRecipe(
+        result, source.binding_id, specification.specification_id
+    )
+
+
+def _restore_layer_overlap(value: Any, /) -> Any:
+    from ._layer_core_subdivision import OverlapSourceStencils
+
+    if value is None:
+        return None
+    if type(value) is not OverlapSourceStencils:
+        raise TypeError("Stored layer overlap evidence has the wrong owner.")
+    rebuilt = OverlapSourceStencils(
+        value.source_binding_id, value.target_mesh_id, value.rows
+    )
+    if not _same_model_content(rebuilt, value):
+        raise ValueError("Stored layer overlap stencil identity changed.")
+    return rebuilt
+
+
+def _restore_layer_column(value: Any, /) -> Any:
+    from ._layer_core_subdivision import (
+        NearestWallPointEvidence,
+        RefinedColumnCertification,
+        RefinedColumnEvidence,
+    )
+
+    if value is None:
+        return None
+    if type(value) is not RefinedColumnCertification:
+        raise TypeError("Stored layer column evidence has the wrong owner.")
+    columns = tuple(
+        RefinedColumnEvidence(
+            column.source_columns,
+            column.target_vertices,
+            tuple(
+                NearestWallPointEvidence(row.squared_distance, row.supports)
+                for row in column.wall_distances
+            ),
+            column.maximum_stretch_squared,
+        )
+        for column in value.columns
+    )
+    rebuilt = RefinedColumnCertification(
+        value.source_binding_id,
+        value.specification_id,
+        value.control_id,
+        value.policy_id,
+        columns,
+    )
+    if not _same_model_content(rebuilt, value):
+        raise ValueError("Stored layer column certification changed.")
+    return rebuilt
+
+
+def restore_layer_core_root_geometry(
+    root: Any, source: Any, specification: Any, /
+) -> Any:
+    """Independently reconstruct and reprove an actual retained layer root."""
+    return _restore_layer_core_computed_root(root, source, specification).root
+
+
+def _restore_layer_core_computed_root(
+    root: Any, source: Any, specification: Any, /
+) -> Any:
+    """Reconstruct the root and retain its freshly computed operation-local proof."""
+    from ..discretization._cell_mesh import CellMesh
+    from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from ..geometry._surface_source_archive import _geometry
+    from ._contracts import VolumeMeshingSpec
+    from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
+
+    _register_model_archive_types()
+
+    if type(root) is not LayerCoreRootGeometry:
+        raise TypeError("Stored layer root has the wrong owner.")
+    root_specification = VolumeMeshingSpec.from_stored_fields(root.specification)
+    if not _same_model_content(root_specification, specification):
+        raise ValueError("Stored layer root binds another volume request.")
+    root_mesh = CellMesh.from_stored_fields(root.mesh)
+    root_geometry = _geometry(root.geometry, root_mesh)
+    reference_mesh = (
+        None
+        if root.reference_mesh is None
+        else CellMesh.from_stored_fields(root.reference_mesh)
+    )
+    if (reference_mesh is None) != (root.reference_geometry is None):
+        raise ValueError("Stored mapped layer root lost its reference geometry owner.")
+    reference_geometry = (
+        None
+        if reference_mesh is None
+        else _geometry(root.reference_geometry, reference_mesh)
+    )
+    computed = ComputedLayerCoreRoot(
+        source,
+        specification,
+        root_mesh,
+        root_geometry,
+        ExactPlcCellGeometrySource.from_stored_fields(root.overlap_exact_geometry),
+        _restore_layer_overlap(root.overlap_stencils),
+        _restore_layer_column(root.column_certification),
+        restore_model_archive_value(root.layer_root_partition),
+        reference_mesh=reference_mesh,
+        reference_geometry=reference_geometry,
+        reference_cell_regions=root.reference_cell_regions,
+    )
+    if not _same_model_content(computed.root, root):
+        raise ValueError("Stored layer root fields or identity changed.")
+    return computed
+
+
+def restore_layer_core_accepted_result(
+    recipe: LayerCoreAcceptedResultArchiveRecipe, source: Any, specification: Any, /
+) -> Any:
+    """Independently reprove a retained result against its source and request.
+
+    Archive content IDs authenticate bytes, not mathematical provenance. Root,
+    carrier support, associations and acceptance are revalidated from the actual
+    reconstructed scientific inputs.
+    """
+    result, _ = _restore_layer_core_accepted_result(recipe, source, specification, None)
+    return result
+
+
+def _restore_layer_core_accepted_result(
+    recipe: LayerCoreAcceptedResultArchiveRecipe,
+    source: Any,
+    specification: Any,
+    computed_root: Any | None,
+    /,
+    *,
+    computed_embedding_out: list[Any] | None = None,
+    validated_chart_parent_embedding: Any | None = None,
+) -> tuple[Any, Any | None]:
+    """Restore an endpoint, optionally using this operation's exact root proof."""
+    from ..discretization._cell_mesh import CellMesh
+    from ..geometry._source_boundary_records import SourceBoundaryQuery
+    from ..geometry._surface_source_archive import (
+        _geometry,
+        restore_surface_source_charts,
+    )
+    from ._contracts import VolumeMeshingSpec
+    from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+    from ._layer_core_carrier_witness import NativeLayerCoreCarrierWitness
+    from ._layer_curving_records import LayerCurvingSourceEvidence
+    from ._mixed_adaptation import _require_retained_bank_origin, _RetainedCoordinateBank
+    from ._result import CellMeshingResult
+    from .providers._native_sources import NativeLayerCoreSource
+
+    if type(recipe) is not LayerCoreAcceptedResultArchiveRecipe:
+        raise TypeError("Expected a retained layer/core accepted-result recipe.")
+    if (
+        type(source) is not NativeLayerCoreSource
+        or type(specification) is not VolumeMeshingSpec
+    ):
+        raise TypeError(
+            "Layer result replay requires its actual source and request owners."
+        )
+    if (
+        source.binding_id != recipe.source_binding_id
+        or specification.specification_id != recipe.specification_id
+    ):
+        raise ValueError("Stored layer result belongs to another source or request.")
+    if computed_root is None:
+        specification = VolumeMeshingSpec.from_stored_fields(specification)
+    else:
+        from ._layer_core_root_geometry import ComputedLayerCoreRoot
+
+        if type(computed_root) is not ComputedLayerCoreRoot:
+            raise TypeError("Layer endpoint replay requires a computed root proof.")
+        computed_root.require(
+            source,
+            specification,
+            computed_root.mesh,
+            computed_root.geometry,
+            computed_root.root,
+        )
+    stored = restore_row_record_recipes(model_archive_projection(recipe.result))
+    if type(stored) is not CellMeshingResult:
+        raise TypeError("Layer snapshot lost its actual accepted result.")
+
+    carrier = stored.layer_core_carrier_witness
+    if carrier is not None:
+        if type(carrier) is not NativeLayerCoreCarrierWitness:
+            raise TypeError("Stored layer carrier inventory has the wrong owner.")
+        rebuilt_carrier = NativeLayerCoreCarrierWitness(source, specification)
+        if not _same_model_content(carrier, rebuilt_carrier):
+            raise ValueError("Stored native carrier inventory changed.")
+        carrier = rebuilt_carrier
+    overlap = _restore_layer_overlap(stored.layer_core_overlap_stencils)
+    column = _restore_layer_column(stored.layer_core_column_certification)
+    stored_root = stored.layer_core_root_geometry
+    if stored_root is None:
+        if computed_root is not None:
+            raise ValueError("Stored layer endpoint lost its proved root.")
+        root = None
+    elif computed_root is None:
+        computed_root = _restore_layer_core_computed_root(
+            stored_root, source, specification
+        )
+        root = computed_root.root
+    else:
+        from ..geometry._mesh_certificates import _same_tree_content
+
+        root = computed_root.root
+        if not _same_tree_content(
+            model_archive_root_projection(stored_root),
+            model_archive_root_projection(root),
+        ) or not _same_model_content(stored_root, root):
+            raise ValueError("Stored layer endpoint has a different proved root.")
+    curving = stored.layer_curving_evidence
+    if curving is not None:
+        if type(curving) is not LayerCurvingSourceEvidence:
+            raise TypeError("Stored layer curving evidence has the wrong owner.")
+        query_recipe = curving.source_query
+        if (
+            type(query_recipe) is MappedReferenceBoundarySourceArchiveRecipe
+            and type(query_recipe.authority) is MappedCoreFacetAuthorityArchiveRecipe
+        ):
+            query = restore_mapped_layer_core_boundary_source(query_recipe, source)
+        else:
+            query = restore_model_archive_value(query_recipe)
+        if not isinstance(query, SourceBoundaryQuery):
+            raise TypeError("Stored layer curving evidence lost its source query.")
+        charts_recipe = curving.source_surface_charts
+        if charts_recipe is None:
+            charts = None
+        elif type(charts_recipe) is SurfaceSourceChartsArchiveRecipe:
+            charts = restore_surface_source_charts(charts_recipe)
+            if source.source_wall_charts is None or not _same_model_content(
+                charts, source.source_wall_charts
+            ):
+                raise ValueError(
+                    "Stored layer curving atlas differs from its source authority."
+                )
+        else:
+            raise TypeError("Stored layer curving evidence lost its source atlas.")
+        curving_mesh = CellMesh.from_stored_fields(stored.mesh)
+        curving_geometry = _geometry(stored.geometry, curving_mesh)
+        curving = LayerCurvingSourceEvidence.from_stored_fields(
+            curving,
+            curving_mesh,
+            curving_geometry,
+            source,
+            query,
+            charts,
+        )
+    result = CellMeshingResult.from_stored_fields(
+        stored,
+        layer_core_carrier_witness=carrier,
+        layer_curving_evidence=curving,
+        layer_core_overlap_stencils=overlap,
+        layer_core_column_certification=column,
+        layer_core_root_geometry=root,
+        layer_core_feature_source=source,
+        computed_root=computed_root,
+        _computed_embedding_out=computed_embedding_out,
+        _validated_chart_parent_embedding=validated_chart_parent_embedding,
+    )
+    if type(result.geometry.source_map) is _RetainedCoordinateBank:
+        if root is None:
+            raise ValueError(
+                "Retained coordinate provenance requires its actual layer root."
+            )
+        _require_retained_bank_origin(root.geometry, result.geometry)
+    if root is not None and source.mapped_domain is not None:
+        # The final result constructor has already replayed all mapped source
+        # associations. Keep the external source/root binding checks here.
+        if (
+            result.layer_core_root_geometry is not root
+            or result.certification is None
+            or result.certification.inputs.feature_source is not source
+            or root.specification is not specification
+            or root.reference_mesh is None
+            or result.layer_core_overlap_stencils is not None
+            or result.layer_core_column_certification is not None
+            or computed_root is None
+        ):
+            raise ValueError("Restored mapped endpoint lost its actual source or root.")
+        computed_root.require(source, specification, root.mesh, root.geometry, root)
+    else:
+        transfer = NativeLayerCoreAssociationTransfer(source, specification)
+        if result.layer_core_root_geometry is None:
+            transfer.validate_source(result)
+        else:
+            transfer._validate_source(result, computed_root=computed_root)
+        _require_layer_root_transfer(result, transfer, computed_root=computed_root)
+    return result, computed_root
+
+
+def mixed_adaptation_policy_recipe(policy: Any, /) -> MixedAdaptationPolicyArchiveRecipe:
+    """Capture a mixed policy without serializing its live association capability."""
+    from ._adaptation import MeshAdaptationPolicy, MeshAdaptationRoute
+
+    if (
+        type(policy) is not MeshAdaptationPolicy
+        or policy.route is not MeshAdaptationRoute.NATIVE_MIXED
+    ):
+        raise TypeError("Expected the actual native mixed adaptation policy.")
+    if policy.association_transfer is None or any(
+        value is not None
+        for value in (
+            policy.device_policy,
+            policy.provider,
+            policy.provider_options,
+            policy.distribution,
+            policy.partition_policy,
+        )
+    ):
+        raise ValueError("Mixed policy requires a source-bound association owner.")
+    return MixedAdaptationPolicyArchiveRecipe(
+        policy.protected_scopes,
+        policy.compatibility.value,
+        policy.predicate_mode.value,
+        policy.relocation,
+        policy.audit_policy,
+        policy.association_transfer.transfer_id,
+        policy.policy_id,
+    )
+
+
+def restore_mixed_adaptation_policy(
+    recipe: MixedAdaptationPolicyArchiveRecipe, association_transfer: Any, /
+) -> Any:
+    """Rebind stored policy inputs to a freshly reconstructed association owner."""
+    from .._geometry_predicates import PredicateMode
+    from ..discretization._cell_geometry_validity import CellValidityPolicy
+    from ._adaptation import MeshAdaptationPolicy, MeshAdaptationRoute
+    from ._audit import CellMeshAuditPolicy
+    from ._bisection import BisectionCompatibility
+
+    if type(recipe) is not MixedAdaptationPolicyArchiveRecipe:
+        raise TypeError("Expected canonical mixed adaptation policy inputs.")
+    if (
+        getattr(association_transfer, "transfer_id", None)
+        != recipe.association_transfer_id
+    ):
+        raise ValueError("Rebuilt association transfer does not match the stored policy.")
+    stored = recipe.audit_policy
+    if type(stored) is not CellMeshAuditPolicy:
+        raise TypeError("Stored adaptation audit policy has the wrong owner.")
+    validity = CellValidityPolicy(
+        relative_determinant_floor=stored.validity_policy.relative_determinant_floor,
+        relative_planarity_tolerance=stored.validity_policy.relative_planarity_tolerance,
+    )
+    if validity.policy_id != stored.validity_policy.policy_id:
+        raise ValueError("Stored audit validity policy changed.")
+    names = (
+        "unused_entities",
+        "require_complete_association",
+        "minimum_measure",
+        "minimum_mean_ratio",
+        "maximum_aspect_ratio",
+        "coincident_vertices",
+        "coincident_vertex_tolerance",
+        "duplicate_cells",
+        "nonmanifold",
+        "inconsistent_orientation",
+        "watertight_boundary",
+        "self_intersection",
+        "invalid_geometry",
+        "unresolved",
+    )
+    audit = CellMeshAuditPolicy(
+        **{name: getattr(stored, name) for name in names}, validity_policy=validity
+    )
+    if audit.policy_id != stored.policy_id:
+        raise ValueError("Stored adaptation audit policy changed.")
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.NATIVE_MIXED,
+        protected_scopes=tuple(
+            restore_model_archive_value(x) for x in recipe.protected_scopes
+        ),
+        compatibility=BisectionCompatibility(recipe.compatibility),
+        predicate_mode=PredicateMode(recipe.predicate_mode),
+        relocation=recipe.relocation,
+        audit_policy=audit,
+        association_transfer=association_transfer,
+    )
+    if policy.policy_id != recipe.expected_policy_id:
+        raise ValueError("Rebuilt mixed adaptation policy identity changed.")
+    return policy
+
+
+def _restore_layer_geometry_transition(stored: Any, source: Any, target: Any, /) -> Any:
+    """Reprove retained exact geometry maps against the actual accepted endpoints."""
+    from ..discretization._cell_geometry_transition_types import (
+        CellGeometryTransition,
+        CellGeometryTransitionEvidence,
+    )
+    from ._mixed_adaptation import _require_retained_bank_origin
+
+    if type(stored) is not CellGeometryTransition:
+        raise TypeError("Layer adaptation lost its exact geometry transition.")
+    original = stored.evidence
+    evidence = CellGeometryTransitionEvidence(
+        original.kind,
+        reference_map_count=original.reference_map_count,
+        refinement_map_count=original.refinement_map_count,
+        coarsening_map_count=original.coarsening_map_count,
+        continuity_residual=original.continuity_residual,
+        approximation_bound=original.approximation_bound,
+    )
+    if evidence.evidence_id != original.evidence_id:
+        raise ValueError("Stored geometry transition evidence changed.")
+    _require_retained_bank_origin(source.geometry, target.geometry)
+    rebuilt = CellGeometryTransition(
+        source.mesh,
+        source.geometry,
+        target.mesh,
+        target.geometry,
+        evidence=evidence,
+        reference_map=restore_model_archive_value(stored.reference_map),
+        refinement=restore_model_archive_value(stored.refinement),
+        coarsening=restore_model_archive_value(stored.coarsening),
+        coarsening_partition=restore_model_archive_value(stored.coarsening_partition),
+    )
+    if rebuilt.transition_id != stored.transition_id or not _same_model_content(
+        rebuilt, stored
+    ):
+        raise ValueError("Stored geometry transition differs from its actual endpoints.")
+    return rebuilt
+
+
+def _require_layer_adaptation_recipe_inputs(prepared: Any, result: Any, /) -> None:
+    """Require the real mixed adaptation and its exact declarative request."""
+    from ._adaptation import (
+        MarkedMeshAdaptation,
+        MeshAdaptationResult,
+        PreparedMeshAdaptation,
+    )
+    from ._mixed_adaptation import MixedAdaptationHierarchy
+
+    if (
+        type(prepared) is not PreparedMeshAdaptation
+        or type(result) is not MeshAdaptationResult
+        or type(prepared.request) is not MarkedMeshAdaptation
+        or prepared.prior_transition is not None
+        or prepared.material_reference is not None
+        or result.distribution is not None
+        or result.prepared_id != prepared.prepared_id
+        or result.source.result_id != prepared.source.result_id
+        or type(result.hierarchy) is not MixedAdaptationHierarchy
+        or result.transition is None
+        or result.transition.geometry_transition is None
+    ):
+        raise ValueError("Layer snapshot requires its actual bound mixed adaptation.")
+
+
+def layer_core_accepted_adaptation_recipe(
+    prepared: Any, result: Any, /
+) -> LayerCoreAcceptedAdaptationArchiveRecipe:
+    """Retain the actual mixed result and its original declarative request."""
+    _require_layer_adaptation_recipe_inputs(prepared, result)
+    _require_layer_root_transfer(result.target, prepared.policy.association_transfer)
+    return LayerCoreAcceptedAdaptationArchiveRecipe(
+        result,
+        prepared.request,
+        mixed_adaptation_policy_recipe(prepared.policy),
+        result.source.result_id,
+        result.target.result_id,
+        result.result_id,
+    )
+
+
+def _layer_core_accepted_lifecycle_recipes(
+    initial: Any, prepared: Any, result: Any, source: Any, specification: Any, /
+) -> tuple[
+    LayerCoreAcceptedResultArchiveRecipe,
+    LayerCoreAcceptedAdaptationArchiveRecipe,
+    LayerCoreAcceptedResultArchiveRecipe,
+]:
+    """Reprove shared mapped root once and each actual endpoint independently."""
+    from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+    from ._layer_core_root_geometry import ComputedLayerCoreRoot
+
+    _require_layer_result_recipe_inputs(initial, source, specification)
+    _require_layer_adaptation_recipe_inputs(prepared, result)
+    _require_layer_result_recipe_inputs(result.target, source, specification)
+    if (
+        initial is not result.source and not _same_model_content(initial, result.source)
+    ) or (
+        initial is not prepared.source
+        and not _same_model_content(initial, prepared.source)
+    ):
+        raise ValueError(
+            "Layer adaptation does not retain its actual accepted source endpoint."
+        )
+    transfer = prepared.policy.association_transfer
+    root = initial.layer_core_root_geometry
+    if (
+        source.mapped_domain is None
+        or root is None
+        or result.target.layer_core_root_geometry is not root
+        or type(transfer) is not NativeLayerCoreAssociationTransfer
+        or transfer.source is not source
+        or transfer.specification is not specification
+    ):
+        return (
+            layer_core_accepted_result_recipe(initial, source, specification),
+            layer_core_accepted_adaptation_recipe(prepared, result),
+            layer_core_accepted_result_recipe(result.target, source, specification),
+        )
+    canonical_transfer = NativeLayerCoreAssociationTransfer(source, specification)
+    if transfer.transfer_id != canonical_transfer.transfer_id:
+        raise ValueError(
+            "Layer adaptation association transfer changed from its source owner."
+        )
+    for endpoint in (initial, result.target):
+        if (
+            root.reference_mesh is None
+            or endpoint.layer_core_overlap_stencils is not None
+            or endpoint.layer_core_column_certification is not None
+        ):
+            raise ValueError(
+                "Mapped layer endpoints require their actual reference root."
+            )
+    computed_root = ComputedLayerCoreRoot.reprove(source, specification, root)
+    transfer._validate_source(result.target, computed_root=computed_root)
+    transfer._validate_source(initial, computed_root=computed_root)
+    return (
+        LayerCoreAcceptedResultArchiveRecipe(
+            initial, source.binding_id, specification.specification_id
+        ),
+        LayerCoreAcceptedAdaptationArchiveRecipe(
+            result,
+            prepared.request,
+            mixed_adaptation_policy_recipe(prepared.policy),
+            result.source.result_id,
+            result.target.result_id,
+            result.result_id,
+        ),
+        LayerCoreAcceptedResultArchiveRecipe(
+            result.target, source.binding_id, specification.specification_id
+        ),
+    )
+
+
+def restore_layer_core_accepted_adaptation(
+    recipe: LayerCoreAcceptedAdaptationArchiveRecipe,
+    source: Any,
+    target: Any,
+    association_transfer: Any,
+    /,
+) -> Any:
+    """Reprove the actual retained mixed transition without executing its request."""
+    _require_layer_root_transfer(target, association_transfer)
+    return _restore_layer_core_accepted_adaptation(
+        recipe, source, target, association_transfer, None
+    )
+
+
+def _restore_layer_core_accepted_adaptation(
+    recipe: LayerCoreAcceptedAdaptationArchiveRecipe,
+    source: Any,
+    target: Any,
+    association_transfer: Any,
+    computed_root: Any | None,
+    /,
+) -> Any:
+    from ._adaptation import MeshAdaptationResult
+
+    if type(recipe) is not LayerCoreAcceptedAdaptationArchiveRecipe:
+        raise TypeError("Expected a retained layer/core adaptation recipe.")
+    if (
+        source.result_id != recipe.source_result_id
+        or target.result_id != recipe.target_result_id
+    ):
+        raise ValueError("Stored mixed adaptation names different accepted endpoints.")
+    raw = restore_row_record_recipes(model_archive_projection(recipe.result))
+    if type(raw) is not MeshAdaptationResult or raw.transition is None:
+        raise TypeError("Stored layer adaptation lost its actual transition owner.")
+    if (
+        raw.result_id != recipe.expected_result_id
+        or not _same_model_content(raw.source, source)
+        or not _same_model_content(raw.target, target)
+    ):
+        raise ValueError(
+            "Stored mixed adaptation differs from its authenticated endpoints."
+        )
+    request = restore_model_archive_value(recipe.request)
+    if type(recipe.policy) is not MixedAdaptationPolicyArchiveRecipe:
+        raise TypeError("Stored adaptation policy has the wrong owner.")
+    policy = restore_mixed_adaptation_policy(recipe.policy, association_transfer)
+    hierarchy = restore_model_archive_value(raw.hierarchy)
+    geometry = _restore_layer_geometry_transition(
+        raw.transition.geometry_transition, source, target
+    )
+    restored = MeshAdaptationResult.from_stored_fields(
+        raw,
+        source=source,
+        target=target,
+        policy=policy,
+        request=request,
+        geometry_transition=geometry,
+        hierarchy=hierarchy,
+        expected_result_id=recipe.expected_result_id,
+        _computed_layer_root=computed_root,
+    )
+    return restored
+
+
+def _restore_layer_core_accepted_lifecycle(
+    initial_recipe: LayerCoreAcceptedResultArchiveRecipe,
+    refined_recipe: LayerCoreAcceptedResultArchiveRecipe,
+    adaptation_recipe: LayerCoreAcceptedAdaptationArchiveRecipe,
+    source: Any,
+    specification: Any,
+    /,
+) -> tuple[Any, Any, Any, Any]:
+    """Restore independently checked endpoints with one operation-local root proof."""
+    from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+    from ._result import CellMeshingResult
+
+    parent_embeddings: list[Any] = []
+    initial, computed_root = _restore_layer_core_accepted_result(
+        initial_recipe,
+        source,
+        specification,
+        None,
+        computed_embedding_out=parent_embeddings,
+    )
+    operation_specification = (
+        specification if computed_root is None else computed_root.specification
+    )
+    domain = source.mapped_domain
+    stored_target = refined_recipe.result
+    if type(stored_target) is not CellMeshingResult:
+        raise TypeError("Layer snapshot lost its actual accepted result.")
+    restriction = stored_target.geometry.restriction_source
+    parent_embedding = (
+        parent_embeddings[0]
+        if parent_embeddings
+        and domain is not None
+        and restriction is not None
+        and (
+            restriction.source_geometry_id != domain.reference_geometry_id
+            or restriction.source_topology_id != domain.reference_mesh.topology_id
+        )
+        else None
+    )
+    target, target_root = _restore_layer_core_accepted_result(
+        refined_recipe,
+        source,
+        operation_specification,
+        computed_root,
+        validated_chart_parent_embedding=parent_embedding,
+    )
+    if computed_root is not None and target_root is not computed_root:
+        raise ValueError("Layer endpoints did not retain the same computed root.")
+    transfer = NativeLayerCoreAssociationTransfer(source, operation_specification)
+    if computed_root is not None and domain is not None:
+        root = target.layer_core_root_geometry
+        if (
+            root is not computed_root.root
+            or transfer.source is not source
+            or transfer.specification is not operation_specification
+            or target.certification is None
+            or target.certification.inputs.feature_source is not source
+            or target.certification.inputs.source is not source.fidelity_source
+            or target.certification.inputs.fidelity_witness is None
+            or target.certification.inputs.layer_core_root_geometry is not root
+            or root.specification is not operation_specification
+            or root.reference_mesh is None
+            or target.layer_core_overlap_stencils is not None
+            or target.layer_core_column_certification is not None
+        ):
+            raise ValueError("Restored mapped transition lost its actual source or root.")
+        computed_root.require(
+            source, operation_specification, root.mesh, root.geometry, root
+        )
+    else:
+        _require_layer_root_transfer(target, transfer, computed_root=computed_root)
+    adaptation = _restore_layer_core_accepted_adaptation(
+        adaptation_recipe, initial, target, transfer, computed_root
+    )
+    return initial, target, adaptation, transfer
+
+
+def finite_element_field_banks_recipe(
+    space: Any, layouts: tuple[Any, ...], fields: tuple[Any, ...], /
+) -> FiniteElementFieldBanksArchiveRecipe:
+    """Capture typed field coefficients against an already prepared FE space."""
+    from ..solver._finite_element_schedule import FiniteElementAcceptedFieldLayout
+
+    if any(type(layout) is not FiniteElementAcceptedFieldLayout for layout in layouts):
+        raise TypeError("Field banks require canonical accepted FE layouts.")
+    recipe = FiniteElementFieldBanksArchiveRecipe(
+        tuple(layout.recipe() for layout in layouts),
+        tuple(fields),
+        space.mesh.topology_id,
+        space.prepared_id,
+    )
+    restore_finite_element_field_banks(recipe, space)
+    return recipe
+
+
+def restore_finite_element_field_banks(
+    recipe: FiniteElementFieldBanksArchiveRecipe, space: Any, /
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    """Bind stored field layouts and coefficients to an independently prepared space."""
+    import numpy as np
+
+    from ..discretization.fem._generic import FiniteElementDiscretization
+    from ..solver._finite_element_schedule import (
+        FiniteElementAcceptedFieldLayout,
+        FiniteElementAcceptedFieldLayoutRecipe,
+    )
+
+    if (
+        type(recipe) is not FiniteElementFieldBanksArchiveRecipe
+        or type(space) is not FiniteElementDiscretization
+    ):
+        raise TypeError("Field-bank restore needs its canonical recipe and FE space.")
+    if (
+        recipe.topology_id != space.mesh.topology_id
+        or recipe.prepared_id != space.prepared_id
+    ):
+        raise ValueError("Stored field banks do not bind the current FE space.")
+    layout_values = []
+    for item in recipe.field_layouts:
+        if type(item) is not FiniteElementAcceptedFieldLayoutRecipe:
+            raise TypeError("Stored FE field layouts have the wrong owner.")
+        layout_values.append(FiniteElementAcceptedFieldLayout.from_recipe(item))
+    layouts = tuple(layout_values)
+    if len(layouts) != len(space.dof_maps) or len(recipe.fields) != len(layouts):
+        raise ValueError("Stored FE fields and prepared layout counts differ.")
+    for layout, field, field_space, dofs, elements in zip(
+        layouts,
+        recipe.fields,
+        space.field_spaces,
+        space.dof_maps,
+        space.elements,
+        strict=True,
+    ):
+        if (
+            layout.name != field_space.name
+            or layout.storage_kind != "canonical_dofs"
+            or layout.periodic_quotient
+        ):
+            raise ValueError("Stored FE field name or storage does not bind the layout.")
+        expected = layout.field_spec.resolve(space.mesh)
+        if tuple(element.element_id for element in expected) != tuple(
+            element.element_id for element in elements
+        ):
+            raise ValueError(
+                "Stored FE reference elements differ from the prepared space."
+            )
+        if np.asarray(field).shape != (dofs.global_dof_count, *layout.component_shape):
+            raise ValueError("Stored FE coefficient shape differs from its DOF layout.")
+    return layouts, recipe.fields
 
 
 def _require_model_type(model_type: Any, /) -> None:
@@ -2516,6 +5820,22 @@ def _require_model_type(model_type: Any, /) -> None:
 
 
 __all__ = [
+    "layer_core_accepted_adaptation_recipe",
+    "restore_layer_core_accepted_adaptation",
+    "layer_core_accepted_result_recipe",
+    "restore_layer_core_accepted_result",
+    "restore_layer_core_root_geometry",
+    "overset_registration_recipe",
+    "restore_overset_registration",
+    "planar_motion_advance_recipe",
+    "restore_planar_motion_advance",
+    "model_archive_content_id",
+    "mixed_adaptation_policy_recipe",
+    "restore_mixed_adaptation_policy",
+    "finite_element_field_banks_recipe",
+    "restore_finite_element_field_banks",
+    "layer_core_authoring_recipe",
+    "restore_layer_core_authoring",
     "read_model_archive",
     "read_model_archive_fields",
     "read_model_artifact",

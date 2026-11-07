@@ -30,6 +30,7 @@ from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..typing import checked
 from ._contracts import VolumeMeshingSpec
 from ._result import CellMeshingResult
+from .providers._native_schedules import NativeSurfaceSchedule
 
 
 def _target_association(
@@ -55,8 +56,10 @@ def _rebind_association(
     /,
 ) -> association_owner.GeometryAssociation:
     entity_set = target.entity_set(dimension)
-    if parent.target_entity_set_id == entity_set.entity_set_id:
+    if parent.target_entity_set_id == entity_set.entity_set_id and orientation_sign == 1:
         return parent
+    if parent.source_boundary_witness_id is not None:
+        raise ValueError("Rebound face pieces require a source-bound target witness.")
     targets = np.asarray(entity_set.entity_ids, dtype=np.int64)
     parent_rows = {
         int(identifier): row
@@ -70,14 +73,45 @@ def _rebind_association(
         [parent_rows[int(identifier)] for identifier in targets.tolist()],
         dtype=np.int64,
     )
-    return association_owner.inherit_association_rows(
-        parent,
-        entity_set,
+    return association_owner.GeometryAssociation(
+        parent.association_kind,
+        parent.source_id,
+        parent.source_revision,
+        entity_set.entity_set_id,
         targets,
-        rows,
-        residuals=np.asarray(parent.residuals, dtype=np.float64)[rows],
+        tuple(parent.source_entity_ids[int(row)] for row in rows),
+        np.asarray(parent.residuals)[rows],
+        resolved=np.asarray(parent.resolved)[rows],
+        ambiguous=np.asarray(parent.ambiguous)[rows],
+        exact=parent.exact,
+        source_dimensions=np.asarray(parent.source_dimensions)[rows],
+        source_indices=np.asarray(parent.source_indices)[rows],
+        source_roles=tuple(parent.source_roles[int(row)] for row in rows),
+        source_occurrence_paths=tuple(
+            parent.source_occurrence_paths[int(row)] for row in rows
+        ),
+        source_region_sides=tuple(parent.source_region_sides[int(row)] for row in rows),
+        source_parameter_intervals=tuple(
+            parent.source_parameter_intervals[int(row)] for row in rows
+        ),
+        target_parameter_intervals=tuple(
+            None
+            if (interval := parent.target_parameter_intervals[int(row)]) is None
+            else (
+                interval
+                if dimension != 1 or orientation_sign == 1
+                else (1 - interval[1], 1 - interval[0])
+            )
+            for row in rows
+        ),
+        source_parameter_points=tuple(
+            parent.source_parameter_points[int(row)] for row in rows
+        ),
+        parameters=np.asarray(parent.parameters)[rows],
         orientations=orientation_sign
         * np.asarray(parent.orientations, dtype=np.int8)[rows],
+        parent_association_id=parent.association_id,
+        provenance=association_owner.GeometryAssociationProvenance.LINEAGE,
     )
 
 
@@ -119,6 +153,42 @@ def inward_wall_charts(
         0,
         1,
     )
+    edge_tables = tuple(
+        value
+        for value in charts.associations
+        if value.target_entity_set_id == mesh.entity_set(1).entity_set_id
+    )
+    edge_associations = []
+    for parent in edge_tables:
+        target_ids = np.asarray(parent.target_global_ids, dtype=np.int64)
+        if not np.all(np.isin(target_ids, wall.entity_set(1).entity_ids)):
+            raise ValueError("The inward wall must retain every associated edge.")
+        edge_associations.append(
+            association_owner.GeometryAssociation(
+                parent.association_kind,
+                parent.source_id,
+                parent.source_revision,
+                wall.entity_set(1).entity_set_id,
+                target_ids,
+                parent.source_entity_ids,
+                np.asarray(parent.residuals),
+                resolved=np.asarray(parent.resolved),
+                ambiguous=np.asarray(parent.ambiguous),
+                exact=parent.exact,
+                source_dimensions=np.asarray(parent.source_dimensions),
+                source_indices=np.asarray(parent.source_indices),
+                source_roles=parent.source_roles,
+                source_occurrence_paths=parent.source_occurrence_paths,
+                source_region_sides=parent.source_region_sides,
+                source_parameter_intervals=parent.source_parameter_intervals,
+                target_parameter_intervals=parent.target_parameter_intervals,
+                source_parameter_points=parent.source_parameter_points,
+                parameters=np.asarray(parent.parameters),
+                orientations=np.asarray(parent.orientations),
+                parent_association_id=parent.association_id,
+                provenance=association_owner.GeometryAssociationProvenance.LINEAGE,
+            )
+        )
     exact = tuple((chart[0], chart[2], chart[1]) for chart in charts.root_parameter_exact)
     inward = SurfaceSourceCharts(
         charts.domain,
@@ -127,11 +197,12 @@ def inward_wall_charts(
         charts.coordinate_contract,
         np.asarray(charts.root_parameters, dtype=np.float64)[:, (0, 2, 1)],
         np.asarray(charts.root_patches, dtype=np.int64),
-        (cells, vertices),
+        (cells, vertices, *edge_associations),
         charts.boundary_source,
         source_root_cell_ids=np.asarray(charts.source_root_cell_ids, dtype=np.int64),
         source_piece_ids=charts.source_piece_ids,
         root_parameter_exact=exact,
+        trim_roots=charts.trim_roots,
         boundary_occurrences=(
             None
             if charts.boundary_occurrences.size == 0
@@ -139,6 +210,219 @@ def inward_wall_charts(
         ),
     )
     return inward, vertices
+
+
+@checked
+def restrict_wall_charts(
+    charts: SurfaceSourceCharts, wall: CellMesh, /
+) -> SurfaceSourceCharts:
+    """Restrict accepted surface charts to an exactly incident oriented wall."""
+    from ..geometry._domain_boundary import MeshingDomainBoundarySource
+    from ._association_routes import ordered_vertices, target_dimension
+
+    charts.require_root(charts.mesh, charts.geometry)
+    if any(block.cell_kind != "triangle" for block in wall.blocks):
+        raise ValueError("A restricted BRep wall must contain triangular cells.")
+    parent_vertices = np.asarray(charts.mesh.vertex_global_ids, dtype=np.int64)
+    wall_vertices = np.asarray(wall.vertex_global_ids, dtype=np.int64)
+    parent_rows = {int(identifier): row for row, identifier in enumerate(parent_vertices)}
+    parent_points = np.asarray(charts.mesh.coordinates, dtype=np.float64)
+    wall_points = np.asarray(wall.coordinates, dtype=np.float64)
+    for row, identifier in enumerate(wall_vertices):
+        source_row = parent_rows.get(int(identifier))
+        if source_row is None or not np.array_equal(
+            wall_points[row].view(np.uint64), parent_points[source_row].view(np.uint64)
+        ):
+            raise ValueError(
+                "Restricted wall vertices must retain exact source coordinates."
+            )
+    parent_cells = {
+        int(identifier): tuple(int(parent_vertices[int(vertex)]) for vertex in row)
+        for block in charts.mesh.blocks
+        for identifier, row in zip(
+            np.asarray(block.global_ids, dtype=np.int64),
+            np.asarray(block.vertices, dtype=np.int64).tolist(),
+            strict=True,
+        )
+    }
+    chart_rows = {
+        int(identifier): row for row, identifier in enumerate(charts.cell_global_ids)
+    }
+    selected_ids = [
+        int(identifier)
+        for block in wall.blocks
+        for identifier in np.asarray(block.global_ids, dtype=np.int64)
+    ]
+    permutations: list[tuple[int, ...]] = []
+    for block in wall.blocks:
+        for identifier, vertices in zip(
+            np.asarray(block.global_ids, dtype=np.int64),
+            np.asarray(block.vertices, dtype=np.int64).tolist(),
+            strict=True,
+        ):
+            old = parent_cells.get(int(identifier))
+            new = tuple(int(wall_vertices[int(vertex)]) for vertex in vertices)
+            if old is None or len(old) != 3 or set(old) != set(new):
+                raise ValueError(
+                    "Restricted wall cells must retain exact parent vertex incidence."
+                )
+            permutations.append(tuple(old.index(vertex) for vertex in new))
+    rows = np.asarray(
+        [chart_rows[identifier] for identifier in selected_ids], dtype=np.int64
+    )
+    signs = {
+        identifier: (
+            -1
+            if sum(
+                permutation[i] > permutation[j] for i in range(3) for j in range(i + 1, 3)
+            )
+            % 2
+            else 1
+        )
+        for identifier, permutation in zip(selected_ids, permutations, strict=True)
+    }
+    parameters = np.stack(
+        [
+            np.asarray(charts.root_parameters[row])[np.asarray(permutation)]
+            for row, permutation in zip(rows, permutations, strict=True)
+        ]
+    )
+    exact = tuple(
+        tuple(charts.root_parameter_exact[int(row)][index] for index in permutation)
+        for row, permutation in zip(rows, permutations, strict=True)
+    )
+    patches = np.asarray(charts.root_patches, dtype=np.int64)[rows]
+    occurrences = (
+        None
+        if charts.boundary_occurrences.size == 0
+        else np.stack(
+            [
+                np.asarray(charts.boundary_occurrences[row])[np.asarray(permutation)]
+                for row, permutation in zip(rows, permutations, strict=True)
+            ]
+        )
+    )
+    parent_edges = ordered_vertices(charts.mesh, 1)
+    wall_edges = ordered_vertices(wall, 1)
+    if parent_edges is None or wall_edges is None:
+        raise ValueError(
+            "Restricted wall edge ancestry requires exact simplex incidence."
+        )
+    parent_edge_ids = np.asarray(charts.mesh.entity_set(1).entity_ids, dtype=np.int64)
+    wall_edge_ids = np.asarray(wall.entity_set(1).entity_ids, dtype=np.int64)
+    edge_parents: dict[tuple[int, ...], tuple[int, tuple[int, ...]]] = {}
+    for edge_id, edge in zip(parent_edge_ids, parent_edges, strict=True):
+        ordered = tuple(int(parent_vertices[int(row)]) for row in edge)
+        key = tuple(sorted(ordered))
+        if key in edge_parents:
+            raise ValueError("Parent surface has repeated edge vertex incidence.")
+        edge_parents[key] = (int(edge_id), ordered)
+    edge_map: dict[int, tuple[int, int]] = {}
+    for edge_id, edge in zip(wall_edge_ids, wall_edges, strict=True):
+        ordered = tuple(int(wall_vertices[int(row)]) for row in edge)
+        parent = edge_parents.get(tuple(sorted(ordered)))
+        if parent is None:
+            raise ValueError("A wall edge has no exact parent surface incidence.")
+        edge_map[int(parent[0])] = (int(edge_id), 1 if ordered == parent[1] else -1)
+    tables: list[association_owner.GeometryAssociation] = []
+    for parent in charts.associations:
+        dimension = target_dimension(charts.mesh, parent)
+        parent_ids = np.asarray(parent.target_global_ids, dtype=np.int64)
+        target_ids = set(
+            np.asarray(wall.entity_set(dimension).entity_ids, dtype=np.int64).tolist()
+        )
+        chosen: list[tuple[int, int, int]] = []
+        for row, identifier in enumerate(parent_ids.tolist()):
+            if dimension == 1:
+                match = edge_map.get(int(identifier))
+                if match is not None:
+                    chosen.append((row, match[0], match[1]))
+            elif int(identifier) in target_ids:
+                chosen.append(
+                    (
+                        row,
+                        int(identifier),
+                        signs[int(identifier)] if dimension == 2 else 1,
+                    )
+                )
+        if not chosen:
+            continue
+        parent_rows = np.asarray([item[0] for item in chosen], dtype=np.int64)
+        ids = np.asarray([item[1] for item in chosen], dtype=np.int64)
+        if (
+            parent.target_entity_set_id == wall.entity_set(dimension).entity_set_id
+            and np.array_equal(ids, parent_ids)
+            and all(item[2] == 1 for item in chosen)
+        ):
+            tables.append(parent)
+            continue
+        if parent.source_boundary_witness_id is not None:
+            raise ValueError(
+                "Restricted face pieces require a source-bound target witness."
+            )
+        orientation = np.asarray(parent.orientations, dtype=np.int8)[
+            parent_rows
+        ] * np.asarray([item[2] for item in chosen], dtype=np.int8)
+        tables.append(
+            association_owner.GeometryAssociation(
+                parent.association_kind,
+                parent.source_id,
+                parent.source_revision,
+                wall.entity_set(dimension).entity_set_id,
+                ids,
+                tuple(parent.source_entity_ids[int(row)] for row in parent_rows),
+                np.asarray(parent.residuals)[parent_rows],
+                resolved=np.asarray(parent.resolved)[parent_rows],
+                ambiguous=np.asarray(parent.ambiguous)[parent_rows],
+                exact=parent.exact,
+                source_dimensions=np.asarray(parent.source_dimensions)[parent_rows],
+                source_indices=np.asarray(parent.source_indices)[parent_rows],
+                source_roles=tuple(parent.source_roles[int(row)] for row in parent_rows),
+                source_occurrence_paths=tuple(
+                    parent.source_occurrence_paths[int(row)] for row in parent_rows
+                ),
+                source_region_sides=tuple(
+                    parent.source_region_sides[int(row)] for row in parent_rows
+                ),
+                source_parameter_intervals=tuple(
+                    parent.source_parameter_intervals[int(row)] for row in parent_rows
+                ),
+                target_parameter_intervals=tuple(
+                    None
+                    if (interval := parent.target_parameter_intervals[int(row)]) is None
+                    else (
+                        interval
+                        if dimension != 1 or chosen[index][2] == 1
+                        else (1 - interval[1], 1 - interval[0])
+                    )
+                    for index, row in enumerate(parent_rows)
+                ),
+                source_parameter_points=tuple(
+                    parent.source_parameter_points[int(row)] for row in parent_rows
+                ),
+                parameters=np.asarray(parent.parameters)[parent_rows],
+                orientations=orientation,
+                parent_association_id=parent.association_id,
+                provenance=association_owner.GeometryAssociationProvenance.LINEAGE,
+            )
+        )
+    return SurfaceSourceCharts(
+        charts.domain,
+        wall,
+        CellGeometrySpec.affine(wall),
+        charts.coordinate_contract,
+        parameters,
+        patches,
+        tuple(tables),
+        MeshingDomainBoundarySource(charts.domain, tuple(sorted(set(patches.tolist())))),
+        source_root_cell_ids=np.asarray(charts.source_root_cell_ids, dtype=np.int64)[
+            rows
+        ],
+        source_piece_ids=tuple(charts.source_piece_ids[int(row)] for row in rows),
+        root_parameter_exact=exact,
+        boundary_occurrences=occurrences,
+        trim_roots=charts.trim_roots,
+    )
 
 
 def _triangle_rows(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
@@ -158,9 +442,11 @@ class FixedCore(NamedTuple):
     """The fixed core PLC and its exact ancestry in the charted wall.
 
     ``vertex_layer_ids`` maps PLC vertices to cap layer vertices (or ``-1``),
-    ``vertex_wall_rows`` maps the remaining PLC vertices to unmoved wall rows (or
-    ``-1``), and ``polygon_wall_cells`` maps each fixed surface polygon to its wall
-    cell (``-1`` for cap polygons, which come first).
+    ``vertex_wall_rows`` maps other retained vertices to their source-wall rows
+    (or ``-1``), and ``polygon_wall_cells`` names the unique source wall cell
+    when one exists. Cap polygons come first and carry ``-1``; an arranged side
+    polygon spanning multiple wall cells also carries ``-1`` and requires
+    independent exact source-image overlap.
     """
 
     complex_: plc_source_owner.PiecewiseLinearComplex
@@ -179,6 +465,110 @@ def grown_wall_cells(layers: boundary_layer_owner.BoundaryLayerMesh, /) -> np.nd
     )
 
 
+def _planar_fixed_core(
+    domain: MeshingDomain,
+    layers: boundary_layer_owner.BoundaryLayerMesh,
+    charts: SurfaceSourceCharts,
+    /,
+) -> FixedCore | None:
+    """Build a cap-preserving source-face arrangement when exact strata admit it."""
+    from fractions import Fraction
+
+    from ._layer_core_brep_plc import remaining_brep_core_plc_rows
+    from ._layer_core_cad_footprints import layer_planar_cad_footprints
+    from ._layer_core_edge_policy import _segment_relation
+
+    footprints = layer_planar_cad_footprints(domain, charts, layers)
+    if footprints is None:
+        return None
+    rows = remaining_brep_core_plc_rows(domain, charts, layers, footprints)
+    if any(
+        layer < 0 and wall < 0
+        for layer, wall in zip(rows.vertex_layer_ids, rows.vertex_wall_rows, strict=True)
+    ):
+        raise ValueError(
+            "A planar core arrangement vertex lacks retained layer or source-wall ancestry."
+        )
+    layer_ids = np.asarray(layers.mesh.vertex_global_ids, dtype=np.int64)
+    wall_ids = np.asarray(charts.mesh.vertex_global_ids, dtype=np.int64)
+    vertex_ids = tuple(
+        f"{domain.source_id}:layer-vertex:{int(layer_ids[layer])}"
+        if layer >= 0
+        else f"{domain.source_id}:surface-vertex:{int(wall_ids[wall])}"
+        for layer, wall in zip(rows.vertex_layer_ids, rows.vertex_wall_rows, strict=True)
+    )
+    facet_paths = tuple(
+        tuple(domain.source_occurrences[2][patch]) for _, patch in rows.facet_keys
+    )
+    edge_paths: dict[tuple[int, int], set[tuple[str, ...]]] = {}
+    for polygon, facet in zip(rows.polygons, rows.polygon_facets, strict=True):
+        for index, first in enumerate(polygon):
+            last = polygon[(index + 1) % 3]
+            edge = (min(first, last), max(first, last))
+            edge_paths.setdefault(edge, set()).add(facet_paths[facet])
+    if any(len(paths) != 1 for paths in edge_paths.values()):
+        raise ValueError("A planar core edge joins different source occurrences.")
+    constrained: list[tuple[int, int]] = []
+    for edge in sorted(edge_paths):
+        intervals: list[tuple[Fraction, Fraction]] = []
+        for curve in footprints.strata.segments:
+            interval, crossing = _segment_relation(
+                rows.points[edge[0]], rows.points[edge[1]], curve.first, curve.last
+            )
+            if crossing:
+                raise ValueError("A planar core edge crosses an original CAD curve.")
+            if interval is not None:
+                intervals.append(interval)
+        if not intervals:
+            continue
+        cursor = Fraction(0)
+        for lower, upper in sorted(intervals):
+            if lower > cursor:
+                break
+            cursor = max(cursor, upper)
+        if cursor != 1:
+            raise ValueError(
+                "A planar core edge only partially covers a source CAD curve."
+            )
+        constrained.append(edge)
+    complex_ = plc_source_owner.PiecewiseLinearComplex(
+        np.asarray(
+            [[float(value) for value in point] for point in rows.points], dtype=np.float64
+        ),
+        rows.polygons,
+        np.asarray(rows.polygon_facets, dtype=np.int64),
+        np.asarray(
+            [(0, -1) if side == "cap" else (-1, 0) for side, _ in rows.facet_keys],
+            dtype=np.int64,
+        ),
+        (domain.regions[0].name,),
+        segments=np.asarray(constrained, dtype=np.int64).reshape((-1, 2)),
+        vertex_ids=vertex_ids,
+        vertex_occurrence_paths=((),) * len(rows.points),
+        facet_ids=tuple(
+            f"{domain.source_id}:layer-{side}:{domain.entity_id(2, patch)}"
+            for side, patch in rows.facet_keys
+        ),
+        facet_occurrence_paths=facet_paths,
+        segment_ids=tuple(
+            f"{vertex_ids[first]}~{vertex_ids[last]}" for first, last in constrained
+        ),
+        segment_occurrence_paths=tuple(
+            next(iter(edge_paths[edge])) for edge in constrained
+        ),
+        region_occurrence_paths=(domain.region_source_occurrences[0],),
+        boundary="fixed",
+    )
+    return FixedCore(
+        complex_,
+        np.asarray(rows.vertex_layer_ids, dtype=np.int64),
+        np.asarray(rows.vertex_wall_rows, dtype=np.int64),
+        np.asarray(rows.polygon_wall_cells, dtype=np.int64),
+        rows.facet_keys,
+        rows.cap_count,
+    )
+
+
 @checked
 def fixed_core(
     domain: MeshingDomain,
@@ -186,12 +576,10 @@ def fixed_core(
     charts: SurfaceSourceCharts,
     /,
 ) -> FixedCore:
-    """Bind the cap and the unselected wall cells as one fixed core PLC.
+    """Bind the unchanged cap to the remaining original source-face boundary.
 
-    Every rim vertex of an unselected cell moves to the cap vertex that tops its
-    single column; the cell keeps its outward orientation. One PLC facet groups
-    the cap over each source face and one the fixed remainder of each source face;
-    every polygon edge is an explicit segment so that recovery keeps each polygon.
+    Exact planar source charts are arranged against actual layer footprints;
+    otherwise the source wall's existing fixed-cell ancestry is retained.
     """
     wall = charts.mesh
     if layers.source_wall is not wall and layers.source_wall.mesh_id != wall.mesh_id:
@@ -199,6 +587,9 @@ def fixed_core(
     cap = layers.cap
     if cap is None:
         raise ValueError("The accepted layers left no free cap for the fixed core.")
+    planar = _planar_fixed_core(domain, layers, charts)
+    if planar is not None:
+        return planar
     cap_rows, _ = _triangle_rows(cap)
     cap_layer_rows = np.asarray(layers.cap_vertices, dtype=np.int64)
     layer_vertex_ids = np.asarray(layers.mesh.vertex_global_ids, dtype=np.int64)
@@ -347,6 +738,7 @@ def brep_layer_core_source(
     domain: MeshingDomain,
     boundary: CellMeshingResult,
     specification: VolumeMeshingSpec,
+    source_boundary_schedule: NativeSurfaceSchedule,
     /,
 ) -> sources_owner.NativeLayerCoreSource:
     """Grow the source-face layer control and bind the fixed conforming core."""
@@ -360,8 +752,9 @@ def brep_layer_core_source(
             "The accepted boundary charts must bind the volume source domain."
         )
     control = controls_owner.wall_layer_control(specification.layer_controls[0], charts)
+    policy = boundary_layer_owner.BoundaryLayerPolicy()
     layers = boundary_layer_owner.prepare_boundary_layers(
-        charts.mesh, control, wall_association=vertex_association
+        charts.mesh, control, wall_association=vertex_association, policy=policy
     )
     core = fixed_core(domain, layers, charts)
     return sources_owner.NativeLayerCoreSource(
@@ -381,7 +774,16 @@ def brep_layer_core_source(
         source_boundary_scope=specification.boundary_scope,
         source_domain=domain,
         fidelity_source=charts.boundary_source,
-        source_surface_charts=charts,
+        source_boundary_charts=boundary.surface_source,
+        source_boundary_schedule=source_boundary_schedule,
+        source_wall_charts=charts,
+        noncap_refinement=(
+            "conforming"
+            if np.any(core.polygon_wall_cells[core.cap_count :] < 0)
+            else "fixed"
+        ),
+        layer_control=control,
+        layer_policy=policy,
         core_facet_source_ids=tuple(
             None if side == "cap" else domain.entity_id(2, patch)
             for side, patch in core.facet_keys

@@ -1,19 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from fractions import Fraction
+from heapq import heappop, heappush
 from types import MappingProxyType
 from typing import NamedTuple
 
 import numpy as np
+from ..linalg._exact import solve_exact
 
 from ._coordinate_enclosure import (
     add,
+    axes,
     bernstein_coefficients,
     BernsteinDomain,
     constant,
     evaluate_expression,
     ExactScalar,
+    expression_equal,
     normalize_pyramid_reference_expression,
     RationalPolynomial,
     scale,
@@ -822,11 +826,333 @@ def validate_reference_cell_map_witnesses(
     exact_reference_cell_vertices(witnesses)
 
 
+class ReferenceCellPartition(NamedTuple):
+    """Complete disjoint fine-reference partitions of coarse reference cells.
+
+    Each map is oriented fine-to-coarse: its ``target_cell_ids`` name the fine
+    cells, and its ``source_cell_ids`` name the coarse parents. This direction
+    is also used when the partition witnesses a physical coarsening transition.
+    """
+
+    maps: tuple[ReferenceCellMapWitnesses, ...]
+
+
+def _partition_subtract(
+    first: tuple[Fraction, ...], second: tuple[Fraction, ...], /
+) -> tuple[Fraction, ...]:
+    return tuple(a - b for a, b in zip(first, second, strict=True))
+
+
+def _partition_cross(
+    first: tuple[Fraction, ...], second: tuple[Fraction, ...], /
+) -> tuple[Fraction, ...]:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _partition_dot(
+    first: tuple[Fraction, ...], second: tuple[Fraction, ...], /
+) -> Fraction:
+    return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+
+def _partition_affine_coefficients(
+    kind: str, vertices: tuple[tuple[Fraction, ...], ...], /
+) -> tuple[tuple[tuple[Fraction, ...], ...], Fraction]:
+    from ._reference_cell import reference_cell_topology
+
+    local = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology(kind).vertices
+    )
+    if kind in ("tetrahedron", "simplex:3", "prism"):
+        basis = (0, 1, 2, 3)
+    elif kind in ("hexahedron", "pyramid"):
+        basis = (0, 1, 3, 4)
+    elif kind in ("triangle", "simplex:2"):
+        basis = (0, 1, 2)
+    else:
+        raise ValueError(
+            "Reference partitions require standard 2D or 3D simplex/volume cells."
+        )
+    dimension = len(basis) - 1
+    if len(vertices) != len(local) or any(len(point) != dimension for point in vertices):
+        raise ValueError("Reference partition corners do not match their cell family.")
+    coefficients = solve_exact(
+        [[Fraction(1), *local[index]] for index in basis],
+        [list(vertices[index]) for index in basis],
+    )
+    if any(
+        tuple(
+            coefficients[0][axis]
+            + sum(
+                (
+                    point[column] * coefficients[column + 1][axis]
+                    for column in range(dimension)
+                ),
+                Fraction(0),
+            )
+            for axis in range(dimension)
+        )
+        != image
+        for point, image in zip(local, vertices, strict=True)
+    ):
+        raise ValueError("Reference partition maps must be exact affine restrictions.")
+    columns = tuple(
+        tuple(coefficients[column + 1][axis] for axis in range(dimension))
+        for column in range(dimension)
+    )
+    if dimension == 2:
+        determinant = columns[0][0] * columns[1][1] - columns[0][1] * columns[1][0]
+    else:
+        first, second, third = columns
+        determinant = _partition_dot(first, _partition_cross(second, third))
+    if not determinant:
+        raise ValueError("Reference partition cells must be nondegenerate.")
+    return tuple(tuple(row) for row in coefficients), abs(determinant)
+
+
+def _partition_interiors_disjoint(
+    first_kind: str,
+    first: tuple[tuple[Fraction, ...], ...],
+    second_kind: str,
+    second: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> bool:
+    if first_kind == second_kind == "prism":
+        def extruded(vertices: tuple[tuple[Fraction, ...], ...]) -> bool:
+            return (
+                len(vertices) == 6
+                and all(vertices[index][:2] == vertices[index + 3][:2] for index in range(3))
+                and len({vertices[index][2] for index in range(3)}) == 1
+                and len({vertices[index][2] for index in range(3, 6)}) == 1
+                and (
+                    (vertices[1][0] - vertices[0][0]) * (vertices[2][1] - vertices[0][1])
+                    - (vertices[1][1] - vertices[0][1]) * (vertices[2][0] - vertices[0][0])
+                ) != 0
+                and vertices[0][2] != vertices[3][2]
+            )
+
+        if extruded(first) and extruded(second):
+            first_z = sorted((first[0][2], first[3][2]))
+            second_z = sorted((second[0][2], second[3][2]))
+            if first_z[1] <= second_z[0] or second_z[1] <= first_z[0]:
+                return True
+            # Each admitted image is exactly a triangle × interval; 2D
+            # separating axes of the two triangle edges are complete.
+            for triangle in (first, second):
+                for start, end in ((0, 1), (1, 2), (2, 0)):
+                    dx = triangle[end][0] - triangle[start][0]
+                    dy = triangle[end][1] - triangle[start][1]
+                    left = tuple(-dy * point[0] + dx * point[1] for point in first[:3])
+                    right = tuple(-dy * point[0] + dx * point[1] for point in second[:3])
+                    if max(left) <= min(right) or max(right) <= min(left):
+                        return True
+            return False
+    from ._reference_cell import reference_cell_topology
+
+    first_topology = reference_cell_topology(first_kind)
+    second_topology = reference_cell_topology(second_kind)
+    if first_topology.dimension == second_topology.dimension == 2:
+        # Both images are convex polygons: their edge normals are a complete
+        # set of separating axes.
+        for topology, vertices in ((first_topology, first), (second_topology, second)):
+            for start, end in topology.entities[1]:
+                normal = (
+                    vertices[start][1] - vertices[end][1],
+                    vertices[end][0] - vertices[start][0],
+                )
+                left = tuple(_partition_dot(normal, point) for point in first)
+                right = tuple(_partition_dot(normal, point) for point in second)
+                if max(left) <= min(right) or max(right) <= min(left):
+                    return True
+        return False
+    axes = []
+    for topology, vertices in ((first_topology, first), (second_topology, second)):
+        for face in topology.entities[2]:
+            axes.append(
+                _partition_cross(
+                    _partition_subtract(vertices[face[1]], vertices[face[0]]),
+                    _partition_subtract(vertices[face[2]], vertices[face[0]]),
+                )
+            )
+    first_edges = tuple(
+        _partition_subtract(first[edge[1]], first[edge[0]])
+        for edge in first_topology.entities[1]
+    )
+    second_edges = tuple(
+        _partition_subtract(second[edge[1]], second[edge[0]])
+        for edge in second_topology.entities[1]
+    )
+    axes.extend(_partition_cross(a, b) for a in first_edges for b in second_edges)
+    for axis in axes:
+        if not any(axis):
+            continue
+        left = tuple(_partition_dot(axis, point) for point in first)
+        right = tuple(_partition_dot(axis, point) for point in second)
+        if max(left) <= min(right) or max(right) <= min(left):
+            return True
+    return False
+
+
+def _partition_aabb_candidates(
+    children: Sequence[
+        tuple[str, tuple[tuple[Fraction, ...], ...], Fraction]
+    ],
+    /,
+) -> Iterator[tuple[int, int]]:
+    """Yield pairs whose exact axis-aligned bounding boxes overlap."""
+    dimension = len(children[0][1][0]) if children else 3
+    bounds = tuple(
+        tuple(
+            (min(point[axis] for point in vertices), max(point[axis] for point in vertices))
+            for axis in range(dimension)
+        )
+        for _, vertices, _ in children
+    )
+    # Choose the axis with the fewest interval overlaps, not a caller-supplied
+    # grid assumption. Touching intervals cannot contain intersecting interiors.
+    orders = tuple(
+        sorted(range(len(bounds)), key=lambda index: bounds[index][axis][0])
+        for axis in range(dimension)
+    )
+    counts = []
+    for axis, order in enumerate(orders):
+        ends: list[Fraction] = []
+        count = 0
+        for index in order:
+            lower, upper = bounds[index][axis]
+            while ends and ends[0] <= lower:
+                heappop(ends)
+            count += len(ends)
+            heappush(ends, upper)
+        counts.append(count)
+    axis = min(range(dimension), key=counts.__getitem__)
+    remaining_axes = tuple(other for other in range(dimension) if other != axis)
+    active: dict[int, None] = {}
+    ends_with_ids: list[tuple[Fraction, int]] = []
+    for index in orders[axis]:
+        lower, upper = bounds[index][axis]
+        while ends_with_ids and ends_with_ids[0][0] <= lower:
+            _, expired = heappop(ends_with_ids)
+            del active[expired]
+        for other in active:
+            if all(
+                bounds[index][other_axis][0] < bounds[other][other_axis][1]
+                and bounds[other][other_axis][0] < bounds[index][other_axis][1]
+                for other_axis in remaining_axes
+            ):
+                yield other, index
+        active[index] = None
+        heappush(ends_with_ids, (upper, index))
+
+
+def validate_reference_cell_partition(partition: ReferenceCellPartition, /) -> None:
+    """Prove exact affine inclusion, disjoint interiors, and complete parent cover.
+
+    Partitions are triangle-by-triangle in 2D or by standard volume cells in
+    3D. Exact bounding-box separation excludes pairs with disjoint interiors;
+    all remaining pairs receive the full separating-axis proof. Inclusion and
+    disjointness make exact equality of the measure sum a complete-cover proof.
+    """
+    if (
+        not isinstance(partition, ReferenceCellPartition)
+        or not isinstance(partition.maps, tuple)
+        or not partition.maps
+    ):
+        raise ValueError("A reference partition requires nonempty exact map groups.")
+    volumes = {
+        "triangle": Fraction(1, 2),
+        "simplex:2": Fraction(1, 2),
+        "tetrahedron": Fraction(1, 6),
+        "simplex:3": Fraction(1, 6),
+        "prism": Fraction(1, 2),
+        "pyramid": Fraction(1, 3),
+        "hexahedron": Fraction(1),
+    }
+    planar = frozenset(("triangle", "simplex:2"))
+    partition_dimension: int | None = None
+    parents: dict[
+        int, tuple[str, list[tuple[str, tuple[tuple[Fraction, ...], ...], Fraction]]]
+    ] = {}
+    fine_ids: set[int] = set()
+    for group in partition.maps:
+        if not isinstance(group, ReferenceCellMapWitnesses):
+            raise TypeError("Reference partition groups must be reference map witnesses.")
+        if (
+            group.target_cell_kind not in volumes
+            or group.source_cell_kind not in volumes
+        ):
+            raise ValueError("Reference partitions require affine standard-volume maps.")
+        group_dimension = 2 if group.target_cell_kind in planar else 3
+        if (group.source_cell_kind in planar) != (group_dimension == 2) or (
+            partition_dimension is not None and group_dimension != partition_dimension
+        ):
+            raise ValueError("Reference partition cells must share one dimension.")
+        partition_dimension = group_dimension
+        exact = exact_reference_cell_vertices(group)
+        for row, (fine, coarse, vertices) in enumerate(zip(
+            np.asarray(group.target_cell_ids, dtype=np.int64),
+            np.asarray(group.source_cell_ids, dtype=np.int64),
+            exact,
+            strict=True,
+        )):
+            fine_id, coarse_id = int(fine), int(coarse)
+            if fine_id in fine_ids:
+                raise ValueError("A fine cell occurs more than once in a reference partition.")
+            fine_ids.add(fine_id)
+            parent_kind, children = parents.setdefault(
+                coarse_id, (group.source_cell_kind, [])
+            )
+            if parent_kind != group.source_cell_kind:
+                raise ValueError("A reference partition parent has conflicting cell families.")
+            coefficients, determinant = _partition_affine_coefficients(
+                group.target_cell_kind, vertices
+            )
+            arguments = group.source_reference_chart_arguments
+            if arguments is None:
+                if group.target_cell_kind == "pyramid":
+                    raise ValueError("Pyramid partitions require explicit affine charts.")
+            else:
+                variables = axes(group_dimension)
+                for axis, actual in enumerate(arguments[row]):
+                    expected = constant(coefficients[0][axis], group_dimension)
+                    for column in range(group_dimension):
+                        expected = add(
+                            expected,
+                            scale(variables[column], coefficients[column + 1][axis]),
+                        )
+                    actual_expression = actual if isinstance(actual, RationalPolynomial) else dict(actual)
+                    if not expression_equal(expected, actual_expression):
+                        raise ValueError("Reference partition chart is not its affine corner map.")
+            children.append((group.target_cell_kind, vertices, determinant))
+    if not fine_ids:
+        raise ValueError("A reference partition cannot be empty.")
+    for parent_kind, children in parents.values():
+        total = sum(
+            (volumes[kind] * determinant for kind, _, determinant in children),
+            Fraction(0),
+        )
+        if total != volumes[parent_kind]:
+            raise ValueError("Reference partition does not cover its parent volume exactly.")
+        for index, other_index in _partition_aabb_candidates(children):
+            kind, vertices, _ = children[index]
+            other_kind, other_vertices, _ = children[other_index]
+            if not _partition_interiors_disjoint(
+                kind, vertices, other_kind, other_vertices
+            ):
+                raise ValueError("Reference partition cells have overlapping interiors.")
+
+
 __all__ = [
     "ExactReferenceChartArgumentBank",
     "ExactReferenceChartExpression",
     "NestedReferenceWitnesses",
     "ReferenceCellMapWitnesses",
+    "ReferenceCellPartition",
     "exact_reference_cell_vertices",
     "exact_reference_vertices",
     "evaluate_reference_chart_arguments",
@@ -837,4 +1163,5 @@ __all__ = [
     "reference_cell_strictly_contains",
     "validate_nested_reference_witnesses",
     "validate_reference_cell_map_witnesses",
+    "validate_reference_cell_partition",
 ]

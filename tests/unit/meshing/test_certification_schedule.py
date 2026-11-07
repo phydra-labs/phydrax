@@ -1,17 +1,34 @@
+import pickle
 from typing import Literal
 
 import numpy as np
 import pytest
 
+from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry_validity import (
     certify_cell_geometry_validity,
 )
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
-from phydrax.geometry._global_embedding import certify_global_embedding
+from phydrax.geometry._global_embedding import (
+    certify_global_embedding,
+    ValidatedGlobalEmbedding,
+)
+from phydrax.geometry._source_fidelity import certify_source_fidelity
+from phydrax.geometry.simplicial import SegmentMesh
 from phydrax.meshing._certification import MeshCertificationReport
 from phydrax.meshing._certification_inputs import MeshCertificationInputs
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+from phydrax.meshing._contracts import (
+    CellFamilyPolicy,
+    CellMeshingTarget,
+    CurveMeshingSpec,
+)
+from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
+from phydrax.meshing.providers._native_curve import prepare_native_curve
+from phydrax.meshing.providers._native_options import NativeMeshingOptions
+from phydrax.meshing.providers._native_sources import NativeCurveSource
 
 
 def _planar_inputs() -> tuple[CellMesh, CellGeometrySpec, PiecewiseLinearDomain]:
@@ -169,6 +186,34 @@ def test_acceptance_reuses_only_an_embedding_bound_to_its_inputs() -> None:
         report.revalidate(mesh, geometry, embedding=foreign)
 
 
+def test_operation_local_embedding_reuse_rejects_foreign_and_serialization() -> None:
+    mesh, geometry, domain = _planar_inputs()
+    inputs = MeshCertificationInputs(
+        mesh,
+        geometry,
+        MeshCertificationSchedule("planar"),
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        domain=domain,
+        cell_regions=np.asarray((0,), dtype=np.int64),
+        junction_vertices=np.asarray((), dtype=np.int64),
+        protected_features=(),
+    )
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    proof = ValidatedGlobalEmbedding(mesh, geometry, validity)
+    report = MeshCertificationReport(inputs, validated_embedding=proof)
+    assert report.passed
+    assert report.embedding is proof.certificate
+    assert report.report_id == MeshCertificationReport(inputs).report_id
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(proof)
+    other_mesh, other_geometry, _ = _planar_inputs()
+    other_validity = certify_cell_geometry_validity(other_geometry, mesh=other_mesh)
+    other = ValidatedGlobalEmbedding(other_mesh, other_geometry, other_validity)
+    with pytest.raises(ValueError, match="different exact"):
+        MeshCertificationReport(inputs, validated_embedding=other)
+
+
 def test_local_mesh_validity_does_not_replace_source_domain_coverage() -> None:
     source_mesh, _, domain = _planar_inputs()
     mesh = CellMesh(source_mesh.coordinates * 0.5, source_mesh.blocks)
@@ -190,3 +235,152 @@ def test_local_mesh_validity_does_not_replace_source_domain_coverage() -> None:
     assert report.coverage is not None
     assert report.coverage.status != "certified"
     assert not report.passed
+
+
+@pytest.mark.parametrize(
+    ("overall_tolerance", "scoped_tolerance"),
+    ((0.25, 0.25), (0.25, 0.01), (0.0, -0.0)),
+    ids=("same-bound", "stricter-feature-bound", "signed-zero-identity"),
+)
+def test_scoped_fidelity_retains_its_own_request_binding(
+    overall_tolerance: float,
+    scoped_tolerance: float,
+) -> None:
+    segments = SegmentMesh(
+        np.asarray(((0.0, 0.0), (1.0, 0.0)), dtype=np.float64),
+        np.asarray(((0, 1),), dtype=np.int32),
+        source_id="scoped-fidelity-line",
+    )
+    source = NativeCurveSource(
+        segments,
+        "revision",
+        curve_entity_ids=np.asarray((73,), dtype=np.int64),
+        vertex_entity_ids=np.asarray((91, 92), dtype=np.int64),
+    )
+    scope = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        1,
+        source.scope_entity_set_id(1),
+        np.asarray(source.chart_scope_entity_ids, dtype=np.int64),
+    )
+    specification = CurveMeshingSpec(
+        CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 2.0, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=0.25,
+    )
+    construction = prepare_native_curve(
+        source,
+        specification,
+        NativeMeshingOptions("curve_arc_length"),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    request = construction.certification
+    query, witness = request.fidelity_source, request.fidelity_witness
+    assert query is not None and witness is not None
+    inputs = MeshCertificationInputs(
+        construction.mesh,
+        construction.geometry,
+        request.schedule,
+        source_id=request.source_id,
+        source_revision=request.source_revision,
+        source=query,
+        fidelity_tolerance=overall_tolerance,
+        fidelity_witness=witness,
+        junction_vertices=request.junction_vertices,
+        protected_features=request.protected_features,
+        scoped_fidelity=((query, witness, scoped_tolerance),),
+        feature_source=request.feature_source,
+    )
+    report = MeshCertificationReport(inputs, organization=construction.organization)
+    scoped = report.scoped_fidelity[0]
+    assert scoped.status == "certified", scoped.findings
+    scoped.require_inputs(
+        construction.mesh,
+        construction.geometry,
+        query,
+        tolerance=scoped_tolerance,
+        maximum_normal_deviation=None,
+        witness=witness,
+    )
+    independent = certify_source_fidelity(
+        construction.mesh,
+        construction.geometry,
+        query,
+        tolerance=scoped_tolerance,
+        witness=witness,
+    )
+    assert scoped.certificate_id == independent.certificate_id
+
+
+def test_live_surface_proof_retains_exact_control_identity() -> None:
+    from phydrax.geometry._source_fidelity_certificate import SourceFidelityWitness
+    from phydrax.geometry.brep import brep_box
+    from phydrax.meshing._certification import _ComputedSurfaceAcceptance
+    from phydrax.meshing._contracts import SurfaceMeshingSpec
+    from phydrax.meshing.providers._native import NativeMeshingProvider
+
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=SpatialCoordinateContract.si(),
+        source_id="surface-reuse-controls",
+    )
+    scope = MeshingScope.whole(model, 2)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(UniformSizeControl(scope, 1.0),),
+        maximum_deviation=0.05,
+    )
+    construction = NativeMeshingProvider().plan(model, specification).prepared.execute()
+    request = construction.certification
+    witness = request.fidelity_witness
+    assert witness is not None
+
+    def inputs(
+        tolerance: float,
+        selected_witness: SourceFidelityWitness,
+    ) -> MeshCertificationInputs:
+        return MeshCertificationInputs(
+            construction.mesh,
+            construction.geometry,
+            request.schedule,
+            source_id=request.source_id,
+            source_revision=request.source_revision,
+            domain=request.domain,
+            cell_regions=request.cell_regions,
+            source=request.fidelity_source,
+            fidelity_tolerance=tolerance,
+            maximum_normal_deviation=request.maximum_normal_deviation,
+            junction_vertices=request.junction_vertices,
+            protected_features=request.protected_features,
+            scoped_fidelity=request.scoped_fidelity,
+            fidelity_witness=selected_witness,
+            feature_source=request.feature_source,
+        )
+
+    original = inputs(0.0, witness)
+    computed = _ComputedSurfaceAcceptance(
+        original,
+        construction.organization,
+        embedding=None,
+        validity_parent=None,
+        validated=(),
+    )
+    changed = inputs(-0.0, witness)
+    assert not computed.matches(changed)
+    renewed = MeshCertificationReport(
+        changed,
+        organization=construction.organization,
+        computed_surface=computed,
+    )
+    independent = MeshCertificationReport(changed, organization=construction.organization)
+    assert renewed.passed and independent.passed
+    assert renewed.report_id == independent.report_id
+    assert renewed.fidelity is not None and computed.report.fidelity is not None
+    assert renewed.fidelity.certificate_id != computed.report.fidelity.certificate_id

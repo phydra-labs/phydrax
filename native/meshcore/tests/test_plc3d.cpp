@@ -1149,6 +1149,31 @@ void test_conforming_missing_boundary_edges_recover_with_exact_witnesses() {
         result.points.data() + 3 * tet[2], result.points.data() + 3 * tet[3]);
   }
   PHX_CHECK((recovered_volume - initial_volume).sign() == 0);
+
+  // Selective protection either preserves the complete input triangle and
+  // its edges, or reports a fixed-boundary recovery refusal; it must never
+  // silently publish a split of that source facet.
+  const std::array<std::uint8_t, 8> protected_facets{1, 0, 0, 0, 0, 0, 0, 0};
+  input.protected_facets = protected_facets.data();
+  PlcRecovery selective;
+  const int32_t protected_status = recover_plc(input, selective);
+  if (protected_status == PHX_MC_OK) {
+    std::size_t count = 0;
+    auto original = std::array<int32_t, 3>{triangles[0], triangles[1], triangles[2]};
+    std::sort(original.begin(), original.end());
+    for (std::size_t row = 0; row < selective.face_sources.size(); ++row) {
+      if (selective.face_sources[row] != 0) continue;
+      ++count;
+      auto face = std::array<int32_t, 3>{
+          selective.faces[3 * row], selective.faces[3 * row + 1], selective.faces[3 * row + 2]};
+      std::sort(face.begin(), face.end());
+      PHX_CHECK(face == original);
+    }
+    PHX_CHECK(count == 1);
+  } else {
+    PHX_CHECK(selective.failure.reason == phx::mc::kPlcFixedFacet ||
+              selective.failure.reason == phx::mc::kPlcFixedSegment);
+  }
 }
 
 // Recovers a closed triangle surface, one facet per triangle oriented with
@@ -2342,17 +2367,18 @@ void test_recover_plc_removes_a_closed_cavity() {
   }
 }
 
-void test_grouped_material_interface_with_cavity_recovers_missing_planar_surface() {
+void check_grouped_material_interface_with_cavity(bool embedded_segment) {
   // Unchanged native_family_matrix._cavity_plc: two unit boxes, a shared
   // material interface and an exact-dyadic half-unit cavity in the right box.
   // The interface is planar but is not initially a mesh surface. Grouping
   // polygons must not bypass the facet recovery needed to construct it.
-  const std::array<double, 60> points{
+  const std::array<double, 66> points{
       0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0,
       0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1,
       2, 0, 0, 2, 1, 0, 2, 0, 1, 2, 1, 1,
       1.25, .25, .25, 1.75, .25, .25, 1.25, .75, .25, 1.75, .75, .25,
-      1.25, .25, .75, 1.75, .25, .75, 1.25, .75, .75, 1.75, .75, .75};
+      1.25, .25, .75, 1.75, .25, .75, 1.25, .75, .75, 1.75, .75, .75,
+      .25, .25, .25, .75, .75, .75};
   const std::array<int32_t, 68> vertices{
       0, 2, 3, 1, 1, 3, 9, 8,
       4, 5, 7, 6, 5, 10, 11, 7,
@@ -2365,10 +2391,11 @@ void test_grouped_material_interface_with_cavity_recovers_missing_planar_surface
   const std::array<int32_t, 17> facets{0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2,
                                        3, 3, 3, 3, 3, 3};
   const std::array<int32_t, 8> regions{-1, 0, -1, 1, 1, 0, 1, -1};
+  const std::array<int32_t, 2> segment{20, 21};
   std::array<int64_t, 18> offsets{};
   for (std::size_t row = 0; row < offsets.size(); ++row) offsets[row] = 4 * row;
   PlcInput input;
-  input.point_count = 20;
+  input.point_count = embedded_segment ? 22 : 20;
   input.points = points.data();
   input.polygon_count = 17;
   input.polygon_offsets = offsets.data();
@@ -2376,6 +2403,8 @@ void test_grouped_material_interface_with_cavity_recovers_missing_planar_surface
   input.polygon_facets = facets.data();
   input.facet_count = 4;
   input.facet_regions = regions.data();
+  input.segment_count = embedded_segment ? 1 : 0;
+  input.segments = embedded_segment ? segment.data() : nullptr;
   input.policy = BoundaryPolicy::kConforming;
   PlcRecovery result;
   const int32_t status = recover_plc(input, result);
@@ -2452,6 +2481,40 @@ void test_grouped_material_interface_with_cavity_recovers_missing_planar_surface
   for (std::size_t polygon = 0; polygon < facets.size(); ++polygon) {
     PHX_CHECK((twice_areas[polygon] - Expansion(polygon < 11 ? 2.0 : 0.5)).sign() == 0);
   }
+  if (embedded_segment) {
+    double total_x_length = 0.0;
+    std::map<int32_t, int> degree;
+    for (std::size_t row = 0; row < result.segment_sources.size(); ++row) {
+      const int32_t source = result.segment_sources[row];
+      if (source < 0 || 2 * static_cast<std::size_t>(source) + 1 >= result.plc_edges.size()) continue;
+      const int32_t a = result.plc_edges[2 * static_cast<std::size_t>(source)];
+      const int32_t b = result.plc_edges[2 * static_cast<std::size_t>(source) + 1];
+      if (!((a == 20 && b == 21) || (a == 21 && b == 20))) continue;
+      const int32_t u = result.segments[2 * row], v = result.segments[2 * row + 1];
+      ++degree[u];
+      ++degree[v];
+      for (int32_t vertex : {u, v}) {
+        const double* p = result.points.data() + 3 * vertex;
+        PHX_CHECK(std::fabs(p[0] - p[1]) < 1e-12);
+        PHX_CHECK(std::fabs(p[0] - p[2]) < 1e-12);
+        PHX_CHECK(p[0] >= .25 && p[0] <= .75);
+      }
+      total_x_length += std::fabs(result.points[3 * u] - result.points[3 * v]);
+    }
+    PHX_CHECK(std::fabs(total_x_length - .5) < 1e-12);
+    PHX_CHECK(degree[20] == 1 && degree[21] == 1);
+    for (const auto& [vertex, count] : degree) {
+      if (vertex != 20 && vertex != 21) PHX_CHECK(count == 2);
+    }
+  }
+}
+
+void test_grouped_material_interface_with_cavity_recovers_missing_planar_surface() {
+  check_grouped_material_interface_with_cavity(false);
+  // Exact authored PLC with protected interior segment. Its interface split
+  // used to legalize against an artificial corner before inserting the new
+  // source point, cycling between two triangulations.
+  check_grouped_material_interface_with_cavity(true);
 }
 
 // Point 1455 of a 1552-point CAD PLC under FIXED: its ear-clipped wedge has
@@ -2726,6 +2789,147 @@ void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
   PHX_CHECK(result.suppression_search.exhausted == 0);
 }
 
+// A capped patch of the original lobed-r4 reconstruction surface, whose full
+// recovery refused STEINER_SUPPRESSION at its PLC edge (36, 88): the 63
+// source triangles within 0.04 of that edge, closed by a fan to one apex
+// below them, every facet void outside and region 0 inside, CONFORMING.
+// Here vertices 9, 16, 17 are the source vertices 36, 88, 89. A cluster of
+// source vertices lies within ~3e-3 of the edge length of 88, nearly on the
+// line of the edge (needle facets such as (9, 17, 16), height ~1e-3 of its
+// length). Recovery splits the segments through the cluster and places
+// volume Steiner points of planar fan flips and earlier suppressions a few
+// 1e-6 of an edge length from their subfaces. The last non-binary64 split
+// point of the segment (32, 37) (source (129, 167); 129 lies within 1.1e-4
+// of the line of (36, 88)) then had a wedge that no fill covers while those
+// points stay wall vertices, and growth that never enclosed a vertex
+// exhausted its region: recovery refused STEINER_SUPPRESSION, as the full
+// surface did. Merged cavities now enclose volume Steiner points, which
+// leave with the split point.
+void test_suppression_merges_enclose_volume_steiner_points() {
+  const std::vector<double> points{
+      -0x1.e72d6ad559595p-4, -0x1.34bee8af41e50p-5, -0x1.0e00f058de8edp-4,
+      -0x1.e3b3727ee20bdp-4, -0x1.d79f1875dacf5p-4, 0x1.95c560de94dc0p-7,
+      -0x1.cfb7267fa5e90p-4, -0x1.33ab786198fb6p-4, -0x1.9a4d5fb895b58p-6,
+      -0x1.b3c75ccd15e37p-4, -0x1.7ba7226c1bd40p-4, -0x1.5d1e03f1508c0p-5,
+      -0x1.b2541123dbe23p-4, -0x1.510e8dbd63023p-4, -0x1.b24f2d4ec22f6p-5,
+      -0x1.b15ef4f01e56cp-4, -0x1.a54a9ae7171a4p-4, -0x1.09d712fb59ff5p-5,
+      -0x1.a9b68108af55ap-4, -0x1.9da226ffa8192p-4, -0x1.a1140d1869164p-5,
+      -0x1.a87b610cb61e0p-4, -0x1.34bee8af41e50p-5, -0x1.8fd6b00d23270p-4,
+      -0x1.9f0cd01466728p-4, -0x1.2e7768404b5a8p-3, 0x1.95c560de94dc0p-7,
+      -0x1.87bb7c7523108p-4, -0x1.e44c930515297p-4, -0x1.5d1e03f1508c0p-5,
+      -0x1.87bb7c7523108p-4, -0x1.7ba7226c1bd40p-4, -0x1.1cd937e38f78bp-4,
+      -0x1.65246fab7d64ap-4, -0x1.591015a276282p-4, -0x1.8fd6b00d23270p-4,
+      -0x1.60462218c6894p-4, -0x1.2e7768404b5a8p-3, -0x1.0e334f38977d8p-5,
+      -0x1.31faed35a0d72p-4, -0x1.25e6932c999aap-4, -0x1.0daee7710de79p-3,
+      -0x1.2dc84a5bdca1ep-4, -0x1.7221a63de593fp-3, -0x1.526f3f7d875dap-6,
+      -0x1.4e6728a07c7b7p-5, -0x1.2e17854880532p-3, -0x1.8fd6b00d23270p-4,
+      -0x1.4e429e003901bp-5, -0x1.2e7768404b5a8p-3, -0x1.8f292f6daed52p-4,
+      -0x1.4d761060d9761p-5, -0x1.2e7768404b5a8p-3, -0x1.8fd6b00d23270p-4,
+      -0x1.4d5914b92a453p-5, -0x1.2e5b0a4254e0bp-3, -0x1.900f6c09101aap-4,
+      -0x1.4d56b2f380654p-5, -0x1.2e932dccd75c5p-3, -0x1.8f9f24f40b236p-4,
+      -0x1.4d3ea76738c05p-5, -0x1.2e7768404b5a8p-3, -0x1.9002356017582p-4,
+      -0x1.4d3e64c470c5ep-5, -0x1.2e8d1a4113748p-3, -0x1.8fd6b00d23270p-4,
+      -0x1.4d2e01b33f873p-5, -0x1.2e89017cc724dp-3, -0x1.8ff9e2861abbap-4,
+      -0x1.4ce79cc1505e0p-5, -0x1.897669dc7a90fp-3, -0x1.068aae3917a2cp-5,
+      -0x1.4ce79cc1505e0p-5, -0x1.2ec4e12d960ecp-3, -0x1.8f3bbe328dbe8p-4,
+      -0x1.4ce79cc1505e0p-5, -0x1.2e9981c8be09bp-3, -0x1.8fd6b00d23270p-4,
+      -0x1.4ce79cc1505e0p-5, -0x1.2e8ca75d1f59ap-3, -0x1.90012e46cb255p-4,
+      -0x1.4ce79cc1505e0p-5, -0x1.2e7768404b5a8p-3, -0x1.901a2088325d8p-4,
+      -0x1.4ce79cc1505e0p-5, -0x1.2e281878bd351p-3, -0x1.90754f9c3f71ep-4,
+      -0x1.4ce79cc1505e0p-5, -0x1.531d7291685bep-4, -0x1.244a572375483p-3,
+      -0x1.4c7ce6c4fe61dp-5, -0x1.2e9215bf5fd99p-3, -0x1.900c0b0b4c251p-4,
+      -0x1.4bc47832ba017p-5, -0x1.2e7768404b5a8p-3, -0x1.906842546e554p-4,
+      -0x1.4bb27eb891740p-5, -0x1.2ec4afc27b150p-3, -0x1.8fd6b00d23270p-4,
+      -0x1.82a76b0bc2b50p-8, -0x1.9f1b3f4a88cb4p-3, -0x1.5d1e03f1508c0p-5,
+      -0x1.228baa6f197c0p-8, -0x1.7ba7226c1bd40p-4, -0x1.388f2f10cf044p-3,
+      0x1.09f8f16402f52p-7, -0x1.abe5a00e31f4fp-3, -0x1.904786fff532cp-5,
+      0x1.23d81c29e0f81p-7, -0x1.91fffe9ab2670p-4, -0x1.43bb9d281a4dcp-3,
+      0x1.d69efd9e95900p-7, -0x1.9f1b3f4a88cb4p-3, -0x1.016bc997c15f2p-4,
+      0x1.d69efd9e95900p-7, -0x1.c45682923182bp-4, -0x1.388f2f10cf044p-3,
+      0x1.973daee30c7ecp-6, -0x1.899d794810946p-3, -0x1.8fd6b00d23270p-4,
+      0x1.9fc0bc80dbfbcp-6, -0x1.2e7768404b5a8p-3, -0x1.2201075a9cddcp-3,
+      0x1.2cb20755e9523p-5, -0x1.7158ad4ef7cfbp-3, -0x1.0acc9d153e08bp-3,
+      0x1.bd540fdbf4922p-6, -0x1.38397fcd86f38p-4, -0x1.f8460b9172c32p-6,
+  };
+  const std::vector<int32_t> triangles{
+      0, 4, 2, 0, 7, 4, 1, 2, 5, 1, 5, 8,
+      2, 3, 5, 2, 4, 3, 3, 4, 6, 3, 6, 5,
+      4, 7, 10, 4, 10, 6, 5, 6, 9, 5, 9, 8,
+      6, 10, 17, 6, 17, 9, 7, 11, 10, 8, 9, 12,
+      8, 12, 14, 9, 16, 12, 9, 17, 16, 10, 11, 15,
+      10, 15, 17, 11, 13, 18, 11, 18, 15, 12, 16, 19,
+      12, 19, 14, 13, 28, 18, 13, 29, 28, 14, 19, 23,
+      15, 18, 17, 16, 17, 19, 17, 18, 20, 17, 20, 22,
+      17, 21, 19, 17, 22, 21, 18, 27, 20, 18, 28, 27,
+      19, 21, 25, 19, 24, 23, 19, 25, 24, 20, 27, 22,
+      21, 22, 25, 22, 26, 25, 22, 27, 26, 23, 24, 33,
+      24, 25, 33, 25, 26, 30, 25, 30, 32, 25, 32, 37,
+      25, 35, 33, 25, 37, 35, 26, 27, 30, 27, 28, 34,
+      27, 31, 30, 27, 34, 36, 27, 36, 38, 27, 38, 31,
+      28, 29, 34, 30, 31, 41, 30, 41, 32, 31, 38, 40,
+      31, 40, 41, 32, 39, 37, 32, 41, 39, 0, 2, 42,
+      7, 0, 42, 2, 1, 42, 1, 8, 42, 11, 7, 42,
+      8, 14, 42, 13, 11, 42, 29, 13, 42, 14, 23, 42,
+      23, 33, 42, 33, 35, 42, 35, 37, 42, 36, 34, 42,
+      38, 36, 42, 34, 29, 42, 40, 38, 42, 41, 40, 42,
+      37, 39, 42, 39, 41, 42,
+  };
+  const std::size_t point_count = points.size() / 3;
+  const std::size_t faces = triangles.size() / 3;
+  std::vector<int64_t> offsets(faces + 1);
+  std::vector<int32_t> facets(faces);
+  std::vector<int32_t> regions(2 * faces);
+  for (std::size_t row = 0; row <= faces; ++row) offsets[row] = static_cast<int64_t>(3 * row);
+  for (std::size_t row = 0; row < faces; ++row) {
+    facets[row] = static_cast<int32_t>(row);
+    regions[2 * row] = -1;
+    regions[2 * row + 1] = 0;
+  }
+  PlcInput input;
+  input.point_count = static_cast<int64_t>(point_count);
+  input.points = points.data();
+  input.polygon_count = static_cast<int64_t>(faces);
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = triangles.data();
+  input.polygon_facets = facets.data();
+  input.facet_count = static_cast<int64_t>(faces);
+  input.facet_regions = regions.data();
+  input.policy = BoundaryPolicy::kConforming;
+  PlcRecovery result;
+  const int32_t status = recover_plc(input, result);
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  check_conforming_recovery(result, point_count, faces);
+  PHX_CHECK(result.suppression_search.merges > 0);
+  // The region-0 cells fill the closed surface: their volumes sum to its
+  // signed volume.
+  double enclosed = 0.0;
+  for (std::size_t row = 0; row < faces; ++row) {
+    const double* a = points.data() + 3 * static_cast<std::size_t>(triangles[3 * row]);
+    const double* b = points.data() + 3 * static_cast<std::size_t>(triangles[3 * row + 1]);
+    const double* c = points.data() + 3 * static_cast<std::size_t>(triangles[3 * row + 2]);
+    enclosed += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) +
+                 a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0;
+  }
+  double meshed = 0.0;
+  for (std::size_t cell = 0; cell < result.tet_regions.size(); ++cell) {
+    PHX_CHECK(result.tet_regions[cell] == 0);
+    const double* v[4];
+    for (int k = 0; k < 4; ++k) {
+      v[k] = result.points.data() + 3 * static_cast<std::size_t>(result.tets[4 * cell + k]);
+    }
+    double u[3][3];
+    for (int k = 0; k < 3; ++k) {
+      for (int axis = 0; axis < 3; ++axis) u[k][axis] = v[k + 1][axis] - v[0][axis];
+    }
+    meshed += (u[0][0] * (u[1][1] * u[2][2] - u[1][2] * u[2][1]) -
+               u[0][1] * (u[1][0] * u[2][2] - u[1][2] * u[2][0]) +
+               u[0][2] * (u[1][0] * u[2][1] - u[1][1] * u[2][0])) / 6.0;
+  }
+  PHX_CHECK(enclosed > 0.0);
+  PHX_CHECK(std::fabs(meshed - enclosed) <= 1e-12);
+}
+
 // The distance envelope of the unit tetrahedron at offset 1.5 has grid
 // vertices such as (-1.5, 0.5, 0.5) at exactly the offset from a face. Its
 // marching-tetrahedra surface used to carry clusters of ~10 vertices within
@@ -2819,10 +3023,98 @@ void test_offset_tie_envelope_recovers_under_both_policies() {
   }
 }
 
+void test_affine_recovery_c_api_guards() {
+  const std::array<double, 12> points{0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  const std::array<int64_t, 5> offsets{0, 3, 6, 9, 12};
+  const std::array<int32_t, 12> vertices{1, 2, 3, 0, 3, 2, 0, 1, 3, 0, 2, 1};
+  const std::array<int32_t, 4> facets{0, 1, 2, 3};
+  const std::array<int32_t, 8> regions{-1, 1, -1, 1, -1, 1, -1, 1};
+  const std::array<double, 9> identity{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  const std::array<double, 9> reflected{-1, 0, 0, 0, 2, 0, 0, 0, 1};
+  const std::array<double, 9> singular{1, 0, 0, 0, 1, 0, 0, 0, 0};
+  auto nonfinite = identity;
+  phx_mc_plc3d_result* result = nullptr;
+  phx_mc_plc3d_prepare_source_request request{};
+  request.point_count = 4;
+  request.points = points.data();
+  request.polygon_count = 4;
+  request.polygon_vertex_count = 12;
+  request.polygon_offsets = offsets.data();
+  request.polygon_vertices = vertices.data();
+  request.polygon_facets = facets.data();
+  request.facet_count = 4;
+  request.facet_regions = regions.data();
+  request.boundary_policy = PHX_MC_TET_MESH_BOUNDARY_FIXED;
+  request.result = &result;
+
+  PHX_CHECK(phx_mc_plc3d_recover_with_affine_metric(nullptr, identity.data()) ==
+            PHX_MC_INVALID_ARGUMENT);
+  auto invalid = [&](const phx_mc_plc3d_prepare_source_request& bad, const double* matrix,
+                     int32_t expected) {
+    result = reinterpret_cast<phx_mc_plc3d_result*>(static_cast<uintptr_t>(1));
+    PHX_CHECK(phx_mc_plc3d_recover_with_affine_metric(&bad, matrix) == expected);
+    PHX_CHECK(result == nullptr);
+  };
+  invalid(request, nullptr, PHX_MC_INVALID_ARGUMENT);
+  invalid(request, singular.data(), PHX_MC_INVALID_ARGUMENT);
+  nonfinite[0] = std::numeric_limits<double>::quiet_NaN();
+  invalid(request, nonfinite.data(), PHX_MC_INVALID_ARGUMENT);
+  nonfinite[0] = std::numeric_limits<double>::infinity();
+  invalid(request, nonfinite.data(), PHX_MC_INVALID_ARGUMENT);
+  auto bad = request;
+  bad.points = nullptr;
+  invalid(bad, identity.data(), PHX_MC_INVALID_ARGUMENT);
+  bad = request;
+  bad.polygon_vertices = nullptr;
+  invalid(bad, identity.data(), PHX_MC_INVALID_ARGUMENT);
+  bad = request;
+  bad.polygon_vertex_count = -1;
+  invalid(bad, identity.data(), PHX_MC_INVALID_ARGUMENT);
+  bad = request;
+  bad.polygon_vertex_count = 11;
+  invalid(bad, identity.data(), PHX_MC_INVALID_ARGUMENT);
+  bad = request;
+  bad.point_count = std::numeric_limits<int32_t>::max();
+  invalid(bad, identity.data(), PHX_MC_INDEX_RANGE_ERROR);
+  const std::array<int32_t, 4> bad_facets{4, 1, 2, 3};
+  bad = request;
+  bad.polygon_facets = bad_facets.data();
+  result = nullptr;
+  PHX_CHECK(phx_mc_plc3d_recover_with_affine_metric(&bad, identity.data()) ==
+            PHX_MC_INVALID_INPUT);
+  phx_mc_plc3d_free(result);
+  bad = request;
+  bad.result = nullptr;
+  PHX_CHECK(phx_mc_plc3d_recover_with_affine_metric(&bad, identity.data()) ==
+            PHX_MC_INVALID_ARGUMENT);
+
+  for (const double* matrix : {identity.data(), reflected.data()}) {
+    result = nullptr;
+    PHX_CHECK(phx_mc_plc3d_recover_with_affine_metric(&request, matrix) == PHX_MC_OK);
+    PHX_CHECK(result != nullptr);
+    if (result != nullptr) {
+      std::array<int64_t, PHX_MC_PLC3D_SIZES> sizes{};
+      PHX_CHECK(phx_mc_plc3d_sizes(result, sizes.data()) == PHX_MC_OK);
+      PHX_CHECK(sizes[0] == 4 && sizes[1] == 1 && sizes[2] == 4);
+      phx_mc_plc3d_free(result);
+    }
+  }
+  result = nullptr;
+  PHX_CHECK(phx_mc_plc3d_recover(&request) == PHX_MC_OK);
+  PHX_CHECK(result != nullptr);
+  if (result != nullptr) {
+    std::array<int64_t, PHX_MC_PLC3D_SIZES> sizes{};
+    PHX_CHECK(phx_mc_plc3d_sizes(result, sizes.data()) == PHX_MC_OK);
+    PHX_CHECK(sizes[0] == 4 && sizes[1] == 1 && sizes[2] == 4);
+    phx_mc_plc3d_free(result);
+  }
+}
+
 }  // namespace
 
 
 int main() {
+  test_affine_recovery_c_api_guards();
   test_edge_candidates_include_touching_and_coplanar_constraints();
   test_adjacency_candidates_follow_accepted_cavity_edit();
   test_source_witness_carriers_report_exact_deviation();
@@ -2855,5 +3147,6 @@ int main() {
   test_offset_tie_envelope_recovers_under_both_policies();
   test_suppression_wedge_without_delaunay_fill_is_searched();
   test_suppression_merges_a_sliver_wedge_with_its_neighbours();
+  test_suppression_merges_enclose_volume_steiner_points();
   return phx::mc::test::finish("test_plc3d");
 }

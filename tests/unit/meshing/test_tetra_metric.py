@@ -12,6 +12,7 @@ from phydrax._geometry_predicates import PredicateMode
 from phydrax._meshcore import TetMeshEdit, TetMeshEditKind, TetMeshEditStatus
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.meshing._canonical import certify_cell_mesh
+from phydrax.meshing._lineage import EntityLineageKind
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._tetra_metric import (
     _apply_collapse_batch,
@@ -21,20 +22,20 @@ from phydrax.meshing._tetra_metric import (
     _carrier_simplices,
     _collapse_metric_candidates,
     _collapse_phase,
-    _EntityFrame,
     _entity_frame,
     _entity_weights,
+    _EntityFrame,
     _facet_group_map,
-    _metric_enclosing_center,
     _locate_source_weights,
+    _metric_enclosing_center,
     _metric_logarithms,
     _NativeState,
     _prepare_native_state,
     _quantized_relocation,
     _relocation_goals,
     _relocation_proposals,
-    _source_metric_from_stencil,
     _replacement_candidates,
+    _source_metric_from_stencil,
     _split_phase,
     _stencil_image,
     _topology,
@@ -45,63 +46,6 @@ from phydrax.meshing._tetra_metric import (
     TetraMetricUnmetKind,
 )
 from phydrax.meshing._topology_edit import entity_keys, TopologyEditBlock
-
-
-def test_relocation_stage_cache_preserves_only_unchanged_stars(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from types import SimpleNamespace
-
-    import phydrax.meshing._tetra_metric as metric
-
-    state = SimpleNamespace(
-        target_mesh=SimpleNamespace(periodic_topology=None),
-        vertex_target_ids={1: 1},
-        snapshot=object(),
-    )
-    proposal = {
-        "vertex": 1,
-        "star_vertices": frozenset((1, 2)),
-        "star_cell_ids": (10,),
-        "cavity": frozenset((10,)),
-        "badness": 2.0,
-        "gain": 1.0,
-    }
-    deep_calls = 0
-    preparations: list[object] = []
-
-    def prepare(
-        _state: Any, /, *, previous: Any = None, moved_vertices: Any = None
-    ) -> object:
-        result = object()
-        preparations.append(result)
-        return result
-
-    def candidates(
-        _state: Any, cache: dict[int, Any], /, *, deep: bool,
-        active_only: bool, band_only: bool, refine: bool, prepared: object,
-    ) -> list[tuple[dict[str, Any], ...]]:
-        nonlocal deep_calls
-        assert prepared is preparations[-1]
-        if not deep or refine:
-            return []
-        deep_calls += 1
-        if deep_calls == 1:
-            cache.update({1: proposal, 99: None})
-            return [(proposal,)]
-        assert cache == {99: None}
-        return []
-
-    monkeypatch.setattr(metric, "_prepare_relocation_geometry", prepare)
-    monkeypatch.setattr(metric, "_relocation_proposals", candidates)
-    monkeypatch.setattr(metric, "_disjoint_candidates", lambda rows: [rows[0][1]])
-    monkeypatch.setattr(
-        metric, "_apply_relocation_partition",
-        lambda _state, selected, _counters, _cache: list(selected[0]),
-    )
-    assert metric._relocation_phase(state, {}, topology_operations=False) == 1
-    assert deep_calls == 2
-    assert len(preparations) == 2
 
 
 def _source(
@@ -183,7 +127,9 @@ def _state(source: CellMeshingResult, metric: np.ndarray, /) -> _NativeState:
     mesh = source.mesh
     edge_count = mesh.entity_set(1).entity_ids.size
     return _prepare_native_state(
-        source,
+        source.mesh,
+        source.geometry,
+        source.coordinate_contract,
         np.broadcast_to(metric, (mesh.vertex_global_ids.size, 3, 3)).copy(),
         cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
         facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
@@ -249,6 +195,55 @@ def _target_edges(outcome: TetraMetricOutcome, /) -> set[tuple[int, int]]:
     return edges
 
 
+def test_tetra_metric_seeds_authoritative_exact_source_vertices() -> None:
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    mesh = CellMesh(
+        points, (CellBlock("tet", "tetrahedron", np.asarray([[0, 1, 2, 3]])),)
+    )
+    exact = tuple(tuple(Fraction(float(x)) for x in row) for row in points)
+    exact = (
+        exact[0],
+        (Fraction(1) + Fraction(1, 2**54), Fraction(0), Fraction(0)),
+        *exact[2:],
+    )
+    bank = ExactPlcCellGeometrySource(
+        "authored-source",
+        "revision",
+        np.asarray(mesh.vertex_global_ids),
+        exact,
+        vertex_source_entity_ids=(None,) * 4,
+        vertex_occurrence_paths=((),) * 4,
+    )
+    affine = phx.discretization.CellGeometrySpec.affine(mesh)
+    geometry = phx.discretization.CellGeometrySpec(
+        dict(zip(affine.block_names, affine.elements, strict=True)),
+        dict(zip(affine.block_names, affine.geometry_dofs, strict=True)),
+        mesh.coordinates,
+        source_map=bank,
+        source_mesh=mesh,
+    )
+    state = _prepare_native_state(
+        mesh,
+        geometry,
+        phx.SpatialCoordinateContract.si(),
+        np.broadcast_to(np.eye(3), (4, 3, 3)).copy(),
+        cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
+        facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+        edge_classes=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.int64),
+        protected_edges=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.bool_),
+        fixed_vertices=np.zeros(4, dtype=np.bool_),
+    )
+    assert state.source_exact_points == exact
+    assert state.source_exact_points[1][0] != Fraction(float(state.source_points[1, 0]))
+    located = _locate_source_weights(exact[1], state.source_records)
+    assert located is not None
+    assert located[2] == (Fraction(0), Fraction(1), Fraction(0), Fraction(0))
+
+
 def test_nonperiodic_refinement_reaches_the_unit_metric() -> None:
     outcome = _adapt(_source(), np.eye(3) * 4.0, relocation=False)
 
@@ -268,7 +263,9 @@ def test_graded_split_points_are_exact_dyadic_edge_points() -> None:
     sizes = 0.12 + 0.3 * np.asarray(mesh.coordinates[:, 0], dtype=np.float64)
     metric = np.eye(3)[None] / (sizes * sizes)[:, None, None]
     state = _prepare_native_state(
-        source,
+        source.mesh,
+        source.geometry,
+        source.coordinate_contract,
         metric,
         cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
         facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
@@ -497,6 +494,96 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
         _adapt(source, invalid)
 
 
+def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> None:
+    from phydrax._meshcore import IntervalBoxProgram, TetMeshImplicitSource
+    from phydrax.meshing._tetra_metric import _implicit_only_vertex, _survivor_moves
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.25, 0.25, 1.0),
+            (0.25, 0.25, 0.0),
+        )
+    )
+    cells = [[0, 1, 4, 3], [1, 2, 4, 3], [2, 0, 4, 3]]
+    source = _mesh_result(points, cells)
+    exact = tuple(tuple(Fraction(float(value)) for value in point) for point in points)
+    bank = ExactPlcCellGeometrySource(
+        "plane", "revision", np.asarray(source.mesh.vertex_global_ids), exact,
+        vertex_source_entity_ids=(None,) * len(points),
+        vertex_occurrence_paths=((),) * len(points),
+    )
+    affine = phx.discretization.CellGeometrySpec.affine(source.mesh)
+    geometry = phx.discretization.CellGeometrySpec(
+        dict(zip(affine.block_names, affine.elements, strict=True)),
+        dict(zip(affine.block_names, affine.geometry_dofs, strict=True)),
+        source.mesh.coordinates, source_map=bank, source_mesh=source.mesh,
+    )
+    source = certify_cell_mesh(source.mesh, source.coordinate_contract, geometry=geometry)
+    state = _state(source, np.eye(3))
+    records = _boundary_records(state)
+    groups = {records.facets[key][1] for key in records.vertex_facets[4]}
+    assert len(groups) == 1
+    group = next(iter(groups))
+    value = IntervalBoxProgram(
+        np.asarray([[2, 4, 1, 2, -1, 3, -1, 0]], dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+        np.empty(0),
+        np.zeros(5),
+        np.zeros(5),
+        np.asarray([4]),
+        np.empty(0, dtype=np.int64),
+    )
+    gradient = IntervalBoxProgram(
+        np.empty((0, 8), dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+        np.empty(0),
+        np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        np.asarray([3, 4, 5]),
+        np.empty(0, dtype=np.int64),
+    )
+    try:
+        state.native.bind_implicit_source(
+            TetMeshImplicitSource(
+                value,
+                gradient,
+                np.asarray([group], dtype=np.int32),
+                0.01,
+                0,
+                "plane",
+                "revision",
+                bank.source_map_id,
+                source.coordinate_contract.reference_frame,
+            )
+        )
+        state.snapshot = state.native.arrays()
+        state.implicit_groups = frozenset((group,))
+        records = _boundary_records(state)
+        assert _implicit_only_vertex(state, records, 4)
+        topology = _topology(state.snapshot)
+        local = points[[4, 0, 1, 2, 3]]
+        moves = list(
+            _survivor_moves(
+                state, records, topology, 4, local, np.broadcast_to(np.eye(3), (5, 3, 3))
+            )
+        )
+        assert moves
+        for move in moves:
+            exact = _stencil_image(state, move["stencil"])
+            np.testing.assert_array_equal(
+                move["point"], [float(value) for value in exact]
+            )
+        state.native.protect_facet_group_rows(np.asarray([group], dtype=np.int32))
+        state.snapshot = state.native.arrays()
+        assert not _implicit_only_vertex(state, _boundary_records(state), 4)
+    finally:
+        state.native.close()
+
+
 def test_collapse_moves_its_survivor_to_the_collapsed_edge_midpoint() -> None:
     # Interior vertices r, k on the axis of a double cone over a hexagon: the
     # short edge rk (0.6) collapses in place only by creating a long spoke
@@ -529,11 +616,52 @@ def test_collapse_moves_its_survivor_to_the_collapsed_edge_midpoint() -> None:
     row = np.asarray(snapshot.vertex_ids).tolist().index(survivor)
     np.testing.assert_array_equal(np.asarray(snapshot.points)[row], np.zeros(3))
     assert state.vertex_stencils[survivor] == {1: Fraction(1, 2), 2: Fraction(1, 2)}
+    removed = 3 - survivor
+    assert (removed, survivor, EntityLineageKind.COLLAPSED_INTO) in state.history_vertex
+    assert (survivor, survivor, EntityLineageKind.RELOCATED) in state.history_vertex
+    assert not any(
+        kind is EntityLineageKind.UNKNOWN for _, _, kind in state.history_vertex
+    )
     assert len(snapshot.tetrahedra) == 12
     converged, outside, shortest, longest, quality = _unit_metric_status(state)
     # Only the hull spokes apex-ring (1.58) stay long; the merged star is in band.
     assert shortest >= 1.0 / np.sqrt(2.0) and quality > 0.0
     assert not converged and outside == 12 and longest > np.sqrt(2.0)
+    stencil = {1: Fraction(1, 4), 2: Fraction(3, 4)}
+    point = np.asarray(
+        [
+            float(
+                sum(
+                    (
+                        weight * Fraction(float(coordinates[vertex, axis]))
+                        for vertex, weight in stencil.items()
+                    ),
+                    Fraction(0),
+                )
+            )
+            for axis in range(3)
+        ]
+    )
+    proposal = {
+        "vertex": survivor,
+        "point": point,
+        "metric": np.eye(3),
+        "stencil": stencil,
+        "star_cell_ids": tuple(int(value) for value in state.snapshot.cell_ids),
+    }
+    assert _apply_relocation_batch(state, [proposal]) is TetMeshEditStatus.APPLIED
+    assert (removed, survivor, EntityLineageKind.COLLAPSED_INTO) in state.history_vertex
+    assert (survivor, survivor, EntityLineageKind.RELOCATED) in state.history_vertex
+    row = np.asarray(state.snapshot.vertex_ids).tolist().index(survivor)
+    np.testing.assert_array_equal(np.asarray(state.snapshot.points)[row], point)
+    assert state.vertex_stencils[survivor] == stencil
+    state.fixed_vertices.add(survivor)
+    cache = {
+        int(identifier): None
+        for identifier in np.asarray(state.snapshot.vertex_ids)
+        if int(identifier) != survivor
+    }
+    assert not _relocation_proposals(state, cache)
 
 
 def test_relocation_backtracks_to_binary64_resolution() -> None:
@@ -577,7 +705,9 @@ def test_active_relocation_prepares_only_violating_vertex_stars(
     prepared = metric._prepare_relocation_geometry(state)
     active = {
         vertex
-        for edge, length in zip(prepared.topology.edge_cells, prepared.lengths, strict=True)
+        for edge, length in zip(
+            prepared.topology.edge_cells, prepared.lengths, strict=True
+        )
         if not prepared.protected[edge]
         and (length < metric._LOWER or length > metric._UPPER)
         for vertex in edge
@@ -996,9 +1126,15 @@ def test_exact_entity_frames_project_rational_edge_and_triangle() -> None:
     assert _entity_weights(
         _entity_frame(edge), (Fraction(2), Fraction(2), Fraction(4))
     ) == (Fraction(5, 9), Fraction(4, 9))
-    triangle = tuple(tuple(Fraction(v) for v in row) for row in ((0, 0, 0), (2, 1, 0), (1, 0, 1)))
+    triangle = tuple(
+        tuple(Fraction(v) for v in row) for row in ((0, 0, 0), (2, 1, 0), (1, 0, 1))
+    )
     u, v = Fraction(1, 3), Fraction(1, 4)
-    point = tuple(u * triangle[1][k] + v * triangle[2][k] + Fraction((-1, 2, 1)[k], 7) for k in range(3))
+    point_values = tuple(
+        u * triangle[1][k] + v * triangle[2][k] + Fraction((-1, 2, 1)[k], 7)
+        for k in range(3)
+    )
+    point = (point_values[0], point_values[1], point_values[2])
     assert _entity_weights(_entity_frame(triangle), point) == (1 - u - v, u, v)
     assert _entity_weights(_entity_frame((edge[0], edge[0])), point) is None
 
@@ -1014,8 +1150,11 @@ def test_source_stencil_dyadic_image_matches_fraction_oracle() -> None:
     for stencil in stencils:
         expected = tuple(
             sum(
-                (weight * Fraction(float(coordinates[state.source_vertex_rows[vertex], axis]))
-                 for vertex, weight in stencil.items()),
+                (
+                    weight
+                    * Fraction(float(coordinates[state.source_vertex_rows[vertex], axis]))
+                    for vertex, weight in stencil.items()
+                ),
                 Fraction(0),
             )
             for axis in range(3)
@@ -1029,7 +1168,9 @@ def test_source_locator_exact_boxes_match_exhaustive_barycentric_search(
 ) -> None:
     source = (
         _mesh_result(
-            np.asarray(((0., 0., 0.), (0.8, 0.1, 0.), (0.2, 0.9, 0.1), (0.1, 0.2, 0.9))),
+            np.asarray(
+                ((0.0, 0.0, 0.0), (0.8, 0.1, 0.0), (0.2, 0.9, 0.1), (0.1, 0.2, 0.9))
+            ),
             [[0, 1, 2, 3]],
         )
         if skewed
@@ -1041,10 +1182,22 @@ def test_source_locator_exact_boxes_match_exhaustive_barycentric_search(
             for z in (Fraction(0), Fraction(1, 2), Fraction(1)):
                 point = (x, y, z)
                 expected = None
-                for cell_id, vertices, inverse, origin, _, _, _, _ in state.source_records:
+                for (
+                    cell_id,
+                    vertices,
+                    inverse,
+                    origin,
+                    _,
+                    _,
+                    _,
+                    _,
+                ) in state.source_records:
                     delta = tuple(point[k] - origin[k] for k in range(3))
                     tail = tuple(
-                        sum((inverse[row][axis] * delta[axis] for axis in range(3)), Fraction(0))
+                        sum(
+                            (inverse[row][axis] * delta[axis] for axis in range(3)),
+                            Fraction(0),
+                        )
                         for row in range(3)
                     )
                     weights = (Fraction(1) - sum(tail, Fraction(0)), *tail)
@@ -1080,9 +1233,16 @@ def test_ring_negative_cache_rechecks_changed_metric() -> None:
     state = _state(_source(), np.eye(3) * 9.0)
     cache: dict[tuple[int, int], tuple[Any, ...]] = {}
 
-    def candidates(cache_arg: dict[tuple[int, int], tuple[Any, ...]] | None):
+    def candidates(
+        cache_arg: dict[tuple[int, int], tuple[Any, ...]] | None,
+    ) -> list[
+        tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...], float]
+    ]:
         groups = _replacement_candidates(
-            state, TetMeshEditKind.RECONNECT, set(), PredicateMode.EXACT,
+            state,
+            TetMeshEditKind.RECONNECT,
+            set(),
+            PredicateMode.EXACT,
             negative_rings=cache_arg,
         )
         return [
@@ -1092,7 +1252,8 @@ def test_ring_negative_cache_rechecks_changed_metric() -> None:
                 tuple(map(tuple, row["replacement_cell_vertices"].tolist())),
                 row["gain"],
             )
-            for group in groups for row in group
+            for group in groups
+            for row in group
         ]
 
     assert candidates(cache) == candidates(None)

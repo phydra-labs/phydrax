@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
-from math import prod
+from math import floor, prod
 from numbers import Integral
 from typing import (
     Any,
@@ -799,7 +799,7 @@ def _periodic_metric_controls(
                 scope.source_id != source.source_id
                 or scope.source_revision != source.source_revision
                 or scope.entity_dimension != dimension
-                or scope.entity_set_id != mesh.entity_set(dimension).entity_set_id
+                or scope.entity_set_id != source.scope_entity_set_id(dimension)
             ):
                 raise ValueError(
                     "Periodic region controls must bind the represented source-cell entity set."
@@ -905,7 +905,7 @@ def _periodic_metric_controls(
                 feature.feature_kind
                 not in (FeatureKind.CURVE, FeatureKind.MATERIAL_INTERFACE)
                 or scope.entity_dimension != 1
-                or scope.entity_set_id != mesh.entity_set(1).entity_set_id
+                or scope.entity_set_id != source.scope_entity_set_id(1)
             ):
                 raise ValueError(
                     "Periodic triangle features must be exact corners or edge features."
@@ -4581,7 +4581,7 @@ def _compose_owner_local_periodic_coordinate_ancestry(
                 int(current_stencil.source_global_ids[row, column]): exact_weight
                 for column, (exact_weight, valid) in enumerate(
                     zip(
-                        current_stencil.exact_weights[row],
+                        _rational_stencil_row(current_stencil.exact_weights[row]),
                         np.asarray(current_stencil.valid)[row],
                         strict=True,
                     )
@@ -4622,7 +4622,7 @@ def _compose_owner_local_periodic_coordinate_ancestry(
             offset = [Fraction(0) for _ in range(ambient_dimension)]
             for source_vertex_id, exact_weight, valid in zip(
                 intermediate_sources[target_row],
-                intermediate_exact[target_row],
+                _rational_stencil_row(intermediate_exact[target_row]),
                 intermediate_valid[target_row],
                 strict=True,
             ):
@@ -4635,7 +4635,9 @@ def _compose_owner_local_periodic_coordinate_ancestry(
                     )
                 for source_id, source_fraction, source_active in zip(
                     current_global_sources[source_vertex_row],
-                    current_stencil.exact_weights[source_vertex_row],
+                    _rational_stencil_row(
+                        current_stencil.exact_weights[source_vertex_row]
+                    ),
                     current_valid[source_vertex_row],
                     strict=True,
                 ):
@@ -4783,6 +4785,14 @@ def _initial_owner_local_periodic_coordinate_ancestry(
     return stencil, tuple(offsets)
 
 
+def _rational_stencil_row(row: tuple[object, ...], /) -> tuple[Fraction, ...]:
+    """Owner-local periodic coordinate ancestry is rational; refuse radicals."""
+    rational = tuple(value for value in row if isinstance(value, Fraction))
+    if len(rational) != len(row):
+        raise TypeError("Periodic vertex ancestry requires exact rational rows.")
+    return rational
+
+
 def _evaluate_owner_local_periodic_coordinate_ancestry(
     stencil: VertexInterpolationStencil,
     exact_vertex_coordinate_offsets: tuple[tuple[Fraction, ...], ...],
@@ -4829,7 +4839,7 @@ def _evaluate_owner_local_periodic_coordinate_ancestry(
         raise ValueError("Periodic coordinate stencil rows are malformed.")
     coordinates: list[tuple[Fraction, ...]] = []
     for row in range(source_ids.shape[0]):
-        exact_weights = stencil.exact_weights[row]
+        exact_weights = _rational_stencil_row(stencil.exact_weights[row])
         if len(exact_weights) != source_ids.shape[1]:
             raise ValueError("Periodic coordinate weights do not align with source rows.")
         if (
@@ -4878,10 +4888,8 @@ def _periodic_vertex_ancestry_payload(
     source_ids = np.asarray(stencil.source_global_ids, dtype=np.int64)[row]
     valid = np.asarray(stencil.valid, dtype=np.bool_)[row]
     weight_bits = np.asarray(stencil.weights, dtype=np.float64)[row].view(np.uint64)
-    exact_weights = stencil.exact_weights[row]
-    if any(not isinstance(value, Fraction) for value in exact_weights) or any(
-        not isinstance(value, Fraction) for value in exact_offsets
-    ):
+    exact_weights = _rational_stencil_row(stencil.exact_weights[row])
+    if any(not isinstance(value, Fraction) for value in exact_offsets):
         raise TypeError("Periodic vertex ancestry requires exact rational rows.")
     active = sorted(
         (
@@ -6202,6 +6210,25 @@ def _owner_local_periodic_mesh_authority(
             axis_name,
             "periodic neighbor halo graph rows",
         )
+    elif route == "periodic_power":
+        resident_ids = np.asarray(mesh_data["cell_ids"], dtype=np.int64)
+        resident_owners = np.asarray(mesh_data["cell_owner_ranks"], dtype=np.int32)
+        neighbor_ids = np.asarray(mesh_data["graph_neighbor_ids"], dtype=np.int64)
+        neighbor_owners = np.asarray(
+            mesh_data["graph_neighbor_owner_ranks"], dtype=np.int32
+        )
+        resident_by_id = dict(zip(resident_ids, resident_owners, strict=True))
+        _owner_group_fail_if_any(
+            None
+            if all(
+                int(resident_by_id.get(int(identifier), -1)) == int(owner)
+                for identifier, owner in zip(neighbor_ids, neighbor_owners, strict=True)
+            )
+            else "A periodic power face neighbor is absent or has the wrong owner.",
+            execution_group,
+            axis_name,
+            "periodic power neighbor closure",
+        )
     cell_ids = np.asarray(mesh_data["cell_ids"], dtype=np.int64)
     key_offsets = np.asarray(mesh_data["cell_key_offsets"], dtype=np.int64)
     key_sources = np.asarray(mesh_data["cell_key_source_ids"], dtype=np.int64)
@@ -6826,9 +6853,12 @@ def _owner_local_require_periodic_face_coverage(
     source_revision: str,
     source_content_id: str,
     periodic_cell_id: str,
+    native_evidence: tuple[Any, ...] | None,
+    periodic_orders: np.ndarray,
     axis_name: str,
     /,
 ) -> tuple[str, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    from ...discretization._periodic_exact import reduce_periodic_exponents
     from .._distribution import (
         _owner_exchange_message_banks,
         _owner_group_allgather,
@@ -6840,6 +6870,25 @@ def _owner_local_require_periodic_face_coverage(
     local_error = None
     if owned_ids.ndim != 1 or np.unique(owned_ids).size != owned_ids.size:
         local_error = "Owned periodic cell IDs must be one unique integer row."
+    expected: dict[tuple[Any, int, int], tuple[int, int, tuple[int, ...], int]] = {}
+    if native_evidence is not None:
+        for key, sign, cell_id, neighbor, owner, action, tet in native_evidence:
+            identity = (key, int(sign), int(cell_id))
+            if (
+                identity in expected
+                or len(action) != dimension
+                or int(tet) < -1
+                or int(neighbor) < 0
+                or not 0 <= int(owner) < parts
+            ):
+                local_error = "Native periodic power face evidence is malformed."
+            expected[identity] = (int(neighbor), int(owner), tuple(action), int(tet))
+        if len(expected) != len(face_records) or set(expected) != {
+            (key, int(sign), int(cell_id)) for key, sign, cell_id, _ in face_records
+        }:
+            local_error = (
+                "Native periodic power face evidence does not cover owned faces."
+            )
     local_maximum = max(
         (
             len(
@@ -6859,7 +6908,7 @@ def _owner_local_require_periodic_face_coverage(
         axis_name,
     ).reshape(-1)
     width = int(np.max(widths, initial=0))
-    row_width = 4 + width
+    row_width = 6 + dimension + width
     outgoing_rows: list[list[np.ndarray]] = [[] for _ in range(parts)]
     local_rows: list[np.ndarray] = []
     for key, sign, cell_id, cell_owner in face_records:
@@ -6881,7 +6930,13 @@ def _owner_local_require_periodic_face_coverage(
         destination = int(destination_hash[:16], 16) % parts
         row = np.zeros((row_width,), dtype=np.int64)
         row[:4] = (sign, cell_id, cell_owner, len(flattened))
-        row[4 : 4 + len(flattened)] = np.asarray(flattened, dtype=np.int64)
+        hint = expected.get((key, int(sign), int(cell_id)))
+        row[4:6] = (-1, -1) if hint is None else hint[:2]
+        if hint is not None:
+            row[6 : 6 + dimension] = hint[2]
+        row[6 + dimension : 6 + dimension + len(flattened)] = np.asarray(
+            flattened, dtype=np.int64
+        )
         if destination == rank:
             local_rows.append(row)
         else:
@@ -6897,12 +6952,10 @@ def _owner_local_require_periodic_face_coverage(
             for bank in incoming.values()
             for index in range(np.asarray(bank).shape[0])
         )
-    incidences: dict[
-        tuple[tuple[int, tuple[int, ...]], ...], list[tuple[int, int, int]]
-    ] = {}
+    incidences: dict[tuple[Any, ...], list[tuple[Any, ...]]] = {}
     for row in local_rows:
         sign, cell_id, cell_owner, length = map(int, row[:4])
-        values = np.asarray(row[4 : 4 + length], dtype=np.int64)
+        values = np.asarray(row[6 + dimension : 6 + dimension + length], dtype=np.int64)
         if (
             sign not in (-1, 1)
             or cell_owner < 0
@@ -6921,7 +6974,16 @@ def _owner_local_require_periodic_face_coverage(
             )
             for offset in range(0, length, stride)
         )
-        incidences.setdefault(key, []).append((sign, cell_id, cell_owner))
+        incidences.setdefault(key, []).append(
+            (
+                sign,
+                cell_id,
+                cell_owner,
+                int(row[4]),
+                int(row[5]),
+                tuple(int(value) for value in row[6 : 6 + dimension]),
+            )
+        )
     if local_error is None and any(
         len(records) != 2 or sum(record[0] for record in records) != 0
         for records in incidences.values()
@@ -6929,6 +6991,30 @@ def _owner_local_require_periodic_face_coverage(
         local_error = (
             "Periodic quotient faces must have exactly two oppositely oriented cells."
         )
+    if local_error is None:
+        for records in incidences.values():
+            if len(records) != 2:
+                continue
+            first, second = records
+            if (first[3] < 0) != (second[3] < 0):
+                local_error = "Native periodic face evidence is missing on one owner."
+                break
+            if first[3] >= 0 and (
+                (first[3], first[4]) != (second[1], second[2])
+                or (second[3], second[4]) != (first[1], first[2])
+                or np.any(
+                    reduce_periodic_exponents(
+                        np.asarray(first[5], dtype=np.int64)
+                        + np.asarray(second[5], dtype=np.int64),
+                        periodic_orders,
+                    )
+                    != 0
+                )
+            ):
+                local_error = (
+                    "Native periodic face neighbor or action disagrees with its owner."
+                )
+                break
     _owner_group_fail_if_any(
         local_error, execution_group, axis_name, "periodic quotient face coverage"
     )
@@ -6937,12 +7023,8 @@ def _owner_local_require_periodic_face_coverage(
     local_neighbor_rows: list[np.ndarray] = []
     for records in incidences.values():
         (
-            (first_sign, first_id, first_owner),
-            (
-                second_sign,
-                second_id,
-                second_owner,
-            ),
+            (first_sign, first_id, first_owner, *_),
+            (second_sign, second_id, second_owner, *_),
         ) = records
         del first_sign, second_sign
         for cell_id, owner, neighbor_id, neighbor_owner in (
@@ -6997,7 +7079,7 @@ def _owner_local_require_periodic_face_coverage(
     local_face_records = tuple(
         (
             key,
-            tuple(sorted((sign, cell_id) for sign, cell_id, _ in records)),
+            tuple(sorted((record[0], record[1]) for record in records)),
         )
         for key, records in incidences.items()
     )
@@ -7150,6 +7232,8 @@ def _owner_local_periodic_face_graph(
         source_revision,
         source_content_id,
         periodic_cell.cell_id,
+        mesh_data.get("native_face_evidence"),
+        orders,
         axis_name,
     )
     cell_row_by_id = {
@@ -7778,21 +7862,19 @@ def _require_owner_local_periodic_view_current(
                     graph_owners = np.asarray(
                         graph_evidence.result.owners, dtype=np.int32
                     )
-                    owned_rows = np.asarray(candidate["source_owned"], dtype=np.bool_)
-                    source_ids = np.asarray(candidate["point_ids"], dtype=np.int64)[
+                    owned_rows = np.asarray(mesh_data["owned"], dtype=np.bool_)
+                    source_ids = np.asarray(mesh_data["cell_ids"], dtype=np.int64)[
                         owned_rows
                     ]
                     source_owners = np.asarray(
-                        candidate["point_owner_ranks"], dtype=np.int32
+                        mesh_data["cell_owner_ranks"], dtype=np.int32
                     )[owned_rows]
                     if (
                         graph_ids.ndim != 1
                         or graph_owners.shape != graph_ids.shape
-                        or not np.array_equal(np.sort(graph_ids), np.sort(source_ids))
+                        or np.unique(graph_ids).size != graph_ids.size
                     ):
-                        raise ValueError(
-                            "Stored power graph labels differ from current owned sites."
-                        )
+                        raise ValueError("Stored power graph labels are malformed.")
                     graph_owner_records = tuple(
                         (int(identifier), int(owner))
                         for identifier, owner in zip(
@@ -7849,7 +7931,7 @@ def _require_owner_local_periodic_view_current(
                         np.sort(
                             np.asarray(graph_evidence.target_cell_ids, dtype=np.int64)
                         ),
-                        np.sort(np.asarray(mesh_data["cell_ids"], dtype=np.int64)),
+                        np.sort(source_ids),
                     )
                     else "Stored periodic power graph owner map differs from its exact cells."
                 )
@@ -9042,6 +9124,16 @@ def _repartition_owner_local_periodic_assembly(
             current_source = current_power["source"]
             current_map = current_power["source_map"]
             source_mesh_data = _owner_local_periodic_power_mesh_data(current_power, rank)
+            _owner_local_periodic_face_graph(
+                source_mesh_data,
+                source_domain.cell,
+                rank,
+                execution_group,
+                source.source_id,
+                source.source_revision,
+                source_content_id,
+                f"{axis_name}_power_source_faces",
+            )
             source_mesh, source_geometry = view.reconstruct_local_geometry()
             generated_mesh = current_power["mesh"]
             generated_geometry = current_power["geometry"]
@@ -9286,7 +9378,9 @@ def _repartition_owner_local_periodic_assembly(
                     "Periodic power migration omitted or duplicated authored sites."
                 )
             target_mesh_data = _owner_local_periodic_power_mesh_data(target_power, rank)
-            target_cell_ids = np.asarray(target_mesh_data["cell_ids"], dtype=np.int64)
+            target_cell_ids = np.asarray(target_mesh_data["cell_ids"], dtype=np.int64)[
+                np.asarray(target_mesh_data["owned"], dtype=np.bool_)
+            ]
             if not np.array_equal(
                 target_cell_ids,
                 np.asarray(target_active_cell_ids, dtype=np.int64),
@@ -9957,6 +10051,167 @@ def _owner_local_periodic_assembly_from_state(
     return local_assembly
 
 
+def _publish_algebraic_periodic_carrier(
+    source: NativePeriodicSource, carrier: Any, /
+) -> tuple[CellMesh, CellGeometrySpec, np.ndarray]:
+    """Publish exact carrier sites and windings without rounding their identity.
+
+    Carrier cells are quotient cells with arbitrary lattice anchors. Each cell is
+    translated by the unique lattice vector placing its exact centroid in the
+    half-open fundamental parallelogram, so the lifted carrier is one canonical
+    fundamental domain independent of the carrier's face traversal start.
+    """
+    from ...discretization._cell_mesh import CellBlock
+    from ...discretization._exact_algebraic_geometry import ExactPeriodicAlgebraicSource
+    from ...discretization._periodic_cell import PeriodicCell
+
+    if isinstance(source.domain, PeriodicPointOrbits):
+        cell = source.domain.cell
+        reserved = np.asarray(source.domain.point_ids, dtype=np.int64)
+        block_name = "periodic"
+    else:
+        topology = source.domain.periodic_topology
+        if topology is None:
+            raise ValueError(
+                "An algebraic represented source requires periodic topology."
+            )
+        cell = topology.cell
+        reserved = np.asarray(source.domain.vertex_global_ids, dtype=np.int64)
+        block_name = source.domain.blocks[0].name
+    if not isinstance(cell, PeriodicCell):
+        raise ValueError("Algebraic periodic carriers require a translation lattice.")
+    identities = tuple(carrier.site_identities)
+    if len(identities) != len(carrier.exact_coordinates) or len(set(identities)) != len(
+        identities
+    ):
+        raise ValueError(
+            "Algebraic carrier site identities must uniquely cover its coordinates."
+        )
+    cells = np.asarray(carrier.simplices, dtype=np.int64)
+    shifts = np.asarray(carrier.shifts, dtype=np.int64)
+    regions = np.asarray(carrier.regions, dtype=np.int64)
+    if (
+        cells.ndim != 2
+        or cells.shape[1] != 3
+        or shifts.shape != (*cells.shape, 2)
+        or regions.shape != (cells.shape[0],)
+        or np.any(cells < 0)
+        or np.any(cells >= len(identities))
+    ):
+        raise ValueError(
+            "Algebraic carrier cells, windings, and regions are inconsistent."
+        )
+    vectors = np.asarray(cell.vectors, dtype=np.float64)
+    exact_vectors = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in vectors
+    )
+    (a0, a1), (b0, b1) = exact_vectors
+    determinant = a0 * b1 - a1 * b0
+    shifts = shifts.copy()
+    for row, (sites, row_shifts) in enumerate(zip(cells, shifts, strict=True)):
+        corners = [
+            tuple(
+                carrier.exact_coordinates[int(site)][axis]
+                + sum(
+                    (int(shift[k]) * exact_vectors[k][axis] for k in range(2)),
+                    Fraction(),
+                )
+                for axis in range(2)
+            )
+            for site, shift in zip(sites, row_shifts, strict=True)
+        ]
+        x = sum((corner[0] for corner in corners), Fraction()) / 3
+        y = sum((corner[1] for corner in corners), Fraction()) / 3
+        anchor = (
+            floor((x * b1 - y * b0) / determinant),
+            floor((a0 * y - a1 * x) / determinant),
+        )
+        shifts[row] -= np.asarray(anchor, dtype=np.int64)
+    keys = {
+        (int(site), tuple(int(value) for value in shift))
+        for site, shift in zip(cells.reshape(-1), shifts.reshape((-1, 2)), strict=True)
+    }
+    if {site for site, _ in keys} != set(range(len(identities))):
+        raise ValueError("Every algebraic carrier site must occur in the quotient cells.")
+    root_keys = {}
+    for site in range(len(identities)):
+        candidates = [key for key in keys if key[0] == site]
+        zero = (site, (0, 0))
+        root_keys[site] = zero if zero in keys else min(candidates)
+    ordered_keys = sorted(keys, key=lambda key: (identities[key[0]], key[1]))
+    key_rows = {key: row for row, key in enumerate(ordered_keys)}
+    next_id = int(np.max(reserved, initial=-1)) + 1
+    root_ids = {}
+    for site in sorted(range(len(identities)), key=lambda row: identities[row]):
+        kind, arguments = identities[site]
+        if kind == "authored_source_root":
+            root_ids[site] = int(arguments[0])
+        else:
+            root_ids[site] = next_id
+            next_id += 1
+    if len(set(root_ids.values())) != len(root_ids):
+        raise ValueError("Algebraic source roots do not have distinct semantic IDs.")
+    root_rows = np.empty(len(ordered_keys), dtype=np.int32)
+    windings = np.empty((len(ordered_keys), 2), dtype=np.int64)
+    vertex_ids = np.empty(len(ordered_keys), dtype=np.int64)
+    exact_coordinates = []
+    for row, (site, winding) in enumerate(ordered_keys):
+        root_key = root_keys[site]
+        root_rows[row] = key_rows[root_key]
+        windings[row] = np.asarray(winding, dtype=np.int64) - np.asarray(
+            root_key[1], dtype=np.int64
+        )
+        vertex_ids[row] = root_ids[site] if (site, winding) == root_key else next_id
+        if (site, winding) != root_key:
+            next_id += 1
+        point = carrier.exact_coordinates[site]
+        exact_coordinates.append(
+            tuple(
+                point[axis]
+                + sum((winding[k] * exact_vectors[k][axis] for k in range(2)), Fraction())
+                for axis in range(2)
+            )
+        )
+    lifted_cells = np.asarray(
+        [
+            [
+                key_rows[(int(site), tuple(int(value) for value in shift))]
+                for site, shift in zip(sites, row_shifts, strict=True)
+            ]
+            for sites, row_shifts in zip(cells, shifts, strict=True)
+        ],
+        dtype=np.int32,
+    )
+    coordinates = np.asarray(
+        [[float(value) for value in row] for row in exact_coordinates], dtype=np.float64
+    )
+    block = CellBlock(
+        block_name,
+        "triangle",
+        lifted_cells,
+        global_ids=np.arange(cells.shape[0], dtype=np.int64),
+    )
+    lifted = CellMesh(coordinates, (block,), vertex_global_ids=vertex_ids)
+    witness = ExactPeriodicAlgebraicSource(
+        tuple(exact_coordinates), vertex_ids, source.source_id, source.source_revision
+    )
+    periodic = PeriodicMeshTopology(
+        lifted, cell, root_rows, windings, exact_coordinate_source=witness
+    )
+    mesh = CellMesh(
+        coordinates, (block,), vertex_global_ids=vertex_ids, periodic_topology=periodic
+    )
+    affine = CellGeometrySpec.affine(mesh)
+    geometry = CellGeometrySpec(
+        dict(zip(affine.block_names, affine.elements, strict=True)),
+        dict(zip(affine.block_names, affine.geometry_dofs, strict=True)),
+        coordinates,
+        source_map=witness,
+        source_mesh=mesh,
+    )
+    return mesh, geometry, regions
+
+
 @final
 class PreparedNativePeriodic(StrictModule, NonTrainableState):
     source: NativePeriodicSource
@@ -10602,7 +10857,11 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                 local_error = (
                     None
                     if np.array_equal(
-                        np.sort(np.asarray(mesh_data["cell_ids"], dtype=np.int64)),
+                        np.sort(
+                            np.asarray(mesh_data["cell_ids"], dtype=np.int64)[
+                                np.asarray(mesh_data["owned"], dtype=np.bool_)
+                            ]
+                        ),
                         np.sort(np.asarray(target_active_cell_ids, dtype=np.int64)),
                     )
                     else "Rebuilt periodic power cells differ from graph target ownership."
@@ -10821,7 +11080,41 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                 self.source, self.specification, mesh, source_regions
             )
             region_by_code = metric_controls[4]
-            if mesh.topological_dimension == 2:
+            algebraic_carrier = None
+            policy = self.specification.size_compliance
+            specification = self.specification
+            if (
+                mesh.topological_dimension == 2
+                and isinstance(specification, SurfaceMeshingSpec)
+                and policy.absolute_tolerance == 0.0
+                and policy.relative_tolerance == 0.0
+            ):
+                from ._native_periodic_algebraic import (
+                    construct_exact_algebraic_carrier,
+                    construct_orbit_lattice_band_carrier,
+                    prove_orbit_lattice_bands,
+                    prove_source_action_bands,
+                )
+
+                if isinstance(self.source.domain, PeriodicPointOrbits):
+                    if prove_orbit_lattice_bands(self.source, specification) is not None:
+                        algebraic_carrier = construct_orbit_lattice_band_carrier(
+                            self.source, specification
+                        )
+                elif prove_source_action_bands(self.source, specification):
+                    algebraic_carrier = construct_exact_algebraic_carrier(
+                        self.source, specification
+                    )
+            if algebraic_carrier is not None:
+                mesh, constructed_geometry, algebraic_regions = (
+                    _publish_algebraic_periodic_carrier(self.source, algebraic_carrier)
+                )
+                quotient_ids = _periodic_quotient_entity_ids(mesh, 0)
+                target_scope_ids = tuple(
+                    quotient_ids for _ in self.specification.size_controls
+                )
+                target_regions = algebraic_regions if source_regions is not None else None
+            elif mesh.topological_dimension == 2:
                 (
                     mesh,
                     target_scope_ids,
@@ -10945,14 +11238,15 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
                         region_role=control.role,
                     )
                 )
-        if self.options.route == "periodic_power":
-            if constructed_geometry is None:
-                raise ValueError(
-                    "Periodic power construction requires its exact geometry map."
-                )
-            geometry = constructed_geometry
-        else:
-            geometry = CellGeometrySpec.affine(mesh)
+        if self.options.route == "periodic_power" and constructed_geometry is None:
+            raise ValueError(
+                "Periodic power construction requires its exact geometry map."
+            )
+        geometry = (
+            CellGeometrySpec.affine(mesh)
+            if constructed_geometry is None
+            else constructed_geometry
+        )
         return NativeMeshConstruction(
             mesh,
             self.coordinate_contract,
@@ -11156,6 +11450,156 @@ def prepare_native_periodic(
     return PreparedNativePeriodic(source, specification, options, coordinate_contract)
 
 
+def _require_stored_power_face_evidence(view: OwnerLocalCellGeometry, /) -> None:
+    """Rebind archived native face witnesses to the stored local mesh and graph."""
+    from collections import Counter
+    from fractions import Fraction
+
+    from ...discretization._cell_complex import PolyhedralConnectivity
+    from ...discretization._exact_power_geometry import ExactPowerCellGeometrySource
+    from ...discretization._periodic_exact import identification_orders
+    from ...discretization.fem._partition_form_moments import _clip_polygon, _planes
+    from ...geometry._exact_polyhedral_geometry import _cross3, _sub3
+
+    shell = view.periodic_shell_certificate
+    if not isinstance(shell, Mapping) or "native_power_face_evidence" not in shell:
+        raise ValueError("Archived periodic power shard lacks native face evidence.")
+    evidence = tuple(shell["native_power_face_evidence"])
+    mesh, geometry = view.reconstruct_local_geometry()
+    if mesh is None:
+        if evidence:
+            raise ValueError("Empty periodic power shard has native face evidence.")
+        return
+    if geometry is None or not isinstance(
+        geometry.source_map, ExactPowerCellGeometrySource
+    ):
+        raise ValueError("Archived periodic power face evidence lacks its exact source.")
+    source_map = geometry.source_map
+    context = source_map.periodic_source_context
+    if context is None or not isinstance(mesh.connectivity, PolyhedralConnectivity):
+        raise ValueError("Archived periodic power face evidence lacks its quotient.")
+    orders = identification_orders(context.periodic_source.cell)
+    image_owners = np.asarray(context.image_owners, dtype=np.int64)
+    image_windings = np.asarray(context.image_windings, dtype=np.int64)
+    source_ids = np.asarray(context.periodic_source.point_ids, dtype=np.int64)
+    witness_offsets = np.asarray(source_map.vertex_site_offsets, dtype=np.int64)
+    witness_sites = np.asarray(source_map.vertex_sites, dtype=np.int64)
+    output_rows = np.asarray(source_map.output_vertex_indices, dtype=np.int64)
+    vertex_ids = np.asarray(view.vertex_source_ids, dtype=np.int64)
+    vertex_windings = np.asarray(view.vertex_absolute_windings, dtype=np.int64)
+    owner_by_id = dict(
+        zip(
+            np.asarray(view.source_point_ids, dtype=np.int64).tolist(),
+            np.asarray(view.source_owner_ranks, dtype=np.int64).tolist(),
+            strict=True,
+        )
+    )
+    carrier_points = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row)
+        for row in np.asarray(source_map.carrier_points, dtype=np.float64)
+    )
+    carrier_tets = np.asarray(source_map.carrier_tets, dtype=np.int64)
+
+    def face_meets_tet(loop: np.ndarray, tet_index: int) -> bool:
+        polygon = tuple(source_map.exact_vertices[int(output_rows[int(v)])] for v in loop)
+        tet = tuple(carrier_points[int(v)] for v in carrier_tets[tet_index])
+        polygon = _clip_polygon(polygon, _planes("tetrahedron", tet))
+        if len(polygon) < 3:
+            return False
+        if any(len(point) != 3 for point in polygon):
+            raise ValueError("Clipped periodic power face is not three-dimensional.")
+        points = tuple((x, y, z) for x, y, z in polygon)
+        origin = points[0]
+        return any(
+            any(_cross3(_sub3(points[i], origin), _sub3(points[i + 1], origin)))
+            for i in range(1, len(points) - 1)
+        )
+
+    resident_ids = set(np.asarray(view.cell_ids, dtype=np.int64).tolist())
+    expected = {}
+    for key, sign, cell_id, neighbor, owner, action, tet in evidence:
+        identity = (key, int(sign), int(cell_id))
+        if identity in expected or owner_by_id.get(int(neighbor)) != int(owner):
+            raise ValueError("Archived native power face has invalid neighbor ownership.")
+        if not -1 <= int(tet) < len(source_map.carrier_tets):
+            raise ValueError("Archived native power face has invalid carrier evidence.")
+        if int(neighbor) == int(cell_id) and tuple(action) == (0, 0, 0):
+            raise ValueError("Archived native power face names the same image twice.")
+        # This periodic-power route selects only unshifted base images and
+        # each such cell is convex. A resident zero-action peer is therefore
+        # the only case whose opposite component is represented locally.
+        # Component-general routes cannot infer this from site IDs alone.
+        local_counterpart = int(neighbor) in resident_ids and tuple(action) == (0, 0, 0)
+        if (int(tet) == -1) != local_counterpart:
+            raise ValueError(
+                "Archived native power face lost its remote carrier evidence."
+            )
+        expected[identity] = (int(neighbor), int(owner), tuple(action), int(tet))
+    connectivity = mesh.connectivity
+    face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+    face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int64)
+    cell_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
+    owned_ids = set(np.asarray(view.owned_cell_ids, dtype=np.int64).tolist())
+    graph_counts: Counter[tuple[int, int, int]] = Counter()
+    seen = set()
+    for row, cell_id_value in enumerate(cell_ids):
+        cell_id = int(cell_id_value)
+        if cell_id not in owned_ids:
+            continue
+        for incidence in range(cell_offsets[row], cell_offsets[row + 1]):
+            face = int(cell_faces[incidence])
+            loop = face_values[face_offsets[face] : face_offsets[face + 1]]
+            key, orientation = _canonical_periodic_face_key(
+                vertex_ids[loop], vertex_windings[loop], orders
+            )
+            identity = (key, int(cell_signs[incidence]) * orientation, cell_id)
+            if identity not in expected or identity in seen:
+                raise ValueError(
+                    "Archived native power face orientation or geometry differs."
+                )
+            seen.add(identity)
+            neighbor, owner, action, tet = expected[identity]
+            if tet >= 0 and not face_meets_tet(loop, tet):
+                raise ValueError("Archived native power face misses its carrier tet.")
+            for vertex in loop:
+                witness_row = int(output_rows[int(vertex)])
+                first, last = witness_offsets[witness_row : witness_row + 2]
+                images = witness_sites[first:last]
+                signatures = {
+                    (
+                        int(source_ids[image_owners[image]]),
+                        tuple(int(value) for value in image_windings[image]),
+                    )
+                    for image in images
+                }
+                if (cell_id, (0, 0, 0)) not in signatures or (
+                    neighbor,
+                    action,
+                ) not in signatures:
+                    raise ValueError("Archived native power bisector evidence differs.")
+            if neighbor != cell_id:
+                graph_counts[(cell_id, neighbor, owner)] += 1
+    if seen != set(expected):
+        raise ValueError("Archived native power face evidence is incomplete.")
+    offsets = np.asarray(view.cell_neighbor_offsets, dtype=np.int64)
+    neighbors = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
+    owners = np.asarray(view.cell_neighbor_owner_ranks, dtype=np.int64)
+    weights = np.asarray(view.cell_neighbor_weights, dtype=np.int64)
+    graph_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
+    recorded = Counter(
+        {
+            (int(cell_id), int(neighbors[index]), int(owners[index])): int(weights[index])
+            for row, cell_id in enumerate(graph_ids)
+            for index in range(offsets[row], offsets[row + 1])
+        }
+    )
+    if graph_counts != recorded:
+        raise ValueError("Archived native power faces disagree with the owner graph.")
+
+
 def rebuild_owner_local_periodic_assembly_from_shards(
     stored_shards: Iterable[OwnerLocalCellGeometry],
     execution_group: ExecutionGroup,
@@ -11295,6 +11739,8 @@ def rebuild_owner_local_periodic_assembly_from_shards(
                     raise TypeError(
                         "Archived periodic shard has no concrete source geometry authority."
                     )
+                if route == "periodic_power":
+                    _require_stored_power_face_evidence(shard)
                 if (
                     not isinstance(source.domain, PeriodicPointOrbits)
                     or source.point_owner_ranks is None

@@ -3,6 +3,7 @@
 #
 
 
+import pickle
 from dataclasses import dataclass, fields
 from fractions import Fraction
 from typing import Any
@@ -387,6 +388,343 @@ def test_chart_coefficient_shadows_are_reported_separately_from_coordinates() ->
     assert int(rational_certificate.execution_status[0]) == Status.CERTIFIED_VALID
     assert float(rational_certificate.maximum_coefficient_rounding_error) == 0.0
     assert float(rational_certificate.maximum_element_coefficient_rounding_error) > 0.0
+
+
+def test_quadratic_tetra_interval_proof_has_exact_fallback() -> None:
+    x: Expression = {(1, 0, 0): Fraction(1)}
+    y: Expression = {(0, 1, 0): Fraction(1)}
+    shear: Expression = {(0, 0, 1): Fraction(1), (2, 0, 0): Fraction(1, 8)}
+    policy = D.CellValidityPolicy()
+    proof = validity_module._interval_quadratic_simplex_certificate(
+        (x, y, shear), "simplex", 3, policy
+    )
+    assert proof is not None and proof[0] is Status.CERTIFIED_VALID
+    assert proof[1] <= 1.0 <= proof[2]
+    reversed_map: tuple[Expression, ...] = (
+        x,
+        y,
+        {(0, 0, 1): Fraction(-1), (2, 0, 0): Fraction(1, 8)},
+    )
+    assert (
+        validity_module._interval_quadratic_simplex_certificate(
+            reversed_map, "simplex", 3, policy
+        )
+        is None
+    )
+    crossing: tuple[Expression, ...] = (
+        {(1, 0, 0): Fraction(1), (2, 0, 0): Fraction(-1)},
+        y,
+        {(0, 0, 1): Fraction(1)},
+    )
+    assert (
+        validity_module._interval_quadratic_simplex_certificate(
+            crossing, "simplex", 3, policy
+        )
+        is None
+    )
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    coordinates = np.asarray(element.reference_nodes, dtype=np.float64).copy()
+    coordinates[:, 2] += coordinates[:, 0] ** 2 / 8.0
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(element.local_dof_count, dtype=np.int64)[None, :]},
+        coordinates,
+    )
+    certificate = D.certify_cell_geometry_validity(geometry)
+    assert int(certificate.source_status[0]) == Status.CERTIFIED_VALID
+    assert float(certificate.source_determinant_lower[0]) <= 1.0
+    assert float(certificate.source_determinant_upper[0]) >= 1.0
+
+
+def test_quadratic_tetra_block_interval_preserves_fallback_and_parent() -> None:
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    positive = nodes.copy()
+    positive[:, 2] += positive[:, 0] ** 2 / 8.0
+    reversed_nodes = positive.copy()
+    reversed_nodes[:, 0] *= -1.0
+    coordinates = np.concatenate((positive, reversed_nodes))
+    routes = {"cells": np.arange(20, dtype=np.int64).reshape(2, 10)}
+    geometry = CellGeometrySpec({"cells": element}, routes, coordinates)
+    computed = validity_module.ComputedCellValidity(
+        geometry, None, D.CellValidityPolicy(), None
+    )
+    certificate = computed.certificate
+    assert tuple(np.asarray(certificate.execution_status)) == (
+        Status.CERTIFIED_VALID,
+        Status.INVALID,
+    )
+    assert (
+        float(certificate.determinant_lower[0])
+        <= 1.0
+        <= float(certificate.determinant_upper[0])
+    )
+    digests = np.frombuffer(certificate.cell_map_digests, dtype=np.uint8).reshape(
+        2, 2, 16
+    )
+    assert not np.any(digests[0])
+    assert np.any(digests[1])
+    parent_reuse = D.certify_cell_geometry_validity(geometry, parent=computed)
+    assert parent_reuse.certificate_id == certificate.certificate_id
+    restored = validity_module.CellValidityCertificate.from_stored_fields(
+        certificate, None, geometry, policy=D.CellValidityPolicy()
+    )
+    assert restored.certificate_id == certificate.certificate_id
+    identity: tuple[Expression, ...] = (
+        {(1, 0, 0): Fraction(1)},
+        {(0, 1, 0): Fraction(1)},
+        {(0, 0, 1): Fraction(1)},
+    )
+    restricted = PerCellRestrictedCellGeometryElement(
+        element, "tetrahedron", (0, 1), (0, 1), (identity, identity)
+    )
+    child = CellGeometrySpec({"cells": restricted}, routes, coordinates)
+    child_fresh = D.certify_cell_geometry_validity(child)
+    child_assisted = D.certify_cell_geometry_validity(child, parent=computed)
+    assert child_assisted.certificate_id == child_fresh.certificate_id
+    assert tuple(np.asarray(child_assisted.status)) == tuple(
+        np.asarray(certificate.status)
+    )
+
+
+def test_quadratic_tetra_block_distinguishes_exact_source_and_execution() -> None:
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    epsilon = Fraction(1, 2**54)
+    exact = tuple(
+        (
+            Fraction(1) + epsilon * Fraction(float(point[0])),
+            Fraction(float(point[1])),
+            Fraction(float(point[2])),
+        )
+        for point in nodes
+    )
+    execution = np.asarray([[float(value) for value in point] for point in exact])
+    mesh = D.CellMesh(
+        execution[:4],
+        (
+            D.CellBlock(
+                "cells", "tetrahedron", np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+            ),
+        ),
+    )
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(10, dtype=np.int64)[None, :]},
+        execution,
+        source_mesh=mesh,
+        source_map=_MutableCoordinateProvider(exact),
+    )
+    certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+    assert int(certificate.source_status[0]) == Status.CERTIFIED_VALID
+    assert int(certificate.execution_status[0]) == Status.INVALID
+    assert float(certificate.source_determinant_lower[0]) > 0.0
+    positive_exact = tuple(
+        (
+            Fraction(float(point[0])) + (epsilon if point[0] == 1.0 else 0),
+            Fraction(float(point[1])),
+            Fraction(float(point[2])),
+        )
+        for point in nodes
+    )
+    positive_execution = np.asarray(
+        [[float(value) for value in point] for point in positive_exact]
+    )
+    positive_mesh = D.CellMesh(
+        positive_execution[:4],
+        (
+            D.CellBlock(
+                "cells", "tetrahedron", np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+            ),
+        ),
+    )
+    positive_geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(10, dtype=np.int64)[None, :]},
+        positive_execution,
+        source_mesh=positive_mesh,
+        source_map=_MutableCoordinateProvider(positive_exact),
+    )
+    positive_certificate = D.certify_cell_geometry_validity(
+        positive_geometry, mesh=positive_mesh
+    )
+    assert int(positive_certificate.source_status[0]) == Status.CERTIFIED_VALID
+    assert int(positive_certificate.execution_status[0]) == Status.CERTIFIED_VALID
+    assert float(positive_certificate.maximum_coefficient_rounding_error) > 0.0
+    assert not any(positive_certificate.cell_map_digests)
+
+
+def test_rational_interval_jacobian_proves_positive_and_refuses_ambiguous() -> None:
+    rational = RationalPolynomial(
+        {(1, 0): Fraction(1)},
+        {(0, 0): Fraction(1), (1, 0): Fraction(1, 8)},
+    )
+    y: Expression = {(0, 1): Fraction(1)}
+    expressions: tuple[Expression, ...] = (rational, y)
+    jacobian = validity_module._exact_map_jacobian(expressions, 2)
+    proof = validity_module._interval_rational_map_certificate(
+        expressions, jacobian, "box", 2, D.CellValidityPolicy()
+    )
+    assert proof is not None
+    assert proof[0] == Status.CERTIFIED_VALID
+    assert proof[1] <= float(Fraction(64, 81))
+    assert proof[2] >= 1.0
+    direct = validity_module._interval_rational_map_certificate(
+        expressions, None, "box", 2, D.CellValidityPolicy()
+    )
+    assert direct is not None and direct[0] == Status.CERTIFIED_VALID
+    assert direct[1] <= float(Fraction(64, 81))
+    assert direct[2] >= 1.0
+
+    reversed_map: tuple[Expression, ...] = (
+        RationalPolynomial({(1, 0): Fraction(-1)}, {(0, 0): Fraction(1)}),
+        y,
+    )
+    assert (
+        validity_module._interval_rational_map_certificate(
+            reversed_map,
+            validity_module._exact_map_jacobian(reversed_map, 2),
+            "box",
+            2,
+            D.CellValidityPolicy(),
+        )
+        is None
+    )
+    assert (
+        validity_module._interval_rational_map_certificate(
+            reversed_map, None, "box", 2, D.CellValidityPolicy()
+        )
+        is None
+    )
+    pole: tuple[Expression, ...] = (
+        RationalPolynomial(
+            {(1, 0): Fraction(1)}, {(0, 0): Fraction(1, 2), (1, 0): Fraction(-1)}
+        ),
+        y,
+    )
+    assert (
+        validity_module._interval_rational_map_certificate(
+            pole,
+            validity_module._exact_map_jacobian(pole, 2),
+            "box",
+            2,
+            D.CellValidityPolicy(),
+        )
+        is None
+    )
+    assert (
+        validity_module._interval_rational_map_certificate(
+            pole, None, "box", 2, D.CellValidityPolicy()
+        )
+        is None
+    )
+
+
+def test_per_cell_restricted_proof_matches_direct_basis_composition() -> None:
+    source = D.fem.lagrange_element("interval", 2)
+    charts: tuple[tuple[Expression, ...], ...] = (
+        ({(0,): Fraction(0), (1,): Fraction(1, 2)},),
+        ({(0,): Fraction(1, 3), (1,): Fraction(1, 2)},),
+        ({(0,): Fraction(1, 3), (1,): Fraction(1, 2)},),
+    )
+    element = PerCellRestrictedCellGeometryElement(
+        source, "interval", (7, 8, 9), (3, 3, 3), charts
+    )
+    nodes = np.asarray(source.reference_nodes, dtype=np.float64).reshape((-1,))
+    coordinates = np.column_stack((nodes + nodes * nodes,))
+    routes = np.tile(np.arange(nodes.size, dtype=np.int64), (3, 1))
+    geometry = CellGeometrySpec({"cells": element}, {"cells": routes}, coordinates)
+    certificate = D.certify_cell_geometry_validity(geometry)
+    assert np.all(np.asarray(certificate.status) == Status.CERTIFIED_VALID)
+    assert float(certificate.maximum_element_coefficient_rounding_error) > 0.0
+
+    bank = tuple((Fraction(float(value)),) for value in coordinates[:, 0])
+    for execution in (False, True):
+        _, unsupported, digests = validity_module._certify_source_block(
+            element,
+            "interval",
+            bank,
+            routes,
+            D.CellValidityPolicy(),
+            validity_module._CellProofs(),
+            execution_map=execution,
+        )
+        assert not unsupported
+        for row in range(3):
+            direct = (
+                validity_module.coordinate_execution_map_expressions(
+                    element, bank, cell_row=row
+                )
+                if execution
+                else validity_module.coordinate_map_expressions(
+                    element, bank, cell_row=row
+                )
+            )
+            assert bytes(digests[row]) == validity_module._map_digest("interval", direct)
+
+
+def test_validity_proof_reuse_requires_exact_map_not_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = D.fem.lagrange_element("interval", 1)
+    charts: tuple[tuple[Expression, ...], ...] = (
+        ({(1,): Fraction(1)},),
+        ({(0,): Fraction(1), (1,): Fraction(-1)},),
+    )
+    element = PerCellRestrictedCellGeometryElement(
+        source, "interval", (7, 8), (3, 3), charts
+    )
+    bank = ((Fraction(0),), (Fraction(1),))
+    routes = np.asarray(((0, 1), (0, 1)), dtype=np.int64)
+    monkeypatch.setattr(validity_module, "_map_digest", lambda *_: b"x" * 16)
+    result, _, _ = validity_module._certify_source_block(
+        element,
+        "interval",
+        bank,
+        routes,
+        D.CellValidityPolicy(),
+        validity_module._CellProofs(),
+    )
+    assert tuple(int(value) for value in result.status) == (
+        Status.CERTIFIED_VALID,
+        Status.INVALID,
+    )
+
+
+def test_public_parent_reuse_rechecks_exact_map_under_digest_collision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = D.fem.lagrange_element("interval", 1)
+    forward_chart: tuple[tuple[Expression, ...], ...] = (({(1,): Fraction(1)},),)
+    reverse_chart: tuple[tuple[Expression, ...], ...] = (
+        ({(0,): Fraction(1), (1,): Fraction(-1)},),
+    )
+    forward = PerCellRestrictedCellGeometryElement(
+        source, "interval", (7,), (3,), forward_chart
+    )
+    reverse = PerCellRestrictedCellGeometryElement(
+        source,
+        "interval",
+        (8,),
+        (3,),
+        reverse_chart,
+    )
+    routes = {"cells": np.asarray(((0, 1),), dtype=np.int64)}
+    coordinates = np.asarray(((0.0,), (1.0,)))
+    parent_geometry = CellGeometrySpec({"cells": forward}, routes, coordinates)
+    target_geometry = CellGeometrySpec({"cells": reverse}, routes, coordinates)
+    monkeypatch.setattr(validity_module, "_map_digest", lambda *_: b"x" * 16)
+    parent = D.certify_cell_geometry_validity(parent_geometry)
+    target = D.certify_cell_geometry_validity(target_geometry, parent=parent)
+    assert int(parent.status[0]) == Status.CERTIFIED_VALID
+    assert int(target.status[0]) == Status.INVALID
+    computed = validity_module.ComputedCellValidity(
+        parent_geometry, None, D.CellValidityPolicy(), None
+    )
+    target_from_live = D.certify_cell_geometry_validity(target_geometry, parent=computed)
+    assert int(target_from_live.status[0]) == Status.INVALID
+    with pytest.raises(ValueError, match="different exact operands"):
+        computed.require(target_geometry, None, computed.certificate)
 
 
 def test_transverse_constant_singularity_terminates_without_certification() -> None:
@@ -1206,6 +1544,20 @@ def test_validated_parent_replays_once_before_target_reuse(
     reused = D.certify_cell_geometry_validity(geometry, mesh=mesh, parent=validated)
     assert reused.certificate_id == parent.certificate_id
     assert calls == [1]
+
+
+def test_operation_local_validity_tokens_refuse_pickle() -> None:
+    mesh, geometry, _ = _curved_triangle_pair(0.0)
+    computed = validity_module.ComputedCellValidity(
+        geometry, mesh, D.CellValidityPolicy(), None
+    )
+    validated = validity_module.ValidatedCellValidityParent(computed.certificate)
+    computed.require(geometry, mesh, computed.certificate)
+    validated.require(geometry, mesh, computed.certificate)
+    for token in (computed, validated, validity_module._CellProofs()):
+        for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+            with pytest.raises(TypeError, match="cannot be serialized"):
+                pickle.dumps(token, protocol=protocol)
 
 
 @pytest.mark.parametrize(

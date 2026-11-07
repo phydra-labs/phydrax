@@ -6,7 +6,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from fractions import Fraction
 from typing import Any, final, NamedTuple
 
 import equinox as eqx
@@ -24,7 +25,6 @@ from ..discretization._distributed_field import DistributedHaloPlan
 from ..discretization._mapped_locator import prepare_owner_local_mapped_cell_locator
 from ..discretization._view_support import OwnerLocalCellGeometry, OwnerLocalFieldSupport
 from ..discretization.fem import (
-    dirichlet_constraint,
     FiniteElementDiscretization,
     FiniteElementPlan,
     prepare_finite_element_field_reconstruction,
@@ -41,13 +41,15 @@ from ..equations import (
     SourceAction,
 )
 from ..geometry._common_root_volume_overlap import PhysicalOverlapActionEvidence
+from ..geometry._overset_interfaces import AtomicEdge, partition_overset_interfaces
+from ..geometry._overset_partition import OversetPartition
+from ..geometry._planar_primitives import line_key
 from ..lifecycle import (
     Composition,
     CompositionEntry,
     CompositionRebindReceipt,
     CompositionTransport,
 )
-from ..linalg import LinearSolvePolicy, solve, TolerancePolicy
 from ..linalg._distributed import (
     DistributedKrylovPolicy,
     DistributedLinearOperator,
@@ -59,7 +61,6 @@ from ..meshing._motion import MeshMotionAdvance
 from ..meshing._overset import (
     OversetConnectivity,
     OversetPartSpec,
-    prepare_overset_conservative_remap,
     prepare_overset_field_transfer,
     prepare_overset_motion_rebind,
     PreparedOversetConservativeRemap,
@@ -71,23 +72,25 @@ from ..meshing._overset_exchange import (
 )
 from ..meshing._result import CellMeshingResult
 from ..typing import checked
+from ._composite_overset_poisson import CompositeOversetPoissonResult, solve_composite_poisson
 
 
 @final
 class MovingOversetPoissonPart(StrictModule, NonTrainableState):
-    """One moved part's FE solution, source-overlap, and boundary-flux evidence.
+    """One part's FE solution and physical source and flux evidence.
 
-    Serial parts carry a whole-part common refinement; owner-local parts carry
-    the owner-routed refinement and its owned-target action result.
+    Serial composite reanalysis has no predecessor overlap remap, so its remap
+    fields and overlap defect are absent. Owner-local evidence retains the
+    original conservative remap semantics.
     """
 
     part_name: str = eqx.field(static=True)
     discretization: FiniteElementDiscretization
     coefficients: Array
     conservative_remap: (
-        PreparedOversetConservativeRemap | PreparedOwnerLocalConservativeRemap
+        PreparedOversetConservativeRemap | PreparedOwnerLocalConservativeRemap | None
     )
-    overlap_evidence: PhysicalOverlapActionEvidence | OwnerLocalConservativeRemapResult
+    overlap_evidence: PhysicalOverlapActionEvidence | OwnerLocalConservativeRemapResult | None
     remap_complete: bool = eqx.field(static=True)
     source_content: float = eqx.field(static=True)
     target_content: float = eqx.field(static=True)
@@ -95,8 +98,9 @@ class MovingOversetPoissonPart(StrictModule, NonTrainableState):
     overset_flux: float = eqx.field(static=True)
     linear_residual: float = eqx.field(static=True)
     flux_defect: float = eqx.field(static=True)
-    overlap_defect: float = eqx.field(static=True)
+    overlap_defect: float | None = eqx.field(static=True)
     accepted: bool = eqx.field(static=True)
+    reanalysis_id: str | None = eqx.field(static=True)
     part_update_id: str = eqx.field(static=True)
 
     def __init__(
@@ -105,9 +109,11 @@ class MovingOversetPoissonPart(StrictModule, NonTrainableState):
         discretization: FiniteElementDiscretization,
         coefficients: Array,
         conservative_remap: PreparedOversetConservativeRemap
-        | PreparedOwnerLocalConservativeRemap,
+        | PreparedOwnerLocalConservativeRemap
+        | None,
         overlap_evidence: PhysicalOverlapActionEvidence
-        | OwnerLocalConservativeRemapResult,
+        | OwnerLocalConservativeRemapResult
+        | None,
         /,
         *,
         source_content: float,
@@ -116,8 +122,9 @@ class MovingOversetPoissonPart(StrictModule, NonTrainableState):
         overset_flux: float,
         linear_residual: float,
         flux_defect: float,
-        overlap_defect: float,
+        overlap_defect: float | None,
         accepted: bool,
+        reanalysis_id: str | None = None,
     ) -> None:
         values = (
             source_content,
@@ -126,15 +133,24 @@ class MovingOversetPoissonPart(StrictModule, NonTrainableState):
             overset_flux,
             linear_residual,
             flux_defect,
-            overlap_defect,
         )
         if any(not np.isfinite(value) for value in values):
             raise ValueError("Moving overset Poisson evidence must be finite.")
+        if overlap_defect is not None and not np.isfinite(overlap_defect):
+            raise ValueError("Overlap defect must be finite when present.")
         if not isinstance(accepted, bool):
             raise TypeError("accepted must be a host bool.")
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
-        if isinstance(conservative_remap, PreparedOversetConservativeRemap):
+        if conservative_remap is None and overlap_evidence is None:
+            # Composite reanalysis solves the current physical domain; it is not
+            # an extensive remap of a body's predecessor support.
+            remap_complete = False
+            if not reanalysis_id:
+                raise ValueError("Composite reanalysis requires its physical solve identity.")
+            remap_id = None
+            overlap_values = None
+        elif isinstance(conservative_remap, PreparedOversetConservativeRemap):
             if not isinstance(overlap_evidence, PhysicalOverlapActionEvidence):
                 raise TypeError("Serial overlap evidence must be a physical action.")
             remap_complete = conservative_remap.complete
@@ -168,16 +184,18 @@ class MovingOversetPoissonPart(StrictModule, NonTrainableState):
         self.overset_flux = float(overset_flux)
         self.linear_residual = float(linear_residual)
         self.flux_defect = float(flux_defect)
-        self.overlap_defect = float(overlap_defect)
+        self.overlap_defect = None if overlap_defect is None else float(overlap_defect)
         self.accepted = accepted
+        self.reanalysis_id = reanalysis_id
         self.part_update_id = canonical_fingerprint(
             {
                 "kind": "moving-overset-poisson-part",
                 "part": self.part_name,
                 "connectivity": remap_id,
+                "reanalysis": reanalysis_id,
                 "discretization": discretization.prepared_id,
                 "coefficients": array_tree_fingerprint(coefficients),
-                "overlap": array_tree_fingerprint(overlap_values),
+                "overlap": None if overlap_values is None else array_tree_fingerprint(overlap_values),
                 "source_content": self.source_content,
                 "target_content": self.target_content,
                 "boundary_flux": self.boundary_flux,
@@ -199,6 +217,9 @@ class PreparedMovingOversetPoissonUpdate(StrictModule, NonTrainableState):
     parts: tuple[MovingOversetPoissonPart, ...]
     motion: PreparedOversetMotion
     execution_group: ExecutionGroup | None
+    composite: CompositeOversetPoissonResult | None
+    partition: OversetPartition | None = eqx.field(static=True)
+    interfaces: tuple[AtomicEdge, ...] | None = eqx.field(static=True)
     accepted: bool = eqx.field(static=True)
     update_id: str = eqx.field(static=True)
 
@@ -212,6 +233,9 @@ class PreparedMovingOversetPoissonUpdate(StrictModule, NonTrainableState):
         /,
         *,
         collective_accepted: bool | None = None,
+        partition: OversetPartition | None = None,
+        interfaces: tuple[AtomicEdge, ...] | None = None,
+        composite: CompositeOversetPoissonResult | None = None,
     ) -> None:
         if not isinstance(previous, OversetConnectivity) or not isinstance(
             candidate, OversetConnectivity
@@ -240,6 +264,9 @@ class PreparedMovingOversetPoissonUpdate(StrictModule, NonTrainableState):
         self.parts = ordered
         self.motion = motion
         self.execution_group = execution_group
+        self.composite = composite
+        self.partition = partition
+        self.interfaces = interfaces
         self.accepted = accepted
         self.update_id = canonical_fingerprint(
             {
@@ -1266,125 +1293,87 @@ def _vertex_dof_rows(
         raise ValueError("P1 DOF routes must cover every mesh vertex exactly.")
     return rows
 
+def _p1_vertex_coordinates(
+    discretization: FiniteElementDiscretization, /
+) -> np.ndarray:
+    """Route the affine geometry bank onto the original mesh vertices."""
+    coordinates = np.asarray(discretization.default_runtime.coordinates, dtype=np.float64)
+    vertices = np.empty((len(discretization.mesh.vertex_global_ids), 2), dtype=np.float64)
+    assigned = np.zeros(len(vertices), dtype=np.bool_)
+    for block, geometry_dofs in zip(
+        discretization.mesh.blocks, discretization.coordinate_dofs, strict=True
+    ):
+        rows = np.asarray(block.vertices, dtype=np.int64)
+        routes = np.asarray(geometry_dofs, dtype=np.int64)
+        if rows.ndim != 2 or rows.shape[1] != 3 or routes.shape != rows.shape:
+            raise ValueError("Composite Poisson requires affine triangular coordinate elements.")
+        for vertex, coordinate in zip(rows.flat, routes.flat, strict=True):
+            value = coordinates[coordinate]
+            if assigned[vertex] and not np.array_equal(vertices[vertex], value):
+                raise ValueError("Shared mesh vertices must have identical physical coordinates.")
+            vertices[vertex] = value
+            assigned[vertex] = True
+    if not np.all(assigned):
+        raise ValueError("Composite geometry must cover every mesh vertex.")
+    return vertices
 
-def _poisson_part(
-    part_name: str,
-    source_discretization: FiniteElementDiscretization,
-    target_discretization: FiniteElementDiscretization,
-    source_coefficients: Array,
-    receptor_ids: np.ndarray,
-    receptor_values: Array,
-    conservative_remap: PreparedOversetConservativeRemap,
-    field_name: str,
+
+def _require_physical_partition_boundary(
+    partition: OversetPartition,
+    background: tuple[str, np.ndarray, np.ndarray],
+    cavities: Sequence[np.ndarray],
     /,
-    *,
-    solve_tolerance: float,
-    flux_tolerance: float,
-) -> MovingOversetPoissonPart:
-    field_index = target_discretization._field_index(field_name)
-    target_dof_map = target_discretization.dof_maps[field_index]
-    source_dof_map = source_discretization.dof_maps[
-        source_discretization._field_index(field_name)
-    ]
-    if (
-        source_dof_map.dof_map_id != target_dof_map.dof_map_id
-        or source_coefficients.shape != (source_dof_map.global_dof_count,)
-    ):
-        raise ValueError(
-            f"Moving Poisson part {part_name!r} must retain its canonical P1 DOF layout."
-        )
-    source_measures = np.asarray(
-        source_discretization.measures[0].weights, dtype=np.float64
-    )
-    target_measures = np.asarray(
-        target_discretization.measures[0].weights, dtype=np.float64
-    )
-    overlap_evidence = conservative_remap.apply_extensive_with_evidence(source_measures)
-    remapped_source = np.asarray(overlap_evidence.values, dtype=np.float64)
-    overlap_defect = float(np.max(np.abs(remapped_source - target_measures), initial=0.0))
-    source_content = float(np.asarray(overlap_evidence.source_total))
-    target_content = float(np.asarray(overlap_evidence.target_total))
-    rows = _vertex_dof_rows(target_discretization, field_index)
-    carried = jnp.asarray(source_coefficients)
-    receptor_mask = np.zeros((target_dof_map.global_dof_count,), dtype=np.bool_)
-    for identifier, value in zip(
-        receptor_ids.tolist(), np.asarray(receptor_values).reshape((-1,)), strict=True
-    ):
-        try:
-            dof_row = rows[int(identifier)]
-        except KeyError as error:
+) -> tuple[AtomicEdge, ...]:
+    """Reject unmatched edges not covered by the declared physical boundary."""
+    _, coordinates, triangles = background
+    counts: dict[tuple[int, int], int] = {}
+    for triangle in triangles:
+        for a, b in ((triangle[0], triangle[1]), (triangle[1], triangle[2]), (triangle[2], triangle[0])):
+            key = (min(int(a), int(b)), max(int(a), int(b)))
+            counts[key] = counts.get(key, 0) + 1
+    def point(value: np.ndarray) -> tuple[Fraction, Fraction]:
+        return (Fraction(float(value[0])), Fraction(float(value[1])))
+
+    support: dict[tuple[int, int, int], list[tuple[Fraction, Fraction]]] = {}
+    def add(a: np.ndarray, b: np.ndarray) -> None:
+        first, second = point(a), point(b)
+        key = line_key((first, second))
+        axis = 0 if first[0] != second[0] else 1
+        support.setdefault(key, []).append((min(first[axis], second[axis]), max(first[axis], second[axis])))
+
+    for (a, b), count in counts.items():
+        if count == 1:
+            add(coordinates[a], coordinates[b])
+        elif count != 2:
+            raise ValueError("Background mesh has a nonmanifold boundary.")
+    for cavity in cavities:
+        vertices = np.asarray(cavity, dtype=np.float64)
+        if vertices.ndim != 2 or vertices.shape[1] != 2:
+            raise ValueError("Cavity vertices must be planar coordinate pairs.")
+        for i in range(len(vertices)):
+            add(vertices[i, :], vertices[(i + 1) % len(vertices), :])
+    for intervals in support.values():
+        intervals.sort()
+    interfaces = partition_overset_interfaces(partition)
+    for edge in interfaces:
+        if edge.kind != "physical_boundary":
+            continue
+        key = line_key((edge.start, edge.end))
+        axis = 0 if edge.start[0] != edge.end[0] else 1
+        lower, upper = sorted((edge.start[axis], edge.end[axis]))
+        covered = lower
+        for start, end in support.get(key, ()):
+            if start > covered:
+                break
+            if end > covered:
+                covered = end
+            if covered >= upper:
+                break
+        if covered < upper:
             raise ValueError(
-                "Overset receptor identity is absent from its target P1 field layout."
-            ) from error
-        carried = carried.at[dof_row].set(value)
-        receptor_mask[dof_row] = True
-    boundary_mask = np.asarray(target_dof_map.boundary_dof_mask, dtype=np.bool_)
-    constrained_mask = boundary_mask | receptor_mask
-    constraint = dirichlet_constraint(
-        target_discretization, field_name, boundary_mask=constrained_mask
-    )
-    form = FiniteElementForm(
-        "moving-overset-poisson",
-        field_name,
-        (
-            DiffusionAction(field_name, 1.0),
-            SourceAction(field_name, 1.0),
-        ),
-    )
-    problem = compile_finite_element_problem(
-        form,
-        target_discretization,
-        constraint=constraint,
-        dirichlet_values=carried,
-    )
-    system, rhs = problem.linear_system()
-    if not isinstance(rhs, Array):
-        raise TypeError("Compiled Poisson right-hand side must be a JAX array.")
-    policy = LinearSolvePolicy(
-        tolerance=TolerancePolicy(
-            relative=0.0,
-            absolute=solve_tolerance,
-            max_steps=max(32, 4 * target_dof_map.global_dof_count),
-        )
-    )
-    solution = solve(system, rhs, policy=policy)
-    if not bool(jnp.all(solution.successful)) or not isinstance(solution.value, Array):
-        raise RuntimeError(f"Moving Poisson solve failed on overset part {part_name!r}.")
-    operator_action = system.operator.mv(solution.value)
-    linear_residual = float(jnp.max(jnp.abs(operator_action - rhs), initial=0.0))
-    coefficients = problem.expand(solution.value)
-    if not isinstance(coefficients, Array):
-        raise TypeError("Expanded Poisson state must be a JAX array.")
-    full_residual = problem.full_residual(coefficients)
-    if not isinstance(full_residual, Array):
-        raise TypeError("Full Poisson residual must be a JAX array.")
-    residual = np.asarray(full_residual, dtype=np.float64)
-    source_content_target = float(np.sum(target_measures))
-    physical_dofs = boundary_mask & ~receptor_mask
-    boundary_flux = float(np.sum(residual[physical_dofs]))
-    overset_flux = float(np.sum(residual[receptor_mask]))
-    flux_defect = abs(boundary_flux + overset_flux + source_content_target)
-    accepted = (
-        conservative_remap.complete
-        and linear_residual <= solve_tolerance
-        and overlap_defect <= flux_tolerance * max(1.0, source_content_target)
-        and flux_defect <= flux_tolerance * max(1.0, source_content_target)
-    )
-    return MovingOversetPoissonPart(
-        part_name,
-        target_discretization,
-        coefficients,
-        conservative_remap,
-        overlap_evidence,
-        source_content=source_content,
-        target_content=target_content,
-        boundary_flux=boundary_flux,
-        overset_flux=overset_flux,
-        linear_residual=linear_residual,
-        flux_defect=flux_defect,
-        overlap_defect=overlap_defect,
-        accepted=accepted,
-    )
+                "Partition has an unmatched edge outside the background or cavity boundary."
+            )
+    return interfaces
 
 
 @checked
@@ -1396,6 +1385,9 @@ def prepare_moving_overset_poisson_update(
     field_name: str,
     /,
     *,
+    part_priority: Sequence[str] | None = None,
+    cavities: Sequence[np.ndarray] = (),
+    boundary_values: Callable[[Array], Array] | None = None,
     solve_tolerance: float = 1e-11,
     flux_tolerance: float = 1e-9,
     retain: Sequence[str] = (),
@@ -1407,16 +1399,18 @@ def prepare_moving_overset_poisson_update(
 ) -> PreparedMovingOversetPoissonUpdate:
     """Rebuild, remap, solve, and stage every part before one accepted commit.
 
-    Each source part must have a `fe:<part>` discretization entry and one
-    `physical-state` entry depending on that FE revision. P1 state crosses the
-    motion through the declared FE layout; the unit Poisson source is separately
-    transported by exact physical overlap and its boundary plus overset reaction
-    fluxes must balance that source content. Owner-local updates require complete
-    source and successor cell views on every group rank so overlap and flux
-    evidence covers the global part without assembling coordinate payloads.
-    Topology changes are transferred by `FiniteElementTopologyTransaction`
-    before reanalysis. The caller's composition is never mutated during
-    preparation.
+    Each source part must have a `fe:<part>` entry and one physical state
+    depending on its revision. Serial reanalysis requires ``part_priority`` and
+    ``cavities`` to match the successor connectivity's bound partition. The
+    last priority part is the background physical support: its mesh boundary
+    and the bound cavity walls are the only physical Dirichlet boundaries.
+    ``boundary_values`` is a vectorized physical-coordinate callback. The
+    connectivity's exact partition and atomic interfaces are exposed on the
+    update. Whole-cell hole and fringe classifications govern donor search,
+    not integration.
+    Owner-local updates retain their existing distributed behavior. Topology
+    changes require the declared FE topology transaction before reanalysis.
+    Preparation does not mutate the accepted composition.
     """
 
     if not isinstance(advances, Mapping) or not advances:
@@ -1441,6 +1435,8 @@ def prepare_moving_overset_poisson_update(
     if any(not isinstance(value, MeshMotionAdvance) for value in advances.values()):
         raise TypeError("Every advance must be a MeshMotionAdvance.")
     if previous.owner_local:
+        if part_priority is not None or cavities or boundary_values is not None:
+            raise ValueError("Composite partition inputs are serial-only.")
         if not isinstance(execution_group, ExecutionGroup) or not isinstance(
             successor_assembly, MeshAssembly
         ):
@@ -1468,6 +1464,20 @@ def prepare_moving_overset_poisson_update(
         )
     candidate = previous.moved_from_advances(advances)
     candidate.require_complete()
+    if part_priority is None or len(part_priority) != len(names) or set(part_priority) != set(names):
+        raise ValueError("part_priority must name every serial overset part exactly once.")
+    partition = candidate.bound_partition
+    if partition is None:
+        raise ValueError("Serial composite Poisson requires a connectivity-bound partition.")
+    if tuple(part_priority) != candidate.partition_priority:
+        raise ValueError("part_priority must match the connectivity-bound partition.")
+    if len(cavities) != len(candidate.partition_cavities) or any(
+        not np.array_equal(np.asarray(given), np.asarray(bound))
+        for given, bound in zip(cavities, candidate.partition_cavities, strict=True)
+    ):
+        raise ValueError("cavities must match the connectivity-bound partition.")
+    if not callable(boundary_values):
+        raise TypeError("Serial composite Poisson requires physical boundary_values.")
     if candidate.owner_local:
         raise ValueError(
             "Serial moving FE-Poisson reanalysis cannot publish owner-local successors."
@@ -1476,8 +1486,6 @@ def prepare_moving_overset_poisson_update(
     target_parts = {part.name: part for part in candidate.assembly.parts}
     field_entries: dict[str, CompositionEntry] = {}
     state_entries: dict[str, CompositionEntry] = {}
-    source_discretizations: dict[str, FiniteElementDiscretization] = {}
-    source_coefficients: dict[str, Array] = {}
     target_discretizations: dict[str, FiniteElementDiscretization] = {}
     for name in names:
         source_part = source_parts[name]
@@ -1531,40 +1539,75 @@ def prepare_moving_overset_poisson_update(
             raise ValueError(f"Moving Poisson part {name!r} changed its FE DOF identity.")
         field_entries[name] = fe_entry
         state_entries[name] = state_entry
-        source_discretizations[name] = discretization
-        source_coefficients[name] = values
         target_discretizations[name] = target_discretization
 
-    donor_names = tuple(sorted({packet.donor_part for packet in candidate.packets}))
-    field_transfer = prepare_overset_field_transfer(
-        candidate,
-        {name: target_discretizations[name] for name in donor_names},
-        field,
+    background_name = part_priority[-1]
+    background_result = _cell_result(target_parts[background_name])
+    background = (
+        background_name,
+        _p1_vertex_coordinates(target_discretizations[background_name]),
+        np.concatenate(
+            [np.asarray(block.vertices, dtype=np.int64) for block in background_result.mesh.blocks],
+            axis=0,
+        ),
     )
-    donor_values = {
-        name: source_coefficients[name] for name in field_transfer.donor_names
-    }
-    receptor_values = field_transfer.apply(donor_values)
-    receptors_by_name = {item.part_name: item for item in candidate.receptors}
+    interfaces = _require_physical_partition_boundary(
+        partition, background, candidate.partition_cavities
+    )
+    composite = solve_composite_poisson(
+        partition, target_discretizations, field, boundary_values,
+        solve_tolerance=tolerances[0],
+        interfaces=interfaces,
+    )
+    scale = max(1.0, abs(composite.source_content))
+    composite_accepted = (
+        bool(jnp.all(composite.solve_result.successful))
+        and composite.linear_residual <= tolerances[0]
+        and composite.flux_defect <= tolerances[1] * scale
+    )
+    reanalysis_id = canonical_fingerprint(
+        {
+            "kind": "moving-composite-poisson-reanalysis",
+            "candidate": candidate.connectivity_id,
+            "field": field,
+            "partition_binding": candidate.partition_binding_id,
+            "partition_digest": candidate.partition_digest,
+            "physical_area": str(partition.total_area),
+            "coefficients": {
+                name: array_tree_fingerprint(composite.coefficients_by_name[name])
+                for name in names
+            },
+            "source_content": composite.source_content,
+            "boundary_flux": composite.boundary_flux,
+            "linear_residual": composite.linear_residual,
+            "flux_defect": composite.flux_defect,
+            "solve_tolerance": tolerances[0],
+            "flux_tolerance": tolerances[1],
+            "accepted": composite_accepted,
+        }
+    )
     part_evidence: list[MovingOversetPoissonPart] = []
     for name in names:
-        source_part = source_parts[name]
-        target_part = target_parts[name]
-        remap = prepare_overset_conservative_remap(source_part, target_part)
-        evidence = receptors_by_name[name]
-        transferred = receptor_values[name]
+        source = composite.source_area_by_name[name]
+        boundary_flux = composite.physical_flux_by_name[name]
+        interface_flux = composite.interface_flux_by_name[name]
+        part_defect = abs(source + boundary_flux + interface_flux)
         part_evidence.append(
-            _poisson_part(
+            MovingOversetPoissonPart(
                 name,
-                source_discretizations[name],
                 target_discretizations[name],
-                source_coefficients[name],
-                np.asarray(evidence.receptor_ids, dtype=np.int64),
-                transferred,
-                remap,
-                field,
-                solve_tolerance=tolerances[0],
-                flux_tolerance=tolerances[1],
+                composite.coefficients_by_name[name],
+                None,
+                None,
+                source_content=source,
+                target_content=source,
+                boundary_flux=boundary_flux,
+                overset_flux=interface_flux,
+                linear_residual=composite.linear_residual,
+                flux_defect=part_defect,
+                overlap_defect=None,
+                accepted=composite_accepted and part_defect <= tolerances[1] * scale,
+                reanalysis_id=reanalysis_id,
             )
         )
 
@@ -1608,13 +1651,16 @@ def prepare_moving_overset_poisson_update(
             dependencies=(new_fe.binding("revision"),),
         )
         new_fe_entries.append(new_fe)
+        # This generic owner-authorized state transport publishes the PDE
+        # reanalysis; it is not a conservative remap of the FE coefficients.
+        # Any extensive inventory is transported separately by its owner.
         state_transports.append(
             CompositionTransport(
                 "physical-remap",
                 (old_state.entry_id,),
                 (new_state,),
                 source_structure_ids=(old_state.structure_id,),
-                route_id=f"moving-overset-poisson:{name}",
+                route_id=f"moving-overset-poisson-reanalysis:{reanalysis_id}:{name}",
                 successful=jnp.asarray(part.accepted, dtype=jnp.bool_),
             )
         )
@@ -1632,6 +1678,9 @@ def prepare_moving_overset_poisson_update(
         candidate,
         tuple(part_evidence),
         motion,
+        partition=partition,
+        interfaces=composite.interfaces,
+        composite=composite,
     )
 
 

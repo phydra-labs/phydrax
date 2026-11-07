@@ -180,9 +180,40 @@ at every design.
 
 `FiniteElementAcceptedStepSchedule` promotes fields and material trials exactly
 once after acceptance. Rejected attempts preserve the previous fields,
-material version, schedule cursor, and topology identity. Local mesh changes use
-`FiniteElementTopologyTransaction`; candidate transfer or certification failure
-retains the accepted mesh and state.
+material version, schedule cursor, and topology identity. When the accepted
+state has materials, an accepted candidate must retain the same sites, model
+layouts, versions, and committed values; only trial values may change before
+promotion. Local mesh changes use `FiniteElementTopologyTransaction`; candidate
+transfer or certification failure retains the accepted mesh and state.
+
+Cell-based material sites use `MaterialSiteId.for_cell_quadrature` with a
+stable domain identity, global cell ID, quadrature-rule identity, and stable
+reference-site identity. The reference-site identity is not a local quadrature
+ordinal, so reordering a rule does not change site identity.
+`MaterialSiteOwnership(entries, part_count=...)` declares the global
+site-to-rank table independently for source and target placements. Its
+fingerprint binds the required positive partition count as well as every site
+and owner. An owner-bound `MaterialIntegrationPlan` and its transactions must
+cover exactly the sites assigned to their rank; an in-range rank with no
+assigned sites may have an empty plan and transaction, while an out-of-range
+rank is invalid. Site identity and placement do not by themselves define
+refinement transfer.
+Material checkpoint payloads bind and restore both committed and pending trial
+values with their state versions; rollback remains an explicit operation.
+
+Owner-local topology transactions require source and target material plans whose
+site placements match the owned cells and whose restart layouts use
+`OWNED_SITES`. Fixed-topology repartition migrates each site's committed and
+trial values and version to its new owner. Refinement requires an explicit
+material-transfer policy; the transaction validates the target plan and
+publishes fields, banks, and materials together only after certification.
+Named `payload_transfers` can supply topology actions for history fibers that
+do not obey their associated FE field's default transfer semantics.
+
+The cold owner-local qualification includes independent tetrahedral cone
+domains with native Newmark/J2 dynamics. It compares producer-side uninterrupted
+evolution with a fresh reader after refinement and changed placement, while
+retaining the separate periodic P1/P0 conservation and live-family checks.
 
 ## Design-dependent fixed-topology geometry
 

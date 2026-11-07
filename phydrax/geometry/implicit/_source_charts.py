@@ -71,6 +71,7 @@ from ._adaptive_discovery import (
     _root_on_edges,
     AdaptiveImplicitBoundarySource,
     AdaptiveImplicitBoxIssue,
+    AdaptiveImplicitCover,
     AdaptiveImplicitSurface,
 )
 from ._analytic_profile import AnalyticImplicitProfile
@@ -1368,6 +1369,16 @@ def _point_interval(value: Interval, /) -> float:
     return 0.0 if value[0] <= 0.0 <= value[1] else min(abs(value[0]), abs(value[1]))
 
 
+def _absolute_residual_interval(value: Interval, /) -> Interval:
+    """Outward enclosure of the magnitude of a signed field interval."""
+    if math.isnan(value[0]) or math.isnan(value[1]):
+        return math.nan, math.nan
+    return (
+        max(0.0, math.nextafter(_point_interval(value), -math.inf)),
+        math.nextafter(max(abs(value[0]), abs(value[1])), math.inf),
+    )
+
+
 def _gradient_norm_interval(lower: np.ndarray, upper: np.ndarray, /) -> Interval:
     return _interval_vector_norm_bounds(
         tuple((float(lower[axis]), float(upper[axis])) for axis in range(3))
@@ -1469,10 +1480,12 @@ def _profile_covers_singularities_away_from_zero_set(
         or not surface.volume.bounds.gradient_rigorous
     ):
         return False
-    possible_zero_boxes = cover.boxes[cover.possible_zero_mask]
-    return bool(possible_zero_boxes.shape[0]) and not any(
-        profile._field_singular_set_intersects_box(box) for box in possible_zero_boxes
-    )
+    found = False
+    for boxes in _possible_zero_box_blocks(cover):
+        found = True
+        if any(profile._field_singular_set_intersects_box(box) for box in boxes):
+            return False
+    return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -2279,48 +2292,77 @@ def _face_piece_steps(
             f"normal-angle lower bound {target_normal[0]!r}"
         )
         return None, detail, False
+    normal_unresolved = normal_limit is not None and target_normal[1] > normal_limit
+    if unresolved_requirement and not normal_unresolved and not exact_on_source:
+        assert tolerance is not None
+        # The tolerance alone is undecided. Both distance bounds above use
+        # slope enclosures over the whole normal tube, which do not shrink
+        # with the piece, so subdividing a near-band face alone never decides
+        # it. Midpoint Newton steps narrow T to a width that does shrink, and
+        # |t*| |grad f(P)| over the narrowed T bounds the distance both ways.
+        narrowed = yield from _narrowed_root_parameters(
+            base_box, gradient_p, root_parameters, _TOLERANCE_NEWTON_STEPS
+        )
+        narrowed_upper = math.nextafter(
+            max(-narrowed[0], narrowed[1]) * gradient_norm[1], math.inf
+        )
+        # The root parameter nearest zero; the narrowed T contains every root.
+        nearest = max(narrowed[0], -narrowed[1], 0.0)
+        narrowed_lower = max(
+            lower_distance, math.nextafter(nearest * gradient_norm[0], 0.0)
+        )
+        if narrowed_upper <= tolerance:
+            root_parameters = narrowed
+            upper_distance = narrowed_upper
+            lower_distance = narrowed_lower
+            unresolved_requirement = False
+        elif narrowed_lower > tolerance:
+            return (
+                None,
+                f"certified lower target-to-root deviation {narrowed_lower!r} "
+                f"exceeds tolerance {tolerance!r}",
+                False,
+            )
+        elif (
+            narrowed_lower >= tolerance - _TOLERANCE_STRADDLE_ULPS * math.ulp(tolerance)
+            and narrowed_upper
+            <= tolerance + _TOLERANCE_STRADDLE_ULPS * math.ulp(tolerance)
+        ) or all(
+            high - low <= _TOLERANCE_STRADDLE_ULPS * math.ulp(max(abs(low), abs(high)))
+            for low, high in base_box
+        ):
+            # Either both endpoints sit at the tolerance in binary64, or the
+            # piece's physical points already are binary64 neighbours: the
+            # enclosure can no longer contract past the tolerance by splitting.
+            return (
+                None,
+                f"certified target-to-root deviation [{narrowed_lower!r}, "
+                f"{narrowed_upper!r}] straddles tolerance {tolerance!r} at "
+                "binary64 resolution",
+                False,
+            )
     if unresolved_requirement:
         return (
             None,
             "target-to-root or normal interval bound needs face subdivision",
             True,
         )
-    lifted_parameters = root_parameters
-    for _ in range(0 if exact_on_source else root_newton_steps):
-        # Midpoint interval Newton for phi(t) = f(P + t grad f(P)): every root
-        # in T lies in m - phi(m) / phi'(T), with phi'(T) enclosed over the
-        # tube of T; unlike the step from t = 0 its width shrinks with the piece.
-        middle = 0.5 * lifted_parameters[0] + 0.5 * lifted_parameters[1]
-        fields, _ = yield _BoxRequests(
-            (
-                _box_arrays(_lifted_box(base_box, (middle, middle), gradient_p)),
-                _box_arrays(_lifted_box(base_box, lifted_parameters, gradient_p)),
+    lifted_parameters = (
+        root_parameters
+        if exact_on_source
+        else (
+            yield from _narrowed_root_parameters(
+                base_box, gradient_p, root_parameters, root_newton_steps
             )
         )
-        (middle_value, _), (_, tube_gradient) = fields
-        slope = sum_interval(
-            (
-                _interval_multiply(tube_gradient[0], gradient_p[0]),
-                _interval_multiply(tube_gradient[1], gradient_p[1]),
-                _interval_multiply(tube_gradient[2], gradient_p[2]),
-            )
-        )
-        if not slope[0] > 0.0:
-            break
-        lifted_parameters = _intersect_intervals(
-            lifted_parameters,
-            _interval_subtract((middle, middle), _interval_divide(middle_value, slope)),
-        )
+    )
     return (
         _PieceProof(
             triangle,
             _prepare_barycentric_solver(triangle),
             maximum_root_parameter,
             max(-root_parameters[0], root_parameters[1]),
-            (
-                max(0.0, math.nextafter(value_low, -math.inf)),
-                math.nextafter(value_high, math.inf),
-            ),
+            _absolute_residual_interval(residual),
             (lower_distance, upper_distance),
             target_normal,
             math.nextafter(chart_jacobian, 0.0),
@@ -2342,6 +2384,53 @@ def _face_piece_steps(
         "",
         False,
     )
+
+
+# Midpoint Newton steps a piece takes to decide a tolerance its plain root
+# interval leaves undecided.
+_TOLERANCE_NEWTON_STEPS = 3
+# Ulps within which a tolerance-straddling distance enclosure, or the physical
+# box of its piece, is at binary64 resolution and no split can decide it.
+_TOLERANCE_STRADDLE_ULPS = 4
+
+
+def _narrowed_root_parameters(
+    base_box: IntervalVector3,
+    gradient_p: IntervalVector3,
+    parameters: Interval,
+    steps: int,
+    /,
+) -> Generator[_BoxRequests, _BoxResults, Interval]:
+    """Narrow a certified normal-line root interval by midpoint interval Newton.
+
+    For phi(t) = f(P + t grad f(P)) every root in ``parameters`` lies in
+    m - phi(m) / phi'(T), with phi'(T) enclosed over the tube of T; unlike the
+    step from t = 0 its width shrinks with the piece. A slope enclosure that is
+    not strictly positive ends the narrowing.
+    """
+    for _ in range(steps):
+        middle = 0.5 * parameters[0] + 0.5 * parameters[1]
+        fields, _ = yield _BoxRequests(
+            (
+                _box_arrays(_lifted_box(base_box, (middle, middle), gradient_p)),
+                _box_arrays(_lifted_box(base_box, parameters, gradient_p)),
+            )
+        )
+        (middle_value, _), (_, tube_gradient) = fields
+        slope = sum_interval(
+            (
+                _interval_multiply(tube_gradient[0], gradient_p[0]),
+                _interval_multiply(tube_gradient[1], gradient_p[1]),
+                _interval_multiply(tube_gradient[2], gradient_p[2]),
+            )
+        )
+        if not slope[0] > 0.0:
+            break
+        parameters = _intersect_intervals(
+            parameters,
+            _interval_subtract((middle, middle), _interval_divide(middle_value, slope)),
+        )
+    return parameters
 
 
 def _lifted_box(
@@ -3099,41 +3188,149 @@ def _target_cell_coordinate_expressions(
     return first, second, third
 
 
-def _source_root_rows(
-    surface: AdaptiveImplicitSurface,
-) -> dict[GridEdge, tuple[np.ndarray, float]]:
-    scaffold = surface.scaffold
-    result: dict[GridEdge, tuple[np.ndarray, float]] = {}
-    for key, point, error in zip(
-        np.asarray(scaffold.root_edge_ids, dtype=np.int64),
-        np.asarray(scaffold.root_points, dtype=np.float64),
-        np.asarray(scaffold.root_errors, dtype=np.float64),
-        strict=True,
-    ):
-        result[_grid_edge(np.asarray(key, dtype=np.int64))] = (
-            np.array(point, copy=True),
-            float(error),
-        )
-    return result
+class _SourceRootRows:
+    """Borrow root arrays and retain only requested edge lookups."""
+
+    def __init__(self, surface: AdaptiveImplicitSurface) -> None:
+        scaffold = surface.scaffold
+        self.edges = np.asarray(scaffold.root_edge_ids, dtype=np.int64)
+        self.points = np.asarray(scaffold.root_points, dtype=np.float64)
+        self.errors = np.asarray(scaffold.root_errors, dtype=np.float64)
+        if self.edges.ndim != 3 or self.edges.shape[1:] != (2, 3):
+            raise ValueError(
+                "An adaptive root edge requires two three-dimensional grid keys."
+            )
+        if len(self.edges) != len(self.points) or len(self.edges) != len(self.errors):
+            raise ValueError("Root edge, point, and error rows must align.")
+        self.rows: dict[GridEdge, int | None] = {}
+
+    def prepare(self, keys: Sequence[GridEdge]) -> None:
+        missing = list(dict.fromkeys(key for key in keys if key not in self.rows))
+        if not missing:
+            return
+        # Both endpoint orders map to the same canonical edge. Later rows win,
+        # exactly as in the original dictionary construction.
+        probes: dict[tuple[int, ...], GridEdge] = {}
+        for key in missing:
+            self.rows[key] = None
+            probes[(*key[0], *key[1])] = key
+            probes[(*key[1], *key[0])] = key
+        for row, key in _matching_integer_rows(self.edges, tuple(probes)):
+            self.rows[probes[key]] = row
+
+    def __contains__(self, key: GridEdge) -> bool:
+        self.prepare((key,))
+        return self.rows[key] is not None
+
+    def __getitem__(self, key: GridEdge) -> tuple[np.ndarray, float]:
+        self.prepare((key,))
+        row = self.rows[key]
+        if row is None:
+            raise KeyError(key)
+        return self.points[row], float(self.errors[row])
 
 
-def _root_rows_by_point(
-    root_rows: dict[GridEdge, tuple[np.ndarray, float]], /
-) -> dict[bytes, GridEdge]:
-    """Index retained scaffold roots by their exact point bits; the least edge wins."""
-    result: dict[bytes, GridEdge] = {}
-    for edge in sorted(root_rows):
-        result.setdefault(root_rows[edge][0].tobytes(), edge)
-    return result
+def _matching_integer_rows(
+    rows: np.ndarray, probes: Sequence[tuple[int, ...]], /
+) -> Generator[tuple[int, tuple[int, ...]], None, None]:
+    """Find requested integer tuples in bounded chunks, in source order."""
+    if not probes:
+        return
+    width = len(probes[0])
+    dtype = np.dtype([(f"f{i}", np.int64) for i in range(width)])
+    query = np.asarray(probes, dtype=np.int64).reshape(-1, width)
+    ordered = np.sort(query.view(dtype).reshape(-1))
+    for start in range(0, len(rows), 8192):
+        part = np.ascontiguousarray(rows[start : start + 8192]).reshape(-1, width)
+        records = part.view(dtype).reshape(-1)
+        positions = np.searchsorted(ordered, records)
+        valid = positions < len(ordered)
+        valid[valid] = ordered[positions[valid]] == records[valid]
+        for offset in np.flatnonzero(valid):
+            yield start + int(offset), tuple(int(value) for value in part[offset])
 
 
-def _source_cell_rows(surface: AdaptiveImplicitSurface, /) -> dict[SourceCellKey, int]:
-    return {
-        _source_cell_key(np.asarray(key, dtype=np.int64)): index
-        for index, key in enumerate(
-            np.asarray(surface.scaffold.cell_indices, dtype=np.int64)
-        )
-    }
+class _RootRowsByPoint:
+    """Exact point-byte lookup, resolving duplicate edges before least-edge ties."""
+
+    def __init__(self, roots: _SourceRootRows) -> None:
+        self.roots = roots
+        self.rows: dict[bytes, GridEdge | None] = {}
+
+    def prepare(self, keys: Sequence[bytes]) -> None:
+        missing = list(dict.fromkeys(key for key in keys if key not in self.rows))
+        if not missing:
+            return
+        for key in missing:
+            self.rows[key] = None
+        points = self.roots.points
+        query = np.frombuffer(b"".join(missing), dtype=np.dtype((np.void, 24)))
+        for start in range(0, len(points), 8192):
+            part = np.ascontiguousarray(points[start : start + 8192])
+            records = part.view(query.dtype).reshape(-1)
+            matches = np.isin(records, query)
+            candidates: dict[bytes, list[tuple[GridEdge, int]]] = {}
+            for offset in np.flatnonzero(matches):
+                row = start + int(offset)
+                key = points[row].tobytes()
+                candidates.setdefault(key, []).append(
+                    (_grid_edge(self.roots.edges[row]), row)
+                )
+            edges = tuple(edge for rows in candidates.values() for edge, _ in rows)
+            existing = set(self.roots.rows)
+            self.roots.prepare(edges)
+            for key, rows in candidates.items():
+                live = [edge for edge, row in rows if self.roots.rows[edge] == row]
+                if live:
+                    edge = min(live)
+                    previous = self.rows[key]
+                    if previous is None or edge < previous:
+                        self.rows[key] = edge
+            for edge in edges:
+                if edge not in existing:
+                    self.roots.rows.pop(edge, None)
+        # The chosen edges are all that later corner lookups need.
+        self.roots.prepare(tuple(edge for edge in self.rows.values() if edge is not None))
+
+    def get(self, key: bytes) -> GridEdge | None:
+        self.prepare((key,))
+        return self.rows[key]
+
+
+class _SourceCellRows:
+    """Borrow cell IDs and cache only queried rows, preserving last-row wins."""
+
+    def __init__(self, surface: AdaptiveImplicitSurface) -> None:
+        self.cells = np.asarray(surface.scaffold.cell_indices, dtype=np.int64)
+        if self.cells.ndim != 2 or self.cells.shape[1] != 4:
+            raise ValueError(
+                "An adaptive source cell key requires level and three grid indices."
+            )
+        self.rows: dict[SourceCellKey, int | None] = {}
+
+    def prepare(self, keys: Sequence[SourceCellKey]) -> None:
+        missing = list(dict.fromkeys(key for key in keys if key not in self.rows))
+        if not missing:
+            return
+        self.rows.update(dict.fromkeys(missing))
+        for row, key in _matching_integer_rows(self.cells, missing):
+            self.rows[(key[0], key[1], key[2], key[3])] = row
+
+    def get(self, key: SourceCellKey) -> int | None:
+        self.prepare((key,))
+        return self.rows[key]
+
+
+def _source_root_rows(surface: AdaptiveImplicitSurface) -> _SourceRootRows:
+    return _SourceRootRows(surface)
+
+
+def _root_rows_by_point(root_rows: _SourceRootRows, /) -> _RootRowsByPoint:
+    return _RootRowsByPoint(root_rows)
+
+
+def _source_cell_rows(surface: AdaptiveImplicitSurface, /) -> _SourceCellRows:
+    return _SourceCellRows(surface)
 
 
 def _box_distance_lower(point: np.ndarray, box: IntervalVector3, /) -> float:
@@ -3251,8 +3448,8 @@ def _face_setup(
     target: _TargetMapSource,
     witness: SourceBoundaryChartWitness,
     surface: AdaptiveImplicitSurface,
-    root_rows: dict[GridEdge, tuple[np.ndarray, float]],
-    cell_rows: dict[SourceCellKey, int],
+    root_rows: _SourceRootRows,
+    cell_rows: _SourceCellRows,
     /,
 ) -> _FaceSetup:
     block_index, cell_row = target_row
@@ -3333,22 +3530,28 @@ def _face_setup(
     )
 
 
-def _face_root_corners(
-    setup: _FaceSetup,
-    root_rows: dict[GridEdge, tuple[np.ndarray, float]],
-    root_by_point: dict[bytes, GridEdge],
-    /,
-) -> tuple[RootCorner, ...]:
-    root_corners: list[RootCorner] = []
-    for corner in setup.reference_corners:
-        corner_point = np.asarray(
+def _face_corner_point_bytes(setup: _FaceSetup) -> tuple[bytes, ...]:
+    return tuple(
+        np.asarray(
             tuple(
                 float(evaluate_expression(expression, corner))
                 for expression in setup.cell_expressions
             ),
             dtype=np.float64,
-        )
-        corner_edge = root_by_point.get(corner_point.tobytes())
+        ).tobytes()
+        for corner in setup.reference_corners
+    )
+
+
+def _face_root_corners(
+    setup: _FaceSetup,
+    root_rows: _SourceRootRows,
+    root_by_point: _RootRowsByPoint,
+    /,
+) -> tuple[RootCorner, ...]:
+    root_corners: list[RootCorner] = []
+    for point in _face_corner_point_bytes(setup):
+        corner_edge = root_by_point.get(point)
         if corner_edge is None:
             root_corners.append(None)
         else:
@@ -3361,8 +3564,8 @@ def _build_face(
     setup: _FaceSetup,
     witness: SourceBoundaryChartWitness,
     surface: AdaptiveImplicitSurface,
-    root_rows: dict[GridEdge, tuple[np.ndarray, float]],
-    root_by_point: dict[bytes, GridEdge],
+    root_rows: _SourceRootRows,
+    root_by_point: _RootRowsByPoint,
     *,
     tolerance: float | None,
     maximum_normal_deviation: float | None,
@@ -3393,6 +3596,10 @@ def _build_face(
             prove, transversal, pieces
         )
     jacobian_lower = min(piece.chart_jacobian_lower for piece in pieces)
+    if any(
+        not math.isfinite(bound) for piece in pieces for bound in piece.field_residual
+    ):
+        raise ValueError("Implicit chart field residual enclosure is not finite.")
     residual_upper = max(piece.field_residual[1] for piece in pieces)
     target_to_root_lower = max(piece.target_to_source[0] for piece in pieces)
     target_to_root_upper = max(piece.target_to_source[1] for piece in pieces)
@@ -3812,11 +4019,27 @@ def _prepare_root_charts(
     root_rows = _source_root_rows(surface)
     root_by_point = _root_rows_by_point(root_rows)
     cell_rows = _source_cell_rows(surface)
+    cell_rows.prepare(
+        tuple(
+            _source_cell_key(np.asarray(key, dtype=np.int64))
+            for key in witness.implicit_cell_keys
+        )
+    )
+    root_rows.prepare(
+        tuple(
+            _grid_edge(np.asarray(edge, dtype=np.int64))
+            for triangle in witness.implicit_root_edge_keys
+            for edge in triangle
+        )
+    )
     target = _target_map_source(mesh, geometry)
     setups = [
         _face_setup(row, target_row, target, witness, surface, root_rows, cell_rows)
         for row, target_row in enumerate(target_rows)
     ]
+    root_by_point.prepare(
+        tuple(point for setup in setups for point in _face_corner_point_bytes(setup))
+    )
     # A digest selects candidates only; the original exact proof inputs and
     # source-chart metadata must still compare equal before taking evidence.
     candidates: dict[bytes, list[_FaceSetup]] = {}
@@ -3839,7 +4062,10 @@ def _prepare_root_charts(
         ):
             certificate.require_current(capability.mesh, capability.geometry, source)
             parent_rows, _, _ = _surface_target_chart_rows(
-                capability.mesh, capability.geometry, None, parent_witness,
+                capability.mesh,
+                capability.geometry,
+                None,
+                parent_witness,
                 full_source=False,
             )
             parent_target = _target_map_source(capability.mesh, capability.geometry)
@@ -3849,8 +4075,13 @@ def _prepare_root_charts(
                 if key not in candidates:
                     continue
                 parent_setup = _face_setup(
-                    index, parent_rows[index], parent_target, parent_witness,
-                    surface, root_rows, cell_rows,
+                    index,
+                    parent_rows[index],
+                    parent_target,
+                    parent_witness,
+                    surface,
+                    root_rows,
+                    cell_rows,
                 )
                 for setup in candidates[key]:
                     if prepared[setup.row] is not None:
@@ -3859,14 +4090,24 @@ def _prepare_root_charts(
                         setup.cell_key == parent_setup.cell_key
                         and setup.root_edges == parent_setup.root_edges
                         and setup.source_parameters == parent_setup.source_parameters
-                        and tuple(tuple(expr.items()) for expr in setup.target_expressions)
-                        == tuple(tuple(expr.items()) for expr in parent_setup.target_expressions)
-                        and witness.source_chart_ids[setup.row] == parent_witness.source_chart_ids[index]
-                        and witness.source_entity_ids[setup.row] == parent_witness.source_entity_ids[index]
-                        and witness.occurrence_paths[setup.row] == parent_witness.occurrence_paths[index]
+                        and tuple(
+                            tuple(expr.items()) for expr in setup.target_expressions
+                        )
+                        == tuple(
+                            tuple(expr.items())
+                            for expr in parent_setup.target_expressions
+                        )
+                        and witness.source_chart_ids[setup.row]
+                        == parent_witness.source_chart_ids[index]
+                        and witness.source_entity_ids[setup.row]
+                        == parent_witness.source_entity_ids[index]
+                        and witness.occurrence_paths[setup.row]
+                        == parent_witness.occurrence_paths[index]
                     ):
                         prepared[setup.row] = _reused_face(
-                            setup, witness, rows.values[index],
+                            setup,
+                            witness,
+                            rows.values[index],
                             _face_root_corners(setup, root_rows, root_by_point),
                         )
         capability = capability.ancestor
@@ -4487,8 +4728,26 @@ def _box_face_pair_blocks(
         np.nextafter(upper + reach, np.inf),
         dtype=np.float64,
     )
+    # BVH leaves can produce many tiny blocks. Coalesce consecutive pairs in
+    # traversal order so the exact per-pair face calculations stay vectorized.
+    box_buffer = np.empty(_REVERSE_COVER_ROUND, dtype=np.int64)
+    face_buffer = np.empty(_REVERSE_COVER_ROUND, dtype=np.int64)
+    used = 0
     for faces, boxes in bvh_overlap_pair_blocks(maps.bvh, reached, include_touching=True):
-        yield np.asarray(boxes, dtype=np.int64), np.asarray(faces, dtype=np.int64)
+        offset = 0
+        while offset < len(boxes):
+            count = min(_REVERSE_COVER_ROUND - used, len(boxes) - offset)
+            box_buffer[used : used + count] = boxes[offset : offset + count]
+            face_buffer[used : used + count] = faces[offset : offset + count]
+            used += count
+            offset += count
+            if used == _REVERSE_COVER_ROUND:
+                yield box_buffer, face_buffer
+                box_buffer = np.empty(_REVERSE_COVER_ROUND, dtype=np.int64)
+                face_buffer = np.empty(_REVERSE_COVER_ROUND, dtype=np.int64)
+                used = 0
+    if used:
+        yield box_buffer[:used], face_buffer[:used]
 
 
 def _box_face_distance_lower(
@@ -4518,18 +4777,57 @@ def _witness_distance_lower(
     doubles from a small fraction of the tolerance until one of these holds or
     it exceeds the tolerance, so each query only meets the faces near a root.
     """
-    nearest = np.empty((points.shape[0],), dtype=np.float64)
-    pending = np.arange(points.shape[0])
-    reach = tolerance * 2.0**-6
-    while pending.shape[0]:
-        found = _box_face_distance_lower(maps, points[pending], points[pending], reach)
-        settled = (found < reach) | (reach > tolerance)
-        nearest[pending[settled]] = np.minimum(found[settled], reach)
-        pending = pending[~settled]
-        reach = math.nextafter(2.0 * reach, math.inf)
-    return float(
-        np.max(np.maximum(np.nextafter(nearest - errors, -np.inf), 0.0), initial=0.0)
-    )
+    lower = 0.0
+    for start in range(0, points.shape[0], _REVERSE_COVER_ROUND):
+        batch = points[start : start + _REVERSE_COVER_ROUND]
+        batch_errors = errors[start : start + _REVERSE_COVER_ROUND]
+        nearest = np.empty((batch.shape[0],), dtype=np.float64)
+        pending = np.arange(batch.shape[0])
+        reach = tolerance * 2.0**-6
+        while pending.shape[0]:
+            selected = batch[pending]
+            found = _box_face_distance_lower(maps, selected, selected, reach)
+            settled = (found < reach) | (reach > tolerance)
+            nearest[pending[settled]] = np.minimum(found[settled], reach)
+            pending = pending[~settled]
+            reach = math.nextafter(2.0 * reach, math.inf)
+        lower = max(
+            lower,
+            float(
+                np.max(
+                    np.maximum(np.nextafter(nearest - batch_errors, -np.inf), 0.0),
+                    initial=0.0,
+                )
+            ),
+        )
+    return lower
+
+
+def _possible_zero_box_blocks(
+    cover: AdaptiveImplicitCover, /
+) -> Generator[np.ndarray, None, None]:
+    """Yield the original possible-zero rows in full, source-ordered worksets."""
+    size = _REVERSE_COVER_ROUND
+    block = np.empty((size, 2, 3), dtype=np.float64)
+    count = 0
+    for start in range(0, len(cover.boxes), size):
+        stop = min(start + size, len(cover.boxes))
+        mask = (cover.value_lower[start:stop] <= 0.0) & (
+            cover.value_upper[start:stop] >= 0.0
+        )
+        selected = cover.boxes[start:stop][mask]
+        offset = 0
+        while offset < len(selected):
+            take = min(size - count, len(selected) - offset)
+            block[count : count + take] = selected[offset : offset + take]
+            count += take
+            offset += take
+            if count == size:
+                yield block
+                block = np.empty((size, 2, 3), dtype=np.float64)
+                count = 0
+    if count:
+        yield block[:count]
 
 
 def _source_to_mesh_bounds(
@@ -4559,12 +4857,17 @@ def _source_to_mesh_bounds(
     )
     upper_bound = 0.0
     floor = tolerance * _REVERSE_COVER_FLOOR
-    pending = np.asarray(cover.boxes[cover.possible_zero_mask], dtype=np.float64)
-    # Boxes are decided in bounded rounds, so one interval evaluation and its
-    # face pairs never hold more than `_REVERSE_COVER_ROUND` boxes.
-    queue = [pending]
-    while queue:
-        pending = queue.pop()
+    # Keep the exact source order and original round boundaries without
+    # gathering the entire possible-zero cover.
+    source_blocks = iter(_possible_zero_box_blocks(cover))
+    queue: list[np.ndarray] = []
+    while True:
+        if queue:
+            pending = queue.pop()
+        else:
+            pending = next(source_blocks, None)
+            if pending is None:
+                break
         if pending.shape[0] > _REVERSE_COVER_ROUND:
             queue.append(pending[_REVERSE_COVER_ROUND:])
             pending = pending[:_REVERSE_COVER_ROUND]
@@ -4580,19 +4883,17 @@ def _source_to_mesh_bounds(
             0.5 * box_lower + 0.5 * box_upper,
             0.5 * box_lower + 0.5 * box_upper,
         )
-        # Acceptance tries the faces nearest each small box's centre: the
-        # centre's reach doubles from a small fraction of the tolerance until
-        # some face box comes within it, so each query meets only nearby faces.
+        # A nearby face box is only a candidate: its actual enclosed face
+        # point may not prove the requested distance. Keep searching until
+        # a candidate certifies the box or the original reach limit is met.
         reach = np.full((pending.shape[0],), np.inf, dtype=np.float64)
         trial = np.flatnonzero(radius <= tolerance)
         centers = 0.5 * box_lower + 0.5 * box_upper
         search = tolerance * 2.0**-6
         while trial.shape[0] and search <= 2.0 * tolerance:
-            found = np.zeros((trial.shape[0],), dtype=np.bool_)
             for boxes, faces in _box_face_pair_blocks(
                 maps, centers[trial], centers[trial], search
             ):
-                found[boxes] = True
                 rows = trial[boxes]
                 first, second = _nearest_face_parameters(maps, faces, centers[rows])
                 point_lower, point_upper = _face_point_enclosures(
@@ -4605,7 +4906,7 @@ def _source_to_mesh_bounds(
                         box_lower[rows], box_upper[rows], point_lower, point_upper
                     ),
                 )
-            trial = trial[~found]
+            trial = trial[reach[trial] > tolerance]
             search = math.nextafter(2.0 * search, math.inf)
         accepted = reach <= tolerance
         if np.any(accepted):
@@ -4716,8 +5017,10 @@ def certify_adaptive_implicit_charts(
             raise TypeError("chart_parent must be ImplicitChartPremise or None.")
         if validated_chart_parent is None:
             validated_chart_parent = ValidatedImplicitChartParent(
-                chart_parent.parent_mesh, chart_parent.parent_geometry,
-                source, chart_parent.parent_certificate,
+                chart_parent.parent_mesh,
+                chart_parent.parent_geometry,
+                source,
+                chart_parent.parent_certificate,
             )
         parent = chart_parent.certified_parent(
             source, tolerance, maximum_normal_deviation, validated=validated_chart_parent
@@ -4860,7 +5163,13 @@ def certify_adaptive_implicit_charts(
         cover is None
         or not cover.complete
         or not cover.certified
-        or not np.any(cover.possible_zero_mask)
+        or not any(
+            np.any(
+                (cover.value_lower[start : start + _REVERSE_COVER_ROUND] <= 0.0)
+                & (cover.value_upper[start : start + _REVERSE_COVER_ROUND] >= 0.0)
+            )
+            for start in range(0, len(cover.boxes), _REVERSE_COVER_ROUND)
+        )
     ):
         return _unresolved_fidelity(
             mesh,

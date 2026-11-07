@@ -160,8 +160,8 @@ def test_surface_metric_transports_exact_boundary_occurrences(
     reference = ((Fraction(0), Fraction(0)), (half, Fraction(0)), (Fraction(0), half))
     child = (
         parent[0],
-        tuple((parent[0][axis] + parent[1][axis]) / 2 for axis in range(2)),
-        tuple((parent[0][axis] + parent[2][axis]) / 2 for axis in range(2)),
+        ((parent[0][0] + parent[1][0]) / 2, (parent[0][1] + parent[1][1]) / 2),
+        ((parent[0][0] + parent[2][0]) / 2, (parent[0][1] + parent[2][1]) / 2),
     )
     mapping = ReferenceCellMapWitnesses(
         np.asarray((123,), dtype=np.int64),

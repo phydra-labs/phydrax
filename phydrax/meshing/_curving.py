@@ -25,15 +25,16 @@ explicitly accepts valid non-converged relaxations. Otherwise the result rolls b
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from fractions import Fraction
 from itertools import product
-from typing import cast, final, NamedTuple, Protocol, runtime_checkable
+from typing import cast, final, NamedTuple, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, lax
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -45,7 +46,6 @@ from ..discretization import (
     CellMesh,
     CellValidityCertificate,
     CellValidityPolicy,
-    certify_cell_geometry_validity,
     reference_cell_topology,
 )
 from ..discretization._cell_geometry import (
@@ -58,7 +58,10 @@ from ..discretization._cell_geometry import (
     ScalarCoordinateElement,
 )
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
-from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    ComputedCellValidity,
+)
 from ..discretization._exact_algebraic_geometry import (
     coefficient_payload,
     ExactScalar,
@@ -108,6 +111,10 @@ from ._lineage import CellMeshTransition, MeshTransitionKind
 from ._native_construction import NativeMeshOrganization
 from ._optimization import optimize_cell_geometry_coordinates
 from ._result import CellMeshingResult
+
+
+if TYPE_CHECKING:
+    from ..geometry.brep._projection import _ProjectionPreparation
 
 
 @runtime_checkable
@@ -785,8 +792,18 @@ def _geometry_with_exact_coordinate_bank(
     )
 
 
-def _straight_geometry(mesh: CellMesh, degree: int, /) -> CellGeometrySpec:
-    """Evaluate the exact piecewise-linear mesh map at canonical Lagrange nodes."""
+def _straight_geometry(
+    mesh: CellMesh,
+    degree: int,
+    /,
+    *,
+    source_geometry: CellGeometrySpec | None = None,
+) -> CellGeometrySpec:
+    """Evaluate the actual source map at canonical nodes, or the P1 mesh map.
+
+    Interpolation at these nodes does not itself certify equality of the full
+    map when the requested degree is below the source's degree.
+    """
     kinds = {block.cell_kind for block in mesh.blocks}
     if not kinds <= set(_CURVED_KINDS):
         raise ValueError(
@@ -794,11 +811,19 @@ def _straight_geometry(mesh: CellMesh, degree: int, /) -> CellGeometrySpec:
         )
     mesh_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    linear_geometry = CellGeometrySpec(
-        {block.name: lagrange_element(block.cell_kind, 1) for block in mesh.blocks},
-        {block.name: np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks},
-        mesh_coordinates,
+    linear_geometry = (
+        CellGeometrySpec(
+            {block.name: lagrange_element(block.cell_kind, 1) for block in mesh.blocks},
+            {
+                block.name: np.asarray(block.vertices, dtype=np.int32)
+                for block in mesh.blocks
+            },
+            mesh_coordinates,
+        )
+        if source_geometry is None
+        else source_geometry
     )
+    linear_geometry.resolve(mesh)
     elements: dict[str, CellGeometryElement] = {}
     routes: dict[str, np.ndarray] = {}
     local_keys: dict[str, tuple[tuple[tuple[object, ...], ...], ...]] = {}
@@ -922,6 +947,10 @@ def _straight_geometry(mesh: CellMesh, degree: int, /) -> CellGeometrySpec:
 
     for row, exact_coordinate in enumerate(vertex_coordinates):
         if exact_coordinate is None:
+            if source_geometry is not None:
+                raise ValueError(
+                    "Source geometry cannot prove an unreferenced mesh vertex."
+                )
             vertex_coordinates[row] = tuple(
                 Fraction(float(value)) for value in mesh_coordinates[row]
             )
@@ -968,7 +997,9 @@ def _straight_geometry(mesh: CellMesh, degree: int, /) -> CellGeometrySpec:
         mesh.mesh_id,
         mesh.numeric_version,
         (
-            "straight-p1-mesh-map",
+            "straight-p1-mesh-map"
+            if source_geometry is None
+            else "source-map-nodal-evaluation",
             str(degree),
             cell_geometry_id(linear_geometry),
             *node_identity_payload,
@@ -1209,9 +1240,17 @@ def _distortion_blocks(
             _, gradients = element.tabulate(samples)
             per_cell_gradients = False
         _, linear = lagrange_element(block.cell_kind, 1).tabulate(samples)
+        linear = np.asarray(linear, dtype=np.float64)
+        linear_bits = linear.view(np.uint64)
+        if np.array_equal(
+            linear_bits, np.broadcast_to(linear_bits[:1], linear_bits.shape)
+        ):
+            # Identical straight-map Jacobians share one solve per cell.
+            # Broadcast the retained inverse over the unchanged sample lattice.
+            linear = linear[:1]
         straight = contract(
             "mnk,cna->cmak",
-            np.asarray(linear),
+            linear,
             points[np.asarray(block.vertices, dtype=np.int64)],
         )
         plan = SmallLinearSolvePlan(dimension)
@@ -1236,6 +1275,77 @@ def _distortion_blocks(
     return tuple(blocks)
 
 
+def _sampled_block_quality(
+    block: _BlockDistortion, values: Array, /
+) -> tuple[Array, Array]:
+    """Reduce sampled diagnostics in their original eager evaluation order."""
+    frobenius, determinant, jacobian = block.ratios(values)
+    dimension = block.gradients.shape[-1]
+    columns = jnp.prod(jnp.linalg.norm(jacobian, axis=-2), axis=-1)
+    if block.embedded:
+        gram = jnp.swapaxes(jacobian, -1, -2) @ jacobian
+        measure = jnp.sqrt(jnp.maximum(determinant_small_linear(block.plan, gram), 0.0))
+    else:
+        measure = determinant_small_linear(block.plan, jacobian)
+    scaled = jnp.min(measure / jnp.maximum(columns, jnp.finfo(values.dtype).tiny))
+    positive = jnp.where(determinant > 0.0, determinant, jnp.nan)
+    distortion = jnp.nanmax(frobenius / (dimension * positive ** (2.0 / dimension)))
+    return scaled, distortion
+
+
+# Host certificate preparation must retain the eager rounding of each numeric
+# kernel. Bound live Jacobian work rather than fusing their arithmetic.
+_QUALITY_WORKSET_ENTRIES = 1 << 18
+
+
+def _quality_workset(
+    block: _BlockDistortion,
+    cell_start: int,
+    cell_count: int,
+    /,
+) -> _BlockDistortion:
+    cell_offset = jnp.asarray(cell_start, dtype=jnp.int32)
+    routes = lax.dynamic_slice_in_dim(block.routes, cell_offset, cell_count, axis=0)
+    gradients = block.gradients
+    if block.per_cell_gradients:
+        gradients = lax.dynamic_slice_in_dim(gradients, cell_offset, cell_count, axis=0)
+    inverses = lax.dynamic_slice_in_dim(
+        block.target_inverses, cell_offset, cell_count, axis=0
+    )
+    return _BlockDistortion(
+        routes,
+        gradients,
+        inverses,
+        block.plan,
+        block.embedded,
+        block.per_cell_gradients,
+    )
+
+
+def _bounded_sampled_block_quality(
+    block: _BlockDistortion, values: Array, /
+) -> tuple[Array, Array]:
+    cells = block.routes.shape[0]
+    samples = block.gradients.shape[1 if block.per_cell_gradients else 0]
+    width = values.shape[1] * block.gradients.shape[-1]
+    if cells * samples * width <= _QUALITY_WORKSET_ENTRIES:
+        return _sampled_block_quality(block, values)
+    cell_count = max(1, _QUALITY_WORKSET_ENTRIES // (samples * width))
+    scaled: list[np.ndarray] = []
+    distortion: list[np.ndarray] = []
+    for cell_start in range(0, cells, cell_count):
+        workset = _quality_workset(block, cell_start, min(cell_count, cells - cell_start))
+        scale, shape = _sampled_block_quality(workset, values)
+        # This is an explicit host-evidence boundary, not an optimizer
+        # iteration: finish one workset before admitting its successor.
+        scaled.append(np.asarray(scale))
+        distortion.append(np.asarray(shape))
+    return (
+        jnp.min(jnp.asarray(np.stack(scaled))),
+        jnp.nanmax(jnp.asarray(np.stack(distortion))),
+    )
+
+
 def _sampled_quality(
     blocks: tuple[_BlockDistortion, ...], coordinates: np.ndarray, /
 ) -> tuple[float, float]:
@@ -1243,27 +1353,31 @@ def _sampled_quality(
     values = jnp.asarray(coordinates)
     scaled, distortion = [], []
     for block in blocks:
-        frobenius, determinant, jacobian = block.ratios(values)
-        dimension = block.gradients.shape[-1]
-        columns = jnp.prod(jnp.linalg.norm(jacobian, axis=-2), axis=-1)
-        if block.embedded:
-            gram = jnp.swapaxes(jacobian, -1, -2) @ jacobian
-            measure = jnp.sqrt(
-                jnp.maximum(determinant_small_linear(block.plan, gram), 0.0)
-            )
-        else:
-            measure = determinant_small_linear(block.plan, jacobian)
-        scaled.append(
-            jnp.min(measure / jnp.maximum(columns, jnp.finfo(values.dtype).tiny))
-        )
-        positive = jnp.where(determinant > 0.0, determinant, jnp.nan)
-        distortion.append(
-            jnp.nanmax(frobenius / (dimension * positive ** (2.0 / dimension)))
-        )
+        block_scaled, block_distortion = _bounded_sampled_block_quality(block, values)
+        scaled.append(block_scaled)
+        distortion.append(block_distortion)
     return float(min(scaled)), float(max(distortion))
 
 
 # -- evidence ---------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _NodeProjectionCache:
+    """Previous row-aligned projections, scoped to one curving invocation."""
+
+    projection: AbstractBRepProjection
+    classes: _NodeClasses
+    rows: np.ndarray | None = None
+    dimensions: np.ndarray | None = None
+    indices: np.ndarray | None = None
+    queries: np.ndarray | None = None
+    feet: np.ndarray | None = None
+    residuals: np.ndarray | None = None
+    projectors: np.ndarray | None = None
+    preparation: _ProjectionPreparation | None = None
+    hits: int = 0
+    misses: int = 0
 
 
 def _node_residuals(
@@ -1271,33 +1385,95 @@ def _node_residuals(
     coordinates: np.ndarray,
     classes: _NodeClasses,
     /,
+    *,
+    cache: _NodeProjectionCache | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Closest points, residuals, unit normals-space projectors of constrained nodes."""
     rows = np.flatnonzero(classes.constrained)
     ambient = coordinates.shape[1]
     residuals = np.zeros((coordinates.shape[0],))
-    result = projection.project(
-        coordinates[rows], classes.dimensions[rows], classes.indices[rows]
-    )
-    failed = ~np.isin(np.asarray(result.status), _RESOLVED_STATUS)
-    feet = np.asarray(result.points)
-    residuals[rows] = np.where(failed, np.inf, np.asarray(result.residuals))
+    query = np.ascontiguousarray(coordinates[rows], dtype=np.float64)
+    same = np.zeros(rows.size, dtype=np.bool_)
+    if (
+        cache is not None
+        and cache.projection is projection
+        and cache.classes is classes
+        and cache.rows is not None
+        and np.array_equal(cache.rows, rows)
+        and cache.dimensions is not None
+        and cache.indices is not None
+        and np.array_equal(cache.dimensions, classes.dimensions[rows])
+        and np.array_equal(cache.indices, classes.indices[rows])
+        and cache.queries is not None
+        and cache.queries.shape == query.shape
+    ):
+        # Bitwise identity preserves even signed zero and never treats a
+        # tolerance-near query as the same scientific input.
+        same = np.all(query.view(np.uint64) == cache.queries.view(np.uint64), axis=1)
+    feet = np.empty_like(query)
+    projected_residuals = np.empty(rows.size, dtype=np.float64)
+    projectors = np.empty((rows.size, ambient, ambient), dtype=np.float64)
+    if np.any(same):
+        assert cache is not None and cache.feet is not None
+        assert cache.residuals is not None and cache.projectors is not None
+        feet[same] = cache.feet[same]
+        projected_residuals[same] = cache.residuals[same]
+        projectors[same] = cache.projectors[same]
+    missing = ~same
+    if np.any(missing):
+        selected = rows[missing]
+        from ..geometry.brep._projection import NativeBRepProjection
+
+        if (
+            cache is not None
+            and cache.projection is projection
+            and cache.classes is classes
+            and isinstance(projection, NativeBRepProjection)
+        ):
+            if cache.preparation is None:
+                cache.preparation = projection._prepare_project()
+            result = projection._project_prepared(
+                query[missing],
+                classes.dimensions[selected],
+                classes.indices[selected],
+                preparation=cache.preparation,
+            )
+        else:
+            result = projection.project(
+                query[missing], classes.dimensions[selected], classes.indices[selected]
+            )
+        failed = ~np.isin(np.asarray(result.status), _RESOLVED_STATUS)
+        projected_residuals[missing] = np.where(
+            failed, np.inf, np.asarray(result.residuals)
+        )
+        identity = np.eye(ambient)
+        tangents = np.asarray(result.tangents)
+        normals = np.asarray(result.normals)
+        fresh_projectors = np.zeros((selected.size, ambient, ambient))
+        edge = classes.dimensions[selected] == 1
+        face = classes.dimensions[selected] == 2
+        fresh_projectors[edge] = (
+            identity - tangents[edge, 0, :, None] * tangents[edge, 0, None, :]
+        )
+        fresh_projectors[face] = normals[face, :, None] * normals[face, None, :]
+        fresh_projectors[classes.dimensions[selected] == 0] = identity
+        unframed = ~np.all(np.isfinite(fresh_projectors), axis=(1, 2))
+        fresh_projectors[unframed] = identity
+        projectors[missing] = fresh_projectors
+        fresh_feet = np.asarray(result.points)
+        feet[missing] = np.where(np.isfinite(fresh_feet), fresh_feet, query[missing])
+    residuals[rows] = projected_residuals
     residuals[~classes.resolved] = np.inf
-    identity = np.eye(ambient)
-    tangents = np.asarray(result.tangents)
-    normals = np.asarray(result.normals)
-    projectors = np.zeros((rows.size, ambient, ambient))
-    edge = classes.dimensions[rows] == 1
-    face = classes.dimensions[rows] == 2
-    projectors[edge] = identity - tangents[edge, 0, :, None] * tangents[edge, 0, None, :]
-    projectors[face] = normals[face, :, None] * normals[face, None, :]
-    vertex = classes.dimensions[rows] == 0
-    projectors[vertex] = identity
-    # A resolved foot without a finite frame (singular or frameless hit) pins the
-    # node to its foot; a zero projector would leave a constrained node free.
-    unframed = ~np.all(np.isfinite(projectors), axis=(1, 2))
-    projectors[unframed] = identity
-    feet = np.where(np.isfinite(feet), feet, coordinates[rows])
+    if cache is not None and cache.projection is projection and cache.classes is classes:
+        cache.rows = rows.copy()
+        cache.dimensions = classes.dimensions[rows].copy()
+        cache.indices = classes.indices[rows].copy()
+        cache.queries = query
+        cache.feet = feet.copy()
+        cache.residuals = projected_residuals.copy()
+        cache.projectors = projectors.copy()
+        cache.hits += int(np.count_nonzero(same))
+        cache.misses += int(np.count_nonzero(missing))
     return rows, feet, residuals, projectors
 
 
@@ -1454,12 +1630,12 @@ class _LocalEvidence(NamedTuple):
     residuals: np.ndarray
     scaled: float
     distortion: float
-    validity: CellValidityCertificate
+    computed_validity: ComputedCellValidity
 
     def passes(self, policy: HighOrderCurvingPolicy, /) -> bool:
         """Every cell certified valid and every constrained node on the source."""
         return bool(
-            self.validity.all_certified
+            self.computed_validity.certificate.all_certified
             and float(np.max(self.residuals, initial=0.0)) <= policy.residual_tolerance
         )
 
@@ -1473,15 +1649,14 @@ def _local_evidence(
     policy: HighOrderCurvingPolicy,
     /,
     *,
-    parent: CellValidityCertificate | None = None,
+    parent: ComputedCellValidity | None = None,
+    cache: _NodeProjectionCache | None = None,
 ) -> _LocalEvidence:
     coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
-    _, _, residuals, _ = _node_residuals(projection, coordinates, classes)
+    _, _, residuals, _ = _node_residuals(projection, coordinates, classes, cache=cache)
     scaled, distortion = _sampled_quality(blocks, coordinates)
-    validity = certify_cell_geometry_validity(
-        geometry, mesh=mesh, policy=policy.validity, parent=parent
-    )
-    return _LocalEvidence(residuals, scaled, distortion, validity)
+    computed_validity = ComputedCellValidity(geometry, mesh, policy.validity, parent)
+    return _LocalEvidence(residuals, scaled, distortion, computed_validity)
 
 
 def _evidence(
@@ -1496,19 +1671,32 @@ def _evidence(
     source_result: CellMeshingResult | None = None,
     prior_transition: CellMeshTransition | None = None,
     local: _LocalEvidence | None = None,
+    cache: _NodeProjectionCache | None = None,
+    embedding: GlobalEmbeddingCertificate | None = None,
 ) -> CurvedGeometryEvidence:
     if local is None:
-        local = _local_evidence(mesh, geometry, classes, projection, blocks, policy)
-    residuals, scaled, distortion, validity = local
+        local = _local_evidence(
+            mesh, geometry, classes, projection, blocks, policy, cache=cache
+        )
+    residuals, scaled, distortion, computed_validity = local
+    validity = computed_validity.certificate
+    computed_validity.require(geometry, mesh, validity)
     certification = None if source_result is None else source_result.certification
-    embedding = certify_global_embedding(
-        mesh,
-        geometry,
-        validity,
-        junction_vertices=None
-        if certification is None
-        else certification.inputs.junction_vertices,
+    junction_vertices = (
+        None if certification is None else certification.inputs.junction_vertices
     )
+    if embedding is None:
+        embedding = certify_global_embedding(
+            mesh,
+            geometry,
+            validity,
+            junction_vertices=junction_vertices,
+            validated_validity=computed_validity,
+        )
+    else:
+        embedding.require_inputs(
+            mesh, geometry, validity, junction_vertices=junction_vertices
+        )
     # Source claims are renewed only for a locally accepted map: a rejected
     # candidate's refusal is decided before any source acceptance is consulted.
     locally_accepted = local.passes(policy) and embedding.status == "certified"
@@ -1531,7 +1719,9 @@ def _evidence(
         else (None, None, None, None, None)
     )
     if np.any(~np.isfinite(residuals)):
-        source_failure = "CAD projection or node association has no finite residual bound."
+        source_failure = (
+            "CAD projection or node association has no finite residual bound."
+        )
     return CurvedGeometryEvidence(
         validity,
         embedding,
@@ -1652,10 +1842,18 @@ def _periodic_nodes(
     A node belongs to a side when every vertex of its owning mesh entity is in
     the side's vertex scope; sides are paired on the straight positions.
     """
+    ambient = mesh.ambient_dimension
+    if not periodic:
+        empty = np.zeros((0,), dtype=np.int64)
+        return _PeriodicNodes(
+            empty,
+            empty,
+            np.zeros((0, ambient, ambient), dtype=np.float64),
+            np.zeros((0, ambient), dtype=np.float64),
+        )
     owner_dims, owner_rows = _node_owners(mesh, straight)
     coordinates = np.asarray(straight.coordinates, dtype=np.float64)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    ambient = mesh.ambient_dimension
     incidences = tuple(
         _incidence_pairs(mesh, 0, dimension)
         for dimension in range(mesh.topological_dimension + 1)
@@ -1696,11 +1894,6 @@ def _periodic_nodes(
         translations.append(
             np.broadcast_to(np.asarray(coupling.translation), (target_rows.size, ambient))
         )
-    if not sources:
-        empty = np.zeros((0,), dtype=np.int64)
-        return _PeriodicNodes(
-            empty, empty, np.zeros((0, ambient, ambient)), np.zeros((0, ambient))
-        )
     target = np.concatenate(targets)
     if np.unique(target).size != target.size:
         raise ValueError("Periodic couplings must not share target nodes.")
@@ -1729,9 +1922,13 @@ def _project_constrained(
     classes: _NodeClasses,
     periodic: _PeriodicNodes,
     /,
+    *,
+    cache: _NodeProjectionCache | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Re-project movable constrained nodes; periodic targets follow their sources."""
-    rows, feet, _, projectors = _node_residuals(projection, coordinates, classes)
+    rows, feet, _, projectors = _node_residuals(
+        projection, coordinates, classes, cache=cache
+    )
     result = coordinates.copy()
     movable = ~classes.fixed[rows]
     result[rows[movable]] = feet[movable]
@@ -1753,13 +1950,24 @@ def curve_cell_mesh(
 
     ``source_result`` retains target-bound certification. ``prior_transition`` must
     target that exact source result and is required to continue any material
-    declaration/chain; a bare result never authors material identity.
+    declaration/chain; a bare result never authors material identity. When
+    retained, its exact coordinate map supplies every initial nodal image.
+
+    This coordinator keeps candidate selection and rollback-owned caches in one
+    invocation; numerical preparation, projection and proof phases stay in their
+    owning helpers so their ordering and accepted-state lifetime remain explicit.
     """
     _require_inputs(mesh, association, projection, policy)
     source_result = _curving_source_result(mesh, source_result, prior_transition)
-    straight = _straight_geometry(mesh, policy.degree)
+    straight = _straight_geometry(
+        mesh,
+        policy.degree,
+        source_geometry=None if source_result is None else source_result.geometry,
+    )
     classes = _node_classes(mesh, straight, association, projection)
     blocks = _distortion_blocks(mesh, straight, policy.degree)
+    projection_cache = _NodeProjectionCache(projection, classes)
+    straight_projection_cache = projection_cache
 
     def rollback(
         status: HighOrderCurvingStatus,
@@ -1777,6 +1985,7 @@ def curve_cell_mesh(
             policy,
             source_result=source_result,
             prior_transition=prior_transition,
+            cache=straight_projection_cache,
         )
         return HighOrderCurvingResult(
             status, straight, straight, evidence, candidate, minimizations, None
@@ -1806,8 +2015,15 @@ def curve_cell_mesh(
         )
     )
     coordinates, constrained_rows, projectors = _project_constrained(
-        projection, np.asarray(straight.coordinates, dtype=np.float64), classes, pairs
+        projection,
+        np.asarray(straight.coordinates, dtype=np.float64),
+        classes,
+        pairs,
+        cache=projection_cache,
     )
+    # Cache updates replace their arrays. Retain the initial exact-query rows
+    # without copying them so rollback does not repeat source projections.
+    straight_projection_cache = replace(projection_cache)
 
     def candidate_geometry(values: np.ndarray, /) -> CellGeometrySpec:
         return _geometry_with_exact_coordinate_bank(
@@ -1833,7 +2049,8 @@ def curve_cell_mesh(
             projection,
             blocks,
             policy,
-            parent=candidates[-1][3].validity if candidates else None,
+            parent=candidates[-1][3].computed_validity if candidates else None,
+            cache=projection_cache,
         )
         candidates.append((round_, values, geometry, local, admissible))
 
@@ -1867,7 +2084,11 @@ def curve_cell_mesh(
         if not np.all(np.isfinite(moved)):
             break
         coordinates, constrained_rows, projectors = _project_constrained(
-            projection, moved, classes, pairs
+            projection,
+            moved,
+            classes,
+            pairs,
+            cache=projection_cache,
         )
         admissible = relaxed.converged or policy.accept_valid_nonconverged_relaxation
         if not admissible and round_ < policy.relaxation_rounds:

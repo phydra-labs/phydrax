@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections import OrderedDict
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import cast, TYPE_CHECKING
@@ -17,6 +18,7 @@ from jax import Array
 from ..discretization._cell_geometry import (
     CellGeometryElement,
     CellGeometrySpec,
+    PerCellRestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
 from ..discretization._cell_mesh import CellMesh, PolyhedralBlock
@@ -33,6 +35,7 @@ from ..discretization._coordinate_enclosure import (
     Polynomial,
     polynomial_bounds,
     RationalPolynomial,
+    RestrictedCoordinateMapPreparation,
     subtract,
 )
 from ..discretization._exact_algebraic_geometry import RadicalElement
@@ -44,6 +47,7 @@ from ._source_boundary_records import SourceBoundaryChartWitness
 
 
 if TYPE_CHECKING:
+    from ._affine_plc_boundary import AffinePlcBoundarySource
     from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 
 Point2 = tuple[Fraction, Fraction]
@@ -323,6 +327,8 @@ def _mapped_chart_maps(
     routes: tuple[Array, ...],
     coordinates: CoordinateSourceBank,
     target_vertex_coordinates: dict[int, _Point3Exact] | None,
+    target_maps: OrderedDict[tuple[int, int], tuple[Expression, ...]],
+    root_preparations: dict[int, RestrictedCoordinateMapPreparation],
     /,
 ) -> tuple[tuple[Expression, ...], tuple[Expression, ...]]:
     parameters = _triangle_points(witness.source_parameter_chart(row))
@@ -387,7 +393,23 @@ def _mapped_chart_maps(
     element = elements[block_index]
     if not isinstance(element, ScalarCoordinateElement):
         raise TypeError("Mapped target charts require scalar coordinate elements.")
-    target_base = coordinate_map_expressions(element, local, cell_row=cell_row)
+    target_base = target_maps.get(target_row)
+    if target_base is None:
+        preparation = root_preparations.get(block_index)
+        if preparation is None and isinstance(element, PerCellRestrictedCellGeometryElement):
+            preparation = RestrictedCoordinateMapPreparation(
+                element, coordinates, np.asarray(routes[block_index], dtype=np.int64),
+                mode="source",
+            )
+            root_preparations[block_index] = preparation
+        target_base = None if preparation is None else preparation.expressions(cell_row)
+        if target_base is None:
+            target_base = coordinate_map_expressions(element, local, cell_row=cell_row)
+        target_maps[target_row] = target_base
+        if len(target_maps) > 64:
+            target_maps.popitem(last=False)
+    else:
+        target_maps.move_to_end(target_row)
     target_reference = witness.target_reference_chart(row)
     if witness.reference_dimension != mesh.topological_dimension or any(
         len(point) != witness.reference_dimension for point in target_reference
@@ -626,7 +648,9 @@ def _normal_bounds(
 def certify_surface_chart_maps(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
-    source: MappedReferenceBoundarySource | PiecewiseLinearBoundarySource,
+    source: MappedReferenceBoundarySource
+    | PiecewiseLinearBoundarySource
+    | AffinePlcBoundarySource,
     witness: SourceBoundaryChartWitness,
     target_rows: tuple[tuple[int, int], ...],
     /,
@@ -635,6 +659,7 @@ def certify_surface_chart_maps(
     maximum_normal_deviation: float | None,
 ) -> SurfaceChartFidelity:
     """Bound both directed errors through exact source and target chart maps."""
+    from ._affine_plc_boundary import AffinePlcBoundarySource
     from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 
     if len(target_rows) != len(witness.source_chart_ids):
@@ -663,12 +688,18 @@ def certify_surface_chart_maps(
     target_ids = tuple(int(value) for value in witness.entity_global_ids)
     source_rows: list[int] = []
     source_map_cache: dict[str, tuple[Expression, ...]] = {}
+    # This bounded scheduling window is local to these exact geometry operands;
+    # eviction only repeats the same composition and does not affect the proof.
+    target_maps: OrderedDict[tuple[int, int], tuple[Expression, ...]] = OrderedDict()
+    root_preparations: dict[int, RestrictedCoordinateMapPreparation] = {}
     for row, target_row in enumerate(target_rows):
         chart_row = source.chart_row(2, witness.source_chart_ids[row])
         source_rows.append(
             int(
                 source.source_rows[chart_row]
-                if isinstance(source, PiecewiseLinearBoundarySource)
+                if isinstance(
+                    source, (PiecewiseLinearBoundarySource, AffinePlcBoundarySource)
+                )
                 else source.polygon_source_facet_rows[chart_row]
             )
         )
@@ -691,6 +722,8 @@ def certify_surface_chart_maps(
                 routes,
                 coordinates,
                 target_vertex_coordinates,
+                target_maps,
+                root_preparations,
             )
             difference = tuple(
                 subtract(source_value, target_value)

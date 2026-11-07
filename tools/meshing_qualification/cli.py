@@ -20,7 +20,36 @@ def _invoke(name: str, arguments: argparse.Namespace, /) -> dict[str, object]:
 
             module_name, function_name = NATIVE_CASE_REGISTRY[name]
             function = getattr(import_module(module_name, __package__), function_name)
-            record = function()
+            if name in ("native-general-families", "native-planar-feature-matrix"):
+                checkpoint_path = (
+                    arguments.output.with_name(arguments.output.name + ".profiles.jsonl")
+                    if arguments.output is not None
+                    else None
+                )
+                if checkpoint_path is None:
+                    import sys
+
+                    def checkpoint(event: dict[str, object]) -> None:
+                        print(
+                            json.dumps(event, default=_json_default, allow_nan=False),
+                            file=sys.stderr,
+                            flush=True,
+                        )
+
+                    record = function(checkpoint=checkpoint)
+                else:
+                    with checkpoint_path.open("w", encoding="utf-8") as stream:
+
+                        def checkpoint(event: dict[str, object]) -> None:
+                            stream.write(
+                                json.dumps(event, default=_json_default, allow_nan=False)
+                                + "\n"
+                            )
+                            stream.flush()
+
+                        record = function(checkpoint=checkpoint)
+            else:
+                record = function()
         elif name in OPTIONAL_SCENARIOS:
             from .scenarios.providers import run_optional
 
@@ -74,7 +103,31 @@ def run(
         for item in expanded:
             if item not in selected:
                 selected.append(item)
-    records = {name: _invoke(name, arguments) for name in selected}
+    distributed = "native-distributed-lifecycle"
+    combined = "native-cold-fe-fv-continuation"
+    shared_continuation = distributed in selected and combined in selected
+    records = {
+        name: _invoke(name, arguments)
+        for name in selected
+        if not (shared_continuation and name == distributed)
+    }
+    if shared_continuation:
+        component = records[combined].get("owner_local_fe_continuation")
+        if (
+            isinstance(component, dict)
+            and isinstance(component.get("status"), str)
+            and component["status"]
+            and component.get("scenario", distributed) == distributed
+        ):
+            records[distributed] = {**component, "scenario": distributed}
+        else:
+            records[distributed] = {
+                "scenario": distributed,
+                "status": "failed",
+                "detail": "Combined cold continuation omitted its canonical distributed FE result.",
+                "runtime": records[combined]["runtime"],
+            }
+        records = {name: records[name] for name in selected}
     status = (
         "passed"
         if all(value["status"] == "passed" for value in records.values())

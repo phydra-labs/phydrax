@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -27,6 +32,7 @@ from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import UniformSizeControl
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
+from phydrax.meshing.providers import NativeMeshingProvider
 from phydrax.meshing.providers._native_compartment import (
     _normalize_label_field_source,
     prepare_native_compartment,
@@ -375,3 +381,152 @@ def test_native_label_surface_route_preserves_multimaterial_plc_identity() -> No
     )
     assert facet_source_keys <= set(face_association.source_entity_ids)
     assert face_association.exact
+
+
+def test_image_slab_tetrahedral_fv_transport_conserves_material_inventory() -> None:
+    from tools.meshing_qualification.scenarios.image_material_profiles import (
+        _run_image_profile,
+    )
+
+    record = _run_image_profile("native-image-lifecycle", oblique=False)
+    transport = record["transport"]
+    assert isinstance(transport, dict)
+    assert transport["accepted_step"] == 5
+    assert transport["positivity_valid"] is True
+    assert transport["positive_density_changed"] is True
+    mass_error = transport["absolute_mass_error"]
+    flux_error = transport["flux_balance_error"]
+    assert isinstance(mass_error, float) and mass_error < 1.0e-9
+    assert isinstance(flux_error, float) and flux_error < 1.0e-9
+
+
+def test_image_material_cli_qualifies_original_slab_and_reflected_junction(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "image-material.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.meshing_qualification",
+            "--scenario",
+            "native-image-material",
+            "--output",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["status"] == "passed"
+    scenario = report["scenarios"]["native-image-material"]
+    assert scenario["status"] == "passed", scenario
+    assert scenario["failures"] == []
+    slab, junction = scenario["cases"]
+    for case, volumes, face_count in (
+        (slab, {"material-a": 0.5, "material-b": 0.5}, 112),
+        (junction, {"material-a": 0.25, "material-b": 0.25, "material-c": 0.5}, 120),
+    ):
+        assert case["status"] == "passed"
+        assert case["source_id"] and case["source_revision"]
+        assert case["independent_region_volumes_m3"] == pytest.approx(
+            volumes, rel=0.0, abs=1e-10
+        )
+        assert case["measured_region_volumes_m3"] == pytest.approx(
+            volumes, rel=0.0, abs=1e-10
+        )
+        assert case["measured_total_volume_m3"] == pytest.approx(
+            1.0, rel=0.0, abs=1e-10
+        )
+        interface = case["interface_oracle"]
+        assert interface["voxel_face_count"] == face_count
+        assert interface["method"] == "oriented voxel faces and exact rational planar clipping"
+        witness = case["source_chart_witness"]
+        assert witness["witness_id"]
+        assert witness["source_id"] == case["source_id"]
+        assert witness["source_revision"] == case["source_revision"]
+        assert witness["chart_piece_count"] >= witness["target_face_count"] > 0
+        assert interface["maximum_plane_distance_m"] <= 1e-10
+        assert interface["interface_triangle_count"] > 0
+        transport = case["transport"]
+        assert transport["accepted_step"] == 5
+        assert transport["positive_density_changed"] is True
+        assert transport["positivity_valid"] is True
+        assert transport["absolute_mass_error"] <= 1e-9
+        assert transport["flux_balance_error"] <= 1e-9
+    assert slab["profile"] == "native-image-lifecycle"
+    assert junction["profile"] == "native-image-lifecycle:oblique-junction-transport"
+    affine = np.asarray(junction["coordinate_affine"])
+    assert np.linalg.det(affine[:3, :3]) < 0
+    assert affine[0, 1] != 0 and affine[1, 2] != 0
+
+
+def test_oblique_image_cold_source_and_accepted_evidence_replay(tmp_path: Path) -> None:
+    from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import write_model_artifact
+    from tools.meshing_qualification.scenarios.image_material_profiles import (
+        _image_profile_inputs,
+        _image_result_evidence,
+    )
+
+    source, specification, options, contract = _image_profile_inputs(
+        "native-image-lifecycle:oblique-junction-transport", oblique=True
+    )
+    result = NativeMeshingProvider(options).plan(
+        source, specification, coordinate_contract=contract
+    ).execute()
+    expected = _image_result_evidence(result)
+    assert expected["source_id"] == source.source_id
+    assert expected["source_revision"] == source.source_revision
+    assert expected["association_ids"]
+    entries = tuple(
+        CompositionEntry(
+            value,
+            entry_id=entry_id,
+            role=role,
+            owner_id="phydrax.meshing",
+            structure_id=source.source_id,
+            revision_id=source.source_revision,
+            semantics_id=entry_id,
+        )
+        for entry_id, role, value in (
+            ("image/source", "topology", source),
+            ("image/specification", "interface-route", specification),
+            ("image/options", "model-parameter", options),
+            ("image/accepted-result", "discretization", result),
+        )
+    )
+    composition = Composition(entries, boundary_id="image-accepted-cold-replay")
+    path = tmp_path / "image-accepted.phx"
+    write_model_artifact(path, composition, limits=None)
+    expected_path = tmp_path / "accepted-evidence.json"
+    expected_path.write_text(json.dumps(expected, sort_keys=True), encoding="utf-8")
+    script = """
+import json, sys
+from phydrax.lifecycle._composition_rebind import Composition
+from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._model_codec import read_model_artifact, restore_model_archive_value
+from phydrax.meshing.providers import NativeMeshingProvider
+from tools.meshing_qualification.scenarios.image_material_profiles import _image_result_evidence
+composition = read_model_artifact(sys.argv[1], expected_type=Composition,
+    restore=restore_model_archive_value, limits=None)
+source = composition.value("image/source")
+specification = VolumeMeshingSpec.from_stored_fields(composition.value("image/specification"))
+options = composition.value("image/options")
+stored_result = composition.value("image/accepted-result")
+expected = json.loads(open(sys.argv[2], encoding="utf-8").read())
+assert _image_result_evidence(stored_result) == expected
+result = NativeMeshingProvider(options).plan(source, specification,
+    coordinate_contract=source.coordinate_contract).execute()
+assert stored_result.certification.inputs.source_id == source.source_id
+assert _image_result_evidence(result) == expected
+"""
+    child = subprocess.run(
+        [sys.executable, "-c", script, str(path), str(expected_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert child.returncode == 0, child.stdout + child.stderr

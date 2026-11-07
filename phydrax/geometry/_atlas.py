@@ -99,6 +99,63 @@ def _polygon_point_state(
     return inside, False
 
 
+type _AffineTrimSpan = tuple[
+    tuple[Fraction, Fraction], tuple[Fraction, Fraction], Fraction, Fraction
+]
+
+
+def _affine_trim_span(segment: _CurveTrimSegment, /) -> _AffineTrimSpan | None:
+    """Retain only an independently proved rational line and admitted parameter span."""
+    from .brep._boolean_core import line_chart_coefficients
+    from .brep._intersection_curve import CurveTrimSegment
+
+    if not isinstance(segment, CurveTrimSegment):
+        return None
+    coefficients = line_chart_coefficients(segment.curve)
+    if coefficients is None:
+        return None
+    origin, direction = coefficients
+    if (
+        len(origin) != 2
+        or len(direction) != 2
+        or not isinstance(origin[0], Fraction)
+        or not isinstance(origin[1], Fraction)
+    ):
+        return None
+    first = Fraction(
+        segment.first
+        if segment.first_root is None
+        else segment.first_root.parameter_enclosure()[1]
+    )
+    last = Fraction(
+        segment.last
+        if segment.last_root is None
+        else segment.last_root.parameter_enclosure()[0]
+    )
+    if first > last:
+        return None
+    return (origin[0], origin[1]), (direction[0], direction[1]), first, last
+
+
+def _affine_trim_meets_box(span: _AffineTrimSpan, box: np.ndarray, /) -> bool:
+    """Exact slab intersection of a guaranteed source subsegment and the query."""
+    origin, direction, first, last = span
+    for axis in range(2):
+        lower = Fraction.from_float(float(box[0, axis]))
+        upper = Fraction.from_float(float(box[1, axis]))
+        if direction[axis] == 0:
+            if not lower <= origin[axis] <= upper:
+                return False
+            continue
+        start = (lower - origin[axis]) / direction[axis]
+        stop = (upper - origin[axis]) / direction[axis]
+        first = max(first, min(start, stop))
+        last = min(last, max(start, stop))
+        if first > last:
+            return False
+    return True
+
+
 class _SegmentEnclosures:
     """Lazily refined enclosure tree of one trim segment within one classification.
 
@@ -108,12 +165,13 @@ class _SegmentEnclosures:
     record is created by the classifying call and dropped with it.
     """
 
-    __slots__ = ("boxes", "points", "segment")
+    __slots__ = ("affine_span", "boxes", "points", "segment")
 
     def __init__(self, segment: _CurveTrimSegment, /) -> None:
         self.segment = segment
         self.boxes: dict[tuple[float, float], np.ndarray | None] = {}
         self.points: dict[float, np.ndarray | None] = {}
+        self.affine_span = _affine_trim_span(segment)
 
 
 type _LoopEnclosures = tuple[tuple[_SegmentEnclosures, ...], ...]
@@ -133,6 +191,21 @@ class TrimEnclosures:
         self.loops: _LoopEnclosures = tuple(
             tuple(_SegmentEnclosures(segment) for segment in loop) for loop in loops
         )
+
+    def retain_coarse(self) -> None:
+        """Discard adaptive nodes while retaining a fixed dyadic source prefix."""
+        for loop in self.loops:
+            for record in loop:
+                record.boxes = {
+                    key: value
+                    for key, value in record.boxes.items()
+                    if key[1] - key[0] >= 1.0 / 64.0
+                }
+                record.points = {
+                    key: value
+                    for key, value in record.points.items()
+                    if (key * 64).is_integer()
+                }
 
     def require_for(
         self, loops: tuple[tuple[_CurveTrimSegment, ...], ...], /
@@ -244,6 +317,12 @@ def _segment_chord_pieces(
     segment: _SegmentEnclosures, query_box: np.ndarray, /
 ) -> list[_ChordPiece] | None:
     """Order parameter pieces whose source boxes all avoid the query box."""
+    # A source point in the query cannot admit a partition into boxes avoiding
+    # that query. Prove this directly instead of bisecting down to machine spacing.
+    if segment.affine_span is not None and _affine_trim_meets_box(
+        segment.affine_span, query_box
+    ):
+        return None
     pending: list[tuple[float, float, np.ndarray | None]] = [(0.0, 1.0, None)]
     accepted: list[_ChordPiece] = []
     while pending:

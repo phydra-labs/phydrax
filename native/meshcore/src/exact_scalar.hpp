@@ -96,6 +96,9 @@ inline double rounded_quotient(const Dyadic& numerator, const Dyadic& denominato
   if (denominator.sign() == 0) {
     throw std::invalid_argument("An exact quotient requires a nonzero denominator.");
   }
+  // Exact zero has one geometric identity, independent of denominator sign.
+  // Do not canonicalize rounded zero for nonzero negative underflow.
+  if (numerator.sign() == 0) return 0.0;
   std::int64_t exponent = 0;
   std::int64_t denominator_exponent = 0;
   const double fraction = numerator.fraction(exponent);

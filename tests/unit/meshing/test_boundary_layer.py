@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -642,3 +643,586 @@ def _channel(gap: Any) -> Any:
         np.concatenate((lower, upper)),
         np.concatenate((lower_triangles, upper_triangles + lower.shape[0])),
     )
+
+
+@pytest.mark.parametrize("height", (0.5, 0.2))
+def test_selected_floor_distinguishes_parallel_sides_from_top_contact(
+    height: float,
+) -> None:
+    points, triangles = _box((0.0, 0.0, 0.0), (1.0, 1.0, height), 8, outward=False)
+    wall = _wall(points, triangles)
+    floor = np.flatnonzero(np.all(points[triangles][:, :, 2] == 0.0, axis=1))
+    scope = phx.meshing.MeshingScope(
+        wall.mesh_id,
+        wall.numeric_version,
+        phx.meshing.MeshingEntityKind.MESH,
+        2,
+        wall.entity_set(2).entity_set_id,
+        np.asarray(wall.entity_set(2).entity_ids)[floor],
+    )
+    control = phx.meshing.BoundaryLayerControl(
+        scope,
+        phx.meshing.LayerSchedule.geometric(2, 0.1, growth_rate=1.0),
+        route=phx.meshing.BoundaryLayerRoute.ADVANCING,
+        collision=phx.meshing.BoundaryLayerCollisionPolicy.FAIL,
+    )
+    if height == 0.2:
+        with pytest.raises(phx.meshing.MeshingFailure) as failure:
+            phx.meshing.prepare_boundary_layers(wall, control)
+        assert (
+            failure.value.category is phx.meshing.MeshingFailureCategory.CONTROL_CONFLICT
+        )
+        return
+    result = phx.meshing.prepare_boundary_layers(wall, control)
+    np.testing.assert_allclose(
+        result.evidence.achieved_thicknesses, (0.1, 0.1), rtol=1e-12
+    )
+    _assert_certified(result)
+
+
+@pytest.mark.parametrize(
+    "collision",
+    (
+        phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
+        phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY,
+        phx.meshing.BoundaryLayerCollisionPolicy.MERGE,
+    ),
+)
+def test_retained_column_state_is_reproved_without_growth(collision: Any) -> None:
+    import equinox as eqx
+
+    from phydrax.meshing._boundary_layer import _reprove_retained_boundary_layers
+
+    wall = _channel(0.05)
+    control = _control(wall, collision=collision, minimum_thickness_fraction=0.2)
+    layers = phx.meshing.prepare_boundary_layers(wall, control)
+    assert _reprove_retained_boundary_layers(layers, wall, control) is layers
+
+    coordinates = np.array(layers.column_level_coordinates)
+    coordinates[0, 0, 2] += 0.001
+    forged = eqx.tree_at(
+        lambda value: value.column_level_coordinates, layers, coordinates
+    )
+    with pytest.raises(ValueError, match="column coordinates|column vertices"):
+        _reprove_retained_boundary_layers(forged, wall, control)
+
+
+def test_retained_quad_cap_and_obstacle_reproof() -> None:
+    import equinox as eqx
+
+    from phydrax.meshing._boundary_layer import _reprove_retained_boundary_layers
+
+    points = np.asarray(((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)), dtype=float)
+    wall = phx.discretization.CellMesh(
+        points, (phx.discretization.CellBlock("wall", "quadrilateral", [[0, 1, 2, 3]]),)
+    )
+    obstacles = _wall(points + (0, 0, 2), ((0, 1, 2), (0, 2, 3)))
+    control = _control(wall)
+    layers = phx.meshing.prepare_boundary_layers(wall, control, obstacles=obstacles)
+    assert (
+        _reprove_retained_boundary_layers(layers, wall, control, obstacles=obstacles)
+        is layers
+    )
+    with pytest.raises(ValueError, match="obstacles"):
+        _reprove_retained_boundary_layers(layers, wall, control)
+    face_weights = np.array(layers.column_source_face_weights)
+    face_weights[0] *= 0.5
+    forged = eqx.tree_at(
+        lambda value: value.column_source_face_weights, layers, face_weights
+    )
+    with pytest.raises(ValueError, match="front ancestry"):
+        _reprove_retained_boundary_layers(forged, wall, control, obstacles=obstacles)
+
+
+def test_original_ridge_retained_source_reproof() -> None:
+    from phydrax.meshing._boundary_layer import _reprove_retained_boundary_layers
+    from tools.meshing_qualification.scenarios.native_hybrid_profiles import (
+        _archived_ridge_source,
+    )
+
+    source, control, policy = _archived_ridge_source()
+    layers = source.layers
+    assert (
+        _reprove_retained_boundary_layers(
+            layers,
+            layers.source_wall,
+            control,
+            obstacles=layers.obstacles,
+            wall_association=layers.wall_association,
+            policy=policy,
+        )
+        is layers
+    )
+
+
+def test_cell_certification_rejects_contained_obstacle() -> None:
+    from phydrax.meshing._boundary_layer import (
+        _CELL_ARITY,
+        _certify_cells,
+        _Environment,
+        _VOLUME_KINDS,
+    )
+
+    points = np.asarray(((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)), dtype=float)
+    wall = phx.discretization.CellMesh(
+        points, (phx.discretization.CellBlock("wall", "quadrilateral", [[0, 1, 2, 3]]),)
+    )
+    policy = phx.meshing.BoundaryLayerPolicy(simplex_cap=False)
+    layers = phx.meshing.prepare_boundary_layers(wall, _control(wall), policy=policy)
+    cells = {
+        name: np.empty((0, _CELL_ARITY[name]), dtype=np.int64) for name in _VOLUME_KINDS
+    }
+    cells["hexahedron"] = np.asarray(layers.mesh.blocks[0].vertices, dtype=np.int64)[:1]
+    obstacle_points = np.asarray(
+        ((0.4, 0.4, 0.005), (0.6, 0.4, 0.005), (0.5, 0.6, 0.005))
+    )
+    environment = _Environment(
+        np.empty((0, 3), dtype=np.int64),
+        np.empty((0,), dtype=bool),
+        obstacle_points,
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+    )
+    bad, hits, _ = _certify_cells(
+        np.asarray(layers.mesh.coordinates), cells, [], environment, policy
+    )
+    assert bad["hexahedron"][0]
+    assert hits > 0
+
+
+def test_cell_certification_proves_disjoint_warped_face() -> None:
+    from phydrax.meshing._boundary_layer import (
+        _CELL_ARITY,
+        _certify_cells,
+        _Environment,
+        _VOLUME_KINDS,
+    )
+
+    points = np.asarray(
+        (
+            (0, 0, 0),
+            (1, 0, 0),
+            (1, 1, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (1, 0, 1),
+            (1, 1, 1.4),
+            (0, 1, 1),
+        ),
+        dtype=float,
+    )
+    cells = {
+        name: np.empty((0, _CELL_ARITY[name]), dtype=np.int64) for name in _VOLUME_KINDS
+    }
+    cells["hexahedron"] = np.asarray(((0, 1, 2, 3, 4, 5, 6, 7),), dtype=np.int64)
+    obstacle = np.asarray(((0.1, 0.1, 1.2), (0.2, 0.1, 1.2), (0.1, 0.2, 1.2)))
+    environment = _Environment(
+        np.empty((0, 3), dtype=np.int64),
+        np.empty((0,), dtype=bool),
+        obstacle,
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+    )
+    bad, hits, _ = _certify_cells(
+        points, cells, [], environment, phx.meshing.BoundaryLayerPolicy()
+    )
+    assert not bad["hexahedron"][0]
+    assert hits == 0
+
+
+def test_warped_wall_contact_requires_declared_zero_hull() -> None:
+    from phydrax.geometry._global_embedding import (
+        _bilinear_quad_triangle_contact_is_declared,
+    )
+
+    quad = np.asarray(((0, 0, 0), (1, 0, 0), (1, 1, 1), (0, 1, 0.5)), dtype=float)
+    wall = np.asarray(((0, 0, 0), (1, 0, 0), (0, -1, 0)), dtype=float)
+    quad_ids = np.asarray((0, 1, 2, 3))
+    assert _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, wall, np.asarray((0, 1, 4))
+    )
+    assert not _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, wall, np.asarray((5, 6, 7))
+    )
+    assert _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, wall, np.asarray((5, 6, 7)), sliding_side=True
+    )
+    quad[3, 2] = -0.5
+    wall[2, 1] = 1.0
+    assert not _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, wall, np.asarray((0, 1, 4))
+    )
+
+
+def test_warped_wall_contact_uses_exact_control_hull() -> None:
+    from phydrax.geometry._global_embedding import (
+        _bilinear_quad_triangle_contact_is_declared,
+    )
+
+    # None of the wall-plane or triangle-edge separating planes suffices.
+    # The tetrahedral control hull meets the wall triangle only at vertex 0.
+    quad = np.asarray(((0, 0, 0), (1, -1, -1), (-1, 1, -1), (1, 1, 1)), dtype=float)
+    wall = np.asarray(((0, 0, 0), (-1, 0, 0), (0, -1, 0)), dtype=float)
+    quad_ids = np.arange(4)
+    assert _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, wall, np.asarray((0, 4, 5))
+    )
+    assert not _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, wall, np.asarray((6, 4, 5))
+    )
+
+    # At parameters (u,v)=(1/4,1/3), the changed bilinear patch meets
+    # the triangle at (-1/6,-1/3,0), outside the shared vertex.
+    quad[3] = (-1, -1, 1)
+    assert not _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, wall, np.asarray((0, 4, 5))
+    )
+    assert not _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, wall, np.asarray((0, 4, 5)), sliding_side=True
+    )
+
+
+def test_warped_wall_contact_original_sloped_plate() -> None:
+    from phydrax.geometry._global_embedding import (
+        _bilinear_quad_triangle_contact_is_declared,
+    )
+
+    # Original opposing_sloped_plates4, native 730; hexadecimal binary64
+    # preserves the source operands, including its nonzero plane residual.
+    quad = np.asarray(
+        [
+            [float.fromhex(v) for v in row]
+            for row in (
+                ("0x1.0000000000000p+0", "0x1.0000000000000p-2", "0x1.999999999999ap-3"),
+                ("0x1.8000000000000p-1", "0x0.0p+0", "0x1.428f5c28f5c29p-3"),
+                ("0x1.80dbabb74edcfp-1", "0x0.0p+0", "0x1.2e5ea2d75bcddp-3"),
+                ("0x1.006dd5dba76e9p+0", "0x1.0000000000000p-2", "0x1.8568e047ffa27p-3"),
+            )
+        ]
+    )
+    triangle = np.asarray(
+        [
+            [float.fromhex(v) for v in row]
+            for row in (
+                ("0x1.8000000000000p-1", "0x1.0000000000000p-2", "0x1.428f5c28f5c29p-3"),
+                ("0x1.8000000000000p-1", "0x0.0p+0", "0x1.428f5c28f5c29p-3"),
+                ("0x1.0000000000000p-1", "0x0.0p+0", "0x1.d70a3d70a3d71p-4"),
+            )
+        ]
+    )
+    quad_ids = np.asarray((46, 40, 90, 96))
+    assert _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, triangle, np.asarray((41, 40, 35))
+    )
+    assert not _bilinear_quad_triangle_contact_is_declared(
+        quad, quad_ids, triangle, np.asarray((41, 140, 35))
+    )
+
+
+@pytest.fixture
+def closed_core_source() -> tuple[Any, Any, Any, Any, Any, Any]:
+    from phydrax.meshing.providers import NativeLayerCoreSource
+
+    wall_points, wall_triangles = _box((-0.3,) * 3, (0.3,) * 3, 2, outward=True)
+    wall = _wall(wall_points, wall_triangles)
+    control = _control(
+        wall,
+        collision=phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
+        corner=phx.meshing.BoundaryLayerCornerPolicy.FAN,
+        minimum_thickness_fraction=0.5,
+    )
+    policy = phx.meshing.BoundaryLayerPolicy()
+    layers = phx.meshing.prepare_boundary_layers(wall, control, policy=policy)
+    points, triangles = _box((-1.0,) * 3, (1.0,) * 3, 1, outward=True)
+    contract = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
+    outer = phx.geometry.surface.SurfaceModel.from_triangles(
+        points,
+        triangles,
+        phx.geometry.surface.SurfaceMetadata(
+            source_id="outer-box",
+            source_revision="outer-revision",
+            coordinate_contract=contract,
+            provenance=("authored-outer",),
+        ),
+    )
+    source = NativeLayerCoreSource.fixed_core(
+        layers,
+        outer,
+        contract,
+        "layer-core",
+        "revision",
+        region_id="fluid",
+        region_entity_id=17,
+        region_occurrence_path=("fluid",),
+        wall_occurrence_path=("wall",),
+        outer_occurrence_path=("outer",),
+        layer_control=control,
+        layer_policy=policy,
+    )
+    return source, layers, outer, contract, control, policy
+
+
+def test_fixed_core_source_binds_disconnected_authored_shells(
+    closed_core_source: tuple[Any, Any, Any, Any, Any, Any],
+) -> None:
+    from copy import copy
+
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.geometry._source_identity import source_entity_id
+    from phydrax.meshing._layer_core_association import _core_source_identity
+    from phydrax.meshing._layer_core_boundary_replay import (
+        core_cap_source_keys,
+        core_source_facet_keys,
+    )
+    from phydrax.meshing._layer_core_topology import validate_staged_layer_domain
+    from phydrax.meshing.providers import NativeLayerCoreSource
+
+    source, layers, outer, contract, _, _ = closed_core_source
+    domain = validate_staged_layer_domain(source)
+    assert domain.region_ids == ("fluid",)
+    assert source.source_domain is not None
+    assert isinstance(source.fidelity_source, MeshingDomainBoundarySource)
+    assert layers.cap is not None
+    assert len(source.cap_polygon_ids) == sum(
+        block.cell_count for block in layers.cap.blocks
+    )
+    assert source.source_boundary_charts is not None
+    assert (
+        source.source_boundary_charts.coordinate_contract.spatial_id
+        == contract.spatial_id
+    )
+    np.testing.assert_array_equal(
+        np.asarray(source.complex.vertices)[np.asarray(source.vertex_layer_ids) < 0],
+        np.asarray(outer.mesh.coordinates),
+    )
+    restored = NativeLayerCoreSource.from_stored_fields(source)
+    assert restored.binding_id == source.binding_id
+    validate_staged_layer_domain(restored)
+    facets = np.asarray(source.complex.polygon_facets, dtype=np.int64)
+    for polygon in np.asarray(source.cap_polygon_ids, dtype=np.int64):
+        facet = int(facets[int(polygon)])
+        identifier = source.complex.facet_ids[facet]
+        path = source.complex.facet_occurrence_paths[facet]
+        assert _core_source_identity(source, 2, identifier, path) == (
+            source_entity_id(
+                source.source_id,
+                source.source_revision,
+                "face",
+                identifier,
+                occurrence_path=path,
+            ),
+            path,
+        )
+    expected_cap_keys = frozenset(
+        _core_source_identity(
+            source,
+            2,
+            source.complex.facet_ids[int(facets[int(polygon)])],
+            source.complex.facet_occurrence_paths[int(facets[int(polygon)])],
+        )
+        for polygon in np.asarray(source.cap_polygon_ids, dtype=np.int64)
+    )
+    assert core_cap_source_keys(restored) == expected_cap_keys
+    assert expected_cap_keys <= core_source_facet_keys(restored)
+    first_polygon = int(source.cap_polygon_ids[0])
+    first_facet = int(facets[first_polygon])
+    altered_complex = copy(source.complex)
+    altered_points = np.asarray(source.complex.vertices).copy()
+    offsets = np.asarray(source.complex.polygon_offsets)
+    first_vertex = int(
+        np.asarray(source.complex.polygon_vertices)[int(offsets[first_polygon])]
+    )
+    altered_points[first_vertex, 0] += 0.125
+    object.__setattr__(altered_complex, "vertices", altered_points)
+    altered_source = copy(source)
+    object.__setattr__(altered_source, "complex", altered_complex)
+    with pytest.raises(ValueError, match="accepted layer triangle"):
+        _core_source_identity(
+            altered_source,
+            2,
+            source.complex.facet_ids[first_facet],
+            source.complex.facet_occurrence_paths[first_facet],
+        )
+    scope = phx.meshing.MeshingScope.whole(source, 2)
+    kinds = tuple(
+        sorted({block.cell_kind for block in layers.mesh.blocks} - {"tetrahedron"})
+    )
+    specification = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3,
+            3,
+            phx.meshing.CellFamilyPolicy(
+                required=("tetrahedron",), allowed_transitions=kinds, allow_mixed=True
+            ),
+        ),
+        scope,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(
+            phx.meshing.UniformSizeControl(
+                scope, 0.5, strength=phx.meshing.SizeControlStrength.SOFT
+            ),
+        ),
+        maximum_deviation=0.0,
+    )
+    provider = phx.meshing.NativeMeshingProvider()
+    for wrong in (
+        phx.SpatialCoordinateContract.si(),
+        phx.SpatialCoordinateContract(
+            phx.units.MILLIMETER, reference_frame="other-frame"
+        ),
+    ):
+        with pytest.raises(phx.meshing.MeshingFailure, match="coordinate_contract"):
+            provider.plan(source, specification, coordinate_contract=wrong)
+    forged = copy(contract)
+    object.__setattr__(forged, "reference_frame", "forged-frame")
+    with pytest.raises(ValueError, match="fingerprint"):
+        provider.plan(source, specification, coordinate_contract=forged)
+    forged_charts = copy(source.source_boundary_charts)
+    object.__setattr__(forged_charts, "coordinate_contract", forged)
+    forged_source = copy(source)
+    object.__setattr__(forged_source, "source_boundary_charts", forged_charts)
+    with pytest.raises(ValueError, match="fingerprint"):
+        provider.plan(forged_source, specification, coordinate_contract=contract)
+
+    stale = copy(source)
+    object.__setattr__(stale, "source_revision", "stale")
+    with pytest.raises(ValueError):
+        validate_staged_layer_domain(stale)
+
+    changed = copy(source.complex)
+    sides = np.asarray(changed.facet_regions).copy()
+    cap_facet = int(np.asarray(changed.polygon_facets)[int(source.cap_polygon_ids[0])])
+    sides[cap_facet] = sides[cap_facet, ::-1]
+    object.__setattr__(changed, "facet_regions", sides)
+    wrong_side = copy(source)
+    object.__setattr__(wrong_side, "complex", changed)
+    with pytest.raises(ValueError):
+        validate_staged_layer_domain(wrong_side)
+
+    query = copy(source.fidelity_source)
+    object.__setattr__(query, "patches", query.patches[:-1])
+    missing_chart = copy(source)
+    object.__setattr__(missing_chart, "fidelity_source", query)
+    with pytest.raises(ValueError):
+        validate_staged_layer_domain(missing_chart)
+
+
+def test_fixed_core_source_cold_authoring(
+    closed_core_source: tuple[Any, Any, Any, Any, Any, Any],
+    tmp_path: Path,
+) -> None:
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._layer_core_topology import validate_staged_layer_domain
+    from phydrax.meshing._model_codec import (
+        layer_core_authoring_recipe,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_layer_core_authoring,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    source, _, _, contract, control, policy = closed_core_source
+    author = layer_core_authoring_recipe(source, control, policy)
+    model = Composition(
+        (
+            CompositionEntry(
+                author,
+                entry_id="source",
+                role="topology",
+                owner_id="phydrax.meshing",
+                structure_id=source.binding_id,
+                revision_id=source.binding_id,
+                semantics_id="closed-fixed-core",
+            ),
+        ),
+        boundary_id="closed-fixed-core-test",
+    )
+    archive = write_model_artifact(
+        tmp_path / "closed-fixed-core.phx", model, limits=MODEL_ARCHIVE_LIMITS
+    )
+    decoded = read_model_artifact(
+        archive,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    cold = restore_layer_core_authoring(decoded.value("source"))
+    assert cold.binding_id == source.binding_id
+    assert cold.source_boundary_charts is not None
+    assert (
+        cold.source_boundary_charts.coordinate_contract.spatial_id == contract.spatial_id
+    )
+    validate_staged_layer_domain(cold)
+
+
+def test_closed_inward_cap_only_core_retains_original_wall_charts() -> None:
+    from copy import copy
+
+    from phydrax.meshing._boundary_layer import BoundaryLayerMesh
+    from phydrax.meshing._layer_core_association import _is_exact_closed_cap_facet
+    from phydrax.meshing._layer_core_topology import (
+        closed_fixed_core_source,
+        validate_staged_layer_domain,
+    )
+    from phydrax.meshing._plc_source import _numeric_entity_ids
+    from phydrax.meshing.providers import NativeLayerCoreSource
+
+    points, triangles = _box((-1.0,) * 3, (1.0,) * 3, 2, outward=False)
+    wall = _wall(points, triangles)
+    control = _control(wall)
+    policy = phx.meshing.BoundaryLayerPolicy()
+    layers = phx.meshing.prepare_boundary_layers(wall, control, policy=policy)
+    contract = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
+    region_entity_id = _numeric_entity_ids("plc-region", ("fluid",), ((),))[0]
+
+    def build(
+        accepted_layers: BoundaryLayerMesh, outer_path: tuple[str, ...] | None = None
+    ) -> NativeLayerCoreSource:
+        return closed_fixed_core_source(
+            accepted_layers,
+            None,
+            contract,
+            str(wall.mesh_id),
+            str(wall.numeric_version),
+            region_id="fluid",
+            region_entity_id=region_entity_id,
+            region_occurrence_path=(),
+            wall_occurrence_path=(),
+            outer_occurrence_path=outer_path,
+            layer_control=control,
+            layer_policy=policy,
+        )
+
+    source = build(layers)
+    assert source.source_wall_charts is not None
+    assert source.source_wall_charts.mesh is wall
+    assert source.source_boundary_charts is not None
+    assert source.maximum_deviation == 0.0
+    assert np.all(np.asarray(source.vertex_layer_ids) >= 0)
+    assert len(source.complex.facet_ids) == len(source.cap_polygon_ids)
+    assert source.complex.facet_ids == tuple(
+        f"{wall.mesh_id}:cap-facet:{row}" for row in range(len(source.cap_polygon_ids))
+    )
+    np.testing.assert_array_equal(
+        source.complex.facet_regions, np.tile((0, -1), (len(source.cap_polygon_ids), 1))
+    )
+    facet = int(np.asarray(source.complex.polygon_facets)[int(source.cap_polygon_ids[0])])
+    assert _is_exact_closed_cap_facet(source, facet)
+    wrong_sides = copy(source)
+    wrong_complex = copy(source.complex)
+    sides = np.asarray(source.complex.facet_regions).copy()
+    sides[facet] = (-1, 0)
+    object.__setattr__(wrong_complex, "facet_regions", sides)
+    object.__setattr__(wrong_sides, "complex", wrong_complex)
+    with pytest.raises(ValueError, match="identity or material sides"):
+        _is_exact_closed_cap_facet(wrong_sides, facet)
+    validate_staged_layer_domain(source)
+    assert (
+        NativeLayerCoreSource.from_stored_fields(source).binding_id == source.binding_id
+    )
+
+    with pytest.raises(ValueError, match="no outer occurrence"):
+        build(layers, ("outer",))
+    wrong_wall = copy(layers)
+    object.__setattr__(wrong_wall, "source_wall", None)
+    with pytest.raises(ValueError, match="actual closed accepted layer cap"):
+        build(wrong_wall)

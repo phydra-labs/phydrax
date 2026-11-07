@@ -115,6 +115,151 @@ def _skew_periodic_mesh() -> CellMesh:
     )
 
 
+def test_periodic_quotient_history_cold_reproof_rejects_corruption() -> None:
+    from phydrax.meshing._periodic import (
+        PeriodicQuotientHistory,
+        reprove_periodic_quotient_history,
+        update_periodic_quotient_history,
+    )
+
+    root = _periodic_tetra_mesh()
+    geometry = phx.discretization.CellGeometrySpec.affine(root)
+    history = update_periodic_quotient_history(root, None)
+    points = tuple(
+        (int(identifier), ((int(identifier), Fraction(1)),))
+        for identifier in np.asarray(root.vertex_global_ids)
+    )
+    rebuilt = reprove_periodic_quotient_history(root, root, history, points, geometry)
+    assert rebuilt.history_id == history.history_id
+
+    records = history.entity_keys_by_degree[0]
+    (first,), quotient_id = records[0]
+    (other,), _ = next(record for record in records if record[1] != quotient_id)
+    retired_vertex = max(identifier for (identifier,), _ in records) + 1
+    altered_records = (
+        tuple(sorted((*records, ((retired_vertex,), quotient_id)))),
+        *history.entity_keys_by_degree[1:],
+    )
+    altered_occurrences = (
+        tuple(
+            sorted(
+                (
+                    *history.occurrences_by_degree[0],
+                    ((retired_vertex,), (retired_vertex,), ""),
+                )
+            )
+        ),
+        *history.occurrences_by_degree[1:],
+    )
+    actions = {
+        identifier: (fixed, winding)
+        for identifier, fixed, winding in history.vertex_actions_by_id
+    }
+    actions[retired_vertex] = actions[other]
+    corrupt = PeriodicQuotientHistory(
+        history.identification_id,
+        history.source_mesh_id,
+        altered_records,
+        history.allocator_next_ids,
+        altered_occurrences,
+        tuple((identifier, *action) for identifier, action in sorted(actions.items())),
+    )
+    with pytest.raises(ValueError, match="root action"):
+        reprove_periodic_quotient_history(
+            root,
+            root,
+            corrupt,
+            (*points, (retired_vertex, ((other, Fraction(1)),))),
+            geometry,
+        )
+
+    actions[retired_vertex] = (
+        tuple(not value for value in actions[first][0]),
+        tuple(0 for _ in actions[first][1]),
+    )
+    corrupt_fixed = PeriodicQuotientHistory(
+        history.identification_id,
+        history.source_mesh_id,
+        altered_records,
+        history.allocator_next_ids,
+        altered_occurrences,
+        tuple((identifier, *action) for identifier, action in sorted(actions.items())),
+    )
+    with pytest.raises(ValueError, match="fixed action"):
+        reprove_periodic_quotient_history(
+            root,
+            root,
+            corrupt_fixed,
+            (*points, (retired_vertex, ((first, Fraction(1)),))),
+            geometry,
+        )
+    actions[retired_vertex] = (
+        actions[first][0],
+        (actions[first][1][0] + 1, *actions[first][1][1:]),
+    )
+    corrupt_winding = PeriodicQuotientHistory(
+        history.identification_id,
+        history.source_mesh_id,
+        altered_records,
+        history.allocator_next_ids,
+        altered_occurrences,
+        tuple((identifier, *action) for identifier, action in sorted(actions.items())),
+    )
+    with pytest.raises(ValueError, match="root action"):
+        reprove_periodic_quotient_history(
+            root,
+            root,
+            corrupt_winding,
+            (*points, (retired_vertex, ((first, Fraction(1)),))),
+            geometry,
+        )
+
+    top_rows = list(history.occurrences_by_degree[-1])
+    key, vertices, kind = top_rows[0]
+    replacement = next(
+        identifier for identifier, _ in points if identifier not in vertices
+    )
+    top_rows[0] = (key, (replacement, *vertices[1:]), kind)
+    corrupt_occurrence = PeriodicQuotientHistory(
+        history.identification_id,
+        history.source_mesh_id,
+        history.entity_keys_by_degree,
+        history.allocator_next_ids,
+        (*history.occurrences_by_degree[:-1], tuple(top_rows)),
+        history.vertex_actions_by_id,
+    )
+    with pytest.raises(ValueError, match="issued occurrence"):
+        reprove_periodic_quotient_history(
+            root, root, corrupt_occurrence, points, geometry
+        )
+
+    bad_points = tuple(
+        (identifier, ((other, Fraction(1)),) if identifier == first else point)
+        for identifier, point in points
+    )
+    with pytest.raises(ValueError, match="root action"):
+        reprove_periodic_quotient_history(root, root, history, bad_points, geometry)
+    # A later unsupported point must not replace the original earlier orbit
+    # refusal when speculative batched preparation falls back to ordered replay.
+    unsupported = (
+        (points[0][0], Fraction(1, 2)),
+        (points[-1][0], Fraction(1, 2)),
+    )
+    with pytest.raises(ValueError, match="root action"):
+        reprove_periodic_quotient_history(
+            root, root, corrupt, (*bad_points, (retired_vertex, unsupported)), geometry
+        )
+    with pytest.raises(ValueError, match="entry is malformed"):
+        PeriodicQuotientHistory(
+            history.identification_id,
+            history.source_mesh_id,
+            history.entity_keys_by_degree,
+            (0, *history.allocator_next_ids[1:]),
+            history.occurrences_by_degree,
+            history.vertex_actions_by_id,
+        )
+
+
 def test_periodic_vertex_orbit_rejects_a_nonzero_one_ulp_mismatch() -> None:
     from phydrax.discretization._periodic_topology import (
         validate_periodic_vertex_orbits,
@@ -206,6 +351,70 @@ def _periodic_tetra_mesh(shape: int = 3, /) -> CellMesh:
         vertex_global_ids=vertex_ids,
         periodic_topology=topology,
     )
+
+
+def test_periodic_quotient_history_reproof_uses_exact_root_geometry() -> None:
+    from phydrax.meshing._periodic import (
+        PeriodicQuotientHistory,
+        reprove_periodic_quotient_history,
+        update_periodic_quotient_history,
+    )
+
+    root = _periodic_tetra_mesh()
+    geometry = phx.discretization.CellGeometrySpec.affine(root)
+    history = update_periodic_quotient_history(root, None)
+    points = tuple(
+        (int(identifier), ((int(identifier), Fraction(1)),))
+        for identifier in np.asarray(root.vertex_global_ids)
+    )
+    rebuilt = reprove_periodic_quotient_history(root, root, history, points, geometry)
+    assert rebuilt.history_id == history.history_id
+    unbound_root = CellMesh(
+        root.coordinates, root.blocks, vertex_global_ids=root.vertex_global_ids
+    )
+    unbound_geometry = phx.discretization.CellGeometrySpec.affine(unbound_root)
+    assert (
+        reprove_periodic_quotient_history(
+            unbound_root, root, history, points, unbound_geometry
+        ).history_id
+        == history.history_id
+    )
+
+    (first,), quotient_id = history.entity_keys_by_degree[0][0]
+    retired_vertex = max(identifier for identifier, _ in points) + 1
+    actions = list(history.vertex_actions_by_id)
+    _, fixed, winding = next(row for row in actions if row[0] == first)
+    actions.append((retired_vertex, fixed, winding))
+    corrupt = PeriodicQuotientHistory(
+        history.identification_id,
+        history.source_mesh_id,
+        (
+            tuple(
+                sorted(
+                    (*history.entity_keys_by_degree[0], ((retired_vertex,), quotient_id))
+                )
+            ),
+            *history.entity_keys_by_degree[1:],
+        ),
+        history.allocator_next_ids,
+        (
+            tuple(
+                sorted(
+                    (
+                        *history.occurrences_by_degree[0],
+                        ((retired_vertex,), (retired_vertex,), ""),
+                    )
+                )
+            ),
+            *history.occurrences_by_degree[1:],
+        ),
+        tuple(sorted(actions)),
+    )
+    unsupported = ((points[0][0], Fraction(1, 2)), (points[-1][0], Fraction(1, 2)))
+    with pytest.raises(ValueError, match="no supporting exact root cell"):
+        reprove_periodic_quotient_history(
+            root, root, corrupt, (*points, (retired_vertex, unsupported)), geometry
+        )
 
 
 def _periodic_grid_mesh(subdivisions: int, /, *, perturbation: float = 0.0) -> CellMesh:
@@ -413,6 +622,58 @@ def _reordered_periodic_mesh() -> CellMesh:
         blocks,
         vertex_global_ids=base.vertex_global_ids,
         periodic_topology=topology,
+    )
+
+
+def test_periodic_restore_rejects_changed_bound_geometry() -> None:
+    import jax
+
+    mesh = _reordered_periodic_mesh()
+    topology = mesh.periodic_topology
+    assert topology is not None
+    geometry = topology._actual_geometry
+    assert geometry is not None
+    assert (
+        CellMesh.from_stored_fields(mesh, actual_geometry=geometry).mesh_id
+        == mesh.mesh_id
+    )
+    leaves, tree = jax.tree_util.tree_flatten(geometry)
+    equivalent = jax.tree_util.tree_unflatten(tree, leaves)
+    assert equivalent is not geometry
+    assert (
+        CellMesh.from_stored_fields(mesh, actual_geometry=equivalent).mesh_id
+        == mesh.mesh_id
+    )
+    with pytest.raises(ValueError, match="originally bound coordinate geometry"):
+        CellMesh.from_stored_fields(
+            mesh, actual_geometry=phx.discretization.CellGeometrySpec.affine(mesh)
+        )
+
+
+def test_periodic_quotient_history_reserves_root_allocator_without_root_keys() -> None:
+    from phydrax.meshing._periodic import (
+        periodic_next_entity_ids,
+        update_periodic_quotient_history,
+    )
+
+    source = _skew_periodic_mesh()
+    root = _reordered_periodic_mesh()
+    initial = update_periodic_quotient_history(source, None)
+    reserved = update_periodic_quotient_history(source, None, root=root)
+    assert reserved.entity_keys_by_degree == initial.entity_keys_by_degree
+    assert reserved.occurrences_by_degree == initial.occurrences_by_degree
+    assert reserved.vertex_actions_by_id == initial.vertex_actions_by_id
+    assert reserved.allocator_next_ids == tuple(
+        max(source_id, root_id)
+        for source_id, root_id in zip(
+            periodic_next_entity_ids(source), periodic_next_entity_ids(root), strict=True
+        )
+    )
+    assert all(
+        current > old
+        for current, old in zip(
+            reserved.allocator_next_ids, initial.allocator_next_ids, strict=True
+        )
     )
 
 
@@ -1004,6 +1265,171 @@ def test_periodic_topology_edit_stages_non_binary64_split_roots_with_exact_bank(
     )
     staged_topology.require_coordinates(target.coordinates)
     assert staged_topology.vertex_orbit_count == target_topology.vertex_orbit_count
+    # The quotient retains the actual exact vertex witness, independently of
+    # the full higher-order coefficient map used by the target geometry.
+    from copy import copy
+
+    import jax
+
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.geometry._surface_source_archive import _geometry
+    from phydrax.meshing._curving import _straight_geometry
+    from phydrax.meshing._topology_edit import _rebind_periodic_topology
+
+    retained = staged_topology.exact_coordinate_source
+    assert isinstance(retained, ExactPlcCellGeometrySource)
+    assert retained.exact_coordinates == bank.exact_coordinates
+    unbound = CellMesh(
+        target.coordinates,
+        target.blocks,
+        vertex_global_ids=target.vertex_global_ids,
+        entity_global_ids={
+            entity.intrinsic_dimension: entity.entity_ids
+            for entity in target.topology.entity_sets
+            if entity.intrinsic_dimension > 0
+        },
+        numeric_version=target.numeric_version,
+    )
+    rebound = _rebind_periodic_topology(unbound, staged_topology)
+    assert rebound.periodic_topology is not None
+    assert rebound.periodic_topology.exact_coordinate_source is not None
+    assert (
+        rebound.periodic_topology.exact_coordinate_source.source_map_id
+        == bank.source_map_id
+    )
+    restored_mesh = CellMesh.from_stored_fields(target)
+    assert restored_mesh.periodic_topology is not None
+    assert restored_mesh.periodic_topology.exact_coordinate_source is not None
+    p1 = CellGeometrySpec.power(target, bank)
+    p2 = _straight_geometry(target, 2, source_geometry=p1)
+    assert p2.source_map is not bank
+    staged_topology.require_exact_geometry(target, p1)
+    staged_topology.require_exact_geometry(target, p2)
+    restored_p2 = CellMesh.from_stored_fields(target, actual_geometry=p2)
+    assert restored_p2.mesh_id == target.mesh_id
+    assert _geometry(p2, target).geometry_layout_id == p2.geometry_layout_id
+    leaves, tree = jax.tree_util.tree_flatten(target)
+    rebuilt_tree = jax.tree_util.tree_unflatten(tree, leaves)
+    restored_tree = CellMesh.from_stored_fields(rebuilt_tree, actual_geometry=p2)
+    assert restored_tree.periodic_topology is not None
+    assert restored_tree.periodic_topology.exact_coordinate_source is not None
+    # A second incidence of one vertex must not be skipped merely because
+    # the first cell proved that vertex. Keep its binary64 shadow unchanged.
+    from phydrax.discretization._reference_cell import reference_cell_topology
+    from phydrax.discretization.fem._reference import FiniteElementSpec
+    from phydrax.meshing._curving import _exact_coordinate_bank_source_map
+
+    elements, routes, p2_coordinates = p2.resolve(target)
+    assert isinstance(elements[0], FiniteElementSpec)
+    assert p2.exact_coordinate_bank is not None
+    cells = np.asarray(target.blocks[0].vertices, dtype=np.int64)
+    counts = np.bincount(cells.ravel(), minlength=target.vertex_global_ids.size)
+    changed_row = next(
+        row
+        for row in np.flatnonzero(counts > 1).tolist()
+        if float(p2.exact_coordinate_bank[row][0] + Fraction(1, 2**100))
+        == float(p2.exact_coordinate_bank[row][0])
+    )
+    incidences = np.argwhere(cells == changed_row)
+    cell_row, local_corner = (int(value) for value in incidences[1])
+    reference_corner = np.asarray(
+        reference_cell_topology(target.blocks[0].cell_kind).vertices[local_corner]
+    )
+    local_dof = int(
+        np.flatnonzero(
+            np.all(np.asarray(elements[0].reference_nodes) == reference_corner, axis=1)
+        )[0]
+    )
+    changed_routes = [np.asarray(route).copy() for route in routes]
+    changed_routes[0][cell_row, local_dof] = len(p2.exact_coordinate_bank)
+    changed_bank = list(p2.exact_coordinate_bank)
+    changed_point = list(changed_bank[changed_row])
+    changed_point[0] += Fraction(1, 2**100)
+    changed_bank.append(tuple(changed_point))
+    changed_coordinates = np.vstack(
+        (np.asarray(p2_coordinates), np.asarray(p2_coordinates)[changed_row])
+    )
+    changed_source = _exact_coordinate_bank_source_map(
+        target,
+        "periodic-incidence-test",
+        target.mesh_id,
+        (),
+        tuple(changed_bank),
+        changed_coordinates,
+    )
+    incidence_geometry = CellGeometrySpec(
+        dict(zip(p2.block_names, elements, strict=True)),
+        dict(zip(p2.block_names, changed_routes, strict=True)),
+        changed_coordinates,
+        source_map=changed_source,
+        source_mesh=target,
+    )
+    with pytest.raises(ValueError, match="actual periodic cell map|vertex witness"):
+        staged_topology.require_exact_geometry(target, incidence_geometry)
+
+    # Change one complete orbit by a sub-ULP exact translation. Its binary64
+    # shadow and deck action stay valid, but it is not the actual P2 map.
+    representatives = np.asarray(staged_topology.vertex_representatives, dtype=np.int64)
+    forged_rows = [list(row) for row in bank.exact_coordinates]
+    delta = Fraction(1, 2**100)
+    selected = None
+    for root in np.unique(representatives):
+        members = np.flatnonzero(representatives == root)
+        for axis in range(target.ambient_dimension):
+            if all(
+                float(forged_rows[int(row)][axis] + delta)
+                == float(forged_rows[int(row)][axis])
+                for row in members
+            ):
+                selected = (members, axis)
+                break
+        if selected is not None:
+            break
+    assert selected is not None
+    members, axis = selected
+    assert p2.exact_coordinate_bank is not None
+    altered_coefficients = [list(row) for row in p2.exact_coordinate_bank]
+    altered_coefficients[int(members[0])][axis] += delta
+    changed_geometry = copy(p2)
+    object.__setattr__(
+        changed_geometry,
+        "exact_coordinate_bank",
+        tuple(tuple(row) for row in altered_coefficients),
+    )
+    with pytest.raises(ValueError, match="actual periodic cell map|vertex witness"):
+        staged_topology.require_exact_geometry(target, changed_geometry)
+    for row in members:
+        forged_rows[int(row)][axis] += delta
+    forged_bank = ExactPlcCellGeometrySource(
+        bank.source_id,
+        bank.source_revision,
+        bank.vertex_global_ids,
+        tuple(tuple(row) for row in forged_rows),
+        vertex_source_entity_ids=bank.vertex_source_entity_ids,
+        vertex_occurrence_paths=bank.vertex_occurrence_paths,
+    )
+    np.testing.assert_array_equal(forged_bank.rounded_vertices, target.coordinates)
+    forged_bank.require_periodic_lift(
+        target.coordinates,
+        staged_topology.cell,
+        staged_topology.vertex_representatives,
+        staged_topology.vertex_shifts,
+    )
+    with pytest.raises(ValueError, match="another exact coordinate witness"):
+        _rebind_periodic_topology(
+            unbound, staged_topology, exact_coordinate_source=forged_bank
+        )
+    forged_topology = copy(staged_topology)
+    object.__setattr__(forged_topology, "exact_coordinate_source", forged_bank)
+    object.__setattr__(
+        forged_topology, "coordinate_source_map_id", forged_bank.source_map_id
+    )
+    forged_mesh = copy(target)
+    object.__setattr__(forged_mesh, "periodic_topology", forged_topology)
+    with pytest.raises(ValueError, match="actual periodic cell map|vertex witness"):
+        CellMesh.from_stored_fields(forged_mesh, actual_geometry=p2)
+    with pytest.raises(ValueError, match="actual periodic cell map|vertex witness"):
+        _geometry(p2, forged_mesh)
 
 
 def test_periodic_local_metric_commits_a_full_collapse_orbit() -> None:

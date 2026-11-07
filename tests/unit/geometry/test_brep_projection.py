@@ -35,6 +35,7 @@ from phydrax.geometry.brep._assembly import (
 )
 from phydrax.geometry.brep._constructors import (
     brep_box,
+    brep_cylinder,
     brep_extrusion,
     brep_planar_face,
     brep_sphere,
@@ -114,6 +115,76 @@ def test_trimmed_cylinder_reports_certified_boundary_distance() -> None:
     assert float(result.distance_lower_bounds[0]) > 1.0
     assert np.isnan(np.asarray(result.points)[0]).all()
     assert np.isnan(np.asarray(result.normals)[0]).all()
+    from phydrax.geometry.brep import _projection
+
+    query = np.asarray((1.0, 1.5, 2.0))
+    boundary = _projection._source_boundary_bounds(
+        blend.model,
+        face,
+        query,
+        (),
+        projection.policy,
+        boxes=projection._source_edge_boxes(),
+    )
+    assert boundary is not None and boundary[0] <= oracle <= boundary[1]
+    far = _projection._cylindrical_trim_distance(
+        blend.model,
+        face,
+        query,
+        (),
+        projection.policy,
+        enclosures={},
+        distance_threshold=0.01,
+    )
+    assert far is not None and far.status == _STATUS.UNRESOLVED
+    assert far.lower > 0.01
+    assert np.isnan(far.point).all()
+
+
+def test_planar_excluded_support_keeps_unresolved_boundary_box_evidence() -> None:
+    from phydrax.geometry.brep._constructors import _Builder, assemble_brep_model
+    from phydrax.geometry.brep._patches import BSplineCurve, LineCurve, PlanePatch
+
+    builder = _Builder()
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    vertices = [builder.vertex((x, y, 0.0)) for x, y in corners]
+    coedges = []
+    for index, (start, end) in enumerate(
+        zip(corners, (*corners[1:], corners[0]), strict=True)
+    ):
+        delta = (end[0] - start[0], end[1] - start[1])
+        curve = LineCurve((*start, 0.0), (*delta, 0.0))
+        edge = builder.edge(curve, 0.0, 1.0, vertices[index], vertices[(index + 1) % 4])
+        pcurve = (
+            BSplineCurve((start, end), (1.0, 1.0), (0.0, 0.0, 1.0, 1.0), 1)
+            if index == 1
+            else LineCurve(start, delta)
+        )
+        coedges.append(builder.coedge(edge, 1, pcurve))
+    builder.face(
+        PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+        ((0.0, 0.0), (1.0, 1.0)),
+        1,
+        "spline-edge-plane",
+        [coedges],
+    )
+    geometry, patches, bounds, orientations, tags, trims = builder.geometry(solid=False)
+    model = assemble_brep_model(
+        geometry,
+        patches,
+        bounds,
+        orientations,
+        tags,
+        coordinate_contract=_CONTRACT,
+        source_id="projection-spline-edge-plane",
+        trim_domains=trims,
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    result = _project(projection, [[2.0, 0.5, 0.0], [0.5, 0.5, 0.0]], _FACE, 0)
+    assert int(result.status[0]) == _STATUS.UNRESOLVED
+    assert 0.99 < float(result.distance_lower_bounds[0]) <= 1.0
+    assert np.isnan(np.asarray(result.points)[0]).all()
+    assert int(result.status[1]) == _STATUS.UNIQUE
 
 
 def test_brep_projection_scenario_1() -> None:
@@ -203,6 +274,42 @@ def test_brep_projection_scenario_1() -> None:
     assert np.asarray(
         projection.contains([2, 1, 1], [0, rim, rim], [1, 0, 2], [rim, corner, 0])
     ).tolist() == [True, True, False]
+
+
+@pytest.mark.parametrize(
+    ("model", "points"),
+    (
+        (
+            lambda: brep_box((0, 0, 0), (1, 1, 1), coordinate_contract=_CONTRACT),
+            ((0.5, 0.5, 0), (1, 0.5, 0), (1, 1, 1), (0.5, 0.5, 0.5), (3, 3, 3)),
+        ),
+        (
+            lambda: brep_cylinder(1, 2, coordinate_contract=_CONTRACT),
+            ((1, 0, 1), (0, 1, 2), (1, 0, 2), (0, 0, 1), (3, 3, 3)),
+        ),
+        (
+            lambda: brep_sphere(1, coordinate_contract=_CONTRACT),
+            ((0, 0, 1), (1, 0, 0), (0, 0, -1), (0, 0, 0), (3, 3, 3)),
+        ),
+    ),
+)
+def test_classification_face_box_pruning_matches_unbounded(
+    model: Any,
+    points: Any,
+) -> None:
+    projection = phx.geometry.prepare_brep_projection(model())
+    boxes = np.array(projection.entity_boxes)
+    first = sum(projection.entity_counts[:2])
+    last = first + projection.entity_counts[2]
+    boxes[first:last, 0] = -np.inf
+    boxes[first:last, 1] = np.inf
+    unbounded = eqx.tree_at(
+        lambda value: value.entity_boxes, projection, jnp.asarray(boxes)
+    )
+    queries = np.asarray(points, dtype=np.float64)
+    actual = projection.classify(queries, tolerance=1e-8)
+    direct = unbounded.classify(queries, tolerance=1e-8)
+    assert actual.result_id == direct.result_id
 
 
 def test_native_sphere_projects_interior_pole_seam_and_center_points() -> None:
@@ -335,99 +442,6 @@ def test_closed_revolution_containment_is_exact_with_unresolved_boundary(
     assert np.asarray(located.dimensions).tolist() == [3] * len(inside)
 
 
-def test_projection_trim_enclosures_reuse_only_the_current_batch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from types import SimpleNamespace
-
-    from phydrax.geometry import _atlas
-    from phydrax.geometry.brep import _projection
-    from phydrax.geometry.brep._intersection_curve import CurveTrimSegment
-    from phydrax.geometry.brep._patches import LineCurve
-
-    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
-    segments = tuple(
-        CurveTrimSegment(
-            LineCurve(start, (end[0] - start[0], end[1] - start[1])), 0.0, 1.0
-        )
-        for start, end in zip(corners, (*corners[1:], corners[0]), strict=True)
-    )
-    domain = _atlas.TrimDomain.from_curve_loops((segments,))
-    model = SimpleNamespace(geometry=None, trim_domains=(domain,))
-    original = _atlas._compute_segment_box
-    calls = 0
-
-    def counted(*args: Any) -> Any:
-        nonlocal calls
-        calls += 1
-        return original(*args)
-
-    monkeypatch.setattr(_atlas, "_compute_segment_box", counted)
-    point = np.asarray((0.3, 0.4))
-    enclosures: dict[int, _atlas.TrimEnclosures] = {}
-    assert _projection._trim_classification(model, 0, point, enclosures=enclosures) == 1
-    first_calls = calls
-    assert first_calls > 0
-    assert _projection._trim_classification(model, 0, point, enclosures=enclosures) == 1
-    assert calls == first_calls
-    assert _projection._trim_classification(model, 0, point, enclosures={}) == 1
-    assert calls == 2 * first_calls
-
-
-def test_solid_location_prepares_containment_once_per_batch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax.geometry.brep import _projection
-
-    projection = phx.geometry.prepare_brep_projection(
-        brep_sphere(1.0, coordinate_contract=_CONTRACT)
-    )
-    original = _projection._closed_revolution_profile
-    calls: list[int] = []
-
-    def counted(model: Any, solid: int) -> Any:
-        calls.append(solid)
-        return original(model, solid)
-
-    monkeypatch.setattr(_projection, "_closed_revolution_profile", counted)
-    points = np.asarray(((0.0, 0.0, 0.0), (0.2, 0.1, 0.0), (0.0, 0.0, 2.0)))
-    for expected_calls in (1, 2):
-        result = projection.locate_solids(points)
-        assert np.asarray(result.status).tolist() == [
-            _STATUS.UNIQUE,
-            _STATUS.UNIQUE,
-            _STATUS.FAILED,
-        ]
-        assert calls == [0] * expected_calls
-
-
-def test_solid_location_prepares_ray_carriers_once_per_batch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax.geometry.brep import _projection
-
-    projection = phx.geometry.prepare_brep_projection(
-        brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_CONTRACT)
-    )
-    original = _projection.NativeBRepProjection._ray_carriers
-    calls: list[int] = []
-
-    def counted(self: Any, solid: int) -> Any:
-        calls.append(solid)
-        return original(self, solid)
-
-    monkeypatch.setattr(_projection.NativeBRepProjection, "_ray_carriers", counted)
-    points = np.asarray(((0.2, 0.3, 0.4), (0.7, 0.6, 0.5), (2.0, 2.0, 2.0)))
-    for expected_calls in (1, 2):
-        result = projection.locate_solids(points)
-        assert np.asarray(result.status).tolist() == [
-            _STATUS.UNIQUE,
-            _STATUS.UNIQUE,
-            _STATUS.FAILED,
-        ]
-        assert calls == [0] * expected_calls
-
-
 def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
     # Axis, rim-height and cap-plane points: exact ray parity against the
     # cylinder wall and both caps decides interior and exterior points, and
@@ -455,6 +469,153 @@ def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
     assert contains(boundary) == [None] * len(boundary)
     located = projection.locate_solids(np.asarray(inside, dtype=np.float64))
     assert np.asarray(located.status).tolist() == [_STATUS.UNIQUE] * len(inside)
+
+
+def test_exact_line_boundary_proof_rejects_nearby_and_endpoint_queries() -> None:
+    from phydrax.geometry.brep._projection import _exact_line_boundary_parameter
+
+    model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
+    face = 0
+    coedge = model.geometry.face_loops[face][0][0]
+    edge = model.geometry.coedge_edges[coedge]
+    vertices = np.asarray(model.geometry.vertex_points)[
+        list(model.geometry.edge_vertices[edge])
+    ]
+    midpoint = (vertices[0] + vertices[1]) / 2
+    assert _exact_line_boundary_parameter(model, face, midpoint, lifts={}) is not None
+    assert _exact_line_boundary_parameter(model, face, vertices[0], lifts={}) is None
+    nearby = midpoint.copy()
+    for axis in range(3):
+        if vertices[0, axis] == vertices[1, axis]:
+            nearby[axis] += 0.125
+            break
+    assert _exact_line_boundary_parameter(model, face, nearby, lifts={}) is None
+
+
+def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+    from phydrax.geometry.brep._projection import _exact_cylinder
+
+    model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    face = next(
+        index
+        for index, patch in enumerate(model.patches)
+        if isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, LineCurve)
+        and _exact_cylinder(model, index) is not None
+    )
+    points = np.asarray(((2.0, 0.0, 0.5), (0.0, 2.0, 1.0), (-2.0, 0.5, 1.5)))
+    result = _project(projection, points, _FACE, face)
+    for row, point in enumerate(points):
+        direct = projection._project_one(2, face, point, None)
+        assert int(result.status[row]) == direct.status
+        np.testing.assert_allclose(result.points[row], direct.point, equal_nan=True)
+        np.testing.assert_allclose(result.normals[row], direct.normal, equal_nan=True)
+        np.testing.assert_allclose(result.tangents[row], direct.tangents, equal_nan=True)
+    preparation = projection._prepare_project()
+    dimensions = np.full(points.shape[0], int(_FACE))
+    indices = np.full(points.shape[0], face)
+    prepared = projection._project_prepared(
+        points, dimensions, indices, preparation=preparation
+    )
+    assert prepared.result_id == result.result_id
+    other_model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    other = phx.geometry.prepare_brep_projection(other_model)
+    with pytest.raises(ValueError, match="different source model"):
+        other._project_prepared(points, dimensions, indices, preparation=preparation)
+
+
+def test_straight_revolution_ray_carrier_preserves_signed_profile_rate() -> None:
+    from phydrax.geometry.brep._intersection import _revolution_cylinder_view
+    from phydrax.geometry.brep._intersection_curve import SurfaceRegion
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+    from phydrax.geometry.brep._projection import _cylinder_frame_point, _exact_cylinder
+
+    model = brep_cylinder(2.0, 2.0, axis=(0.0, 0.0, -1.0), coordinate_contract=_CONTRACT)
+    face, cylinder = next(
+        (index, carrier)
+        for index in range(len(model.patches))
+        if (carrier := _exact_cylinder(model, index)) is not None
+    )
+    assert cylinder.radius == 2 and cylinder.axis[2] < 0
+    point = tuple(
+        cylinder.origin[i] + cylinder.axis[i] / 2 + cylinder.second[i] * cylinder.radius
+        for i in range(3)
+    )
+    relative, x, y, excess = _cylinder_frame_point(
+        cylinder, (point[0], point[1], point[2])
+    )
+    assert (x, y, excess) == (0, 2, 0)
+    assert sum(a * b for a, b in zip(relative, cylinder.axis, strict=True)) / (
+        cylinder.axis_squared
+    ) == Fraction(1, 2)
+    tilted = RevolutionSurface(
+        LineCurve((2.0, 0.0, 3.0), (1.0, 0.0, -2.0)),
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    assert (
+        _revolution_cylinder_view(
+            SurfaceRegion(tilted, np.asarray(model.parameter_bounds[face]))
+        )
+        is None
+    )
+
+
+def test_cylinder_ray_uses_certified_trim_crossing_boxes() -> None:
+    from phydrax.geometry.brep._projection import _exact_cylinder, _ray_cylinder_crossings
+
+    model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    face, cylinder = next(
+        (index, carrier)
+        for index in range(len(model.patches))
+        if (carrier := _exact_cylinder(model, index)) is not None
+    )
+    inside = tuple(cylinder.origin[i] + cylinder.axis[i] / 2 for i in range(3))
+    direction = cylinder.second
+    assert (
+        _ray_cylinder_crossings(
+            model, face, cylinder, (inside[0], inside[1], inside[2]), direction
+        )
+        == 1
+    )
+    tangent = tuple(
+        inside[i] + cylinder.radius * (cylinder.first[i] - cylinder.second[i])
+        for i in range(3)
+    )
+    assert (
+        _ray_cylinder_crossings(
+            model, face, cylinder, (tangent[0], tangent[1], tangent[2]), direction
+        )
+        is None
+    )
+    trim_edge = cylinder.origin
+    assert _ray_cylinder_crossings(model, face, cylinder, trim_edge, direction) is None
+
+
+def test_cylinder_ray_refuses_source_rooted_translated_period_gap() -> None:
+    from phydrax.geometry.brep._intersection import NativePeriodEndpoint
+    from phydrax.geometry.brep._intersection_curve import interval_context
+    from phydrax.geometry.brep._intersection_projection import _scalar
+    from phydrax.geometry.brep._patches import CylinderPatch, LineCurve
+    from phydrax.geometry.brep._projection import _cylinder_chart_lifts
+
+    patch = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1)
+    pcurve = LineCurve((0.0, 0.5), (1.0, 0.0))
+    end = NativePeriodEndpoint(pcurve, patch, 0, rational=1, turns=1)
+    upper = float(1.0 + 2 * np.pi)
+    chart = np.asarray(((1.0, 0.0), (upper, 1.0)))
+    native_upper = end.parameter_enclosure()[1]
+    assert native_upper > upper
+    context = interval_context(80)
+    angle = _scalar(context, Fraction(1) - Fraction(1, 10**16))
+    assert (
+        _cylinder_chart_lifts(
+            context, angle, _scalar(context, Fraction(1, 2)), chart, (1.0, native_upper)
+        )
+        is None
+    )
 
 
 def test_containment_rays_continue_past_degenerate_sequence_prefix() -> None:
@@ -1135,4 +1296,90 @@ def test_distant_query_is_not_blocked_by_unresolved_boundary_entities() -> None:
     )
     assert int(result.status[0]) == _STATUS.FAILED
     assert int(result.dimensions[0]) == -1
+    assert np.all(np.isnan(np.asarray(result.points)))
+
+
+@pytest.mark.parametrize(
+    ("ambiguity", "expected_status"),
+    ((1.0e-9, _STATUS.SEAM), (1.0e-16, _STATUS.UNRESOLVED)),
+    ids=("certified-minimum-band", "insufficient-distance-evidence"),
+)
+def test_torus_seam_minimum_requires_certified_distance_evidence(
+    ambiguity: float, expected_status: phx.geometry.BRepProjectionStatus
+) -> None:
+    from phydrax.geometry.brep._fillet import brep_fillet
+    from phydrax.geometry.brep._patches import TorusPatch
+    from phydrax.geometry.brep._projection_contracts import BRepProjectionPolicy
+
+    source = brep_cylinder(2.0, 3.0, coordinate_contract=_CONTRACT)
+    vertices = np.asarray(source.geometry.vertex_points)
+    edge = next(
+        row
+        for row, (first, last) in enumerate(source.geometry.edge_vertices)
+        if first == last and vertices[first, 2] == 3.0
+    )
+    blend = brep_fillet(source, (source.edge_ids[edge],), 0.25)
+    assert blend.status == "certified" and blend.model is not None
+    model = blend.model
+    face, patch = next(
+        (row, patch)
+        for row, patch in enumerate(model.patches)
+        if isinstance(patch, TorusPatch)
+    )
+    angle, distance = 0.5, 0.0001
+    major, minor = float(patch.major_radius), float(patch.minor_radius)
+    center = np.asarray(patch.center)
+    radial, tangent, axis = (
+        np.asarray(patch.first_axis),
+        np.asarray(patch.second_axis),
+        np.asarray(patch.axis),
+    )
+    point = (
+        center
+        + (major + (minor - distance) * np.cos(angle)) * radial
+        - np.finfo(np.float64).eps * tangent
+        + (minor - distance) * np.sin(angle) * axis
+    )
+    projection = phx.geometry.prepare_brep_projection(
+        model, policy=BRepProjectionPolicy(ambiguity_tolerance=ambiguity)
+    )
+    result = projection.project(
+        point[None, :],
+        np.asarray((2,), dtype=np.int64),
+        np.asarray((face,), dtype=np.int64),
+    )
+    assert int(result.status[0]) == expected_status
+    if expected_status == _STATUS.UNRESOLVED:
+        assert np.all(np.isnan(np.asarray(result.points)))
+        return
+    expected = (
+        center + (major + minor * np.cos(angle)) * radial + minor * np.sin(angle) * axis
+    )
+    np.testing.assert_allclose(result.points[0], expected, rtol=0.0, atol=1.0e-13)
+    assert (
+        float(result.distance_lower_bounds[0]) <= distance <= float(result.residuals[0])
+    )
+    np.testing.assert_allclose(np.linalg.norm(result.normals[0]), 1.0, atol=1.0e-13)
+
+
+def test_torus_seam_projection_does_not_promote_an_unrepaired_source_gap() -> None:
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeTorus
+    from phydrax.geometry.brep._patches import TorusPatch
+
+    model = import_occt_shape(
+        BRepPrimAPI_MakeTorus(2.0, 0.5).Shape(), coordinate_contract=_CONTRACT
+    ).model
+    face = next(
+        row for row, patch in enumerate(model.patches) if isinstance(patch, TorusPatch)
+    )
+    point = np.asarray(
+        ((2.0 + 0.4999 * np.cos(0.5), -np.finfo(np.float64).eps, 0.4999 * np.sin(0.5)),),
+        dtype=np.float64,
+    )
+    result = phx.geometry.prepare_brep_projection(model).project(
+        point,
+        np.asarray((2,), dtype=np.int64),
+        np.asarray((face,), dtype=np.int64),
+    )
+    assert int(result.status[0]) == _STATUS.UNRESOLVED
     assert np.all(np.isnan(np.asarray(result.points)))

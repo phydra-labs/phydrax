@@ -59,7 +59,7 @@ from .._rational import (
 from ._assembly import BRepAssemblyOccurrence
 from ._boolean_core import AffinePCurve, PeriodicPCurve
 from ._exact import rational_determinant
-from ._intersection import _straight_revolution
+from ._intersection import _prepare_plane_cylinder_angular_data, _straight_revolution
 from ._intersection_curve import IntersectionPCurve, orthogonal_cylinder_family
 from ._model import BRepEntityId, BRepGeometry, BRepModel
 from ._patches import (
@@ -555,6 +555,148 @@ def _section_point(parameter: Array, coefficients: Array, /) -> Array:
     )
 
 
+def _plane_plane_chart_evaluator(
+    pcurve: IntersectionPCurve, chart: int, /
+) -> tuple[Callable[[Array, Array, Array], Array], np.ndarray, np.ndarray] | None:
+    """Solve the certified chart coordinate against the exact affine planes."""
+    curve = pcurve.curve
+    first, second = curve.first.patch, curve.second.patch
+    if not isinstance(first, PlanePatch) or not isinstance(second, PlanePatch):
+        return None
+    axes = (
+        rational_vector(np.asarray(first.first_axis)),
+        rational_vector(np.asarray(first.second_axis)),
+        tuple(-value for value in rational_vector(np.asarray(second.first_axis))),
+        tuple(-value for value in rational_vector(np.asarray(second.second_axis))),
+    )
+    rhs = tuple(
+        b - a
+        for a, b in zip(
+            rational_vector(np.asarray(first.origin)),
+            rational_vector(np.asarray(second.origin)),
+            strict=True,
+        )
+    )
+    axis = int(np.asarray(curve.chart_axes)[chart])
+    free = [index for index in range(4) if index != axis]
+    columns = [axes[index] for index in free]
+    determinant = rational_determinant(*columns)
+    if determinant == 0:
+        return None
+
+    def solve(right: tuple[Fraction, ...]) -> tuple[Fraction, ...]:
+        return tuple(
+            rational_determinant(
+                *(
+                    right if index == position else column
+                    for index, column in enumerate(columns)
+                )
+            )
+            / determinant
+            for position in range(3)
+        )
+
+    offsets = solve(rhs)
+    slopes = solve(tuple(-value for value in axes[axis]))
+    offset = [Fraction(0)] * 4
+    slope = [Fraction(0)] * 4
+    slope[axis] = Fraction(1)
+    for index, value, rate in zip(free, offsets, slopes, strict=True):
+        offset[index], slope[index] = value, rate
+    coefficients = (
+        Fraction.from_float(float(np.asarray(curve.chart_start)[chart, axis])),
+        Fraction.from_float(float(np.asarray(curve.chart_end)[chart, axis])),
+        Fraction.from_float(pcurve.first) + Fraction.from_float(pcurve.last),
+        *offset,
+        *slope,
+    )
+    lower = np.asarray([fraction_down(value) for value in coefficients])
+    upper = np.asarray([fraction_up(value) for value in coefficients])
+    side = slice(0, 2) if pcurve.side == "first" else slice(2, 4)
+
+    def evaluate(parameter: Array, period: Array, values: Array, /) -> Array:
+        del period
+        carrier = values[2] - parameter if pcurve.reversed else parameter
+        coordinate = values[0] + (carrier - chart) * (values[1] - values[0])
+        return (values[3:7] + coordinate * values[7:11])[side]
+
+    return evaluate, lower, upper
+
+
+def _plane_cylinder_chart_evaluator(
+    pcurve: IntersectionPCurve, chart: int, /
+) -> tuple[Callable[[Array, Array, Array], Array], np.ndarray, np.ndarray] | None:
+    """Transport a certified angular chart through its exact source section."""
+    curve = pcurve.curve
+    data = _prepare_plane_cylinder_angular_data(curve.first, curve.second)
+    if data is None:
+        return None
+    axis = 2 if data.plane_first else 0
+    if int(np.asarray(curve.chart_axes)[chart]) != axis:
+        return None
+    start = Fraction.from_float(float(np.asarray(curve.chart_start)[chart, axis]))
+    end = Fraction.from_float(float(np.asarray(curve.chart_end)[chart, axis]))
+    coefficients = (
+        start,
+        end,
+        Fraction.from_float(pcurve.first) + Fraction.from_float(pcurve.last),
+        *data.uv_center,
+        *data.uv_cosine,
+        *data.uv_sine,
+        data.height_center,
+        data.height_cosine,
+        data.height_sine,
+    )
+    bounds = tuple(coefficient_interval(value, bits=128) for value in coefficients)
+    lower = np.asarray([fraction_down(value[0]) for value in bounds])
+    upper = np.asarray([fraction_up(value[1]) for value in bounds])
+    plane_side = (pcurve.side == "first") == data.plane_first
+
+    def evaluate(parameter: Array, period: Array, values: Array, /) -> Array:
+        del period
+        carrier = values[2] - parameter if pcurve.reversed else parameter
+        theta = values[0] + (carrier - chart) * (values[1] - values[0])
+        cosine, sine = jnp.cos(theta), jnp.sin(theta)
+        if plane_side:
+            return values[3:5] + values[5:7] * cosine + values[7:9] * sine
+        return jnp.stack((theta, values[9] + values[10] * cosine + values[11] * sine))
+
+    return evaluate, lower, upper
+
+
+def _intersection_chart_evaluator(
+    pcurve: IntersectionPCurve, chart: int, /
+) -> tuple[Callable[[Array, Array, Array], Array], np.ndarray, np.ndarray]:
+    section = _plane_plane_chart_evaluator(pcurve, chart)
+    if section is None:
+        section = _plane_cylinder_chart_evaluator(pcurve, chart)
+    if section is not None:
+        return section
+    return pcurve._chart_evaluator_with_source_bounds(chart)
+
+
+def _intersection_area_program(
+    pcurve: IntersectionPCurve, chart: int, /
+) -> _IntervalProgram:
+    evaluate, lower, upper = _intersection_chart_evaluator(pcurve, chart)
+    period_low, period_high = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(1)))
+    lower = np.concatenate((lower, [period_low]))
+    upper = np.concatenate((upper, [period_high]))
+
+    def jet(parameters: Array, /) -> Array:
+        def point(value: Array, /) -> Array:
+            return evaluate(value, parameters[-1], parameters[1:-1])
+
+        def density(value: Array, /) -> Array:
+            position = point(value[0])
+            tangent = jax.jacfwd(point)(value[0])
+            return 0.5 * (position[0] * tangent[1] - position[1] * tangent[0])
+
+        return _with_hessian(density, fourth=True)(parameters[:1])
+
+    return _BoundProgram(_cell_program(jet, 1 + lower.size), lower, upper)
+
+
 def _parameter_area_program(pcurve: AbstractCurve, /) -> _IntervalProgram:
     """Green density ``(u v' - v u') / 2`` of one p-curve and its derivatives."""
     section = pcurve
@@ -657,8 +799,8 @@ def _green_strip_program(
     chart_evaluator = None
     chart_slice = None
     if chart is not None and isinstance(pcurve, IntersectionPCurve):
-        chart_evaluator, chart_lower, chart_upper = (
-            pcurve._chart_evaluator_with_source_bounds(chart)
+        chart_evaluator, chart_lower, chart_upper = _intersection_chart_evaluator(
+            pcurve, chart
         )
         chart_slice = slice(len(lower), len(lower) + chart_lower.size)
         lower.extend(chart_lower.tolist())
@@ -746,6 +888,18 @@ def _green_strip_program(
                 *straight.axis,
                 straight.axial_rate,
                 straight.scale_origin,
+            )
+        )
+    torus_slice = None
+    if isinstance(patch, TorusPatch):
+        torus_slice = bind(
+            (
+                *patch.center_exact,
+                *patch.first_axis_exact,
+                *patch.second_axis_exact,
+                *patch.axis_exact,
+                patch.major_radius_exact,
+                patch.minor_radius_exact,
             )
         )
 
@@ -846,6 +1000,39 @@ def _green_strip_program(
 
         dimension = 1
         integrand = cylinder_density
+    elif torus_slice is not None:
+        dimension = 1
+
+        def torus_density(parameters: Array, bound: Array) -> Array:
+            evaluate = evaluator(bound)
+            values = bound[torus_slice]
+            center, first_axis, second_axis, axis = (
+                values[:3],
+                values[3:6],
+                values[6:9],
+                values[9:12],
+            )
+            major, minor = values[12], values[13]
+            point = evaluate(parameters[0])
+            tangent = jax.jacfwd(evaluate)(parameters[0])
+            sine, cosine = jnp.sin(point[1]), jnp.cos(point[1])
+            ring = major + minor * cosine
+            constant = sine * jnp.dot(center, jnp.cross(first_axis, second_axis))
+            constant += (minor + major * cosine) * jnp.dot(
+                first_axis, jnp.cross(second_axis, axis)
+            )
+            first = jnp.dot(center, jnp.cross(first_axis, axis))
+            second = jnp.dot(center, jnp.cross(second_axis, axis))
+
+            def primitive(angle: Array, /) -> Array:
+                return minor * ring / 3 * (
+                    constant * angle
+                    + cosine * (first * jnp.cos(angle) + second * jnp.sin(angle))
+                )
+
+            return (primitive(point[0]) - primitive(jnp.asarray(origin))) * tangent[1]
+
+        integrand = torus_density
     else:
         dimension = 2
 
@@ -859,7 +1046,7 @@ def _green_strip_program(
 
         integrand = density
 
-    fourth = cylinder and (
+    fourth = (cylinder or torus_slice is not None) and (
         isinstance(
             pcurve,
             (IntersectionPCurve, PlaneCylinderSectionPCurve, LineCurve, ExactLineCurve),
@@ -1686,6 +1873,39 @@ def _exact_end(point: _Point, /) -> _End:
 type _LoopEnds = tuple[tuple[tuple[_End, _End], ...], ...]
 
 
+def _analytic_intersection_endpoint(
+    pcurve: IntersectionPCurve, parameter: float, /
+) -> _End | None:
+    """Enclose the actual source chart endpoint, not its coarse isolating box."""
+    carrier = pcurve.first + pcurve.last - parameter if pcurve.reversed else parameter
+    if carrier == pcurve.last and float(pcurve.last).is_integer():
+        chart = int(pcurve.last) - 1
+    else:
+        chart = int(carrier)
+    chart = max(0, min(chart, pcurve.curve.num_charts - 1))
+    section = _plane_plane_chart_evaluator(pcurve, chart)
+    if section is None:
+        section = _plane_cylinder_chart_evaluator(pcurve, chart)
+    if section is None:
+        return None
+    evaluate, lower, upper = section
+    period_low, period_high = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(1)))
+    lower = np.concatenate((lower, [period_low]))
+    upper = np.concatenate((upper, [period_high]))
+    program = _BoundProgram(
+        prepare_interval_function(
+            lambda values: evaluate(values[0], values[-1], values[1:-1]),
+            1 + lower.size,
+            batch_capacity=1,
+        ),
+        lower,
+        upper,
+    )
+    value = np.asarray(((parameter,),))
+    low, high = _evaluate("intersection p-curve endpoint", program, value, value)
+    return _End(np.stack((low[0], high[0])), None)
+
+
 def _loop_ends(source: _VolumeSource, face: int, /) -> _LoopEnds:
     """Start and end parameter points of each coedge in traversal order.
 
@@ -1702,6 +1922,13 @@ def _loop_ends(source: _VolumeSource, face: int, /) -> _LoopEnds:
                 ends.append((_exact_end(exact[1]), _exact_end(exact[2])))
                 continue
             pcurve = geometry.pcurves[coedge]
+            if isinstance(pcurve, IntersectionPCurve):
+                first, last = _traversal_range(geometry, coedge)
+                start = _analytic_intersection_endpoint(pcurve, first)
+                end = _analytic_intersection_endpoint(pcurve, last)
+                if start is not None and end is not None:
+                    ends.append((start, end))
+                    continue
             if isinstance(
                 pcurve,
                 (
@@ -1749,7 +1976,14 @@ def _chord_distance(end: _End, start: _End, /) -> float:
 def _green_curve_breaks(curve: AbstractCurve, /) -> np.ndarray | None:
     """Admit analytic intersection p-curves only one certified chart at a time."""
     if isinstance(curve, IntersectionPCurve):
-        if orthogonal_cylinder_family(curve.curve.first, curve.curve.second) is None:
+        if (
+            orthogonal_cylinder_family(curve.curve.first, curve.curve.second) is None
+            and any(
+                _plane_plane_chart_evaluator(curve, chart) is None
+                and _plane_cylinder_chart_evaluator(curve, chart) is None
+                for chart in range(curve.curve.num_charts)
+            )
+        ):
             return None
         breaks = np.arange(curve.curve.num_charts + 1, dtype=np.float64)
         if curve.reversed:
@@ -1960,7 +2194,7 @@ def _plan_face(
         for loop, loop_ends in zip(geometry.face_loops[face], ends, strict=True):
             for position, coedge in enumerate(loop):
                 pcurve = geometry.pcurves[coedge]
-                breaks = _curve_breaks(pcurve)
+                breaks = _green_curve_breaks(pcurve)
                 if breaks is None:
                     raise _MeasureFailure(
                         "unsupported",
@@ -1973,14 +2207,45 @@ def _plan_face(
                     ]
                 )
                 coedge_label = f"{label} coedge {coedge}"
-                families.append(
-                    _new_family(
-                        coedge_label,
-                        _prepare(coedge_label, lambda: _parameter_area_program(pcurve)),
-                        _factor(flux * geometry.coedge_senses[coedge]),
-                        _break_grid(np.asarray((first,)), np.asarray((last,)), (breaks,)),
+                if isinstance(pcurve, IntersectionPCurve):
+                    intersection = pcurve
+                    cuts = np.concatenate(
+                        ([first], _interior_breaks(breaks, first, last), [last])
                     )
-                )
+                    for start, stop in zip(cuts[:-1], cuts[1:], strict=True):
+                        midpoint = float(start + 0.5 * (stop - start))
+                        carrier = (
+                            pcurve.first + pcurve.last - midpoint
+                            if pcurve.reversed
+                            else midpoint
+                        )
+                        chart = min(int(carrier), pcurve.curve.num_charts - 1)
+                        families.append(
+                            _new_family(
+                                coedge_label,
+                                _prepare(
+                                    coedge_label,
+                                    lambda: _intersection_area_program(intersection, chart),
+                                ),
+                                _factor(flux * geometry.coedge_senses[coedge]),
+                                _break_grid(
+                                    np.asarray((start,)),
+                                    np.asarray((stop,)),
+                                    (_NO_BREAKS,),
+                                ),
+                            )
+                        )
+                else:
+                    families.append(
+                        _new_family(
+                            coedge_label,
+                            _prepare(coedge_label, lambda: _parameter_area_program(pcurve)),
+                            _factor(flux * geometry.coedge_senses[coedge]),
+                            _break_grid(
+                                np.asarray((first,)), np.asarray((last,)), (breaks,)
+                            ),
+                        )
+                    )
                 end = loop_ends[position][1].box
                 start = loop_ends[(position + 1) % len(loop)][0].box
                 cross = interval_subtract(
@@ -2049,7 +2314,7 @@ def _plan_face(
         cylinder = straight is not None and straight.slope == 0
 
         def grid(first: float, last: float, breaks: np.ndarray, /) -> np.ndarray:
-            if cylinder:
+            if cylinder or isinstance(patch, TorusPatch):
                 return _break_grid(np.asarray((first,)), np.asarray((last,)), (breaks,))
             return _break_grid(
                 np.asarray((first, 0.0)),

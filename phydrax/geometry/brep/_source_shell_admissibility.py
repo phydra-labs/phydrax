@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 import numpy as np
 
@@ -39,9 +39,22 @@ if TYPE_CHECKING:
     from .._surface_source_support import SurfaceSourceCharts
     from ._curve_approximation_topology import TrimReferenceSegment
     from ._intersection_curve import IntersectionSide
+    from ._patches import CircleCurve
 
 
 _IntervalBox = tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
+
+
+def _rational_frame(
+    values: tuple[tuple[object, ...], ...], /
+) -> TypeGuard[tuple[tuple[Fraction, ...], ...]]:
+    return all(isinstance(value, Fraction) for vector in values for value in vector)
+
+
+def _rational_components(
+    values: tuple[object, ...], /
+) -> TypeGuard[tuple[Fraction, ...]]:
+    return all(isinstance(value, Fraction) for value in values)
 
 
 def _trim_enclosure(model: BRepModel, face: int, /) -> _IntervalBox | None:
@@ -233,6 +246,573 @@ def certify_same_chart_face_separation(
 
 
 @dataclass(frozen=True, slots=True)
+class SourceCoaxialRadialSeparation:
+    """Replayable separation of the complete exact coaxial carriers."""
+
+    source_id: str
+    model_id: str
+    source_revision: str
+    faces: tuple[int, int]
+    certificate_id: str
+
+    def replay(self, model: BRepModel, /) -> bool:
+        return certify_coaxial_radial_separation(model, *self.faces) == self
+
+
+def certify_coaxial_radial_separation(
+    model: BRepModel, first: int, second: int, /
+) -> SourceCoaxialRadialSeparation | None:
+    from ._intersection import _coaxial_radial_separation
+
+    if (
+        not isinstance(model, BRepModel)
+        or type(first) is not int
+        or type(second) is not int
+        or not 0 <= first < second < len(model.patches)
+    ):
+        return None
+    try:
+        model.require_current()
+        common = set(model.geometry.topology.face_edges[first]) & set(
+            model.geometry.topology.face_edges[second]
+        )
+        if common or not _coaxial_radial_separation(
+            model.patches[first], model.patches[second]
+        ):
+            return None
+        identity = canonical_fingerprint(
+            {
+                "kind": "cad-source-coaxial-radial-separation",
+                "source": model.source_id,
+                "model": model.model_id,
+                "revision": model.source_revision,
+                "faces": (first, second),
+            }
+        )
+        return SourceCoaxialRadialSeparation(
+            model.source_id,
+            model.model_id,
+            model.source_revision,
+            (first, second),
+            identity,
+        )
+    except (ArithmeticError, TypeError, ValueError, OverflowError, NotImplementedError):
+        return None
+
+
+def _opposed_source_uses(
+    model: BRepModel, faces: tuple[int, int], coedges: tuple[int, int], /
+) -> bool:
+    """Bind both edge occurrences to opposite oriented uses of one shell."""
+    geometry = model.geometry
+    if geometry.coedge_edges[coedges[0]] != geometry.coedge_edges[coedges[1]] or any(
+        sum(
+            coedge == candidate
+            for loop in geometry.face_loops[face]
+            for candidate in loop
+        )
+        != 1
+        for face, coedge in zip(faces, coedges, strict=True)
+    ):
+        return False
+    if len(geometry.solid_shells) != 1 or len(geometry.solid_shells[0]) != 1:
+        return False
+    shell = geometry.solid_shells[0][0]
+    shell_faces = geometry.shell_faces[shell]
+    signs = geometry.shell_orientations[shell]
+    if any(shell_faces.count(face) != 1 for face in faces):
+        return False
+    oriented = tuple(
+        int(model.orientation[face])
+        * int(signs[shell_faces.index(face)])
+        * int(geometry.coedge_senses[coedge])
+        for face, coedge in zip(faces, coedges, strict=True)
+    )
+    return oriented[0] in (-1, 1) and oriented[0] == -oriented[1]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRingFacePair:
+    """A current, full support-intersection ring bound to both face uses."""
+
+    source_id: str
+    model_id: str
+    source_revision: str
+    faces: tuple[int, int]
+    shared_edges: tuple[int, ...]
+    coedges: tuple[int, int]
+    coverage_id: str
+    certificate_id: str
+
+    def replay(self, model: BRepModel, /) -> bool:
+        return certify_source_ring_face_pair(model, *self.faces) == self
+
+
+def certify_source_ring_face_pair(
+    model: BRepModel, first: int, second: int, /
+) -> SourceRingFacePair | None:
+    """Prove a complete plane/cylinder support intersection with a native ring."""
+    from ._boolean_coincidence import prove_source_ring_pair_coverage
+    from ._patches import CylinderPatch, PlanePatch
+
+    if (
+        not isinstance(model, BRepModel)
+        or type(first) is not int
+        or type(second) is not int
+        or not 0 <= first < second < len(model.patches)
+    ):
+        return None
+    try:
+        model.require_current()
+        patches = (model.patches[first], model.patches[second])
+        cylinder = next((p for p in patches if isinstance(p, CylinderPatch)), None)
+        if cylinder is None or not any(isinstance(p, PlanePatch) for p in patches):
+            return None
+        # The coverage owner's support uses binary shadows. Require those to
+        # be the actual exact carrier coefficients, not rounded algebraic data.
+        for numeric, exact in (
+            (cylinder.origin, cylinder.origin_exact),
+            (cylinder.first_axis, cylinder.first_axis_exact),
+            (cylinder.second_axis, cylinder.second_axis_exact),
+            (cylinder.axis, cylinder.axis_exact),
+        ):
+            if tuple(Fraction.from_float(float(x)) for x in np.asarray(numeric)) != exact:
+                return None
+        if Fraction.from_float(float(cylinder.radius)) != cylinder.radius_exact:
+            return None
+        geometry = model.geometry
+        common = set(geometry.topology.face_edges[first]) & set(
+            geometry.topology.face_edges[second]
+        )
+        if len(common) != 1:
+            return None
+        edge = next(iter(common))
+        occurrences = tuple(
+            tuple(
+                coedge
+                for loop in geometry.face_loops[face]
+                for coedge in loop
+                if geometry.coedge_edges[coedge] == edge
+            )
+            for face in (first, second)
+        )
+        if any(len(uses) != 1 for uses in occurrences):
+            return None
+        coedges = (occurrences[0][0], occurrences[1][0])
+        if not _opposed_source_uses(model, (first, second), coedges):
+            return None
+        coverage = prove_source_ring_pair_coverage(
+            (model,),
+            ((0, first), (0, second)),
+            (0, edge),
+            (geometry.pcurves[coedges[0]], geometry.pcurves[coedges[1]]),
+        )
+        if coverage is None:
+            return None
+        payload = {
+            "kind": "cad-source-ring-face-pair",
+            "source": model.source_id,
+            "model": model.model_id,
+            "revision": model.source_revision,
+            "faces": (first, second),
+            "edge": edge,
+            "coedges": coedges,
+            "senses": tuple(geometry.coedge_senses[c] for c in coedges),
+            "coverage": coverage.certificate_id,
+        }
+        return SourceRingFacePair(
+            model.source_id,
+            model.model_id,
+            model.source_revision,
+            (first, second),
+            (edge,),
+            coedges,
+            coverage.certificate_id,
+            canonical_fingerprint(payload),
+        )
+    except (ArithmeticError, TypeError, ValueError, OverflowError, NotImplementedError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceTangentCylinderTorusPair:
+    """Replayable complete coaxial tangent-cylinder/torus intersection."""
+
+    source_id: str
+    model_id: str
+    source_revision: str
+    faces: tuple[int, int]
+    shared_edges: tuple[int, ...]
+    certificate_id: str
+
+    def replay(self, model: BRepModel, /) -> bool:
+        return certify_tangent_cylinder_torus_pair(model, *self.faces) == self
+
+
+def _shared_two_arc_circle(
+    model: BRepModel, first: int, second: int, /
+) -> (
+    tuple[CircleCurve, tuple[int, ...], tuple[tuple[int, int, int], ...], tuple[str, ...]]
+    | None
+):
+    """Bind two complete adjacent conic arcs to their two source occurrences."""
+    from ._intersection import ConicParameterEndpoint
+    from ._patches import _validate_conic_parameter_root, CircleCurve
+
+    geometry = model.geometry
+    edges = sorted(
+        set(geometry.topology.face_edges[first])
+        & set(geometry.topology.face_edges[second])
+    )
+    if len(edges) != 2:
+        return None
+    arcs: list[
+        tuple[CircleCurve, tuple[ConicParameterEndpoint, ConicParameterEndpoint]]
+    ] = []
+    use_ids: list[tuple[int, int, int]] = []
+    for edge in edges:
+        index = geometry.edge_curves[edge]
+        if index < 0:
+            return None
+        curve = geometry.curves[index]
+        if not isinstance(curve, CircleCurve):
+            return None
+        raw_roots = geometry.edge_endpoint_roots[edge]
+        first_root, second_root = raw_roots
+        if not isinstance(first_root, ConicParameterEndpoint) or not isinstance(
+            second_root, ConicParameterEndpoint
+        ):
+            return None
+        roots = (first_root, second_root)
+        # A Boolean-rebound endpoint retains its raw carrier parameter. Only the
+        # exact cosine/sine/turn root below is used, so that parameter is
+        # admissible solely as a representative inside the root's isolation.
+        if any(
+            root.parameter_exact is not None
+            and not (
+                root.root.parameter_lower
+                <= root.parameter_exact
+                <= root.root.parameter_upper
+            )
+            for root in roots
+        ):
+            return None
+        for root in roots:
+            _validate_conic_parameter_root(root.root)
+            if root.root_id != canonical_fingerprint(root.identity_payload()):
+                return None
+        if any(
+            not _same_tree_content(root.carrier, curve)
+            or not _same_tree_content(root.root.conic, curve)
+            for root in roots
+        ):
+            return None
+        start, stop = map(float, geometry.edge_ranges[edge])
+        if not all(
+            root.root.parameter_lower <= value <= root.root.parameter_upper
+            for root, value in zip(roots, (start, stop), strict=True)
+        ):
+            return None
+        for face in (first, second):
+            uses = [
+                c
+                for loop in geometry.face_loops[face]
+                for c in loop
+                if geometry.coedge_edges[c] == edge
+            ]
+            if len(uses) != 1:
+                return None
+            coedge = uses[0]
+            region = SurfaceRegion(
+                model.patches[face], boolean_face_chart_box(model, face)
+            )
+            if not exact_source_lift(
+                curve, geometry.pcurves[coedge], region, start, stop
+            ):
+                return None
+            use_ids.append((face, coedge, geometry.coedge_senses[coedge]))
+        if not _opposed_source_uses(
+            model, (first, second), (use_ids[-2][1], use_ids[-1][1])
+        ):
+            return None
+        arcs.append((curve, roots))
+    arcs.sort(key=lambda arc: float(arc[1][0].root.parameter_lower))
+    (curve, start), (other_curve, end) = arcs
+    if not _same_tree_content(curve, other_curve):
+        return None
+    a, b, c, d = start[0].root, start[1].root, end[0].root, end[1].root
+    if (
+        (a.cosine_exact, a.sine_exact, a.turns) != (1, 0, 0)
+        or (d.cosine_exact, d.sine_exact, d.turns) != (1, 0, 1)
+        or b.root_id != c.root_id
+        or b.parameter_lower <= a.parameter_upper
+        or b.parameter_upper >= d.parameter_lower
+    ):
+        return None
+    return (
+        curve,
+        tuple(edges),
+        tuple(use_ids),
+        tuple(root.root_id for _, roots in arcs for root in roots),
+    )
+
+
+def certify_tangent_cylinder_torus_pair(
+    model: BRepModel, first: int, second: int, /
+) -> SourceTangentCylinderTorusPair | None:
+    """Prove a coaxial tangent cylinder/torus intersection covered by two arcs."""
+    from .._rational import rational_cross, rational_dot
+    from ._patches import CylinderPatch, TorusPatch
+
+    if (
+        not isinstance(model, BRepModel)
+        or type(first) is not int
+        or type(second) is not int
+        or not 0 <= first < second < len(model.patches)
+    ):
+        return None
+    try:
+        model.require_current()
+        patches = (model.patches[first], model.patches[second])
+        cylinder = next((p for p in patches if isinstance(p, CylinderPatch)), None)
+        torus = next((p for p in patches if isinstance(p, TorusPatch)), None)
+        if cylinder is None or torus is None:
+            return None
+        for patch in (cylinder, torus):
+            frame = (patch.first_axis_exact, patch.second_axis_exact, patch.axis_exact)
+            if not _rational_frame(frame):
+                return None
+            if any(
+                rational_dot(frame[i], frame[j]) != (1 if i == j else 0)
+                for i in range(3)
+                for j in range(3)
+            ):
+                return None
+        if not all(
+            isinstance(x, Fraction)
+            for x in (
+                *cylinder.origin_exact,
+                *torus.center_exact,
+                cylinder.radius_exact,
+                torus.major_radius_exact,
+                torus.minor_radius_exact,
+            )
+        ):
+            return None
+        if (
+            torus.major_radius_exact <= torus.minor_radius_exact
+            or torus.minor_radius_exact <= 0
+            or cylinder.radius_exact
+            not in (
+                torus.major_radius_exact - torus.minor_radius_exact,
+                torus.major_radius_exact + torus.minor_radius_exact,
+            )
+            or any(rational_cross(cylinder.axis_exact, torus.axis_exact))
+            or any(
+                rational_cross(
+                    tuple(
+                        a - b
+                        for a, b in zip(
+                            cylinder.origin_exact, torus.center_exact, strict=True
+                        )
+                    ),
+                    torus.axis_exact,
+                )
+            )
+        ):
+            return None
+        shared = _shared_two_arc_circle(model, first, second)
+        if shared is None:
+            return None
+        _, edges, use_ids, roots = shared
+        identity = canonical_fingerprint(
+            {
+                "kind": "cad-source-tangent-cylinder-torus-pair",
+                "source": model.source_id,
+                "model": model.model_id,
+                "revision": model.source_revision,
+                "faces": (first, second),
+                "edges": edges,
+                "uses": use_ids,
+                "roots": roots,
+            }
+        )
+        return SourceTangentCylinderTorusPair(
+            model.source_id,
+            model.model_id,
+            model.source_revision,
+            (first, second),
+            tuple(edges),
+            identity,
+        )
+    except (ArithmeticError, TypeError, ValueError, OverflowError, NotImplementedError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePlaneTorusPair:
+    """A planar trim excludes the other exact coaxial torus section."""
+
+    source_id: str
+    model_id: str
+    source_revision: str
+    faces: tuple[int, int]
+    shared_edges: tuple[int, ...]
+    certificate_id: str
+
+    def replay(self, model: BRepModel, /) -> bool:
+        return certify_plane_torus_pair(model, *self.faces) == self
+
+
+def certify_plane_torus_pair(
+    model: BRepModel, first: int, second: int, /
+) -> SourcePlaneTorusPair | None:
+    """Prove an annular planar trim retains just its shared torus circle."""
+    from .._rational import rational_cross, rational_dot, rational_vector
+    from ._model import _validate_curve_trim_domains
+    from ._patches import PlanePatch, TorusPatch
+
+    if (
+        not isinstance(model, BRepModel)
+        or type(first) is not int
+        or type(second) is not int
+        or not 0 <= first < second < len(model.patches)
+    ):
+        return None
+    try:
+        model.require_current()
+        plane_match = next(
+            (
+                (f, model.patches[f])
+                for f in (first, second)
+                if isinstance(model.patches[f], PlanePatch)
+            ),
+            None,
+        )
+        torus = next(
+            (
+                patch
+                for patch in (model.patches[first], model.patches[second])
+                if isinstance(patch, TorusPatch)
+            ),
+            None,
+        )
+        if plane_match is None or torus is None:
+            return None
+        plane_face, plane = plane_match
+        if not isinstance(plane, PlanePatch):
+            return None
+        frame = (torus.first_axis_exact, torus.second_axis_exact, torus.axis_exact)
+        if not _rational_frame(frame):
+            return None
+        if any(
+            rational_dot(frame[i], frame[j]) != (1 if i == j else 0)
+            for i in range(3)
+            for j in range(3)
+        ):
+            return None
+        torus_center = torus.center_exact
+        if (
+            not _rational_components(torus_center)
+            or not isinstance(torus.major_radius_exact, Fraction)
+            or not isinstance(torus.minor_radius_exact, Fraction)
+        ):
+            return None
+        if (
+            torus.major_radius_exact <= torus.minor_radius_exact
+            or torus.minor_radius_exact <= 0
+        ):
+            return None
+        normal = rational_cross(
+            rational_vector(np.asarray(plane.first_axis)),
+            rational_vector(np.asarray(plane.second_axis)),
+        )
+        torus_axis = frame[2]
+        if not any(normal) or any(rational_cross(normal, torus_axis)):
+            return None
+        shared = _shared_two_arc_circle(model, first, second)
+        if shared is None:
+            return None
+        curve, edges, uses, roots = shared
+        circle_center = curve.center_exact
+        circle_frame = (curve.first_axis_exact, curve.second_axis_exact, torus_axis)
+        if (
+            not _rational_components(circle_center)
+            or not _rational_frame(circle_frame)
+            or not isinstance(curve.radius_exact, Fraction)
+        ):
+            return None
+        if any(
+            rational_dot(circle_frame[i], circle_frame[j]) != (1 if i == j else 0)
+            for i in range(3)
+            for j in range(3)
+        ):
+            return None
+        relative = tuple(a - b for a, b in zip(circle_center, torus_center, strict=True))
+        if any(rational_cross(relative, torus_axis)):
+            return None
+        height = rational_dot(relative, torus_axis)
+        radius = curve.radius_exact
+        if radius <= 0 or (
+            (radius - torus.major_radius_exact) ** 2 + height**2
+            != torus.minor_radius_exact**2
+        ):
+            return None
+        plane_origin = rational_vector(np.asarray(plane.origin))
+        if (
+            rational_dot(
+                normal,
+                tuple(a - b for a, b in zip(circle_center, plane_origin, strict=True)),
+            )
+            != 0
+        ):
+            return None
+        domain = model.trim_domains[plane_face]
+        if domain is None or domain.numeric_only or not domain.curve_loops:
+            return None
+        _validate_curve_trim_domains(model.geometry, model.trim_domains)
+        matching = [
+            index
+            for index, loop in enumerate(model.geometry.face_loops[plane_face])
+            if len(loop) == 2
+            and {model.geometry.coedge_edges[c] for c in loop} == set(edges)
+        ]
+        if len(matching) != 1:
+            return None
+        loop_index = matching[0]
+        # The first loop defines the bounded outer region; later loops are
+        # excluded holes. The second torus section lies beyond that boundary.
+        if not (
+            (loop_index == 0 and radius < torus.major_radius_exact)
+            or (loop_index > 0 and radius > torus.major_radius_exact)
+        ):
+            return None
+        identity = canonical_fingerprint(
+            {
+                "kind": "cad-source-plane-torus-pair",
+                "source": model.source_id,
+                "model": model.model_id,
+                "revision": model.source_revision,
+                "faces": (first, second),
+                "edges": edges,
+                "uses": uses,
+                "roots": roots,
+                "plane_loop": loop_index,
+            }
+        )
+        return SourcePlaneTorusPair(
+            model.source_id,
+            model.model_id,
+            model.source_revision,
+            (first, second),
+            edges,
+            identity,
+        )
+    except (ArithmeticError, TypeError, ValueError, OverflowError, NotImplementedError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
 class SourceFaceBranchCoverage:
     """Replayable complete face-pair branches bound to shared source edges."""
 
@@ -266,16 +846,44 @@ def _branch_outside_trim(
         (Fraction.from_float(float(box[0, 0])), Fraction.from_float(float(box[0, 1]))),
         (Fraction.from_float(float(box[1, 0])), Fraction.from_float(float(box[1, 1]))),
     )
-    if not any(
-        branch_box[1][axis] < trim[0][axis] or trim[1][axis] < branch_box[0][axis]
+    separated = tuple(
+        axis
         for axis in range(2)
-    ):
+        if branch_box[1][axis] < trim[0][axis] or trim[1][axis] < branch_box[0][axis]
+    )
+    if not separated:
         return False
     union: _IntervalBox = (
         (min(branch_box[0][0], trim[0][0]), min(branch_box[0][1], trim[0][1])),
         (max(branch_box[1][0], trim[1][0]), max(branch_box[1][1], trim[1][1])),
     )
-    return certify_source_embedding(region.patch, union) is not None
+    if certify_source_embedding(region.patch, union) is not None:
+        return True
+    # Outward-rounded full-turn trims exceed one period, so no rational box is
+    # an embedded sheet. Separation on the non-periodic axis holds at every
+    # periodic coordinate; the exact full-turn sheet with its declared deck
+    # pairing then separates the branch from the trim modulo the period.
+    from ._boolean_core import ChartScalar
+    from ._source_embedding import _TAU
+
+    periods = region.patch.native_period_symbols()
+    for axis in separated:
+        other = 1 - axis
+        if periods[axis] is not None or periods[other] != "two_pi":
+            continue
+        lower: list[ChartScalar] = [Fraction(0), Fraction(0)]
+        upper: list[ChartScalar] = [_TAU, _TAU]
+        lower[axis], upper[axis] = union[0][axis], union[1][axis]
+        if (
+            certify_source_embedding(
+                region.patch,
+                ((lower[0], lower[1]), (upper[0], upper[1])),
+                deck_axes=(other,),
+            )
+            is not None
+        ):
+            return True
+    return False
 
 
 def _shared_branch_edge(
@@ -923,6 +1531,22 @@ def certify_single_source_shell(
                     return None
                 pair_certificates.append(separate.certificate_id)
                 continue
+            radial = certify_coaxial_radial_separation(model, first, second)
+            if radial is not None:
+                pair_certificates.append(radial.certificate_id)
+                continue
+            ring = certify_source_ring_face_pair(model, first, second)
+            if ring is not None:
+                pair_certificates.append(ring.certificate_id)
+                continue
+            tangent = certify_tangent_cylinder_torus_pair(model, first, second)
+            if tangent is not None:
+                pair_certificates.append(tangent.certificate_id)
+                continue
+            plane_torus = certify_plane_torus_pair(model, first, second)
+            if plane_torus is not None:
+                pair_certificates.append(plane_torus.certificate_id)
+                continue
             from ._boolean_full_overlay import _coaxial_faces_meet_on_shared_circle
 
             regions = (
@@ -931,7 +1555,9 @@ def certify_single_source_shell(
                     model.patches[second], boolean_face_chart_box(model, second)
                 ),
             )
-            if _coaxial_faces_meet_on_shared_circle(model, (first, second), regions):
+            if not common and _coaxial_faces_meet_on_shared_circle(
+                model, (first, second), regions
+            ):
                 pair_certificates.append(
                     canonical_fingerprint(
                         {

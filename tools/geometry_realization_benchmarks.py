@@ -21,6 +21,7 @@ import phydrax as phx
 from benchmarks._io import write_json_atomic
 from benchmarks._runtime import (
     capture_environment,
+    DurationDistribution,
     logical_array_bytes,
     measure_repeated,
     measure_synchronized,
@@ -207,7 +208,7 @@ def _sharp_measure_case(count: int, *, warmup: int, repeats: int) -> Any:
     }
 
 
-def _placement_case() -> Any:
+def _placement_case(instance_count: int) -> Any:
     """Time separate native placement, world evidence and scientific consumers."""
     box = brep_box(
         (0, 0, 0), (1, 1, 1), coordinate_contract=SpatialCoordinateContract.si()
@@ -260,6 +261,21 @@ def _placement_case() -> Any:
                         (0, 0, 0, 1),
                     )
                 ),
+            ),
+            *(
+                BRepAssemblyUse(
+                    f"instance-{index}",
+                    definition_id="part",
+                    placement=BRepAffinePlacement.from_matrix(
+                        (
+                            (1, 0, 0, 1),
+                            (0, 1, 0, Fraction(41 * index, 20)),
+                            (0, 0, 1, 0),
+                            (0, 0, 0, 1),
+                        )
+                    ),
+                )
+                for index in range(2, instance_count)
             ),
         ),
         (BRepAssemblyDefinition("part", (BRepAssemblyUse("leaf", solid_index=0),)),),
@@ -364,8 +380,7 @@ def _placement_case() -> Any:
         for patch in source.patches
     )
     reused_trim_count = sum(
-        reused.curve_spans(pcurve) is local.curve_spans(pcurve)
-        for pcurve in pcurves
+        reused.curve_spans(pcurve) is local.curve_spans(pcurve) for pcurve in pcurves
     )
 
     def world(model: Any, preparation: Any) -> Any:
@@ -386,6 +401,56 @@ def _placement_case() -> Any:
     )
     if certificate.certificate_id != cold_certificate.certificate_id:
         raise ValueError("Cold and reused placement world proofs differ.")
+
+    # Compare the actual placed prepared-span jets with a fresh preparation.
+    # The oracle differentiates the authored bilinear control net independently,
+    # then applies the rigid linear map; it does not differentiate the host edit.
+    placed_surface = next(
+        item.surface
+        for item in reused.domain.patches
+        if getattr(item.surface, "source", None) is source.patches[0]
+        and item.surface.placement == pose
+    )
+    warm_spans = reused.surface_spans(placed_surface)
+    cold_spans = SourcePreparation(reused.domain).surface_spans(placed_surface)
+    assert warm_spans is not None and cold_spans is not None
+    (warm_span,) = warm_spans.spans
+    (cold_span,) = cold_spans.spans
+    (u0, u1), (v0, v1) = warm_span.parameter_bounds
+    u, v = (u0 + u1) / 2, (v0 + v1) / 2
+    bounds = ((u, u), (v, v))
+    warm_jet = warm_span.enclose(bounds)
+    cold_jet = cold_span.enclose(bounds)
+    if warm_jet != cold_jet:
+        raise ValueError("Cold and reused prepared placement jets differ.")
+    control = patches[0].exact_control_points
+    local_du = tuple(
+        (control[1][0][i] + control[1][1][i] - control[0][0][i] - control[0][1][i])
+        / (2 * (u1 - u0))
+        for i in range(3)
+    )
+    local_dv = tuple(
+        (control[0][1][i] + control[1][1][i] - control[0][0][i] - control[1][0][i])
+        / (2 * (v1 - v0))
+        for i in range(3)
+    )
+    oracle = tuple(
+        tuple(
+            sum(pose.matrix[row][col] * derivative[col] for col in range(3))
+            for row in range(3)
+        )
+        for derivative in (local_du, local_dv)
+    )
+    for derivative, enclosure in zip(
+        oracle, (warm_jet.du_bounds, warm_jet.dv_bounds), strict=True
+    ):
+        if not all(
+            lower <= value <= upper
+            for value, (lower, upper) in zip(derivative, enclosure, strict=True)
+        ):
+            raise ValueError(
+                "Prepared placement jet excludes the rigid-transform oracle."
+            )
 
     def coordinates(model: Any) -> Any:
         occurrence = next(
@@ -468,7 +533,7 @@ def _placement_case() -> Any:
             coefficients
         )
 
-    def contact(model: Any, mesh: Any) -> Any:
+    def contact_pair(model: Any, mesh: Any, other: tuple[str, str]) -> Any:
         vertices = np.asarray(mesh.vertices)
         triangles = np.asarray(mesh.triangles, dtype=np.int32)
         triangle_occurrences = np.asarray(mesh.triangle_occurrence_ids)
@@ -479,7 +544,7 @@ def _placement_case() -> Any:
         space = phx.linalg.ArraySpace((1, 3), dtype=vertices.dtype)
         surfaces = []
         counts = []
-        for body, path in enumerate((("first", "leaf"), ("second", "leaf"))):
+        for body, path in enumerate((("first", "leaf"), other)):
             occurrence_id = occurrence_ids[path]
             selected = triangles[triangle_occurrences == occurrence_id]
             vertex_indices = np.unique(selected)
@@ -487,12 +552,34 @@ def _placement_case() -> Any:
             points = jnp.asarray(vertices[vertex_indices])
             count = len(vertex_indices)
             counts.append((count, len(selected)))
+            edges = np.unique(
+                np.sort(
+                    np.concatenate(
+                        (
+                            local_faces[:, (0, 1)],
+                            local_faces[:, (1, 2)],
+                            local_faces[:, (2, 0)],
+                        )
+                    ),
+                    axis=1,
+                ),
+                axis=0,
+            )
+            feature_base = len(vertices) + body * 4 * len(triangles)
             topology = phx.discretization.CollisionSurfacePlan(
                 jnp.asarray(vertex_indices, dtype=jnp.int64),
                 ambient_dimension=3,
                 faces=jnp.asarray(local_faces, dtype=jnp.int32),
                 body_ids=body,
                 participant_ids=body,
+                edge_ids=np.arange(
+                    feature_base, feature_base + len(edges), dtype=np.int64
+                ),
+                face_ids=np.arange(
+                    feature_base + 3 * len(triangles),
+                    feature_base + 3 * len(triangles) + len(local_faces),
+                    dtype=np.int64,
+                ),
             )
             surfaces.append(
                 phx.discretization.PreparedCollisionSurface(
@@ -512,6 +599,12 @@ def _placement_case() -> Any:
         )
         return search.build(scene, scene.positions(space.zeros()))
 
+    def contact(model: Any, mesh: Any) -> Any:
+        others = (("second", "leaf"),) + tuple(
+            (f"instance-{index}", "leaf") for index in range(2, instance_count)
+        )
+        return tuple(contact_pair(model, mesh, path) for path in others)
+
     epoch, contact_seconds = measure_synchronized(
         lambda: contact(edited.model, tessellation)
     )
@@ -526,14 +619,17 @@ def _placement_case() -> Any:
             edited.model, numeric_version="cold-" + edited.model.source_revision
         )
     )
-    np.testing.assert_array_equal(
-        epoch.reference_positions, cold_epoch.reference_positions
-    )
-    np.testing.assert_array_equal(epoch.status, cold_epoch.status)
-    np.testing.assert_array_equal(epoch.complete, cold_epoch.complete)
-    for actual, cold_batch in zip(epoch.batches, cold_epoch.batches, strict=True):
-        np.testing.assert_array_equal(actual.valid, cold_batch.valid)
-        np.testing.assert_array_equal(actual.vertex_indices, cold_batch.vertex_indices)
+    for actual_epoch, cold in zip(epoch, cold_epoch, strict=True):
+        np.testing.assert_array_equal(
+            actual_epoch.reference_positions, cold.reference_positions
+        )
+        np.testing.assert_array_equal(actual_epoch.status, cold.status)
+        np.testing.assert_array_equal(actual_epoch.complete, cold.complete)
+        for actual, cold_batch in zip(actual_epoch.batches, cold.batches, strict=True):
+            np.testing.assert_array_equal(actual.valid, cold_batch.valid)
+            np.testing.assert_array_equal(
+                actual.vertex_indices, cold_batch.vertex_indices
+            )
     for actual, cold_value in zip(traces, cold_traces, strict=True):
         np.testing.assert_allclose(actual, cold_value)
 
@@ -552,6 +648,17 @@ def _placement_case() -> Any:
 
     _, total_seconds = measure_synchronized(end_to_end)
     return {
+        "instance_count": instance_count,
+        "source_id": source.source_id,
+        "source_revision": source.source_revision,
+        "edited_source_revision": edited.model.source_revision,
+        "world_certificate_id": certificate.certificate_id,
+        "cold_world_certificate_id": cold_certificate.certificate_id,
+        "surface_carriers": len(source.patches),
+        "prepared_jet_oracle": [[float(value) for value in row] for row in oracle],
+        "prepared_jet_cold_reuse_parity": True,
+        "trim_curve_carriers": len(pcurves),
+        "consumer_scope": "contact moved occurrence against every other; FEM/BEM moved occurrence",
         "local_preparation_seconds": local_seconds,
         "placement_seconds": placement_seconds,
         "local_span_reuse_seconds": reuse_seconds,
@@ -567,30 +674,62 @@ def _placement_case() -> Any:
         "end_to_end_seconds": total_seconds,
         "world_triangles": int(tessellation.triangles.shape[0]),
         "world_certificate_status": certificate.status,
-        "contact_candidates": int(epoch.candidate_count),
-        "contact_successful": bool(epoch.successful),
+        "contact_pairs": len(epoch),
+        "contact_candidates": sum(int(item.candidate_count) for item in epoch),
+        "contact_successful": all(bool(item.successful) for item in epoch),
         "trace": traces[0].tolist(),
         "conormal": traces[1].tolist(),
     }
 
 
-def run(*, smoke: bool, warmup: int, repeats: int) -> Any:
-    resolutions = (7,) if smoke else (7, 9)
+def _placement_distribution(instance_count: int, *, warmup: int, repeats: int) -> Any:
+    for _ in range(warmup):
+        _placement_case(instance_count)
+    samples = [_placement_case(instance_count) for _ in range(repeats)]
+    timings = {
+        key: DurationDistribution(tuple(sample[key] for sample in samples)).to_dict()
+        for key in samples[0]
+        if key.endswith("_seconds")
+    }
     return {
+        "instance_count": instance_count,
+        "warmup": warmup,
+        "timings": timings,
+        "samples": samples,
+    }
+
+
+def run(
+    *,
+    smoke: bool,
+    warmup: int,
+    repeats: int,
+    case: str = "all",
+    placement_instances: tuple[int, ...] = (2, 4, 8),
+) -> Any:
+    if warmup < 0 or repeats < 1:
+        raise ValueError("warmup must be nonnegative and repeats must be positive.")
+    if not placement_instances or any(count < 2 for count in placement_instances):
+        raise ValueError("placement instance counts must be at least two.")
+    resolutions = (7,) if smoke else (7, 9)
+    result = {
         "environment": capture_environment().to_dict(),
-        "finite_element": _finite_element_case(warmup=warmup, repeats=repeats),
-        "placement": _placement_case(),
         "kind": "geometry-realization-record-only-timing",
         "record_only": True,
-        "surface": [
-            _surface_case(count, warmup=warmup, repeats=repeats) for count in resolutions
+        "placement": [
+            _placement_distribution(count, warmup=warmup, repeats=repeats)
+            for count in placement_instances
         ],
-        "sharp_measure": _sharp_measure_case(
-            8 if smoke else 16,
-            warmup=warmup,
-            repeats=repeats,
-        ),
     }
+    if case == "all":
+        result["finite_element"] = _finite_element_case(warmup=warmup, repeats=repeats)
+        result["surface"] = [
+            _surface_case(count, warmup=warmup, repeats=repeats) for count in resolutions
+        ]
+        result["sharp_measure"] = _sharp_measure_case(
+            8 if smoke else 16, warmup=warmup, repeats=repeats
+        )
+    return result
 
 
 def main() -> None:
@@ -600,6 +739,8 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=8)
+    parser.add_argument("--case", choices=("all", "placement"), default="all")
+    parser.add_argument("--placement-instances", type=int, nargs="+", default=[2, 4, 8])
     parser.add_argument(
         "--output",
         type=Path,
@@ -610,6 +751,8 @@ def main() -> None:
         smoke=arguments.smoke,
         warmup=arguments.warmup,
         repeats=arguments.repeats,
+        case=arguments.case,
+        placement_instances=tuple(arguments.placement_instances),
     )
     rendered = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     print(rendered)

@@ -1,19 +1,20 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Bounded host sparse row-rank profiles for fixed-topology constraints.
+"""Sparse host rank evidence for fixed-topology operators.
 
-This owner supplies a tolerance-defined deterministic pivot profile, not an
-algebraic-rank certificate or a singular-value estimate. Consumers validate
-selected equations with native numerical factors and audit every original
-constraint. No global dense design or Gram matrix is materialized here.
+The row-pivot profile is tolerance-defined, not an algebraic-rank certificate
+or a singular-value estimate. Consumers validate selected equations with native
+numerical factors and audit every original constraint. The separate support
+report supplies rigorous combinatorial rank bounds for stored execution values.
+Neither path materializes a global dense design or Gram matrix.
 """
 
 from __future__ import annotations
 
 from math import isfinite
 from numbers import Integral
-from typing import final
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,7 +25,64 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import Dim, Float64, Int32, Scalar, Size
 from ._policies import RankPolicy
-from ._sparse_contract import AbstractSparseLinearOperator
+from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
+
+
+class SparseSupportRank(NamedTuple):
+    """Execution support and certified combinatorial rank bounds of a CSR matrix."""
+
+    source_supported: np.ndarray
+    target_supported: np.ndarray
+    rank_lower_bound: int
+    rank_upper_bound: int
+    exact_rank: int | None
+
+
+def sparse_support_rank(storage: SparseStorage, /) -> SparseSupportRank:
+    """Prepare host support and rank bounds from actual nonzero execution values.
+
+    Singleton rows with distinct columns certify a rank lower bound; maximum
+    structural matching certifies an upper bound. No global dense matrix is formed.
+    The exact rank is returned only when the bounds coincide.
+    """
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import structural_rank
+
+    if (
+        not isinstance(storage, SparseStorage)
+        or storage.format != "csr"
+        or storage.batch_shape
+    ):
+        raise ValueError("Sparse support rank requires unbatched canonical CSR storage.")
+    values = np.asarray(storage.values)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Sparse support rank requires finite execution coefficients.")
+    matrix = csr_matrix(
+        (values, np.asarray(storage.indices), np.asarray(storage.indptr)),
+        shape=storage.shape,
+        copy=True,
+    )
+    matrix.check_format(full_check=True)
+    matrix.sum_duplicates()
+    if not np.all(np.isfinite(matrix.data)):
+        raise ValueError("Sparse coefficient coalescing must remain finite.")
+    matrix.eliminate_zeros()
+    counts = np.diff(matrix.indptr)
+    singleton_rows = np.flatnonzero(counts == 1)
+    lower = int(np.unique(matrix.indices[matrix.indptr[singleton_rows]]).size)
+    upper = int(structural_rank(matrix))
+    source_supported = np.zeros((storage.shape[1],), dtype=np.bool_)
+    source_supported[matrix.indices] = True
+    target_supported = counts != 0
+    source_supported.setflags(write=False)
+    target_supported.setflags(write=False)
+    return SparseSupportRank(
+        source_supported,
+        target_supported,
+        lower,
+        upper,
+        lower if lower == upper else None,
+    )
 
 
 class _SparseIndependentRowDim(Dim):

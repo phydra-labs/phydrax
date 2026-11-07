@@ -32,7 +32,16 @@ from __future__ import annotations
 
 from enum import StrEnum
 from fractions import Fraction
-from typing import Any, final, NamedTuple, Protocol, TYPE_CHECKING
+from typing import (
+    Any,
+    cast,
+    final,
+    NamedTuple,
+    NoReturn,
+    Protocol,
+    SupportsIndex,
+    TYPE_CHECKING,
+)
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -40,14 +49,20 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from .._archive_columns import StaticColumnArchiveRecipe
+from .._archive_columns import StaticColumnArchiveRecipe, TextRowsArchiveRecipe
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, EntitySet
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
+from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._exact_algebraic_geometry import coefficient_payload
+from ..geometry._source_boundary_records import (
+    SourceBoundaryChartWitness,
+    SourceBoundaryFaceImageWitness,
+    SourceBoundaryImagePullback,
+)
 from ..geometry._source_identity import source_entity_id
 from ..geometry.brep._projection_contracts import (
     AbstractBRepProjection,
@@ -60,8 +75,748 @@ from ._scope import resolve_mesh_scope
 
 
 if TYPE_CHECKING:
+    from ..discretization._cell_geometry import CellGeometrySpec
+    from ..geometry._source_boundary_records import SourceBoundaryQuery
+    from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
+    from ._certification_inputs import ScopedFidelityInput
+    from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
     from ._lineage import MeshLineage, VertexInterpolationStencil
     from ._result import CellMeshingResult
+    from .providers._native_sources import NativeLayerCoreSource
+
+type SourceBoundaryReferencePiece = tuple[
+    int, int, tuple[int, ...], tuple[tuple[tuple[int, int], ...], ...]
+]
+type SourceBoundaryTargetPiece = (
+    SourceBoundaryReferencePiece | SourceBoundaryImagePullback
+)
+type SourceBoundaryTargetPieceRow = tuple[SourceBoundaryTargetPiece, ...]
+
+
+def _target_piece_sort_key(piece: SourceBoundaryTargetPiece, /) -> tuple[Any, ...]:
+    if isinstance(piece, SourceBoundaryImagePullback):
+        return (
+            1,
+            piece.cell_global_id,
+            piece.local_entity_index,
+            piece.image_rational_tokens,
+            piece.source_chart_id,
+        )
+    return (0, *piece)
+
+
+def source_boundary_association_piece_rows(
+    witness: SourceBoundaryChartWitness, /
+) -> dict[tuple[int, str, tuple[str, ...]], SourceBoundaryTargetPieceRow]:
+    """Group exact target pieces by occurrence-qualified source face and mesh face."""
+    if (
+        not isinstance(witness, SourceBoundaryChartWitness)
+        or witness.chart_dimension != 2
+    ):
+        raise TypeError("Source-face support requires a surface chart witness.")
+    polyhedra = np.asarray(witness.target_face_vertex_global_ids, dtype=np.int64)
+    result: dict[
+        tuple[int, str, tuple[str, ...]], list[SourceBoundaryReferencePiece]
+    ] = {}
+    for row, (face, cell, local, identity, path, tokens) in enumerate(
+        zip(
+            witness.entity_global_ids,
+            witness.cell_global_ids,
+            witness.local_entity_indices,
+            witness.source_entity_ids,
+            witness.occurrence_paths,
+            witness.target_reference_rational_tokens,
+            strict=True,
+        )
+    ):
+        vertices = (
+            () if polyhedra.size == 0 else tuple(int(value) for value in polyhedra[row])
+        )
+        piece = (int(cell), int(local), vertices, tokens)
+        result.setdefault((int(face), identity, tuple(path)), []).append(piece)
+    return {key: tuple(sorted(pieces)) for key, pieces in result.items()}
+
+
+def source_boundary_image_association_piece_rows(
+    witness: SourceBoundaryFaceImageWitness, /
+) -> dict[tuple[int, str, tuple[str, ...]], SourceBoundaryTargetPieceRow]:
+    """Group implicit target-face pullbacks by exact source occurrence."""
+    from ..geometry._source_boundary_records import SourceBoundaryFaceImageWitness
+
+    if type(witness) is not SourceBoundaryFaceImageWitness:
+        raise TypeError(
+            "Image support requires its exact source-bound face image witness."
+        )
+    result: dict[tuple[int, str, tuple[str, ...]], list[SourceBoundaryImagePullback]] = {}
+    for face, cell, local, chart, identity, path, tokens in zip(
+        witness.entity_global_ids,
+        witness.cell_global_ids,
+        witness.local_entity_indices,
+        witness.source_chart_ids,
+        witness.source_entity_ids,
+        witness.occurrence_paths,
+        witness.image_triangle_rational_tokens,
+        strict=True,
+    ):
+        piece = SourceBoundaryImagePullback(int(cell), int(local), tokens, chart)
+        result.setdefault((int(face), identity, tuple(path)), []).append(piece)
+    return {key: tuple(sorted(pieces)) for key, pieces in result.items()}
+
+
+def source_boundary_image_face_orientations(
+    mesh: CellMesh, geometry: CellGeometrySpec, witness: SourceBoundaryFaceImageWitness, /
+) -> dict[tuple[int, str, tuple[str, ...]], int]:
+    """Resolve source normals against canonical target-face vertex orientation."""
+    from ..discretization._cell_geometry_transition_types import _geometry_map_expressions
+    from ..discretization._coordinate_enclosure import evaluate_expression
+    from ..discretization._reference_cell import reference_cell_topology
+    from ._topology_edit import entity_keys
+
+    vertices = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    cells = {
+        int(identifier): (
+            block.cell_kind,
+            tuple(int(value) for value in vertices[np.asarray(rows, dtype=np.int64)]),
+        )
+        for block in mesh.blocks
+        for identifier, rows in zip(block.global_ids, block.vertices, strict=True)
+    }
+    resolved = geometry.resolve(mesh)
+    maps = _geometry_map_expressions(mesh, geometry, (resolved[0], resolved[1]))
+    faces = {
+        int(identifier): tuple(int(value) for value in key if value >= 0)
+        for key, identifier in zip(
+            entity_keys(mesh, 2), mesh.entity_set(2).entity_ids, strict=True
+        )
+    }
+
+    def normal(
+        points_: tuple[tuple[Fraction, ...], ...],
+    ) -> tuple[Fraction, Fraction, Fraction]:
+        first, second, third = points_[:3]
+        u = tuple(b - a for a, b in zip(first, second, strict=True))
+        v = tuple(b - a for a, b in zip(first, third, strict=True))
+        return (
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        )
+
+    result: dict[tuple[int, str, tuple[str, ...]], int] = {}
+    for row, (face, cell, local, identity, path, orientation) in enumerate(
+        zip(
+            witness.entity_global_ids,
+            witness.cell_global_ids,
+            witness.local_entity_indices,
+            witness.source_entity_ids,
+            witness.occurrence_paths,
+            witness.orientations,
+            strict=True,
+        )
+    ):
+        face_id = int(face)
+        vertex_ids = faces.get(face_id)
+        if vertex_ids is None or len(vertex_ids) < 3:
+            raise ValueError("An image witness names an invalid target face.")
+        owner = cells.get(int(cell))
+        if owner is None:
+            raise ValueError("An image witness names an absent target cell.")
+        kind, cell_vertices = owner
+        topology = reference_cell_topology(kind)
+        local_face = int(local)
+        if not 0 <= local_face < len(topology.entities[2]):
+            raise ValueError("An image witness names an absent local target face.")
+        local_vertices = topology.entities[2][local_face]
+        if tuple(sorted(cell_vertices[index] for index in local_vertices)) != vertex_ids:
+            raise ValueError("An image witness changes target cell-face incidence.")
+        by_global = {cell_vertices[index]: index for index in local_vertices}
+        physical = tuple(
+            tuple(
+                evaluate_expression(
+                    expression,
+                    tuple(
+                        Fraction.from_float(float(value))
+                        for value in topology.vertices[by_global[vertex]]
+                    ),
+                )
+                for expression in maps.expressions(int(cell))
+            )
+            for vertex in vertex_ids[:3]
+        )
+        if any(not isinstance(value, Fraction) for point in physical for value in point):
+            raise ValueError(
+                "Image face orientation requires exact rational target corners."
+            )
+        target_normal = normal(cast(tuple[tuple[Fraction, ...], ...], physical))
+        image_normal = normal(witness.image_triangle(row))
+        alignment = int(orientation) * sum(
+            left * right for left, right in zip(target_normal, image_normal, strict=True)
+        )
+        if not alignment:
+            raise ValueError("Image source and target face orientation is degenerate.")
+        key = (face_id, identity, tuple(path))
+        value = 1 if alignment > 0 else -1
+        previous = result.setdefault(key, value)
+        if previous != value:
+            raise ValueError(
+                "Image source pieces disagree on canonical face orientation."
+            )
+    return result
+
+
+def source_boundary_edge_intervals(
+    mesh: CellMesh, witness: SourceBoundaryChartWitness, /
+) -> dict[tuple[int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]]:
+    """Derive exact target-edge support from source chart pieces.
+
+    The caller must first validate the witness against its source and geometry.
+    Edge parameters follow increasing target vertex global IDs.
+    """
+    from ..discretization._reference_cell import reference_cell_topology
+    from ._layer_core_strata_replay import _triangle_line_interval
+    from ._topology_edit import entity_keys
+
+    if (
+        mesh.topological_dimension != 3
+        or witness.chart_dimension != 2
+        or witness.reference_dimension != 3
+        or np.asarray(witness.target_face_vertex_global_ids).size
+    ):
+        raise ValueError(
+            "Source facet-edge support requires explicit volume cell charts."
+        )
+    vertices = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    cells = {
+        int(identifier): (
+            block.cell_kind,
+            tuple(int(value) for value in vertices[np.asarray(rows, dtype=np.int64)]),
+        )
+        for block in mesh.blocks
+        for identifier, rows in zip(block.global_ids, block.vertices, strict=True)
+    }
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+    edges = {
+        tuple(int(value) for value in key if value >= 0): int(identifier)
+        for key, identifier in zip(entity_keys(mesh, 1), edge_ids, strict=True)
+    }
+    intervals: dict[
+        tuple[int, str, tuple[str, ...]], list[tuple[Fraction, Fraction]]
+    ] = {}
+    for row, (cell_id, local_face) in enumerate(
+        zip(witness.cell_global_ids, witness.local_entity_indices, strict=True)
+    ):
+        cell = cells.get(int(cell_id))
+        if cell is None:
+            raise ValueError("A source chart names an absent target cell.")
+        kind, global_vertices = cell
+        topology = reference_cell_topology(kind)
+        local = int(local_face)
+        if not 0 <= local < len(topology.entities[2]):
+            raise ValueError("A source chart names an absent target face.")
+        face = topology.entities[2][local]
+        points = {
+            global_vertices[index]: tuple(
+                Fraction(float(value)) for value in topology.vertices[index]
+            )
+            for index in face
+        }
+        triangle = witness.target_reference_chart(row)
+        face_vertices = set(int(index) for index in face)
+        for local_edge in topology.entities[1]:
+            if not set(local_edge) <= face_vertices:
+                continue
+            first, last = sorted(int(global_vertices[index]) for index in local_edge)
+            edge_id = edges.get((first, last))
+            if edge_id is None:
+                raise ValueError(
+                    "A source chart face edge is absent from target incidence."
+                )
+            interval = _triangle_line_interval(points[first], points[last], triangle)
+            if interval is not None and interval[0] < interval[1]:
+                key = (
+                    edge_id,
+                    witness.source_entity_ids[row],
+                    witness.occurrence_paths[row],
+                )
+                intervals.setdefault(key, []).append(interval)
+    result: dict[
+        tuple[int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]
+    ] = {}
+    for key, values in intervals.items():
+        merged: list[tuple[Fraction, Fraction]] = []
+        for lower, upper in sorted(values):
+            if merged and lower <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], upper))
+            else:
+                merged.append((lower, upper))
+        result[key] = tuple(merged)
+    return result
+
+
+class _LayerImageSupportPreparation:
+    """Call-local exact edge maps produced from the bound layer geometry."""
+
+    def __init__(
+        self,
+        source: NativeLayerCoreSource,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        core_cell_ids: tuple[int, ...],
+        /,
+        *,
+        root: LayerCoreRootGeometry | None = None,
+        computed_root: ComputedLayerCoreRoot | None = None,
+    ) -> None:
+        from ._layer_core_strata_replay import core_edge_images
+
+        self.source = source
+        self.core_cell_ids = tuple(sorted(core_cell_ids))
+        if len(set(self.core_cell_ids)) != len(self.core_cell_ids):
+            raise ValueError("Layer image preparation requires unique core cell IDs.")
+        self.mesh = mesh
+        self.root = root
+        self.computed_root = computed_root
+        self.geometry = geometry
+        self.images = core_edge_images(
+            source, mesh, geometry, core_cell_ids, root=root, computed_root=computed_root
+        )
+        self.edge_maps = {
+            (cell, edge): image
+            for edge, rows in self.images.items()
+            for cell, image, _ in rows
+        }
+        self.endpoints: dict[
+            tuple[int, int], tuple[tuple[Fraction, ...], tuple[Fraction, ...]]
+        ] = {}
+        self.face_support: dict[
+            int,
+            tuple[
+                SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness,
+                dict[
+                    tuple[int, str, tuple[str, ...]],
+                    tuple[frozenset[int], frozenset[tuple[int, int]]],
+                ],
+            ],
+        ] = {}
+        self.image_pieces: dict[
+            int,
+            tuple[
+                SourceBoundaryFaceImageWitness,
+                dict[tuple[int, int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]],
+            ],
+        ] = {}
+
+    def require(
+        self, source: NativeLayerCoreSource, mesh: CellMesh, geometry: CellGeometrySpec,
+        core_cell_ids: tuple[int, ...], /, *,
+        root: LayerCoreRootGeometry | None = None,
+        computed_root: ComputedLayerCoreRoot | None = None,
+    ) -> None:
+        if (
+            self.source is not source or self.mesh is not mesh or self.geometry is not geometry
+            or self.core_cell_ids != tuple(sorted(core_cell_ids))
+            or self.root is not root or self.computed_root is not computed_root
+            or len(set(core_cell_ids)) != len(core_cell_ids)
+        ):
+            raise ValueError("Layer image preparation belongs to other source, mesh, geometry or core cells.")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Layer image preparation is operation-local and cannot be serialized.")
+
+
+def _prepare_layer_image_support(
+    source: NativeLayerCoreSource,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    core_cell_ids: tuple[int, ...],
+    /,
+    *,
+    root: LayerCoreRootGeometry | None = None,
+    computed_root: ComputedLayerCoreRoot | None = None,
+) -> _LayerImageSupportPreparation:
+    return _LayerImageSupportPreparation(
+        source, mesh, geometry, core_cell_ids, root=root, computed_root=computed_root,
+    )
+
+
+def _source_boundary_image_edge_pieces(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    witness: SourceBoundaryFaceImageWitness,
+    /,
+    preparation: _LayerImageSupportPreparation | None = None,
+) -> dict[tuple[int, int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]]:
+    """Clip actual target-edge maps against each exact physical source-face piece."""
+    from ..discretization._cell_geometry_transition_types import _geometry_map_expressions
+    from ..discretization._coordinate_enclosure import (
+        compose_expression,
+        evaluate_expression,
+    )
+    from ..discretization._nested_reference import _chart_from_corners
+    from ..discretization._reference_cell import reference_cell_topology
+    from ._layer_core_strata_replay import _triangle_line_interval, source_line_interval
+    from ._topology_edit import entity_keys
+
+    if mesh.topological_dimension != 3:
+        raise ValueError("Source face image support requires a volume target.")
+    if preparation is not None and (
+        preparation.mesh is not mesh or preparation.geometry is not geometry
+    ):
+        raise ValueError("Layer image preparation belongs to another mesh or geometry.")
+    if preparation is not None:
+        cached = preparation.image_pieces.get(id(witness))
+        if cached is not None and cached[0] is witness:
+            return dict(cached[1])
+    vertices = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    cells = {
+        int(identifier): (
+            block.cell_kind,
+            tuple(int(value) for value in vertices[np.asarray(rows, dtype=np.int64)]),
+        )
+        for block in mesh.blocks
+        for identifier, rows in zip(block.global_ids, block.vertices, strict=True)
+    }
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+    edges = {
+        tuple(int(value) for value in key if value >= 0): int(identifier)
+        for key, identifier in zip(entity_keys(mesh, 1), edge_ids, strict=True)
+    }
+    maps = None
+    intervals: dict[
+        tuple[int, int, str, tuple[str, ...]], list[tuple[Fraction, Fraction]]
+    ] = {}
+    edge_images: dict[
+        tuple[int, int], tuple[tuple[Fraction, ...], tuple[Fraction, ...]]
+    ] = {} if preparation is None else preparation.endpoints
+    for row, (cell_raw, local_raw) in enumerate(
+        zip(witness.cell_global_ids, witness.local_entity_indices, strict=True)
+    ):
+        cell_id, local = int(cell_raw), int(local_raw)
+        cell = cells.get(cell_id)
+        if cell is None:
+            raise ValueError("A source image names an absent target cell.")
+        kind, global_vertices = cell
+        topology = reference_cell_topology(kind)
+        if not 0 <= local < len(topology.entities[2]):
+            raise ValueError("A source image names an absent target face.")
+        face = set(topology.entities[2][local])
+        triangle = witness.image_triangle(row)
+        for local_edge in topology.entities[1]:
+            if not set(local_edge) <= face:
+                continue
+            ordered = sorted(local_edge, key=lambda index: global_vertices[index])
+            first_id, last_id = (global_vertices[index] for index in ordered)
+            edge_id = edges.get((first_id, last_id))
+            if edge_id is None:
+                raise ValueError(
+                    "An image-supported face edge is absent from target incidence."
+                )
+            cache_key = (cell_id, edge_id)
+            endpoints = edge_images.get(cache_key)
+            if endpoints is None:
+                image = (
+                    None if preparation is None else preparation.edge_maps.get(cache_key)
+                )
+                if image is None:
+                    if maps is None:
+                        resolved = geometry.resolve(mesh)
+                        maps = _geometry_map_expressions(
+                            mesh, geometry, (resolved[0], resolved[1])
+                        )
+                    corners = tuple(
+                        tuple(
+                            Fraction.from_float(float(value))
+                            for value in topology.vertices[index]
+                        )
+                        for index in ordered
+                    )
+                    arguments = _chart_from_corners("interval", corners)
+                    image = tuple(
+                        compose_expression(value, arguments)
+                        for value in maps.expressions(cell_id)
+                    )
+                evaluated = tuple(
+                    tuple(
+                        evaluate_expression(value, (Fraction(parameter),))
+                        for value in image
+                    )
+                    for parameter in (0, 1)
+                )
+                if any(
+                    not isinstance(value, Fraction)
+                    for point in evaluated
+                    for value in point
+                ):
+                    raise ValueError(
+                        "Image-supported target edge endpoints must be exact rational points."
+                    )
+                exact = cast(tuple[tuple[Fraction, ...], tuple[Fraction, ...]], evaluated)
+                if source_line_interval(image, exact[0], exact[1]) != (
+                    Fraction(0),
+                    Fraction(1),
+                ):
+                    raise ValueError(
+                        "Image-supported target edge requires an exact affine parameter map."
+                    )
+                endpoints = edge_images[cache_key] = exact
+            interval = _triangle_line_interval(endpoints[0], endpoints[1], triangle)
+            if interval is not None:
+                key = (
+                    int(witness.entity_global_ids[row]),
+                    edge_id,
+                    witness.source_entity_ids[row],
+                    witness.occurrence_paths[row],
+                )
+                intervals.setdefault(key, []).append(interval)
+    result: dict[
+        tuple[int, int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]
+    ] = {}
+    for key, values in intervals.items():
+        merged: list[tuple[Fraction, Fraction]] = []
+        for lower, upper in sorted(values):
+            if merged and lower <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], upper))
+            else:
+                merged.append((lower, upper))
+        result[key] = tuple(merged)
+    if preparation is not None:
+        preparation.image_pieces[id(witness)] = (witness, dict(result))
+    return result
+
+
+def _source_boundary_image_edge_intervals(
+    mesh: CellMesh, geometry: CellGeometrySpec, witness: SourceBoundaryFaceImageWitness, /,
+    preparation: _LayerImageSupportPreparation | None,
+) -> dict[tuple[int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]]:
+    """Union exact source-facet image coverage along target edges."""
+    intervals: dict[
+        tuple[int, str, tuple[str, ...]], list[tuple[Fraction, Fraction]]
+    ] = {}
+    for (_, edge, identity, path), values in _source_boundary_image_edge_pieces(
+        mesh, geometry, witness, preparation
+    ).items():
+        intervals.setdefault((edge, identity, path), []).extend(
+            (lower, upper) for lower, upper in values if lower < upper
+        )
+    result: dict[
+        tuple[int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]
+    ] = {}
+    for key, values in intervals.items():
+        merged: list[tuple[Fraction, Fraction]] = []
+        for lower, upper in sorted(values):
+            if merged and lower <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], upper))
+            else:
+                merged.append((lower, upper))
+        result[key] = tuple(merged)
+    return result
+
+
+def source_boundary_image_edge_intervals(
+    mesh: CellMesh, geometry: CellGeometrySpec, witness: SourceBoundaryFaceImageWitness, /
+) -> dict[tuple[int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]]:
+    return _source_boundary_image_edge_intervals(mesh, geometry, witness, None)
+
+
+def _source_boundary_image_face_support(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    witness: SourceBoundaryFaceImageWitness,
+    /,
+    preparation: _LayerImageSupportPreparation | None,
+) -> dict[tuple[int, str, tuple[str, ...]], tuple[set[int], set[tuple[int, int]]]]:
+    """Retain face-qualified exact vertex and edge support without invented diagonals."""
+    from ._topology_edit import entity_keys
+
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+    edge_vertices = {
+        int(identifier): tuple(int(value) for value in key if value >= 0)
+        for key, identifier in zip(entity_keys(mesh, 1), edge_ids, strict=True)
+    }
+    result: dict[
+        tuple[int, str, tuple[str, ...]], tuple[set[int], set[tuple[int, int]]]
+    ] = {
+        (int(face), identity, tuple(path)): (set(), set())
+        for face, identity, path in zip(
+            witness.entity_global_ids,
+            witness.source_entity_ids,
+            witness.occurrence_paths,
+            strict=True,
+        )
+    }
+    for (face, edge, identity, path), intervals in _source_boundary_image_edge_pieces(
+        mesh, geometry, witness, preparation
+    ).items():
+        pair = edge_vertices[edge]
+        if len(pair) != 2:
+            raise ValueError("An image-supported target edge must have two vertices.")
+        first, last = pair
+        covered_vertices, covered_edges = result.setdefault(
+            (face, identity, path), (set(), set())
+        )
+        if any(lower < upper for lower, upper in intervals):
+            covered_edges.add((first, last))
+        if any(lower == 0 for lower, _ in intervals):
+            covered_vertices.add(first)
+        if any(upper == 1 for _, upper in intervals):
+            covered_vertices.add(last)
+    return result
+
+
+def source_boundary_image_face_support(
+    mesh: CellMesh, geometry: CellGeometrySpec, witness: SourceBoundaryFaceImageWitness, /
+) -> dict[tuple[int, str, tuple[str, ...]], tuple[set[int], set[tuple[int, int]]]]:
+    return _source_boundary_image_face_support(mesh, geometry, witness, None)
+
+
+def _validate_target_reference_piece_rows(
+    rows: tuple[SourceBoundaryTargetPieceRow | None, ...],
+    roles: tuple[GeometrySourceEntityRole | None, ...],
+    count: int,
+    /,
+) -> None:
+    if len(rows) != count:
+        raise ValueError("Target face piece rows must align with association rows.")
+    for row, pieces in enumerate(rows):
+        if pieces is None:
+            continue
+        if not isinstance(pieces, tuple) or not pieces:
+            raise ValueError("Target face support needs nonempty immutable exact pieces.")
+        for piece in pieces:
+            if isinstance(piece, SourceBoundaryImagePullback):
+                cell, local = piece.cell_global_id, piece.local_entity_index
+                tokens, chart_id = piece.image_rational_tokens, piece.source_chart_id
+                role = roles[row]
+                if (
+                    type(cell) is not int
+                    or cell < 0
+                    or type(local) is not int
+                    or local < 0
+                    or not isinstance(chart_id, str)
+                    or not chart_id
+                    or chart_id != chart_id.strip()
+                    or role
+                    not in (GeometrySourceEntityRole.FACET, GeometrySourceEntityRole.EDGE)
+                    or not isinstance(tokens, tuple)
+                    or (
+                        len(tokens) != 2
+                        if role is GeometrySourceEntityRole.EDGE
+                        else len(tokens) < 3
+                    )
+                ):
+                    raise ValueError(
+                        "Image pullback needs exact incidence, source chart and polygon support."
+                    )
+                points: list[tuple[Fraction, ...]] = []
+                for point in tokens:
+                    if not isinstance(point, tuple) or len(point) != 3:
+                        raise ValueError(
+                            "Image pullback points must have three exact physical coordinates."
+                        )
+                    coordinates: list[Fraction] = []
+                    for token in point:
+                        if (
+                            not isinstance(token, tuple)
+                            or len(token) != 2
+                            or type(token[0]) is not int
+                            or type(token[1]) is not int
+                            or token[1] <= 0
+                        ):
+                            raise ValueError(
+                                "Image pullback has invalid rational coordinate tokens."
+                            )
+                        value = Fraction(*token)
+                        if (value.numerator, value.denominator) != token:
+                            raise ValueError(
+                                "Image pullback rational tokens must be reduced."
+                            )
+                        coordinates.append(value)
+                    points.append(tuple(coordinates))
+                if len(set(points)) != len(points):
+                    raise ValueError("Image pullback vertices must be distinct.")
+                direction = tuple(
+                    b - a for a, b in zip(points[0], points[1], strict=True)
+                )
+                if role is GeometrySourceEntityRole.FACET and not any(
+                    direction[i] * (point[j] - points[0][j])
+                    != direction[j] * (point[i] - points[0][i])
+                    for point in points[2:]
+                    for i in range(3)
+                    for j in range(i + 1, 3)
+                ):
+                    raise ValueError("Image pullback polygon must have nonzero area.")
+                continue
+            if not isinstance(piece, tuple) or len(piece) != 4:
+                raise ValueError(
+                    "Target face piece needs its target incidence and exact chart."
+                )
+            cell, local, vertices, tokens = piece
+            if (
+                type(cell) is not int
+                or cell < 0
+                or type(local) is not int
+                or local < -1
+                or not isinstance(vertices, tuple)
+                or len(vertices) not in (0, 3)
+                or any(type(vertex) is not int or vertex < 0 for vertex in vertices)
+                or len(set(vertices)) != len(vertices)
+            ):
+                raise ValueError("Target face piece has invalid target incidence.")
+            corner_count = 3 if roles[row] is GeometrySourceEntityRole.FACET else 2
+            if roles[row] not in (
+                GeometrySourceEntityRole.FACET,
+                GeometrySourceEntityRole.EDGE,
+            ):
+                raise ValueError(
+                    "Target face pieces require an explicit source facet or edge role."
+                )
+            if (
+                not isinstance(tokens, tuple)
+                or len(tokens) != corner_count
+                or not isinstance(tokens[0], tuple)
+                or len(tokens[0]) not in ((2,) if vertices else (2, 3))
+                or any(
+                    not isinstance(point, tuple) or len(point) != len(tokens[0])
+                    for point in tokens
+                )
+            ):
+                raise ValueError(
+                    "Target face piece has an invalid exact reference chart."
+                )
+            chart = []
+            for point in tokens:
+                coordinates = []
+                for token in point:
+                    if (
+                        not isinstance(token, tuple)
+                        or len(token) != 2
+                        or type(token[0]) is not int
+                        or type(token[1]) is not int
+                        or token[1] <= 0
+                    ):
+                        raise ValueError("Target face piece has invalid rational tokens.")
+                    value = Fraction(*token)
+                    if (value.numerator, value.denominator) != token:
+                        raise ValueError(
+                            "Target face piece rational tokens must be reduced."
+                        )
+                    coordinates.append(value)
+                chart.append(tuple(coordinates))
+            first = tuple(b - a for a, b in zip(chart[0], chart[1], strict=True))
+            if not any(first):
+                raise ValueError("Target face reference pieces must be nondegenerate.")
+            if corner_count == 3:
+                second = tuple(b - a for a, b in zip(chart[0], chart[2], strict=True))
+                if not any(
+                    first[i] * second[j] != first[j] * second[i]
+                    for i in range(len(first))
+                    for j in range(i + 1, len(first))
+                ):
+                    raise ValueError(
+                        "Target face reference pieces must be nondegenerate."
+                    )
+        if tuple(sorted(set(pieces), key=_target_piece_sort_key)) != pieces:
+            raise ValueError("Target face pieces must be unique and in canonical order.")
 
 
 class GeometryAssociationKind(StrEnum):
@@ -106,7 +861,12 @@ class AssociationEntityClasses(NamedTuple):
 
 
 class AssociationTransfer(Protocol):
-    """Common adaptation contract for revision-bound source association routes."""
+    """Common adaptation contract for revision-bound source association routes.
+
+    ``propagate`` receives the endpoint-bound geometry transition and the
+    renewed target source-chart witness when available. Geometry-free routes
+    pass ``None``; source routes that require either proof must reject its absence.
+    """
 
     @property
     def transfer_id(self) -> str: ...
@@ -128,6 +888,12 @@ class AssociationTransfer(Protocol):
         /,
         *,
         vertex_stencil: VertexInterpolationStencil | None,
+        geometry_transition: CellGeometryTransition | None,
+        target_fidelity_witness: SourceBoundaryChartWitness
+        | SourceBoundaryFaceImageWitness
+        | None,
+        target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
+        validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]: ...
 
 
@@ -161,6 +927,12 @@ class GeometryAssociation(StrictModule, NonTrainableState):
     ``parent_ids`` name the parent mesh entity whose class a row inherited
     (``-1`` for geometric classification). Infinite residuals are allowed only on
     unresolved rows (no closest point).
+    ``target_parameter_intervals`` restrict edge rows to exact subintervals of
+    the canonically oriented target edge; ``None`` denotes the entire edge.
+    Source intervals and orientation then describe only that target support.
+    ``target_reference_pieces`` carry exact witness-bound face restrictions;
+    their parent cell, local face and optional polyhedral triangle IDs are
+    retained together with the original witness token rows.
     """
 
     association_kind: GeometryAssociationKind = eqx.field(static=True)
@@ -177,6 +949,13 @@ class GeometryAssociation(StrictModule, NonTrainableState):
     source_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...] = eqx.field(
         static=True
     )
+    target_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...] = eqx.field(
+        static=True
+    )
+    target_reference_pieces: tuple[SourceBoundaryTargetPieceRow | None, ...] = eqx.field(
+        static=True
+    )
+    source_boundary_witness_id: str | None = eqx.field(static=True)
     source_parameter_points: tuple[Fraction | None, ...] = eqx.field(static=True)
     residuals: Array
     resolved: Array
@@ -213,6 +992,11 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         source_region_sides: tuple[tuple[str | None, str | None], ...] | None = None,
         source_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...]
         | None = None,
+        target_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...]
+        | None = None,
+        target_reference_pieces: tuple[SourceBoundaryTargetPieceRow | None, ...]
+        | None = None,
+        source_boundary_witness_id: str | None = None,
         source_parameter_points: tuple[Fraction | None, ...] | None = None,
         parameters: ArrayLike | None = None,
         orientations: ArrayLike | None = None,
@@ -291,6 +1075,16 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             if source_parameter_intervals is None
             else tuple(source_parameter_intervals)
         )
+        target_intervals = (
+            tuple(None for _ in range(count))
+            if target_parameter_intervals is None
+            else tuple(target_parameter_intervals)
+        )
+        target_pieces = (
+            tuple(None for _ in range(count))
+            if target_reference_pieces is None
+            else tuple(target_reference_pieces)
+        )
         parameter_points = (
             tuple(None for _ in range(count))
             if source_parameter_points is None
@@ -345,6 +1139,57 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Source parameter intervals must be exact increasing Fraction pairs."
             )
+        if len(target_intervals) != count or any(
+            interval is not None
+            and (
+                not isinstance(interval, tuple)
+                or len(interval) != 2
+                or any(not isinstance(value, Fraction) for value in interval)
+                or not (0 <= interval[0] < interval[1] <= 1)
+            )
+            for interval in target_intervals
+        ):
+            raise ValueError(
+                "Target edge intervals must be exact increasing Fraction pairs in [0, 1]."
+            )
+        target_intervals = tuple(
+            None if interval == (Fraction(0), Fraction(1)) else interval
+            for interval in target_intervals
+        )
+        _validate_target_reference_piece_rows(target_pieces, roles, count)
+        if source_boundary_witness_id is not None and (
+            not isinstance(source_boundary_witness_id, str)
+            or not source_boundary_witness_id
+            or source_boundary_witness_id != source_boundary_witness_id.strip()
+        ):
+            raise ValueError("Source boundary witness identity must be nonempty.")
+        if any(piece is not None for piece in target_pieces):
+            if source_boundary_witness_id is None or any(
+                piece is None for piece in target_pieces
+            ):
+                raise ValueError(
+                    "Every witness-bound face row needs exact target pieces."
+                )
+            if any(
+                not resolved_[row]
+                or roles[row]
+                not in (GeometrySourceEntityRole.FACET, GeometrySourceEntityRole.EDGE)
+                or (
+                    roles[row] is GeometrySourceEntityRole.EDGE
+                    and parameter_intervals[row] is None
+                )
+                for row in range(count)
+            ):
+                raise ValueError(
+                    "Exact target face pieces need resolved source facets or parameterized edges."
+                )
+        elif source_boundary_witness_id is not None and any(
+            not resolved_[row] or roles[row] is not GeometrySourceEntityRole.FACET
+            for row in range(count)
+        ):
+            raise ValueError(
+                "Witness-bound edge support requires resolved source facets."
+            )
         if len(parameter_points) != count or any(
             value is not None and not isinstance(value, Fraction)
             for value in parameter_points
@@ -357,14 +1202,33 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 association_kind is GeometryAssociationKind.CURVE
                 and roles[row] is GeometrySourceEntityRole.EDGE
             )
-            if ((interval is not None or point is not None) and not curve_edge) or (
-                interval is not None and point is not None
-            ):
+            parameterized_edge = (
+                association_kind
+                in (
+                    GeometryAssociationKind.CURVE,
+                    GeometryAssociationKind.PIECEWISE_LINEAR,
+                )
+                and roles[row] is GeometrySourceEntityRole.EDGE
+            )
+            if (
+                (interval is not None or point is not None) and not parameterized_edge
+            ) or (interval is not None and point is not None):
                 raise ValueError(
-                    "Exact curve parameters belong to one curve-edge interval or point per row."
+                    "Exact source parameters belong to one edge interval or point per row."
                 )
             if not resolved_[row] and (interval is not None or point is not None):
-                raise ValueError("Unresolved curve rows cannot claim exact parameters.")
+                raise ValueError("Unresolved edge rows cannot claim exact parameters.")
+            facet_edge = (
+                source_boundary_witness_id is not None
+                and roles[row] is GeometrySourceEntityRole.FACET
+            )
+            if target_intervals[row] is not None and (
+                not resolved_[row]
+                or not ((parameterized_edge and interval is not None) or facet_edge)
+            ):
+                raise ValueError(
+                    "Partial target support requires a proved source edge or facet."
+                )
             if resolved_[row] and curve_edge and (interval is None) == (point is None):
                 raise ValueError(
                     "Resolved curve-edge rows require exactly one interval or point parameter."
@@ -423,6 +1287,9 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.source_occurrence_paths = occurrences
         self.source_region_sides = region_sides
         self.source_parameter_intervals = parameter_intervals
+        self.target_parameter_intervals = target_intervals
+        self.target_reference_pieces = target_pieces
+        self.source_boundary_witness_id = source_boundary_witness_id
         self.source_parameter_points = parameter_points
         self.association_id = canonical_fingerprint(
             {
@@ -447,6 +1314,42 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                     if interval is None
                     else tuple(coefficient_payload(value) for value in interval)
                     for interval in parameter_intervals
+                ),
+                **(
+                    {
+                        "target_parameter_intervals": tuple(
+                            None
+                            if interval is None
+                            else tuple(coefficient_payload(value) for value in interval)
+                            for interval in target_intervals
+                        )
+                    }
+                    if any(interval is not None for interval in target_intervals)
+                    else {}
+                ),
+                **(
+                    {
+                        "target_reference_pieces": tuple(
+                            None
+                            if pieces is None
+                            else tuple(
+                                {
+                                    "kind": "source-boundary-image-pullback",
+                                    "cell_global_id": piece.cell_global_id,
+                                    "local_entity_index": piece.local_entity_index,
+                                    "image_rational_tokens": piece.image_rational_tokens,
+                                    "source_chart_id": piece.source_chart_id,
+                                }
+                                if isinstance(piece, SourceBoundaryImagePullback)
+                                else piece
+                                for piece in pieces
+                            )
+                            for pieces in target_pieces
+                        ),
+                        "source_boundary_witness_id": source_boundary_witness_id,
+                    }
+                    if source_boundary_witness_id is not None
+                    else {}
                 ),
                 "source_parameter_points": tuple(
                     None if point is None else coefficient_payload(point)
@@ -483,6 +1386,162 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             np.isin(np.asarray(self.target_global_ids), np.asarray(entity_set.entity_ids))
         ):
             raise ValueError("Geometry association contains undeclared target IDs.")
+        dimension = entity_set.intrinsic_dimension
+        if (
+            any(value is not None for value in self.target_parameter_intervals)
+            and dimension != 1
+        ):
+            raise ValueError("Target parameter intervals require mesh-edge targets.")
+        has_pieces = any(value is not None for value in self.target_reference_pieces)
+        if has_pieces and dimension != 2:
+            raise ValueError("Target reference pieces require mesh-face targets.")
+        if (
+            self.source_boundary_witness_id is not None
+            and not has_pieces
+            and dimension != 1
+        ):
+            raise ValueError(
+                "Witness-bound facet-edge support requires mesh-edge targets."
+            )
+
+    def validate_source_boundary_support(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        query: SourceBoundaryQuery,
+        witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness,
+        /,
+        *,
+        association_source: NativeLayerCoreSource | None = None,
+        layer_core_root_geometry: LayerCoreRootGeometry | None = None,
+    ) -> None:
+        """Reprove exact target support against its actual source face witness.
+
+        A source edge represented by a segment in a target face additionally
+        requires its original ``association_source``. Mapped descendants whose
+        restriction binds a retained layer/core root also require that actual
+        ``layer_core_root_geometry``; identities alone do not establish a map.
+        The witness must describe the incident source facet, not an unrelated
+        exterior chart.
+        """
+        if self.source_boundary_witness_id is None:
+            raise ValueError("This association has no source-bound target support.")
+        if not isinstance(
+            witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+        ):
+            raise TypeError("Target support requires an exact source face witness.")
+        if (
+            witness.witness_id != self.source_boundary_witness_id
+            or witness.source_id != self.source_id
+            or witness.source_revision != self.source_revision
+        ):
+            raise ValueError("Target support changes its source witness identity.")
+        edge_face = (
+            mesh.topological_dimension >= 2
+            and self.target_entity_set_id == mesh.entity_set(2).entity_set_id
+            and any(role is GeometrySourceEntityRole.EDGE for role in self.source_roles)
+        )
+        if edge_face:
+            from ..geometry._source_fidelity import validate_source_fidelity_witness
+            from ._layer_core_segment_overlay import validate_source_edge_face_segments
+            from .providers._native_sources import NativeLayerCoreSource
+
+            if not isinstance(association_source, NativeLayerCoreSource):
+                raise ValueError(
+                    "Source-edge face support requires its actual native source."
+                )
+            token = validate_source_fidelity_witness(mesh, geometry, query, witness)
+            validate_source_edge_face_segments(
+                association_source,
+                mesh,
+                geometry,
+                token,
+                self,
+                root=layer_core_root_geometry,
+            )
+        else:
+            witness.require_current(mesh, geometry, query)
+        if self.target_entity_set_id == mesh.entity_set(1).entity_set_id:
+            self.validate_target(mesh.entity_set(1))
+            edge_groups = (
+                source_boundary_image_edge_intervals(mesh, geometry, witness)
+                if isinstance(witness, SourceBoundaryFaceImageWitness)
+                else source_boundary_edge_intervals(mesh, witness)
+            )
+            for target, identity, path, interval in zip(
+                self.target_global_ids,
+                self.source_entity_ids,
+                self.source_occurrence_paths,
+                self.target_parameter_intervals,
+                strict=True,
+            ):
+                expected = (Fraction(0), Fraction(1)) if interval is None else interval
+                if expected not in edge_groups.get(
+                    (int(target), identity, tuple(path)), ()
+                ):
+                    raise ValueError(
+                        "Target edge support differs from its exact source witness."
+                    )
+            return
+        self.validate_target(mesh.entity_set(2))
+        groups = (
+            source_boundary_image_association_piece_rows(witness)
+            if isinstance(witness, SourceBoundaryFaceImageWitness)
+            else source_boundary_association_piece_rows(witness)
+        )
+        image_metadata: dict[
+            tuple[int, str, tuple[str, ...]], tuple[tuple[str | None, str | None], int]
+        ] = {}
+        if isinstance(witness, SourceBoundaryFaceImageWitness):
+            canonical_orientations = source_boundary_image_face_orientations(
+                mesh, geometry, witness
+            )
+            for face, identity, path, sides in zip(
+                witness.entity_global_ids,
+                witness.source_entity_ids,
+                witness.occurrence_paths,
+                witness.source_region_sides,
+                strict=True,
+            ):
+                key = (int(face), identity, tuple(path))
+                value = (tuple(sides), canonical_orientations[key])
+                previous = image_metadata.setdefault(key, value)
+                if previous != value:
+                    raise ValueError("Image witness changes source sides or orientation.")
+        for row, (target, identity, path, pieces, role) in enumerate(
+            zip(
+                self.target_global_ids,
+                self.source_entity_ids,
+                self.source_occurrence_paths,
+                self.target_reference_pieces,
+                self.source_roles,
+                strict=True,
+            )
+        ):
+            if role is GeometrySourceEntityRole.FACET and (
+                groups.get((int(target), identity, tuple(path))) != pieces
+            ):
+                raise ValueError(
+                    "Target face support differs from its exact source witness."
+                )
+            if role is GeometrySourceEntityRole.FACET and image_metadata:
+                expected_metadata = image_metadata.get(
+                    (int(target), identity, tuple(path))
+                )
+                if expected_metadata != (
+                    self.source_region_sides[row],
+                    int(self.orientations[row]),
+                ):
+                    raise ValueError(
+                        "Image facet support changes its source sides or orientation."
+                    )
+            if role not in (
+                GeometrySourceEntityRole.FACET,
+                GeometrySourceEntityRole.EDGE,
+            ):
+                raise ValueError(
+                    "Target face support requires a source facet or edge role."
+                )
 
     def target_rows(self, target_global_ids: ArrayLike, /) -> np.ndarray:
         """Host rows of exact target global IDs; every requested ID must be a row."""
@@ -518,6 +1577,9 @@ class GeometryAssociationArchiveRecipe(NamedTuple):
     source_occurrence_paths: StaticColumnArchiveRecipe
     source_region_sides: StaticColumnArchiveRecipe
     source_parameter_intervals: StaticColumnArchiveRecipe
+    target_parameter_intervals: StaticColumnArchiveRecipe
+    target_reference_pieces: StaticColumnArchiveRecipe
+    source_boundary_witness_id: str | None
     source_parameter_points: StaticColumnArchiveRecipe
     residuals: Array
     resolved: Array
@@ -550,6 +1612,9 @@ class GeometryAssociationArchiveRecipe(NamedTuple):
             StaticColumnArchiveRecipe.encode(value.source_occurrence_paths),
             StaticColumnArchiveRecipe.encode(value.source_region_sides),
             StaticColumnArchiveRecipe.encode(value.source_parameter_intervals),
+            StaticColumnArchiveRecipe.encode(value.target_parameter_intervals),
+            StaticColumnArchiveRecipe.encode(value.target_reference_pieces),
+            value.source_boundary_witness_id,
             StaticColumnArchiveRecipe.encode(value.source_parameter_points),
             value.residuals,
             value.resolved,
@@ -595,6 +1660,9 @@ class GeometryAssociationArchiveRecipe(NamedTuple):
             source_occurrence_paths=self.source_occurrence_paths.decode(),
             source_region_sides=self.source_region_sides.decode(),
             source_parameter_intervals=self.source_parameter_intervals.decode(),
+            target_parameter_intervals=self.target_parameter_intervals.decode(),
+            target_reference_pieces=self.target_reference_pieces.decode(),
+            source_boundary_witness_id=self.source_boundary_witness_id,
             source_parameter_points=self.source_parameter_points.decode(),
             parameters=self.parameters,
             orientations=self.orientations,
@@ -610,6 +1678,248 @@ class GeometryAssociationArchiveRecipe(NamedTuple):
         return restored
 
 
+def _association_optional_text(value: str | None, /) -> str:
+    return "0" if value is None else "1" + value
+
+
+def _association_optional_value(value: str, /) -> str | None:
+    if value == "0":
+        return None
+    if not value.startswith("1"):
+        raise ValueError("Association bank optional text is noncanonical.")
+    return value[1:]
+
+
+def _association_exact_row(association: GeometryAssociation, row: int, /) -> tuple[str, ...]:
+    role = association.source_roles[row]
+    path = association.source_occurrence_paths[row]
+    sides = association.source_region_sides[row]
+    values = [
+        association.source_entity_ids[row],
+        _association_optional_text(None if role is None else role.value),
+        str(len(path)), *path,
+        _association_optional_text(sides[0]), _association_optional_text(sides[1]),
+    ]
+    for interval in (
+        association.source_parameter_intervals[row], association.target_parameter_intervals[row],
+    ):
+        values.append("0" if interval is None else "1")
+        if interval is not None:
+            values.extend(str(item) for item in interval)
+    point = association.source_parameter_points[row]
+    values.append("0" if point is None else "1")
+    if point is not None:
+        values.append(str(point))
+    pieces = association.target_reference_pieces[row]
+    values.append("-1" if pieces is None else str(len(pieces)))
+    if pieces is not None:
+        for piece in pieces:
+            if isinstance(piece, SourceBoundaryImagePullback):
+                values.extend(("I", str(piece.cell_global_id), str(piece.local_entity_index),
+                               piece.source_chart_id, str(len(piece.image_rational_tokens)), "3"))
+                points = piece.image_rational_tokens
+            else:
+                cell, local, vertices, points = piece
+                values.extend(("R", str(cell), str(local), str(len(vertices)),
+                               *(str(vertex) for vertex in vertices),
+                               str(len(points)), str(len(points[0]))))
+            for coordinates in points:
+                for numerator, denominator in coordinates:
+                    values.extend((str(numerator), str(denominator)))
+    return tuple(values)
+
+
+def _association_decode_row(values: tuple[str, ...], /) -> tuple[Any, ...]:
+    index = 0
+
+    def text() -> str:
+        nonlocal index
+        if index >= len(values):
+            raise ValueError("Association bank row is truncated.")
+        result = values[index]
+        index += 1
+        return result
+
+    def integer() -> int:
+        value = text()
+        try:
+            result = int(value)
+        except ValueError as error:
+            raise ValueError("Association bank integer is invalid.") from error
+        if str(result) != value:
+            raise ValueError("Association bank integer is noncanonical.")
+        return result
+
+    def count() -> int:
+        result = integer()
+        if result < 0 or result > len(values) - index:
+            raise ValueError("Association bank row count is invalid.")
+        return result
+
+    def fraction() -> Fraction:
+        value = text()
+        try:
+            result = Fraction(value)
+        except (ValueError, ZeroDivisionError) as error:
+            raise ValueError("Association bank rational is invalid.") from error
+        if str(result) != value:
+            raise ValueError("Association bank rational is noncanonical.")
+        return result
+
+    def optional_fraction_pair() -> tuple[Fraction, Fraction] | None:
+        present = text()
+        if present == "0":
+            return None
+        if present != "1":
+            raise ValueError("Association bank interval marker is invalid.")
+        return fraction(), fraction()
+
+    source = text()
+    role_text = _association_optional_value(text())
+    role = None if role_text is None else GeometrySourceEntityRole(role_text)
+    path = tuple(text() for _ in range(count()))
+    sides = (_association_optional_value(text()), _association_optional_value(text()))
+    source_interval, target_interval = optional_fraction_pair(), optional_fraction_pair()
+    point_marker = text()
+    if point_marker not in ("0", "1"):
+        raise ValueError("Association bank point marker is invalid.")
+    point = None if point_marker == "0" else fraction()
+    piece_count = integer()
+    if piece_count < -1 or piece_count > len(values) - index:
+        raise ValueError("Association bank piece count is invalid.")
+    pieces: list[SourceBoundaryTargetPiece] = []
+    for _ in range(max(piece_count, 0)):
+        kind, cell, local = text(), integer(), integer()
+        if kind == "I":
+            chart = text()
+            vertex_ids: tuple[int, ...] = ()
+        elif kind == "R":
+            chart = ""
+            vertex_ids = tuple(integer() for _ in range(count()))
+        else:
+            raise ValueError("Association bank piece kind is invalid.")
+        point_count, dimension = count(), integer()
+        if dimension not in (2, 3) or point_count > (len(values) - index) // (2 * dimension):
+            raise ValueError("Association bank piece coordinates have an invalid extent.")
+        points = tuple(
+            tuple((integer(), integer()) for _ in range(dimension))
+            for _ in range(point_count)
+        )
+        if kind == "I":
+            if dimension != 3:
+                raise ValueError("Association image pieces require three coordinates.")
+            pieces.append(SourceBoundaryImagePullback(cell, local, points, chart))
+        else:
+            pieces.append((cell, local, vertex_ids, points))
+    if index != len(values):
+        raise ValueError("Association bank row has trailing data.")
+    return (
+        source, role, path, sides, source_interval, target_interval,
+        None if piece_count == -1 else tuple(pieces), point,
+    )
+
+
+class GeometryAssociationBankArchiveRecipe(NamedTuple):
+    """Compact exact columns for an ordered tuple of existing associations."""
+
+    metadata: TextRowsArchiveRecipe
+    rows: TextRowsArchiveRecipe
+    ends: np.ndarray
+    numeric: tuple[np.ndarray, ...]
+
+    @classmethod
+    def from_associations(
+        cls, values: tuple[GeometryAssociation, ...], /
+    ) -> GeometryAssociationBankArchiveRecipe:
+        if not values or any(type(value) is not GeometryAssociation for value in values):
+            raise TypeError("Association bank requires exact nonempty association owners.")
+        names = (
+            "target_global_ids", "residuals", "resolved", "ambiguous",
+            "source_dimensions", "source_indices", "parameters", "orientations",
+            "parent_dimensions", "parent_ids",
+        )
+        metadata = tuple(
+            (value.association_kind.value, value.source_id, value.source_revision,
+             value.target_entity_set_id, _association_optional_text(value.source_boundary_witness_id),
+             "1" if value.exact else "0", value.provenance.value,
+             _association_optional_text(value.parent_association_id), value.association_id)
+            for value in values
+        )
+        lengths = tuple(len(value.source_entity_ids) for value in values)
+        ends = np.cumsum(np.asarray(lengths, dtype=np.int64), dtype=np.int64)
+        rows = tuple(
+            _association_exact_row(value, row)
+            for value in values for row in range(len(value.source_entity_ids))
+        )
+        arrays = tuple(
+            np.concatenate(tuple(np.asarray(getattr(value, name)) for value in values), axis=0)
+            for name in names
+        )
+        return cls(TextRowsArchiveRecipe.encode(metadata), TextRowsArchiveRecipe.encode(rows), ends, arrays)
+
+    def restore(self) -> tuple[GeometryAssociation, ...]:
+        metadata = self.metadata.decode()
+        rows = self.rows.decode()
+        ends = np.asarray(self.ends)
+        if (
+            ends.dtype != np.int64 or ends.ndim != 1 or len(metadata) != len(ends)
+            or not len(ends) or np.any(ends <= np.concatenate((np.asarray((0,), dtype=np.int64), ends[:-1])))
+            or int(ends[-1]) != len(rows) or len(self.numeric) != 10
+        ):
+            raise ValueError("Association bank offsets or field inventory are invalid.")
+        arrays = tuple(np.asarray(array) for array in self.numeric)
+        if any(array.ndim != (2 if index == 6 else 1) or array.shape[0] != len(rows)
+               or (index == 6 and array.shape[1] != 2)
+               for index, array in enumerate(arrays)):
+            raise ValueError("Association bank numeric arrays are not row aligned.")
+        from .._array_archive import array_payload_digest
+
+        restored = []
+        start = 0
+        for meta, end in zip(metadata, ends.tolist(), strict=True):
+            if len(meta) != 9 or meta[5] not in ("0", "1"):
+                raise ValueError("Association bank metadata has an invalid field set.")
+            parsed = tuple(_association_decode_row(row) for row in rows[start:end])
+            columns = tuple(array[start:end] for array in arrays)
+            dimensions, indices = columns[4], columns[5]
+            kind = GeometryAssociationKind(meta[0])
+            absent = kind is not GeometryAssociationKind.BREP and bool(
+                np.all(dimensions == -1) and np.all(indices == -1)
+            )
+            item = GeometryAssociation(
+                kind, meta[1], meta[2], meta[3], columns[0],
+                tuple(row[0] for row in parsed), columns[1],
+                resolved=columns[2], ambiguous=columns[3], exact=meta[5] == "1",
+                source_dimensions=None if absent else dimensions,
+                source_indices=None if absent else indices,
+                source_roles=tuple(row[1] for row in parsed),
+                source_occurrence_paths=tuple(row[2] for row in parsed),
+                source_region_sides=tuple(row[3] for row in parsed),
+                source_parameter_intervals=tuple(row[4] for row in parsed),
+                target_parameter_intervals=tuple(row[5] for row in parsed),
+                target_reference_pieces=tuple(row[6] for row in parsed),
+                source_parameter_points=tuple(row[7] for row in parsed),
+                source_boundary_witness_id=_association_optional_value(meta[4]),
+                parameters=columns[6], orientations=columns[7],
+                parent_dimensions=columns[8], parent_ids=columns[9],
+                parent_association_id=_association_optional_value(meta[7]),
+                provenance=GeometryAssociationProvenance(meta[6]),
+            )
+            names = (
+                "target_global_ids", "residuals", "resolved", "ambiguous",
+                "source_dimensions", "source_indices", "parameters", "orientations",
+                "parent_dimensions", "parent_ids",
+            )
+            if item.association_id != meta[8] or any(
+                array_payload_digest(np.asarray(getattr(item, name))) != array_payload_digest(value)
+                for name, value in zip(names, columns, strict=True)
+            ):
+                raise ValueError("Association bank row differs from its canonical owner.")
+            restored.append(item)
+            start = end
+        return tuple(restored)
+
+
 def inherit_association_rows(
     parent: GeometryAssociation,
     target_entity_set: EntitySet,
@@ -620,6 +1930,8 @@ def inherit_association_rows(
     residuals: ArrayLike,
     orientations: ArrayLike | None = None,
     source_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...]
+    | None = None,
+    target_parameter_intervals: tuple[tuple[Fraction, Fraction] | None, ...]
     | None = None,
     source_parameter_points: tuple[Fraction | None, ...] | None = None,
     source_region_sides: tuple[tuple[str | None, str | None], ...] | None = None,
@@ -650,6 +1962,10 @@ def inherit_association_rows(
     residual = np.asarray(residuals, dtype=np.float64)
     if residual.shape != (count,):
         raise ValueError("Association child residuals must align with target rows.")
+    if parent.source_boundary_witness_id is not None:
+        raise ValueError(
+            "Witness-bound target faces require an independently composed child witness."
+        )
     source_ids = tuple(parent.source_entity_ids[int(row)] for row in rows)
     roles = tuple(parent.source_roles[int(row)] for row in rows)
     occurrences = tuple(parent.source_occurrence_paths[int(row)] for row in rows)
@@ -662,6 +1978,17 @@ def inherit_association_rows(
         tuple(parent.source_parameter_intervals[int(row)] for row in rows)
         if source_parameter_intervals is None
         else source_parameter_intervals
+    )
+    if target_parameter_intervals is None and any(
+        parent.target_parameter_intervals[int(row)] is not None for row in rows
+    ):
+        raise ValueError(
+            "Partial target-edge support requires explicit child reference intervals."
+        )
+    target_intervals = (
+        tuple(None for _ in rows)
+        if target_parameter_intervals is None
+        else target_parameter_intervals
     )
     parameter_points = (
         tuple(parent.source_parameter_points[int(row)] for row in rows)
@@ -713,6 +2040,7 @@ def inherit_association_rows(
         source_occurrence_paths=occurrences,
         source_region_sides=region_sides,
         source_parameter_intervals=intervals,
+        target_parameter_intervals=target_intervals,
         source_parameter_points=parameter_points,
         parameters=np.asarray(parent.parameters)[rows],
         orientations=orientation,
@@ -2123,12 +3451,18 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
         dimensions = []
+        curve = None
         vertex = None
         for association in source.associations:
             if (
                 association.source_id,
                 association.source_revision,
             ) != self.source_namespaces[0]:
+                continue
+            if association.association_kind is GeometryAssociationKind.CURVE:
+                if curve is not None:
+                    raise ValueError("A B-Rep source carries one CAD curve association.")
+                curve = association
                 continue
             if association.association_kind is not GeometryAssociationKind.BREP:
                 raise ValueError("A B-Rep source namespace cannot mix association kinds.")
@@ -2144,7 +3478,100 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         if len(set(dimensions)) != len(dimensions):
             raise ValueError("A source carries one association per mesh dimension.")
         _vertex_classes(source.mesh, vertex)
+        if curve is not None:
+            self._validate_cad_curve(source, curve)
+        elif source.certification is not None:
+            witness = source.certification.inputs.fidelity_witness
+            if (
+                isinstance(witness, SourceBoundaryChartWitness)
+                and (witness.source_id, witness.source_revision) == self.source_namespaces[0]
+                and witness.cad_plc is not None
+                and witness.cad_plc.cad_segment_edge_ids is not None
+                and np.asarray(witness.cad_plc.cad_segment_edge_ids).size
+            ):
+                raise ValueError("CAD source curve association is missing.")
         return vertex, tuple(sorted(dimensions))
+
+    def _validate_cad_curve(
+        self, source: CellMeshingResult, curve: GeometryAssociation, /
+    ) -> None:
+        """Require the accepted CAD chart and its original curve-edge authority."""
+        certification = source.certification
+        witness = None if certification is None else certification.inputs.fidelity_witness
+        charts = source.surface_source
+        if (
+            not isinstance(witness, SourceBoundaryChartWitness)
+            or witness.cad_curve_association is None
+            or witness.cad_curve_association.association_id != curve.association_id
+            or witness.mesh_id != source.mesh.mesh_id
+            or witness.topology_id != source.mesh.topology_id
+            or (witness.source_id, witness.source_revision) != self.source_namespaces[0]
+            or charts is None
+        ):
+            raise ValueError("CAD curve association lacks its current source chart witness.")
+        charts.require_current()
+        roots = tuple(
+            item for item in charts.associations
+            if item.association_kind is GeometryAssociationKind.CURVE
+            and item.association_id == curve.parent_association_id
+        )
+        if len(roots) != 1 or (
+            roots[0].source_id,
+            roots[0].source_revision,
+        ) != self.source_namespaces[0]:
+            raise ValueError("CAD curve association lost its original source-edge authority.")
+        curve.validate_target(source.mesh.entity_set(1))
+
+        plc = witness.cad_plc
+        if (
+            plc is None
+            or plc.cad_source_charts is None
+            or plc.cad_source_charts.source_chart_id != charts.source_chart_id
+            or plc.cad_fidelity_tolerance is None
+            or curve.provenance is not GeometryAssociationProvenance.LINEAGE
+        ):
+            raise ValueError("CAD curve association lacks its original PLC lineage.")
+        from ..geometry._approximate_source_coverage import _cad_target_root_partition
+
+        patch_rows = [
+            charts.domain.resolve_entity_id(2, identifier, occurrence_path=occurrence)
+            for identifier, occurrence in zip(
+                witness.source_entity_ids, witness.occurrence_paths, strict=True
+            )
+        ]
+        _cad_target_root_partition(
+            charts.domain, source.mesh, witness, patch_rows, plc.cad_fidelity_tolerance
+        )
+        edge_tables = tuple(
+            item for item in source.associations
+            if item.association_kind is GeometryAssociationKind.BREP
+            and (item.source_id, item.source_revision) == self.source_namespaces[0]
+            and item.target_entity_set_id == source.mesh.entity_set(1).entity_set_id
+        )
+        if len(edge_tables) != 1:
+            raise ValueError("CAD curve association requires one B-Rep edge table.")
+        edge_table = edge_tables[0]
+        edge_table.validate_target(source.mesh.entity_set(1))
+        edge_rows = {
+            int(identifier): row
+            for row, identifier in enumerate(np.asarray(edge_table.target_global_ids))
+        }
+        for row, identifier in enumerate(np.asarray(curve.target_global_ids)):
+            edge = edge_rows.get(int(identifier))
+            if (
+                edge is None
+                or int(edge_table.source_dimensions[edge]) != 1
+                or not bool(edge_table.resolved[edge])
+                or bool(edge_table.ambiguous[edge])
+                or edge_table.source_entity_ids[edge] != curve.source_entity_ids[row]
+                or int(edge_table.source_indices[edge]) != int(curve.source_indices[row])
+                or edge_table.source_occurrence_paths[edge] != curve.source_occurrence_paths[row]
+                or (
+                    int(edge_table.orientations[edge]) != 0
+                    and int(edge_table.orientations[edge]) != int(curve.orientations[row])
+                )
+            ):
+                raise ValueError("CAD curve association changes its target-edge authority.")
 
     def classes(
         self, source: CellMeshingResult, /
@@ -2192,6 +3619,12 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         vertex_stencil: VertexInterpolationStencil | None,
+        geometry_transition: CellGeometryTransition | None,
+        target_fidelity_witness: SourceBoundaryChartWitness
+        | SourceBoundaryFaceImageWitness
+        | None,
+        target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
+        validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
         """Propagate B-Rep associations with the accepted vertex stencil."""
         vertex, dimensions = self.source_associations(source)
@@ -2204,13 +3637,49 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             policy=self.policy,
             vertex_stencil=vertex_stencil,
         )
-        return self._derived(propagated, dimensions, target)
+        output = self._derived(propagated, dimensions, target)
+        curves = tuple(
+            item for item in source.associations
+            if (item.source_id, item.source_revision) == self.source_namespaces[0]
+            and item.association_kind is GeometryAssociationKind.CURVE
+        )
+        if not curves:
+            return output
+        from ._surface_association_transfer import _curve_edges_with_root_ancestry
+
+        if (
+            not isinstance(target_fidelity_witness, SourceBoundaryChartWitness)
+            or target_fidelity_witness.mesh_id != target.mesh_id
+            or target_fidelity_witness.topology_id != target.topology_id
+            or (target_fidelity_witness.source_id, target_fidelity_witness.source_revision)
+            != self.source_namespaces[0]
+            or target_fidelity_witness.cad_curve_association is None
+        ):
+            raise ValueError("CAD curve transfer requires the current target chart witness.")
+        if target.topology_id == source.mesh.topology_id:
+            curve = curves[0]
+        else:
+            if vertex_stencil is None:
+                raise ValueError("CAD curve transfer requires exact vertex ancestry.")
+            curve = _curve_edges_with_root_ancestry(
+                source, lineage, target, vertex_stencil, curves[0]
+            )
+        if curve.association_id != target_fidelity_witness.cad_curve_association.association_id:
+            raise ValueError("CAD curve transfer differs from the target chart ancestry.")
+        curve.validate_target(target.entity_set(1))
+        return (*output, curve)
 
     def rederive(
         self, source: CellMeshingResult, target: CellMeshingResult, /
     ) -> tuple[GeometryAssociation, ...]:
         """Target associations of a remeshed result with unknown lineage."""
         vertex, dimensions = self.source_associations(source)
+        if any(
+            item.association_kind is GeometryAssociationKind.CURVE
+            and (item.source_id, item.source_revision) == self.source_namespaces[0]
+            for item in source.associations
+        ):
+            raise ValueError("CAD curve associations require exact topology lineage.")
         derived = rederive_association(
             vertex, source, target, self.projection, policy=self.policy
         )

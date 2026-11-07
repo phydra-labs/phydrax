@@ -36,6 +36,7 @@ _DEFERRED_EXPORTS = {
     "ThinFeatureEvidence": "._robustness",
     "AuthoredTriangleSheet": "._sheet",
     "TriangleSheetRepairEvidence": "._sheet",
+    "SurfaceEnvelopeMode": "._envelope",
 }
 
 
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
         ReconstructionReportProvider,
         RepairInterpretation,
     )
+    from ._envelope import SurfaceEnvelopeMode
     from ._normals import (
         estimate_point_normals,
         NormalEstimationEvidence,
@@ -96,6 +98,7 @@ __all__ = [
     "ThinFeatureEvidence",
     "AuthoredTriangleSheet",
     "TriangleSheetRepairEvidence",
+    "SurfaceEnvelopeMode",
     "estimate_point_normals",
     "reconstruct_dem_region",
     "reconstruct_lidar_region",

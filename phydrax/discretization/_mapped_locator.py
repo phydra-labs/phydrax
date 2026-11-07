@@ -17,7 +17,7 @@ import numpy as np
 from jax import Array
 from jax.core import Tracer
 
-from .._bvh import PackedBVH, point_select_leaf_items, prepare_bvh
+from .._bvh import PackedBVH, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -1657,6 +1657,16 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
         search_complete_all = np.ones((count,), dtype=np.bool_)
         ambiguous = np.zeros((count,), dtype=np.bool_)
         refusals: list[CellInverseRefusal] = []
+        # This host-only certified inverse query traverses the prepared
+        # bounding boxes without specializing device code to each tree shape.
+        node_lower = np.asarray(self.bvh.bbox_min)
+        node_upper = np.asarray(self.bvh.bbox_max)
+        left = np.asarray(self.bvh.left)
+        right = np.asarray(self.bvh.right)
+        leaf_id = np.asarray(self.bvh.leaf_id)
+        leaf_items = np.asarray(self.bvh.leaf_items)
+        item_lower = np.asarray(self.bvh.item_bbox_min)
+        item_upper = np.asarray(self.bvh.item_bbox_max)
         for point_index, point in enumerate(values):
             target = np.asarray(point, dtype=np.float64)
             hits: list[tuple[int, _InverseRoot]] = []
@@ -1664,17 +1674,24 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
                 complete[point_index] = False
                 located_rows.append(hits)
                 continue
-            # The structural capacity is every source cell, never a candidate quota.
-            candidates, valid, search_complete = point_select_leaf_items(
-                jnp.asarray(target[None]),
-                bvh=self.bvh,
-                maximum_candidates=self.cell_map.cell_count,
-                tolerance=0.0,
-            )
-            candidate_rows = np.asarray(candidates[0], dtype=np.int64)
-            candidate_valid = np.asarray(valid[0], dtype=np.bool_)
-            search_complete_all[point_index] = bool(np.asarray(search_complete[0]))
-            for cell in candidate_rows[candidate_valid]:
+            query = target.astype(node_lower.dtype, copy=False)
+            stack = [0]
+            candidates: list[int] = []
+            while stack:
+                node = stack.pop()
+                if not np.all((query >= node_lower[node]) & (query <= node_upper[node])):
+                    continue
+                leaf = int(leaf_id[node])
+                if leaf < 0:
+                    stack.extend((int(left[node]), int(right[node])))
+                    continue
+                for item in leaf_items[leaf]:
+                    cell = int(item)
+                    if cell >= 0 and np.all(
+                        (query >= item_lower[cell]) & (query <= item_upper[cell])
+                    ):
+                        candidates.append(cell)
+            for cell in candidates:
                 if not mask[cell]:
                     continue
                 isolation = _isolate_inverse_roots(

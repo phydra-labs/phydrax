@@ -29,13 +29,22 @@ _DEFERRED_EXPORTS = {
     "MmgReference": "._mmg",
     "MmgReferenceRetention": "._mmg",
     "MmgSessionEvidence": "._mmg",
+    "NativeCurveSource": "._native_sources",
+    "NativeImplicitSource": "._native_sources",
+    "NativeLayerCoreSource": "._native_sources",
+    "NativeMappedHexSource": "._native_sources",
     "NativeMeshingOptions": "._native_options",
     "NativeMeshingPlan": "._native",
     "NativeMeshingProvider": "._native",
     "NativeMeshingRoute": "._native_options",
     "NativeMeshingSource": "._native_source_type",
     "NativePeriodicSource": "._native_periodic",
+    "NativePlanarSource": "._native_sources",
+    "NativePlcSource": "._native_sources",
+    "NativePolyhedralSource": "._native_sources",
+    "NativeStructuredSource": "._native_sources",
     "NativeSurfaceSchedule": "._native_schedules",
+    "NativeSweepSource": "._native_sources",
     "OmegaHAdaptationEvidence": "._omega_h",
     "OmegaHAdaptationResult": "._omega_h",
     "OmegaHClassification": "._omega_h",
@@ -115,6 +124,17 @@ if TYPE_CHECKING:
     from ._native_periodic import NativePeriodicSource as NativePeriodicSource
     from ._native_schedules import NativeSurfaceSchedule as NativeSurfaceSchedule
     from ._native_source_type import NativeMeshingSource as NativeMeshingSource
+    from ._native_sources import (
+        NativeCurveSource as NativeCurveSource,
+        NativeImplicitSource as NativeImplicitSource,
+        NativeLayerCoreSource as NativeLayerCoreSource,
+        NativeMappedHexSource as NativeMappedHexSource,
+        NativePlanarSource as NativePlanarSource,
+        NativePlcSource as NativePlcSource,
+        NativePolyhedralSource as NativePolyhedralSource,
+        NativeStructuredSource as NativeStructuredSource,
+        NativeSweepSource as NativeSweepSource,
+    )
     from ._omega_h import (
         OmegaHAdaptationEvidence as OmegaHAdaptationEvidence,
         OmegaHAdaptationResult as OmegaHAdaptationResult,

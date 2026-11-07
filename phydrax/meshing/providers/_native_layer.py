@@ -30,7 +30,7 @@ import phydrax.meshing._sizing as sizing_owner
 import phydrax.meshing.providers._native_options as options_owner
 import phydrax.meshing.providers._native_sources as sources_owner
 
-from ..._meshcore import MeshcoreError, MeshcoreStatus, zero_set_remesh
+from ..._meshcore import MeshcoreError, zero_set_remesh
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -57,6 +57,7 @@ from ...geometry._meshing_domain import MeshingDomain
 from ...geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
+    SourceBoundaryFaceImageWitness,
     SourceBoundaryQuery,
 )
 from ...geometry._source_identity import source_entity_id
@@ -67,6 +68,7 @@ from .._contracts import (
     CellMeshingTarget,
     MeshingFailure,
     MeshingFailureCategory,
+    MeshingFailureEvidence,
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
@@ -77,11 +79,18 @@ from .._controls import (
     RegionControl,
 )
 from .._scope import MeshingEntityKind, MeshingScope
-from .._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
+from .._trace import (
+    MeshingDiagnostic,
+    MeshingDiagnosticSeverity,
+    MeshingStageKind,
+    MeshingStageReport,
+    MeshingStageStatus,
+)
 from ._native_polyhedral import polyhedral_support_issues
 
 
 if TYPE_CHECKING:
+    from ...geometry._global_embedding import ValidatedGlobalEmbedding
     from ...geometry.implicit._adaptive_discovery import (
         AdaptiveImplicitBoundarySource,
     )
@@ -202,9 +211,18 @@ def _lower_core_specification(
     for control in specification.region_controls:
         core_row = _core_region_row(source, specification, control)
         if core_row is None:
-            raise ValueError(
-                "Region control identity is not retained by the fixed PLC core."
-            )
+            composite = _composite_region_row(source, specification, control)
+            if (
+                composite is None
+                or composite not in np.asarray(source.layer_regions)
+                or np.any(np.asarray(source.core_region_map) == composite)
+            ):
+                raise ValueError(
+                    "Region control is not retained by the layer/core source."
+                )
+            # This material occupies only accepted layer cells, so it has no
+            # core-local control to lower. It remains on the composite result.
+            continue
         region_name = complex_.region_ids[core_row]
         core_regions_list.append(
             RegionControl(
@@ -330,13 +348,13 @@ def _lower_core_specification(
     )
 
 
-def _core_region_row(
+def _composite_region_row(
     source: sources_owner.NativeLayerCoreSource,
     specification: VolumeMeshingSpec,
     control: RegionControl,
     /,
 ) -> int | None:
-    """Resolve a scoped authored region through its stable composite ID bank."""
+    """Resolve a scoped material against the complete composite region bank."""
     scope = control.scope
     identifiers = np.asarray(scope.entity_ids, dtype=np.int64)
     if (
@@ -352,6 +370,27 @@ def _core_region_row(
     if composite_rows.size != 1:
         return None
     composite = int(composite_rows[0])
+    region_name, occurrence_path = source.source_entity_key_for_scope(
+        3, int(identifiers[0])
+    )
+    if (
+        region_name != control.region_name
+        or region_name != source.region_ids[composite]
+        or tuple(occurrence_path) != source.region_occurrence_paths[composite]
+    ):
+        return None
+    return composite
+
+
+def _core_region_row(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: VolumeMeshingSpec,
+    control: RegionControl,
+    /,
+) -> int | None:
+    composite = _composite_region_row(source, specification, control)
+    if composite is None:
+        return None
     core_rows = np.flatnonzero(
         np.asarray(source.core_region_map, dtype=np.int64) == composite
     )
@@ -359,7 +398,7 @@ def _core_region_row(
         return None
     core_row = int(core_rows[0])
     region_name, occurrence_path = source.source_entity_key_for_scope(
-        3, int(identifiers[0])
+        3, int(np.asarray(control.scope.entity_ids, dtype=np.int64)[0])
     )
     if (
         region_name != control.region_name
@@ -381,11 +420,13 @@ def _boundary_control_issues(
     if source.source_boundary_scope is None:
         chart_domain = (
             None
-            if source.source_surface_charts is None
-            else source.source_surface_charts.domain
+            if source.source_wall_charts is None
+            else source.source_wall_charts.domain
         )
         retained_layer_domain = (
-            chart_domain is not None or source.source_domain is not None
+            chart_domain is not None
+            or source.source_domain is not None
+            or source.mapped_domain is not None
         )
         fixed_plc_boundary = (
             boundary.entity_dimension == 2
@@ -447,7 +488,7 @@ def _feature_support_issues(
     }
     for feature in specification.protected_features:
         scope = feature.scope
-        if source.source_surface_charts is None:
+        if source.source_boundary_charts is None:
             query = source.fidelity_source
             if not isinstance(query, MappedReferenceBoundarySource):
                 issues.append(
@@ -562,7 +603,7 @@ def _mapped_reference_support_issues(
         or (domain.source_id, domain.source_revision)
         != (source.source_id, source.source_revision)
         or source.layers.control_id != reference.layers.control_id
-        or domain.region_ids != reference.complex.region_ids
+        or domain.region_ids != source.region_ids
     ):
         issues.append("one nonrecursive source-bound reference PLC and mapped domain")
 
@@ -630,6 +671,37 @@ def _mapped_reference_support_issues(
     ):
         issues.append("reference composite region and source-facet identity maps")
     return issues
+
+
+def _layer_fidelity_budget(
+    source: sources_owner.NativeLayerCoreSource, specification: VolumeMeshingSpec, /
+) -> float | None:
+    """Use a declared bound, or require exact fidelity for an exact affine atlas."""
+    limits = tuple(
+        value
+        for value in (source.maximum_deviation, specification.maximum_deviation)
+        if value is not None
+    )
+    if limits:
+        return min(limits)
+    domain = source.source_domain
+    query = source.fidelity_source
+    charts = source.source_boundary_charts
+    if (
+        not isinstance(domain, MeshingDomain)
+        or domain.accuracy != "exact_represented"
+        or not isinstance(query, MeshingDomainBoundarySource)
+        or charts is None
+        or charts.domain.domain_id != domain.domain_id
+    ):
+        return None
+    from ...geometry._source_interpolation import exact_affine_boundary_source
+
+    if not exact_affine_boundary_source(query):
+        return None
+    # This is an internal exact theorem obligation, not an authored tolerance.
+    # The actual atlas and every target chart still have to certify zero distance.
+    return 0.0
 
 
 @checked
@@ -705,7 +777,7 @@ def layer_core_support_issues(
                 "layer controls different from the supplied accepted layer realization"
             )
     if any(
-        _core_region_row(source, specification, control) is None
+        _composite_region_row(source, specification, control) is None
         for control in specification.region_controls
     ):
         issues.append("region controls bound to exact authored composite region IDs")
@@ -722,7 +794,7 @@ def layer_core_support_issues(
     issues.extend(_feature_support_issues(source, specification))
     if source.fidelity_source is None:
         issues.append("a retained source-bound boundary query for fidelity")
-    if source.source_surface_charts is None and specification.target.geometry_order > 1:
+    if source.source_wall_charts is None and specification.target.geometry_order > 1:
         query = source.fidelity_source
         if isinstance(query, MappedReferenceBoundarySource):
             if (
@@ -744,8 +816,8 @@ def layer_core_support_issues(
                 issues.append(
                     "the original adaptive implicit root-scaffold authority for high-order layers"
                 )
-    if source.maximum_deviation is None and specification.maximum_deviation is None:
-        issues.append("an explicit physical source-fidelity tolerance")
+    if _layer_fidelity_budget(source, specification) is None:
+        issues.append("an explicit source-fidelity bound or exact affine source theorem")
     if any(
         seed.region_name not in source.complex.region_ids
         for seed in specification.region_seeds
@@ -849,8 +921,10 @@ def _compliance_report(
     source: sources_owner.NativeLayerCoreSource,
     specification: VolumeMeshingSpec,
     construction: layer_core_owner.layer_topology.LayerCoreConstruction,
+    schedule: object,
     /,
     soft_feature_outcomes: tuple[tuple[ProtectedFeature, float, bool], ...] = (),
+    physical_quality: tuple[tuple[str, str, int, float], ...] | None = None,
 ) -> result_owner.MeshingComplianceReport:
     """Measure physical core size, fixed layer thickness, and native convergence evidence."""
     size = specification.size_controls[0]
@@ -1044,25 +1118,78 @@ def _compliance_report(
         # A restricted-power core's tetrahedral carrier is an internal scaffold;
         # its explicit quality request is enforced by the power generator and
         # output cells are measured above, so carrier refinement is not output.
-        # As in the fixed-boundary PLC route, refinement is construction evidence:
-        # the fixed cap and source facets cannot be split, and the accepted cell
-        # quality is the improvement outcome.
+        # Initial phase records are historical; the final query is bound to
+        # the exported core generation.
         achieved.extend(
             (
                 (
-                    "native_refinement_status",
+                    "reference_native_refinement_status"
+                    if source.mapped_domain is not None
+                    else "native_refinement_status",
                     float(int(construction.core.refinement_status)),
                 ),
                 (
-                    "native_refinement_unmet_count",
+                    "reference_native_refinement_unmet_count"
+                    if source.mapped_domain is not None
+                    else "native_refinement_unmet_count",
                     float(len(construction.core.refinement_unmet)),
+                ),
+                (
+                    "reference_native_improvement_status"
+                    if source.mapped_domain is not None
+                    else "native_improvement_status",
+                    float(int(construction.core.improvement_status)),
+                ),
+                (
+                    "reference_native_improvement_unmet_count"
+                    if source.mapped_domain is not None
+                    else "native_improvement_unmet_count",
+                    float(len(construction.core.improvement_unmet)),
+                ),
+                (
+                    "reference_native_final_quality_unmet_count"
+                    if source.mapped_domain is not None
+                    else "native_final_quality_unmet_count",
+                    float(len(construction.core.final_quality_unmet)),
                 ),
             )
         )
-        if construction.core.improvement_status is not MeshcoreStatus.OK:
-            issues.append("native_improvement_status")
-        for name, _, _, _ in construction.core.improvement_unmet:
-            issues.append(f"native_improvement:{name}")
+        if source.mapped_domain is None:
+            for name, _, _, _ in construction.core.final_quality_schedule_unmet:
+                issues.append(f"native_final_quality:{name}")
+        else:
+            from .._volume_generation import NativeVolumeSchedule
+
+            if not isinstance(schedule, NativeVolumeSchedule):
+                raise TypeError(
+                    "Mapped layer quality requires its physical volume schedule."
+                )
+            if physical_quality is None:
+                raise ValueError(
+                    "Mapped layer quality lost its physical candidate evidence."
+                )
+            findings = physical_quality
+            if schedule.radius_edge_bound is not None:
+                requested.append(("radius_edge_bound", schedule.radius_edge_bound))
+            requested.extend(
+                (
+                    ("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees),
+                    (
+                        "minimum_relative_determinant",
+                        schedule.minimum_relative_determinant,
+                    ),
+                )
+            )
+            achieved.append(
+                (
+                    "physical_affine_corner_native_quality_unmet_count",
+                    float(len(findings)),
+                )
+            )
+            issues.extend(
+                f"physical_affine_corner_native_quality:{cell_id}:{criterion}:{reason}"
+                for criterion, reason, cell_id, _ in findings
+            )
     return result_owner.MeshingComplianceReport(
         specification.specification_id,
         requested=tuple(requested),
@@ -1085,14 +1212,14 @@ def _layer_surface_chart_witness(
     /,
 ) -> SourceBoundaryChartWitness:
     """Bind unchanged input-wall chart pieces to their exact output boundary facets."""
-    charts = source.source_surface_charts
+    charts = source.source_wall_charts
     if charts is None or source.fidelity_source is None:
         raise ValueError(
             "Layer surface fidelity requires retained root charts and query."
         )
     charts.require_root(source.layers.source_wall, charts.geometry)
     charts.require_bound(
-        source.layers.source_wall, charts.geometry, source.fidelity_source
+        source.layers.source_wall, charts.geometry, charts.boundary_source
     )
     if (
         query.source_id != charts.source_id
@@ -1156,7 +1283,7 @@ def _layer_surface_chart_witness(
                 patch,
             )
         )
-    if grown is not None:
+    if grown is not None and grown != set(charts.cell_global_ids):
         bindings.extend(
             _open_wall_bindings(
                 source,
@@ -1320,7 +1447,7 @@ def _open_wall_bindings(
     point on that face, seeded at the rim vertex; a vertex shared by two charts
     lies exactly on their common straight trim.
     """
-    charts = source.source_surface_charts
+    charts = source.source_wall_charts
     domain = source.source_domain
     if charts is None or not isinstance(domain, MeshingDomain):
         raise ValueError("Open layer walls require their retained charted BRep source.")
@@ -1480,9 +1607,9 @@ _LayerOutputFace = tuple[
 
 
 def _layer_output_boundary_faces(
-    mesh: CellMesh, /
+    mesh: CellMesh, /, *, include_internal: bool = False
 ) -> dict[tuple[int, ...], list[_LayerOutputFace]]:
-    """Index true output boundary facets by their stable vertex identities."""
+    """Index output boundary, optionally internal, faces by stable vertex identities."""
     if mesh.topological_dimension != 3 or mesh.ambient_dimension != 3:
         raise ValueError("Layer boundary charts require a 3D volume mesh.")
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
@@ -1552,7 +1679,7 @@ def _layer_output_boundary_faces(
                     raise ValueError(
                         "Layer cell face is absent from canonical face incidence."
                     )
-                if not boundary[face_row]:
+                if not include_internal and not boundary[face_row]:
                     continue
                 parameter_by_vertex = {
                     identifier: reference_vertices[int(local_vertex)]
@@ -1744,6 +1871,7 @@ def implicit_layer_wall(
                 scaffold_distance,
                 edge_length,
                 _CARRIER_MINIMUM_ANGLE_DEGREES,
+                admission_limited_coarsening=False,
             )
         except (MeshcoreError, ValueError, OverflowError) as error:
             raise MeshingFailure(
@@ -2160,7 +2288,9 @@ def _mapped_layer_reference_controls(
             np.asarray(reference_mesh.vertex_global_ids),
             np.asarray(construction.mesh.vertex_global_ids),
         )
-        or source.complex.region_ids != domain.region_ids
+        or source.region_ids != domain.region_ids
+        or source.region_occurrence_paths
+        != domain.reference_domain.region_occurrence_paths
     ):
         raise ValueError(
             "Mapped layer reference charts change their original root authority."
@@ -2170,7 +2300,7 @@ def _mapped_layer_reference_controls(
         domain,
         reference_mesh,
         reference_geometry,
-        np.asarray(construction.cell_regions, dtype=np.int64),
+        mapped_core_owner._block_order_regions(reference_mesh, construction.cell_regions),
     )
     controls_by_id = nested_reference_owner.reference_chart_controls_by_target_id(
         controls
@@ -2533,7 +2663,18 @@ def _mapped_layer_surface_chart_witness(
             authority.scope_entity_ids(2), dtype=np.int64
         ).tolist()
     }
-    for row, chart_id in enumerate(chart_ids):
+    if isinstance(authority, sources_owner.NativePlcSource):
+        # The full PLC is independently reconstructed against the mapped root
+        # domain. Prove every core exterior and layer/core interface against
+        # its authored triangle, occurrence and oriented material sides before
+        # admitting wall charts outside the core-only facet bank.
+        issues = _mapped_reference_support_issues(source)
+        if issues:
+            raise ValueError("; ".join(issues))
+        sources_owner._mapped_layer_core_facet_relation(source, authority)
+        source_scope_keys = authority_scope_keys
+    for row in query._selected_rows(2):
+        chart_id = chart_ids[row]
         source_key = query.chart_source_key(2, chart_id)
         relation_key = (chart_source_keys[row], chart_occurrences[row])
         if (
@@ -2546,6 +2687,20 @@ def _mapped_layer_surface_chart_witness(
             (chart_id, row, source_key)
         )
 
+    relation_cells = np.asarray(
+        authority.root_relation.polygon_root_cell_global_ids, dtype=np.int64
+    )
+    relation_local_faces = np.asarray(
+        authority.root_relation.polygon_root_local_face_indices, dtype=np.int64
+    )
+    if relation_cells.shape != (len(chart_ids), 2) or relation_local_faces.shape != (
+        len(chart_ids),
+        2,
+    ):
+        raise ValueError("Mapped source root-side incidence is malformed.")
+    root_paths = dict(
+        zip(domain.root_cell_ids, domain.root_cell_occurrence_paths, strict=True)
+    )
     root_cell_regions: dict[int, int] = {}
     root_region_cursor = 0
     for block in domain.reference_mesh.blocks:
@@ -2567,7 +2722,7 @@ def _mapped_layer_surface_chart_witness(
         or np.any(wall_map >= target_vertex_ids.size)
     ):
         raise ValueError("Mapped layer wall-to-output vertex incidence is incomplete.")
-    target_faces = _layer_output_boundary_faces(mesh)
+    target_faces = _layer_output_boundary_faces(mesh, include_internal=True)
     standard_chart = (
         (Fraction(0), Fraction(0)),
         (Fraction(1), Fraction(0)),
@@ -2583,19 +2738,23 @@ def _mapped_layer_surface_chart_witness(
     witness_occurrences: list[tuple[str, ...]] = []
     witness_orientations: list[int] = []
     covered_target_faces: set[int] = set()
-    for block in wall.blocks:
-        if block.cell_kind != "triangle":
-            raise ValueError("Mapped layer source wall must retain triangular facets.")
-        for source_vertices in np.asarray(block.vertices, dtype=np.int64):
-            mapped_rows = wall_map[source_vertices]
-            mapped_vertex_ids = tuple(
-                int(value) for value in target_vertex_ids[mapped_rows]
-            )
-            candidates = target_faces.get(tuple(sorted(mapped_vertex_ids)), ())
-            if len(candidates) != 1:
-                raise ValueError(
-                    "Each mapped layer wall triangle must bind one unique output boundary facet."
-                )
+    full_query = query.is_full_surface_scope
+    all_target_faces = set(
+        np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)[
+            np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
+        ].tolist()
+    )
+    for candidates in target_faces.values():
+        if not candidates or len(candidates) > 2:
+            raise ValueError("A mapped output face has invalid cell incidence.")
+        face_id = int(candidates[0][0])
+        exterior = face_id in all_target_faces
+        if exterior and len(candidates) != 1:
+            raise ValueError("A mapped exterior face must have one owning cell.")
+        chosen = None
+        for candidate in sorted(
+            candidates, key=lambda row: (int(controls[row[1]].source_cell_id), row[1])
+        ):
             (
                 target_face_id,
                 target_cell_id,
@@ -2603,124 +2762,155 @@ def _mapped_layer_surface_chart_witness(
                 _,
                 target_face_order,
                 target_parameters_by_vertex,
-            ) = candidates[0]
-            if target_face_id in covered_target_faces:
-                raise ValueError(
-                    "Mapped layer source wall repeats an output boundary facet."
-                )
-            covered_target_faces.add(target_face_id)
-            target_reference_triangle = tuple(
-                target_parameters_by_vertex[identifier]
-                for identifier in mapped_vertex_ids
-            )
+            ) = candidate
+            if len(target_face_order) == 3:
+                face_triangles = (target_face_order,)
+            elif len(target_face_order) == 4:
+                a, b, c, d = target_face_order
+                face_triangles = ((a, b, c), (a, c, d))
+            else:
+                raise ValueError("Mapped layer faces must be triangles or quads.")
             control = controls[target_cell_id]
             if (
                 root_cell_regions.get(int(control.source_cell_id))
                 != control.source_region
                 or control.source_region_id != domain.region_ids[control.source_region]
+                or root_paths.get(int(control.source_cell_id))
+                != control.source_occurrence_path
             ):
-                raise ValueError("Mapped layer target/reference region ancestry changed.")
-            nested_map = nested_maps[target_cell_id]
-            root_reference_triangle = tuple(
-                _exact_fraction_point(nested_map.evaluate(point))
-                for point in target_reference_triangle
-            )
-            root_face_local = _mapped_root_face_local_index(
-                control.source_cell_kind, root_reference_triangle
-            )
-            root_face_id = root_face_index.get(
-                (int(control.source_cell_id), root_face_local)
-            )
-            if root_face_id is None:
                 raise ValueError(
-                    "Mapped layer wall is not incident to a declared source PLC root face."
+                    "Mapped target/root region or occurrence ancestry changed."
                 )
-            target_uv = tuple(
-                _exact_fraction_pair(point)
-                for point in query.root_face_uv(
-                    root_face_id,
-                    int(control.source_cell_id),
-                    root_face_local,
-                    np.asarray(root_reference_triangle, dtype=object),
+            pieces = []
+            complete_side = True
+            for mapped_vertex_ids in face_triangles:
+                target_reference_triangle = tuple(
+                    target_parameters_by_vertex[identifier]
+                    for identifier in mapped_vertex_ids
                 )
-            )
-            target_area = abs(_signed_chart_area(target_uv))
-            if target_area == 0:
-                raise ValueError(
-                    "Mapped layer wall collapses in the original root-face chart."
+                nested_map = nested_maps[target_cell_id]
+                root_reference_triangle = tuple(
+                    _exact_fraction_point(nested_map.evaluate(point))
+                    for point in target_reference_triangle
                 )
-            face_charts = chart_rows_by_root_face.get(root_face_id, ())
-            if not face_charts:
-                continue
-            target_orientation = _layer_target_face_orientation(
-                target_face_order, mapped_vertex_ids
-            )
-            covered_area = Fraction(0)
-            for chart_id, relation_row, source_key in face_charts:
-                # The query keeps one selected root-cell side per polygon.
-                if int(chart_root_cells[relation_row]) != int(control.source_cell_id):
-                    continue
-                if int(chart_root_local_faces[relation_row]) != root_face_local:
-                    raise ValueError(
-                        "Mapped layer source chart changes its root local-face incidence."
+                try:
+                    root_face_local = _mapped_root_face_local_index(
+                        control.source_cell_kind, root_reference_triangle
                     )
-                if source_key[1] != control.source_occurrence_path:
-                    raise ValueError(
-                        "Mapped layer root cell and source chart occurrences disagree."
-                    )
-                if (
-                    root_cell_regions[int(control.source_cell_id)]
-                    != control.source_region
-                ):
-                    raise ValueError(
-                        "Mapped layer source chart belongs to a different material region."
-                    )
-                source_uv = tuple(
-                    _exact_fraction_pair(point) for point in query.chart_face_uv(chart_id)
+                except ValueError:
+                    complete_side = False
+                    break
+                root_face_id = root_face_index.get(
+                    (int(control.source_cell_id), root_face_local)
                 )
-                clipped = _clip_exact_triangle(target_uv, source_uv)
-                if len(clipped) < 3:
-                    continue
-                covered_area += abs(_signed_chart_area(clipped))
-                for triangle_row in range(1, len(clipped) - 1):
-                    uv_triangle = (
-                        clipped[0],
-                        clipped[triangle_row],
-                        clipped[triangle_row + 1],
+                if root_face_id is None:
+                    complete_side = False
+                    break
+                target_uv = tuple(
+                    _exact_fraction_pair(point)
+                    for point in query.root_face_uv(
+                        root_face_id,
+                        int(control.source_cell_id),
+                        root_face_local,
+                        np.asarray(root_reference_triangle, dtype=object),
                     )
-                    target_reference_piece = _triangle_chart_map(
-                        uv_triangle, target_uv, target_reference_triangle
-                    )
-                    source_parameter_piece = tuple(
-                        _exact_fraction_pair(point)
-                        for point in _triangle_chart_map(
-                            uv_triangle, source_uv, standard_chart
+                )
+                target_area = abs(_signed_chart_area(target_uv))
+                if target_area == 0:
+                    raise ValueError("A mapped source triangle collapses in its chart.")
+                face_charts = chart_rows_by_root_face.get(root_face_id, ())
+                oriented_triangle = tuple(
+                    value for value in target_face_order if value in mapped_vertex_ids
+                )
+                target_orientation = _layer_target_face_orientation(
+                    oriented_triangle, mapped_vertex_ids
+                )
+                covered_area = Fraction(0)
+                triangle_pieces = []
+                for chart_id, relation_row, source_key in face_charts:
+                    sides = [
+                        side
+                        for side in range(2)
+                        if int(relation_cells[relation_row, side])
+                        == int(control.source_cell_id)
+                        and int(relation_local_faces[relation_row, side])
+                        == root_face_local
+                    ]
+                    if not sides:
+                        continue
+                    if len(sides) != 1:
+                        raise ValueError(
+                            "Mapped chart has ambiguous root-side incidence."
                         )
+                    source_uv = tuple(
+                        _exact_fraction_pair(point)
+                        for point in query.chart_face_uv(chart_id)
                     )
-                    source_orientation = (
-                        1 if _signed_chart_area(source_parameter_piece) > 0 else -1
-                    )
-                    target_orientation_piece = target_orientation * (
-                        1
-                        if _signed_chart_area(uv_triangle) * _signed_chart_area(target_uv)
-                        > 0
-                        else -1
-                    )
-                    chart_cell_ids.append(int(target_cell_id))
-                    chart_entity_ids.append(int(target_face_id))
-                    chart_local_faces.append(int(target_local_face))
-                    target_reference_rows.append(target_reference_piece)
-                    source_parameter_rows.append(source_parameter_piece)
-                    witness_chart_ids.append(chart_id)
-                    witness_entity_ids.append(source_key[0])
-                    witness_occurrences.append(source_key[1])
-                    witness_orientations.append(
-                        source_orientation * target_orientation_piece
-                    )
-            if covered_area != target_area:
+                    clipped = _clip_exact_triangle(target_uv, source_uv)
+                    if len(clipped) < 3:
+                        continue
+                    covered_area += abs(_signed_chart_area(clipped))
+                    for triangle_row in range(1, len(clipped) - 1):
+                        uv_triangle = (
+                            clipped[0],
+                            clipped[triangle_row],
+                            clipped[triangle_row + 1],
+                        )
+                        target_piece = _triangle_chart_map(
+                            uv_triangle, target_uv, target_reference_triangle
+                        )
+                        source_piece = tuple(
+                            _exact_fraction_pair(point)
+                            for point in _triangle_chart_map(
+                                uv_triangle, source_uv, standard_chart
+                            )
+                        )
+                        source_orientation = (
+                            1 if _signed_chart_area(source_piece) > 0 else -1
+                        )
+                        target_orientation_piece = target_orientation * (
+                            1
+                            if _signed_chart_area(uv_triangle)
+                            * _signed_chart_area(target_uv)
+                            > 0
+                            else -1
+                        )
+                        triangle_pieces.append(
+                            (
+                                target_piece,
+                                source_piece,
+                                chart_id,
+                                source_key,
+                                source_orientation * target_orientation_piece,
+                            )
+                        )
+                if covered_area != target_area:
+                    complete_side = False
+                    break
+                pieces.extend(triangle_pieces)
+            if complete_side and pieces:
+                chosen = (target_face_id, target_cell_id, target_local_face, pieces)
+                break
+        if chosen is None:
+            if exterior and full_query:
                 raise ValueError(
-                    "Mapped source charts do not exactly partition a layer wall facet."
+                    "A mapped exterior face has no exact source chart cover."
                 )
+            continue
+        target_face_id, target_cell_id, target_local_face, pieces = chosen
+        for target_piece, source_piece, chart_id, source_key, orientation in pieces:
+            chart_cell_ids.append(int(target_cell_id))
+            chart_entity_ids.append(int(target_face_id))
+            chart_local_faces.append(int(target_local_face))
+            target_reference_rows.append(target_piece)
+            source_parameter_rows.append(source_piece)
+            witness_chart_ids.append(chart_id)
+            witness_entity_ids.append(source_key[0])
+            witness_occurrences.append(source_key[1])
+            witness_orientations.append(orientation)
+        covered_target_faces.add(int(target_face_id))
+    if full_query and not all_target_faces <= covered_target_faces:
+        raise ValueError("Mapped source charts do not cover every output boundary face.")
 
     if not chart_cell_ids:
         raise ValueError("Mapped source chart query produced no layer wall witnesses.")
@@ -2769,7 +2959,7 @@ def _layer_feature_boundary_query(
     /,
 ) -> MeshingDomainBoundarySource | MappedReferenceBoundarySource:
     """Resolve a protected scope through its original source entity keys."""
-    charts = source.source_surface_charts
+    charts = source.source_boundary_charts
     scope = feature.scope
     if charts is None:
         query = source.fidelity_source
@@ -2822,13 +3012,641 @@ def _layer_feature_boundary_query(
     return MeshingDomainBoundarySource(domain, patches)
 
 
+def _staged_layer_boundary_chart_witness(
+    source: sources_owner.NativeLayerCoreSource,
+    construction: layer_core_owner.layer_topology.LayerCoreConstruction,
+    query: MeshingDomainBoundarySource,
+    /,
+) -> SourceBoundaryChartWitness:
+    """Bind every fixed staged-source exterior triangle to exact output incidence."""
+    domain = source.source_domain
+    if (
+        not isinstance(domain, MeshingDomain)
+        or query.domain.domain_id != domain.domain_id
+    ):
+        raise ValueError("Staged layer charts require their original domain query.")
+    if not isinstance(source.fidelity_source, MeshingDomainBoundarySource) or (
+        query.source_scope_id != source.fidelity_source.source_scope_id
+    ):
+        raise ValueError("Staged layer charts require the retained full exterior scope.")
+    staged = layer_core_owner.layer_topology.validate_staged_layer_domain(source)
+    mesh = construction.mesh
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    staged_points = np.asarray(staged.vertices, dtype=np.float64)
+    if points.shape[0] < staged_points.shape[0] or not np.array_equal(
+        points[: staged_points.shape[0]].view(np.uint64), staged_points.view(np.uint64)
+    ):
+        raise ValueError("Layer/core output changed a staged source vertex.")
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    faces = _layer_output_boundary_faces(mesh)
+    source_rows_by_vertex = {
+        int(identifier): row
+        for row, identifier in enumerate(vertex_ids[: staged_points.shape[0]])
+    }
+    curve_by_endpoints: dict[tuple[int, int], int] = {}
+    for row, curve in enumerate(domain.curves):
+        first, last = sorted((int(curve.start), int(curve.end)))
+        key = (first, last)
+        if key in curve_by_endpoints:
+            raise ValueError("Staged source curves have ambiguous endpoint ancestry.")
+        curve_by_endpoints[key] = row
+    candidates: dict[tuple[int, int, int], list[_LayerOutputFace]] = {}
+    all_face_ids: set[int] = set()
+    for rows in faces.values():
+        for face in rows:
+            face_id, _, _, _, ordered, _ = face
+            all_face_ids.add(int(face_id))
+            for index, identifier in enumerate(ordered):
+                following = ordered[(index + 1) % len(ordered)]
+                if (
+                    identifier not in source_rows_by_vertex
+                    or following not in source_rows_by_vertex
+                ):
+                    raise ValueError(
+                        "An output boundary edge lost its staged source vertices."
+                    )
+                key = tuple(
+                    sorted(
+                        (
+                            source_rows_by_vertex[identifier],
+                            source_rows_by_vertex[following],
+                        )
+                    )
+                )
+                if key not in curve_by_endpoints:
+                    raise ValueError(
+                        "An output boundary edge lacks exact source-curve ancestry."
+                    )
+            for first in range(len(ordered)):
+                for second in range(first + 1, len(ordered)):
+                    for third in range(second + 1, len(ordered)):
+                        a, b, c = sorted(
+                            (ordered[first], ordered[second], ordered[third])
+                        )
+                        key = (a, b, c)
+                        candidates.setdefault(key, []).append(face)
+    source_uv = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    facets = np.asarray(staged.facets, dtype=np.int64)
+    cell_ids: list[int] = []
+    face_ids: list[int] = []
+    local_faces: list[int] = []
+    target_rows: list[tuple[tuple[Fraction, ...], ...]] = []
+    source_rows: list[tuple[tuple[Fraction, ...], ...]] = []
+    chart_ids: list[str] = []
+    occurrences: list[tuple[str, ...]] = []
+    orientations: list[int] = []
+    covered: set[int] = set()
+    for patch in query.patches:
+        if patch < 0 or patch >= len(facets):
+            raise ValueError("Staged source query references an absent source facet.")
+        triangle = tuple(int(value) for value in vertex_ids[facets[patch]])
+        matches = candidates.get(tuple(sorted(triangle)), ())
+        if len(matches) != 1:
+            raise ValueError(
+                "A staged source facet lacks one exact output-face ancestor."
+            )
+        face_id, cell_id, local_face, _, face_order, reference = matches[0]
+        ordered_triangle = tuple(value for value in face_order if value in triangle)
+        if len(ordered_triangle) != 3:
+            raise ValueError("A staged source facet has ambiguous output-face incidence.")
+        target_rows.append(tuple(reference[value] for value in triangle))
+        source_rows.append(source_uv)
+        cell_ids.append(int(cell_id))
+        face_ids.append(int(face_id))
+        local_faces.append(int(local_face))
+        chart_ids.append(domain.entity_id(2, int(patch)))
+        occurrences.append(tuple(domain.source_occurrences[2][int(patch)]))
+        orientations.append(_layer_target_face_orientation(ordered_triangle, triangle))
+        covered.add(int(face_id))
+    if not cell_ids or covered != all_face_ids:
+        raise ValueError("Staged source charts do not cover every output boundary face.")
+    witness = SourceBoundaryChartWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(construction.geometry),
+        topology_id=mesh.topology_id,
+        source_id=query.source_id,
+        source_revision=query.source_revision,
+        source_query_id=query.source_scope_id,
+        chart_dimension=2,
+        reference_dimension=3,
+        cell_global_ids=np.asarray(cell_ids, dtype=np.int64),
+        entity_global_ids=np.asarray(face_ids, dtype=np.int64),
+        local_entity_indices=np.asarray(local_faces, dtype=np.int32),
+        target_reference_vertices=np.asarray(target_rows, dtype=np.float64),
+        target_reference_rational_tokens=rational_chart_tokens(target_rows),
+        source_chart_ids=tuple(chart_ids),
+        source_entity_ids=tuple(chart_ids),
+        occurrence_paths=tuple(occurrences),
+        source_parameters=np.asarray(source_rows, dtype=np.float64),
+        source_parameter_rational_tokens=rational_chart_tokens(source_rows),
+        orientations=np.asarray(orientations, dtype=np.int8),
+    )
+    source_fidelity_owner.validate_source_fidelity_witness(
+        mesh, construction.geometry, query, witness
+    )
+    return witness
+
+
+def _staged_layer_cap_witness(
+    source: sources_owner.NativeLayerCoreSource,
+    construction: layer_core_owner.layer_topology.LayerCoreConstruction,
+    /,
+) -> tuple[MeshingDomainBoundarySource, SourceBoundaryFaceImageWitness]:
+    """Prove the original internal cap against its realized two-sided partition."""
+    from ...discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from ...geometry._coplanar_overlap import exact_coplanar_triangle_partitions
+    from ...geometry._planar_primitives import signed_area2
+    from .._layer_core_subdivision import require_overlap_source_provenance
+
+    domain = source.source_domain
+    if not isinstance(domain, MeshingDomain) or source.cap_refinement != "conforming":
+        raise ValueError("Internal cap overlap requires its authored conforming source.")
+    staged = layer_core_owner.layer_topology.validate_staged_layer_domain(source)
+    require_overlap_source_provenance(source, construction)
+    carrier = construction.overlap_exact_geometry
+    if not isinstance(carrier, ExactPlcCellGeometrySource):
+        raise ValueError(
+            "Internal cap overlap requires exact source-bound output coordinates."
+        )
+    carrier = ExactPlcCellGeometrySource.from_stored_fields(carrier)
+    mesh = construction.mesh
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    if (
+        carrier.source_id != source.source_id
+        or carrier.source_revision != source.source_revision
+        or not np.array_equal(np.asarray(carrier.vertex_global_ids), vertex_ids)
+        or not np.array_equal(
+            np.asarray(carrier.rounded_vertices).view(np.uint64),
+            np.asarray(mesh.coordinates, dtype=np.float64).view(np.uint64),
+        )
+    ):
+        raise ValueError(
+            "Internal cap exact coordinates changed their source or vertex bank."
+        )
+    exact_by_id = dict(zip(vertex_ids.tolist(), carrier.exact_coordinates, strict=True))
+    polygon_facets = np.asarray(source.complex.polygon_facets, dtype=np.int64)
+    patches: set[int] = set()
+    for polygon in np.asarray(source.cap_polygon_ids, dtype=np.int64):
+        facet = int(polygon_facets[int(polygon)])
+        identifier = source.core_facet_source_ids[facet]
+        occurrence = source.core_facet_source_occurrence_paths[facet]
+        if identifier is None or occurrence is None:
+            raise ValueError(
+                "Every original cap facet needs its source identity and occurrence."
+            )
+        patches.add(domain.resolve_entity_id(2, identifier, occurrence_path=occurrence))
+    if not patches:
+        raise ValueError("The original layer/core cap has no source patches.")
+    query = MeshingDomainBoundarySource(domain, tuple(sorted(patches)))
+    source_points = tuple(
+        tuple(Fraction.from_float(float(value)) for value in point)
+        for point in np.asarray(staged.vertices, dtype=np.float64)
+    )
+    facets = np.asarray(staged.facets, dtype=np.int64)
+    sides = np.asarray(staged.facet_regions, dtype=np.int64)
+    source_triangles = tuple(
+        tuple(source_points[int(vertex)] for vertex in facets[patch])
+        for patch in query.patches
+    )
+    if any(np.any(sides[patch] < 0) for patch in query.patches):
+        raise ValueError("A declared internal cap must retain both material sides.")
+    cell_ids = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
+    regions = np.asarray(construction.cell_regions, dtype=np.int64)
+    if regions.shape != cell_ids.shape:
+        raise ValueError("Cap side proof requires every composite cell region.")
+    region_by_cell = dict(zip(cell_ids.tolist(), regions.tolist(), strict=True))
+    cell_vertices = {
+        int(identifier): tuple(int(vertex_ids[int(vertex)]) for vertex in row)
+        for block in mesh.blocks
+        for identifier, row in zip(
+            np.asarray(block.global_ids, dtype=np.int64).tolist(),
+            np.asarray(block.vertices, dtype=np.int64).tolist(),
+            strict=True,
+        )
+    }
+    core_cells = set(np.asarray(construction.core_cell_ids, dtype=np.int64).tolist())
+    core_map = np.asarray(construction.core_vertex_map, dtype=np.int64)
+    core_boundary = {
+        tuple(sorted(int(vertex_ids[int(core_map[int(vertex)])]) for vertex in face))
+        for face in np.asarray(construction.core.boundary_faces, dtype=np.int64)
+    }
+    targets = []
+    metadata = []
+    for key, incident in _layer_output_boundary_faces(
+        mesh, include_internal=True
+    ).items():
+        core = [row for row in incident if int(row[1]) in core_cells]
+        layer = [row for row in incident if int(row[1]) not in core_cells]
+        if not core or not layer:
+            continue
+        if len(core) != 1 or len(layer) != 1 or key not in core_boundary:
+            raise ValueError(
+                "Every layer/core interface must bind one recovered core boundary face."
+            )
+        face_id, cell_id, local_face, _, order, _ = core[0]
+        if len(order) != 3:
+            raise ValueError("The refined fixed core must meet a triangular layer cap.")
+        targets.append(tuple(exact_by_id[vertex] for vertex in order))
+        metadata.append((face_id, cell_id, local_face, int(layer[0][1])))
+    pieces = exact_coplanar_triangle_partitions(source_triangles, tuple(targets))
+    if not pieces:
+        raise ValueError("The conforming cap has no exact original-source overlap.")
+    image_rows, chart_ids, occurrences, region_sides = [], [], [], []
+    target_cells, target_faces, local_faces, orientations = [], [], [], []
+    for piece in pieces:
+        patch = query.patches[piece.source_row]
+        face_id, core_cell, local_face, layer_cell = metadata[piece.target_row]
+        triangle = source_triangles[piece.source_row]
+        first = tuple(triangle[1][i] - triangle[0][i] for i in range(3))
+        second = tuple(triangle[2][i] - triangle[0][i] for i in range(3))
+        normal = (
+            first[1] * second[2] - first[2] * second[1],
+            first[2] * second[0] - first[0] * second[2],
+            first[0] * second[1] - first[1] * second[0],
+        )
+        for target_cell in (int(core_cell), layer_cell):
+            vertices = cell_vertices[target_cell]
+            center = tuple(
+                sum(exact_by_id[v][i] for v in vertices) / len(vertices) for i in range(3)
+            )
+            signed = sum(normal[i] * (center[i] - triangle[0][i]) for i in range(3))
+            if not signed or region_by_cell[target_cell] != int(
+                sides[patch, 1 if signed > 0 else 0]
+            ):
+                raise ValueError(
+                    "Refined cap changed an authored oriented material side."
+                )
+        image_rows.append(
+            tuple(
+                tuple(
+                    triangle[0][axis]
+                    + uv[0] * (triangle[1][axis] - triangle[0][axis])
+                    + uv[1] * (triangle[2][axis] - triangle[0][axis])
+                    for axis in range(3)
+                )
+                for uv in piece.source_chart
+            )
+        )
+        region_sides.append(
+            tuple(
+                None if int(region) < 0 else domain.entity_id(3, int(region))
+                for region in sides[patch]
+            )
+        )
+        chart_ids.append(domain.entity_id(2, patch))
+        occurrences.append(tuple(domain.source_occurrences[2][patch]))
+        target_cells.append(core_cell)
+        target_faces.append(face_id)
+        local_faces.append(local_face)
+        orientations.append(
+            (1 if signed_area2(piece.source_chart) > 0 else -1)
+            * domain.patches[patch].orientation
+        )
+    witness = SourceBoundaryFaceImageWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(construction.geometry),
+        topology_id=mesh.topology_id,
+        source_id=query.source_id,
+        source_revision=query.source_revision,
+        source_query_id=query.source_scope_id,
+        cell_global_ids=np.asarray(target_cells, dtype=np.int64),
+        entity_global_ids=np.asarray(target_faces, dtype=np.int64),
+        local_entity_indices=np.asarray(local_faces, dtype=np.int32),
+        source_chart_ids=tuple(chart_ids),
+        source_entity_ids=tuple(chart_ids),
+        occurrence_paths=tuple(occurrences),
+        source_region_sides=tuple(region_sides),
+        image_triangle_rational_tokens=rational_chart_tokens(image_rows),
+        orientations=np.asarray(orientations, dtype=np.int8),
+    )
+    return query, witness
+
+
+def _atlas_layer_boundary_witness(
+    source: sources_owner.NativeLayerCoreSource,
+    construction: layer_core_owner.layer_topology.LayerCoreConstruction,
+    query: MeshingDomainBoundarySource,
+    /,
+) -> SourceBoundaryFaceImageWitness:
+    """Overlay the retained full CAD atlas with the realized exterior boundary."""
+    from ...geometry._coplanar_overlap import (
+        CoplanarTrianglePiece,
+        exact_coplanar_triangle_partitions,
+    )
+    from ...geometry._planar_primitives import signed_area2
+    from .._association import GeometrySourceEntityRole
+
+    charts = source.source_boundary_charts
+    if charts is None or query.domain.domain_id != charts.domain.domain_id:
+        raise ValueError("Full layer boundary fidelity requires the original CAD atlas.")
+    charts.require_current()
+    charts.require_root(charts.mesh, charts.geometry)
+    charts.require_bound(charts.mesh, charts.geometry, charts.boundary_source)
+    if not set(query.patches) <= set(charts.boundary_source.patches):
+        raise ValueError("Layer boundary query exceeds the independently retained atlas.")
+    chart_row_by_cell = {
+        int(identifier): row for row, identifier in enumerate(charts.cell_global_ids)
+    }
+    source_triangles = []
+    source_metadata = []
+    for block in charts.mesh.blocks:
+        if block.cell_kind != "triangle":
+            raise ValueError(
+                "Full CAD boundary overlap requires triangular source charts."
+            )
+        reference_corners = tuple(
+            tuple(Fraction.from_float(float(value)) for value in point)
+            for point in np.asarray(reference_cell_topology("triangle").vertices)
+        )
+        identifiers = np.asarray(block.global_ids, dtype=np.int64)
+        exact_cells = charts.geometry.evaluate_exact(
+            charts.mesh, identifiers, tuple(reference_corners for _ in identifiers)
+        )
+        for identifier, exact_vertices in zip(identifiers, exact_cells, strict=True):
+            row = chart_row_by_cell[int(identifier)]
+            patch = int(charts.root_patches[row])
+            if patch not in query.patches:
+                continue
+            if any(
+                not isinstance(value, Fraction)
+                for vertex in exact_vertices
+                for value in vertex
+            ):
+                raise ValueError(
+                    "Exact CAD image overlap requires rational source vertices."
+                )
+            source_triangles.append(exact_vertices)
+            source_metadata.append((patch, charts.root_parameter_exact[row]))
+    mesh = construction.mesh
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    output_faces = _layer_output_boundary_faces(mesh)
+    face_by_key = {
+        key: int(rows[0][0]) for key, rows in output_faces.items() if len(rows) == 1
+    }
+    face_keys: dict[int, set[tuple[str, tuple[str, ...]]]] = {}
+    for association in construction.associations:
+        if (
+            association.source_id != source.source_id
+            or association.source_revision != source.source_revision
+            or association.target_entity_set_id != mesh.entity_set(2).entity_set_id
+        ):
+            continue
+        for target, identifier, role, occurrence in zip(
+            np.asarray(association.target_global_ids, dtype=np.int64),
+            association.source_entity_ids,
+            association.source_roles,
+            association.source_occurrence_paths,
+            strict=True,
+        ):
+            if role is GeometrySourceEntityRole.FACET:
+                face_keys.setdefault(int(target), set()).add(
+                    (identifier, tuple(occurrence))
+                )
+    for rows, scope_id in controls_owner.layer_source_face_ancestry(source).items():
+        key = tuple(sorted(int(vertex_ids[int(row)]) for row in rows))
+        face = face_by_key.get(key)
+        if face is not None:
+            face_keys.setdefault(face, set()).add(
+                charts.domain.source_entity_key_for_scope(2, int(scope_id))
+            )
+    selected_keys = {
+        (
+            charts.domain.entity_id(2, patch),
+            tuple(charts.domain.source_occurrences[2][patch]),
+        )
+        for patch in query.patches
+    }
+    targets = []
+    target_metadata = []
+    target_keys = []
+    for incident in output_faces.values():
+        if len(incident) != 1:
+            raise ValueError("A CAD exterior face must have one incident volume cell.")
+        face_id, cell_id, local_face, kind, order, references = incident[0]
+        keys = face_keys.get(int(face_id), set())
+        if len(keys) != 1:
+            raise ValueError(
+                "Each CAD boundary face needs one independently authored source occurrence."
+            )
+        owner = next(iter(keys))
+        if owner not in selected_keys:
+            continue
+        exact_vertices = construction.geometry.evaluate_exact(
+            mesh,
+            np.asarray((cell_id,), dtype=np.int64),
+            (tuple(references[vertex] for vertex in order),),
+        )[0]
+        if any(
+            not isinstance(value, Fraction)
+            for vertex in exact_vertices
+            for value in vertex
+        ):
+            raise ValueError("Exact CAD image overlap requires rational target vertices.")
+        exact_face = dict(zip(order, exact_vertices, strict=True))
+        if len(order) == 3:
+            triangles = (order,)
+        elif len(order) == 4:
+            triangles = ((order[0], order[1], order[2]), (order[0], order[2], order[3]))
+        else:
+            raise ValueError("CAD boundary faces must be triangles or quadrilaterals.")
+        for triangle in triangles:
+            targets.append(tuple(exact_face[vertex] for vertex in triangle))
+            target_metadata.append(
+                (
+                    face_id,
+                    cell_id,
+                    local_face,
+                    kind,
+                    tuple(references[vertex] for vertex in triangle),
+                )
+            )
+            target_keys.append(owner)
+    source_groups: dict[tuple[str, tuple[str, ...]], list[int]] = {}
+    target_groups: dict[tuple[str, tuple[str, ...]], list[int]] = {}
+    for row, (patch, _) in enumerate(source_metadata):
+        key = (
+            charts.domain.entity_id(2, patch),
+            tuple(charts.domain.source_occurrences[2][patch]),
+        )
+        source_groups.setdefault(key, []).append(row)
+    for row, key in enumerate(target_keys):
+        target_groups.setdefault(key, []).append(row)
+    if set(source_groups) != set(target_groups):
+        raise ValueError(
+            "CAD target facets do not cover the exact authored source occurrences."
+        )
+    pieces = []
+    for key, source_indices in source_groups.items():
+        target_indices = target_groups[key]
+        for piece in exact_coplanar_triangle_partitions(
+            tuple(source_triangles[row] for row in source_indices),
+            tuple(targets[row] for row in target_indices),
+        ):
+            pieces.append(
+                CoplanarTrianglePiece(
+                    source_indices[piece.source_row],
+                    target_indices[piece.target_row],
+                    piece.source_chart,
+                    piece.target_chart,
+                )
+            )
+    if not pieces:
+        raise ValueError("The full CAD atlas has no exact target boundary overlap.")
+    image_rows, chart_ids, occurrences, region_sides = [], [], [], []
+    target_cells, target_faces, local_faces, orientations = [], [], [], []
+    for piece in pieces:
+        patch, source_reference = source_metadata[piece.source_row]
+        face_id, cell_id, local_face, _, _ = target_metadata[piece.target_row]
+        source_triangle = tuple(
+            (
+                source_reference[0][0]
+                + uv[0] * (source_reference[1][0] - source_reference[0][0])
+                + uv[1] * (source_reference[2][0] - source_reference[0][0]),
+                source_reference[0][1]
+                + uv[0] * (source_reference[1][1] - source_reference[0][1])
+                + uv[1] * (source_reference[2][1] - source_reference[0][1]),
+            )
+            for uv in piece.source_chart
+        )
+        physical = source_triangles[piece.source_row]
+        image_rows.append(
+            tuple(
+                tuple(
+                    physical[0][axis]
+                    + uv[0] * (physical[1][axis] - physical[0][axis])
+                    + uv[1] * (physical[2][axis] - physical[0][axis])
+                    for axis in range(3)
+                )
+                for uv in piece.source_chart
+            )
+        )
+        sides: list[str | None] = [None, None]
+        for region_row, region in enumerate(charts.domain.regions):
+            for region_patch, sign in region.boundary:
+                if region_patch != patch:
+                    continue
+                slot = 0 if sign > 0 else 1
+                identity = charts.domain.entity_id(3, region_row)
+                if sides[slot] is not None and sides[slot] != identity:
+                    raise ValueError(
+                        "A CAD source face has conflicting declared region sides."
+                    )
+                sides[slot] = identity
+        region_sides.append((sides[0], sides[1]))
+        chart_ids.append(charts.domain.entity_id(2, patch))
+        occurrences.append(tuple(charts.domain.source_occurrences[2][patch]))
+        target_cells.append(cell_id)
+        target_faces.append(face_id)
+        local_faces.append(local_face)
+        orientations.append(
+            (1 if signed_area2(source_triangle) > 0 else -1)
+            * charts.domain.patches[patch].orientation
+        )
+    witness = SourceBoundaryFaceImageWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(construction.geometry),
+        topology_id=mesh.topology_id,
+        source_id=query.source_id,
+        source_revision=query.source_revision,
+        source_query_id=query.source_scope_id,
+        cell_global_ids=np.asarray(target_cells, dtype=np.int64),
+        entity_global_ids=np.asarray(target_faces, dtype=np.int64),
+        local_entity_indices=np.asarray(local_faces, dtype=np.int32),
+        source_chart_ids=tuple(chart_ids),
+        source_entity_ids=tuple(chart_ids),
+        occurrence_paths=tuple(occurrences),
+        source_region_sides=tuple(region_sides),
+        image_triangle_rational_tokens=rational_chart_tokens(image_rows),
+        orientations=np.asarray(orientations, dtype=np.int8),
+    )
+    return witness
+
+
+def _same_wall_boundary_atlas(source: sources_owner.NativeLayerCoreSource, /) -> bool:
+    """Recognize the same full atlas after an exact wall-orientation change."""
+    wall, boundary = source.source_wall_charts, source.source_boundary_charts
+    if wall is None or boundary is None:
+        return False
+    if wall.source_chart_id == boundary.source_chart_id:
+        return True
+    if set(wall.cell_global_ids) != set(boundary.cell_global_ids):
+        return False
+    if (
+        wall.domain.domain_id != boundary.domain.domain_id
+        or wall.boundary_source.source_scope_id
+        != boundary.boundary_source.source_scope_id
+    ):
+        raise ValueError("Equivalent wall atlases must retain their full source query.")
+
+    def rows(charts: object) -> dict[int, tuple[object, ...]]:
+        from ...geometry._surface_source_support import SurfaceSourceCharts
+
+        if not isinstance(charts, SurfaceSourceCharts):
+            raise TypeError("Expected the original surface chart authority.")
+        vertex_ids = np.asarray(charts.mesh.vertex_global_ids, dtype=np.int64)
+        points = np.asarray(charts.mesh.coordinates, dtype=np.float64)
+        cells = {
+            int(identifier): tuple(int(vertex) for vertex in vertices)
+            for block in charts.mesh.blocks
+            for identifier, vertices in zip(block.global_ids, block.vertices, strict=True)
+        }
+        result: dict[int, tuple[object, ...]] = {}
+        for row, identifier in enumerate(charts.cell_global_ids):
+            local = cells[int(identifier)]
+            vertex_chart = tuple(
+                sorted(
+                    (
+                        int(vertex_ids[vertex]),
+                        tuple(int(value) for value in points[vertex].view(np.uint64)),
+                        charts.root_parameter_exact[row][corner],
+                    )
+                    for corner, vertex in enumerate(local)
+                )
+            )
+            result[int(identifier)] = (
+                int(charts.root_patches[row]),
+                int(charts.source_root_cell_ids[row]),
+                charts.source_piece_ids[row],
+                vertex_chart,
+            )
+        return result
+
+    if rows(wall) != rows(boundary):
+        raise ValueError(
+            "Wall orientation changed the original cell, vertex, or source chart."
+        )
+    return True
+
+
 def _layer_boundary_chart_witness(
     source: sources_owner.NativeLayerCoreSource,
     construction: layer_core_owner.layer_topology.LayerCoreConstruction,
     query: SourceBoundaryQuery,
     /,
-) -> SourceBoundaryChartWitness:
-    charts = source.source_surface_charts
+) -> SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness:
+    if (
+        source.conforming_execution
+        and source.mapped_domain is None
+        and isinstance(query, MeshingDomainBoundarySource)
+    ):
+        from ._native_layer_overlap import _staged_layer_overlap_witness
+
+        return _staged_layer_overlap_witness(source, construction, query)
+    if (
+        isinstance(query, MeshingDomainBoundarySource)
+        and source.source_wall_charts is not None
+        and source.source_boundary_charts is not None
+        and not _same_wall_boundary_atlas(source)
+    ):
+        from ...geometry._source_interpolation import exact_affine_boundary_source
+
+        if exact_affine_boundary_source(query):
+            return _atlas_layer_boundary_witness(source, construction, query)
+    charts = source.source_wall_charts
     if charts is not None:
         if not isinstance(query, MeshingDomainBoundarySource):
             raise TypeError(
@@ -2837,9 +3655,33 @@ def _layer_boundary_chart_witness(
         return _layer_surface_chart_witness(source, construction, query)
     if isinstance(query, MappedReferenceBoundarySource):
         return _mapped_layer_surface_chart_witness(source, construction, query)
+    if isinstance(query, MeshingDomainBoundarySource) and source.mapped_domain is None:
+        return _staged_layer_boundary_chart_witness(source, construction, query)
     if query is source.fidelity_source:
         return _implicit_layer_surface_chart_witness(source, construction)
     raise TypeError("Layer witness query has no retained exact source chart authority.")
+
+
+def _require_mapped_cap_interface(
+    mesh: CellMesh,
+    core_cell_ids: np.ndarray,
+    witness: SourceBoundaryChartWitness,
+    /,
+) -> None:
+    """Require the scoped cap witness to cover exactly the layer/core faces."""
+    core_ids = {int(value) for value in core_cell_ids}
+    cap_faces = {
+        int(incidents[0][0])
+        for incidents in _layer_output_boundary_faces(
+            mesh, include_internal=True
+        ).values()
+        if len(incidents) == 2
+        and ((int(incidents[0][1]) in core_ids) != (int(incidents[1][1]) in core_ids))
+    }
+    if cap_faces != set(np.asarray(witness.entity_global_ids, dtype=np.int64).tolist()):
+        raise ValueError(
+            "Mapped cap charts do not cover exactly the layer/core interface."
+        )
 
 
 def _native_construction(
@@ -2847,7 +3689,9 @@ def _native_construction(
     specification: VolumeMeshingSpec,
     coordinate_contract: SpatialCoordinateContract,
     construction: layer_core_owner.layer_topology.LayerCoreConstruction,
+    schedule: object,
     curving_result: layer_curving_owner.LayerCurvingConstructionResult | None = None,
+    validated_embedding: ValidatedGlobalEmbedding | None = None,
     /,
 ) -> construction_owner.NativeMeshConstruction:
     """Lower complete route data to the canonical acceptance contract."""
@@ -2856,19 +3700,13 @@ def _native_construction(
         raise TypeError("Layer/core certification requires a uniform size control.")
     if source.fidelity_source is None:
         raise ValueError("Layer certification requires its retained source query.")
-    explicit_tolerances = tuple(
-        value
-        for value in (source.maximum_deviation, specification.maximum_deviation)
-        if value is not None
-    )
-    if not explicit_tolerances:
+    fidelity_tolerance = _layer_fidelity_budget(source, specification)
+    if fidelity_tolerance is None:
         raise ValueError(
-            "Layer source fidelity requires an explicit physical deviation tolerance."
+            "Layer source fidelity lacks a declared bound or exact affine source theorem."
         )
-    fidelity_tolerance = min(explicit_tolerances)
-    charts = source.source_surface_charts
     if curving_result is None:
-        query = source.fidelity_source if charts is None else charts.boundary_source
+        query = source.fidelity_source
         if query is None:
             raise ValueError("Layer chart witness requires its retained source query.")
         fidelity_witness = _layer_boundary_chart_witness(source, construction, query)
@@ -2882,7 +3720,14 @@ def _native_construction(
                 "Accepted layer curving must retain its source chart witness and fidelity."
             )
         fidelity_witness = curving_result.chart_witness
-    source_fidelity_owner.validate_source_fidelity_witness(
+        if (
+            isinstance(source.fidelity_source, MeshingDomainBoundarySource)
+            and fidelity_witness.source_query_id != source.fidelity_source.source_scope_id
+        ):
+            fidelity_witness = _layer_boundary_chart_witness(
+                source, construction, source.fidelity_source
+            )
+    validated_fidelity = source_fidelity_owner.validate_source_fidelity_witness(
         construction.mesh,
         construction.geometry,
         source.fidelity_source,
@@ -2898,6 +3743,145 @@ def _native_construction(
         if feature.hard
         and feature.feature_kind in (FeatureKind.SURFACE, FeatureKind.MATERIAL_INTERFACE)
         for query in (_layer_feature_boundary_query(source, feature),)
+    )
+    wall_query = (
+        layer_curving_owner.layer_wall_boundary_query(
+            source.layers, source.source_wall_charts
+        )
+        if source.source_wall_charts is not None
+        and isinstance(source.fidelity_source, MeshingDomainBoundarySource)
+        else None
+    )
+    if (
+        wall_query is not None
+        and isinstance(source.fidelity_source, MeshingDomainBoundarySource)
+        and (
+            wall_query.source_scope_id != source.fidelity_source.source_scope_id
+            or not isinstance(fidelity_witness, SourceBoundaryChartWitness)
+        )
+    ):
+        wall_witness = (
+            _layer_boundary_chart_witness(source, construction, wall_query)
+            if curving_result is None
+            else curving_result.chart_witness
+        )
+        if (
+            wall_witness is None
+            or wall_witness.source_query_id != wall_query.source_scope_id
+        ):
+            raise ValueError("Wall witness changed its authored wall query.")
+        scoped_fidelity += ((wall_query, wall_witness, fidelity_tolerance),)
+    if source.cap_refinement == "conforming" and source.mapped_domain is not None:
+        from .._layer_core_boundary_replay import core_cap_source_keys
+
+        mapped_query = source.fidelity_source
+        if not isinstance(mapped_query, MappedReferenceBoundarySource) or not isinstance(
+            mapped_query.authority,
+            (sources_owner.NativePlcSource, sources_owner.NativeMappedHexSource),
+        ):
+            raise TypeError(
+                "A mapped conforming cap requires its original mapped boundary authority."
+            )
+        cap_keys = core_cap_source_keys(source)
+        if not cap_keys:
+            raise ValueError(
+                "A mapped conforming cap has no original source facet scope."
+            )
+        cap_query = mapped_query.authority.boundary_query(
+            face_scope_keys=tuple(sorted(cap_keys))
+        )
+        if not isinstance(cap_query, MappedReferenceBoundarySource):
+            raise TypeError("Mapped cap scope must retain its original mapped source.")
+        cap_witness = _mapped_layer_surface_chart_witness(source, construction, cap_query)
+        _require_mapped_cap_interface(
+            construction.mesh, construction.core_cell_ids, cap_witness
+        )
+        scoped_fidelity += ((cap_query, cap_witness, fidelity_tolerance),)
+    if source.cap_refinement == "conforming" and source.mapped_domain is None:
+        cap_query, cap_witness = _staged_layer_cap_witness(source, construction)
+        scoped_fidelity += ((cap_query, cap_witness, fidelity_tolerance),)
+    overlap_stencils = construction.overlap_source_stencils
+    column_certification = construction.layer_core_column_certification
+    layer_root_geometry = None
+    computed_root = None
+    if source.conforming_execution:
+        from .._layer_core_root_geometry import ComputedLayerCoreRoot
+
+        root_partition = construction.layer_root_partition
+        if (
+            column_certification is None
+            or overlap_stencils is None
+            or root_partition is None
+            or construction.overlap_exact_geometry is None
+        ):
+            raise ValueError(
+                "Conforming generation requires exact geometry, column and source lineage."
+            )
+        reference_mesh = construction.reference_mesh
+        reference_geometry = construction.reference_geometry
+        reference_regions = None
+        if source.mapped_domain is not None:
+            if reference_mesh is None or reference_geometry is None:
+                raise ValueError(
+                    "Mapped conforming generation lost its actual reference mesh or geometry."
+                )
+            reference_ids = np.sort(
+                np.asarray(reference_mesh.entity_set(3).entity_ids, dtype=np.int64)
+            )
+            physical_ids = np.sort(
+                np.asarray(construction.mesh.entity_set(3).entity_ids, dtype=np.int64)
+            )
+            if not np.array_equal(reference_ids, physical_ids):
+                raise ValueError(
+                    "Mapped conforming generation changed reference cell identities."
+                )
+            reference_regions = tuple(int(value) for value in construction.cell_regions)
+        computed_root = ComputedLayerCoreRoot(
+            source,
+            specification,
+            construction.mesh,
+            construction.geometry,
+            construction.overlap_exact_geometry,
+            overlap_stencils,
+            column_certification,
+            root_partition,
+            reference_mesh=reference_mesh if source.mapped_domain is not None else None,
+            reference_geometry=reference_geometry
+            if source.mapped_domain is not None
+            else None,
+            reference_cell_regions=reference_regions,
+        )
+        layer_root_geometry = computed_root.root
+    elif (
+        column_certification is not None
+        or overlap_stencils is not None
+        or construction.layer_root_partition is not None
+    ):
+        raise ValueError(
+            "Fixed-cap generation cannot publish conforming subdivision evidence."
+        )
+    internal_token = None
+    internal_witness = None
+    if source.mapped_domain is not None:
+        from .._layer_core_facet_authority import issue_mapped_core_facet_witness
+
+        internal = issue_mapped_core_facet_witness(
+            source,
+            construction.mesh,
+            construction.geometry,
+            layer_root_geometry,
+            computed_root=computed_root,
+        )
+        if internal is not None:
+            internal_query, internal_witness, internal_token = internal
+            scoped_fidelity += ((internal_query, internal_witness, fidelity_tolerance),)
+    validated_scoped = tuple(
+        internal_token
+        if internal_token is not None and witness is internal_witness
+        else source_fidelity_owner.validate_source_fidelity_witness(
+            construction.mesh, construction.geometry, query, witness
+        )
+        for query, witness, _ in scoped_fidelity
     )
     soft_feature_outcomes = []
     for feature in specification.protected_features:
@@ -2924,20 +3908,21 @@ def _native_construction(
             or deviation_upper > feature.maximum_deviation
         )
         soft_feature_outcomes.append((feature, deviation_upper, warning))
-    feature_source = source if specification.protected_features else None
     certification = construction_owner.NativeCertificationRequest(
         MeshCertificationSchedule("volume_layer"),
         source.source_id,
         source.source_revision,
         domain=construction.domain,
-        cell_regions=construction.cell_regions,
+        cell_regions=mapped_core_owner._block_order_regions(
+            construction.mesh, construction.cell_regions
+        ),
         fidelity_source=source.fidelity_source,
         fidelity_tolerance=fidelity_tolerance,
         scoped_fidelity=scoped_fidelity,
         protected_features=specification.protected_features,
         fidelity_witness=fidelity_witness,
         maximum_normal_deviation=None,
-        feature_source=feature_source,
+        feature_source=source,
         # Acceptance reuses the proofs of layer cells (and, for an accepted
         # CURVED result, of its certified map) whose exact maps are unchanged.
         validity_parent=(source.layers.validity,)
@@ -2947,14 +3932,155 @@ def _native_construction(
             else (curving_result.validity,)
         ),
     )
+    carrier_witness = None
+    associations = construction.associations
+    if specification.fill_strategy is VolumeFillStrategy.SIMPLEX and isinstance(
+        source.fidelity_source,
+        (MappedReferenceBoundarySource, MeshingDomainBoundarySource),
+    ):
+        from .._association import (
+            GeometryAssociation,
+            GeometryAssociationKind,
+            GeometryAssociationProvenance,
+            GeometrySourceEntityRole,
+        )
+        from .._layer_core_association import composite_region_identity
+        from .._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+        from .._layer_core_carrier_witness import NativeLayerCoreCarrierWitness
+
+        if not isinstance(
+            fidelity_witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+        ):
+            raise TypeError(
+                "Layer/core carrier replay requires its actual source fidelity witness."
+            )
+
+        image_preparation = None
+        if source.conforming_execution:
+            from .._association import _prepare_layer_image_support
+
+            image_preparation = _prepare_layer_image_support(
+                source,
+                construction.mesh,
+                construction.geometry,
+                tuple(int(value) for value in construction.core_cell_ids),
+                root=layer_root_geometry,
+                computed_root=computed_root,
+            )
+        carrier_witness = NativeLayerCoreCarrierWitness._from_construction(
+            source,
+            specification,
+            construction,
+            validated_fidelity,
+            validated_scoped,
+            layer_root_geometry,
+            computed_root=computed_root,
+            preparation=image_preparation,
+        )
+        authored = source if source.reference_source is None else source.reference_source
+        cell_ids = np.sort(
+            np.asarray(construction.mesh.entity_set(3).entity_ids, dtype=np.int64)
+        )
+        region_rows = np.asarray(construction.cell_regions, dtype=np.int64)
+        if (
+            construction.region_ids != authored.region_ids
+            or region_rows.shape != cell_ids.shape
+            or np.any((region_rows < 0) | (region_rows >= len(authored.region_ids)))
+        ):
+            raise ValueError(
+                "Original composite region authority must cover every target cell."
+            )
+        region_table = GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            authored.source_id,
+            authored.source_revision,
+            construction.mesh.entity_set(3).entity_set_id,
+            cell_ids,
+            tuple(composite_region_identity(authored, int(row)) for row in region_rows),
+            np.zeros(cell_ids.shape, dtype=np.float64),
+            exact=True,
+            source_roles=(GeometrySourceEntityRole.REGION,) * cell_ids.size,
+            source_occurrence_paths=tuple(
+                authored.region_occurrence_paths[int(row)] for row in region_rows
+            ),
+            orientations=np.zeros(cell_ids.shape, dtype=np.int8),
+            provenance=GeometryAssociationProvenance.CLASSIFICATION,
+        )
+        adapter = NativeLayerCoreAssociationTransfer(source, specification)
+        associations = (
+            *adapter._endpoint(
+                construction.mesh,
+                construction.geometry,
+                fidelity_witness,
+                region_table,
+                carrier_witness,
+                layer_root_geometry,
+                scoped_fidelity,
+                (validated_fidelity, *validated_scoped),
+                computed_root=computed_root,
+                image_preparation=image_preparation,
+            ),
+            region_table,
+        )
     organization = construction_owner.NativeMeshOrganization(
         patches=construction.patches,
         zones=construction.zones,
         labels=construction.labels,
         attributes=construction.attributes,
-        associations=construction.associations,
+        associations=associations,
     )
     stages = tuple(construction.core.stages)
+    physical_quality = None
+    if source.mapped_domain is not None and construction.polyhedral_core is None:
+        from .._volume_generation import NativeVolumeSchedule
+
+        if not isinstance(schedule, NativeVolumeSchedule):
+            raise TypeError("Mapped layer quality requires its physical volume schedule.")
+        physical_quality, candidate_id = mapped_core_owner.mapped_core_quality_findings(
+            construction, schedule
+        )
+        stages += (
+            MeshingStageReport(
+                MeshingStageKind.QUALITY_EVALUATION,
+                MeshingStageStatus.FAILED
+                if physical_quality
+                else MeshingStageStatus.PASSED,
+                input_ids=(construction.mesh.mesh_id, schedule.schedule_id),
+                output_ids=(candidate_id,),
+                diagnostics=(
+                    (
+                        MeshingDiagnostic(
+                            MeshingDiagnosticSeverity.ERROR,
+                            "Physical affine corner tetrahedra did not meet the native quality schedule.",
+                            provider_code="native_layer_core",
+                            failure_category=MeshingFailureCategory.QUALITY_REJECTED,
+                            entity_ids=tuple(
+                                sorted({cell for _, _, cell, _ in physical_quality})
+                            ),
+                            failure_evidence=MeshingFailureEvidence(
+                                requested_quantities={
+                                    **(
+                                        {}
+                                        if schedule.radius_edge_bound is None
+                                        else {
+                                            "radius_edge_bound": schedule.radius_edge_bound
+                                        }
+                                    ),
+                                    "minimum_dihedral_degrees": schedule.minimum_dihedral_degrees,
+                                },
+                                checkpoint="physical_affine_corner_quality",
+                                logical_findings=tuple(
+                                    f"{criterion}:{reason}:cell={cell}:value={value!r}"
+                                    for criterion, reason, cell, value in physical_quality
+                                ),
+                            ),
+                        ),
+                    )
+                    if physical_quality
+                    else ()
+                ),
+            ),
+        )
     layer_curving_evidence = None
     if curving_result is not None:
         if curving_result.status is not layer_curving_owner.LayerCurvingStatus.CURVED:
@@ -2963,14 +4089,18 @@ def _native_construction(
             )
         evidence = curving_result.source_evidence
         layer_curving_evidence = evidence
-        projection = curving_result.projection_trace
+        projection = (
+            curving_result.projection_trace
+            or curving_result.implicit_root_trace
+            or curving_result.mapped_chart_trace
+        )
         witness = curving_result.chart_witness
         fidelity = curving_result.source_fidelity
         validity = curving_result.validity
         embedding = curving_result.embedding
         if (
             evidence is None
-            or projection is None
+            or (projection is None and evidence.source_surface_charts is None)
             or witness is None
             or fidelity is None
             or validity is None
@@ -2986,7 +4116,9 @@ def _native_construction(
                 input_ids=(construction.mesh.mesh_id, curving_result.result_id),
                 output_ids=(
                     evidence.evidence_id,
-                    projection.trace_id,
+                    evidence.chart_column_identity.identity_id
+                    if projection is None
+                    else projection.trace_id,
                     witness.witness_id,
                     fidelity.certificate_id,
                     validity.certificate_id,
@@ -3001,7 +4133,9 @@ def _native_construction(
             source,
             specification,
             construction,
+            schedule,
             soft_feature_outcomes=tuple(soft_feature_outcomes),
+            physical_quality=physical_quality,
         ),
         certification,
         geometry=construction.geometry,
@@ -3011,6 +4145,17 @@ def _native_construction(
         source_mesh=construction.source_mesh,
         source_geometry=construction.source_geometry,
         layer_curving_evidence=layer_curving_evidence,
+        layer_core_carrier_witness=carrier_witness,
+        layer_core_overlap_stencils=overlap_stencils
+        if source.mapped_domain is None
+        else None,
+        layer_core_column_certification=column_certification
+        if source.mapped_domain is None
+        else None,
+        layer_core_root_geometry=layer_root_geometry,
+        computed_layer_core_root=computed_root,
+        validated_global_embedding=validated_embedding,
+        validated_fidelity=(validated_fidelity, *validated_scoped),
     )
 
 
@@ -3053,6 +4198,12 @@ class PreparedNativeLayer(StrictModule, NonTrainableState):
                 "Mapped layer source and target use different spatial coordinate contracts."
             )
         issues = layer_core_support_issues(source, specification)
+        if options.volume_schedule is not None:
+            from .._volume_generation import _shape_targets_gated
+
+            # Core preflights and mapped physical corner quality gate shape rows.
+            if not _shape_targets_gated(options.volume_schedule):
+                issues.append("hard NativeVolumeSchedule shape strength")
         if issues:
             message = (
                 "Native layer/core route does not support the requested semantics: "
@@ -3119,10 +4270,11 @@ class PreparedNativeLayer(StrictModule, NonTrainableState):
             polyhedral_schedule=polyhedral_schedule,
         )
         curving_result = None
+        embedding_proofs: list[ValidatedGlobalEmbedding] = []
         implicit_root_witness = None
         mapped_chart_witness = None
         if self.specification.target.geometry_order > 1:
-            if self.source.source_surface_charts is None:
+            if self.source.source_wall_charts is None:
                 query = self.source.fidelity_source
                 if query is None:
                     raise ValueError(
@@ -3144,25 +4296,28 @@ class PreparedNativeLayer(StrictModule, NonTrainableState):
             curving_result = layer_curving_owner.curve_layer_core_construction(
                 layer_construction,
                 self.source.layers,
-                self.source.source_surface_charts,
+                self.source.source_wall_charts,
                 policy=high_order_curving_owner.HighOrderCurvingPolicy(
                     degree=self.specification.target.geometry_order,
                     relaxation_rounds=0,
                 ),
-                fidelity_tolerance=self.specification.maximum_deviation,
+                fidelity_tolerance=_layer_fidelity_budget(
+                    self.source, self.specification
+                ),
                 maximum_normal_deviation=None,
                 fidelity_source=(
                     self.source.fidelity_source
-                    if self.source.source_surface_charts is None
+                    if self.source.source_wall_charts is None
                     else None
                 ),
                 implicit_root_witness=implicit_root_witness,
                 mapped_chart_witness=mapped_chart_witness,
                 frame_id=(
                     self.coordinate_contract.spatial_id
-                    if self.source.source_surface_charts is None
+                    if self.source.source_wall_charts is None
                     else None
                 ),
+                _embedding_proofs=embedding_proofs,
             )
             layer_construction = layer_curving_owner.require_layer_core_construction(
                 curving_result
@@ -3172,7 +4327,9 @@ class PreparedNativeLayer(StrictModule, NonTrainableState):
             self.specification,
             self.coordinate_contract,
             layer_construction,
+            schedule,
             curving_result,
+            embedding_proofs[0] if embedding_proofs else None,
         )
 
 

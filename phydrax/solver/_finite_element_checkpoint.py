@@ -21,13 +21,86 @@ from .._array_archive import (
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..equations import MaterialSiteId, MaterialState, MaterialTransaction
+from ..equations import (
+    MaterialSiteId,
+    MaterialSiteOwnership,
+    MaterialState,
+    MaterialTransaction,
+)
 from ..lifecycle import (
     CheckpointManifest,
     CheckpointShard,
     create as create_lifecycle_archive,
     open as open_lifecycle_archive,
 )
+
+
+def _material_site_record(site: MaterialSiteId, /) -> dict[str, object]:
+    return {
+        "key": site.key,
+        "domain_id": site.domain_id,
+        "cell_id": site.cell_id,
+        "quadrature_rule_id": site.quadrature_rule_id,
+        "reference_site_id": site.reference_site_id,
+    }
+
+
+def _restore_material_site(record: object, /) -> MaterialSiteId:
+    if not isinstance(record, dict) or set(record) != {
+        "key",
+        "domain_id",
+        "cell_id",
+        "quadrature_rule_id",
+        "reference_site_id",
+    }:
+        raise ValueError("Invalid material site identity.")
+    return MaterialSiteId(
+        record["key"],
+        domain_id=record["domain_id"],
+        cell_id=record["cell_id"],
+        quadrature_rule_id=record["quadrature_rule_id"],
+        reference_site_id=record["reference_site_id"],
+    )
+
+
+def _material_placement_record(materials: MaterialTransaction | None, /) -> object:
+    if materials is None or materials.ownership is None:
+        return None
+    return {
+        "sites": [
+            [_material_site_record(site), rank]
+            for site, rank in zip(
+                materials.ownership.site_ids, materials.ownership.owners, strict=True
+            )
+        ],
+        "part_count": materials.ownership.part_count,
+        "owner_rank": materials.owner_rank,
+        "ownership_id": materials.ownership.ownership_id,
+    }
+
+
+def _restore_material_placement(
+    record: object, /
+) -> tuple[MaterialSiteOwnership | None, int | None]:
+    if record is None:
+        return None, None
+    if not isinstance(record, dict) or set(record) != {
+        "sites",
+        "owner_rank",
+        "ownership_id",
+        "part_count",
+    }:
+        raise ValueError("Invalid material ownership record.")
+    entries = record["sites"]
+    if not isinstance(entries, list):
+        raise ValueError("Material ownership sites must be an array.")
+    ownership = MaterialSiteOwnership(
+        tuple((_restore_material_site(site), rank) for site, rank in entries),
+        part_count=record["part_count"],
+    )
+    if ownership.ownership_id != record["ownership_id"]:
+        raise ValueError("Stored material ownership changed its canonical identity.")
+    return ownership, record["owner_rank"]
 
 
 class FiniteElementCheckpoint(StrictModule, NonTrainableState):
@@ -109,9 +182,10 @@ def write_finite_element_checkpoint(
             None if checkpoint.materials is None else checkpoint.materials.layout_id
         ),
         "material_payload_id": checkpoint.material_payload_id,
+        "material_placement": _material_placement_record(checkpoint.materials),
         "materials": [
             {
-                "site_key": state.site_id.key,
+                "site": _material_site_record(state.site_id),
                 "model_id": state.model_id,
                 "state_version": state.state_version,
             }
@@ -127,6 +201,10 @@ def write_finite_element_checkpoint(
         },
         **{
             f"material_{index}": np.asarray(state.committed)
+            for index, state in enumerate(material_states)
+        },
+        **{
+            f"material_trial_{index}": np.asarray(state.trial)
             for index, state in enumerate(material_states)
         },
     }
@@ -184,14 +262,24 @@ def read_finite_element_checkpoint(
     )
     material_states = tuple(
         MaterialState(
-            MaterialSiteId(item["site_key"]),
+            _restore_material_site(item["site"]),
             item["model_id"],
             archive.arrays[f"material_{index}"],
+            trial=archive.arrays[f"material_trial_{index}"],
             state_version=int(item["state_version"]),
         )
         for index, item in enumerate(metadata["materials"])
     )
-    materials = None if not material_states else MaterialTransaction(material_states)
+    ownership, owner_rank = _restore_material_placement(
+        metadata.get("material_placement")
+    )
+    materials = (
+        None
+        if not material_states and ownership is None
+        else MaterialTransaction(
+            material_states, ownership=ownership, owner_rank=owner_rank
+        )
+    )
     if materials is not None and materials.layout_id != metadata["material_layout_id"]:
         raise ValueError("FE checkpoint material layout identity mismatch.")
     if (

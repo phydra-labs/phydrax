@@ -17,6 +17,7 @@ from .._validation import canonical_identifier
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellMesh
+from ..geometry._affine_plc_domain import AffinePlcDomain
 from ..geometry._domain_certification import (
     coverage_region_occurrence_paths,
     CoverageDomain,
@@ -41,6 +42,7 @@ from ..geometry.implicit._restricted_delaunay_coverage import (
 from ..typing import checked
 from ._certification_schedule import MeshCertificationSchedule
 from ._controls import ProtectedFeature
+from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
 from ._scope import _SourceEntityScopes
 
 
@@ -253,7 +255,7 @@ def _require_coverage_witness_binding(
         return
     if isinstance(witness, PlcSourcePointWitness):
         if (
-            not isinstance(domain, PiecewiseLinearDomain)
+            not isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain))
             or witness.domain_id != domain.domain_id
             or not np.array_equal(witness.vertex_global_ids, mesh.vertex_global_ids)
         ):
@@ -366,6 +368,7 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
     maximum_normal_deviation: float | None
     fidelity_witness: SourceFidelityWitness | None
     feature_source: _SourceEntityScopes | None
+    layer_core_root_geometry: LayerCoreRootGeometry | None
     source_coverage_witness: SourceCoverageWitness | None
     mesh_id: str
     topology_id: str
@@ -396,13 +399,20 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         scoped_fidelity: tuple[ScopedFidelityInput, ...] = (),
         fidelity_witness: SourceFidelityWitness | None = None,
         feature_source: _SourceEntityScopes | None = None,
+        layer_core_root_geometry: LayerCoreRootGeometry | None = None,
         source_coverage_witness: SourceCoverageWitness | None = None,
         validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
+        computed_root: ComputedLayerCoreRoot | None = None,
     ) -> None:
         """Retain the inputs; their fidelity witnesses must validate on ``mesh``.
 
         ``validated`` holds validations the caller already made for exactly
         these operands; a witness with one is not validated again.
+        ``feature_source`` may also retain the authoritative layer/core source
+        for association replay when no features are protected; retaining it
+        does not itself add a protected feature or geometric constraint.
+        ``layer_core_root_geometry`` retains the independently proved root
+        owner for current-to-root association replay; it is not a new source.
         """
         source_id_ = canonical_identifier(source_id, "source_id")
         source_revision_ = canonical_identifier(source_revision, "source_revision")
@@ -442,6 +452,34 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             source_revision_,
             feature_source,
         )
+        if feature_source is not None or layer_core_root_geometry is not None:
+            from .providers._native_sources import NativeLayerCoreSource
+
+            if (
+                type(feature_source) is NativeLayerCoreSource
+                and feature_source.conforming_execution
+                and layer_core_root_geometry is None
+            ):
+                raise ValueError("Conforming layer/core certification requires its root geometry.")
+        if layer_core_root_geometry is not None:
+            if type(layer_core_root_geometry) is not LayerCoreRootGeometry:
+                raise TypeError("layer_core_root_geometry must be LayerCoreRootGeometry.")
+            if type(feature_source) is not NativeLayerCoreSource:
+                raise TypeError("Layer root geometry requires its actual layer/core source.")
+            if computed_root is None:
+                layer_core_root_geometry.require_current(
+                    feature_source, layer_core_root_geometry.specification
+                )
+            elif type(computed_root) is ComputedLayerCoreRoot:
+                computed_root.require(
+                    feature_source, layer_core_root_geometry.specification,
+                    layer_core_root_geometry.mesh, layer_core_root_geometry.geometry,
+                    layer_core_root_geometry,
+                )
+            else:
+                raise TypeError("computed_root must be ComputedLayerCoreRoot or None.")
+        elif computed_root is not None:
+            raise ValueError("A computed root requires its retained root geometry.")
         scoped = tuple(
             (query, token.witness, tolerance)
             for query, token, tolerance in _validate_scoped_fidelity(
@@ -475,6 +513,7 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         self.maximum_normal_deviation = normal_limit
         self.fidelity_witness = fidelity_witness
         self.feature_source = feature_source
+        self.layer_core_root_geometry = layer_core_root_geometry
         self.source_coverage_witness = source_coverage_witness
         self.mesh_id = mesh.mesh_id
         self.topology_id = mesh.topology_id
@@ -506,6 +545,10 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
                 else (
                     feature_source.source_id,
                     feature_source.source_revision,
+                ),
+                **(
+                    {} if layer_core_root_geometry is None
+                    else {"layer_core_root_geometry": layer_core_root_geometry.root_id}
                 ),
                 "junctions": None
                 if junctions is None
@@ -604,22 +647,35 @@ def validate_fidelity_witnesses(
     fidelity_witness: SourceFidelityWitness | None,
     scoped_fidelity: tuple[ScopedFidelityInput, ...],
     /,
+    *,
+    validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
 ) -> tuple[ValidatedSourceFidelityWitness, ...]:
     """Validate a certification request's fidelity witnesses once, to hand on.
 
     The result is passed as ``validated`` to :class:`MeshCertificationInputs`
     and its consumers for these same operands. A witness without its source is
-    left to the inputs, which refuse it.
+    left to the inputs, which refuse it. Existing validations are reused only
+    when they bind the same operand objects and the same witness.
     """
     tokens = []
     if fidelity_witness is not None and source is not None:
         tokens.append(
-            validate_source_fidelity_witness(mesh, geometry, source, fidelity_witness)
+            validate_source_fidelity_witness(
+                mesh, geometry, source,
+                validated_fidelity_witness(
+                    validated, mesh, geometry, source, fidelity_witness
+                ),
+            )
         )
-    tokens.extend(
-        validate_source_fidelity_witness(mesh, geometry, query, witness)
-        for query, witness, _ in scoped_fidelity
-    )
+    for query, witness, _ in scoped_fidelity:
+        tokens.append(
+            validate_source_fidelity_witness(
+                mesh, geometry, query,
+                validated_fidelity_witness(
+                    (*validated, *tokens), mesh, geometry, query, witness
+                ),
+            )
+        )
     return tuple(tokens)
 
 

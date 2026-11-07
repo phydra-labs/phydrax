@@ -7,7 +7,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax import Array
+from jax import Array, vmap
 
 from phydrax._model._ports import PortVariance, ValuePort
 from phydrax.discretization import CellMesh, PolygonalConnectivity
@@ -242,6 +242,53 @@ def test_polyhedral_scalar_form_reproduces_affine_energy_and_limits_degree() -> 
     )
     with pytest.raises(ValueError, match="degree one"):
         prepare_polyhedral_h1_virtual_element_3d(mesh, degree=2)
+
+
+def test_polyhedral_collinear_boundary_dofs_preserve_energy_and_nullspace() -> None:
+    points: list[tuple[float, ...]] = [
+        (float(corner & 1), float((corner >> 1) & 1), float((corner >> 2) & 1))
+        for corner in range(8)
+    ]
+    corners = (
+        (0, 2, 3, 1),
+        (4, 5, 7, 6),
+        (0, 1, 5, 4),
+        (2, 6, 7, 3),
+        (0, 4, 6, 2),
+        (1, 3, 7, 5),
+    )
+    midpoint_ids: dict[tuple[int, int], int] = {}
+    faces: list[np.ndarray] = []
+    for face in corners:
+        refined: list[int] = []
+        for left, right in zip(face, face[1:] + face[:1], strict=True):
+            edge = (min(left, right), max(left, right))
+            if edge not in midpoint_ids:
+                midpoint_ids[edge] = len(points)
+                points.append(
+                    tuple(
+                        (points[left][axis] + points[right][axis]) / 2.0
+                        for axis in range(3)
+                    )
+                )
+            refined.extend((left, midpoint_ids[edge]))
+        faces.append(np.asarray(refined, dtype=np.int32))
+    coordinates = np.asarray(points, dtype=np.float64)
+    mesh = CellMesh.from_polyhedra(coordinates, (tuple(faces),))
+    prepared = prepare_polyhedral_h1_virtual_element_3d(mesh)
+    slope = np.asarray((2.0, -3.0, 0.5), dtype=np.float64)
+    affine = jnp.asarray(1.0 + coordinates @ slope)
+    np.testing.assert_allclose(affine @ prepared.mv(affine), slope @ slope, atol=1e-11)
+    matrix = np.asarray(
+        vmap(prepared.mv)(jnp.eye(coordinates.shape[0], dtype=jnp.float64))
+    )
+    np.testing.assert_allclose(matrix, matrix.T, atol=1e-12)
+    np.testing.assert_allclose(
+        matrix @ np.ones(coordinates.shape[0], dtype=np.float64), 0.0, atol=1e-12
+    )
+    eigenvalues = np.linalg.eigvalsh(matrix)
+    assert abs(eigenvalues[0]) < 1e-12
+    assert eigenvalues[1] > 1e-6
 
 
 def test_obsolete_conformity_selector_is_refused() -> None:

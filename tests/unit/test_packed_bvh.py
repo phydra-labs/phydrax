@@ -56,6 +56,53 @@ def _brute_pairs(
     return np.argwhere(hit)
 
 
+@pytest.mark.parametrize("forced_cpu", (False, True))
+def test_packed_bvh_private_index_transfer_preserves_placement_and_inputs(
+    forced_cpu: bool,
+) -> None:
+    lower, upper = _random_boxes(194, 37)
+    expected_lower, expected_upper = lower.copy(), upper.copy()
+    device = jax.devices("cpu")[0] if forced_cpu else None
+    with jax.default_device(device):
+        bvh = prepare_bvh(lower, upper, dtype=jnp.float64)
+        indices = (bvh.left, bvh.right, bvh.leaf_id, bvh.leaf_items, bvh.leaf_node)
+        saved = tuple(np.asarray(value).copy() for value in indices)
+        for value in indices:
+            assert value.dtype == jnp.int32
+            assert not value.weak_type
+            assert not value.committed
+            if forced_cpu:
+                assert value.device == device
+        lower[:] = -100.0
+        upper[:] = 100.0
+        assert np.array_equal(np.asarray(bvh.item_bbox_min), expected_lower)
+        assert np.array_equal(np.asarray(bvh.item_bbox_max), expected_upper)
+        for value, before in zip(indices, saved, strict=True):
+            assert np.array_equal(np.asarray(value), before)
+
+
+def test_packed_bvh_private_indices_follow_nonzero_default_cpu() -> None:
+    devices = jax.devices("cpu")
+    if len(devices) < 2:
+        pytest.skip("Requires two CPU devices.")
+    lower, upper = _random_boxes(196, 37)
+    with jax.default_device(devices[1]):
+        bvh = prepare_bvh(lower, upper, dtype=jnp.float64)
+        for value in (bvh.left, bvh.right, bvh.leaf_id, bvh.leaf_items, bvh.leaf_node):
+            assert value.device == devices[1]
+            assert not value.committed
+            assert not value.weak_type
+
+
+def test_packed_bvh_keeps_x64_disabled_float_warning() -> None:
+    lower, upper = _random_boxes(195, 8)
+    with jax.enable_x64(False):
+        with pytest.warns(UserWarning, match="float64"):
+            bvh = prepare_bvh(lower, upper, dtype=jnp.float64)
+        assert bvh.bbox_min.dtype == jnp.float32
+        assert bvh.left.dtype == jnp.int32
+
+
 def test_packed_bvh_scenario_1() -> None:
     lower = jnp.stack(
         (jnp.arange(8, dtype="float64"), jnp.zeros(8), jnp.zeros(8)), axis=-1

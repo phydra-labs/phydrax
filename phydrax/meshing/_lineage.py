@@ -21,6 +21,11 @@ from ..discretization._cell_geometry_transition_types import (
     cell_geometry_id,
     CellGeometryTransition,
 )
+from ..discretization._exact_algebraic_geometry import (
+    canonical_exact_scalar,
+    ExactScalar,
+    RadicalElement,
+)
 from ..discretization.fem import (
     FiniteElementTopologyTransfer,
     vertex_interpolation_transfer,
@@ -212,12 +217,33 @@ class MeshLineage(StrictModule, NonTrainableState):
         raise KeyError(f"No lineage record for dimension {target}.")
 
 
+def _exact_weight_identity(
+    value: ExactScalar, /
+) -> tuple[int, int] | tuple[str, tuple[tuple[int, int, int], ...]]:
+    """Encode one canonical stencil coefficient for the stencil identity.
+
+    Rational coefficients keep their established ``(numerator, denominator)``
+    pair; irrational coefficients are tagged with their square-free radical terms.
+    """
+    if isinstance(value, RadicalElement):
+        return (
+            "radical",
+            tuple(
+                (radicand, coefficient.numerator, coefficient.denominator)
+                for radicand, coefficient in value.terms
+            ),
+        )
+    return value.numerator, value.denominator
+
+
 class VertexInterpolationStencil(StrictModule, NonTrainableState):
-    """Exact source rows with binary64 action weights and rational coefficients.
+    """Exact source rows with binary64 action weights and exact field coefficients.
 
     ``exact_weights`` is the authoritative source-map row; ``weights`` is its
-    binary64 execution projection. Repeated source IDs remain additive, including
-    multiple exact binary64 components for a dyadic coefficient.
+    correctly rounded binary64 execution projection. Coefficients are canonical
+    exact scalars: rational values are ``Fraction`` and only genuinely irrational
+    algebraic values are ``RadicalElement``. Repeated source IDs remain additive,
+    including multiple exact binary64 components for a dyadic coefficient.
     """
 
     source_entity_set_id: str = eqx.field(static=True)
@@ -226,7 +252,7 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
     source_global_ids: Array
     weights: Array
     valid: Array
-    exact_weights: tuple[tuple[Fraction, ...], ...] = eqx.field(static=True)
+    exact_weights: tuple[tuple[ExactScalar, ...], ...] = eqx.field(static=True)
     preserves_constants: bool = eqx.field(static=True)
     stencil_id: str = eqx.field(static=True)
 
@@ -241,7 +267,7 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
         /,
         *,
         preserves_constants: bool = True,
-        exact_weights: tuple[tuple[Fraction, ...], ...] | None = None,
+        exact_weights: tuple[tuple[ExactScalar, ...], ...] | None = None,
     ) -> None:
         source_set = str(source_entity_set_id).strip()
         target_set = str(target_entity_set_id).strip()
@@ -289,13 +315,17 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
                 for row, row_valid in zip(coefficient_rows, valid_rows, strict=True)
             )
         else:
-            exact = tuple(tuple(row) for row in exact_weights)
+            exact = tuple(
+                tuple(
+                    canonical_exact_scalar(value, role="Exact interpolation weights")
+                    for value in row
+                )
+                for row in exact_weights
+            )
             if len(exact) != sources.shape[0] or any(
                 len(row) != sources.shape[1] for row in exact
             ):
                 raise ValueError("Exact interpolation weights must align with rows.")
-            if any(not isinstance(value, Fraction) for row in exact for value in row):
-                raise TypeError("Exact interpolation weights must be Fraction values.")
             if any(
                 not is_valid and value != 0
                 for row, row_valid in zip(exact, valid_rows, strict=True)
@@ -349,8 +379,7 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
                 "source_global_ids": array_tree_fingerprint(sources),
                 "weights": array_tree_fingerprint(coefficients),
                 "exact_weights": [
-                    [(value.numerator, value.denominator) for value in row]
-                    for row in exact
+                    [_exact_weight_identity(value) for value in row] for row in exact
                 ],
                 "valid": array_tree_fingerprint(valid_),
                 "preserves_constants": bool(preserves_constants),

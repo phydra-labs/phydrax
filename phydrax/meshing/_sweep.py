@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from fractions import Fraction
 from typing import final
 
 import equinox as eqx
@@ -27,6 +28,8 @@ from ..discretization._nested_reference_types import (
     ReferenceCellMapWitnesses,
     validate_reference_cell_map_witnesses,
 )
+from ..discretization._periodic_exact import exact_periodic_generators
+from ..discretization._periodic_topology import PeriodicMeshTopology
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization.fem._reference import FiniteElementSpec
 from ..typing import checked
@@ -77,9 +80,22 @@ class SweepControl(StrictModule, NonTrainableState):
             raise TypeError("closed must be bool.")
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("tolerance must be finite and nonnegative.")
-        center = np.zeros((3,), dtype=np.float64) if origin is None else np.asarray(origin, dtype=np.float64)
-        direction = np.asarray((0.0, 0.0, 1.0), dtype=np.float64) if axis is None else np.asarray(axis, dtype=np.float64)
-        if center.shape != (3,) or direction.shape != (3,) or not np.all(np.isfinite(center)) or not np.all(np.isfinite(direction)):
+        center = (
+            np.zeros((3,), dtype=np.float64)
+            if origin is None
+            else np.asarray(origin, dtype=np.float64)
+        )
+        direction = (
+            np.asarray((0.0, 0.0, 1.0), dtype=np.float64)
+            if axis is None
+            else np.asarray(axis, dtype=np.float64)
+        )
+        if (
+            center.shape != (3,)
+            or direction.shape != (3,)
+            or not np.all(np.isfinite(center))
+            or not np.all(np.isfinite(direction))
+        ):
             raise ValueError("origin and axis must be finite three-vectors.")
         axis_norm = float(np.linalg.norm(direction))
         if not np.isclose(axis_norm, 1.0, rtol=0.0, atol=8.0 * np.finfo(np.float64).eps):
@@ -88,31 +104,51 @@ class SweepControl(StrictModule, NonTrainableState):
         match kind:
             case SweepMapKind.EXTRUSION | SweepMapKind.REVOLUTION:
                 if frames is not None or translations is not None:
-                    raise ValueError("Analytic sweep maps cannot carry frame or translation banks.")
+                    raise ValueError(
+                        "Analytic sweep maps cannot carry frame or translation banks."
+                    )
                 rotations = np.zeros((0, 3, 3), dtype=np.float64)
                 offsets = np.zeros((0, 3), dtype=np.float64)
                 if kind is SweepMapKind.EXTRUSION and closed:
                     raise ValueError("A straight extrusion cannot declare a closed seam.")
                 if kind is SweepMapKind.REVOLUTION and closed:
-                    turn = float(np.sum(np.asarray(schedule.thicknesses, dtype=np.float64)))
+                    turn = float(
+                        np.sum(np.asarray(schedule.thicknesses, dtype=np.float64))
+                    )
                     if abs(turn - 2.0 * np.pi) > tolerance:
-                        raise ValueError("A closed revolution schedule must span one full turn.")
+                        raise ValueError(
+                            "A closed revolution schedule must span one full turn."
+                        )
             case SweepMapKind.FRAMES:
                 if frames is None or translations is None:
-                    raise ValueError("Frame sweeps require rotations and translations at every station.")
+                    raise ValueError(
+                        "Frame sweeps require rotations and translations at every station."
+                    )
                 rotations = np.asarray(frames, dtype=np.float64)
                 offsets = np.asarray(translations, dtype=np.float64)
-                if rotations.shape != (station_count, 3, 3) or offsets.shape != (station_count, 3):
-                    raise ValueError("Frame and translation banks must match the station count.")
+                if rotations.shape != (station_count, 3, 3) or offsets.shape != (
+                    station_count,
+                    3,
+                ):
+                    raise ValueError(
+                        "Frame and translation banks must match the station count."
+                    )
                 if not np.all(np.isfinite(rotations)) or not np.all(np.isfinite(offsets)):
                     raise ValueError("Frame and translation banks must be finite.")
                 gram = np.swapaxes(rotations, -1, -2) @ rotations
-                if not np.allclose(gram, np.eye(3, dtype=np.float64), rtol=0.0, atol=tolerance):
+                if not np.allclose(
+                    gram, np.eye(3, dtype=np.float64), rtol=0.0, atol=tolerance
+                ):
                     raise ValueError("Sweep frames must be orthonormal.")
                 if np.any(np.linalg.det(rotations) <= 0.0):
                     raise ValueError("Sweep frames must preserve orientation.")
-                if closed and (not np.array_equal(rotations[-1], rotations[0]) or not np.array_equal(offsets[-1], offsets[0])):
-                    raise ValueError("A closed frame sweep requires identical endpoint transforms.")
+                if closed and (
+                    not np.array_equal(rotations[-1], rotations[0])
+                    or not np.array_equal(offsets[-1], offsets[0])
+                ):
+                    raise ValueError(
+                        "A closed frame sweep requires identical endpoint transforms."
+                    )
             case _:
                 raise ValueError(f"Unsupported sweep map kind {kind!r}.")
         self.schedule = schedule
@@ -139,7 +175,9 @@ class SweepControl(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def from_stored_fields(cls: type[SweepControl], value: SweepControl, /) -> SweepControl:
+    def from_stored_fields(
+        cls: type[SweepControl], value: SweepControl, /
+    ) -> SweepControl:
         if type(value) is not cls:
             raise TypeError("Stored sweep control has the wrong registered type.")
         if value.kind is SweepMapKind.FRAMES:
@@ -164,8 +202,12 @@ class SweepControl(StrictModule, NonTrainableState):
                 closed=value.closed,
                 tolerance=value.tolerance,
             )
-        if fresh.control_id != value.control_id or array_tree_fingerprint(fresh) != array_tree_fingerprint(value):
-            raise ValueError("Stored sweep control fields do not match constructor-defined state.")
+        if fresh.control_id != value.control_id or array_tree_fingerprint(
+            fresh
+        ) != array_tree_fingerprint(value):
+            raise ValueError(
+                "Stored sweep control fields do not match constructor-defined state."
+            )
         return fresh
 
 
@@ -201,24 +243,25 @@ class SweepConstruction(StrictModule):
     ) -> None:
         parents = dict(cell_parent_ids)
         if set(parents) != {block.name for block in mesh.blocks}:
-            raise ValueError("Sweep parent-cell IDs must cover every output block exactly.")
+            raise ValueError(
+                "Sweep parent-cell IDs must cover every output block exactly."
+            )
         if len(reference_map) != len(mesh.blocks):
             raise ValueError("Sweep reference maps must cover every output block.")
         for block, witnesses in zip(mesh.blocks, reference_map, strict=True):
             validate_reference_cell_map_witnesses(witnesses)
-            if (
-                witnesses.target_cell_kind != block.cell_kind
-                or not np.array_equal(
-                    np.asarray(witnesses.target_cell_ids),
-                    np.asarray(block.global_ids),
-                )
+            if witnesses.target_cell_kind != block.cell_kind or not np.array_equal(
+                np.asarray(witnesses.target_cell_ids),
+                np.asarray(block.global_ids),
             ):
                 raise ValueError("Sweep reference maps must bind each output cell block.")
             if not np.array_equal(
                 np.asarray(witnesses.source_cell_ids),
                 np.asarray(parents[block.name]),
             ):
-                raise ValueError("Sweep reference maps must preserve actual source cell IDs.")
+                raise ValueError(
+                    "Sweep reference maps must preserve actual source cell IDs."
+                )
         self.mesh = mesh
         self.geometry = geometry
         self.source_mesh_id = source_mesh_id
@@ -232,11 +275,19 @@ class SweepConstruction(StrictModule):
         self.control_id = control_id
 
 
-def mapped_stations(points: np.ndarray, control: SweepControl, /) -> tuple[np.ndarray, np.ndarray]:
+def mapped_stations(
+    points: np.ndarray, control: SweepControl, /
+) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate the declared physical map at every scheduled station."""
     coordinates = np.asarray(points, dtype=np.float64)
-    if coordinates.ndim != 2 or coordinates.shape[1] not in (2, 3) or not np.all(np.isfinite(coordinates)):
-        raise ValueError("Sweep points must be finite coordinates with shape (node_count, 2 or 3).")
+    if (
+        coordinates.ndim != 2
+        or coordinates.shape[1] not in (2, 3)
+        or not np.all(np.isfinite(coordinates))
+    ):
+        raise ValueError(
+            "Sweep points must be finite coordinates with shape (node_count, 2 or 3)."
+        )
     if coordinates.shape[1] == 2:
         points3 = np.zeros((coordinates.shape[0], 3), dtype=np.float64)
         points3[:, :2] = coordinates
@@ -258,15 +309,25 @@ def mapped_stations(points: np.ndarray, control: SweepControl, /) -> tuple[np.nd
             parallel = (displacement @ axis)[:, None] * axis
             radial = displacement - parallel
             if np.any(np.all(radial == 0.0, axis=-1)):
-                raise ValueError("A revolution profile cannot contain a point on the sweep axis.")
+                raise ValueError(
+                    "A revolution profile cannot contain a point on the sweep axis."
+                )
             tangent = np.cross(axis, radial)
             for station, angle in enumerate(stations):
-                mapped[station] = origin + parallel + np.cos(angle) * radial + np.sin(angle) * tangent
+                mapped[station] = (
+                    origin + parallel + np.cos(angle) * radial + np.sin(angle) * tangent
+                )
             if control.closed:
-                defect = float(np.max(np.linalg.norm(mapped[-1] - mapped[0], axis=-1), initial=0.0))
-                scale = max(1.0, float(np.max(np.linalg.norm(points3, axis=-1), initial=0.0)))
+                defect = float(
+                    np.max(np.linalg.norm(mapped[-1] - mapped[0], axis=-1), initial=0.0)
+                )
+                scale = max(
+                    1.0, float(np.max(np.linalg.norm(points3, axis=-1), initial=0.0))
+                )
                 if defect > control.tolerance * scale:
-                    raise ValueError(f"The revolution seam does not close; residual {defect}.")
+                    raise ValueError(
+                        f"The revolution seam does not close; residual {defect}."
+                    )
                 mapped[-1] = mapped[0]
         case SweepMapKind.FRAMES:
             rotations = np.asarray(control.frames, dtype=np.float64)
@@ -280,15 +341,21 @@ def mapped_stations(points: np.ndarray, control: SweepControl, /) -> tuple[np.nd
     return mapped, stations
 
 
-def column_connectivity(rows: np.ndarray, layers: int, stride: int, closed: bool, /) -> np.ndarray:
+def column_connectivity(
+    rows: np.ndarray, layers: int, stride: int, closed: bool, /
+) -> np.ndarray:
     """Extrude oriented triangle/quad rows into prism/hexahedron rows."""
     source_rows = np.asarray(rows)
     if source_rows.ndim != 2 or source_rows.shape[1] < 3 or source_rows.shape[0] == 0:
-        raise ValueError("Sweep profile and geometry routes must be nonempty row arrays of width at least three.")
+        raise ValueError(
+            "Sweep profile and geometry routes must be nonempty row arrays of width at least three."
+        )
     if source_rows.dtype.kind not in "iu":
         raise TypeError("Sweep connectivity inputs must contain integer node identities.")
     if np.any(source_rows < 0) or np.any(source_rows > np.iinfo(np.int32).max):
-        raise OverflowError("Sweep profile node identity is outside int32 connectivity range.")
+        raise OverflowError(
+            "Sweep profile node identity is outside int32 connectivity range."
+        )
     cells = source_rows.astype(np.int32, copy=False)
     if isinstance(layers, bool) or not isinstance(layers, int) or layers < 1:
         raise ValueError("layers must be a positive integer.")
@@ -297,28 +364,38 @@ def column_connectivity(rows: np.ndarray, layers: int, stride: int, closed: bool
     if not isinstance(closed, bool):
         raise TypeError("closed must be bool.")
     if np.any(cells >= stride):
-        raise ValueError("Sweep connectivity rows must index the declared profile-node stride.")
+        raise ValueError(
+            "Sweep connectivity rows must index the declared profile-node stride."
+        )
     node_layers = layers if closed else layers + 1
     if node_layers * stride - 1 > np.iinfo(np.int32).max:
         raise OverflowError("Sweep node identity exceeds int32 connectivity range.")
     result = np.empty((layers * cells.shape[0], 2 * cells.shape[1]), dtype=np.int32)
     for layer in range(layers):
-        lower = result[layer * cells.shape[0] : (layer + 1) * cells.shape[0], : cells.shape[1]]
-        upper = result[layer * cells.shape[0] : (layer + 1) * cells.shape[0], cells.shape[1] :]
+        lower = result[
+            layer * cells.shape[0] : (layer + 1) * cells.shape[0], : cells.shape[1]
+        ]
+        upper = result[
+            layer * cells.shape[0] : (layer + 1) * cells.shape[0], cells.shape[1] :
+        ]
         np.add(cells, layer * stride, out=lower)
         next_layer = 0 if closed and layer == layers - 1 else (layer + 1) * stride
         np.add(cells, next_layer, out=upper)
     return result
 
 
-def _corner_local_indices(element: FiniteElementSpec, cell_kind: str, /) -> tuple[int, ...]:
+def _corner_local_indices(
+    element: FiniteElementSpec, cell_kind: str, /
+) -> tuple[int, ...]:
     reference_nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     vertices = reference_cell_topology(cell_kind).vertices
     indices: list[int] = []
     for vertex in vertices:
         matches = np.flatnonzero(np.all(reference_nodes == np.asarray(vertex), axis=1))
         if matches.size != 1:
-            raise ValueError("A polynomial sweep source element must include every reference vertex exactly once.")
+            raise ValueError(
+                "A polynomial sweep source element must include every reference vertex exactly once."
+            )
         indices.append(int(matches[0]))
     return tuple(indices)
 
@@ -333,7 +410,9 @@ def _require_profile_corner_maps(
     mesh_points = np.asarray(profile.coordinates, dtype=np.float64)
     for block, element, route in zip(profile.blocks, elements, routes, strict=True):
         if not isinstance(element, FiniteElementSpec):
-            raise ValueError("A sweep requires polynomial finite-element profile geometry.")
+            raise ValueError(
+                "A sweep requires polynomial finite-element profile geometry."
+            )
         corner_indices = _corner_local_indices(element, block.cell_kind)
         corner_routes = np.asarray(route, dtype=np.int64)[:, corner_indices]
         source_corners = coordinates[corner_routes]
@@ -356,23 +435,35 @@ def construct_sweep(
 ) -> SweepConstruction:
     """Carry the complete profile coordinate map through swept cells."""
     if profile.topological_dimension != 2 or profile.ambient_dimension not in (2, 3):
-        raise ValueError("A sweep profile must be a two-dimensional mesh embedded in 2D or 3D.")
+        raise ValueError(
+            "A sweep profile must be a two-dimensional mesh embedded in 2D or 3D."
+        )
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name must be nonempty.")
-    if any(block.cell_kind not in ("triangle", "quadrilateral") for block in profile.blocks):
-        raise ValueError("A sweep profile may contain only triangle or quadrilateral blocks.")
-    source_geometry = CellGeometrySpec.affine(profile) if profile_geometry is None else profile_geometry
+    if any(
+        block.cell_kind not in ("triangle", "quadrilateral") for block in profile.blocks
+    ):
+        raise ValueError(
+            "A sweep profile may contain only triangle or quadrilateral blocks."
+        )
+    source_geometry = (
+        CellGeometrySpec.affine(profile) if profile_geometry is None else profile_geometry
+    )
     source_elements, source_routes, source_coordinates = source_geometry.resolve(profile)
     source_points = np.asarray(source_coordinates, dtype=np.float64)
     if source_points.ndim != 2 or source_points.shape[1] != profile.ambient_dimension:
-        raise ValueError("Profile geometry coordinates must match the mesh ambient dimension.")
+        raise ValueError(
+            "Profile geometry coordinates must match the mesh ambient dimension."
+        )
     if any(not isinstance(element, FiniteElementSpec) for element in source_elements):
         raise ValueError("A sweep requires polynomial finite-element profile geometry.")
     _require_profile_corner_maps(profile, source_elements, source_routes, source_points)
     source_coordinates3 = np.zeros((source_points.shape[0], 3), dtype=np.float64)
     source_coordinates3[:, : source_points.shape[1]] = source_points
     mapped_geometry, stations = mapped_stations(source_coordinates3, control)
-    mapped_vertices, vertex_stations = mapped_stations(np.asarray(profile.coordinates), control)
+    mapped_vertices, vertex_stations = mapped_stations(
+        np.asarray(profile.coordinates), control
+    )
     if not np.array_equal(stations, vertex_stations):
         raise RuntimeError("Sweep station construction changed between coordinate banks.")
     layers = stations.size - 1
@@ -391,9 +482,13 @@ def construct_sweep(
     reference_maps: list[ReferenceCellMapWitnesses] = []
     vertex_stride = profile.coordinates.shape[0]
     offset = 0
-    for source_block, element, source_route in zip(profile.blocks, source_elements, source_routes, strict=True):
+    for source_block, element, source_route in zip(
+        profile.blocks, source_elements, source_routes, strict=True
+    ):
         source_vertices = np.asarray(source_block.vertices, dtype=np.int32)
-        columns = column_connectivity(source_vertices, layers, vertex_stride, control.closed)
+        columns = column_connectivity(
+            source_vertices, layers, vertex_stride, control.closed
+        )
         kind = "prism" if source_block.cell_kind == "triangle" else "hexahedron"
         block_name = f"{name}:{source_block.name}"
         identifiers = np.arange(offset, offset + columns.shape[0], dtype=np.int64)
@@ -419,10 +514,22 @@ def construct_sweep(
             )
         )
         offset += columns.shape[0]
-        parent_cells.append((block_name, np.tile(np.asarray(source_block.global_ids, dtype=np.int64), layers)))
-        source_cells.append((source_block.name, np.asarray(source_block.global_ids, dtype=np.int64).copy()))
+        parent_cells.append(
+            (
+                block_name,
+                np.tile(np.asarray(source_block.global_ids, dtype=np.int64), layers),
+            )
+        )
+        source_cells.append(
+            (
+                source_block.name,
+                np.asarray(source_block.global_ids, dtype=np.int64).copy(),
+            )
+        )
         if not isinstance(element, FiniteElementSpec):
-            raise ValueError("A sweep requires polynomial finite-element profile geometry.")
+            raise ValueError(
+                "A sweep requires polynomial finite-element profile geometry."
+            )
         output_elements[block_name] = swept_coordinate_element(element)
         route_columns = column_connectivity(
             np.asarray(source_route, dtype=np.int32),
@@ -433,17 +540,25 @@ def construct_sweep(
         output_routes[block_name] = route_columns
     if root_correspondence is not None:
         if name != "sweep":
-            raise ValueError("A mapped sweep root correspondence requires canonical sweep block names.")
+            raise ValueError(
+                "A mapped sweep root correspondence requires canonical sweep block names."
+            )
         if set(root_correspondence.block_names) != set(output_elements):
-            raise ValueError("Sweep root correspondence must name every output block exactly.")
+            raise ValueError(
+                "Sweep root correspondence must name every output block exactly."
+            )
         for block in profile.blocks:
             target_name = f"{name}:{block.name}"
             expected = layers * block.cell_count
             if (
-                root_correspondence.block_parent_cell_ids[target_name].shape != (expected,)
-                or root_correspondence.block_parent_vertex_ids[target_name].shape[0] != expected
+                root_correspondence.block_parent_cell_ids[target_name].shape
+                != (expected,)
+                or root_correspondence.block_parent_vertex_ids[target_name].shape[0]
+                != expected
             ):
-                raise ValueError("Sweep root correspondence must name every layer-major output cell.")
+                raise ValueError(
+                    "Sweep root correspondence must name every layer-major output cell."
+                )
     geometry_points = mapped_geometry[:node_layers].reshape(-1, 3)
     geometry = CellGeometrySpec(
         output_elements,
@@ -451,14 +566,57 @@ def construct_sweep(
         geometry_points,
         restriction_source=root_correspondence,
     )
-    layer_ids = np.arange(node_layers * vertex_stride, dtype=np.int64).reshape(node_layers, vertex_stride)
-    seam_ids = np.concatenate((layer_ids, layer_ids[:1]), axis=0) if control.closed else layer_ids
+    layer_ids = np.arange(node_layers * vertex_stride, dtype=np.int64).reshape(
+        node_layers, vertex_stride
+    )
+    seam_ids = (
+        np.concatenate((layer_ids, layer_ids[:1]), axis=0)
+        if control.closed
+        else layer_ids
+    )
     thickness = np.linalg.norm(mapped_vertices[1:] - mapped_vertices[:-1], axis=-1)
     mesh = CellMesh(
         coordinates,
         tuple(output_blocks),
         vertex_global_ids=np.arange(coordinates.shape[0], dtype=np.int64),
     )
+    periodic = profile.periodic_topology
+    if periodic is not None:
+        if profile.ambient_dimension != 3 or control.kind is not SweepMapKind.EXTRUSION:
+            raise ValueError(
+                "A periodic sweep currently requires an ambient-3 extrusion profile."
+            )
+        # A single deck action must apply at every station, not just at the
+        # profile vertices.  Exact invariance of the extrusion direction under
+        # each linear generator proves that the two affine maps commute.
+        axis = tuple(Fraction.from_float(float(value)) for value in control.axis)
+        generators, _ = exact_periodic_generators(periodic.cell)
+        for generator in generators:
+            if any(
+                sum(generator[row][column] * axis[column] for column in range(3))
+                != axis[row]
+                for row in range(3)
+            ):
+                raise ValueError(
+                    "The periodic group does not preserve the extrusion direction."
+                )
+        periodic.require_exact_geometry(profile, source_geometry)
+        representatives = np.asarray(periodic.vertex_representatives, dtype=np.int64)
+        shifts = np.asarray(periodic.vertex_shifts, dtype=np.int64)
+        swept_periodic = PeriodicMeshTopology(
+            mesh,
+            periodic.cell,
+            (
+                representatives[None, :] + vertex_stride * np.arange(node_layers)[:, None]
+            ).ravel(),
+            np.tile(shifts, (node_layers, 1)),
+        )
+        mesh = CellMesh(
+            coordinates,
+            tuple(output_blocks),
+            vertex_global_ids=np.arange(coordinates.shape[0], dtype=np.int64),
+            periodic_topology=swept_periodic,
+        )
     return SweepConstruction(
         mesh,
         geometry,

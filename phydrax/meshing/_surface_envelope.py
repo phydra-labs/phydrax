@@ -16,7 +16,7 @@ import numpy as np
 import phydrax.geometry._source_fidelity as source_fidelity_owner
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import MeshcoreError, SurfaceEnvelopeResult
+from .._meshcore import exact_orient3d, MeshcoreError, SurfaceEnvelopeResult
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -26,6 +26,7 @@ from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..geometry._domain_boundary import MeshingDomainBoundarySource
 from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+from ..geometry._planar_coverage import PlcSourcePointWitness
 from ..geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -36,7 +37,9 @@ from ..geometry.reconstruction._boundary import ReconstructedTriangleBoundarySou
 from ..geometry.reconstruction._core import ReconstructedGeometrySource
 from ..geometry.reconstruction._envelope import (
     envelope_reproduces,
+    parse_envelope_mode,
     produce_envelope,
+    SurfaceEnvelopeMode,
     SurfaceEnvelopeReproduction,
 )
 from ..geometry.reconstruction._sheet import AuthoredTriangleSheet
@@ -61,7 +64,7 @@ from ._plc_source import _numeric_entity_ids, PiecewiseLinearComplex
 from ._result import MeshingComplianceReport
 from ._scope import MeshingEntityKind, MeshingScope
 from ._sizing import UniformSizeControl
-from ._volume_generation import NativeVolumeSchedule
+from ._volume_generation import _shape_targets_gated, NativeVolumeSchedule
 from .providers._native_options import NativeMeshingOptions
 from .providers._native_plc_geometry import (
     simplex_volume_entities,
@@ -262,7 +265,7 @@ def _envelope_plc_source(
         segment_ids=segment_ids,
         segment_occurrence_paths=tuple(() for _ in segment_ids),
         region_occurrence_paths=tuple(() for _ in domain.region_ids),
-        boundary="fixed",
+        boundary="conforming",
     )
     source = NativePlcSource(complex_, domain.source_id, domain.source_revision)
     row_ids = tuple(
@@ -285,6 +288,7 @@ def _allocate_envelope_birth_ids(
     source_id: str,
     original: _EnvelopeOriginal,
     controls: tuple[float, float, float, float],
+    envelope_mode: SurfaceEnvelopeMode,
     coordinate_contract: SpatialCoordinateContract,
     vertex_count: int,
     facet_count: int,
@@ -297,6 +301,7 @@ def _allocate_envelope_birth_ids(
             "source_id": source_id,
             "original": (original.source_id, original.source_revision),
             "controls": controls,
+            "envelope_mode": envelope_mode,
             "coordinate_contract": coordinate_contract.spatial_id,
         }
     )
@@ -402,6 +407,31 @@ def _envelope_domain(
     return domain, vertex_entity_ids, facet_entity_ids
 
 
+def _carrier_matches_mode(
+    result: SurfaceEnvelopeResult, mode: SurfaceEnvelopeMode, /
+) -> bool:
+    """Whether the kernel's retained carrier has the shape ``mode`` declares.
+
+    ``"remeshed"`` drops the carrier (its volume vertices are the surface
+    vertices, with no tetrahedra); ``"kernel"`` keeps a nonempty tetrahedral
+    carrier whose vertex bank extends the surface vertices.
+    """
+    surface = np.asarray(result.surface_vertices, dtype=np.float64)
+    volume = np.asarray(result.volume_vertices, dtype=np.float64)
+    cells = np.asarray(result.tetrahedra)
+    match mode:
+        case "remeshed":
+            return np.array_equal(volume, surface) and cells.shape[0] == 0
+        case "kernel":
+            return (
+                volume.shape[0] > surface.shape[0]
+                and cells.ndim == 2
+                and cells.shape[0] > 0
+                and cells.shape[1] == 4
+                and np.array_equal(volume[: surface.shape[0]], surface)
+            )
+
+
 @final
 class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
     """Explicit unsigned-distance envelope with an independently owned PWL domain.
@@ -409,12 +439,19 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
     ``original`` is either a closed reconstructed ``MeshRegion`` or an authored,
     possibly open and imperfect, ``AuthoredTriangleSheet`` whose topology repair
     interpretation and counts stay on ``original.report``/``original.repair``.
+    The meshed domain approximates the original: it is the sampled
+    unsigned-distance sublevel set, not the original surface, and features
+    may round or topology change within the certified band.
     ``result.bounds`` is the native deviation proof: ``bounds[0]`` bounds the
     distance from every original point to the envelope surface and
     ``bounds[2] <= dist(envelope point, original) <= bounds[1]``.
+    ``envelope_mode`` selects the kernel construction (see
+    ``SurfaceEnvelopeMode``): ``"remeshed"`` fills the band-remeshed surface
+    afresh; ``"kernel"`` keeps the marching-tetrahedra extraction, its skin as
+    the envelope surface and its tetrahedral carrier as the initial volume.
     ``reproduction`` records that the kernel produced ``result`` from the
-    original's triangles and these controls; currentness accepts it only for
-    exactly that content and otherwise reruns the kernel.
+    original's triangles, these controls and this mode; currentness accepts it
+    only for exactly that content and otherwise reruns the kernel.
     """
 
     original: _EnvelopeOriginal
@@ -436,6 +473,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
     spacing: float = eqx.field(static=True)
     certificate_spacing: float = eqx.field(static=True)
     maximum_deviation: float = eqx.field(static=True)
+    envelope_mode: SurfaceEnvelopeMode = eqx.field(static=True)
     original_query_id: str = eqx.field(static=True)
     envelope_id: str = eqx.field(static=True)
     scope_entity_id_banks: tuple[np.ndarray, ...]
@@ -458,6 +496,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         spacing: float,
         certificate_spacing: float,
         maximum_deviation: float,
+        envelope_mode: SurfaceEnvelopeMode,
     ) -> None:
         if not isinstance(original, (ReconstructedGeometrySource, AuthoredTriangleSheet)):
             raise TypeError(
@@ -480,6 +519,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
             _real_positive(certificate_spacing, "certificate_spacing"),
             _real_positive(maximum_deviation, "maximum_deviation"),
         )
+        mode = parse_envelope_mode(envelope_mode)
         # The native kernel certifies an envelope only when the offset dominates
         # its sampling error; refuse the declaration before running the kernel.
         if not controls[0] > np.sqrt(3.0) * controls[1] + controls[2]:
@@ -500,10 +540,12 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 stage="source_inspection",
             )
         try:
-            # The marching-tetrahedra surface is remeshed inside the certified
-            # band: same band bounds, embedded oriented manifold, better angles.
+            # "remeshed": the marching-tetrahedra surface is remeshed inside the
+            # certified band (same band bounds, embedded oriented manifold,
+            # better angles) and the carrier is dropped. "kernel": the
+            # extraction and its tetrahedral carrier are kept unchanged.
             result, reproduction = produce_envelope(
-                source_vertices, source_triangles, controls[:3]
+                source_vertices, source_triangles, controls[:3], mode
             )
         except MeshcoreError as error:
             raise _failure(
@@ -528,6 +570,12 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 stage="surface_envelope_execution",
             )
+        if not _carrier_matches_mode(result, mode):
+            raise _failure(
+                f"The native envelope kernel returned a carrier inconsistent with the {mode!r} envelope mode.",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                stage="surface_envelope_execution",
+            )
         (
             allocation_id,
             region_id,
@@ -539,6 +587,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
             source_id_,
             fresh_original,
             controls,
+            mode,
             coordinate_contract,
             int(result.surface_vertices.shape[0]),
             int(result.surface_triangles.shape[0]),
@@ -576,6 +625,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
         self.offset, self.spacing, self.certificate_spacing, self.maximum_deviation = (
             controls
         )
+        self.envelope_mode = mode
         self.original_query_id = original_domain_query.source_scope_id
         self.scope_entity_id_banks = id_banks
         self.scope_entity_key_banks = key_banks
@@ -592,6 +642,7 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 "source": (source_id_, domain.source_revision),
                 "original": (fresh_original.source_id, fresh_original.source_revision),
                 "controls": controls,
+                "envelope_mode": mode,
                 "entity_allocation": allocation_id,
                 "native_vertex_lineage": array_tree_fingerprint(
                     (native_vertex_rows, vertex_entity_ids)
@@ -610,6 +661,17 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 "coordinate_contract": coordinate_contract.spatial_id,
             }
         )
+
+    def kept_carrier(self, /) -> tuple[np.ndarray, np.ndarray] | None:
+        """The kernel's tetrahedral carrier in ``"kernel"`` mode, else ``None``."""
+        match self.envelope_mode:
+            case "kernel":
+                return (
+                    np.asarray(self.result.volume_vertices, dtype=np.float64),
+                    np.asarray(self.result.tetrahedra, dtype=np.int64),
+                )
+            case "remeshed":
+                return None
 
     def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
         if isinstance(dimension, (bool, np.bool_)) or not isinstance(dimension, Integral):
@@ -673,21 +735,20 @@ class SurfaceEnvelopeSource(StrictModule, NonTrainableState):
                 source_vertices,
                 source_triangles,
                 (self.offset, self.spacing, self.certificate_spacing),
+                self.envelope_mode,
                 result.bounds,
                 result.surface_vertices,
                 result.surface_triangles,
                 self.reproduction,
+                carrier=(result.volume_vertices, result.tetrahedra),
             )
         except MeshcoreError as error:
             raise ValueError(
                 f"The retained native envelope no longer reproduces: {error}"
             ) from error
-        # The remeshed envelope drops the marching-tetrahedra carrier: its volume
-        # vertices are the surface vertices and it has no tetrahedra.
         if (
             not reproduces
-            or not np.array_equal(result.volume_vertices, result.surface_vertices)
-            or result.tetrahedra.shape[0] != 0
+            or not _carrier_matches_mode(result, self.envelope_mode)
             or original_domain_query.source_scope_id != self.original_query_id
         ):
             raise ValueError(
@@ -749,14 +810,14 @@ def _mesh_scope(
     )
 
 
-def _association_target_ids(
+def _association_target_groups(
     source: SurfaceEnvelopeSource,
     construction: NativeMeshConstruction,
     dimension: int,
     source_entity_ids: np.ndarray,
     role: GeometrySourceEntityRole,
     /,
-) -> np.ndarray:
+) -> tuple[tuple[int, ...], ...]:
     organization = construction.organization
     if organization is None:
         raise _failure(
@@ -811,14 +872,34 @@ def _association_target_ids(
     for identifier in np.asarray(source_entity_ids, dtype=np.int64).tolist():
         key = source.source_entity_key_for_scope(dimension, int(identifier))
         candidates = target_by_key.get(key, ())
-        if len(candidates) != 1:
+        if not candidates:
             raise _failure(
-                "A derived envelope entity does not have one identity-bound target entity.",
+                "A derived envelope entity has no target ancestry.",
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 stage="source_witness",
             )
-        output.append(candidates[0])
-    return np.asarray(output, dtype=np.int64)
+        output.append(tuple(candidates))
+    return tuple(output)
+
+
+def _association_target_ids(
+    source: SurfaceEnvelopeSource,
+    construction: NativeMeshConstruction,
+    dimension: int,
+    source_entity_ids: np.ndarray,
+    role: GeometrySourceEntityRole,
+    /,
+) -> np.ndarray:
+    groups = _association_target_groups(
+        source, construction, dimension, source_entity_ids, role
+    )
+    if any(len(group) != 1 for group in groups):
+        raise _failure(
+            "A derived envelope vertex does not have one identity-bound target.",
+            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            stage="source_witness",
+        )
+    return np.asarray([group[0] for group in groups], dtype=np.int64)
 
 
 def _envelope_target_boundary(
@@ -834,12 +915,15 @@ def _envelope_target_boundary(
         source.scope_entity_ids_by_mesh_row[0],
         GeometrySourceEntityRole.VERTEX,
     )
-    facet_ids = _association_target_ids(
+    facet_groups = _association_target_groups(
         source,
         construction,
         2,
         source.scope_entity_ids_by_mesh_row[2],
         GeometrySourceEntityRole.FACET,
+    )
+    facet_ids = np.asarray(
+        [identifier for group in facet_groups for identifier in group], dtype=np.int64
     )
     target_vertex_rows = {
         int(identifier): row
@@ -861,7 +945,6 @@ def _envelope_target_boundary(
             )
     _, face_rows = simplex_volume_entities(mesh)
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
-    vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     boundary_mask = np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
     if face_rows.shape != (face_ids.size, 3) or boundary_mask.shape != face_ids.shape:
         raise _failure(
@@ -869,33 +952,12 @@ def _envelope_target_boundary(
             category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             stage="source_witness",
         )
-    row_by_face_id = {
-        int(identifier): row for row, identifier in enumerate(face_ids.tolist())
-    }
-    target_face_vertices = {
-        int(identifier): tuple(sorted(int(value) for value in vertex_global_ids[face]))
-        for face, identifier in zip(face_rows, face_ids.tolist(), strict=True)
-    }
-    for source_row, facet_id in enumerate(facet_ids.tolist()):
-        face_row = row_by_face_id.get(int(facet_id))
-        if face_row is None or not boundary_mask[face_row]:
-            raise _failure(
-                "A fixed envelope facet is absent from the generated volume boundary.",
-                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                stage="source_witness",
-            )
-        expected = tuple(
-            sorted(
-                int(vertex_ids[int(vertex)])
-                for vertex in source.domain.facets[source_row]
-            )
+    if set(facet_ids.tolist()) != set(face_ids[boundary_mask].tolist()):
+        raise _failure(
+            "The derived PLC ancestry does not cover the actual target boundary.",
+            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            stage="source_witness",
         )
-        if target_face_vertices[int(facet_id)] != expected:
-            raise _failure(
-                "A generated boundary facet changed its envelope vertex ancestry.",
-                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                stage="source_witness",
-            )
     return vertex_ids, facet_ids
 
 
@@ -912,7 +974,6 @@ def _envelope_boundary_chart_witness(
     mesh = construction.mesh
     source_facet_ids = np.asarray(source.scope_entity_ids_by_mesh_row[2], dtype=np.int64)
     source_vertex_ids = np.asarray(vertex_ids, dtype=np.int64)
-    target_facet_ids = np.asarray(facet_ids, dtype=np.int64)
     if (
         source_query.domain.domain_id != source.domain.domain_id
         or (source_query.source_id, source_query.source_revision)
@@ -920,7 +981,6 @@ def _envelope_boundary_chart_witness(
         or source_query.entity_dimension != 2
         or not set(source_query.entity_ids.tolist()) <= set(source_facet_ids.tolist())
         or source_facet_ids.shape != (source.domain.facets.shape[0],)
-        or target_facet_ids.shape != source_facet_ids.shape
         or source_vertex_ids.shape != (source.domain.vertices.shape[0],)
     ):
         raise _failure(
@@ -1019,19 +1079,32 @@ def _envelope_boundary_chart_witness(
             stage="source_witness",
         )
 
-    target_face_by_source_id = {
-        int(source_id): int(target_id)
-        for source_id, target_id in zip(
-            source_facet_ids.tolist(), target_facet_ids.tolist(), strict=True
-        )
+    groups = _association_target_groups(
+        source, construction, 2, source_facet_ids, GeometrySourceEntityRole.FACET
+    )
+    target_face_by_source_id = dict(zip(source_facet_ids.tolist(), groups, strict=True))
+    vertex_row_by_id = {
+        int(identifier): row
+        for row, identifier in enumerate(mesh_vertex_global_ids.tolist())
     }
-    if len(target_face_by_source_id) != source_facet_ids.size:
-        raise _failure(
-            "Derived PWL facet identities are not unique.",
-            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            stage="source_witness",
-        )
+    point_witness = construction.certification.source_coverage_witness
+    ancestry = None
+    if point_witness is not None:
+        if not isinstance(point_witness, PlcSourcePointWitness):
+            raise _failure(
+                "The envelope fill requires a PLC source point witness.",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                stage="source_witness",
+            )
+        if not np.array_equal(point_witness.vertex_global_ids, mesh_vertex_global_ids):
+            raise _failure(
+                "The source-point evidence names a different target vertex bank.",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                stage="source_witness",
+            )
+        from ._envelope_ancestry import EnvelopeAncestry
 
+        ancestry = EnvelopeAncestry(source, point_witness)
     standard_triangle = (
         (Fraction(0), Fraction(0)),
         (Fraction(1), Fraction(0)),
@@ -1047,13 +1120,16 @@ def _envelope_boundary_chart_witness(
     source_occurrences: list[tuple[str, ...]] = []
     source_parameter_rows = []
     orientations: list[int] = []
-    for source_entity_id, source_facet_row in zip(
-        source_query.entity_ids.tolist(),
-        source_query.source_rows.tolist(),
-        strict=True,
+    for source_entity_id, source_facet_row, target_face_id in (
+        (int(identifier), int(row), int(target))
+        for identifier, row in zip(
+            source_query.entity_ids.tolist(),
+            source_query.source_rows.tolist(),
+            strict=True,
+        )
+        for target in target_face_by_source_id[int(identifier)]
     ):
-        chart_id = source_query.chart_id_for_entity_id(int(source_entity_id))
-        target_face_id = target_face_by_source_id[int(source_entity_id)]
+        chart_id = source_query.chart_id_for_entity_id(source_entity_id)
         target_face = target_faces.get(target_face_id)
         if target_face is None:
             raise _failure(
@@ -1079,20 +1155,25 @@ def _envelope_boundary_chart_witness(
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 stage="source_witness",
             )
-        try:
-            local_source_vertices = tuple(
-                source_local_by_target_id[int(identifier)]
-                for identifier in target_vertex_ids
+        if ancestry is not None:
+            source_parameters = ancestry.facet_parameters(
+                tuple(
+                    vertex_row_by_id[int(identifier)] for identifier in target_vertex_ids
+                ),
+                source_facet_row,
             )
-        except KeyError as error:
-            raise _failure(
-                "An output boundary face changes its exact PWL vertex ancestry.",
-                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                stage="source_witness",
-            ) from error
-        source_parameters = tuple(
-            standard_triangle[index] for index in local_source_vertices
-        )
+        else:
+            try:
+                source_parameters = tuple(
+                    standard_triangle[source_local_by_target_id[int(identifier)]]
+                    for identifier in target_vertex_ids
+                )
+            except KeyError as error:
+                raise _failure(
+                    "An output boundary face changes its exact PWL vertex ancestry.",
+                    category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    stage="source_witness",
+                ) from error
         signed_area = (source_parameters[1][0] - source_parameters[0][0]) * (
             source_parameters[2][1] - source_parameters[0][1]
         ) - (source_parameters[1][1] - source_parameters[0][1]) * (
@@ -1125,8 +1206,9 @@ def _envelope_boundary_chart_witness(
         expected_boundary_ids
         if source_query.is_full_scope
         else {
-            target_face_by_source_id[int(identifier)]
+            target
             for identifier in source_query.entity_ids.tolist()
+            for target in target_face_by_source_id[int(identifier)]
         }
     )
     if set(target_entity_ids) != expected_query_face_ids:
@@ -1217,7 +1299,7 @@ def _envelope_feature_witness(
         )
 
     source_edge_ids = np.asarray(source.scope_entity_ids_by_mesh_row[1], dtype=np.int64)
-    target_edge_ids = _association_target_ids(
+    target_edge_ids = _association_target_groups(
         source,
         construction,
         1,
@@ -1306,10 +1388,36 @@ def _envelope_feature_witness(
     source_parameter_rows = []
     orientations: list[int] = []
     source_edges = np.asarray(source.edges, dtype=np.int64)
-    for source_id, source_row in zip(
-        source_query.entity_ids.tolist(), source_query.source_rows.tolist(), strict=True
+    vertex_row_by_id = {
+        int(identifier): row for row, identifier in enumerate(mesh_vertex_ids.tolist())
+    }
+    point_witness = construction.certification.source_coverage_witness
+    ancestry = None
+    if point_witness is not None:
+        if not isinstance(point_witness, PlcSourcePointWitness):
+            raise _failure(
+                "The envelope fill requires a PLC source point witness.",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                stage="source_witness",
+            )
+        if not np.array_equal(point_witness.vertex_global_ids, mesh_vertex_ids):
+            raise _failure(
+                "The source-point evidence names a different target vertex bank.",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                stage="source_witness",
+            )
+        from ._envelope_ancestry import EnvelopeAncestry
+
+        ancestry = EnvelopeAncestry(source, point_witness)
+    for source_id, source_row, target_edge_id in (
+        (int(identifier), int(row), int(target))
+        for identifier, row in zip(
+            source_query.entity_ids.tolist(),
+            source_query.source_rows.tolist(),
+            strict=True,
+        )
+        for target in target_edge_ids[int(row)]
     ):
-        target_edge_id = int(target_edge_ids[int(source_row)])
         target_edge_row = mesh_edge_rows.get(target_edge_id)
         chart = target_edge_charts.get(target_edge_id)
         if (
@@ -1327,21 +1435,29 @@ def _envelope_feature_witness(
         source_target_vertices = tuple(
             int(vertex_ids[int(row)]) for row in source_vertex_rows.tolist()
         )
-        if len(set(source_target_vertices)) != 2 or set(source_target_vertices) != set(
-            target_vertices
-        ):
-            raise _failure(
-                "A protected PWL curve changed its exact source vertex ancestry.",
-                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                stage="source_witness",
+        if ancestry is not None:
+            source_parameters = ancestry.edge_parameters(
+                tuple(
+                    vertex_row_by_id[int(identifier)] for identifier in target_vertices
+                ),
+                source_row,
             )
-        source_parameter_by_vertex = {
-            source_target_vertices[0]: Fraction(0),
-            source_target_vertices[1]: Fraction(1),
-        }
-        source_parameters = tuple(
-            (source_parameter_by_vertex[int(vertex)],) for vertex in target_vertices
-        )
+        else:
+            if len(set(source_target_vertices)) != 2 or set(
+                source_target_vertices
+            ) != set(target_vertices):
+                raise _failure(
+                    "A protected PWL curve changed its exact source vertex ancestry.",
+                    category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    stage="source_witness",
+                )
+            source_parameter_by_vertex = {
+                source_target_vertices[0]: Fraction(0),
+                source_target_vertices[1]: Fraction(1),
+            }
+            source_parameters = tuple(
+                (source_parameter_by_vertex[int(vertex)],) for vertex in target_vertices
+            )
         chart_id = source_query.chart_id_for_entity_id(int(source_id))
         entity_key, occurrence_path = source_query.chart_source_key(1, chart_id)
         target_cell_ids.append(cell_id)
@@ -1467,6 +1583,10 @@ def _compliance(
     schedule: NativeVolumeSchedule,
     construction: NativeMeshConstruction,
     /,
+    derived_tolerance: float,
+    source_to_mesh_upper: float,
+    mesh_to_source_upper: float,
+    mesh_to_source_lower: float,
     soft_feature_outcomes: tuple[tuple[ProtectedFeature, float, bool], ...] = (),
 ) -> MeshingComplianceReport:
     base = construction.compliance
@@ -1475,11 +1595,12 @@ def _compliance(
     coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
     tetrahedra = np.asarray(construction.mesh.blocks[0].vertices, dtype=np.int64)
     radius_edge, minimum_dihedral = _tetrahedron_quality(coordinates, tetrahedra)
-    source_deviation = max(float(source.result.bounds[0]), float(source.result.bounds[1]))
+    source_deviation = max(source_to_mesh_upper, mesh_to_source_upper)
     requested = list(base.requested)
+    if schedule.radius_edge_bound is not None:
+        requested.append(("radius_edge_bound", schedule.radius_edge_bound))
     requested.extend(
         (
-            ("radius_edge_bound", schedule.radius_edge_bound),
             ("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees),
             ("source_envelope_maximum_deviation", source.maximum_deviation),
         )
@@ -1490,19 +1611,35 @@ def _compliance(
             ("maximum_radius_edge_ratio", radius_edge),
             ("minimum_dihedral_degrees", minimum_dihedral),
             ("source_envelope_maximum_deviation", source_deviation),
-            ("source_envelope_input_to_envelope_upper", float(source.result.bounds[0])),
-            ("source_envelope_envelope_to_input_upper", float(source.result.bounds[1])),
-            ("source_envelope_envelope_to_input_lower", float(source.result.bounds[2])),
+            ("source_envelope_input_to_envelope_upper", source_to_mesh_upper),
+            ("source_envelope_envelope_to_input_upper", mesh_to_source_upper),
+            ("source_envelope_envelope_to_input_lower", mesh_to_source_lower),
         )
     )
-    counters = source.result.remesh_counters
-    if counters is not None:
-        achieved.append(
-            (
-                "source_envelope_surface_triangles_below_angle_or_size_target",
-                float(counters[4]),
+    match source.envelope_mode:
+        case "remeshed":
+            counters = source.result.remesh_counters
+            if counters is None:
+                raise TypeError("A remeshed envelope lost its native remesh counters.")
+            achieved.append(
+                (
+                    "source_envelope_surface_triangles_below_angle_or_size_target",
+                    float(counters[4]),
+                )
             )
-        )
+        case "kernel":
+            achieved.extend(
+                (
+                    (
+                        "source_envelope_kernel_carrier_vertices",
+                        float(source.result.volume_vertices.shape[0]),
+                    ),
+                    (
+                        "source_envelope_kernel_carrier_tetrahedra",
+                        float(source.result.tetrahedra.shape[0]),
+                    ),
+                )
+            )
     if isinstance(source.original, AuthoredTriangleSheet):
         achieved.extend(
             (f"source_topology_repair:{name}", float(value))
@@ -1522,9 +1659,19 @@ def _compliance(
             )
         )
     issues = list(base.issues)
-    if radius_edge > schedule.radius_edge_bound:
+    if schedule.radius_edge_bound is None and not np.isfinite(radius_edge):
+        issues.append("nonrepresentable_radius_edge")
+    if schedule.minimum_dihedral_degrees == 0.0 and not np.isfinite(minimum_dihedral):
+        issues.append("nonrepresentable_dihedral")
+    # The derived PLC fill's report already carries soft per-cell evidence.
+    shape_gated = _shape_targets_gated(schedule)
+    if (
+        schedule.radius_edge_bound is not None
+        and radius_edge > schedule.radius_edge_bound
+        and (shape_gated or not np.isfinite(radius_edge))
+    ):
         issues.append("radius_edge_bound")
-    if minimum_dihedral < schedule.minimum_dihedral_degrees:
+    if shape_gated and minimum_dihedral < schedule.minimum_dihedral_degrees:
         issues.append("minimum_dihedral_degrees")
     if source_deviation > source.maximum_deviation:
         issues.append("source_envelope_maximum_deviation")
@@ -1532,7 +1679,9 @@ def _compliance(
         requested.append(
             ("derived_envelope_maximum_deviation", specification.maximum_deviation)
         )
-        achieved.append(("derived_envelope_maximum_deviation", 0.0))
+        achieved.append(("derived_envelope_maximum_deviation", derived_tolerance))
+        if derived_tolerance > specification.maximum_deviation:
+            issues.append("derived_envelope_maximum_deviation")
     return MeshingComplianceReport(
         specification.specification_id,
         issues=tuple(dict.fromkeys(issues)),
@@ -1544,15 +1693,54 @@ def _compliance(
 def _organization(
     source: SurfaceEnvelopeSource,
     mesh: CellMesh,
-    boundary_facet_ids: np.ndarray,
     plc_organization: NativeMeshOrganization,
     /,
 ) -> NativeMeshOrganization:
     domain = source.domain
-    boundary_faces = np.asarray(domain.facets, dtype=np.int64)
-    boundary_vertex_count = np.asarray(domain.vertices).shape[0]
+    _, all_faces = simplex_volume_entities(mesh)
+    mask = np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
+    face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+    boundary_faces = np.asarray(all_faces[mask], dtype=np.int64)
+    boundary_facet_ids = face_ids[mask]
+    # Canonical incidence stores unoriented faces. Orient each exterior face
+    # away from its unique incident tetrahedron using the exact predicate.
+    boundary_rows = {
+        tuple(sorted(int(value) for value in face)): row
+        for row, face in enumerate(boundary_faces.tolist())
+    }
+    opposite = np.full(len(boundary_faces), -1, dtype=np.int64)
+    for block in mesh.blocks:
+        for cell in np.asarray(block.vertices, dtype=np.int64):
+            if len(cell) != 4:
+                raise ValueError("Envelope boundary requires tetrahedral cells.")
+            for local in range(4):
+                key = tuple(
+                    sorted(int(cell[index]) for index in range(4) if index != local)
+                )
+                row = boundary_rows.get(key)
+                if row is not None:
+                    if opposite[row] >= 0:
+                        raise ValueError(
+                            "An envelope boundary face has multiple incident cells."
+                        )
+                    opposite[row] = int(cell[local])
+    if np.any(opposite < 0):
+        raise ValueError("An envelope boundary face has no incident cell.")
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    signs = exact_orient3d(
+        coordinates[boundary_faces[:, 0]],
+        coordinates[boundary_faces[:, 1]],
+        coordinates[boundary_faces[:, 2]],
+        coordinates[opposite],
+    )
+    if np.any(signs == 0):
+        raise ValueError("An envelope boundary face has a degenerate incident cell.")
+    inward = signs > 0
+    boundary_faces[inward] = boundary_faces[inward][:, (0, 2, 1)]
+    boundary_vertex_rows, inverse = np.unique(boundary_faces, return_inverse=True)
+    boundary_faces = inverse.reshape(boundary_faces.shape)
     boundary = SurfaceModel.from_triangles(
-        np.asarray(domain.vertices, dtype=np.float64),
+        np.asarray(mesh.coordinates, dtype=np.float64)[boundary_vertex_rows],
         boundary_faces,
         SurfaceMetadata(
             source_id=source.source_id,
@@ -1560,6 +1748,7 @@ def _organization(
             coordinate_contract=source.coordinate_contract,
             provenance=(
                 "native_unsigned_distance_surface_envelope",
+                f"surface_envelope_mode:{source.envelope_mode}",
                 source.original.binding_id,
                 source.original.source_revision,
                 source.envelope_id,
@@ -1567,7 +1756,7 @@ def _organization(
             cell_tags=("unsigned-distance-envelope",) * boundary_faces.shape[0],
         ),
         vertex_global_ids=np.asarray(mesh.vertex_global_ids, dtype=np.int64)[
-            :boundary_vertex_count
+            boundary_vertex_rows
         ],
         cell_global_ids=np.asarray(boundary_facet_ids, dtype=np.int64),
         numeric_version=source.source_revision,
@@ -1590,6 +1779,7 @@ def _organization(
         labels=labels,
         attributes=plc_organization.attributes,
         associations=plc_organization.associations,
+        region_boundary_evidence=plc_organization.region_boundary_evidence,
     )
 
 
@@ -1654,6 +1844,19 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             vertex_ids,
             facet_ids,
         )
+        derived_certificate = source_fidelity_owner.certify_source_fidelity(
+            mesh, geometry, source_query, tolerance=0.0, witness=derived_witness
+        )
+        derived_tolerance = max(
+            derived_certificate.mesh_to_source_upper,
+            derived_certificate.source_to_mesh_upper,
+        )
+        if not np.isfinite(derived_tolerance):
+            raise _failure(
+                "The derived envelope boundary has no finite source fidelity bound.",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                stage="source_witness",
+            )
         distance_witness = SurfaceEnvelopeDistanceWitness(
             mesh_id=mesh.mesh_id,
             geometry_id=cell_geometry_id(geometry),
@@ -1664,12 +1867,17 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             offset=source.offset,
             spacing=source.spacing,
             certificate_spacing=source.certificate_spacing,
+            envelope_mode=source.envelope_mode,
             bounds=np.asarray(source.result.bounds, dtype=np.float64),
             envelope_vertices=np.asarray(source.domain.vertices, dtype=np.float64),
             envelope_triangles=np.asarray(source.domain.facets, dtype=np.int64),
-            target_vertex_global_ids=vertex_ids,
+            target_vertex_global_ids=np.asarray(mesh.vertex_global_ids, dtype=np.int64)[
+                np.asarray(mesh.boundary_masks[0], dtype=np.bool_)
+            ],
             target_facet_global_ids=facet_ids,
             reproduction=source.reproduction,
+            derived_source=source_query,
+            derived_witness=derived_witness,
         )
         try:
             distance_witness.require_current(
@@ -1681,6 +1889,13 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
                 category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 stage="source_witness",
             ) from error
+        original_certificate = source_fidelity_owner.certify_source_fidelity(
+            mesh,
+            geometry,
+            source.original_boundary_query,
+            tolerance=source.maximum_deviation,
+            witness=distance_witness,
+        )
         feature_scoped_fidelity = []
         soft_feature_outcomes = []
         for feature in self.specification.protected_features:
@@ -1729,10 +1944,10 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             MeshCertificationSchedule("volume_plc"),
             source.source_id,
             source.source_revision,
-            domain=source.domain,
+            domain=base_request.domain,
             cell_regions=np.asarray(base_request.cell_regions, dtype=np.int64),
             fidelity_source=source_query,
-            fidelity_tolerance=0.0,
+            fidelity_tolerance=derived_tolerance,
             fidelity_witness=derived_witness,
             protected_features=self.specification.protected_features,
             scoped_fidelity=(
@@ -1744,6 +1959,7 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
                 *feature_scoped_fidelity,
             ),
             feature_source=source if self.specification.protected_features else None,
+            source_coverage_witness=base_request.source_coverage_witness,
         )
         schedule = self.options.volume_schedule
         if not isinstance(schedule, NativeVolumeSchedule):
@@ -1757,12 +1973,15 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             self.specification,
             schedule,
             construction,
+            derived_tolerance=derived_tolerance,
+            source_to_mesh_upper=original_certificate.source_to_mesh_upper,
+            mesh_to_source_upper=original_certificate.mesh_to_source_upper,
+            mesh_to_source_lower=original_certificate.mesh_to_source_lower,
             soft_feature_outcomes=tuple(soft_feature_outcomes),
         )
         organization = _organization(
             source,
             mesh,
-            facet_ids,
             construction.organization,
         )
         return NativeMeshConstruction(
@@ -1884,6 +2103,7 @@ def prepare_native_surface_envelope(
         specification,
         coordinate_contract,
         schedule,
+        carrier=source.kept_carrier(),
     )
     return _PreparedSurfaceEnvelopeRoute(
         source,

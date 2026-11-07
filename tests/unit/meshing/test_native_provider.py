@@ -26,6 +26,7 @@ from phydrax.meshing import (
     MeshingFailureCategory,
     MeshingScope,
     MeshingStageKind,
+    MeshQualityTarget,
     NativeMeshingOptions,
     NativeMeshingPlan,
     NativeMeshingProvider,
@@ -41,6 +42,7 @@ from phydrax.meshing import (
     VolumeMeshingSpec,
 )
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
+from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
 from phydrax.meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
 from phydrax.meshing.providers._native_sources import (
     NativeCurveSource,
@@ -191,6 +193,47 @@ def test_native_provider_builds_a_direct_brep_volume_boundary_internally() -> No
     result = plan.execute()
     assert result.certification is not None and result.certification.passed
     assert result.coordinate_contract.spatial_id == contract.spatial_id
+
+
+def test_native_cad_volume_soft_shape_strength_softens_boundary_angle() -> None:
+    contract = SpatialCoordinateContract.si()
+    source = brep_box(
+        np.asarray((0.0, 0.0, 0.0), dtype=np.float64),
+        np.asarray((1.0, 1.0, 1.0), dtype=np.float64),
+        coordinate_contract=contract,
+        source_id="native-cad-soft-shape-box",
+    )
+    boundary = MeshingScope.whole(source, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.5),),
+        maximum_deviation=0.05,
+    )
+
+    def plan(strength: SizeControlStrength) -> NativeMeshingPlan:
+        schedule = NativeVolumeSchedule(shape_strength=strength)
+        options = NativeMeshingOptions("cad_tetrahedral", volume_schedule=schedule)
+        return NativeMeshingProvider(options).plan(source, specification)
+
+    def boundary_target(candidate: NativeMeshingPlan) -> MeshQualityTarget:
+        prepared = candidate.prepared
+        assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+        target = prepared.boundary_specification.quality_target
+        assert target is not None
+        return target
+
+    hard_target = boundary_target(plan(SizeControlStrength.HARD))
+    soft_plan = plan(SizeControlStrength.SOFT)
+    soft_target = boundary_target(soft_plan)
+    assert hard_target.hard and not soft_target.hard
+    assert soft_target.minimum_angle == hard_target.minimum_angle
+    result = soft_plan.execute()
+    assert result.certification is not None and result.certification.passed
+    assert result.compliance.issues == ()
+    assert "soft_shape_target_unmet_count" in dict(result.compliance.achieved)
+
 
 
 def test_native_provider_preserves_an_explicit_incompatible_route() -> None:

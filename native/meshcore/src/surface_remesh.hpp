@@ -71,7 +71,21 @@
 //    the vertex count and flips the integer valence energy, so (vertex
 //    count, valence energy) decreases lexicographically and the sweeps
 //    terminate;
-//  * the passes run quality, regularization, quality.
+//  * admission-limited coarsening (only when the targets request it): while
+//    edges shorter than 4/5 of the target
+//    length remain, the vertices around them are first centered in the band
+//    (preserve relocations against the mean sagitta, centroid minus its
+//    projection, of their star: half of it, else a quarter), then those edges
+//    are tried shortest first, at most one per 2-ring, as one compound
+//    preserve edit: collapse to the projected midpoint, two damped Jacobi
+//    steps relaxing the merged vertex's 1-ring toward its projected neighbor
+//    average, and centering of the moved vertices (1/2, 1/4 or none of the
+//    sagitta). Admission sees only the final state, so the removed vertex's
+//    area is shared by its ring; vertices need not stay on the represented
+//    surface, only every triangle in the admitted band. A round without a
+//    collapse ends the phase and every other round removes a vertex;
+//  * the passes run quality, regularization, quality and, when requested,
+//    admission-limited coarsening followed by quality.
 // The score of a triangle is floor(2^20 * min(1, angle_min / minimum_angle) *
 // min(1, (4/3) h / edge_max) * fold). Fold is the minimum over the triangle's
 // edges of two factors:
@@ -99,6 +113,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -106,6 +121,10 @@ namespace phx::mc::remesh {
 
 using Point = std::array<double, 3>;
 using Triangle = std::array<int64_t, 3>;
+
+// Whether two indexed triangles have only legal disjoint/shared-feature contact.
+bool legal_triangle_contact(const std::array<Point, 3>& first, const Triangle& first_ids,
+                            const std::array<Point, 3>& second, const Triangle& second_ids);
 
 enum class AdmissionKind : int32_t { kOffsetBand = 0, kZeroSetBand = 1 };
 
@@ -153,6 +172,7 @@ double forced_turn(const NormalCone& first, const NormalCone& second);
 struct RemeshTargets {
   double edge_length = 0;              // h
   double minimum_angle_degrees = 30;   // full-score minimum angle
+  bool admission_limited_coarsening = false;  // run the coarsening pass
 };
 
 struct RemeshCounters {
@@ -170,5 +190,14 @@ double certified_free_radius(const Point& a, const Point& b, const Point& c, dou
 int32_t remesh_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                        const TriangleAdmission& admission, const RemeshTargets& targets,
                        RemeshCounters& counters);
+
+// Borrow immutable packed input points and compact faces for the call. Edits
+// remain owned; the returned vectors contain the ordinary compact output.
+int32_t remesh_surface_borrowed_i32(std::vector<Point>& points, const double* input_points,
+                                    size_t point_count, const int32_t* triangles,
+                                    size_t triangle_count, const int32_t* vertex_face_offsets,
+                                    const int32_t* vertex_faces, std::vector<Triangle>& output,
+                                    const TriangleAdmission& admission,
+                                    const RemeshTargets& targets, RemeshCounters& counters);
 
 }  // namespace phx::mc::remesh

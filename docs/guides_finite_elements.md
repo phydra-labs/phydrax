@@ -39,6 +39,9 @@ full-dimensional n-D affine simplices with explicit dimension.
 nominal facet descriptor. Generic tensor meshes remain dimension1–3; standalone
 tensor form bases may be n-D. Polygonal meshes order triangle blocks before
 quadrilateral blocks so global cell/facet routes remain canonical.
+Field resolution accepts named and dimension-qualified reference cells when the
+reference topology owner identifies the same canonical family. It preserves
+the declared element and mesh-block identities.
 
 Arbitrary straight-sided polygons have two separate substrates. The
 [explicit polygon H1 method](guides_explicit_polygon_h1.md) constructs a
@@ -56,13 +59,17 @@ requires an explicit curved-geometry witness.
 ## Reference elements and fields
 
 `lagrange_element(cell_kind, degree)` constructs nodal interval, triangle,
-quadrilateral, tetrahedron, and hexahedron elements. Arbitrary-order conforming entity
-numbering is executable for polygonal and hexahedral H1 fields; discontinuous
-fields remain cell-local. `FiniteElementSpec.value_spec` declares canonical form
+quadrilateral, tetrahedron, hexahedron, and prism elements. Arbitrary-order
+conforming entity numbering is executable for polygonal and hexahedral H1
+fields; canonical P1/P2 prism and mixed prism-tetrahedron H1 fields share
+entity-based trace numbering. Discontinuous fields remain cell-local.
+`FiniteElementSpec.value_spec` declares canonical form
 degree, twist and proxy; conformity/mapping are derived, with continuity declared
-separately. `form_element` supplies trimmed/full simplex and tensor-trimmed
-families in canonical n-D references. Physical flux/density requires explicit
-twist, and ambiguous degree1 2-D maps require circulation or flux explicitly.
+separately. `form_element` supplies trimmed/full simplex, tensor-trimmed and
+`prism-trimmed` families. Prism forms are the triangle-times-interval trimmed
+complex; their exact entity trace matrices convert product moments into canonical
+simplex or tensor entity moments. Physical flux/density requires explicit twist,
+and ambiguous degree1 2-D maps require circulation or flux explicitly.
 
 `FiniteElementFieldSpec` supports replicated component shapes and multiple named
 fields. One `CompiledFiniteElementProblem` owns the ordered product space and
@@ -151,6 +158,9 @@ Prepared-local implementations, including IGA, consume the same portable term
 through their interpolation, gradient, geometry, and transpose actions.
 `CellEnergyAction` and `FiniteElementFunctional` remain lower-level adapters for
 representation-specific callbacks.
+Cell-local scalar functional evaluation also admits identity-mapped,
+untwisted discontinuous nodal fields, using their cell-local coefficient
+routes. This volume evaluation does not by itself supply DG facet coupling.
 
 ## Essential constraints
 
@@ -325,6 +335,34 @@ transfer evidence. A native transfer refusal retains its reason when no explicit
 field-transfer callback is supplied. Accepted-state recipes rebuild the same
 canonical field and element identities; they do not infer lifted versus quotient
 storage from array dimensions.
+
+`CONSERVATIVE_SURFACE_CONTENT` is an explicit field-transfer semantic for
+admitted serial nested scalar P1 surface fields. It is not a relabeling of
+nonconservative interpolation or volume material transport. The owner binds
+the actual canonical basis, source and target spaces, represented geometry,
+and reference partition; its target mass functional composed with the primal
+transfer must equal the source mass functional for every source coefficient
+vector. Positivity and the supported geometry/route conditions remain separate
+checks. A single density vector whose integral happens to agree is not this
+certificate. Unsupported nonlinear geometry, hp, and owner-local routes are
+refused rather than silently downgraded.
+
+`FiniteElementTopologyTransaction.execute(..., reanalysis_action=...)` can
+stage a checked physical reanalysis after field/material transfer and before
+certification and commit. `FiniteElementReanalysisResult` binds the actual
+target program, field, solution, runtime arguments, and current numerical
+check; a detached operator ID or another right-hand side's residual threshold
+is not solve evidence. Reanalysis cannot replace conservative content while
+leaving a certificate for the pre-refresh values. Other fields, histories,
+and material state retain their declared transaction semantics, and failure
+preserves the complete source accepted state.
+
+The global prepared and compilation identities belong to the complete
+promoted field set, not merely a one-field reanalysis program. The latter's
+identities stay with its own evidence. Callback-free transaction structure and
+identity are unchanged; topology results additionally carry dynamic
+`reanalysis` and `surface_conservative_transfers` evidence, which changes their
+canonical PyTree/archive field set.
 
 On an owner group, `adapt_owner_local` and `repartition` run one collective
 transaction per accepted state; every owner takes part, including owners with

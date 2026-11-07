@@ -56,6 +56,7 @@ _PROFILE_PROVIDERS = (
         "phydrax.geometry.multiregion_surface._profiles",
         "multiregion_surface_candidate_profiles",
     ),
+    ("phydrax.meshing._profiles", "native_meshing_candidate_profiles"),
     (
         "phydrax.interfacial_transport._core",
         "interfacial_transport_candidate_profiles",

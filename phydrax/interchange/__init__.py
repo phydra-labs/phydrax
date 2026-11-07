@@ -61,6 +61,8 @@ _DEFERRED_EXPORTS = {
     "decode_brep_text_resource": "._cad_brep_text",
     "read_brep_text": "._cad_brep_text",
     "write_brep_text": "._cad_brep_text",
+    "load_brep_archive": "._cad_archive",
+    "save_brep_archive": "._cad_archive",
     "DxfExportResult": "._dxf",
     "DxfImportError": "._dxf",
     "DxfImportPolicy": "._dxf",
@@ -378,6 +380,7 @@ if TYPE_CHECKING:
         CadRefusal,
         CadRefusalReason,
     )
+    from ._cad_archive import load_brep_archive, save_brep_archive
     from ._cad_brep_text import (
         BRepTextVersion,
         decode_brep_text_bytes,
@@ -615,6 +618,7 @@ __all__ = [
     "encode_dxf",
     "explore_unique",
     "import_occt_shape",
+    "load_brep_archive",
     "persist_occt_shape",
     "prepare_occt_projection",
     "read_brep_text",
@@ -624,6 +628,7 @@ __all__ = [
     "read_iges",
     "read_occt_shape",
     "read_step",
+    "save_brep_archive",
     "shape_digest",
     "shape_index",
     "write_brep_text",

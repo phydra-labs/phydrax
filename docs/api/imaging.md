@@ -42,6 +42,11 @@
         - KnifeEdgeSchlierenPlan
         - BackgroundOrientedSchlierenPlan
 
+`LabelVolume.from_stored_fields` reconstructs a stored static categorical
+volume and its image, ontology, and evidence through their validating owners.
+Stored content identities are checked against the reconstructed values; they
+are not accepted as reconstruction authority.
+
 ## Bounded tomography routes
 
 `TetrahedralXRayTransformPlan` uses the shared affine-simplex map and packed

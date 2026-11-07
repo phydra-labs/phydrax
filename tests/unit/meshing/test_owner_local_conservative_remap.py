@@ -17,6 +17,7 @@ from jax.experimental import multihost_utils
 import phydrax as phx
 from phydrax._execution_resources import ExecutionGroupSpec
 from phydrax._execution_runtime import ExecutionGroup
+from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_transition_types import (
     CellGeometryTransition,
@@ -24,6 +25,7 @@ from phydrax.discretization._cell_geometry_transition_types import (
 )
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._exact_power_geometry import ExactPowerCellGeometrySource
 from phydrax.discretization._nested_reference_types import (
     exact_reference_cell_vertices,
     ReferenceCellMapWitnesses,
@@ -979,6 +981,10 @@ def _owner_local_periodic_power_assembly(
     /,
     *,
     origin: np.ndarray | None = None,
+    graph_partition_plan: Any = None,
+    specification_out: list[VolumeMeshingSpec] | None = None,
+    weights: np.ndarray | None = None,
+    point_ids: np.ndarray | None = None,
 ) -> MeshAssembly:
     revision = f"{name}-revision-1"
     lattice = np.asarray(
@@ -987,8 +993,16 @@ def _owner_local_periodic_power_assembly(
     )
     cell = PeriodicCell(lattice, origin=origin)
     rank = execution_group.spec.process_indices.index(jax.process_index())
-    all_ids = np.asarray((91, 4, 53, 17, 62, 31), dtype=np.int64)
-    all_weights = np.asarray((0.0, 0.015, -0.01, 0.02, 0.005, -0.015), dtype=np.float64)
+    all_ids = (
+        np.asarray((91, 4, 53, 17, 62, 31), dtype=np.int64)
+        if point_ids is None
+        else np.asarray(point_ids, dtype=np.int64)
+    )
+    all_weights = (
+        np.asarray((0.0, 0.015, -0.01, 0.02, 0.005, -0.015), dtype=np.float64)
+        if weights is None
+        else np.asarray(weights, dtype=np.float64)
+    )
     owners = np.asarray(point_owners, dtype=np.int32)
     if owners.shape != (fractional_points.shape[0],):
         raise ValueError("Periodic test owner ranks must align with all source sites.")
@@ -1022,15 +1036,155 @@ def _owner_local_periodic_power_assembly(
         VolumeFillStrategy.POLYHEDRAL,
         size_controls=(),
     )
-    return (
+    if specification_out is not None:
+        specification_out.append(specification)
+    assembly = (
         NativeMeshingProvider(NativeMeshingOptions("periodic_power"))
         .plan(
             source,
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute(execution_group=execution_group)
+        .execute(
+            execution_group=execution_group,
+            graph_partition_plan=graph_partition_plan,
+        )
     )
+    if graph_partition_plan is not None:
+        view = _owner_view(assembly, name)
+        restored = OwnerLocalCellGeometry.from_stored_fields(
+            view,
+            execution_group,
+            current_specification=specification,
+            graph_partition_plan=graph_partition_plan,
+            axis_name="periodic_power_graph_restore",
+        )
+        assert restored.local_view_id == view.local_view_id
+        np.testing.assert_array_equal(restored.cell_ids, view.cell_ids)
+        np.testing.assert_array_equal(restored.cell_owner_ranks, view.cell_owner_ranks)
+    return assembly
+
+
+def test_owner_local_power_graph_migration_and_replay() -> None:
+    from phydrax.graph import GraphPartitionPlan
+
+    bound = _group(3)
+    if bound is None:
+        _run_in_owner_group("test_owner_local_power_graph_migration_and_replay", 3)
+        return
+    group, _ = bound
+    fractional = np.asarray(
+        (
+            (0.125, 0.1875, 0.25),
+            (0.625, 0.125, 0.125),
+            (0.1875, 0.625, 0.3125),
+            (0.3125, 0.3125, 0.75),
+            (0.75, 0.8125, 0.5625),
+            (0.875, 0.4375, 0.9375),
+        ),
+        dtype=np.float64,
+    )
+    owners = np.asarray((0, 1, 0, 1, 0, 1), dtype=np.int32)
+    graph_plan = GraphPartitionPlan(
+        3, maximum_imbalance=1.5, require_nonempty=True, refinement_passes=4
+    )
+    assembly = _owner_local_periodic_power_assembly(
+        "periodic-power-graph",
+        fractional,
+        owners,
+        group,
+        graph_partition_plan=graph_plan,
+    )
+    view = _owner_view(assembly, "periodic-power-graph")
+    resident = dict(
+        zip(
+            np.asarray(view.cell_ids, dtype=np.int64),
+            np.asarray(view.cell_owner_ranks, dtype=np.int32),
+            strict=True,
+        )
+    )
+    for identifier, owner in zip(
+        view.cell_neighbor_ids, view.cell_neighbor_owner_ranks, strict=True
+    ):
+        assert int(resident[int(identifier)]) == int(owner)
+    authored_owners = dict(zip((91, 4, 53, 17, 62, 31), owners, strict=True))
+    changed = np.asarray(
+        any(
+            int(owner) != int(authored_owners[int(identifier)])
+            for identifier, owner in zip(
+                view.cell_ids, view.cell_owner_ranks, strict=True
+            )
+        ),
+        dtype=np.int32,
+    )
+    assert np.any(np.asarray(multihost_utils.process_allgather(changed)))
+
+
+def test_owner_local_power_inactive_site_survives_graph_migration() -> None:
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.graph import GraphPartitionPlan
+    from phydrax.meshing.providers._native_periodic import (
+        _owner_local_periodic_source_from_view,
+    )
+
+    bound = _group(3)
+    if bound is None:
+        _run_in_owner_group(
+            "test_owner_local_power_inactive_site_survives_graph_migration", 3
+        )
+        return
+    group, rank = bound
+    fractional = np.asarray(
+        (
+            (0.6328125, 0.125, 0.125),
+            (0.625, 0.125, 0.125),
+            (0.1875, 0.625, 0.3125),
+            (0.3125, 0.3125, 0.75),
+            (0.75, 0.8125, 0.5625),
+            (0.875, 0.4375, 0.9375),
+        ),
+        dtype=np.float64,
+    )
+    owners = np.asarray((0, 1, 0, 1, 0, 1), dtype=np.int32)
+    weights = np.asarray((-0.125, 0.015, -0.01, 0.02, 0.005, -0.015))
+    graph_plan = GraphPartitionPlan(
+        3, maximum_imbalance=1.5, require_nonempty=True, refinement_passes=4
+    )
+    assembly = _owner_local_periodic_power_assembly(
+        "periodic-power-inactive",
+        fractional,
+        owners,
+        group,
+        graph_partition_plan=graph_plan,
+        weights=weights,
+    )
+    view = _owner_view(assembly, "periodic-power-inactive")
+    assert 91 not in np.asarray(view.cell_ids, dtype=np.int64)
+    source, _ = _owner_local_periodic_source_from_view(view)
+    assert isinstance(source.domain, PeriodicPointOrbits)
+    source_ids = np.asarray(source.domain.point_ids, dtype=np.int64)
+    source_owners = np.asarray(source.point_owner_ranks, dtype=np.int32)
+    matches = np.flatnonzero(source_ids == 91)
+    target_owner = (
+        bytes.fromhex(canonical_fingerprint(("periodic-source-point-owner", 91)))[0] % 3
+    )
+    weight_rows = np.asarray(source.site_weights, dtype=np.float64)
+    local_valid = np.asarray(
+        matches.size <= 1
+        and (
+            matches.size == 0
+            or (
+                source_owners[matches[0]] == target_owner
+                and weight_rows[matches[0]] == weights[0]
+            )
+        ),
+        dtype=np.int32,
+    )
+    assert np.all(np.asarray(multihost_utils.process_allgather(local_valid)))
+    owned_count = np.asarray(
+        np.count_nonzero((source_ids == 91) & (source_owners == rank)), dtype=np.int32
+    )
+    assert np.sum(np.asarray(multihost_utils.process_allgather(owned_count))) == 1
 
 
 @pytest.mark.parametrize("owner_count", (1, 2, 3))
@@ -1079,6 +1233,114 @@ def test_owner_local_physical_remap_has_independent_periodic_mass_oracle(
     )
     source_view = _owner_view(source, source_name)
     target_view = _owner_view(target, target_name)
+    for view in (source_view, target_view):
+        exact_owned_volume = Fraction(0)
+        resident_owners = dict(
+            zip(
+                np.asarray(view.cell_ids, dtype=np.int64),
+                np.asarray(view.cell_owner_ranks, dtype=np.int32),
+                strict=True,
+            )
+        )
+        for identifier, owner in zip(
+            np.asarray(view.cell_neighbor_ids, dtype=np.int64),
+            np.asarray(view.cell_neighbor_owner_ranks, dtype=np.int32),
+            strict=True,
+        ):
+            assert resident_owners[int(identifier)] == int(owner)
+        mesh, geometry = view.reconstruct_local_geometry()
+        if mesh is not None:
+            assert geometry is not None
+            assert isinstance(geometry.source_map, ExactPowerCellGeometrySource)
+            geometry.source_map.require_periodic_mesh(mesh)
+            connectivity = mesh.connectivity
+            assert isinstance(connectivity, PolyhedralConnectivity)
+            assert view.exact_vertex_coordinates is not None
+            points = tuple(tuple(row) for row in view.exact_vertex_coordinates)
+            face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+            face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+            cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+            cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+            signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int8)
+            vertex_sources = np.asarray(view.vertex_source_ids, dtype=np.int64)
+            vertex_windings = np.asarray(view.vertex_absolute_windings, dtype=np.int64)
+            incidence_by_face: dict[tuple[tuple[int, ...], ...], list[int]] = {}
+            for row in range(len(view.cell_ids)):
+                for incidence in range(cell_offsets[row], cell_offsets[row + 1]):
+                    face = cell_faces[incidence]
+                    loop = face_vertices[face_offsets[face] : face_offsets[face + 1]]
+                    # Independently normalize all possible lattice anchors.
+                    key = min(
+                        tuple(
+                            sorted(
+                                (int(vertex_sources[vertex]),)
+                                + tuple(
+                                    int(value)
+                                    for value in (
+                                        vertex_windings[vertex] - vertex_windings[anchor]
+                                    )
+                                )
+                                for vertex in loop
+                            )
+                        )
+                        for anchor in loop
+                    )
+                    incidence_by_face.setdefault(key, []).append(row)
+            owned = np.asarray(view.owned, dtype=np.bool_)
+            for rows in incidence_by_face.values():
+                if any(owned[row] for row in rows):
+                    assert len(rows) == 2
+                    for row in rows:
+                        assert resident_owners[int(view.cell_ids[row])] == int(
+                            view.cell_owner_ranks[row]
+                        )
+            for row in range(len(view.cell_ids)):
+                six_volume = Fraction(0)
+                for incidence in range(cell_offsets[row], cell_offsets[row + 1]):
+                    face = cell_faces[incidence]
+                    loop = face_vertices[face_offsets[face] : face_offsets[face + 1]]
+                    if signs[incidence] < 0:
+                        loop = loop[::-1]
+                    a = points[int(loop[0])]
+                    for index in range(1, len(loop) - 1):
+                        b, c = points[int(loop[index])], points[int(loop[index + 1])]
+                        six_volume += (
+                            a[0] * (b[1] * c[2] - b[2] * c[1])
+                            + a[1] * (b[2] * c[0] - b[0] * c[2])
+                            + a[2] * (b[0] * c[1] - b[1] * c[0])
+                        )
+                assert six_volume > 0
+                assert float(six_volume / 6) == float(view.cell_measures[row])
+                if owned[row]:
+                    exact_owned_volume += six_volume / 6
+        else:
+            assert not resident_owners
+        volume_bytes = str(exact_owned_volume).encode("ascii")
+        lengths = np.asarray(
+            multihost_utils.process_allgather(
+                np.asarray(len(volume_bytes), dtype=np.int32)
+            )
+        ).reshape(-1)
+        packet = np.zeros((int(np.max(lengths)),), dtype=np.uint8)
+        packet[: len(volume_bytes)] = np.frombuffer(volume_bytes, dtype=np.uint8)
+        gathered = np.asarray(multihost_utils.process_allgather(packet), dtype=np.uint8)
+        total = sum(
+            (
+                Fraction(bytes(row[: int(length)]).decode("ascii"))
+                for row, length in zip(gathered, lengths, strict=True)
+            ),
+            Fraction(0),
+        )
+        exact_lattice = tuple(
+            tuple(Fraction.from_float(float(value)) for value in row) for row in lattice
+        )
+        a, b, c = exact_lattice
+        determinant = (
+            a[0] * (b[1] * c[2] - b[2] * c[1])
+            + a[1] * (b[2] * c[0] - b[0] * c[2])
+            + a[2] * (b[0] * c[1] - b[1] * c[0])
+        )
+        assert total == abs(determinant)
     if owner_count == 3 and rank == 2:
         assert source_view.local_mesh_id is None
         assert target_view.local_mesh_id is None
@@ -1231,9 +1493,14 @@ def test_owner_local_physical_remap_has_independent_periodic_mass_oracle(
     }
     assert np.array_equal(np.sum(gathered_valid, axis=1), owner_counts)
     assert len(values_by_id) == int(np.sum(owner_counts))
-    # Laguerre cells are resident only on their site owner: power views carry no
-    # ghost rows, so the owned target cells above partition the group exactly.
-    assert np.all(np.asarray(target_view.owned, dtype=np.bool_))
+    np.testing.assert_allclose(
+        np.asarray(jax.device_get(probe_result.local_values)),
+        np.asarray(
+            [values_by_id[int(identifier)] for identifier in target_view.cell_ids]
+        ),
+        rtol=2.0e-10,
+        atol=2.0e-12,
+    )
 
     def group_sum(value: float, /) -> float:
         gathered = multihost_utils.process_allgather(np.asarray(value, dtype=np.float64))
@@ -1383,3 +1650,591 @@ def test_owner_local_uncovered_domain_is_diagnostic_and_not_transportable() -> N
             target_view,
             group,
         )
+
+
+def _periodic_power_cold_worker(phase: int) -> None:
+    import os
+    from functools import partial
+    from pathlib import Path
+
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing._distribution import _owner_exchange_message_banks
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing.providers._native_periodic import (
+        _owner_local_periodic_source_from_view,
+        rebuild_owner_local_periodic_assembly_from_shards,
+    )
+
+    bound = _group(3)
+    if bound is None:
+        raise RuntimeError("The power cold worker requires three real owners.")
+    group, rank = bound
+    root = Path(os.environ["PHYDRAX_POWER_COLD_ROOT"])
+    path = root / f"power-rank-{rank}.phx"
+    if phase in (0, 2, 4, 6, 8, 10):
+        fractional = np.asarray(
+            (
+                (0.125, 0.1875, 0.25),
+                (0.625, 0.125, 0.125),
+                (0.1875, 0.625, 0.3125),
+                (0.3125, 0.3125, 0.75),
+                (0.75, 0.8125, 0.5625),
+                (0.875, 0.4375, 0.9375),
+            ),
+            dtype=np.float64,
+        )
+        weights = None
+        if phase == 2:
+            fractional[0] = (0.6328125, 0.125, 0.125)
+            weights = np.asarray((-0.125, 0.015, -0.01, 0.02, 0.005, -0.015))
+        if phase == 10:
+            fractional = fractional[:1]
+            weights = np.zeros((1,), dtype=np.float64)
+        specifications: list[VolumeMeshingSpec] = []
+        assembly = _owner_local_periodic_power_assembly(
+            "power-cold",
+            fractional,
+            np.asarray((0,)) if phase == 10 else np.asarray((0, 1, 0, 1, 0, 1)),
+            group,
+            specification_out=specifications,
+            weights=weights,
+            point_ids=(
+                np.asarray((91,))
+                if phase == 10
+                else np.asarray((2, 4, 53, 5, 62, 31))
+                if phase == 4
+                else None
+            ),
+        )
+        view = _owner_view(assembly, "power-cold")
+        if rank == 2:
+            assert view.local_mesh_id is None
+        spec = specifications[0]
+        spec_entry = CompositionEntry(
+            spec,
+            entry_id="power/specification",
+            role="interface-route",
+            owner_id="phydrax.meshing",
+            structure_id=spec.target.target_id,
+            revision_id=spec.specification_id,
+            semantics_id="periodic-power-specification",
+        )
+        view_entry = CompositionEntry(
+            view,
+            entry_id="power/view",
+            role="discretization",
+            owner_id="phydrax.discretization",
+            structure_id=view.geometry_layout_id,
+            revision_id=view.distribution_id,
+            semantics_id="periodic-power-owner-view",
+            dependencies=(spec_entry.binding("revision"),),
+        )
+        ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
+        values = 0.5 + (ids % 13) * 0.0625
+        field_entry = CompositionEntry(
+            jnp.asarray(values),
+            entry_id="power/field",
+            role="physical-state",
+            owner_id="phydrax.discretization.finite_volume",
+            structure_id=view.geometry_layout_id,
+            revision_id=canonical_fingerprint(
+                (tuple(ids.tolist()), tuple(values.tolist()))
+            ),
+            semantics_id="periodic-power-cell-averages",
+            dependencies=(view_entry.binding("revision"),),
+        )
+        write_model_artifact(
+            path,
+            Composition(
+                (spec_entry, view_entry, field_entry), boundary_id="periodic-power-cold"
+            ),
+            limits=None,
+        )
+        (root / f"writer-{rank}.pid").write_text(str(os.getpid()))
+        return
+    assert phase in (1, 3, 5, 7, 9, 11, 12)
+    assert all(
+        int((root / f"writer-{i}.pid").read_text()) != os.getpid() for i in range(3)
+    )
+    composition = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=partial(restore_model_archive_value, execution_group=group),
+        limits=None,
+    )
+    old_view = composition.value("power/view")
+    spec = composition.value("power/specification")
+    old_values = np.asarray(composition.value("power/field"), dtype=np.float64)
+    old_ids = np.asarray(old_view.owned_cell_ids, dtype=np.int64)
+    assert old_values.shape == old_ids.shape
+    target_group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "periodic-power-cold-new-placement",
+            group.spec.process_indices,
+            tuple((device.process_index, device.id) for device in group.devices),
+            mesh_axes=(("power_cold", 3),),
+        ),
+        group.devices,
+    )
+    if phase in (7, 9, 11):
+        import equinox as eqx
+
+        if rank == 0:
+            shell = dict(old_view.periodic_shell_certificate)
+            evidence = list(shell["native_power_face_evidence"])
+            assert evidence
+            if phase == 7:
+                index = 0
+                record = list(evidence[index])
+                record[3] = int(record[3]) + 1000000
+            elif phase == 9:
+                index = next(i for i, row in enumerate(evidence) if int(row[6]) >= 0)
+                record = list(evidence[index])
+                record[6] = -1
+            else:
+                index = next(
+                    i
+                    for i, row in enumerate(evidence)
+                    if int(row[2]) == int(row[3]) and any(row[5]) and int(row[6]) >= 0
+                )
+                record = list(evidence[index])
+                record[5] = (0, 0, 0)
+                record[6] = -1
+            evidence[index] = tuple(record)
+            shell["native_power_face_evidence"] = tuple(evidence)
+            old_view = eqx.tree_at(
+                lambda value: value.periodic_shell_certificate, old_view, shell
+            )
+        with pytest.raises(ValueError):
+            rebuild_owner_local_periodic_assembly_from_shards(
+                (old_view,),
+                target_group,
+                current_specification=spec,
+                axis_name="periodic_power_cold_corrupt_evidence",
+            )
+        return
+    rebuilt = rebuild_owner_local_periodic_assembly_from_shards(
+        (old_view,),
+        target_group,
+        current_specification=spec,
+        axis_name="periodic_power_cold_reattach",
+    )
+    view = _owner_view(rebuilt, "power-cold")
+    assert view.source_topology_id == old_view.source_topology_id
+    assert view.source_geometry_id == old_view.source_geometry_id
+    assert view.periodic_topology_id == old_view.periodic_topology_id
+    assert view.periodic_face_coverage_id == old_view.periodic_face_coverage_id
+    if phase == 12:
+        return
+    if phase == 5 and rank == 2:
+        assert view.local_mesh_id is None
+        assert view.reconstruct_local_geometry() == (None, None)
+    if phase == 3:
+        assert 91 not in np.asarray(view.cell_ids, dtype=np.int64)
+        source, _ = _owner_local_periodic_source_from_view(view)
+        assert isinstance(source.domain, PeriodicPointOrbits)
+        source_ids = np.asarray(source.domain.point_ids, dtype=np.int64)
+        source_owners = np.asarray(source.point_owner_ranks, dtype=np.int32)
+        rows = np.flatnonzero((source_ids == 91) & (source_owners == rank))
+        local_valid = np.asarray(
+            rows.size == 0
+            or (rows.size == 1 and np.asarray(source.site_weights)[rows[0]] == -0.125),
+            dtype=np.int32,
+        )
+        assert np.all(np.asarray(multihost_utils.process_allgather(local_valid)))
+        assert (
+            np.sum(np.asarray(multihost_utils.process_allgather(np.asarray(rows.size))))
+            == 1
+        )
+    outgoing_rows: list[list[tuple[int, int]]] = [[], [], []]
+    received: dict[int, float] = {}
+    for identifier, value in zip(old_ids, old_values, strict=True):
+        owner = (
+            bytes.fromhex(
+                canonical_fingerprint(("periodic-source-point-owner", int(identifier)))
+            )[0]
+            % 3
+        )
+        if owner == rank:
+            received[int(identifier)] = float(value)
+        else:
+            outgoing_rows[owner].append(
+                (int(identifier), int(np.asarray(value).view(np.uint64)))
+            )
+    outgoing = tuple(
+        np.asarray(rows, dtype=np.uint64).reshape((-1, 2)) for rows in outgoing_rows
+    )
+    for rows in _owner_exchange_message_banks(
+        outgoing, rank, target_group, "periodic_power_cold_fields"
+    ).values():
+        for identifier, value_bits in np.asarray(rows, dtype=np.uint64):
+            received[int(identifier)] = float(np.asarray(value_bits).view(np.float64))
+    target_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
+    assert set(received) == set(target_ids.tolist())
+    for identifier in target_ids:
+        assert received[int(identifier)] == 0.5 + (int(identifier) % 13) * 0.0625
+    changed = np.asarray(not np.array_equal(old_ids, target_ids), dtype=np.int32)
+    assert np.any(np.asarray(multihost_utils.process_allgather(changed)))
+    local_ids = np.asarray(view.cell_ids, dtype=np.int64)
+    values = jnp.asarray(0.5 + (local_ids % 13) * 0.0625)
+    remap = phx.discretization.finite_volume.prepare_owner_local_conservative_remap(
+        view, view, target_group, axis_name="periodic_power_cold_remap"
+    )
+    action = remap.apply_averages(
+        values, view, view, target_group, axis_name="periodic_power_cold_remap"
+    )
+    np.testing.assert_allclose(
+        np.asarray(action.local_values), np.asarray(values), rtol=2.0e-10, atol=2.0e-12
+    )
+
+
+@pytest.mark.parametrize(
+    "cold_case",
+    ("active", "inactive", "empty-target", "tampered", "missing-carrier", "self-action"),
+)
+def test_owner_local_power_fresh_changed_placement(tmp_path: Any, cold_case: str) -> None:
+    import os
+
+    previous = os.environ.get("PHYDRAX_POWER_COLD_ROOT")
+    os.environ["PHYDRAX_POWER_COLD_ROOT"] = str(tmp_path)
+    try:
+        phase = {
+            "active": 0,
+            "inactive": 2,
+            "empty-target": 4,
+            "tampered": 6,
+            "missing-carrier": 8,
+            "self-action": 10,
+        }[cold_case]
+        _run_in_owner_group("_periodic_power_cold_worker", 3, phase)
+        _run_in_owner_group("_periodic_power_cold_worker", 3, phase + 1)
+        if cold_case == "self-action":
+            _run_in_owner_group("_periodic_power_cold_worker", 3, 12)
+    finally:
+        if previous is None:
+            os.environ.pop("PHYDRAX_POWER_COLD_ROOT", None)
+        else:
+            os.environ["PHYDRAX_POWER_COLD_ROOT"] = previous
+
+
+def _periodic_power_regular_worker(
+    site_count: int, phase: int, influence: int = 0
+) -> None:
+    import json
+    import os
+    from functools import partial
+    from pathlib import Path
+
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing._distribution import _owner_exchange_message_banks
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing.providers._native_periodic import (
+        rebuild_owner_local_periodic_assembly_from_shards,
+    )
+
+    bound = _group(4)
+    if bound is None:
+        raise RuntimeError("Regular power qualification requires four real owners.")
+    group, rank = bound
+    root = Path(os.environ["PHYDRAX_POWER_REGULAR_ROOT"])
+    path = root / f"regular-{site_count}-{rank}.phx"
+    if phase == 0:
+        indices = np.arange(site_count, dtype=np.int64)
+        owners = (indices * 4 // site_count).astype(np.int32)
+        points = np.column_stack(
+            (
+                (indices + 0.5) / site_count,
+                np.full(site_count, 0.125),
+                np.full(site_count, 0.125),
+            )
+        )
+        selected = owners == rank
+        cell = PeriodicCell(np.diag((1.0, 0.25, 0.25)))
+        source = NativePeriodicSource(
+            PeriodicPointOrbits(cell, points[selected], indices[selected] + 100),
+            f"regular-power-{site_count}",
+            "regular-power-r1",
+            site_weights=np.where(indices[selected] == 0, 0.5, 0.0)
+            if influence
+            else np.zeros(int(np.sum(selected)), dtype=np.float64),
+            point_owner_ranks=owners[selected],
+        )
+        scope = MeshingScope(
+            source.source_id,
+            source.source_revision,
+            MeshingEntityKind.GEOMETRY,
+            3,
+            source.scope_entity_set_id(3),
+            source.scope_entity_ids(3),
+        )
+        spec = VolumeMeshingSpec(
+            CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
+            scope,
+            VolumeFillStrategy.POLYHEDRAL,
+            size_controls=(),
+        )
+        assembly = (
+            NativeMeshingProvider(NativeMeshingOptions("periodic_power"))
+            .plan(source, spec, coordinate_contract=phx.SpatialCoordinateContract.si())
+            .execute(execution_group=group)
+        )
+        view = _owner_view(assembly, source.source_id)
+        support_count = int(np.asarray(view.source_point_ids).size)
+        owned_indices = indices[selected]
+        if influence:
+            assert 100 in np.asarray(view.source_point_ids, dtype=np.int64)
+            expected_resident = {100} if rank == 0 else set()
+        else:
+            expected_resident = {
+                100 + int(neighbor)
+                for index in owned_indices
+                for neighbor in (
+                    (index - 1) % site_count,
+                    index,
+                    (index + 1) % site_count,
+                )
+            }
+            assert support_count < site_count
+        assert set(np.asarray(view.cell_ids, dtype=np.int64)) == expected_resident
+        (root / f"regular-{site_count}-{rank}.json").write_text(
+            json.dumps({"support": support_count, "resident": len(expected_resident)})
+        )
+        spec_entry = CompositionEntry(
+            spec,
+            entry_id="regular/spec",
+            role="interface-route",
+            owner_id="phydrax.meshing",
+            structure_id=spec.target.target_id,
+            revision_id=spec.specification_id,
+            semantics_id="regular-power-spec",
+        )
+        view_entry = CompositionEntry(
+            view,
+            entry_id="regular/view",
+            role="discretization",
+            owner_id="phydrax.discretization",
+            structure_id=view.geometry_layout_id,
+            revision_id=view.distribution_id,
+            semantics_id="regular-power-view",
+            dependencies=(spec_entry.binding("revision"),),
+        )
+        owned_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
+        field = 0.5 + (owned_ids % 13) * 0.0625
+        field_entry = CompositionEntry(
+            jnp.asarray(field),
+            entry_id="regular/field",
+            role="physical-state",
+            owner_id="phydrax.discretization.finite_volume",
+            structure_id=view.geometry_layout_id,
+            revision_id=canonical_fingerprint(
+                (tuple(owned_ids.tolist()), tuple(field.tolist()))
+            ),
+            semantics_id="regular-power-averages",
+            dependencies=(view_entry.binding("revision"),),
+        )
+        write_model_artifact(
+            path,
+            Composition(
+                (spec_entry, view_entry, field_entry), boundary_id="regular-power-cold"
+            ),
+            limits=None,
+        )
+        (root / f"regular-writer-{site_count}-{rank}.pid").write_text(str(os.getpid()))
+    else:
+        assert phase == 1
+        assert all(
+            int((root / f"regular-writer-{site_count}-{i}.pid").read_text())
+            != os.getpid()
+            for i in range(4)
+        )
+        composition = read_model_artifact(
+            path,
+            expected_type=Composition,
+            restore=partial(restore_model_archive_value, execution_group=group),
+            limits=None,
+        )
+        old_view = composition.value("regular/view")
+        spec = composition.value("regular/spec")
+        old_ids = np.asarray(old_view.owned_cell_ids, dtype=np.int64)
+        old_field = np.asarray(composition.value("regular/field"), dtype=np.float64)
+        group = ExecutionGroup(
+            ExecutionGroupSpec(
+                f"regular-power-target-{site_count}",
+                group.spec.process_indices,
+                tuple((device.process_index, device.id) for device in group.devices),
+                mesh_axes=(("regular_power", 4),),
+            ),
+            group.devices,
+        )
+        assembly = rebuild_owner_local_periodic_assembly_from_shards(
+            (old_view,),
+            group,
+            current_specification=spec,
+            axis_name="regular_power_cold_reattach",
+        )
+        view = _owner_view(assembly, f"regular-power-{site_count}")
+        assert view.source_topology_id == old_view.source_topology_id
+        assert view.source_geometry_id == old_view.source_geometry_id
+        assert view.periodic_face_coverage_id == old_view.periodic_face_coverage_id
+        rows: list[list[tuple[int, int]]] = [[], [], [], []]
+        received: dict[int, float] = {}
+        for identifier, value in zip(old_ids, old_field, strict=True):
+            destination = (
+                bytes.fromhex(
+                    canonical_fingerprint(
+                        ("periodic-source-point-owner", int(identifier))
+                    )
+                )[0]
+                % 4
+            )
+            if destination == rank:
+                received[int(identifier)] = float(value)
+            else:
+                rows[destination].append(
+                    (int(identifier), int(np.asarray(value).view(np.uint64)))
+                )
+        outgoing = tuple(
+            np.asarray(row, dtype=np.uint64).reshape((-1, 2)) for row in rows
+        )
+        for packet in _owner_exchange_message_banks(
+            outgoing, rank, group, "regular_power_cold_fields"
+        ).values():
+            for identifier, bits in np.asarray(packet, dtype=np.uint64):
+                received[int(identifier)] = float(np.asarray(bits).view(np.float64))
+        new_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
+        assert set(received) == set(new_ids.tolist())
+        assert all(
+            value == 0.5 + (identifier % 13) * 0.0625
+            for identifier, value in received.items()
+        )
+        changed = np.asarray(not np.array_equal(old_ids, new_ids), dtype=np.int32)
+        assert np.any(np.asarray(multihost_utils.process_allgather(changed)))
+
+    resident_owners = dict(
+        zip(
+            np.asarray(view.cell_ids, dtype=np.int64),
+            np.asarray(view.cell_owner_ranks, dtype=np.int32),
+            strict=True,
+        )
+    )
+    for identifier, owner in zip(
+        np.asarray(view.cell_neighbor_ids, dtype=np.int64),
+        np.asarray(view.cell_neighbor_owner_ranks, dtype=np.int32),
+        strict=True,
+    ):
+        assert int(resident_owners[int(identifier)]) == int(owner)
+    mesh, geometry = view.reconstruct_local_geometry()
+    if mesh is not None:
+        assert geometry is not None
+        assert isinstance(geometry.source_map, ExactPowerCellGeometrySource)
+        geometry.source_map.require_periodic_mesh(mesh)
+        connectivity = mesh.connectivity
+        assert isinstance(connectivity, PolyhedralConnectivity)
+        exact = view.exact_vertex_coordinates
+        assert exact is not None
+        fv_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+        fv_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+        cf_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+        cf_values = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+        signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int8)
+        roots = np.asarray(view.vertex_source_ids, dtype=np.int64)
+        windings = np.asarray(view.vertex_absolute_windings, dtype=np.int64)
+        face_incidence: dict[tuple[tuple[int, ...], ...], list[int]] = {}
+        for row in range(len(view.cell_ids)):
+            six_volume = Fraction(0)
+            for incidence in range(cf_offsets[row], cf_offsets[row + 1]):
+                face = cf_values[incidence]
+                loop = fv_values[fv_offsets[face] : fv_offsets[face + 1]]
+                key = min(
+                    tuple(
+                        sorted(
+                            (int(roots[v]),)
+                            + tuple(int(x) for x in windings[v] - windings[a])
+                            for v in loop
+                        )
+                    )
+                    for a in loop
+                )
+                face_incidence.setdefault(key, []).append(row)
+                if signs[incidence] < 0:
+                    loop = loop[::-1]
+                a = exact[int(loop[0])]
+                for i in range(1, len(loop) - 1):
+                    b, c = exact[int(loop[i])], exact[int(loop[i + 1])]
+                    six_volume += (
+                        a[0] * (b[1] * c[2] - b[2] * c[1])
+                        + a[1] * (b[2] * c[0] - b[0] * c[2])
+                        + a[2] * (b[0] * c[1] - b[1] * c[0])
+                    )
+            expected_volume = Fraction(1, 16 if influence else 16 * site_count)
+            assert six_volume / 6 == expected_volume
+        owned = np.asarray(view.owned, dtype=np.bool_)
+        assert all(
+            len(rows) == 2
+            for rows in face_incidence.values()
+            if any(owned[row] for row in rows)
+        )
+    values = jnp.asarray(0.5 + (np.asarray(view.cell_ids, dtype=np.int64) % 13) * 0.0625)
+    remap = phx.discretization.finite_volume.prepare_owner_local_conservative_remap(
+        view, view, group, axis_name="regular_power_remap"
+    )
+    assert remap.evidence.coverage_complete
+    action = remap.apply_averages(
+        values, view, view, group, axis_name="regular_power_remap"
+    )
+    np.testing.assert_allclose(
+        np.asarray(action.local_values), np.asarray(values), rtol=2.0e-10, atol=2.0e-12
+    )
+
+
+@pytest.mark.parametrize("site_count", (8, 16))
+def test_regular_power_local_support_and_fresh_restart(
+    tmp_path: Any, site_count: int
+) -> None:
+    import json
+    import os
+
+    previous = os.environ.get("PHYDRAX_POWER_REGULAR_ROOT")
+    os.environ["PHYDRAX_POWER_REGULAR_ROOT"] = str(tmp_path)
+    try:
+        _run_in_owner_group("_periodic_power_regular_worker", 4, site_count, 0)
+        _run_in_owner_group("_periodic_power_regular_worker", 4, site_count, 1)
+        records = [
+            json.loads((tmp_path / f"regular-{site_count}-{rank}.json").read_text())
+            for rank in range(4)
+        ]
+        assert all(row["support"] < site_count for row in records)
+    finally:
+        if previous is None:
+            os.environ.pop("PHYDRAX_POWER_REGULAR_ROOT", None)
+        else:
+            os.environ["PHYDRAX_POWER_REGULAR_ROOT"] = previous
+
+
+def test_global_weight_influence_and_fresh_restart(tmp_path: Any) -> None:
+    import json
+    import os
+
+    previous = os.environ.get("PHYDRAX_POWER_REGULAR_ROOT")
+    os.environ["PHYDRAX_POWER_REGULAR_ROOT"] = str(tmp_path)
+    try:
+        _run_in_owner_group("_periodic_power_regular_worker", 4, 8, 0, 1)
+        _run_in_owner_group("_periodic_power_regular_worker", 4, 8, 1, 1)
+        records = [
+            json.loads((tmp_path / f"regular-8-{rank}.json").read_text())
+            for rank in range(4)
+        ]
+        assert [row["resident"] for row in records] == [1, 0, 0, 0]
+    finally:
+        if previous is None:
+            os.environ.pop("PHYDRAX_POWER_REGULAR_ROOT", None)
+        else:
+            os.environ["PHYDRAX_POWER_REGULAR_ROOT"] = previous

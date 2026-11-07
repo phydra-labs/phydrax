@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
@@ -16,8 +17,12 @@ from phydrax.discretization._cell_geometry import ScalarCoordinateElement
 from phydrax.discretization._cell_geometry_validity import (
     certify_cell_geometry_validity,
 )
+from phydrax.discretization._coordinate_enclosure import ExactScalar
 from phydrax.discretization._surface_chart_records import SurfaceChartWitness
-from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
+from phydrax.geometry._curve_boundary import (
+    _endpoint_interval,
+    ParametricCurveBoundarySource,
+)
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._meshing_domain import (
     MeshingDomain,
@@ -42,6 +47,7 @@ from phydrax.geometry.brep._patches import (
     BSplineCurve,
     BSplineSurfacePatch,
     LineCurve,
+    PlanePatch,
 )
 from phydrax.geometry.reconstruction._core import (
     ReconstructedGeometrySource,
@@ -49,7 +55,7 @@ from phydrax.geometry.reconstruction._core import (
 )
 from phydrax.geometry.simplicial._regions import MeshRegion
 from phydrax.geometry.surface import SurfaceModel
-from phydrax.meshing._association import GeometrySourceEntityRole
+from phydrax.meshing._association import GeometryAssociationKind, GeometrySourceEntityRole
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -64,7 +70,158 @@ from phydrax.meshing.providers._native_schedules import (
     NativeCurveSchedule,
     NativeSurfaceSchedule,
 )
-from phydrax.meshing.providers._native_surface import prepare_native_surface
+from phydrax.meshing.providers._native_surface import (
+    _domain_curve_source_query,
+    prepare_native_surface,
+)
+
+
+def test_curve_interval_expands_intersected_inward_root_bracket() -> None:
+    brackets = ((0.0, 0.0), (0.875, 1.0))
+    assert _endpoint_interval(0.9, 0.95, brackets) == (0.875, 1.0)
+    assert _endpoint_interval(0.5, 0.75, brackets) == (0.5, 0.75)
+
+
+def test_capped_native_curve_endpoint_source_and_tampering() -> None:
+    domain = MeshingDomain.from_brep(
+        brep_cylinder(
+            0.8,
+            1.5,
+            coordinate_contract=SpatialCoordinateContract.si(),
+            source_id="capped-curve-endpoint",
+        )
+    )
+    physical = {
+        use.curve
+        for patch in domain.patches
+        for loop in patch.loops
+        for use in loop
+        if isinstance(use, PatchCurveUse)
+    }
+    selected_ids = []
+    for identifier in domain.scope_entity_ids(1):
+        entity, occurrence = domain.source_entity_key_for_scope(1, int(identifier))
+        if domain.resolve_entity_id(1, entity, occurrence_path=occurrence) in physical:
+            selected_ids.append(int(identifier))
+    selected = np.asarray(selected_ids, dtype=np.int64)
+    query = _domain_curve_source_query(domain, selected)
+    domain.validate_curve_boundary_query(query, selected)
+    bracket_row, bracket_side = next(
+        (row, side)
+        for row, pair in enumerate(query.endpoint_parameter_bounds)
+        for side, (lower, upper) in enumerate(pair)
+        if lower < upper
+    )
+    bracket = query.endpoint_parameter_bounds[bracket_row][bracket_side]
+    assert bracket[1] > query.parameter_ranges[bracket_row][bracket_side]
+    shadow = query.parameter_ranges[bracket_row][bracket_side]
+    endpoint_box = query.chart_point_bounds(query.chart_ids[bracket_row], shadow)
+    expected_box = query.curves[bracket_row].bounding_box(*bracket)
+    assert np.array_equal(endpoint_box[0], expected_box[0])
+    assert np.array_equal(endpoint_box[1], expected_box[1])
+    assert query.boundary_cover(0.5).complete
+    from phydrax._model._structure import model_archive_projection
+    from phydrax.meshing._model_codec import restore_model_archive_value
+
+    recipe = model_archive_projection(query)
+    restored = restore_model_archive_value(recipe)
+    restored.require_current()
+    assert restored.query_id == query.query_id
+    assert restored.endpoint_parameter_bounds == query.endpoint_parameter_bounds
+    mismatches = []
+    for row, (curve, parameters, bounds) in enumerate(
+        zip(
+            query.curves, query.parameter_ranges, query.endpoint_point_bounds, strict=True
+        )
+    ):
+        for side, (parameter, enclosure) in enumerate(
+            zip(parameters, bounds, strict=True)
+        ):
+            assert enclosure is not None
+            value = np.asarray(curve.evaluate(jnp.asarray(parameter, dtype=jnp.float64)))
+            if np.any(value < enclosure[0]) or np.any(value > enclosure[1]):
+                mismatches.append((row, side, value))
+        midpoint = (parameters[0] + parameters[1]) / 2
+        lower, upper = query.chart_point_bounds(query.chart_ids[row], midpoint)
+        value = np.asarray(curve.evaluate(jnp.asarray(midpoint, dtype=jnp.float64)))
+        assert np.all(lower <= value) and np.all(value <= upper)
+    assert mismatches
+    row, side, value = mismatches[0]
+
+    def rebuild(
+        *,
+        parameter_ranges: tuple[tuple[float, float], ...] | None = None,
+        endpoint_source_keys: tuple[
+            tuple[tuple[str, tuple[str, ...]] | None, tuple[str, tuple[str, ...]] | None],
+            ...,
+        ]
+        | None = None,
+        endpoint_point_bounds: tuple[
+            tuple[tuple[tuple[float, ...], tuple[float, ...]] | None, ...], ...
+        ]
+        | None = None,
+        endpoint_parameter_bounds: tuple[
+            tuple[tuple[float, float], tuple[float, float]], ...
+        ]
+        | None = None,
+    ) -> ParametricCurveBoundarySource:
+        return ParametricCurveBoundarySource(
+            query.curves,
+            query.parameter_ranges if parameter_ranges is None else parameter_ranges,
+            source_id=query.source_id,
+            source_revision=query.source_revision,
+            curve_entity_ids=query.curve_entity_ids,
+            occurrence_paths=query.occurrence_paths,
+            chart_ids=query.chart_ids,
+            endpoint_source_keys=query.endpoint_source_keys
+            if endpoint_source_keys is None
+            else endpoint_source_keys,
+            endpoint_point_bounds=query.endpoint_point_bounds
+            if endpoint_point_bounds is None
+            else endpoint_point_bounds,
+            endpoint_parameter_bounds=query.endpoint_parameter_bounds
+            if endpoint_parameter_bounds is None
+            else endpoint_parameter_bounds,
+        )
+
+    bounds = [list(pair) for pair in query.endpoint_point_bounds]
+    bounds[row][side] = (tuple(value), tuple(value))
+    with pytest.raises(ValueError):
+        forged = rebuild(endpoint_point_bounds=tuple(tuple(pair) for pair in bounds))
+        domain.validate_curve_boundary_query(forged, selected)
+
+    bounds[row][side] = ((100.0,) * 3, (100.0,) * 3)
+    with pytest.raises(ValueError):
+        rebuild(endpoint_point_bounds=tuple(tuple(pair) for pair in bounds))
+
+    ranges = list(query.parameter_ranges)
+    ranges[row] = (ranges[row][0], (ranges[row][0] + ranges[row][1]) / 2)
+    with pytest.raises(ValueError):
+        forged = rebuild(parameter_ranges=tuple(ranges))
+        domain.validate_curve_boundary_query(forged, selected)
+
+    keys = [list(pair) for pair in query.endpoint_source_keys]
+    key = keys[row][side]
+    assert key is not None
+    keys[row][side] = (key[0], key[1] + ("forged-occurrence",))
+    with pytest.raises(ValueError):
+        forged = rebuild(endpoint_source_keys=tuple((pair[0], pair[1]) for pair in keys))
+        domain.validate_curve_boundary_query(forged, selected)
+
+    brackets = [list(pair) for pair in query.endpoint_parameter_bounds]
+    shadow = query.parameter_ranges[bracket_row][bracket_side]
+    brackets[bracket_row][bracket_side] = (shadow, shadow)
+    with pytest.raises(ValueError):
+        forged = rebuild(
+            endpoint_parameter_bounds=tuple((pair[0], pair[1]) for pair in brackets)
+        )
+        domain.validate_curve_boundary_query(forged, selected)
+    with pytest.raises(ValueError):
+        restore_model_archive_value(
+            recipe._replace(
+                endpoint_parameter_bounds=tuple((pair[0], pair[1]) for pair in brackets)
+            )
+        )
 
 
 def _warped_surface() -> BSplineSurfacePatch:
@@ -432,7 +589,21 @@ def _assert_vertices_on_domain(
         if dimension == 0:
             expected = domain.corner_points[source_row]
         elif dimension == 1:
-            expected = _curve_point(domain, source_row, parameters[association_row, 0])
+            parameter = parameters[association_row, 0]
+            if vertex_association.association_kind is GeometryAssociationKind.BREP:
+                patch, loop, use_row = (
+                    int(value) for value in domain.curve_owners[source_row]
+                )
+                use = domain.patches[patch].loops[loop][use_row]
+                uv = np.asarray(
+                    use.pcurve.evaluate(jnp.asarray(parameter)), dtype=np.float64
+                )
+                expected = np.asarray(
+                    domain.patches[patch].surface.evaluate(jnp.asarray(uv)),
+                    dtype=np.float64,
+                )
+            else:
+                expected = _curve_point(domain, source_row, parameter)
         else:
             expected = domain.evaluate(
                 np.asarray((source_row,), dtype=np.int64),
@@ -468,6 +639,102 @@ def test_surface_size_is_not_an_inferred_fidelity_request() -> None:
     )
     assert construction.compliance.passed
     assert "maximum_edge_length" in dict(construction.compliance.requested)
+
+
+def test_exact_planar_surface_proves_zero_without_inventing_a_control() -> None:
+    from phydrax.geometry.brep import brep_box
+    from phydrax.meshing import NativeMeshingProvider
+
+    contract = SpatialCoordinateContract.si()
+    model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
+    scope = MeshingScope.whole(model, 2)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.8, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=None,
+    )
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
+        .plan(model, specification, coordinate_contract=contract)
+        .execute()
+    )
+    assert specification.maximum_deviation is None
+    assert not any(name == "maximum_deviation" for name, _ in result.compliance.requested)
+    report = result.certification
+    assert report is not None and report.fidelity is not None
+    assert report.inputs.fidelity_tolerance == 0.0
+    assert report.fidelity.status == "certified"
+    assert report.fidelity.mesh_to_source_upper == 0.0
+    assert report.fidelity.source_to_mesh_upper == 0.0
+
+    from phydrax.discretization._surface_chart_records import _exact_chart_from_tokens
+    from phydrax.geometry._source_fidelity import (
+        _exact_affine_target_charts,
+        _exact_triangle2,
+        _partition_findings,
+    )
+    from phydrax.geometry._source_interpolation import (
+        exact_surface_coordinate_expressions,
+    )
+
+    witness = report.inputs.fidelity_witness
+    source = report.inputs.source
+    assert isinstance(witness, SurfaceChartWitness)
+    assert isinstance(source, MeshingDomainBoundarySource)
+    ids = tuple(int(value) for value in np.asarray(witness.cell_global_ids))
+    patches = tuple(int(value) for value in np.asarray(witness.patches))
+    original = tuple(
+        _exact_triangle2(_exact_chart_from_tokens(witness.chart_rational_tokens, row))
+        for row in range(len(ids))
+    )
+    positions = np.asarray(result.mesh.coordinates, dtype=np.float64)
+    target: dict[int, tuple[tuple[ExactScalar, ...], ...]] = {
+        int(cell_id): tuple(
+            tuple(Fraction.from_float(float(value)) for value in positions[int(vertex)])
+            for vertex in vertices
+        )
+        for block in result.mesh.blocks
+        for cell_id, vertices in zip(block.global_ids, block.vertices, strict=True)
+    }
+    actual = _exact_affine_target_charts(source, ids, patches, original, target, set(ids))
+    assert actual is not None
+    assert not _partition_findings(
+        source, witness, SourcePreparation(source.domain), exact_target_charts=actual
+    )
+    frame = exact_surface_coordinate_expressions(
+        source.domain.patches[patches[0]].surface
+    )
+    assert frame is not None
+    first = tuple(expression.get((1, 0), Fraction(0)) for expression in frame)
+    second = tuple(expression.get((0, 1), Fraction(0)) for expression in frame)
+    normal = (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+    axis = next(index for index, value in enumerate(normal) if value != 0)
+    changed = dict(target)
+    triangle = [list(point) for point in changed[ids[0]]]
+    triangle[0][axis] += Fraction(1, 1000)
+    changed[ids[0]] = tuple(tuple(point) for point in triangle)
+    assert (
+        _exact_affine_target_charts(source, ids, patches, original, changed, set(ids))
+        is None
+    )
+    same_patch = next(
+        index for index in range(1, len(ids)) if patches[index] == patches[0]
+    )
+    overlapping = list(actual)
+    overlapping[same_patch] = actual[0]
+    assert _partition_findings(
+        source,
+        witness,
+        SourcePreparation(source.domain),
+        exact_target_charts=tuple(overlapping),
+    )
 
 
 def test_parametric_surface_route_maps_source_charts_and_trim_curves() -> None:
@@ -992,12 +1259,47 @@ def test_parametric_surface_route_adapts_exact_reconstructed_meshregion() -> Non
     }
 
 
+def test_reconstructed_triangle_chart_box_encloses_exact_affine_image() -> None:
+    from phydrax.geometry.reconstruction._core import _ReconstructedTrianglePatch
+
+    corners = np.asarray(
+        ((0.1, -0.3, 0.7), (1.3, 0.2, -0.1), (-0.4, 0.9, 0.3)), dtype=np.float64
+    )
+    patch = _ReconstructedTrianglePatch(corners)
+    parameter_box = np.asarray(((0.1, 0.2), (0.3, 0.7)), dtype=np.float64)
+    box = patch.bounding_box(parameter_box)
+    exact = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in corners
+    )
+    images = tuple(
+        tuple(
+            exact[0][axis]
+            + u * (exact[1][axis] - exact[0][axis])
+            + v * (exact[2][axis] - exact[0][axis])
+            for axis in range(3)
+        )
+        for u in (Fraction.from_float(0.1), Fraction.from_float(0.3))
+        for v in (Fraction.from_float(0.2), Fraction.from_float(0.7))
+    )
+    for axis in range(3):
+        lowest = min(image[axis] for image in images)
+        highest = max(image[axis] for image in images)
+        assert Fraction.from_float(float(box[0, axis])) <= lowest
+        assert highest <= Fraction.from_float(float(box[1, axis]))
+        # Outward rounding of the exact extremes, never a wider sampled box.
+        assert float(box[0, axis]) >= np.nextafter(float(lowest), -np.inf)
+        assert float(box[1, axis]) <= np.nextafter(float(highest), np.inf)
+
+
 def test_rational_surface_jacobian_uses_positive_source_spans() -> None:
     domain = _curved_trim_domain()
     surface = domain.patches[0].surface
     preparation = SourcePreparation(domain)
-    triangle = ((Fraction(0), Fraction(0)), (Fraction(1), Fraction(0)),
-                (Fraction(0), Fraction(1)))
+    triangle = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
     bounds = _surface_jacobian_bounds(surface, triangle, preparation)
     assert bounds is not None
     lower, upper = bounds
@@ -1214,6 +1516,43 @@ def test_parametric_surface_route_grades_planar_disk_poles_without_thin_bands() 
         NativeMeshingOptions("parametric_surface"),
         contract,
     ).execute()
+    from phydrax.geometry._surface_source_support import (
+        _cad_root_edges,
+        validate_cad_curve_ancestry,
+    )
+
+    charts = construction.organization.surface_source
+    assert charts is not None
+    bindings = validate_cad_curve_ancestry(charts, 0.05)
+    edges, _ = _cad_root_edges(charts)
+    vertex_table = next(
+        value
+        for value in charts.associations
+        if value.target_entity_set_id == charts.mesh.entity_set(0).entity_set_id
+    )
+    vertex_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(vertex_table.target_global_ids)
+    }
+    vertex_ids = np.asarray(charts.mesh.vertex_global_ids, dtype=np.int64)
+    native_checked = 0
+    for edge_id, uses in bindings.items():
+        endpoints = edges[edge_id]
+        for binding in uses:
+            for vertex, parameter in zip(endpoints, binding.parameters, strict=True):
+                if parameter in (0, 1):
+                    continue
+                expected = domain.curve_native_parameter(binding.curve_row, parameter)
+                patch, loop, use = (
+                    int(v) for v in domain.curve_owners[binding.curve_row]
+                )
+                owner = domain.patches[patch].loops[loop][use]
+                if max(abs(owner.first), abs(owner.last)) <= 1.0:
+                    continue
+                row = vertex_rows[int(vertex_ids[vertex])]
+                assert float(vertex_table.parameters[row, 0]) == float(expected)
+                native_checked += 1
+    assert native_checked > 0
 
     assert construction.compliance.passed
     coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
@@ -1287,6 +1626,481 @@ def test_cad_surface_curve_ancestry_replays_root_edge_chains() -> None:
     )
     with pytest.raises(ValueError, match="coedge occurrence"):
         validate_cad_curve_ancestry(forged, 0.1)
+
+
+def test_surface_curve_ancestry_replays_chart_and_coedge_authority() -> None:
+    from phydrax.geometry._surface_source_support import (
+        SurfaceSourceCharts,
+        validate_surface_curve_ancestry,
+    )
+
+    domain = _square_domain(authored_corners=True)
+    construction = prepare_native_surface(
+        domain,
+        _surface_specification(domain),
+        NativeMeshingOptions("parametric_surface"),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    charts = construction.organization.surface_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    bindings = validate_surface_curve_ancestry(charts, 0.05)
+    assert {use.curve_row for uses in bindings.values() for use in uses} == set(
+        range(len(domain.curves))
+    )
+    occurrences = np.array(charts.boundary_occurrences, copy=True)
+    row, slot = np.argwhere(occurrences[:, :, 0] >= 0)[0]
+    patch, loop, use = (int(value) for value in occurrences[row, slot])
+    occurrences[row, slot, 2] = (use + 1) % len(domain.patches[patch].loops[loop])
+    forged = SurfaceSourceCharts(
+        domain,
+        charts.mesh,
+        charts.geometry,
+        charts.coordinate_contract,
+        charts.root_parameters,
+        charts.root_patches,
+        charts.associations,
+        charts.boundary_source,
+        source_root_cell_ids=charts.source_root_cell_ids,
+        source_piece_ids=charts.source_piece_ids,
+        root_parameter_exact=charts.root_parameter_exact,
+        boundary_occurrences=occurrences,
+        trim_roots=charts.trim_roots,
+    )
+    with pytest.raises(ValueError, match="coedge occurrence"):
+        validate_surface_curve_ancestry(forged, 0.05)
+
+    from phydrax.meshing._association import GeometryAssociation
+
+    def replace_table(
+        original: GeometryAssociation,
+        *,
+        parameters: np.ndarray | None = None,
+        intervals: tuple[tuple[Fraction, Fraction] | None, ...] | None = None,
+        dimensions: np.ndarray | None = None,
+        indices: np.ndarray | None = None,
+        roles: tuple[GeometrySourceEntityRole | None, ...] | None = None,
+        source_ids: tuple[str, ...] | None = None,
+        paths: tuple[tuple[str, ...], ...] | None = None,
+    ) -> GeometryAssociation:
+        return GeometryAssociation(
+            original.association_kind,
+            original.source_id,
+            original.source_revision,
+            original.target_entity_set_id,
+            original.target_global_ids,
+            original.source_entity_ids if source_ids is None else source_ids,
+            original.residuals,
+            resolved=original.resolved,
+            ambiguous=original.ambiguous,
+            exact=original.exact,
+            source_dimensions=original.source_dimensions
+            if dimensions is None
+            else dimensions,
+            source_indices=original.source_indices if indices is None else indices,
+            source_roles=original.source_roles if roles is None else roles,
+            source_occurrence_paths=original.source_occurrence_paths
+            if paths is None
+            else paths,
+            source_region_sides=original.source_region_sides,
+            source_parameter_intervals=original.source_parameter_intervals
+            if intervals is None
+            else intervals,
+            source_parameter_points=original.source_parameter_points,
+            parameters=original.parameters if parameters is None else parameters,
+            orientations=original.orientations,
+            parent_dimensions=original.parent_dimensions,
+            parent_ids=original.parent_ids,
+            parent_association_id=original.parent_association_id,
+            provenance=original.provenance,
+        )
+
+    def rebind(
+        original: GeometryAssociation, replacement: GeometryAssociation
+    ) -> SurfaceSourceCharts:
+        return SurfaceSourceCharts(
+            domain,
+            charts.mesh,
+            charts.geometry,
+            charts.coordinate_contract,
+            charts.root_parameters,
+            charts.root_patches,
+            tuple(
+                replacement if value is original else value
+                for value in charts.associations
+            ),
+            charts.boundary_source,
+            source_root_cell_ids=charts.source_root_cell_ids,
+            source_piece_ids=charts.source_piece_ids,
+            root_parameter_exact=charts.root_parameter_exact,
+            boundary_occurrences=charts.boundary_occurrences,
+            trim_roots=charts.trim_roots,
+        )
+
+    vertex_table = next(
+        value
+        for value in charts.associations
+        if value.association_kind is GeometryAssociationKind.SURFACE
+        and value.target_entity_set_id == charts.mesh.entity_set(0).entity_set_id
+    )
+    parameters = np.asarray(vertex_table.parameters).copy()
+    curve_vertex = np.flatnonzero(np.asarray(vertex_table.source_dimensions) == 1)[0]
+    parameters[curve_vertex, 0] += 0.01
+    with pytest.raises(ValueError, match="source parameter"):
+        validate_surface_curve_ancestry(
+            rebind(vertex_table, replace_table(vertex_table, parameters=parameters)), 0.05
+        )
+    dimensions = np.asarray(vertex_table.source_dimensions).copy()
+    indices = np.asarray(vertex_table.source_indices).copy()
+    roles = list(vertex_table.source_roles)
+    source_ids = list(vertex_table.source_entity_ids)
+    paths = list(vertex_table.source_occurrence_paths)
+    dimensions[curve_vertex] = 2
+    indices[curve_vertex] = domain.source_indices[2][0]
+    roles[curve_vertex] = GeometrySourceEntityRole.FACET
+    source_ids[curve_vertex] = domain.entity_id(2, 0)
+    paths[curve_vertex] = domain.source_occurrences[2][0]
+    with pytest.raises(ValueError, match="source occurrence"):
+        validate_surface_curve_ancestry(
+            rebind(
+                vertex_table,
+                replace_table(
+                    vertex_table,
+                    dimensions=dimensions,
+                    indices=indices,
+                    roles=tuple(roles),
+                    source_ids=tuple(source_ids),
+                    paths=tuple(paths),
+                ),
+            ),
+            0.05,
+        )
+    edge_table = next(
+        value
+        for value in charts.associations
+        if value.association_kind is GeometryAssociationKind.CURVE
+    )
+    intervals = list(edge_table.source_parameter_intervals)
+    assert intervals[0] is not None
+    first, last = intervals[0]
+    intervals[0] = (first, (first + last) / 2)
+    with pytest.raises(ValueError):
+        validate_surface_curve_ancestry(
+            rebind(edge_table, replace_table(edge_table, intervals=tuple(intervals))),
+            0.05,
+        )
+    from phydrax.geometry._surface_source_support import _cad_root_edges
+
+    original_intervals = edge_table.source_parameter_intervals
+    first_row, second_row = next(
+        (i, j)
+        for i, left in enumerate(original_intervals)
+        for j, right in enumerate(original_intervals)
+        if left is not None
+        and right is not None
+        and edge_table.source_entity_ids[i] == edge_table.source_entity_ids[j]
+        and edge_table.source_occurrence_paths[i] == edge_table.source_occurrence_paths[j]
+        and left[1] == right[0]
+    )
+    left, right = original_intervals[first_row], original_intervals[second_row]
+    assert left is not None and right is not None
+    shifted = left[1] + (right[1] - left[1]) / 100
+    altered = list(original_intervals)
+    altered[first_row] = (left[0], shifted)
+    altered[second_row] = (shifted, right[1])
+    edges, _ = _cad_root_edges(charts)
+    first_edge = edges[int(edge_table.target_global_ids[first_row])]
+    second_edge = edges[int(edge_table.target_global_ids[second_row])]
+    common = set(first_edge) & set(second_edge)
+    assert len(common) == 1
+    vertex = next(iter(common))
+    vertex_id = int(charts.mesh.vertex_global_ids[vertex])
+    vertex_row = next(
+        row
+        for row, value in enumerate(vertex_table.target_global_ids)
+        if int(value) == vertex_id
+    )
+    adjusted_parameters = np.asarray(vertex_table.parameters).copy()
+    adjusted_parameters[vertex_row, 0] = float(shifted)
+    forged_edge = replace_table(edge_table, intervals=tuple(altered))
+    forged_vertex = replace_table(vertex_table, parameters=adjusted_parameters)
+    forged_both = SurfaceSourceCharts(
+        domain,
+        charts.mesh,
+        charts.geometry,
+        charts.coordinate_contract,
+        charts.root_parameters,
+        charts.root_patches,
+        tuple(
+            forged_edge
+            if value is edge_table
+            else forged_vertex
+            if value is vertex_table
+            else value
+            for value in charts.associations
+        ),
+        charts.boundary_source,
+        source_root_cell_ids=charts.source_root_cell_ids,
+        source_piece_ids=charts.source_piece_ids,
+        root_parameter_exact=charts.root_parameter_exact,
+        boundary_occurrences=charts.boundary_occurrences,
+        trim_roots=charts.trim_roots,
+    )
+    with pytest.raises(ValueError, match="exact root interpolation proof"):
+        validate_surface_curve_ancestry(forged_both, 0.05)
+
+
+def test_non_affine_surface_trim_replays_exact_root_lineage(tmp_path: Path) -> None:
+    from phydrax.geometry._surface_source_support import validate_surface_curve_ancestry
+
+    domain = _curved_trim_domain()
+    construction = prepare_native_surface(
+        domain,
+        _surface_specification(domain, maximum_deviation=0.04),
+        NativeMeshingOptions(
+            "parametric_surface",
+            surface_schedule=NativeSurfaceSchedule(
+                spacing_fraction=0.6,
+                minimum_edge_samples=4,
+                curve_schedule=NativeCurveSchedule(fidelity_samples=5),
+            ),
+        ),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    charts = construction.organization.surface_source
+    assert charts is not None and charts.trim_roots
+    assert any(
+        root.first.denominator == 3 or root.last.denominator == 3
+        for root in charts.trim_roots
+    )
+    edge_table = next(
+        value
+        for value in charts.associations
+        if value.association_kind is GeometryAssociationKind.CURVE
+    )
+    assert any(
+        endpoint.denominator == 3
+        for interval in edge_table.source_parameter_intervals
+        if interval is not None
+        for endpoint in interval
+    )
+    bindings = validate_surface_curve_ancestry(charts, 0.04)
+    assert {use.curve_row for uses in bindings.values() for use in uses} == set(
+        range(len(domain.curves))
+    )
+    import subprocess
+    import sys
+
+    from phydrax.geometry._surface_source_support import SurfaceSourceCharts
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, write_model_artifact
+
+    def rechart(roots: tuple) -> SurfaceSourceCharts:
+        return SurfaceSourceCharts(
+            charts.domain,
+            charts.mesh,
+            charts.geometry,
+            charts.coordinate_contract,
+            charts.root_parameters,
+            charts.root_patches,
+            charts.associations,
+            charts.boundary_source,
+            source_root_cell_ids=charts.source_root_cell_ids,
+            source_piece_ids=charts.source_piece_ids,
+            root_parameter_exact=charts.root_parameter_exact,
+            boundary_occurrences=charts.boundary_occurrences,
+            trim_roots=roots,
+        )
+
+    def persist(value: SurfaceSourceCharts, filename: str) -> Path:
+        entry = CompositionEntry(
+            value,
+            entry_id="source/charts",
+            role="model-state",
+            owner_id=value.source_id,
+            structure_id=value.source_chart_id,
+            revision_id=value.source_revision,
+            semantics_id="surface-source-charts",
+        )
+        return write_model_artifact(
+            tmp_path / filename,
+            Composition((entry,), boundary_id="surface-roots"),
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+
+    script = (
+        "import sys; from phydrax.lifecycle import Composition; "
+        "from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_model_archive_value; "
+        "from phydrax.geometry._surface_source_support import validate_surface_curve_ancestry; "
+        "c=read_model_artifact(sys.argv[1], expected_type=Composition, restore=restore_model_archive_value, limits=MODEL_ARCHIVE_LIMITS); "
+        "s=c.value('source/charts'); assert s.source_chart_id==sys.argv[2]; "
+        "validate_surface_curve_ancestry(s,0.04)"
+    )
+    valid = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(persist(charts, "valid.phx")),
+            charts.source_chart_id,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert valid.returncode == 0, valid.stderr
+    roots = list(charts.trim_roots)
+    first = roots[0]
+    roots[0] = first._replace(
+        first_uv=(first.first_uv[0] + Fraction(1, 100), first.first_uv[1])
+    )
+    forged = rechart(tuple(roots))
+    assert forged.source_chart_id != charts.source_chart_id
+    for value, filename in ((forged, "forged.phx"), (rechart(()), "empty-roots.phx")):
+        rejected = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(persist(value, filename)),
+                value.source_chart_id,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert rejected.returncode != 0, "unproved trim lineage was accepted"
+
+
+def test_non_brep_surface_pole_ancestry_replays_exact_collapse() -> None:
+    from phydrax.geometry._meshing_domain import PatchPoleUse
+    from phydrax.geometry._surface_source_support import validate_surface_curve_ancestry
+
+    contract = SpatialCoordinateContract.si()
+    original = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract)
+    )
+    domain = MeshingDomain(
+        original.patches,
+        original.curves,
+        len(original.corner_points),
+        source_id="surface-pole-proof",
+        source_revision="surface-pole-proof-r1",
+        regions=original.regions,
+        corner_points=original.corner_points,
+    )
+    assert any(
+        isinstance(use, PatchPoleUse)
+        for patch in domain.patches
+        for loop in patch.loops
+        for use in loop
+    )
+    construction = prepare_native_surface(
+        domain,
+        _surface_specification(domain, maximum_deviation=0.05),
+        NativeMeshingOptions("parametric_surface"),
+        contract,
+    ).execute()
+    charts = construction.organization.surface_source
+    assert charts is not None
+    bindings = validate_surface_curve_ancestry(charts, 0.05)
+    # A collapsed pole side is a corner use, not a coedge: its degenerate
+    # source curve has no authored chart owner and no mesh edge to bind. Every
+    # other curve is bound, and every pole side was proved by the replay.
+    pole_corners = {
+        use.corner
+        for patch in domain.patches
+        for loop in patch.loops
+        for use in loop
+        if isinstance(use, PatchPoleUse)
+    }
+    unowned = {
+        row
+        for row in range(len(domain.curves))
+        if tuple(int(value) for value in domain.curve_owners[row]) == (-1, -1, -1)
+    }
+    assert unowned == {
+        row
+        for row, curve in enumerate(domain.curves)
+        if curve.start == curve.end and curve.start in pole_corners
+    }
+    assert unowned
+    assert {use.curve_row for uses in bindings.values() for use in uses} == (
+        set(range(len(domain.curves))) - unowned
+    )
+    # The harmonic collapse proof refuses a ring side that does not collapse.
+    from phydrax.geometry._surface_source_support import _surface_pole_proven
+
+    pole_patch, pole = next(
+        (row, use)
+        for row, patch in enumerate(domain.patches)
+        for loop in patch.loops
+        for use in loop
+        if isinstance(use, PatchPoleUse)
+    )
+    assert _surface_pole_proven(charts, pole_patch, pole)
+    ring = next(
+        use
+        for loop in domain.patches[pole_patch].loops
+        for use in loop
+        if isinstance(use, PatchCurveUse)
+        and domain.curves[use.curve].start == domain.curves[use.curve].end
+    )
+    ring_corner = domain.curves[ring.curve].start
+    forged_pole = PatchPoleUse(ring_corner, ring.pcurve, ring.first, ring.last)
+    assert not _surface_pole_proven(charts, pole_patch, forged_pole)
+
+
+def test_non_brep_seam_corner_is_the_exact_whole_turn_image() -> None:
+    contract = SpatialCoordinateContract.si()
+    original = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract)
+    )
+    seam_end = original.patches[1].surface.evaluate(
+        jnp.asarray((2.0 * np.pi, 0.0), dtype=jnp.float64)
+    )
+    corner = 1
+    assert np.array_equal(original.corner_points[corner], (0.0, 0.5, 0.0))
+    # The rounded binary64 turn misses the seam corner; the exact turn does not.
+    assert not np.array_equal(np.asarray(seam_end), original.corner_points[corner])
+    forged = np.array(original.corner_points, copy=True)
+    forged[corner] = np.asarray(seam_end)
+    with pytest.raises(ValueError, match="endpoints disagree at corner 1"):
+        MeshingDomain(
+            original.patches,
+            original.curves,
+            len(original.corner_points),
+            source_id="surface-pole-proof",
+            source_revision="surface-pole-proof-r1",
+            regions=original.regions,
+            corner_points=forged,
+        )
+
+
+def test_curve_chord_endpoint_box_refusal_is_a_typed_meshing_failure() -> None:
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+    from phydrax.meshing.providers._native_surface import _CurveChordBounds
+
+    domain = _curved_trim_domain()
+    # A curved p-curve leaving the patch chart at its midpoint: its endpoint
+    # chart box cannot be admitted by the source surface.
+    escaping = PatchCurveUse(
+        0,
+        BSplineCurve(
+            np.asarray(((0.0, 0.0), (0.5, -0.4), (1.0, 0.0)), dtype=np.float64),
+            np.ones((3,), dtype=np.float64),
+            np.asarray((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), dtype=np.float64),
+            2,
+        ),
+        0.0,
+        1.0,
+    )
+    chords = _CurveChordBounds(SourcePreparation(domain))
+    with pytest.raises(MeshingFailure) as failure:
+        chords._point_bounds(0, escaping, Fraction(1, 2))
+    assert failure.value.category is MeshingFailureCategory.PROVIDER_EXECUTION_FAILED
+    assert failure.value.entity_ids == (0,)
+    assert "patch 0 at native parameter 1/2" in str(failure.value)
+    assert isinstance(failure.value.__cause__, ValueError)
 
 
 def test_hard_surface_angle_decides_represented_face_ratio_at_threshold() -> None:
@@ -1407,3 +2221,30 @@ def test_parametric_surface_route_samples_seams_at_the_curvature_rate() -> None:
     quality = 2.0 * np.sqrt(3.0) * areas / np.sum(lengths**2, axis=1)
     assert float(np.min(quality)) >= 0.2
     assert float(np.max(np.max(lengths, axis=1) / np.min(lengths, axis=1))) <= 5.0
+
+
+def test_prepared_surface_boxes_preserve_owner_and_refusals() -> None:
+    preparation = SourcePreparation(_square_domain())
+    surfaces = (
+        PlanePatch((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        PlanePatch((2.0, 3.0, 4.0), (0.0, 2.0, 0.0), (0.0, 0.0, 3.0)),
+    )
+    boxes = (
+        np.asarray(((0.0, 0.25), (0.5, 1.0)), dtype=np.float64),
+        np.asarray(((0.25, 0.5), (1.0, 0.75)), dtype=np.float64),
+    )
+    expected = tuple(
+        tuple(surface.bounding_box(box) for box in boxes) for surface in surfaces
+    )
+    for surface_index in (0, 1, 0, 1):
+        for box_index, box in enumerate(boxes):
+            actual = preparation.surface_box(surfaces[surface_index], box)
+            assert np.array_equal(actual, expected[surface_index][box_index])
+    assert not np.array_equal(expected[0][0], expected[1][0])
+
+    invalid = np.asarray(((1.0, 0.0), (0.0, 1.0)), dtype=np.float64)
+    with pytest.raises(ValueError) as original:
+        surfaces[0].bounding_box(invalid)
+    with pytest.raises(ValueError) as prepared:
+        preparation.surface_box(surfaces[0], invalid)
+    assert str(prepared.value) == str(original.value)

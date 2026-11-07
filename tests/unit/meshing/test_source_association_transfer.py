@@ -3,19 +3,30 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from pathlib import Path
 from fractions import Fraction
+from pathlib import Path
+from typing import TYPE_CHECKING
 
+import equinox as eqx
 import numpy as np
 import pytest
 
 from phydrax import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.geometry import Sphere
+from phydrax.geometry._source_boundary_records import (
+    SourceBoundaryChartWitness,
+    SourceBoundaryFaceImageWitness,
+    SourceBoundaryImagePullback,
+)
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
     AnalyticImplicitProfile,
     discover_adaptive_implicit_surface,
+)
+from phydrax.geometry.implicit._chart_restriction import (
+    certify_implicit_chart_restriction,
+    ImplicitChartPremise,
 )
 from phydrax.meshing._adaptation import (
     execute_mesh_adaptation,
@@ -25,16 +36,14 @@ from phydrax.meshing._adaptation import (
     prepare_mesh_adaptation,
 )
 from phydrax.meshing._association import (
+    _target_piece_sort_key,
     AssociationEntityClasses,
     AssociationPropagationError,
     GeometryAssociation,
     GeometryAssociationKind,
+    GeometryAssociationProvenance,
     GeometrySourceEntityRole,
-)
-from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
-from phydrax.geometry.implicit._chart_restriction import (
-    certify_implicit_chart_restriction,
-    ImplicitChartPremise,
+    SourceBoundaryTargetPieceRow,
 )
 from phydrax.meshing._association_composition import ComposedAssociationTransfer
 from phydrax.meshing._association_routes import boundary_mask, target_dimension
@@ -60,7 +69,12 @@ from phydrax.meshing._mapped_reference_association import (
 )
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-from phydrax.meshing._surface_association_transfer import SurfaceAssociationTransfer
+from phydrax.meshing._surface_association_transfer import (
+    _curve_edges_with_root_ancestry,
+    _simplex_edges,
+    _target_edge_parameter,
+    SurfaceAssociationTransfer,
+)
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.meshing.providers._native import NativeMeshingProvider
 from phydrax.meshing.providers._native_implicit import (
@@ -79,6 +93,22 @@ from tests.unit.meshing.test_native_surface_routes import (
     _surface_specification,
 )
 from tests.unit.meshing.test_transition_acceptance import tiny_chart_source
+
+
+if TYPE_CHECKING:
+    from phydrax.meshing._layer_core_association_transfer import (
+        NativeLayerCoreAssociationTransfer,
+    )
+    from phydrax.meshing._mixed_adaptation import MixedLayerColumns
+    from phydrax.meshing.providers._native_sources import NativeLayerCoreSource
+
+type _NativeLayerCoreFixture = tuple[
+    NativeLayerCoreSource,
+    VolumeMeshingSpec,
+    CellMeshingResult,
+    NativeLayerCoreAssociationTransfer,
+    MixedLayerColumns,
+]
 
 
 _CONTRACT = SpatialCoordinateContract.si()
@@ -517,6 +547,64 @@ def test_coarsened_curve_edges_merge_exact_source_intervals() -> None:
     assert _curve_rows(coarsened.target) == _curve_rows(source)
 
 
+def test_curve_edge_parameter_uses_exact_rational_stencil() -> None:
+    stencil = VertexInterpolationStencil(
+        "source-vertices",
+        "target-vertices",
+        np.asarray((30,)),
+        np.asarray(((10, 20),)),
+        np.asarray(((2.0 / 3.0, 1.0 / 3.0),)),
+        np.asarray(((True, True),)),
+        exact_weights=((Fraction(2, 3), Fraction(1, 3)),),
+    )
+    assert _target_edge_parameter(30, (10, 20), stencil) == Fraction(1, 3)
+    with pytest.raises(ValueError, match="source edge"):
+        _target_edge_parameter(30, (10, 40), stencil)
+
+
+def test_curve_edge_incidence_supports_volume_cells() -> None:
+    _source, domain = _mapped_plc_tetra_source()
+    edges = _simplex_edges(domain.reference_mesh)
+    assert edges.shape == (domain.reference_mesh.entity_set(1).count, 2)
+
+
+def test_curve_edge_replay_retains_original_root_parent() -> None:
+    _domain, source = tiny_chart_source()
+    original = next(
+        value
+        for value in source.associations
+        if value.association_kind is GeometryAssociationKind.CURVE
+        and value.target_entity_set_id == source.mesh.entity_set(1).entity_set_id
+    )
+    ids = np.asarray(original.target_global_ids, dtype=np.int64)
+    parent = GeometryAssociation(
+        original.association_kind,
+        original.source_id,
+        original.source_revision,
+        original.target_entity_set_id,
+        ids,
+        original.source_entity_ids,
+        np.asarray(original.residuals),
+        source_dimensions=np.asarray(original.source_dimensions),
+        source_indices=np.asarray(original.source_indices),
+        source_roles=original.source_roles,
+        source_occurrence_paths=original.source_occurrence_paths,
+        source_parameter_intervals=original.source_parameter_intervals,
+        orientations=np.asarray(original.orientations),
+        parent_dimensions=np.ones(ids.size, dtype=np.int8),
+        parent_ids=ids + 1000,
+        provenance=GeometryAssociationProvenance.LINEAGE,
+        parent_association_id="original-curve-bank",
+    )
+    lineage, stencil = _identity_lineage(source.mesh)
+    result = _curve_edges_with_root_ancestry(
+        source, lineage, source.mesh, stencil, parent
+    )
+    assert result.parent_association_id == "original-curve-bank"
+    np.testing.assert_array_equal(result.parent_ids, ids + 1000)
+    assert result.source_parameter_intervals == parent.source_parameter_intervals
+
+
 def test_mapped_reference_root_association_and_composed_namespaces() -> None:
     _source, domain = _mapped_plc_tetra_source()
     mesh, geometry = domain.reference_mesh, domain.source_geometry
@@ -534,6 +622,29 @@ def test_mapped_reference_root_association_and_composed_namespaces() -> None:
     assert cell_association.source_entity_ids == (
         domain.image_entity_id(3, int(domain.root_cell_ids[0])),
     )
+
+    wrong_occurrence = GeometryAssociation(
+        GeometryAssociationKind.MAPPED_REFERENCE,
+        domain.source_id,
+        domain.source_revision,
+        mesh.entity_set(3).entity_set_id,
+        np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64),
+        cell_association.source_entity_ids,
+        np.zeros((mesh.entity_set(3).count,), dtype=np.float64),
+        exact=True,
+        source_dimensions=np.full((mesh.entity_set(3).count,), 3, dtype=np.int8),
+        source_indices=np.asarray(cell_association.source_indices),
+        source_roles=(GeometrySourceEntityRole.REGION,) * mesh.entity_set(3).count,
+        source_occurrence_paths=(("wrong-occurrence",),) * mesh.entity_set(3).count,
+    )
+    wrong_result = certify_cell_mesh(
+        mesh,
+        domain.coordinate_contract,
+        geometry=geometry,
+        associations=(wrong_occurrence,),
+    )
+    with pytest.raises(ValueError, match="occurrence"):
+        mapped_transfer.validate_source(wrong_result)
 
     profile = AnalyticImplicitProfile(
         Sphere((0.0, 0.0, 0.0), 3.0, feature_id="composed-implicit-region").compile(),
@@ -570,7 +681,16 @@ def test_mapped_reference_root_association_and_composed_namespaces() -> None:
     levels = transfer.classes(composed_source)
     assert levels[3].resolved.tolist() == [True]
     lineage, stencil = _identity_lineage(mesh)
-    result = transfer.propagate(composed_source, lineage, mesh, vertex_stencil=stencil)
+    result = transfer.propagate(
+        composed_source,
+        lineage,
+        mesh,
+        vertex_stencil=stencil,
+        geometry_transition=None,
+        target_fidelity_witness=None,
+        target_scoped_fidelity=(),
+        validated_fidelity=(),
+    )
     assert {(value.association_kind, value.source_id) for value in result} == {
         (GeometryAssociationKind.MAPPED_REFERENCE, domain.source_id),
         (GeometryAssociationKind.IMPLICIT, profile.source_id),
@@ -687,3 +807,1170 @@ def test_implicit_chart_restriction_replays_in_an_independent_cold_process(
     )
     assert restored.returncode == 0, restored.stderr
     assert json.loads(restored.stdout) == expected
+
+
+@pytest.fixture(scope="module")
+def accepted_native_layer_core() -> _NativeLayerCoreFixture:
+    """Generate the original ridge with its explicitly approved conforming cap."""
+    from phydrax.meshing._layer_core_association_transfer import (
+        NativeLayerCoreAssociationTransfer,
+    )
+    from tools.meshing_qualification.scenarios.native_hybrid_profiles import (
+        _accepted_layer_columns,
+        _archived_ridge_source,
+        _periodic_layer_core_specification,
+    )
+
+    source, _, _ = _archived_ridge_source(cap_refinement="conforming")
+    specification = _periodic_layer_core_specification(source)
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions("layer_core"))
+        .plan(source, specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
+    assert result.certification is not None and result.certification.passed
+    adapter = NativeLayerCoreAssociationTransfer(source, specification)
+    return source, specification, result, adapter, _accepted_layer_columns(result)
+
+
+def _replace_association_support(
+    table: GeometryAssociation,
+    /,
+    *,
+    pieces: tuple[SourceBoundaryTargetPieceRow | None, ...] | None = None,
+    exact: bool | None = None,
+) -> GeometryAssociation:
+    return GeometryAssociation(
+        table.association_kind,
+        table.source_id,
+        table.source_revision,
+        table.target_entity_set_id,
+        table.target_global_ids,
+        table.source_entity_ids,
+        table.residuals,
+        resolved=table.resolved,
+        ambiguous=table.ambiguous,
+        exact=table.exact if exact is None else exact,
+        source_dimensions=table.source_dimensions,
+        source_indices=table.source_indices,
+        source_roles=table.source_roles,
+        source_occurrence_paths=table.source_occurrence_paths,
+        source_region_sides=table.source_region_sides,
+        source_parameter_intervals=table.source_parameter_intervals,
+        source_parameter_points=table.source_parameter_points,
+        target_parameter_intervals=table.target_parameter_intervals,
+        target_reference_pieces=table.target_reference_pieces
+        if pieces is None
+        else pieces,
+        source_boundary_witness_id=table.source_boundary_witness_id,
+        parameters=table.parameters,
+        orientations=table.orientations,
+        parent_dimensions=table.parent_dimensions,
+        parent_ids=table.parent_ids,
+        parent_association_id=table.parent_association_id,
+        provenance=table.provenance,
+    )
+
+
+def test_face_image_association_consumer_preserves_distinct_source_strata(
+    tmp_path: Path,
+) -> None:
+    from phydrax.meshing._association import (
+        GeometryAssociationArchiveRecipe,
+        GeometryAssociationBankArchiveRecipe,
+        source_boundary_image_association_piece_rows,
+        source_boundary_image_face_orientations,
+    )
+    from tests.unit.meshing.test_native_layer_overlap import (
+        _cross_strata_face_image_fixture,
+    )
+
+    mesh, geometry, query, witness = _cross_strata_face_image_fixture()
+    groups = source_boundary_image_association_piece_rows(witness)
+    orientations = source_boundary_image_face_orientations(mesh, geometry, witness)
+    tables: list[GeometryAssociation] = []
+    for (face, identity, path), pieces in groups.items():
+        row = next(
+            index
+            for index, (target, entity, occurrence) in enumerate(
+                zip(
+                    witness.entity_global_ids,
+                    witness.source_entity_ids,
+                    witness.occurrence_paths,
+                    strict=True,
+                )
+            )
+            if (int(target), entity, occurrence) == (face, identity, path)
+        )
+        table = GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            query.source_id,
+            query.source_revision,
+            mesh.entity_set(2).entity_set_id,
+            np.asarray([face]),
+            (identity,),
+            np.zeros(1),
+            exact=True,
+            source_roles=(GeometrySourceEntityRole.FACET,),
+            source_occurrence_paths=(path,),
+            source_region_sides=(witness.source_region_sides[row],),
+            orientations=np.asarray(
+                [orientations[(face, identity, path)]], dtype=np.int8
+            ),
+            target_reference_pieces=(pieces,),
+            source_boundary_witness_id=witness.witness_id,
+        )
+        table.validate_source_boundary_support(mesh, geometry, query, witness)
+        restored = GeometryAssociationArchiveRecipe.from_association(table).restore()
+        restored.validate_source_boundary_support(mesh, geometry, query, witness)
+        assert restored.association_id == table.association_id
+        tables.append(table)
+    assert len({table.source_entity_ids[0] for table in tables}) == 2
+    assert len({int(table.target_global_ids[0]) for table in tables}) == 1
+    bank = GeometryAssociationBankArchiveRecipe.from_associations(tuple(tables))
+    restored_bank = bank.restore()
+    assert tuple(value.association_id for value in restored_bank) == tuple(
+        value.association_id for value in tables
+    )
+    for table in restored_bank:
+        table.validate_source_boundary_support(mesh, geometry, query, witness)
+    with pytest.raises(ValueError):
+        bank._replace(ends=np.asarray((0, int(bank.ends[-1])), dtype=np.int64)).restore()
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    entry = CompositionEntry(
+        tuple(tables),
+        entry_id="associations",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=mesh.topology_id,
+        revision_id=mesh.mesh_id,
+        semantics_id="source-associations",
+    )
+    path = tmp_path / "association-bank.phx"
+    write_model_artifact(
+        path,
+        Composition((entry,), boundary_id="association-bank"),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    decoded = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    ).value("associations")
+    assert tuple(value.association_id for value in decoded) == tuple(
+        value.association_id for value in tables
+    )
+    for table in decoded:
+        table.validate_source_boundary_support(mesh, geometry, query, witness)
+    forged = eqx.tree_at(
+        lambda value: value.orientations, tables[0], -tables[0].orientations
+    )
+    with pytest.raises(ValueError):
+        forged.validate_source_boundary_support(mesh, geometry, query, witness)
+
+
+def _layer_association_semantics(
+    result: CellMeshingResult,
+) -> tuple[tuple[object, ...], ...]:
+    rows: list[tuple[object, ...]] = []
+    for table in result.associations:
+        dimension = target_dimension(result.mesh, table)
+        for row, identifier in enumerate(
+            np.asarray(table.target_global_ids, dtype=np.int64)
+        ):
+            rows.append(
+                (
+                    table.source_id,
+                    table.source_revision,
+                    table.association_kind,
+                    dimension,
+                    int(identifier),
+                    table.source_entity_ids[row],
+                    table.source_roles[row],
+                    table.source_occurrence_paths[row],
+                    table.source_region_sides[row],
+                    table.source_parameter_intervals[row],
+                    table.source_parameter_points[row],
+                    table.target_parameter_intervals[row],
+                    table.target_reference_pieces[row],
+                    table.source_boundary_witness_id,
+                    tuple(
+                        None if np.isnan(value) else float(value)
+                        for value in np.asarray(table.parameters)[row]
+                    ),
+                    int(np.asarray(table.source_dimensions)[row]),
+                    int(np.asarray(table.source_indices)[row]),
+                    int(np.asarray(table.orientations)[row]),
+                    float(np.asarray(table.residuals)[row]),
+                    bool(np.asarray(table.resolved)[row]),
+                    bool(np.asarray(table.ambiguous)[row]),
+                    table.exact,
+                    int(np.asarray(table.parent_dimensions)[row]),
+                    int(np.asarray(table.parent_ids)[row]),
+                    table.provenance,
+                    table.parent_association_id,
+                )
+            )
+    return tuple(sorted(rows, key=repr))
+
+
+def test_original_layer_rehashed_carrier_forgery_is_not_authority(
+    accepted_native_layer_core: _NativeLayerCoreFixture,
+    tmp_path: Path,
+) -> None:
+    from copy import copy
+
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax._model._structure import LayerCoreAcceptedResultArchiveRecipe
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import (
+        layer_core_authoring_recipe,
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_layer_core_accepted_result,
+        restore_layer_core_authoring,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    source, specification, result, _, _ = accepted_native_layer_core
+    assert source.layer_control is not None and source.layer_policy is not None
+    carrier = copy(result.layer_core_carrier_witness)
+    assert carrier is not None and carrier.original_source_edge_rows
+    forged_rows = carrier.original_source_edge_rows[:-1]
+    object.__setattr__(carrier, "original_source_edge_rows", forged_rows)
+    object.__setattr__(
+        carrier,
+        "witness_id",
+        canonical_fingerprint(
+            {
+                "kind": "native-layer-core-carrier-witness",
+                "source": carrier.source_binding_id,
+                "specification": carrier.specification_id,
+                "original_source_edge_rows": forged_rows,
+                "required_source_edge_rows": carrier.required_source_edge_rows,
+            }
+        ),
+    )
+    forged_result = copy(result)
+    object.__setattr__(forged_result, "layer_core_carrier_witness", carrier)
+    source_entry = CompositionEntry(
+        layer_core_authoring_recipe(source, source.layer_control, source.layer_policy),
+        entry_id="source",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=source.layers.mesh.topology_id,
+        revision_id=source.binding_id,
+        semantics_id="original-layer-core-authority",
+    )
+    spec_entry = CompositionEntry(
+        specification,
+        entry_id="specification",
+        role="model-state",
+        owner_id="phydrax.meshing",
+        structure_id=source.binding_id,
+        revision_id=specification.specification_id,
+        semantics_id="original-layer-core-request",
+        dependencies=(source_entry.binding("revision"),),
+    )
+    result_entry = CompositionEntry(
+        LayerCoreAcceptedResultArchiveRecipe(
+            forged_result, source.binding_id, specification.specification_id
+        ),
+        entry_id="result",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=forged_result.mesh.topology_id,
+        revision_id=forged_result.result_id,
+        semantics_id="untrusted-forged-carrier",
+        dependencies=(source_entry.binding("revision"), spec_entry.binding("revision")),
+    )
+    path = tmp_path / "forged-carrier.phx"
+    write_model_artifact(
+        path,
+        Composition(
+            (source_entry, spec_entry, result_entry), boundary_id="carrier-forgery"
+        ),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    receipt = model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
+    archive = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        expected_content_id=receipt,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    restored_specification = VolumeMeshingSpec.from_stored_fields(
+        archive.value("specification")
+    )
+    restored_source = restore_layer_core_authoring(
+        archive.value("source"),
+        specification=restored_specification,
+    )
+    with pytest.raises(ValueError, match="Stored native carrier inventory changed"):
+        restore_layer_core_accepted_result(
+            archive.value("result"),
+            restored_source,
+            restored_specification,
+        )
+
+
+def test_native_layer_core_mixed_round_trip_preserves_source_strata(
+    accepted_native_layer_core: _NativeLayerCoreFixture,
+    tmp_path: Path,
+) -> None:
+    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+    from phydrax.meshing._layer_core_subdivision import (
+        require_refined_column_certification,
+    )
+    from phydrax.meshing._layer_source_association_replay import (
+        replay_layer_source_associations,
+    )
+    from tools.meshing_qualification.scenarios.native_hybrid_profiles import (
+        _periodic_mixed_coarsening,
+        _periodic_mixed_refinement,
+    )
+
+    source, specification, original, adapter, columns = accepted_native_layer_core
+    import pickle
+    from copy import copy
+
+    from phydrax.meshing._layer_core_root_geometry import ComputedLayerCoreRoot
+
+    root = original.layer_core_root_geometry
+    assert root is not None
+    computed_root = ComputedLayerCoreRoot.reprove(source, specification, root)
+    computed_root.require(source, specification, root.mesh, root.geometry, root)
+    for operands in (
+        (copy(source), specification, root.mesh, root.geometry, root),
+        (source, copy(specification), root.mesh, root.geometry, root),
+        (source, specification, copy(root.mesh), root.geometry, root),
+        (source, specification, root.mesh, root.geometry, copy(root)),
+    ):
+        with pytest.raises(ValueError, match="different exact operands"):
+            computed_root.require(*operands)
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(computed_root)
+    from phydrax.discretization._nested_reference_types import ReferenceCellPartition
+    from phydrax.meshing._model_codec import restore_layer_core_root_geometry
+
+    first = root.layer_root_partition.maps[0]
+    assert len(first.target_cell_ids) > 1
+    missing = first._replace(
+        target_cell_ids=first.target_cell_ids[1:],
+        source_cell_ids=first.source_cell_ids[1:],
+        source_reference_vertices=first.source_reference_vertices[1:],
+        source_reference_exact_vertices=(
+            None
+            if first.source_reference_exact_vertices is None
+            else first.source_reference_exact_vertices[1:]
+        ),
+        source_reference_chart_arguments=(
+            None
+            if first.source_reference_chart_arguments is None
+            else first.source_reference_chart_arguments[1:]
+        ),
+    )
+    forged_root = copy(root)
+    object.__setattr__(
+        forged_root,
+        "layer_root_partition",
+        ReferenceCellPartition((missing, *root.layer_root_partition.maps[1:])),
+    )
+    with pytest.raises(ValueError):
+        restore_layer_core_root_geometry(forged_root, source, specification)
+    overlapping_root = copy(root)
+    object.__setattr__(
+        overlapping_root,
+        "layer_root_partition",
+        ReferenceCellPartition((*root.layer_root_partition.maps, first)),
+    )
+    with pytest.raises(ValueError):
+        restore_layer_core_root_geometry(overlapping_root, source, specification)
+    adapter.validate_source(original)
+    _, refinement, policy = _periodic_mixed_refinement(
+        original, columns, adapter, None, mark_layer=True
+    )
+    refined = refinement.target
+    from phydrax.meshing._layer_source_association_replay import _conforming_current_rows
+
+    retained_geometry = refined.geometry
+    altered_coordinates = np.array(
+        retained_geometry.coordinates, dtype=np.float64, copy=True
+    )
+    routed_row = int(np.asarray(retained_geometry.geometry_dofs[0])[0, 0])
+    altered_coordinates[routed_row, 0] += 0.001
+    altered_geometry = CellGeometrySpec(
+        dict(zip(retained_geometry.block_names, retained_geometry.elements, strict=True)),
+        dict(
+            zip(
+                retained_geometry.block_names,
+                retained_geometry.geometry_dofs,
+                strict=True,
+            )
+        ),
+        altered_coordinates,
+        restriction_source=retained_geometry.restriction_source,
+    )
+    with pytest.raises(ValueError):
+        tuple(_conforming_current_rows(root, refined.mesh, altered_geometry))
+    _, restoration = _periodic_mixed_coarsening(original, refinement, policy)
+    restored = restoration.target
+    adapter.validate_source(refined)
+    adapter.validate_source(restored)
+    root = original.layer_core_root_geometry
+    assert root is not None
+    for endpoint in (original, refined, restored):
+        assert endpoint.layer_core_root_geometry is not None
+        assert endpoint.layer_core_root_geometry.root_id == root.root_id
+        assert endpoint.layer_core_column_certification is not None
+        require_refined_column_certification(
+            source,
+            endpoint.mesh,
+            endpoint.geometry,
+            specification,
+            endpoint.layer_core_column_certification,
+        )
+        assert endpoint.certification is not None
+        inputs = endpoint.certification.inputs
+        assert inputs.cell_regions is not None
+        actual_regions = dict(
+            zip(
+                np.asarray(inputs.cell_global_ids, dtype=np.int64).tolist(),
+                np.asarray(inputs.cell_regions, dtype=np.int64).tolist(),
+                strict=True,
+            )
+        )
+        replay = replay_layer_source_associations(
+            source, endpoint.mesh, endpoint.geometry, root
+        )
+        assert replay.layer_cell_ids and replay.core_cell_ids
+        layer_materials = set(np.asarray(source.layer_regions, dtype=np.int64).tolist())
+        core_materials = set(np.asarray(source.core_region_map, dtype=np.int64).tolist())
+        assert all(
+            actual_regions[cell] in layer_materials for cell in replay.layer_cell_ids
+        )
+        assert all(
+            actual_regions[cell] in core_materials for cell in replay.core_cell_ids
+        )
+    for endpoint in (refined, restored):
+        restriction = endpoint.geometry.restriction_source
+        assert restriction is not None
+        assert restriction.source_topology_id == root.mesh.topology_id
+        assert restriction.source_geometry_id == cell_geometry_id(root.geometry)
+
+    original_kinds = {
+        (table.source_id, table.source_revision, table.association_kind)
+        for table in original.associations
+    }
+    assert original_kinds <= {
+        (table.source_id, table.source_revision, table.association_kind)
+        for table in refined.associations
+    }
+    assert {
+        (table.source_id, table.source_revision, table.association_kind)
+        for table in restored.associations
+    } == original_kinds
+    assert any(
+        target_dimension(refined.mesh, table) == 1
+        and any(role is GeometrySourceEntityRole.FACET for role in table.source_roles)
+        for table in refined.associations
+    )
+    assert any(
+        interval is not None and interval[0] < interval[1]
+        for table in refined.associations
+        for interval in table.source_parameter_intervals
+    )
+    assert any(
+        int(orientation) in (-1, 1)
+        for table in refined.associations
+        for orientation in np.asarray(table.orientations)
+    )
+    assert any(
+        all(value is not None for value in sides)
+        for table in refined.associations
+        for sides in table.source_region_sides
+    )
+    assert _layer_association_semantics(restored) == _layer_association_semantics(
+        original
+    )
+    from phydrax.meshing._layer_core_association import _core_source_identity
+
+    authored = source if source.reference_source is None else source.reference_source
+    for endpoint in (original, refined, restored):
+        for edge, path in zip(
+            authored.complex.plc_edge_ids,
+            authored.complex.plc_edge_occurrence_paths,
+            strict=True,
+        ):
+            identity, occurrence = _core_source_identity(
+                authored, 1, str(edge), tuple(path)
+            )
+            intervals = sorted(
+                interval
+                for table in endpoint.associations
+                if (table.source_id, table.source_revision)
+                == (authored.source_id, authored.source_revision)
+                and target_dimension(endpoint.mesh, table) in (1, 2)
+                for row, interval in enumerate(table.source_parameter_intervals)
+                if table.source_roles[row] is GeometrySourceEntityRole.EDGE
+                and table.source_entity_ids[row] == identity
+                and table.source_occurrence_paths[row] == occurrence
+                and interval is not None
+            )
+            cursor = Fraction(0)
+            for lower, upper in intervals:
+                assert lower == cursor and upper > lower
+                cursor = upper
+            assert cursor == Fraction(1)
+    assert any(
+        role is GeometrySourceEntityRole.FACET
+        and pieces is not None
+        and any(isinstance(piece, SourceBoundaryImagePullback) for piece in pieces)
+        for endpoint in (original, refined, restored)
+        for table in endpoint.associations
+        for role, pieces in zip(
+            table.source_roles, table.target_reference_pieces, strict=True
+        )
+    )
+
+    overlay_endpoint, overlay_index, overlay_row = next(
+        (
+            (endpoint, index, row)
+            for endpoint in (refined, original)
+            for index, table in enumerate(endpoint.associations)
+            if target_dimension(endpoint.mesh, table) == 2
+            for row, role in enumerate(table.source_roles)
+            if role is GeometrySourceEntityRole.EDGE
+            and (pieces := table.target_reference_pieces[row]) is not None
+            and any(isinstance(piece, SourceBoundaryImagePullback) for piece in pieces)
+        ),
+        (None, None, None),
+    )
+    assert (
+        overlay_endpoint is not None
+        and overlay_index is not None
+        and overlay_row is not None
+    )
+    overlay = overlay_endpoint.associations[overlay_index]
+    face_ids = np.asarray(overlay_endpoint.mesh.entity_set(2).entity_ids, dtype=np.int64)
+    face_row = int(
+        np.flatnonzero(face_ids == int(overlay.target_global_ids[overlay_row]))[0]
+    )
+    assert int(adapter.classes(overlay_endpoint)[2].dimensions[face_row]) != 1
+    assert overlay_endpoint.certification is not None
+    inputs = overlay_endpoint.certification.inputs
+    query, witness = next(
+        (query, witness)
+        for query, witness in (
+            (inputs.source, inputs.fidelity_witness),
+            *((query, witness) for query, witness, _ in inputs.scoped_fidelity),
+        )
+        if isinstance(
+            witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+        )
+        and witness.witness_id == overlay.source_boundary_witness_id
+    )
+    assert query is not None and isinstance(
+        witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+    )
+    overlay.validate_source_boundary_support(
+        overlay_endpoint.mesh,
+        overlay_endpoint.geometry,
+        query,
+        witness,
+        association_source=source,
+        layer_core_root_geometry=root,
+    )
+    with pytest.raises(ValueError):
+        overlay.validate_source_boundary_support(
+            overlay_endpoint.mesh,
+            overlay_endpoint.geometry,
+            query,
+            witness,
+        )
+    row_pieces = overlay.target_reference_pieces[overlay_row]
+    assert row_pieces is not None
+    original_piece = row_pieces[0]
+    if isinstance(original_piece, SourceBoundaryImagePullback):
+        points = original_piece.image_rational_tokens
+    else:
+        _, _, _, points = original_piece
+    assert len(points) == 2
+    first_point = list(points[0])
+    numerator, denominator = first_point[0]
+    first_point[0] = (numerator + denominator, denominator)
+    if tuple(first_point) == points[1]:
+        first_point[0] = (numerator + 2 * denominator, denominator)
+    if isinstance(original_piece, SourceBoundaryImagePullback):
+        forged_piece = SourceBoundaryImagePullback(
+            original_piece.cell_global_id,
+            original_piece.local_entity_index,
+            (tuple(first_point), points[1]),
+            original_piece.source_chart_id,
+        )
+    else:
+        cell, local, vertices, _ = original_piece
+        forged_piece = (cell, local, vertices, (tuple(first_point), points[1]))
+    altered_pieces = list(overlay.target_reference_pieces)
+    altered_pieces[overlay_row] = tuple(
+        sorted(
+            (forged_piece, *row_pieces[1:]),
+            key=_target_piece_sort_key,
+        )
+    )
+    forged_overlay = _replace_association_support(overlay, pieces=tuple(altered_pieces))
+    with pytest.raises(ValueError):
+        forged_overlay.validate_source_boundary_support(
+            overlay_endpoint.mesh,
+            overlay_endpoint.geometry,
+            query,
+            witness,
+            association_source=source,
+            layer_core_root_geometry=root,
+        )
+    altered = list(overlay_endpoint.associations)
+    altered[overlay_index] = forged_overlay
+    forged_endpoint = eqx.tree_at(
+        lambda value: value.associations, overlay_endpoint, tuple(altered)
+    )
+    with pytest.raises(ValueError):
+        adapter.validate_source(forged_endpoint)
+    omitted = tuple(
+        table
+        for index, table in enumerate(overlay_endpoint.associations)
+        if index != overlay_index
+    )
+    missing_endpoint = eqx.tree_at(
+        lambda value: value.associations, overlay_endpoint, omitted
+    )
+    with pytest.raises(ValueError):
+        adapter.validate_source(missing_endpoint)
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import (
+        layer_core_accepted_result_recipe,
+        layer_core_authoring_recipe,
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        write_model_artifact,
+    )
+
+    assert source.layer_control is not None and source.layer_policy is not None
+    source_entry = CompositionEntry(
+        layer_core_authoring_recipe(source, source.layer_control, source.layer_policy),
+        entry_id="source",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=source.layers.mesh.topology_id,
+        revision_id=source.binding_id,
+        semantics_id="original-layer-core-authority",
+    )
+    specification_entry = CompositionEntry(
+        specification,
+        entry_id="specification",
+        role="model-state",
+        owner_id="phydrax.meshing",
+        structure_id=source.binding_id,
+        revision_id=specification.specification_id,
+        semantics_id="original-layer-core-request",
+        dependencies=(source_entry.binding("revision"),),
+    )
+    result_entry = CompositionEntry(
+        layer_core_accepted_result_recipe(overlay_endpoint, source, specification),
+        entry_id="result",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=overlay_endpoint.mesh.topology_id,
+        revision_id=overlay_endpoint.result_id,
+        semantics_id="accepted-image-support",
+        dependencies=(
+            source_entry.binding("revision"),
+            specification_entry.binding("revision"),
+        ),
+    )
+    archive_path = tmp_path / "layer-core-image.npz"
+    write_model_artifact(
+        archive_path,
+        Composition(
+            (source_entry, specification_entry, result_entry),
+            boundary_id="layer-core-image-cold-proof",
+        ),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    receipt = model_archive_content_id(archive_path, limits=MODEL_ARCHIVE_LIMITS)
+    # A content hash can authenticate a forged recipe but cannot establish
+    # source inventory. Rehash both the false witness and its whole archive.
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax._model._structure import LayerCoreAcceptedResultArchiveRecipe
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_layer_core_accepted_result,
+        restore_model_archive_value,
+    )
+
+    carrier = copy(overlay_endpoint.layer_core_carrier_witness)
+    assert carrier is not None and carrier.original_source_edge_rows
+    forged_rows = carrier.original_source_edge_rows[:-1]
+    object.__setattr__(carrier, "original_source_edge_rows", forged_rows)
+    object.__setattr__(
+        carrier,
+        "witness_id",
+        canonical_fingerprint(
+            {
+                "kind": "native-layer-core-carrier-witness",
+                "source": carrier.source_binding_id,
+                "specification": carrier.specification_id,
+                "original_source_edge_rows": forged_rows,
+                "required_source_edge_rows": carrier.required_source_edge_rows,
+            }
+        ),
+    )
+    forged_result = copy(overlay_endpoint)
+    object.__setattr__(forged_result, "layer_core_carrier_witness", carrier)
+    forged_entry = CompositionEntry(
+        LayerCoreAcceptedResultArchiveRecipe(
+            forged_result, source.binding_id, specification.specification_id
+        ),
+        entry_id="result",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=forged_result.mesh.topology_id,
+        revision_id=forged_result.result_id,
+        semantics_id="accepted-image-support",
+        dependencies=(
+            source_entry.binding("revision"),
+            specification_entry.binding("revision"),
+        ),
+    )
+    forged_path = tmp_path / "layer-core-forged.npz"
+    write_model_artifact(
+        forged_path,
+        Composition(
+            (source_entry, specification_entry, forged_entry),
+            boundary_id="layer-core-image-cold-proof",
+        ),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    forged_receipt = model_archive_content_id(forged_path, limits=MODEL_ARCHIVE_LIMITS)
+    forged_archive = read_model_artifact(
+        forged_path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+        expected_content_id=forged_receipt,
+    )
+    with pytest.raises(ValueError, match="Stored native carrier inventory changed"):
+        restore_layer_core_accepted_result(
+            forged_archive.value("result"), source, specification
+        )
+    child = """
+import json
+import sys
+import equinox as eqx
+from phydrax.lifecycle import Composition
+from phydrax.meshing._association import GeometryAssociation, GeometrySourceEntityRole
+from phydrax.geometry._source_boundary_records import SourceBoundaryFaceImageWitness, SourceBoundaryImagePullback
+from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
+from phydrax.meshing._model_codec import (
+    MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_layer_core_accepted_result,
+    restore_layer_core_authoring, restore_model_archive_value,
+)
+
+archive = read_model_artifact(
+    sys.argv[1], expected_type=Composition, restore=restore_model_archive_value,
+    limits=MODEL_ARCHIVE_LIMITS, expected_content_id=sys.argv[2],
+)
+specification = VolumeMeshingSpec.from_stored_fields(archive.value("specification"))
+source = restore_layer_core_authoring(archive.value("source"), specification=specification)
+result = restore_layer_core_accepted_result(archive.value("result"), source, specification)
+adapter = NativeLayerCoreAssociationTransfer(source, specification)
+assert result.certification is not None and result.layer_core_root_geometry is not None
+inputs = result.certification.inputs
+sources = ((inputs.source, inputs.fidelity_witness),) + tuple(
+    (query, witness) for query, witness, _ in inputs.scoped_fidelity
+)
+images = []
+for index, table in enumerate(result.associations):
+    if not any(
+        pieces is not None and any(isinstance(piece, SourceBoundaryImagePullback) for piece in pieces)
+        for pieces in table.target_reference_pieces
+    ):
+        continue
+    query, witness = next(
+        (query, witness) for query, witness in sources
+        if query is not None and isinstance(witness, SourceBoundaryFaceImageWitness)
+        and witness.witness_id == table.source_boundary_witness_id
+    )
+    images.append((index, table, query, witness))
+facet = next(item for item in images if any(
+    role is GeometrySourceEntityRole.FACET and a is not None and b is not None and a != b
+    for role, (a, b) in zip(item[1].source_roles, item[1].source_region_sides, strict=True)
+))
+edge = next(item for item in images if any(
+    role is GeometrySourceEntityRole.EDGE for role in item[1].source_roles
+))
+for _, table, query, witness in (facet, edge):
+    table.validate_source_boundary_support(
+        result.mesh, result.geometry, query, witness,
+        association_source=source, layer_core_root_geometry=result.layer_core_root_geometry,
+    )
+
+def rebuilt(table, *, sides=None, witness_id=None):
+    return GeometryAssociation(
+        table.association_kind, table.source_id, table.source_revision,
+        table.target_entity_set_id, table.target_global_ids, table.source_entity_ids,
+        table.residuals, resolved=table.resolved, ambiguous=table.ambiguous, exact=table.exact,
+        source_dimensions=table.source_dimensions, source_indices=table.source_indices,
+        source_roles=table.source_roles, source_occurrence_paths=table.source_occurrence_paths,
+        source_region_sides=table.source_region_sides if sides is None else sides,
+        source_parameter_intervals=table.source_parameter_intervals,
+        source_parameter_points=table.source_parameter_points,
+        target_parameter_intervals=table.target_parameter_intervals,
+        target_reference_pieces=table.target_reference_pieces,
+        source_boundary_witness_id=table.source_boundary_witness_id if witness_id is None else witness_id,
+        parameters=table.parameters, orientations=table.orientations,
+        parent_dimensions=table.parent_dimensions, parent_ids=table.parent_ids,
+        parent_association_id=table.parent_association_id, provenance=table.provenance,
+    )
+
+_, table, query, witness = facet
+sides = list(table.source_region_sides)
+row = next(i for i, (a, b) in enumerate(sides) if a is not None and b is not None and a != b)
+sides[row] = tuple(reversed(sides[row]))
+for forged in (rebuilt(table, sides=tuple(sides)), rebuilt(table, witness_id="forged-image-witness")):
+    try:
+        forged.validate_source_boundary_support(result.mesh, result.geometry, query, witness,
+            association_source=source, layer_core_root_geometry=result.layer_core_root_geometry)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Cold image support accepted forged sides or witness identity.")
+remaining = tuple(table for index, table in enumerate(result.associations) if index != edge[0])
+missing = eqx.tree_at(lambda value: value.associations, result, remaining)
+try:
+    adapter.validate_source(missing)
+except ValueError:
+    pass
+else:
+    raise AssertionError("Cold image source accepted an omitted source-edge partition.")
+print(json.dumps({"source": source.binding_id, "result": result.result_id}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", child, str(archive_path), receipt],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    restored_ids = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert restored_ids == {
+        "source": source.binding_id,
+        "result": overlay_endpoint.result_id,
+    }
+
+
+def test_native_layer_core_refuses_stale_forged_and_conflicting_sources(
+    accepted_native_layer_core: _NativeLayerCoreFixture,
+) -> None:
+    from phydrax.meshing._layer_core_association_transfer import (
+        NativeLayerCoreAssociationTransfer,
+    )
+
+    source, specification, result, adapter, columns = accepted_native_layer_core
+    changed_regions = np.asarray(source.layer_regions, dtype=np.int64).copy()
+    changed_regions[0] = len(source.region_ids)
+    stale = eqx.tree_at(lambda value: value.layer_regions, source, changed_regions)
+    with pytest.raises(ValueError):
+        NativeLayerCoreAssociationTransfer(stale, specification)
+
+    table_index = next(
+        index
+        for index, table in enumerate(result.associations)
+        if target_dimension(result.mesh, table) == 2
+        and table.association_kind is GeometryAssociationKind.PIECEWISE_LINEAR
+        and table.exact
+        and np.any(np.asarray(table.orientations) != 0)
+        and any(
+            all(value is not None for value in sides)
+            for sides in table.source_region_sides
+        )
+    )
+    original = result.associations[table_index]
+    forged = eqx.tree_at(
+        lambda value: value.orientations, original, -original.orientations
+    )
+    altered = list(result.associations)
+    altered[table_index] = forged
+    forged_result = eqx.tree_at(lambda value: value.associations, result, tuple(altered))
+    with pytest.raises(ValueError):
+        adapter.validate_source(forged_result)
+    request = MarkedMeshAdaptation(
+        np.asarray((int(columns.cell_ids[0]),), dtype=np.int64),
+        layer_columns=columns,
+    )
+    with pytest.raises(ValueError):
+        prepare_mesh_adaptation(
+            forged_result,
+            request,
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_MIXED, association_transfer=adapter
+            ),
+        )
+    forged_exactness = _replace_association_support(original, exact=False)
+    altered[table_index] = forged_exactness
+    forged_result = eqx.tree_at(lambda value: value.associations, result, tuple(altered))
+    with pytest.raises(ValueError):
+        adapter.validate_source(forged_result)
+
+    sides_index = next(
+        index
+        for index, sides in enumerate(original.source_region_sides)
+        if all(value is not None for value in sides)
+    )
+    sides = list(original.source_region_sides)
+    sides[sides_index] = (sides[sides_index][1], sides[sides_index][0])
+    conflicting = GeometryAssociation(
+        original.association_kind,
+        original.source_id,
+        original.source_revision,
+        original.target_entity_set_id,
+        original.target_global_ids,
+        original.source_entity_ids,
+        original.residuals,
+        resolved=original.resolved,
+        ambiguous=original.ambiguous,
+        exact=original.exact,
+        source_roles=original.source_roles,
+        source_occurrence_paths=original.source_occurrence_paths,
+        source_region_sides=tuple(sides),
+        source_parameter_intervals=original.source_parameter_intervals,
+        source_parameter_points=original.source_parameter_points,
+        target_parameter_intervals=original.target_parameter_intervals,
+        target_reference_pieces=original.target_reference_pieces,
+        source_boundary_witness_id=original.source_boundary_witness_id,
+        parameters=original.parameters,
+        orientations=original.orientations,
+    )
+    conflicting_result = eqx.tree_at(
+        lambda value: value.associations, result, (*result.associations, conflicting)
+    )
+    with pytest.raises(ValueError):
+        adapter.validate_source(conflicting_result)
+
+
+@pytest.mark.parametrize(
+    "forgery", ("missing-child", "wrong-parent", "wrong-target", "swapped-target")
+)
+def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
+    forgery: str,
+) -> None:
+    from copy import copy
+
+    import phydrax as phx
+    from phydrax.geometry.brep import brep_box
+    from phydrax.meshing._sizing import UniformSizeControl
+
+    model = brep_box(
+        np.zeros(3), np.ones(3), coordinate_contract=_CONTRACT,
+        source_id="test:brep-volume-curve-transfer",
+    )
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.5),),
+        maximum_deviation=0.02,
+    )
+    source = NativeMeshingProvider().plan(
+        model, specification, coordinate_contract=_CONTRACT
+    ).execute()
+    assert source.certification is not None
+    assert isinstance(source.certification.inputs.fidelity_witness, SourceBoundaryChartWitness)
+
+    def witness_of(value: phx.meshing.CellMeshingResult) -> SourceBoundaryChartWitness:
+        assert value.certification is not None
+        witness = value.certification.inputs.fidelity_witness
+        assert isinstance(witness, SourceBoundaryChartWitness)
+        return witness
+
+    def associations_and_witness(
+        value: phx.meshing.CellMeshingResult,
+    ) -> tuple[tuple[GeometryAssociation, ...], SourceBoundaryChartWitness]:
+        return value.associations, witness_of(value)
+
+    def curve_and_witness(
+        value: phx.meshing.CellMeshingResult,
+    ) -> tuple[GeometryAssociation, SourceBoundaryChartWitness]:
+        return value.associations[curve_index], witness_of(value)
+
+    transfer = phx.meshing.BRepAssociationTransfer(
+        phx.geometry.prepare_brep_projection(model)
+    )
+    curve = next(
+        item for item in source.associations
+        if item.association_kind is GeometryAssociationKind.CURVE
+    )
+    transfer.validate_source(source)
+    foreign = brep_box(
+        np.zeros(3), np.ones(3), coordinate_contract=_CONTRACT,
+        source_id="test:foreign-volume-curve-transfer",
+    )
+    with pytest.raises(ValueError, match="vertex association"):
+        phx.meshing.BRepAssociationTransfer(
+            phx.geometry.prepare_brep_projection(foreign)
+        ).validate_source(source)
+    stale = eqx.tree_at(
+        witness_of,
+        source,
+        None,
+    )
+    with pytest.raises(ValueError, match="source chart witness"):
+        transfer.validate_source(stale)
+    curve_index = next(
+        i for i, item in enumerate(source.associations) if item is curve
+    )
+    invalid_curve = copy(curve)
+    object.__setattr__(invalid_curve, "association_kind", GeometryAssociationKind.SURFACE)
+    invalid = eqx.tree_at(
+        lambda value: value.associations[curve_index], source, invalid_curve
+    )
+    with pytest.raises(ValueError, match="mix association kinds"):
+        transfer.validate_source(invalid)
+    absent_witness = copy(source.certification.inputs.fidelity_witness)
+    object.__setattr__(absent_witness, "cad_curve_association", None)
+    without_curve = eqx.tree_at(
+        associations_and_witness,
+        source,
+        (
+            source.associations[:curve_index] + source.associations[curve_index + 1:],
+            absent_witness,
+        ),
+    )
+    with pytest.raises(ValueError, match="curve association is missing"):
+        transfer.validate_source(without_curve)
+    rows = np.arange(len(curve.target_global_ids), dtype=np.int64)
+    if forgery == "missing-child":
+        rows = rows[1:]
+    parent_ids = np.asarray(curve.parent_ids)[rows].copy()
+    if forgery == "wrong-parent":
+        parent_ids[0] = next(value for value in parent_ids if value != parent_ids[0])
+    target_ids = np.asarray(curve.target_global_ids)[rows].copy()
+    if forgery == "wrong-target":
+        target_ids[0] = next(
+            identifier
+            for identifier in np.asarray(source.mesh.entity_set(1).entity_ids)
+            if identifier not in target_ids
+        )
+    if forgery == "swapped-target":
+        first, second = next(
+            (i, j)
+            for i in range(len(target_ids))
+            for j in range(i + 1, len(target_ids))
+            if curve.source_entity_ids[i] == curve.source_entity_ids[j]
+            and curve.source_occurrence_paths[i] == curve.source_occurrence_paths[j]
+        )
+        target_ids[first], target_ids[second] = target_ids[second], target_ids[first]
+
+    def selected[T](values: tuple[T, ...]) -> tuple[T, ...]:
+        return tuple(values[int(row)] for row in rows)
+
+    forged_curve = GeometryAssociation(
+        curve.association_kind, curve.source_id, curve.source_revision,
+        curve.target_entity_set_id, target_ids,
+        selected(curve.source_entity_ids), np.asarray(curve.residuals)[rows],
+        resolved=np.asarray(curve.resolved)[rows],
+        ambiguous=np.asarray(curve.ambiguous)[rows],
+        exact=curve.exact,
+        source_dimensions=np.asarray(curve.source_dimensions)[rows],
+        source_indices=np.asarray(curve.source_indices)[rows],
+        source_roles=selected(curve.source_roles),
+        source_occurrence_paths=selected(curve.source_occurrence_paths),
+        source_region_sides=selected(curve.source_region_sides),
+        source_parameter_intervals=selected(curve.source_parameter_intervals),
+        target_parameter_intervals=selected(curve.target_parameter_intervals),
+        target_reference_pieces=selected(curve.target_reference_pieces),
+        source_boundary_witness_id=curve.source_boundary_witness_id,
+        source_parameter_points=selected(curve.source_parameter_points),
+        parameters=np.asarray(curve.parameters)[rows],
+        orientations=np.asarray(curve.orientations)[rows],
+        parent_dimensions=np.asarray(curve.parent_dimensions)[rows],
+        parent_ids=parent_ids,
+        parent_association_id=curve.parent_association_id,
+        provenance=curve.provenance,
+    )
+    forged_witness = copy(source.certification.inputs.fidelity_witness)
+    object.__setattr__(forged_witness, "cad_curve_association", forged_curve)
+    forged_source = eqx.tree_at(
+        curve_and_witness,
+        source,
+        (forged_curve, forged_witness),
+    )
+    with pytest.raises(ValueError):
+        transfer.validate_source(forged_source)
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(np.asarray(source.mesh.blocks[0].global_ids[:1])),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION, association_transfer=transfer
+            ),
+        )
+    )
+    target = result.target
+    target_curve = next(
+        item for item in target.associations
+        if item.association_kind is GeometryAssociationKind.CURVE
+    )
+    assert target.certification is not None
+    target_witness = target.certification.inputs.fidelity_witness
+    assert isinstance(target_witness, SourceBoundaryChartWitness)
+    assert target_witness.cad_curve_association is not None
+    assert target_curve.parent_association_id == curve.parent_association_id
+    assert target_curve.association_id == (
+        target_witness.cad_curve_association.association_id
+    )
+    assert all(interval is not None for interval in target_curve.source_parameter_intervals)
+    assert source.surface_source is not None
+    root = next(
+        item for item in source.surface_source.associations
+        if item.association_id == curve.parent_association_id
+    )
+    expected = dict(zip(
+        np.asarray(root.target_global_ids).tolist(),
+        root.source_parameter_intervals,
+        strict=True,
+    ))
+    assert all(interval is not None for interval in root.source_parameter_intervals)
+    for current in (curve, target_curve):
+        grouped = {}
+        for parent, interval in zip(
+            np.asarray(current.parent_ids).tolist(),
+            current.source_parameter_intervals,
+            strict=True,
+        ):
+            assert interval is not None
+            grouped.setdefault(parent, []).append(interval)
+        assert set(grouped) == set(expected)
+        for parent, values in grouped.items():
+            expected_interval = expected[parent]
+            assert expected_interval is not None
+            intervals = sorted(values)
+            assert intervals[0][0] == expected_interval[0]
+            assert intervals[-1][1] == expected_interval[1]
+            assert all(
+                left[1] == right[0]
+                for left, right in zip(intervals, intervals[1:])
+            )
+    transfer.validate_source(target)

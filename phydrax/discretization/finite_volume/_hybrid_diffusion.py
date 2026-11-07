@@ -16,12 +16,11 @@ from ..._strict import StrictModule
 from ...ein import contract
 from ...linalg import (
     ArraySpace,
-    ConjugateGradient,
     FunctionLinearOperator,
+    GMRES,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
-    OperatorProperties,
     solve,
 )
 from ...typing import checked
@@ -283,7 +282,7 @@ class HybridMimeticDiffusion(StrictModule):
         source: ArrayLike = 0.0,
         body_force: ArrayLike | None = None,
     ) -> tuple[LinearSystem, Array]:
-        """Build the symmetric lifted global hybrid system; shared faces stay global."""
+        """Build the lifted global hybrid system; shared faces stay global."""
         size = self.cell_count + self.face_count
         zero = jnp.zeros(size, dtype=self.discretization.cell_volumes.dtype)
         zero = eqx.error_if(
@@ -308,7 +307,6 @@ class HybridMimeticDiffusion(StrictModule):
             lambda value: residual(value) - offset,
             source=space,
             target=space,
-            properties=OperatorProperties(self_adjoint=True, positive_definite=True),
         )
         return LinearSystem(operator), -offset
 
@@ -327,7 +325,10 @@ class HybridMimeticDiffusion(StrictModule):
         return solve(
             system,
             rhs,
-            policy=LinearSolvePolicy(ConjugateGradient()) if policy is None else policy,
+            policy=(
+                LinearSolvePolicy(GMRES(restart=40, stagnation_iterations=40))
+                if policy is None else policy
+            ),
         )
 
 

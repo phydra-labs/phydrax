@@ -1,5 +1,6 @@
 from fractions import Fraction
 from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -7,11 +8,55 @@ import pytest
 from phydrax._fingerprint import array_tree_fingerprint
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._coordinate_enclosure import Polynomial
 from phydrax.discretization._exact_power_geometry import (
     _prepare_power_site_bank,
     _vertex_power_point,
     ExactPowerCellGeometrySource,
 )
+
+
+def test_nested_chart_structural_equality_requires_complete_exact_premises() -> None:
+    from phydrax.discretization._cell_geometry_transition_types import (
+        _structurally_equal_maps,
+    )
+
+    zero, one = Fraction(0), Fraction(1)
+    basis: tuple[Polynomial, ...] = ({(0,): one, (1,): -one}, {(1,): one})
+    coefficients = ((zero,), (one,))
+    mapped_chart: tuple[Polynomial, ...] = ({(0,): Fraction(1, 3), (1,): Fraction(2)},)
+    arguments: tuple[Polynomial, ...] = ({(1,): Fraction(1, 4)},)
+    composed: tuple[Polynomial, ...] = ({(0,): Fraction(1, 3), (1,): Fraction(1, 2)},)
+    source = (mapped_chart, basis, coefficients)
+    assert _structurally_equal_maps(
+        (composed, basis, coefficients), source, arguments, {}
+    )
+    assert not _structurally_equal_maps(
+        (({(1,): Fraction(1, 2)},), basis, coefficients), source, arguments, {}
+    )
+    assert not _structurally_equal_maps(
+        (composed, basis, ((zero,), (Fraction(2),))), source, arguments, {}
+    )
+    changed_basis: tuple[Polynomial, ...] = ({(0,): one}, {(1,): one})
+    assert not _structurally_equal_maps(
+        (composed, changed_basis, coefficients), source, arguments, {}
+    )
+    assert not _structurally_equal_maps(
+        (composed, basis, cast(Any, ((0,), (one,)))), source, arguments, {}
+    )
+    assert not _structurally_equal_maps(
+        (composed, cast(Any, ({(0,): 1, (1,): -one}, basis[1])), coefficients),
+        source,
+        arguments,
+        {},
+    )
+    changed_arguments: tuple[Polynomial, ...] = ({(1,): Fraction(1, 2)},)
+    assert not _structurally_equal_maps(
+        (cast(Any, ({(0,): Fraction(1, 3), (1,): 1},)), basis, coefficients),
+        source,
+        changed_arguments,
+        {},
+    )
 
 
 def test_exact_power_geometry_cold_reconstruction_retains_source_mapping() -> None:
@@ -45,9 +90,7 @@ def test_exact_power_geometry_cold_reconstruction_retains_source_mapping() -> No
         cell_regions=np.asarray([7], dtype=np.int32),
     )
     source = ExactPowerCellGeometrySource(
-        np.asarray(
-            [[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64
-        ),
+        np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
         np.asarray([1.0 / 16.0, 0.0], dtype=np.float64),
         carrier,
         restricted_cells,
@@ -119,7 +162,9 @@ def test_exact_power_geometry_cold_reconstruction_retains_source_mapping() -> No
         (Fraction(0), Fraction(0), Fraction(1)),
     )
     assert restored_geometry.source_coordinates() == expected_coordinates
-    assert restored_geometry.source_coordinates() == original_geometry.source_coordinates()
+    assert (
+        restored_geometry.source_coordinates() == original_geometry.source_coordinates()
+    )
 
     selected_rows = np.asarray((1, 2, 3), dtype=np.int64)
     selected_source = ExactPowerCellGeometrySource(
@@ -139,18 +184,62 @@ def test_exact_power_geometry_cold_reconstruction_retains_source_mapping() -> No
         block_name="power-surface",
     )
     selected_geometry = CellGeometrySpec.power(selected_mesh, selected_source)
-    restored_selected = ExactPowerCellGeometrySource.from_stored_fields(
-        selected_source
-    )
-    restored_selected_geometry = CellGeometrySpec.power(
-        selected_mesh, restored_selected
-    )
+    restored_selected = ExactPowerCellGeometrySource.from_stored_fields(selected_source)
+    restored_selected_geometry = CellGeometrySpec.power(selected_mesh, restored_selected)
     expected_selected = tuple(expected_coordinates[index] for index in selected_rows)
     assert restored_selected.output_vertex_indices.tolist() == selected_rows.tolist()
     assert restored_selected_geometry.source_coordinates() == expected_selected
     assert restored_selected_geometry.source_coordinates() == (
         selected_geometry.source_coordinates()
     )
+
+
+def test_exact_power_vertex_redundant_equal_sites_and_dominance() -> None:
+    zero, one = Fraction(0), Fraction(1)
+    sites = tuple(
+        (Fraction(x), Fraction(y), Fraction(z))
+        for x in (0, 1)
+        for y in (0, 1)
+        for z in (0, 1)
+    )
+    weights = (zero,) * len(sites)
+    carrier = (
+        (Fraction(-1), Fraction(-1), Fraction(-1)),
+        (Fraction(7), Fraction(-1), Fraction(-1)),
+        (Fraction(-1), Fraction(7), Fraction(-1)),
+        (Fraction(-1), Fraction(-1), Fraction(7)),
+    )
+    center = (one / 2, one / 2, one / 2)
+    rounded = np.asarray(center, dtype=np.float64)
+    exact, barycentric = _vertex_power_point(
+        rounded,
+        sites,
+        weights,
+        tuple(range(len(sites))),
+        carrier,
+        prepared_site_bank=_prepare_power_site_bank(sites, weights),
+    )
+    assert exact == center
+    assert barycentric == (
+        Fraction(7, 16),
+        Fraction(3, 16),
+        Fraction(3, 16),
+        Fraction(3, 16),
+    )
+
+    dominating_sites = (*sites, center)
+    dominating_weights = (*weights, zero)
+    with pytest.raises(ValueError):
+        _vertex_power_point(
+            rounded,
+            dominating_sites,
+            dominating_weights,
+            tuple(range(len(sites))),
+            carrier,
+            prepared_site_bank=_prepare_power_site_bank(
+                dominating_sites, dominating_weights
+            ),
+        )
 
 
 def test_exact_power_vertex_rejects_nonzero_ulp_rounding_mismatch() -> None:
@@ -161,9 +250,7 @@ def test_exact_power_vertex_rejects_nonzero_ulp_rounding_mismatch() -> None:
     weights = (Fraction(1, 16), Fraction(0))
     carrier_point = (Fraction(9, 16), Fraction(0), Fraction(0))
     prepared = _prepare_power_site_bank(sites, weights)
-    rounded = np.asarray(
-        (np.nextafter(9.0 / 16.0, np.inf), 0.0, 0.0), dtype=np.float64
-    )
+    rounded = np.asarray((np.nextafter(9.0 / 16.0, np.inf), 0.0, 0.0), dtype=np.float64)
 
     with pytest.raises(ValueError, match="does not match the rounded binary64 vertex"):
         _vertex_power_point(

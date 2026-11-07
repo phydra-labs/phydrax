@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import asdict, dataclass
 from fractions import Fraction
 from numbers import Integral
-from typing import final, NoReturn
+from typing import final, NamedTuple, NoReturn
 
 import equinox as eqx
 import numpy as np
@@ -232,6 +232,21 @@ def _repair_topology(
         components=components,
     )
     return repaired_vertices, repaired_faces, edges, evidence
+
+
+class AuthoredTriangleSheetArchiveRecipe(NamedTuple):
+    """Authored arrays and feature ID of one sheet, plus its expected identity.
+
+    Restores rerun the deterministic repair through ``AuthoredTriangleSheet``
+    and compare the recomputed source ID and revision; repaired banks, IDs
+    and the meshing domain are derived and never stored.
+    """
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    feature_id: str
+    expected_source_id: str
+    expected_source_revision: str
 
 
 @final
@@ -462,6 +477,17 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
         self.scope_entity_ids_by_mesh_row = _scope_entity_ids_by_mesh_row(domain)
         self.scope_entity_set_ids = set_ids
 
+    @property
+    def archive_recipe(self) -> AuthoredTriangleSheetArchiveRecipe:
+        """Return the authored inputs, excluding every derived repair bank."""
+        return AuthoredTriangleSheetArchiveRecipe(
+            self.vertices,
+            self.triangles,
+            self.feature_id,
+            self.source_id,
+            self.source_revision,
+        )
+
     def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
         if (
             isinstance(dimension, bool)
@@ -472,4 +498,8 @@ class AuthoredTriangleSheet(StrictModule, NonTrainableState):
         return self.scope_entity_id_banks[int(dimension)]
 
 
-__all__ = ["AuthoredTriangleSheet", "TriangleSheetRepairEvidence"]
+__all__ = [
+    "AuthoredTriangleSheet",
+    "AuthoredTriangleSheetArchiveRecipe",
+    "TriangleSheetRepairEvidence",
+]

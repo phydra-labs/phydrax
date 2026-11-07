@@ -252,8 +252,7 @@ def _intersection_trim_domain(
     )
 
 
-def test_certified_t_spline_intersection_pcurve_drives_native_trimmed_mesh() -> None:
-    patch = _nonuniform_transverse_patch()
+def _plane_intersection_branch(patch: TSplineSurfacePatch, /) -> IntersectionCurve:
     result = intersect_surface_regions(
         SurfaceRegion(patch, np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)),
         SurfaceRegion(
@@ -268,6 +267,32 @@ def test_certified_t_spline_intersection_pcurve_drives_native_trimmed_mesh() -> 
     assert result.complete and len(result.curves) == 1
     branch = result.curves[0]
     assert branch.fully_certified
+    return branch
+
+
+def test_t_spline_intersection_pcurve_endpoint_boxes_stay_in_patch_domain() -> None:
+    patch = _nonuniform_transverse_patch()
+    branch = _plane_intersection_branch(patch)
+    pcurve = branch.p_curve("first")
+    domain = np.asarray(patch.parameter_domain, dtype=np.float64)
+    for parameter in (0.0, float(branch.num_charts)):
+        box = np.asarray(pcurve.bounding_box(parameter, parameter), dtype=np.float64)
+        endpoint = np.asarray(
+            pcurve.evaluate(jnp.asarray(parameter, dtype=jnp.float64)),
+            dtype=np.float64,
+        )
+
+        # The branch ends on the T-spline domain boundary; its rooted endpoint
+        # enclosure must not leave that domain by an outward subnormal.
+        assert np.all(box[0] <= endpoint) and np.all(endpoint <= box[1])
+        assert np.all(box[0] >= domain[0]) and np.all(box[1] <= domain[1])
+        assert np.all(box[0] < box[1])
+        assert np.all(np.isfinite(patch.bounding_box(box)))
+
+
+def test_certified_t_spline_intersection_pcurve_drives_native_trimmed_mesh() -> None:
+    patch = _nonuniform_transverse_patch()
+    branch = _plane_intersection_branch(patch)
     domain = _intersection_trim_domain(patch, branch)
     result = _certified_surface_mesh(domain)
     mesh_coordinates = np.asarray(result.mesh.coordinates, dtype=np.float64)

@@ -54,6 +54,38 @@ std::uint64_t edge_key(std::int32_t a, std::int32_t b) {
 
 }  // namespace
 
+int32_t TetMesh::set_affine_metric(std::span<const double> linear) {
+  if (linear.size() != 9 ||
+      !std::all_of(linear.begin(), linear.end(), [](double x) { return std::isfinite(x); })) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  std::array<double, 9> next;
+  std::copy(linear.begin(), linear.end(), next.begin());
+  if (next == metric_) return PHX_MC_OK;
+  if (!points_.empty()) return PHX_MC_INVALID_ARGUMENT;
+  const long double a = next[0], b = next[1], c = next[2];
+  const long double d = next[3], e = next[4], f = next[5];
+  const long double g = next[6], h = next[7], i = next[8];
+  const long double det = a*(e*i-f*h) - b*(d*i-f*g) + c*(d*h-e*g);
+  if (det == 0 || !std::isfinite(det)) return PHX_MC_INVALID_ARGUMENT;
+  const std::array<long double, 9> adj{
+      e*i-f*h, c*h-b*i, b*f-c*e, f*g-d*i, a*i-c*g,
+      c*d-a*f, d*h-e*g, b*g-a*h, a*e-b*d};
+  std::array<double, 9> inverse;
+  for (std::size_t k = 0; k < 9; ++k) {
+    inverse[k] = static_cast<double>(adj[k] / det);
+    if (!std::isfinite(inverse[k])) return PHX_MC_INVALID_ARGUMENT;
+  }
+  if (generation_ == std::numeric_limits<std::uint64_t>::max()) return PHX_MC_INVALID_ARGUMENT;
+  metric_ = next;
+  metric_inverse_ = inverse;
+  metric_active_ = next != std::array<double, 9>{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  metric_orientation_ = det < 0 ? -1 : 1;
+  unmet_records_.clear();
+  ++generation_;
+  return PHX_MC_OK;
+}
+
 int32_t TetMesh::build(std::span<const double> points,
                        std::span<const std::int32_t> tetrahedra,
                        std::span<const std::int32_t> regions,
@@ -65,9 +97,20 @@ int32_t TetMesh::build(std::span<const double> points,
                        std::span<const double> protection_radii,
                        const SourceComplexView* source,
                        std::span<const std::int8_t> protected_vertices) {
+  if (implicit_source_) return PHX_MC_INVALID_ARGUMENT;
   try {
     plane_refusal_.reset();
     TetMesh staged(policy_);
+    staged.metric_ = metric_;
+    staged.metric_inverse_ = metric_inverse_;
+    staged.metric_active_ = metric_active_;
+    staged.metric_orientation_ = metric_orientation_;
+    staged.identity_bound_ = identity_bound_;
+    staged.source_id_ = source_id_;
+    staged.source_revision_ = source_revision_;
+    staged.source_map_id_ = source_map_id_;
+    staged.frame_id_ = frame_id_;
+    staged.pending_implicit_source_ = pending_implicit_source_;
     const std::int32_t status = staged.build_state(
         points, tetrahedra, regions, faces, face_sources, face_orientations,
         segments, segment_sources, protection_radii, source, protected_vertices);
@@ -76,11 +119,6 @@ int32_t TetMesh::build(std::span<const double> points,
       return status;
     }
     staged.generation_ = 0;
-    staged.identity_bound_ = identity_bound_;
-    staged.source_id_ = source_id_;
-    staged.source_revision_ = source_revision_;
-    staged.source_map_id_ = source_map_id_;
-    staged.frame_id_ = frame_id_;
     staged.swap_state(*this);
     unmet_records_.clear();
     return PHX_MC_OK;
@@ -440,11 +478,19 @@ int32_t TetMesh::build_state(std::span<const double> points,
     const std::int32_t source_id = complex_.constraint(boundary.tet, boundary.slot);
     if (source_id == kNoConstraint) return PHX_MC_INVALID_INPUT;
   }
+  if (pending_implicit_source_) {
+    auto pending = std::move(pending_implicit_source_);
+    const int32_t status = bind_implicit_source(std::move(pending));
+    if (status != PHX_MC_OK) return status;
+  }
 
   // Every boundary vertex of a constrained facet on a declared plane must be
   // admitted on it; the first that is not (facet order, then corner order)
   // refuses the declaration with its record as evidence.
   for (std::size_t row = 0; row < face_count; ++row) {
+    if (implicit_source_ &&
+        std::binary_search(implicit_source_->groups.begin(), implicit_source_->groups.end(),
+                           facets_[row].source)) continue;
     const auto group = declared_groups_.find(facets_[row].source);
     if (group == declared_groups_.end()) continue;
     const std::int32_t plane_row = group->second.rows.front();
@@ -495,10 +541,12 @@ int32_t TetMesh::build_state(std::span<const double> points,
   return PHX_MC_OK;
 }
 
-int32_t TetMesh::install_vertex_sizes(const TetMeshSnapshot& current,
-                                      std::span<const double> sizes) {
+namespace {
+template <class IdAt>
+int32_t install_size_bank(std::unordered_map<std::uint64_t, double>& target,
+                          std::size_t count, std::span<const double> sizes, IdAt id_at) {
   if (sizes.empty()) return PHX_MC_OK;
-  if (sizes.size() != current.vertices.size()) return PHX_MC_INVALID_ARGUMENT;
+  if (sizes.size() != count) return PHX_MC_INVALID_ARGUMENT;
   for (double size : sizes) {
     if (!std::isfinite(size) || size < 0.0) return PHX_MC_INVALID_INPUT;
   }
@@ -506,16 +554,33 @@ int32_t TetMesh::install_vertex_sizes(const TetMeshSnapshot& current,
     std::unordered_map<std::uint64_t, double> installed;
     installed.reserve(sizes.size());
     for (std::size_t row = 0; row < sizes.size(); ++row) {
-      if (sizes[row] > 0.0) installed.emplace(current.vertices[row].id, sizes[row]);
+      if (sizes[row] > 0.0) installed.emplace(id_at(row), sizes[row]);
     }
-    vertex_sizes_.swap(installed);
+    target.swap(installed);
     return PHX_MC_OK;
   } catch (const std::bad_alloc&) {
     return PHX_MC_ALLOCATION_FAILURE;
   }
 }
+}  // namespace
+
+int32_t TetMesh::install_vertex_sizes(const TetMeshSnapshot& current,
+                                      std::span<const double> sizes) {
+  return install_size_bank(vertex_sizes_, current.vertices.size(), sizes,
+                           [&](std::size_t row) { return current.vertices[row].id; });
+}
+
+int32_t TetMesh::install_vertex_sizes(std::span<const std::uint64_t> vertex_ids,
+                                      std::span<const double> sizes) {
+  return install_size_bank(vertex_sizes_, vertex_ids.size(), sizes,
+                           [&](std::size_t row) { return vertex_ids[row]; });
+}
 
 void TetMesh::copy_state_to(TetMesh& destination) const {
+  destination.metric_ = metric_;
+  destination.metric_inverse_ = metric_inverse_;
+  destination.metric_active_ = metric_active_;
+  destination.metric_orientation_ = metric_orientation_;
   destination.complex_ = complex_;
   destination.points_ = points_;
   destination.vertex_ids_ = vertex_ids_;
@@ -544,6 +609,8 @@ void TetMesh::copy_state_to(TetMesh& destination) const {
   destination.source_face_planes_ = source_face_planes_;
   destination.source_face_plane_tolerances_ = source_face_plane_tolerances_;
   destination.declared_groups_ = declared_groups_;
+  destination.implicit_source_ = implicit_source_;
+  destination.pending_implicit_source_ = pending_implicit_source_;
   destination.periodic_orbits_ = periodic_orbits_;
   destination.quotient_cells_ = quotient_cells_;
   destination.periodic_entity_maps_ = periodic_entity_maps_;
@@ -573,6 +640,10 @@ void TetMesh::copy_state_to(TetMesh& destination) const {
 
 void TetMesh::swap_state(TetMesh& other) noexcept {
   using std::swap;
+  swap(metric_, other.metric_);
+  swap(metric_inverse_, other.metric_inverse_);
+  swap(metric_active_, other.metric_active_);
+  swap(metric_orientation_, other.metric_orientation_);
   swap(complex_, other.complex_);
   swap(points_, other.points_);
   swap(vertex_ids_, other.vertex_ids_);
@@ -600,6 +671,8 @@ void TetMesh::swap_state(TetMesh& other) noexcept {
   swap(source_face_planes_, other.source_face_planes_);
   swap(source_face_plane_tolerances_, other.source_face_plane_tolerances_);
   swap(declared_groups_, other.declared_groups_);
+  swap(implicit_source_, other.implicit_source_);
+  swap(pending_implicit_source_, other.pending_implicit_source_);
   swap(source_segment_ids_, other.source_segment_ids_);
   swap(periodic_orbits_, other.periodic_orbits_);
   swap(quotient_cells_, other.quotient_cells_);
@@ -655,12 +728,13 @@ bool TetMesh::audit_state() const {
         });
       }) ||
       !std::all_of(cell_ancestry_.begin(), cell_ancestry_.end(), [&](const auto& item) {
-        if (!used_cell_ids_.contains(item.first) || item.second.edit_kind < 0 ||
+        if (!used_cell_ids_.contains(item.first) || !item.second.ancestor_cell_ids ||
+            item.second.edit_kind < 0 ||
             item.second.edit_kind > static_cast<std::int32_t>(TetEditKind::kRetriangulate)) {
           return false;
         }
-        return std::all_of(item.second.ancestor_cell_ids.begin(),
-                           item.second.ancestor_cell_ids.end(), [&](std::uint64_t ancestor) {
+        return std::all_of(item.second.ancestor_cell_ids->begin(),
+                           item.second.ancestor_cell_ids->end(), [&](std::uint64_t ancestor) {
           return used_cell_ids_.contains(ancestor);
         });
       })) {

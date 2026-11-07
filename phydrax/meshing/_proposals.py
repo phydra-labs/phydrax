@@ -55,6 +55,7 @@ from ._adaptation import (
 )
 from ._association import GeometryAssociationKind
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshAuditReport
+from ._bisection import BisectionCompatibility
 from ._implicit_association_transfer import ImplicitAssociationTransfer
 from ._metric import (
     _grade_scalar_sizes,
@@ -1271,6 +1272,7 @@ def _execute_adaptation(
     source: CellMeshingResult,
     projection: MeshProposalProjection,
     association_transfer: ImplicitAssociationTransfer | None,
+    compatibility: BisectionCompatibility,
     /,
 ) -> MeshAdaptationResult:
     policy = projection.policy
@@ -1305,6 +1307,7 @@ def _execute_adaptation(
             policy=MeshAdaptationPolicy(
                 route,
                 protected_scopes=protected,
+                compatibility=compatibility,
                 association_transfer=association_transfer,
             ),
         )
@@ -1316,6 +1319,8 @@ def prepare_mesh_proposal(
     proposal: MeshProposal,
     policy: MeshProposalSafetyPolicy,
     /,
+    *,
+    compatibility: BisectionCompatibility = BisectionCompatibility.REJECT,
 ) -> MeshProposalTransaction:
     """Project, execute a native trusted path, audit and prepare atomic promotion.
 
@@ -1324,7 +1329,16 @@ def prepare_mesh_proposal(
     lineage organization and accept associations only through their exact source
     transfer; attributes and unsupported association families are refused.
     An empty projected marking is an explicit unchanged-source transaction.
+    ``compatibility`` selects the explicit native initial-label treatment for
+    marking proposals; non-marking proposals cannot request uniform refinement.
     """
+    if not isinstance(compatibility, BisectionCompatibility):
+        raise TypeError("compatibility must be BisectionCompatibility.")
+    if (
+        compatibility is not BisectionCompatibility.REJECT
+        and not isinstance(proposal, MeshMarkingProposal)
+    ):
+        raise ValueError("Bisection compatibility applies only to marking proposals.")
     projection = project_mesh_proposal(source, proposal, policy)
     affine = CellGeometrySpec.affine(source.mesh)
     if (
@@ -1367,12 +1381,25 @@ def prepare_mesh_proposal(
                 raise RuntimeError("Accepted mesh optimization omitted its result.")
             candidate = optimization.result
     elif projection.marked_cell_ids.size or not isinstance(proposal, MeshMarkingProposal):
-        adaptation = _execute_adaptation(source, projection, association_transfer)
+        adaptation = _execute_adaptation(
+            source, projection, association_transfer, compatibility
+        )
         candidate = adaptation.target
     affine_target = CellGeometrySpec.affine(candidate.mesh)
+    target_elements, target_routes, target_coordinates = candidate.geometry.resolve(
+        candidate.mesh
+    )
+    affine_elements, affine_routes, affine_coordinates = affine_target.resolve(
+        candidate.mesh
+    )
     if (
-        candidate.geometry.geometry_layout_id == affine_target.geometry_layout_id
-        and np.array_equal(candidate.geometry.coordinates, affine_target.coordinates)
+        tuple(element.element_id for element in target_elements)
+        == tuple(element.element_id for element in affine_elements)
+        and all(
+            np.array_equal(actual, expected)
+            for actual, expected in zip(target_routes, affine_routes, strict=True)
+        )
+        and np.array_equal(target_coordinates, affine_coordinates)
     ):
         quality_coordinates = candidate.mesh.coordinates
     else:

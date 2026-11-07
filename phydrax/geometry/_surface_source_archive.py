@@ -15,6 +15,7 @@ from .._model._structure import (
     _FiniteElementSpecArchiveProjection,
     MeshingDomainArchiveRecipe,
     SurfaceSourceChartsArchiveRecipe,
+    restore_row_record_recipes,
 )
 from .._physical import SpatialCoordinateContract
 from ..discretization import CellGeometrySpec, CellMesh
@@ -22,6 +23,7 @@ from ..discretization._cell_geometry import (
     _require_stored_chart_term_types,
     CellGeometryRestrictionSource,
     CellVertexGeometryElement,
+    LayerColumnCellGeometryElement,
     PerCellRestrictedCellGeometryElement,
     RationalComposedCellGeometryElement,
     ScalarCoordinateElement,
@@ -56,7 +58,10 @@ def _archive_array(value: object, /) -> np.ndarray:
         raise TypeError("Stored source archive data must be a numeric array.")
     return np.asarray(value)
 
+
 def _domain(value: MeshingDomainArchiveRecipe, /) -> MeshingDomain:
+    from .reconstruction._core import _ReconstructedTrianglePatch
+
     if (
         type(value) is not MeshingDomainArchiveRecipe
         or type(value.corner_points_authored) is not bool
@@ -90,9 +95,15 @@ def _domain(value: MeshingDomainArchiveRecipe, /) -> MeshingDomain:
                 else:
                     raise TypeError("Source domain patch has an unregistered trim use.")
             loops.append(tuple(uses))
+        if type(patch.surface) is _ReconstructedTrianglePatch:
+            surface = _ReconstructedTrianglePatch(_archive_array(patch.surface.corners))
+            if surface.exact_corners != patch.surface.exact_corners:
+                raise ValueError("Stored triangle patch differs from its exact corners.")
+        else:
+            surface = _reconstruct_brep_graph(patch.surface)
         patches.append(
             MeshingSurfacePatch(
-                _reconstruct_brep_graph(patch.surface),
+                surface,
                 tuple(loops),
                 orientation=patch.orientation,
             )
@@ -132,7 +143,9 @@ def _domain(value: MeshingDomainArchiveRecipe, /) -> MeshingDomain:
         source_kinds=value.source_kinds,
         authority_id=value.authority_id,
         brep_authority=authority,
-        corner_points=_archive_array(value.corner_points) if value.corner_points_authored else None,
+        corner_points=_archive_array(value.corner_points)
+        if value.corner_points_authored
+        else None,
     )
     if domain.domain_id != value.expected_domain_id or not np.array_equal(
         np.asarray(domain.corner_points), np.asarray(value.corner_points)
@@ -157,6 +170,30 @@ def _element(value: object, /) -> object:
         return projected.rebuild()
     if type(value) is CellVertexGeometryElement:
         return CellVertexGeometryElement(value.cell_kind, value.local_dof_count)
+    if type(value) is LayerColumnCellGeometryElement:
+        wall = _element(value.wall_element)
+        corner = _element(value.corner_element)
+        if type(wall) is not FiniteElementSpec or type(corner) is not FiniteElementSpec:
+            raise TypeError("Stored layer-column basis lost its finite-element owners.")
+        rebuilt = LayerColumnCellGeometryElement(wall, fiber_graph=value.fiber_graph)
+        if (
+            rebuilt.element_id != value.element_id
+            or rebuilt.corner_element.element_id != corner.element_id
+            or any(
+                getattr(rebuilt, name) != getattr(value, name)
+                for name in (
+                    "cell_kind",
+                    "conformity",
+                    "local_dof_count",
+                    "degree",
+                    "topological_dimension",
+                    "station_axis",
+                    "fiber_graph",
+                )
+            )
+        ):
+            raise ValueError("Stored layer-column basis differs from its exact inputs.")
+        return rebuilt
     if type(value) is SplineCellGeometryElement:
         rebuilt = SplineCellGeometryElement(
             value.anchor_ids,
@@ -200,6 +237,7 @@ def _element(value: object, /) -> object:
 
 
 def _mapped_reference(value: object, /) -> MappedReferenceDomain:
+    from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
     from ._domain_coverage import PiecewiseLinearDomain
     from ._mapped_reference_domain import MappedReferenceDomain
 
@@ -220,7 +258,10 @@ def _mapped_reference(value: object, /) -> MappedReferenceDomain:
     ):
         raise ValueError("Stored reference domain differs from its source.")
     reference_mesh = CellMesh.from_stored_fields(value.reference_mesh)
-    source_geometry = _geometry(value.source_geometry, reference_mesh)
+    stored_geometry = value.source_geometry
+    if type(stored_geometry) is LayerRecordArchiveRecipe:
+        stored_geometry = stored_geometry.restore()
+    source_geometry = _geometry(stored_geometry, reference_mesh)
     result = MappedReferenceDomain(
         reference,
         reference_mesh,
@@ -232,7 +273,8 @@ def _mapped_reference(value: object, /) -> MappedReferenceDomain:
         root_vertex_occurrence_paths=value.root_vertex_occurrence_paths,
         root_cell_occurrence_paths=value.root_cell_occurrence_paths,
         reference_domain_vertex_root_ids=(
-            None if value.reference_domain_vertex_root_ids is None
+            None
+            if value.reference_domain_vertex_root_ids is None
             else np.asarray(value.reference_domain_vertex_root_ids, dtype=np.int64)
         ),
     )
@@ -393,17 +435,41 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
         if source_map.source_map_id != original.source_map_id:
             raise ValueError("Stored spline coordinate source changed.")
     elif source_map is not None:
+        from .._model._structure import (
+            AffinePlcGeometrySourceArchiveRecipe,
+            model_archive_projection,
+        )
         from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
         from ..discretization._exact_power_geometry import ExactPowerCellGeometrySource
         from ..discretization._mapped_power_geometry import MappedPowerCellGeometrySource
         from ..meshing._curving import _ExactCoordinateBankMap
         from ..meshing._dual_extraction import _RestrictedCoordinateMap
         from ..meshing._hex_cut_generation import _CutCoordinateMap
+        from ..meshing._hex_dominant import _HexDominantCoordinateMap
+        from ..meshing._mixed_adaptation import _RetainedCoordinateBank
+        from ..meshing._model_codec import restore_model_archive_value
+        from ._affine_plc_geometry import AffinePlcGeometrySource, map_affine_plc_mesh
 
-        if type(source_map) is _ExactCoordinateBankMap:
+        if type(source_map) in (
+            AffinePlcGeometrySource,
+            AffinePlcGeometrySourceArchiveRecipe,
+        ):
+            source_map = restore_model_archive_value(model_archive_projection(source_map))
+            if type(source_map) is not AffinePlcGeometrySource:
+                raise TypeError("Affine PLC geometry lost its exact source owner.")
+            expected_mesh, _ = map_affine_plc_mesh(
+                source_map.domain, source_map.reference_mesh, witness=source_map.witness
+            )
+            if expected_mesh.mesh_id != mesh.mesh_id:
+                raise ValueError("Affine PLC geometry does not bind the current mesh.")
+        elif type(source_map) is _ExactCoordinateBankMap:
             source_map = _ExactCoordinateBankMap.from_stored_fields(source_map, mesh=mesh)
         elif type(source_map) is ExactPlcCellGeometrySource:
             source_map = ExactPlcCellGeometrySource.from_stored_fields(source_map)
+        elif type(source_map) is _RetainedCoordinateBank:
+            source_map = _RetainedCoordinateBank.from_stored_fields(
+                source_map, coordinates=value.coordinates
+            )
         elif type(source_map) is _RestrictedCoordinateMap:
             original = source_map
             source_mesh = CellMesh.from_stored_fields(original.source_mesh)
@@ -421,6 +487,25 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
             source_map = _power_map(source_map, mesh)
         elif type(source_map) is _CutCoordinateMap:
             source_map = _cut_map(source_map, mesh)
+        elif type(source_map) is _HexDominantCoordinateMap:
+            original = source_map
+            source_mesh = CellMesh.from_stored_fields(original.source_mesh)
+            source_geometry = _geometry(original.source_geometry, source_mesh)
+            source_map = _HexDominantCoordinateMap(
+                source_mesh,
+                source_geometry,
+                mesh,
+                original.exact_vertex_images,
+                original.node_vertex_rows,
+            )
+            if (
+                source_map.source_map_id != original.source_map_id
+                or source_map.exact_coordinate_bank != original.exact_coordinate_bank
+                or not np.array_equal(
+                    source_map.rounded_vertices, original.rounded_vertices
+                )
+            ):
+                raise ValueError("Stored hex-dominant coordinate source changed.")
         else:
             raise TypeError(
                 f"No source chart coordinate-map owner for {type(source_map).__name__}."
@@ -455,6 +540,13 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
             maps[name] = rebuilt
         carrier = None
         if stored.carrier_geometry is not None:
+            if stored.carrier_geometry.source_mesh_id is not None and (
+                stored.carrier_geometry.source_mesh_id != mesh.mesh_id
+                or stored.carrier_geometry.source_topology_id != mesh.topology_id
+            ):
+                raise ValueError(
+                    "Stored carrier geometry requires its actual mesh owner."
+                )
             carrier = _geometry(stored.carrier_geometry, mesh)
         restriction = CellGeometryRestrictionSource(
             stored.source_geometry_id,
@@ -468,7 +560,7 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
         )
         if restriction.restriction_source_id != stored.restriction_source_id:
             raise ValueError("Source chart restriction differs from its exact ancestry.")
-    return CellGeometrySpec.from_stored_fields(
+    rebuilt = CellGeometrySpec.from_stored_fields(
         value,
         source_mesh=mesh if source_map is not None else None,
         source_map=source_map,
@@ -478,6 +570,46 @@ def _geometry(value: CellGeometrySpec, mesh: CellMesh, /) -> CellGeometrySpec:
             for name, element in zip(value.block_names, value.elements, strict=True)
         },
     )
+    if mesh.periodic_topology is not None:
+        mesh.periodic_topology.require_exact_geometry(mesh, rebuilt)
+    return rebuilt
+
+
+def _decode_trim_roots(value: object, /) -> tuple:
+    """Decode exact source trim chords before the chart owner revalidates them."""
+    from fractions import Fraction
+
+    from .._archive_columns import ExactTensorArchiveRecipe
+    from ._surface_source_support import SurfaceTrimRoot
+
+    if type(value) is not ExactTensorArchiveRecipe or not value.rational:
+        raise TypeError("Surface trim roots require a rational exact tensor.")
+    if value.shape != (0,) and (
+        len(value.shape) != 2 or value.shape[0] < 1 or value.shape[1] != 9
+    ):
+        raise ValueError("Stored surface trim-root tensor has a noncanonical shape.")
+    rows = value.decode()
+    roots = []
+    for row in rows:
+        if (
+            not isinstance(row, tuple)
+            or len(row) != 9
+            or any(type(value) is not Fraction for value in row)
+            or any(value.denominator != 1 or value < 0 for value in row[:3])
+        ):
+            raise ValueError("Stored surface trim-root row is malformed.")
+        roots.append(
+            SurfaceTrimRoot(
+                int(row[0]),
+                int(row[1]),
+                int(row[2]),
+                row[3],
+                row[4],
+                (row[5], row[6]),
+                (row[7], row[8]),
+            )
+        )
+    return tuple(roots)
 
 
 def restore_surface_source_charts(
@@ -487,6 +619,7 @@ def restore_surface_source_charts(
     """Rebuild source chart content from registered constructors, not archive claims."""
     if type(value) is not SurfaceSourceChartsArchiveRecipe:
         raise TypeError("Expected a canonical surface-source chart archive recipe.")
+    value = restore_row_record_recipes(value)
     domain = _domain(value.domain)
     from ._mesh_certificates import _same_tree_content
 
@@ -498,15 +631,18 @@ def restore_surface_source_charts(
         source.patches,
         resolution=source.resolution,
         boundary_occurrences=(
-            None if source.boundary_occurrences is None
+            None
+            if source.boundary_occurrences is None
             else _archive_array(source.boundary_occurrences)
         ),
         boundary_cell_ids=(
-            None if source.boundary_cell_ids is None
+            None
+            if source.boundary_cell_ids is None
             else _archive_array(source.boundary_cell_ids)
         ),
         boundary_patch_ids=(
-            None if source.boundary_patch_ids is None
+            None
+            if source.boundary_patch_ids is None
             else _archive_array(source.boundary_patch_ids)
         ),
     )
@@ -561,6 +697,7 @@ def restore_surface_source_charts(
         boundary_occurrences=value.boundary_occurrences,
         source_piece_ids=value.source_piece_ids.decode(),
         root_parameter_exact=value.root_parameter_exact.decode(),
+        trim_roots=_decode_trim_roots(value.trim_roots),
     )
     if charts.source_chart_id != value.expected_source_chart_id:
         raise ValueError("Reconstructed source charts differ from their exact recipe.")

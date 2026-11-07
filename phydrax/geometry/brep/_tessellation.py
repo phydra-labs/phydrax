@@ -355,11 +355,8 @@ def _construction_arrays(
             raise _TessellationUnresolved(
                 "native B-Rep vertex association has invalid source parameters"
             )
-        if dimension == 1:
-            edge_range = np.asarray(model.geometry.edge_ranges, dtype=np.float64)[index]
-            parameters_row[0] = edge_range[0] + parameters_row[0] * (
-                edge_range[1] - edge_range[0]
-            )
+        # Native B-Rep associations already carry parameters in the original
+        # edge curve gauge, not the meshing domain's normalized curve chart.
         dimensions[row] = dimension
         source_indices[row] = index
         vertex_parameters[row] = parameters_row

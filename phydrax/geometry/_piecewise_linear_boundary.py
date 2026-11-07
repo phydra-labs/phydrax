@@ -19,6 +19,7 @@ from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import Dim, HostInt64
+from ._affine_plc_domain import AffinePlcDomain
 from ._domain_coverage import PiecewiseLinearDomain
 from ._rational import fraction_endpoint, rational_vector
 from ._source_boundary_records import (
@@ -29,7 +30,9 @@ from ._source_boundary_records import (
 
 
 class _PiecewiseLinearBoundaryOwner(Protocol):
-    domain: PiecewiseLinearDomain
+    @property
+    def domain(self) -> PiecewiseLinearDomain | AffinePlcDomain: ...
+
     edges: np.ndarray
     envelope_id: str
     scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
@@ -43,6 +46,88 @@ class _PiecewiseLinearBoundaryOwner(Protocol):
     def source_entity_key_for_scope(
         self, dimension: int, entity_id: int, /
     ) -> tuple[str, tuple[str, ...]]: ...
+
+
+@final
+class PiecewiseLinearDomainBoundaryOwner(StrictModule, NonTrainableState):
+    """Retain a declared PWL domain and its canonical occurrence-aware strata."""
+
+    domain: PiecewiseLinearDomain
+    edges: np.ndarray
+    scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    envelope_id: str = eqx.field(static=True)
+    _scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
+    _entity_keys: tuple[tuple[tuple[str, tuple[str, ...]], ...], ...] = eqx.field(
+        static=True
+    )
+
+    def __init__(self, domain: PiecewiseLinearDomain, /) -> None:
+        if not isinstance(domain, PiecewiseLinearDomain) or domain.vertices.shape[1] != 3:
+            raise TypeError(
+                "A PWL domain boundary owner requires a declared 3D PWL domain."
+            )
+        edge_rows = {
+            tuple(sorted((int(face[index]), int(face[(index + 1) % 3]))))
+            for face in np.asarray(domain.facets, dtype=np.int64)
+            for index in range(3)
+        }
+        edges = np.asarray(sorted(edge_rows), dtype=np.int64).reshape((-1, 2))
+        rows = (
+            np.arange(domain.vertices.shape[0], dtype=np.int64),
+            np.arange(edges.shape[0], dtype=np.int64),
+            np.arange(domain.facets.shape[0], dtype=np.int64),
+            np.arange(len(domain.region_ids), dtype=np.int64),
+        )
+        edges.setflags(write=False)
+        for bank in rows:
+            bank.setflags(write=False)
+        self.domain = domain
+        self.edges = edges
+        self.scope_entity_ids_by_mesh_row = rows
+        self.source_id = domain.source_id
+        self.source_revision = domain.source_revision
+        self.envelope_id = domain.domain_id
+        self._scope_entity_set_ids = tuple(
+            f"{domain.domain_id}:pwl:{dimension}" for dimension in range(4)
+        )
+        self._entity_keys = (
+            tuple(
+                (f"{domain.domain_id}:vertex:{row}", ()) for row in range(rows[0].size)
+            ),
+            tuple(
+                (f"{domain.domain_id}:edge:{int(edge[0])}:{int(edge[1])}", ())
+                for edge in edges
+            ),
+            tuple((f"{domain.domain_id}:facet:{row}", ()) for row in range(rows[2].size)),
+            tuple(zip(domain.region_ids, domain.region_occurrence_paths, strict=True)),
+        )
+
+    def require_current(self, /) -> None:
+        if (
+            self.domain.domain_id,
+            self.domain.source_id,
+            self.domain.source_revision,
+        ) != (self.envelope_id, self.source_id, self.source_revision):
+            raise ValueError("The retained PWL source domain changed after preparation.")
+
+    def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
+        return self.scope_entity_ids_by_mesh_row[dimension]
+
+    def scope_entity_set_id(self, dimension: int, /) -> str:
+        return self._scope_entity_set_ids[dimension]
+
+    def source_entity_key_for_scope(
+        self, dimension: int, entity_id: int, /
+    ) -> tuple[str, tuple[str, ...]]:
+        identifiers = self.scope_entity_ids_by_mesh_row[dimension]
+        position = int(np.searchsorted(identifiers, entity_id))
+        if position >= identifiers.size or int(identifiers[position]) != entity_id:
+            raise ValueError(
+                "The requested PWL entity is outside its retained source bank."
+            )
+        return self._entity_keys[dimension][position]
 
 
 class _PwlBoundaryEntityDim(Dim, minimum=1):
@@ -61,7 +146,7 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
     __strict_contract__ = True
 
     owner: _PiecewiseLinearBoundaryOwner
-    domain: PiecewiseLinearDomain
+    domain: PiecewiseLinearDomain | AffinePlcDomain
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     source_query_id: str = eqx.field(static=True)
@@ -87,8 +172,8 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
                 "owner must implement the canonical source-entity scope authority."
             )
         domain_value: object = getattr(owner, "domain", None)
-        if not isinstance(domain_value, PiecewiseLinearDomain):
-            raise TypeError("owner must retain a PiecewiseLinearDomain.")
+        if not isinstance(domain_value, (PiecewiseLinearDomain, AffinePlcDomain)):
+            raise TypeError("owner must retain a PLC domain.")
         domain = domain_value
         source_id = canonical_identifier(owner.source_id, "source_id")
         source_revision = canonical_identifier(owner.source_revision, "source_revision")
@@ -255,7 +340,7 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
         owner.require_current()
         domain_value: object = getattr(owner, "domain", None)
         if (
-            not isinstance(domain_value, PiecewiseLinearDomain)
+            not isinstance(domain_value, (PiecewiseLinearDomain, AffinePlcDomain))
             or domain_value.domain_id != self.domain.domain_id
             or (owner.source_id, owner.source_revision)
             != (self.source_id, self.source_revision)
@@ -357,9 +442,7 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
             element = self.domain.facets[source_row]
         else:
             element = np.asarray(self.owner.edges, dtype=np.int64)[source_row]
-        exact = tuple(
-            rational_vector(self.domain.vertices[int(vertex)]) for vertex in element
-        )
+        exact = tuple(self._exact_vertex(int(vertex)) for vertex in element)
         if chart_dimension == 1:
             return tuple(
                 {(0,): exact[0][axis], (1,): exact[1][axis] - exact[0][axis]}
@@ -386,7 +469,14 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
             )
         row = self.source_row_for_entity_key(0, (entity_id, occurrence_path))
         source_row = int(self.source_rows[row])
-        return rational_vector(self.domain.vertices[source_row])
+        return self._exact_vertex(source_row)
+
+    def _exact_vertex(self, row: int, /) -> tuple[Fraction, Fraction, Fraction]:
+        if isinstance(self.domain, AffinePlcDomain):
+            point = self.domain.exact_vertices[row]
+        else:
+            point = rational_vector(self.domain.vertices[row])
+        return point[0], point[1], point[2]
 
     def validate_chart_witness(self, witness: SourceBoundaryChartWitness, /) -> None:
         if not isinstance(witness, SourceBoundaryChartWitness):
@@ -432,10 +522,31 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
                 "Only a complete PWL facet query provides triangle chart coverage."
             )
         self.require_current()
-        triangles = self.domain.vertices[self.domain.facets[self.source_rows]]
+        facets = self.domain.facets[self.source_rows]
+        triangles = self.domain.vertices[facets]
+        error = max(
+            (
+                sum(
+                    (
+                        (value - Fraction(float(rounded))) ** 2
+                        for value, rounded in zip(
+                            self._exact_vertex(int(vertex)),
+                            self.domain.vertices[int(vertex)],
+                            strict=True,
+                        )
+                    ),
+                    Fraction(0),
+                )
+                for facet in facets
+                for vertex in facet
+            ),
+            default=Fraction(0),
+        )
+        _, error_upper = fraction_sqrt_interval(error)
+        bound = fraction_endpoint(error_upper, upper=True, saturate=True)
         return SourceBoundaryChartCover(
             np.asarray(triangles, dtype=np.float64),
-            np.zeros((triangles.shape[0],), dtype=np.float64),
+            np.full((triangles.shape[0],), bound, dtype=np.float64),
             "certified",
             True,
             self.source_id,
@@ -469,7 +580,7 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
             squared: list[Fraction] = []
             for source_row in self.source_rows.tolist():
                 if self.entity_dimension == 0:
-                    source_point = rational_vector(self.domain.vertices[int(source_row)])
+                    source_point = self._exact_vertex(int(source_row))
                     squared.append(
                         sum(
                             (
@@ -485,18 +596,15 @@ class PiecewiseLinearBoundarySource(StrictModule, NonTrainableState):
                             "A one-dimensional PWL query lost its edge bank."
                         )
                     edge = edges[int(source_row)]
-                    segment = tuple(
-                        rational_vector(self.domain.vertices[int(vertex)])
-                        for vertex in edge
-                    )
+                    segment = tuple(self._exact_vertex(int(vertex)) for vertex in edge)
                     squared.append(
                         _point_segment_squared(exact_point, segment[0], segment[1])
                     )
                 else:
                     vertices = self.domain.facets[int(source_row)]
-                    first = rational_vector(self.domain.vertices[int(vertices[0])])
-                    second = rational_vector(self.domain.vertices[int(vertices[1])])
-                    third = rational_vector(self.domain.vertices[int(vertices[2])])
+                    first = self._exact_vertex(int(vertices[0]))
+                    second = self._exact_vertex(int(vertices[1]))
+                    third = self._exact_vertex(int(vertices[2]))
                     triangle = (
                         (first[0], first[1], first[2]),
                         (second[0], second[1], second[2]),

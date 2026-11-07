@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from jax import Array
 
+import phydrax.discretization._cochain_hodge as cochain_hodge
 from phydrax.discretization._cell_complex import simplicial_cell_complex
 from phydrax.discretization._cochain_hodge import (
     DiagonalHodge,
@@ -26,6 +27,7 @@ from phydrax.linalg import (
     OperatorPairing,
     PCG,
     solve,
+    SparseFactorizationPolicy,
     TolerancePolicy,
 )
 
@@ -104,18 +106,49 @@ def test_sparse_active_restriction_inverts_principal_metric_not_masked_inverse()
     assert not np.allclose(principal @ masked_inverse, rhs, rtol=1e-10, atol=1e-10)
 
 
-def test_sparse_validity_rejects_indefinite_positive_diagonal_after_refresh() -> None:
+@pytest.mark.parametrize(
+    "bad_values",
+    [(1.0, 2.0, 1.0), (1.0, 1.0, 1.0)],
+    ids=["indefinite", "singular"],
+)
+def test_sparse_validity_rejects_non_spd_positive_diagonal_after_refresh(
+    bad_values: tuple[float, float, float],
+) -> None:
     rows = np.asarray([0, 0, 1], dtype=np.int32)
     columns = np.asarray([0, 1, 1], dtype=np.int32)
     hodge = SparseHodge(
         rows, columns, jnp.asarray([3.0, 0.5, 2.0], dtype=jnp.float64), 2
     ).admit()
-    invalid = hodge.refresh(jnp.asarray([1.0, 2.0, 1.0], dtype=jnp.float64))
+    assert hodge._admission_plan is not None
+    defaults = SparseFactorizationPolicy("cholesky")
+    admission = hodge._admission_plan.policy
+    assert admission.ordering == "approximate-minimum-degree"
+    assert admission.max_factor_bytes == defaults.max_factor_bytes
+    assert admission.max_symbolic_work == defaults.max_symbolic_work
+    assert admission.max_factor_nnz == defaults.max_factor_bytes // np.dtype(np.float64).itemsize
+    invalid = hodge.refresh(jnp.asarray(bad_values, dtype=jnp.float64))
     assert not bool(
         jax.jit(lambda values: hodge.refresh(values).valid)(invalid.upper_values)
     )
     with pytest.raises(ValueError, match="positive definite"):
         invalid.admit()
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "metric", "limit"),
+    [("max_factor_bytes", "factor_bytes", 128), ("max_symbolic_work", "symbolic_work", 1)],
+)
+def test_sparse_hodge_respects_native_factor_resource_limits(
+    monkeypatch: pytest.MonkeyPatch, limit_name: str, metric: str, limit: int,
+) -> None:
+    from functools import partial
+
+    monkeypatch.setattr(
+        cochain_hodge, "SparseFactorizationPolicy",
+        partial(SparseFactorizationPolicy, **{limit_name: limit}),
+    )
+    with pytest.raises(ValueError, match=rf"{metric} requires"):
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3)
 
 
 def test_diagonal_restriction_and_refresh_preserve_dynamic_metric_derivative() -> None:

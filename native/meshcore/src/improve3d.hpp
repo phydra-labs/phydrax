@@ -52,6 +52,11 @@ struct TetQualityRequest {
   // improve_mesh from the mesh's retained size field.
   const std::vector<double>* slot_sizes = nullptr;
 };
+// Assess current cells without changing the mesh or its stored unmet records.
+std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest& request,
+                                   std::vector<TetUnmetRecord>& records,
+                                   std::span<const double> snapshot_points = {});
+
 
 // `vertex_sizes` (one per current vertex, snapshot order) replaces the mesh's
 // retained size field when nonempty; otherwise the retained field applies.
@@ -61,6 +66,17 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& request,
                           std::int64_t& collapsed_vertices,
                           std::int64_t& relocated_vertices,
                           std::int64_t& unmet_cells);
+
+// Transactionally try generated, unprotected facet-vertex collapses followed
+// by ordinary quality improvement. Original PLC vertices are explicit and
+// must bind the mesh's complete source-point bank in source order.
+std::int32_t repair_boundary_quality(
+    TetMesh& mesh, const TetQualityRequest& request,
+    std::span<const double> vertex_sizes,
+    std::span<const std::uint64_t> original_vertex_ids,
+    std::int64_t& inserted_vertices, std::int64_t& collapsed_vertices,
+    std::int64_t& relocated_vertices, std::int64_t& unmet_cells,
+    bool& applied);
 
 // Lawson flips from the faces of the cells `seeds` (2-3 across a face whose
 // neighbor's apex lies strictly inside the cell's circumsphere when the union

@@ -366,7 +366,7 @@ def _validate_local_region(
         local_region.geometry_actions.action_id != signature.geometry_action_id
         or tuple(sorted(value.action_id for value in local_region.reference_actions))
         != signature.reference_action_ids
-        or tuple(local_region.entity_indices) != tuple(entities)
+        or not np.array_equal(np.asarray(local_region.entity_indices), entities)
     ):
         raise ValueError("Prepared local region does not match its workset.")
 
@@ -389,6 +389,8 @@ class CompiledWorkset(StrictModule, NonTrainableState):
     signature: WorksetSignature
     local_region: PreparedLocalRegion | None
     reference: PreparedFiniteElementReference | None
+    volume_points: Array | None
+    volume_weights: Array | None
     neighbor_reference: PreparedFiniteElementReference | None
     mortar: FiniteElementMortarPlan | None
     mortar_metric: FiniteElementMortarMetricData | None
@@ -425,6 +427,8 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         *,
         local_region: PreparedLocalRegion | None = None,
         reference: PreparedFiniteElementReference | None = None,
+        volume_points: ArrayLike | None = None,
+        volume_weights: ArrayLike | None = None,
         neighbor_reference: PreparedFiniteElementReference | None = None,
         mortar: FiniteElementMortarPlan | None = None,
         mortar_metric: FiniteElementMortarMetricData | None = None,
@@ -477,6 +481,15 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         self.signature = signature
         self.local_region = local_region
         self.reference = reference
+        if (volume_points is None) != (volume_weights is None):
+            raise ValueError("Volume quadrature points and weights must be provided together.")
+        self.volume_points = None if volume_points is None else jnp.asarray(volume_points)
+        self.volume_weights = None if volume_weights is None else jnp.asarray(volume_weights)
+        if self.volume_points is not None and (
+            self.volume_points.ndim != 2 or self.volume_weights is None
+            or self.volume_weights.shape != (self.volume_points.shape[0],)
+        ):
+            raise ValueError("Volume quadrature points and weights have incompatible shapes.")
         self.neighbor_reference = neighbor_reference
         self.mortar = mortar
         self.mortar_metric = mortar_metric
@@ -509,6 +522,13 @@ class CompiledWorkset(StrictModule, NonTrainableState):
                 ),
                 "prepared_reference": (
                     None if reference is None else reference.prepared_id
+                ),
+                **(
+                    {
+                        "volume_points": array_tree_fingerprint(volume_points),
+                        "volume_weights": array_tree_fingerprint(volume_weights),
+                    }
+                    if volume_points is not None else {}
                 ),
                 "neighbor_reference": (
                     None if neighbor_reference is None else neighbor_reference.prepared_id

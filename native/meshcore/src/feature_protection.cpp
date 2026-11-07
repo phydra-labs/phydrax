@@ -202,8 +202,26 @@ void clamp_simplex(double* parameters) {
 
 std::vector<double> protection_radii(const double* points, int64_t point_count,
                                      std::span<const int32_t> edges,
-                                     std::span<const int32_t> triangles) {
+                                     std::span<const int32_t> triangles,
+                                     const double* affine_metric) {
   const std::size_t count = static_cast<std::size_t>(point_count);
+  // Translation is irrelevant to protection geometry; centering avoids
+  // losing small distances to a large coordinate origin.
+  std::vector<double> world_points;
+  if (affine_metric != nullptr && count != 0) {
+    world_points.resize(3 * count);
+    for (std::size_t v = 0; v < count; ++v) {
+      const double delta[3] = {points[3 * v] - points[0],
+                               points[3 * v + 1] - points[1],
+                               points[3 * v + 2] - points[2]};
+      for (int axis = 0; axis < 3; ++axis) {
+        world_points[3 * v + axis] = affine_metric[3 * axis] * delta[0] +
+                                     affine_metric[3 * axis + 1] * delta[1] +
+                                     affine_metric[3 * axis + 2] * delta[2];
+      }
+    }
+    points = world_points.data();
+  }
   std::vector<std::vector<int32_t>> incident(count);
   for (std::size_t e = 0; e + 1 < edges.size(); e += 2) {
     incident[static_cast<std::size_t>(edges[e])].push_back(edges[e + 1]);
@@ -602,6 +620,32 @@ int insphere_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPoin
   exact_point(d, pd);
   exact_point(e, pe);
   return insphere_sos_sign(pa, pb, pc, pd, pe, ia, ib, ic, id, ie);
+}
+
+int affine_insphere_sos(const double* linear, int orientation,
+                        const ExactPointRef& a, const ExactPointRef& b,
+                        const ExactPointRef& c, const ExactPointRef& d,
+                        const ExactPointRef& e, int64_t ia, int64_t ib,
+                        int64_t ic, int64_t id, int64_t ie) {
+  const ExactPointRef* points[4] = {&a, &b, &c, &d};
+  Expansion transformed[5][3];
+  Expansion origin[3];
+  for (int axis = 0; axis < 3; ++axis) origin[axis] = coordinate(e, axis);
+  for (int vertex = 0; vertex < 4; ++vertex) {
+    Expansion delta[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      delta[axis] = coordinate(*points[vertex], axis) - origin[axis];
+    }
+    for (int row = 0; row < 3; ++row) {
+      for (int col = 0; col < 3; ++col) {
+        transformed[vertex][row] = transformed[vertex][row] +
+            Expansion(linear[3 * row + col]) * delta[col];
+      }
+    }
+  }
+  return orientation * insphere_sos_sign(
+      transformed[0], transformed[1], transformed[2], transformed[3],
+      transformed[4], ia, ib, ic, id, ie);
 }
 
 int orient2d_projected(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,

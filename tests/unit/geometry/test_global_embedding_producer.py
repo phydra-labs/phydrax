@@ -61,8 +61,11 @@ from phydrax.geometry._boundary_degree_embedding import (
 from phydrax.geometry._embedding_cells import EmbeddingCell, prepare_embedding_cells
 from phydrax.geometry._exact_polyhedral_geometry import Point3
 from phydrax.geometry._global_embedding import (
+    _affine_chart_cell,
+    _cartesian_chart_contact,
     _full_column_rank_modulo_prime,
     _nonperiodic_contacts,
+    _planar_faced_chart_cell,
     _rational_markowitz_nullspace,
     _shared_curved_facet_separation,
     _shared_edge_cone_separation,
@@ -70,7 +73,10 @@ from phydrax.geometry._global_embedding import (
     certify_global_embedding,
     GlobalEmbeddingCertificate,
 )
-from phydrax.geometry._mapped_embedding import prove_mapped_cell_injective
+from phydrax.geometry._mapped_embedding import (
+    MappedInjectivityWitness,
+    prove_mapped_cell_injective,
+)
 from phydrax.geometry._restricted_embedding import (
     reference_chart_composition_equal,
     restriction_trace_equal,
@@ -112,6 +118,183 @@ def _mapped_hexahedron(
         tuple(upper for _, upper in bounds),
         tuple(tuple(face) for face in topology.entities[2]),
     )
+
+
+def test_planar_faced_physical_map_requires_full_injectivity_and_face_images() -> None:
+    u, v, w = axes(3)
+    bubble = multiply(
+        multiply(u, subtract(constant(1, 3), u)),
+        multiply(
+            multiply(v, subtract(constant(1, 3), v)),
+            multiply(w, subtract(constant(1, 3), w)),
+        ),
+    )
+    cell = _mapped_hexahedron(
+        1, tuple(range(8)), (add(u, scale(bubble, Fraction(1, 10))), v, w)
+    )
+    assert _planar_faced_chart_cell(cell, cell.coordinates) is not None
+    # Same corners, but a bowed face: corner planarity is not sufficient.
+    face_bump = multiply(v, subtract(constant(1, 3), v))
+    bowed = _mapped_hexahedron(
+        2, tuple(range(8)), (add(u, scale(face_bump, Fraction(1, 10))), v, w)
+    )
+    assert _planar_faced_chart_cell(bowed, bowed.coordinates) is None
+    # A folded map retaining the same boundary is not an injective solid.
+    folded = _mapped_hexahedron(3, tuple(range(8)), (add(u, scale(bubble, 100)), v, w))
+    assert _planar_faced_chart_cell(folded, folded.coordinates) is None
+
+
+def test_planar_contact_reuses_only_the_proved_physical_map(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v, w = axes(3)
+    bubble = multiply(
+        multiply(u, subtract(constant(1, 3), u)),
+        multiply(
+            multiply(v, subtract(constant(1, 3), v)),
+            multiply(w, subtract(constant(1, 3), w)),
+        ),
+    )
+    cell = _mapped_hexahedron(
+        1, tuple(range(8)), (add(u, scale(bubble, Fraction(1, 10))), v, w)
+    )
+    assert embedding.prove_mapped_cell_injective(cell) is not None
+    original = embedding.prove_mapped_cell_injective
+    calls = 0
+
+    def count_proofs(candidate: EmbeddingCell, /) -> MappedInjectivityWitness | None:
+        nonlocal calls
+        calls += 1
+        return original(candidate)
+
+    monkeypatch.setattr(embedding, "prove_mapped_cell_injective", count_proofs)
+    assert (
+        embedding._planar_faced_chart_cell(
+            cell, cell.coordinates, physical_map_injective=True
+        )
+        is not None
+    )
+    assert calls == 0
+    changed = (add(u, scale(bubble, 100)), v, w)
+    assert (
+        embedding._planar_faced_chart_cell(cell, changed, physical_map_injective=True)
+        is None
+    )
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    "shift,expected", [(Fraction(1), "clear"), (Fraction(1, 2), "overlap")]
+)
+def test_planar_faced_mapped_cells_preserve_exact_contact(
+    shift: Fraction,
+    expected: str,
+) -> None:
+    u, v, w = axes(3)
+    bubble = multiply(
+        multiply(u, subtract(constant(1, 3), u)),
+        multiply(
+            multiply(v, subtract(constant(1, 3), v)),
+            multiply(w, subtract(constant(1, 3), w)),
+        ),
+    )
+    base = add(u, scale(bubble, Fraction(1, 16)))
+    maps = ((base, v, w), (add(base, constant(shift, 3)), v, w))
+    topology = reference_cell_topology("hexahedron")
+    reference_vertices = tuple(
+        tuple(Fraction(float(value)) for value in point) for point in topology.vertices
+    )
+    element = lagrange_element("hexahedron", 2)
+    reference_nodes = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in element.reference_nodes
+    )
+    vertices: list[tuple[ExactScalar, ...]] = []
+    vertex_rows: dict[tuple[ExactScalar, ...], int] = {}
+    connectivity: list[tuple[int, ...]] = []
+    dofs: list[tuple[ExactScalar, ...]] = []
+    routes: list[tuple[int, ...]] = []
+    for expressions in maps:
+        corners = tuple(
+            tuple(evaluate_expression(expression, point) for expression in expressions)
+            for point in reference_vertices
+        )
+        row = []
+        for corner in corners:
+            if corner not in vertex_rows:
+                vertex_rows[corner] = len(vertices)
+                vertices.append(corner)
+            row.append(vertex_rows[corner])
+        connectivity.append(tuple(row))
+        start = len(dofs)
+        dofs.extend(
+            tuple(evaluate_expression(expression, point) for expression in expressions)
+            for point in reference_nodes
+        )
+        routes.append(tuple(range(start, len(dofs))))
+    mesh = CellMesh(
+        np.asarray(vertices, dtype=np.float64),
+        (CellBlock("hex", "hexahedron", np.asarray(connectivity)),),
+    )
+    geometry = CellGeometrySpec(
+        {"hex": element}, {"hex": np.asarray(routes)}, np.asarray(dofs, dtype=np.float64)
+    )
+    findings = _nonperiodic_contacts(
+        mesh, geometry, prepare_embedding_cells(mesh, geometry)
+    )
+    if expected == "clear":
+        assert not findings
+    else:
+        assert any(
+            finding.check == "cell_contact" and finding.status == "violated"
+            for finding in findings
+        )
+
+
+def test_cartesian_root_chart_contact_checks_complete_declared_stratum() -> None:
+    variables = axes(3)
+    reference = reference_cell_topology("hexahedron").vertices
+    first_ids = tuple(range(8))
+    by_corner = {tuple(point): first_ids[row] for row, point in enumerate(reference)}
+    touching_ids = tuple(
+        by_corner[(1.0, point[1], point[2])] if point[0] == 0 else 100 + row
+        for row, point in enumerate(reference)
+    )
+    first = _affine_chart_cell(_mapped_hexahedron(1, first_ids, variables), variables)
+    shifted = (add(variables[0], constant(1, 3)), *variables[1:])
+    touching = _affine_chart_cell(_mapped_hexahedron(2, touching_ids, variables), shifted)
+    assert first is not None and touching is not None
+    assert _cartesian_chart_contact(first, touching) == "declared"
+    overlapping = _affine_chart_cell(
+        _mapped_hexahedron(3, tuple(range(200, 208)), variables),
+        (add(variables[0], constant(Fraction(1, 2), 3)), *variables[1:]),
+    )
+    assert overlapping is not None
+    assert _cartesian_chart_contact(first, overlapping) == "outside"
+    separated = _affine_chart_cell(
+        _mapped_hexahedron(4, tuple(range(300, 308)), variables),
+        (add(variables[0], constant(2, 3)), *variables[1:]),
+    )
+    assert separated is not None
+    assert _cartesian_chart_contact(first, separated) == "declared"
+
+
+def test_cartesian_corners_do_not_prove_an_affine_chart() -> None:
+    variables = axes(3)
+    curved: tuple[Expression, ...] = (
+        {(1, 0, 0): Fraction(2), (2, 0, 0): Fraction(-1)},
+        variables[1],
+        variables[2],
+    )
+    cell = _mapped_hexahedron(5, tuple(range(8)), curved)
+    assert set(cell.corner_images) == set(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology("hexahedron").vertices
+    )
+    assert _affine_chart_cell(cell, curved) is None
+    assert _cartesian_chart_contact(cell, cell) is None
 
 
 def _mapped_tetrahedron(
@@ -733,11 +916,37 @@ def test_curved_shared_edge_uses_two_factor_interior_signs() -> None:
     )
 
     assert restriction_trace_equal(first, second, (100, 101)) is True
+    cache: dict[tuple[int, tuple[int, ...]], tuple[Expression, ...] | None] = {}
+    assert restriction_trace_equal(first, second, (100, 101), cache=cache) is True
+    assert len(cache) == 2
+    assert restriction_trace_equal(second, first, (100, 101), cache=cache) is True
+    assert len(cache) == 2
     witness = _shared_edge_separation(first, second, (100, 101), {})
 
     assert witness is not None
     assert witness[1] == -witness[2]
     assert witness[3] and witness[4]
+
+
+def test_nonplanar_shared_edge_cannot_have_a_separating_plane() -> None:
+    first_coordinates: tuple[Expression, ...] = (
+        {(1, 0, 0): Fraction(1)},
+        {(0, 1, 0): Fraction(1), (2, 0, 0): Fraction(1)},
+        {(0, 0, 1): Fraction(1), (3, 0, 0): Fraction(1)},
+    )
+    second_coordinates: tuple[Expression, ...] = (
+        {(1, 0, 0): Fraction(1)},
+        {(0, 1, 0): Fraction(-1), (2, 0, 0): Fraction(1)},
+        {(0, 0, 1): Fraction(-1), (3, 0, 0): Fraction(1)},
+    )
+    first = _mapped_hexahedron(
+        503, (100, 101, 102, 103, 104, 105, 106, 107), first_coordinates
+    )
+    second = _mapped_hexahedron(
+        504, (100, 101, 202, 203, 204, 205, 206, 207), second_coordinates
+    )
+    assert restriction_trace_equal(first, second, (100, 101)) is True
+    assert _shared_edge_separation(first, second, (100, 101), {}) is None
 
 
 def test_two_factor_edge_proof_rejects_an_extra_shared_facet() -> None:
@@ -853,9 +1062,74 @@ def test_exact_p2_curved_facet_contacts_cold_recompute_without_root_source() -> 
         value for witness in certificate.witnesses for value in witness.exact_values
     )
     assert any(
-        "exact-opposite-side-curved-shared-facet" in value for value in exact_values
+        "exact-opposite-side-curved-shared-facet" in value
+        or "glued-facet-monotone-map" in value
+        for value in exact_values
     )
     assert not any("same-root:" in value for value in exact_values)
+
+
+@pytest.mark.parametrize("overlap", (False, True), ids=("separated", "overlapping"))
+def test_quadratic_parameter_on_shared_line_preserves_contact_contract(
+    overlap: bool,
+) -> None:
+    from phydrax.meshing._curving import _straight_geometry
+
+    second_side = (
+        ((1.0, 1.0, 0.0), (-1.0, 1.0, 0.0))
+        if overlap
+        else ((-2.0, -1.0, 0.0), (2.0, -1.0, 0.0))
+    )
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (2.0, 1.0, 0.0),
+            (-2.0, 1.0, 0.0),
+            *second_side,
+        ),
+        dtype=np.float64,
+    )
+    mesh = CellMesh(
+        points,
+        (
+            CellBlock(
+                "cells",
+                "simplex:3",
+                np.asarray(((0, 1, 2, 3), (0, 1, 4, 5)), dtype=np.int32),
+            ),
+        ),
+    )
+    straight = _straight_geometry(mesh, 2)
+    x, y, z = np.asarray(straight.coordinates).T
+    height = z + z * z / 16.0
+    # Height is strictly increasing on [0, 1]; the transverse map has
+    # determinant 1 + 4 z². The final affine shear preserves injectivity.
+    # Thus image overlap is exactly that of the authored straight tetrahedra.
+    coordinates = np.column_stack(
+        (
+            x - 2.0 * y * z + height / 4.0 + 1.0 / 8.0,
+            y + 2.0 * x * z - height / 8.0 - 1.0 / 4.0,
+            height + 3.0 / 8.0,
+        )
+    )
+    geometry = CellGeometrySpec(
+        dict(zip(straight.block_names, straight.elements, strict=True)),
+        dict(zip(straight.block_names, straight.geometry_dofs, strict=True)),
+        coordinates,
+    )
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    assert validity.all_certified
+
+    certificate = certify_global_embedding(mesh, geometry, validity)
+    if overlap:
+        assert certificate.status != "certified"
+        assert any(
+            finding.entity_kind == "cell" and finding.entity_ids == (0, 1)
+            for finding in certificate.findings
+        )
+    else:
+        assert certificate.status == "certified", certificate.findings
 
 
 def test_global_degree_refuses_mismatched_exact_interior_trace() -> None:

@@ -2241,11 +2241,17 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
         axis_name: str = "owner_local_cell_geometry_restore",
     ) -> OwnerLocalCellGeometry:
         """Rebuild scientific rows after current-group and exact-source replay."""
+        from functools import partial
+
         import jax
 
         from ..graph._partition import GraphPartitionPlan
         from ..meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
         from ..meshing._distribution import _owner_group_fail_if_any
+        from ..meshing._model_codec import (
+            _restore_owner_local_dependencies,
+            restore_model_archive_value,
+        )
         from ..meshing._periodic import PeriodicPointOrbits
         from ..meshing.providers._native_periodic import (
             _owner_local_periodic_source_content_identity,
@@ -2299,6 +2305,20 @@ class OwnerLocalCellGeometry(StrictModule, NonTrainableState):
             execution_group,
             axis_name,
             "stored owner-local view rank",
+        )
+        try:
+            value = _restore_owner_local_dependencies(
+                value,
+                partial(restore_model_archive_value, execution_group=execution_group),
+            )
+            local_error = None
+        except Exception as error:
+            local_error = f"{type(error).__name__}: {error}"
+        _owner_group_fail_if_any(
+            local_error,
+            execution_group,
+            axis_name,
+            "stored owner-local executable dependencies",
         )
 
         try:

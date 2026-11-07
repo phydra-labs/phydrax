@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
+from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import jax.numpy as jnp
@@ -52,6 +55,9 @@ from phydrax.meshing.providers._native_sources import (
     NativeCurveSource,
     NativePlanarSource,
 )
+from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
+from phydrax.meshing._motion import MeshMotionMonitor, advance_mesh_motion
+from phydrax.meshing._motion_source import NativePlanarMotionSource
 
 
 class _VariableSpeedLine(BoundaryMap):
@@ -517,6 +523,261 @@ def _planar_request() -> tuple[
     return source, specification, NativeMeshingOptions("planar_constrained_delaunay")
 
 
+def test_planar_motion_requires_authored_successor_and_preserves_scopes() -> None:
+    authored, specification, options = _planar_request()
+    construction = prepare_native_planar(
+        authored, specification, options, SpatialCoordinateContract.si()
+    ).execute()
+    source = _accept_native_construction(
+        construction, specification, _NATIVE_PROVIDER, "test", "test", "test"
+    )
+    monitor = MeshMotionMonitor(source.mesh)
+    shift = np.asarray((0.55, 0.0))
+    coordinates = np.asarray(source.mesh.coordinates) + shift
+    transition = NativePlanarMotionSource(authored, shift)
+    accepted = advance_mesh_motion(
+        monitor, source, coordinates, boundary_residual=0.0, source_transition=transition
+    )
+    assert accepted.accepted, tuple(
+        (a.reasons, a.failure_detail) for a in accepted.assessments
+    )
+    assert accepted.result is not None and accepted.result.certification is not None
+    assert accepted.source_transition is transition
+    inputs = accepted.result.certification.inputs
+    assert isinstance(inputs.feature_source, NativePlanarSource)
+    assert inputs.feature_source.binding_id == transition.successor.binding_id
+    assert inputs.source_revision == transition.successor.source_revision
+    assert (
+        NativePlanarMotionSource.from_stored_fields(transition).transition_id
+        == transition.transition_id
+    )
+    assert all(
+        a.source_revision == transition.successor.source_revision
+        for a in accepted.result.associations
+    )
+    np.testing.assert_array_equal(
+        np.asarray(transition.successor.region.vertices),
+        np.asarray(authored.region.vertices) + shift,
+    )
+    assert source.certification is not None
+    assert inputs.protected_features is not None
+    assert source.certification.inputs.protected_features is not None
+    assert len(inputs.scoped_fidelity) == len(source.certification.inputs.scoped_fidelity)
+    assert {tuple(f.scope.entity_ids.tolist()) for f in inputs.protected_features} == {
+        tuple(f.scope.entity_ids.tolist())
+        for f in source.certification.inputs.protected_features
+    }
+    second_shift = np.asarray((0.05, 0.0))
+    second_authority = NativePlanarMotionSource(transition.successor, second_shift)
+    second = advance_mesh_motion(
+        MeshMotionMonitor(accepted.result.mesh),
+        accepted.result,
+        np.asarray(accepted.result.mesh.coordinates) + second_shift,
+        boundary_residual=0.0,
+        source_transition=second_authority,
+    )
+    assert second.accepted, tuple(
+        (a.reasons, a.failure_detail) for a in second.assessments
+    )
+    assert second.result is not None and second.result.certification is not None
+    assert (
+        second.result.certification.inputs.source_revision
+        == second_authority.successor.source_revision
+    )
+    fixed = advance_mesh_motion(monitor, source, coordinates, boundary_residual=0.0)
+    assert not fixed.accepted and fixed.result is None
+    wrong = NativePlanarMotionSource(transition.successor, shift)
+    stale = advance_mesh_motion(
+        monitor, source, coordinates, boundary_residual=0.0, source_transition=wrong
+    )
+    assert not stale.accepted and stale.result is None
+    changed_scope = NativePlanarSource(
+        authored.region,
+        authored.declared_source_revision,
+        embedded=authored.embedded,
+        region_scope_entity_ids=np.asarray((408,), dtype=np.int64),
+        vertex_entity_ids=authored.vertex_entity_ids,
+        edge_entity_ids=authored.edge_entity_ids,
+        embedded_vertex_entity_ids=authored.embedded_vertex_entity_ids,
+        embedded_edge_entity_ids=authored.embedded_edge_entity_ids,
+    )
+    wrong_scope = advance_mesh_motion(
+        monitor,
+        source,
+        coordinates,
+        boundary_residual=0.0,
+        source_transition=NativePlanarMotionSource(changed_scope, shift),
+    )
+    assert not wrong_scope.accepted and wrong_scope.result is None
+    noncommuting = coordinates.copy()
+    noncommuting[-1, 0] += 0.01
+    refused = advance_mesh_motion(
+        monitor, source, noncommuting, boundary_residual=0.0, source_transition=transition
+    )
+    assert not refused.accepted and refused.result is None
+
+
+def test_planar_motion_composition_cold_replay_and_tampering(tmp_path: Path) -> None:
+    from phydrax._array_archive import ArrayArchiveCorruptionError
+    from phydrax._model._structure import model_archive_projection
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        model_archive_content_id,
+        planar_motion_advance_recipe,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    authored, specification, options = _planar_request()
+    construction = prepare_native_planar(
+        authored, specification, options, SpatialCoordinateContract.si()
+    ).execute()
+    source = _accept_native_construction(
+        construction, specification, _NATIVE_PROVIDER, "test", "test", "test"
+    )
+    monitor = MeshMotionMonitor(source.mesh)
+    translation = np.asarray((0.55, 0.0))
+    coordinates = np.asarray(source.mesh.coordinates) + translation
+    fixed = np.zeros((coordinates.shape[0],), dtype=np.bool_)
+    transition = NativePlanarMotionSource(authored, translation)
+    advance = advance_mesh_motion(
+        monitor,
+        source,
+        coordinates,
+        boundary_residual=0.0,
+        fixed_vertices=fixed,
+        numeric_version="planar-motion-archive-test",
+        source_transition=transition,
+    )
+    assert advance.accepted and advance.result is not None
+    recipe = planar_motion_advance_recipe(
+        monitor,
+        source,
+        coordinates,
+        advance,
+        boundary_residual=0.0,
+        fixed_vertices=fixed,
+        numeric_version="planar-motion-archive-test",
+        adaptation_policy=None,
+        remesh_metric=None,
+        prior_transition=None,
+        source_transition=transition,
+    )
+    predecessor_entry = CompositionEntry(
+        source,
+        entry_id="motion/predecessor",
+        role="topology",
+        owner_id=authored.source_id,
+        structure_id=source.mesh.topology_id,
+        revision_id=source.result_id,
+        semantics_id=authored.binding_id,
+    )
+    target_entry = CompositionEntry(
+        advance.result,
+        entry_id="motion/target",
+        role="topology",
+        owner_id=authored.source_id,
+        structure_id=advance.result.mesh.topology_id,
+        revision_id=advance.result.result_id,
+        semantics_id=transition.successor.binding_id,
+        dependencies=(predecessor_entry.binding("revision"),),
+    )
+    entry = CompositionEntry(
+        recipe,
+        entry_id="motion/advance",
+        role="topology",
+        owner_id=authored.source_id,
+        structure_id=source.mesh.topology_id,
+        revision_id=advance.advance_id,
+        semantics_id=transition.transition_id,
+        dependencies=(
+            predecessor_entry.binding("revision"),
+            target_entry.binding("revision"),
+        ),
+    )
+    composition = Composition(
+        (predecessor_entry, target_entry, entry), boundary_id="planar-motion-cold"
+    )
+    path = write_model_artifact(
+        tmp_path / "motion.phx", composition, limits=MODEL_ARCHIVE_LIMITS
+    )
+    content_id = model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
+    script = (
+        "import sys; "
+        "from phydrax.lifecycle import Composition; "
+        "from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS,read_model_artifact,restore_model_archive_value,restore_planar_motion_advance; "
+        "archive=read_model_artifact(sys.argv[1],expected_type=Composition,restore=restore_model_archive_value,limits=MODEL_ARCHIVE_LIMITS,expected_content_id=sys.argv[2]); "
+        "source=archive.value('motion/predecessor'); target=archive.value('motion/target'); "
+        "assert source.result_id==sys.argv[3] and target.result_id==sys.argv[4]; "
+        "assert source.certification.passed and target.certification.passed; "
+        "recipe=archive.value('motion/advance'); "
+        "assert target.certification.inputs.feature_source.binding_id==archive.entry('motion/target').semantics_id; "
+        "a=restore_planar_motion_advance(recipe,source); "
+        "assert a.accepted and a.advance_id==sys.argv[5] and a.result.result_id==target.result_id and a.source_transition.successor.binding_id==archive.entry('motion/target').semantics_id"
+    )
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(path),
+            content_id,
+            source.result_id,
+            advance.result.result_id,
+            advance.advance_id,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert child.returncode == 0, child.stderr
+    restored = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+        expected_content_id=content_id,
+    )
+    assert restored.value("motion/advance").advance_id == advance.advance_id
+    assert restored.value("motion/predecessor").result_id == source.result_id
+    assert restored.value("motion/target").result_id == advance.result.result_id
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_artifact(
+            path,
+            expected_type=Composition,
+            restore=restore_model_archive_value,
+            limits=MODEL_ARCHIVE_LIMITS,
+            expected_content_id="0" * 64,
+        )
+
+    projected = model_archive_projection(transition)
+    with pytest.raises(ValueError):
+        restore_model_archive_value(
+            projected._replace(translation=np.asarray((0.56, 0.0)))
+        )
+    altered_vertices = np.asarray(projected.source.vertices).copy()
+    altered_vertices[0, 0] += 0.01
+    with pytest.raises(ValueError):
+        restore_model_archive_value(
+            projected._replace(
+                source=projected.source._replace(vertices=altered_vertices)
+            )
+        )
+    assert source.certification is not None
+    query = source.certification.inputs.scoped_fidelity[0][0]
+    query_recipe = model_archive_projection(query)
+    bounds = list(query_recipe.endpoint_point_bounds)
+    first = list(bounds[0])
+    first[0] = ((100.0, 100.0), (100.0, 100.0))
+    bounds[0] = tuple(first)
+    with pytest.raises(ValueError):
+        restore_model_archive_value(
+            query_recipe._replace(endpoint_point_bounds=tuple(bounds))
+        )
+
+
 def test_planar_cdt_preserves_holes_embedded_constraint_and_exact_ancestry() -> None:
     source, specification, options = _planar_request()
     construction = prepare_native_planar(
@@ -705,3 +966,67 @@ def test_planar_route_rejects_conflicting_hard_size_controls() -> None:
             options,
             SpatialCoordinateContract.si(),
         ).execute()
+
+
+@pytest.mark.parametrize("corruption", ("parameter", "occurrence", "missing-proof"))
+def test_curve_junction_audit_requires_each_source_closure(corruption: str) -> None:
+    from phydrax.geometry._source_fidelity import validate_source_fidelity_witness
+    from phydrax.meshing._association import GeometryAssociation
+    from phydrax.meshing._audit import audit_cell_mesh
+
+    source, specification, options = _curve_request()
+    construction = prepare_native_curve(
+        source, specification, options, SpatialCoordinateContract.si()
+    ).execute()
+    mesh, geometry = construction.mesh, construction.geometry
+    request = construction.certification
+    if request.fidelity_source is None or request.fidelity_witness is None:
+        raise AssertionError("The source curve fixture requires a fidelity witness.")
+    token = validate_source_fidelity_witness(
+        mesh, geometry, request.fidelity_source, request.fidelity_witness
+    )
+    associations = construction.organization.associations
+    vertex_curves = tuple(
+        value
+        for value in associations
+        if value.association_kind is GeometryAssociationKind.CURVE
+        and value.target_entity_set_id == mesh.entity_set(0).entity_set_id
+    )
+    first, second = vertex_curves
+    shared = set(np.asarray(first.target_global_ids).tolist()) & set(
+        np.asarray(second.target_global_ids).tolist()
+    )
+    assert len(shared) == 1
+    row = np.asarray(first.target_global_ids).tolist().index(shared.pop())
+    points = list(first.source_parameter_points)
+    occurrences = list(first.source_occurrence_paths)
+    parameters = np.array(first.parameters, copy=True)
+    if corruption == "parameter":
+        points[row] = Fraction(1, 2)
+        parameters[row, 0] = 0.5
+    elif corruption == "occurrence":
+        occurrences[row] = ("unrelated-instance",)
+    forged = GeometryAssociation(
+        first.association_kind,
+        first.source_id,
+        first.source_revision,
+        first.target_entity_set_id,
+        first.target_global_ids,
+        first.source_entity_ids,
+        first.residuals,
+        resolved=first.resolved,
+        exact=first.exact,
+        source_roles=first.source_roles,
+        source_occurrence_paths=tuple(occurrences),
+        source_parameter_points=tuple(points),
+        parameters=parameters,
+        orientations=first.orientations,
+    )
+    report = audit_cell_mesh(
+        mesh,
+        geometry,
+        associations=tuple(forged if value is first else value for value in associations),
+        validated_fidelity=() if corruption == "missing-proof" else (token,),
+    )
+    assert not report.passed
+    assert "association_curve_vertex_closure" in report.issues

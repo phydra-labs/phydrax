@@ -14,6 +14,8 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._form_type import FormType, FormValueSpec
+from ...geometry._planar_chain_embedding import triangulate_planar_polygon
+from ...geometry._rational import rational_vector
 from ...linalg import FunctionLinearOperator, OperatorProperties
 from .._cell_complex import PolyhedralConnectivity
 from .._cell_mesh import CellMesh
@@ -57,17 +59,43 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
         return self.operator.as_linear_operator()
 
 
+def _prepare_face_triangles(
+    coordinates: np.ndarray,
+    connectivity: PolyhedralConnectivity,
+    /,
+) -> tuple[tuple[tuple[int, int, int], ...], ...]:
+    """Preserve every boundary DOF in one exact triangulation per shared face."""
+    points = tuple(
+        rational_vector(tuple(float(coordinates[row, axis]) for axis in range(3)))
+        for row in range(coordinates.shape[0])
+    )
+    offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
+    values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
+    faces: list[tuple[tuple[int, int, int], ...]] = []
+    for start, stop in zip(offsets[:-1], offsets[1:], strict=True):
+        vertices = tuple(int(value) for value in values[start:stop])
+        triangles = triangulate_planar_polygon(
+            tuple(points[vertex] for vertex in vertices)
+        )
+        faces.append(
+            tuple(
+                (vertices[first], vertices[second], vertices[third])
+                for first, second, third in triangles
+            )
+        )
+    return tuple(faces)
+
+
 def _cell_matrix(
     coordinates: np.ndarray,
     connectivity: PolyhedralConnectivity,
     cell_index: int,
+    face_triangles: tuple[tuple[tuple[int, int, int], ...], ...],
     /,
 ) -> tuple[np.ndarray, float, float, float]:
     cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int32)
     cell_face_values = np.asarray(connectivity.cell_face_values, dtype=np.int32)
     cell_face_signs = np.asarray(connectivity.cell_face_sign_values)
-    face_vertex_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
-    face_vertex_values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
     cell_vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
     cell_vertex_values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
     cell_start, cell_stop = cell_vertex_offsets[cell_index : cell_index + 2]
@@ -89,21 +117,9 @@ def _cell_matrix(
         cell_face_signs[int(face_start) : int(face_stop)],
         strict=True,
     ):
-        start, stop = face_vertex_offsets[int(face_index) : int(face_index) + 2]
-        face = face_vertex_values[int(start) : int(stop)]
-        oriented = face if sign > 0.0 else face[::-1]
-        face_points = coordinates[oriented]
-        for offset in range(1, oriented.size - 1):
-            triangle_vertices = (
-                int(oriented[0]),
-                int(oriented[offset]),
-                int(oriented[offset + 1]),
-            )
-            first, second, third = (
-                face_points[0],
-                face_points[offset],
-                face_points[offset + 1],
-            )
+        for triangle in face_triangles[int(face_index)]:
+            triangle_vertices = triangle if sign > 0.0 else triangle[::-1]
+            first, second, third = (coordinates[vertex] for vertex in triangle_vertices)
             area_vector = 0.5 * np.cross(second - first, third - first)
             signed_volume = float(np.dot(first - centroid, area_vector) / 3.0)
             if not np.isfinite(signed_volume) or signed_volume <= 0.0:
@@ -178,6 +194,9 @@ def prepare_polyhedral_h1_virtual_element_3d(
     cell_vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
     cell_vertex_values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
     cell_arities = np.diff(cell_vertex_offsets)
+    if np.any(cell_arities > budget.maximum_local_dofs):
+        raise ValueError("Polyhedral VEM local-DOF capacity exceeded.")
+    face_triangles = _prepare_face_triangles(coordinates, connectivity)
     buckets: dict[int, list[int]] = {}
     matrices: dict[int, list[np.ndarray]] = {}
     volumes = np.empty((connectivity.cell_count,), dtype=np.float64)
@@ -186,10 +205,8 @@ def prepare_polyhedral_h1_virtual_element_3d(
     estimated_bytes = 0
     for cell_index in range(connectivity.cell_count):
         arity = int(cell_arities[cell_index])
-        if arity > budget.maximum_local_dofs:
-            raise ValueError("Polyhedral VEM local-DOF capacity exceeded.")
         matrix, volume, margin, defect = _cell_matrix(
-            coordinates, connectivity, cell_index
+            coordinates, connectivity, cell_index, face_triangles
         )
         buckets.setdefault(arity, []).append(cell_index)
         matrices.setdefault(arity, []).append(matrix)

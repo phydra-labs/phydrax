@@ -115,7 +115,7 @@ class DiagonalHodge(StrictModule):
 def _admission_pattern(
     rows: tuple[int, ...], columns: tuple[int, ...], mirror: tuple[int, ...], size: int, /
 ) -> tuple[SparseFactorizationPlan | None, tuple[int, ...], _SparseStoragePlan]:
-    """Prepare reusable storage and native SPD evidence from immutable routes."""
+    """Prepare native SPD evidence using byte-bounded, AMD-ordered Cholesky."""
     row = np.asarray(rows, dtype=np.int32)
     column = np.asarray(columns, dtype=np.int32)
     mirrored = np.asarray(mirror, dtype=np.int32)
@@ -144,12 +144,23 @@ def _admission_pattern(
             operator_id=f"{identifier}:pattern",
             storage_plan=storage_plan,
         )
+        default_policy = SparseFactorizationPolicy(
+            "cholesky", ordering="approximate-minimum-degree"
+        )
+        # Each structural nonzero occupies at least one float64 panel entry.
+        # Keep the native byte and work budgets authoritative for the complete
+        # supernodal factor, including panels, indices, and retained storage.
+        admission_policy = SparseFactorizationPolicy(
+            "cholesky",
+            ordering=default_policy.ordering,
+            max_factor_nnz=default_policy.max_factor_bytes // np.dtype(np.float64).itemsize,
+        )
         plan = (
             None
             if size == 0
             else prepare_sparse_factorization(
                 operator,
-                SparseFactorizationPolicy("cholesky", ordering="reverse-cuthill-mckee"),
+                admission_policy,
             )
         )
     return plan, tuple(int(index) for index in order), storage_plan

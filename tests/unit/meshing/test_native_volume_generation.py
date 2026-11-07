@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
-from typing import cast
+from dataclasses import replace
+from fractions import Fraction
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -38,10 +43,17 @@ from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._plc_source import PiecewiseLinearComplex, PlcBoundaryPolicy
 from phydrax.meshing._result import _validated_source_evidence, CellMeshingResult
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-from phydrax.meshing._sizing import UniformSizeControl
+from phydrax.meshing._sizing import (
+    SizeCombinationPolicy,
+    SizeCompliancePolicy,
+    SizeControlStrength,
+    UniformSizeControl,
+)
 from phydrax.meshing._volume_generation import (
+    _root_normalized_candidate,
     _source_face_ids,
     _source_tables,
+    compose_plc_root_point,
     generate_plc_volume,
     NativeVolumeSchedule,
     VolumeConstruction,
@@ -52,11 +64,116 @@ from phydrax.meshing.providers._native_sources import NativePlcSource
 from phydrax.meshing.providers._native_volume import (
     _organization,
     _source_associations,
+    _volume_compliance,
     prepare_native_plc_volume,
 )
 
 
 pytestmark = pytest.mark.meshcore
+
+
+def test_composed_plc_root_point_rounds_once_and_rejects_bad_stencils() -> None:
+    half = Fraction(1, 2)
+    one = Fraction(1)
+    next_one = Fraction(float(np.nextafter(1.0, 2.0)))
+    roots = ((one, Fraction(0), Fraction(0)), (next_one, Fraction(0), Fraction(0)))
+    stencils = (((0, half), (1, half)), ((1, one),))
+    terms, point = compose_plc_root_point(roots, stencils, (0, 1), (half, half))
+    assert terms == ((0, Fraction(1, 4)), (1, Fraction(3, 4)))
+    assert float(point[0]) == float(next_one)
+    rounded_midpoint = float((one + next_one) / 2)
+    assert float((Fraction(rounded_midpoint) + next_one) / 2) != float(point[0])
+    with pytest.raises(ValueError, match="coefficients"):
+        compose_plc_root_point(roots, stencils, (0, 1), (one, half))
+    with pytest.raises(ValueError, match="stencils"):
+        compose_plc_root_point(roots, (((0, one), (0, one)),), (0,), (one,))
+
+
+def test_root_normalization_preserves_input_signed_zero_and_rejects_change() -> None:
+    points = np.asarray(((-0.0, 1.0, 2.0),), dtype=np.float64)
+    arrays = SimpleNamespace(
+        points=points,
+        faces=np.empty((0, 3), dtype=np.int32),
+        segments=np.empty((0, 2), dtype=np.int32),
+    )
+    roots = ((Fraction(0), Fraction(1), Fraction(2)),)
+    stencils = (((0, Fraction(1)),),)
+    normalized, terms, exact = _root_normalized_candidate(
+        cast(Any, arrays), cast(Any, None), roots, stencils
+    )
+    np.testing.assert_array_equal(normalized.view(np.uint64), points.view(np.uint64))
+    assert terms == stencils
+    assert exact == roots
+    arrays.points = np.asarray(((0.25, 1.0, 2.0),), dtype=np.float64)
+    with pytest.raises(ValueError, match="input vertex"):
+        _root_normalized_candidate(cast(Any, arrays), cast(Any, None), roots, stencils)
+
+
+def test_mapped_atomic_size_banks_require_exact_cavity_and_source_targets() -> None:
+    from phydrax.meshing._layer_core_mapped import _prove_mapped_atomic_size_banks
+
+    old_points = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        dtype=np.float64,
+    )
+    new_points = np.vstack((old_points, (0.25, 0.25, 0.25)))
+    old_ids = np.asarray((0, 1, 2, 3), dtype=np.int64)
+    new_ids = np.asarray((0, 1, 2, 3, 4), dtype=np.int64)
+    old_tets = np.asarray(((0, 1, 2, 3),), dtype=np.int64)
+    new_tets = np.asarray(
+        ((4, 1, 2, 3), (0, 4, 2, 3), (0, 1, 4, 3), (0, 1, 2, 4)), dtype=np.int64
+    )
+    args = [
+        old_ids,
+        old_points,
+        old_tets,
+        np.asarray((10,)),
+        np.asarray((0,)),
+        np.full(4, 2.0),
+        np.asarray((2.0,)),
+        new_ids,
+        new_points,
+        new_tets,
+        np.asarray((11, 12, 13, 14)),
+        np.zeros(4, dtype=np.int64),
+        np.zeros(6, dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+    ]
+    sizes, cavities = _prove_mapped_atomic_size_banks(*args)
+    np.testing.assert_array_equal(sizes, np.full(5, 2.0))
+    assert cavities == (((10,), (11, 12, 13, 14)),)
+
+    wrong_field = list(args)
+    wrong_field[5] = np.full(4, 0.1)
+    with pytest.raises(ValueError, match="contradicts"):
+        _prove_mapped_atomic_size_banks(*wrong_field)
+    missing_cavity = list(args)
+    missing_cavity[9], missing_cavity[10], missing_cavity[11] = (
+        new_tets[:-1],
+        np.asarray((11, 12, 13)),
+        np.zeros(3, dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="oriented material boundary"):
+        _prove_mapped_atomic_size_banks(*missing_cavity)
+    outside = list(args)
+    outside[8] = new_points.copy()
+    outside[8][4] = (2.0, 2.0, 2.0)
+    with pytest.raises(ValueError, match="lacks an exact original reference cell"):
+        _prove_mapped_atomic_size_banks(*outside)
+
+    shared_points = np.vstack((old_points, (0.0, 0.0, -1.0)))
+    ambiguous = list(args)
+    ambiguous[0] = np.asarray((0, 1, 2, 3, 5))
+    ambiguous[1] = shared_points
+    ambiguous[2] = np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)))
+    ambiguous[3] = np.asarray((10, 15))
+    ambiguous[4] = np.asarray((0, 0))
+    ambiguous[5] = np.asarray((2.0, 2.0, 2.0, 2.0, 0.0))
+    ambiguous[6] = np.asarray((2.0, 0.0))
+    ambiguous[8] = new_points.copy()
+    ambiguous[8][4] = (0.25, 0.25, 0.0)
+    with pytest.raises(ValueError, match="ambiguous original-cell targets"):
+        _prove_mapped_atomic_size_banks(*ambiguous)
 
 
 _POINTS = np.asarray(
@@ -250,6 +367,97 @@ def _schedule() -> NativeVolumeSchedule:
     )
 
 
+def test_native_volume_schedule_omits_only_requested_radius_target() -> None:
+    from phydrax.meshing._model_codec import restore_model_archive_value
+
+    default = NativeVolumeSchedule()
+    explicit = NativeVolumeSchedule(radius_edge_bound=2.0, minimum_dihedral_degrees=10.0)
+    no_radius = NativeVolumeSchedule(radius_edge_bound=None, minimum_dihedral_degrees=0.0)
+    assert default.schedule_id == explicit.schedule_id
+    assert no_radius.radius_edge_bound is None
+    assert no_radius.minimum_dihedral_degrees == 0.0
+    assert no_radius.minimum_relative_determinant == default.minimum_relative_determinant
+    assert no_radius.schedule_id != default.schedule_id
+    rebuilt = restore_model_archive_value(no_radius)
+    assert isinstance(rebuilt, NativeVolumeSchedule)
+    assert rebuilt.schedule_id == no_radius.schedule_id
+    assert rebuilt.radius_edge_bound is None
+    for invalid in (0.0, -1.0, np.inf, np.nan):
+        with pytest.raises(ValueError, match="radius_edge_bound"):
+            NativeVolumeSchedule(radius_edge_bound=invalid)
+
+
+def test_native_volume_shape_strength_keeps_hard_identity() -> None:
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing._model_codec import restore_model_archive_value
+
+    default = NativeVolumeSchedule()
+    hard = NativeVolumeSchedule(shape_strength=SizeControlStrength.HARD)
+    soft = NativeVolumeSchedule(shape_strength=SizeControlStrength.SOFT)
+    legacy_payload: dict[str, object] = {
+        "kind": "native-volume-schedule",
+        "radius_edge_bound": 2.0,
+        "minimum_dihedral_degrees": 10.0,
+        "minimum_relative_determinant": default.minimum_relative_determinant,
+    }
+    assert default.shape_strength is SizeControlStrength.HARD
+    # The pre-strength fingerprint: hard schedules keep their exact identity.
+    assert (
+        default.schedule_id == hard.schedule_id == canonical_fingerprint(legacy_payload)
+    )
+    assert soft.schedule_id == canonical_fingerprint(
+        {**legacy_payload, "shape_strength": "soft"}
+    )
+
+    def options(schedule: NativeVolumeSchedule | None) -> NativeMeshingOptions:
+        return NativeMeshingOptions("plc_tetrahedral", volume_schedule=schedule)
+
+    assert options(hard).options_id == options(None).options_id
+    assert options(soft).options_id != options(hard).options_id
+    rebuilt = restore_model_archive_value(soft)
+    assert isinstance(rebuilt, NativeVolumeSchedule)
+    assert rebuilt.shape_strength is SizeControlStrength.SOFT
+    assert rebuilt.schedule_id == soft.schedule_id
+    with pytest.raises(TypeError, match="shape_strength"):
+        NativeVolumeSchedule(shape_strength=cast(Any, "soft"))
+
+
+def test_soft_shape_strength_is_refused_where_shape_rows_are_not_published() -> None:
+    from phydrax.meshing._polyhedral_generation import (
+        generate_polyhedral_volume,
+        NativePolyhedralSchedule,
+    )
+    from phydrax.meshing.providers._native_dual import (
+        balanced_hex_support_issues,
+        dual_hex_support_issues,
+        frame_hex_support_issues,
+        hex_dominant_support_issues,
+    )
+
+    source = _source()
+    specification = _request(source)
+    soft = NativeVolumeSchedule(shape_strength=SizeControlStrength.SOFT)
+    for route, support_issues in (
+        ("plc_dual_hex", dual_hex_support_issues),
+        ("plc_hex_dominant", hex_dominant_support_issues),
+        ("plc_balanced_grid_hex", balanced_hex_support_issues),
+        ("plc_frame_grid_hex", frame_hex_support_issues),
+    ):
+        issue = "a hard-strength native tetrahedral scaffold schedule"
+        options = NativeMeshingOptions(route, volume_schedule=soft)
+        assert issue in support_issues(source, specification, options)
+        hard_options = NativeMeshingOptions(route, volume_schedule=NativeVolumeSchedule())
+        assert issue not in support_issues(source, specification, hard_options)
+    with pytest.raises(ValueError, match="hard-strength volume schedule"):
+        generate_polyhedral_volume(
+            source,
+            specification,
+            NativePolyhedralSchedule(),
+            frame_id=SpatialCoordinateContract.si().spatial_id,
+            volume_schedule=soft,
+        )
+
+
 def _construct(
     source: NativePlcSource, specification: VolumeMeshingSpec
 ) -> VolumeConstruction:
@@ -262,6 +470,539 @@ def _construct(
         source_map_id="",
         frame_id=SpatialCoordinateContract.si().spatial_id,
         source_domain=source.mapped_domain,
+    )
+
+
+def test_original_plc_curve_witness_rejects_missing_chain_and_wrong_scope(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+    import sys
+
+    from phydrax.geometry._source_fidelity import validate_source_entity_scope
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, write_model_artifact
+    from phydrax.meshing.providers._native_plc_geometry import (
+        physical_plc_tetrahedra,
+        plc_curve_chart_witness,
+    )
+    from tools.meshing_qualification.scenarios import constrained_solid_matrix as scenario
+
+    profile = next(
+        item for item in scenario._PROFILES if item.profile_id == "plc-material-cavity"
+    )
+    source_input = scenario._input_for(profile)
+    source = scenario._source_for(profile, source_input)
+    specification, options, _ = scenario._request(profile, source, source_input)
+    schedule = options.volume_schedule
+    assert schedule is not None
+    construction = generate_plc_volume(
+        source.complex,
+        specification,
+        schedule,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_map_id="",
+        frame_id=SpatialCoordinateContract.si().spatial_id,
+    )
+    geometry = physical_plc_tetrahedra(source, construction).geometry
+    selected = np.asarray(
+        specification.protected_features[0].scope.entity_ids, dtype=np.int64
+    )
+    query, witness = plc_curve_chart_witness(source, construction, geometry, selected)
+    query.validate_chart_witness(witness)
+    validate_source_entity_scope(query, source, 1, selected)
+    other = next(
+        int(value) for value in source.scope_entity_ids(1) if value not in selected
+    )
+    with pytest.raises(ValueError, match="omits or adds"):
+        validate_source_entity_scope(
+            query, source, 1, np.asarray((other,), dtype=np.int64)
+        )
+    source_rows = np.asarray(construction.source_segment_complex_rows)
+    segment_rows = np.asarray(construction.segment_source_edges)
+    selected_rows = np.flatnonzero(
+        np.asarray(source.complex.plc_edge_entity_ids)[source_rows[segment_rows]]
+        == selected[0]
+    )
+    assert selected_rows.size
+    keep = np.ones(segment_rows.size, dtype=np.bool_)
+    keep[selected_rows[0]] = False
+    incomplete = replace(
+        construction,
+        segments=np.asarray(construction.segments)[keep],
+        segment_source_edges=segment_rows[keep],
+    )
+    with pytest.raises(ValueError, match="gap or overlap"):
+        plc_curve_chart_witness(source, incomplete, geometry, selected)
+    entry = CompositionEntry(
+        query,
+        entry_id="plc/curve",
+        role="model-state",
+        owner_id=source.source_id,
+        structure_id=query.source_query_id,
+        revision_id=source.source_revision,
+        semantics_id="exact-plc-curve",
+    )
+    archive = write_model_artifact(
+        tmp_path / "curve.phx",
+        Composition((entry,), boundary_id="plc-curve-roundtrip"),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    script = (
+        "import sys; from phydrax.lifecycle import Composition; "
+        "from phydrax.geometry._source_fidelity import validate_source_entity_scope; "
+        "from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS,read_model_artifact,restore_model_archive_value; "
+        "c=read_model_artifact(sys.argv[1],expected_type=Composition,restore=restore_model_archive_value,limits=MODEL_ARCHIVE_LIMITS); "
+        "q=c.value('plc/curve'); q.require_current(); "
+        "assert q.source_query_id==sys.argv[2]; "
+        "validate_source_entity_scope(q,q.owner.source,1,q.entity_ids)"
+    )
+    subprocess.run(
+        [sys.executable, "-c", script, str(archive), query.source_query_id],
+        check=True,
+    )
+
+
+def test_original_larger_cavity_splits_embedded_curve_to_meet_quality() -> None:
+    # Native refinement used to leave the embedded hard curve as one edge of
+    # length sqrt(3)/2 at the finer authored target, so every cell around it
+    # was refused and three radius-edge residuals remained.
+    from phydrax.meshing.providers._native_plc_geometry import (
+        physical_plc_tetrahedra,
+        plc_curve_chart_witness,
+    )
+    from tools.meshing_qualification.scenarios import constrained_solid_matrix as scenario
+
+    profile = next(
+        item
+        for item in scenario._PROFILES
+        if item.profile_id == "plc-material-cavity:larger"
+    )
+    source_input = scenario._input_for(profile)
+    source = scenario._source_for(profile, source_input)
+    specification, options, _ = scenario._request(profile, source, source_input)
+    schedule = options.volume_schedule
+    assert schedule is not None
+    construction = generate_plc_volume(
+        source.complex,
+        specification,
+        schedule,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_map_id="",
+        frame_id=SpatialCoordinateContract.si().spatial_id,
+    )
+    assert construction.final_quality_schedule_unmet == ()
+    selected = np.asarray(
+        specification.protected_features[0].scope.entity_ids, dtype=np.int64
+    )
+    source_rows = np.asarray(construction.source_segment_complex_rows)
+    segment_rows = np.asarray(construction.segment_source_edges)
+    curve_rows = np.flatnonzero(
+        np.asarray(source.complex.plc_edge_entity_ids)[source_rows[segment_rows]]
+        == selected[0]
+    )
+    assert curve_rows.size > 1
+    geometry = physical_plc_tetrahedra(source, construction).geometry
+    query, witness = plc_curve_chart_witness(source, construction, geometry, selected)
+    query.validate_chart_witness(witness)
+
+
+def test_final_native_evidence_controls_volume_compliance() -> None:
+    source = _source()
+    specification = _request(source)
+    construction = _construct(source, specification)
+    points = np.asarray(construction.mesh.coordinates)
+
+    def issues(candidate: VolumeConstruction) -> tuple[str, ...]:
+        return _volume_compliance(
+            source, specification, _schedule(), candidate, points
+        ).issues
+
+    baseline = replace(
+        construction,
+        refinement_status=MeshcoreStatus.UNRESOLVED,
+        refinement_unmet=(("1", "1", 7, 3.0),),
+        improvement_status=MeshcoreStatus.UNRESOLVED,
+        improvement_unmet=(("1", "4", 8, 3.0),),
+        final_quality_unmet=(),
+    )
+    assert not issues(baseline)
+    assert "native_final_quality:2" in issues(
+        replace(baseline, final_quality_unmet=(("2", "4", 8, 1.1),))
+    )
+    size_only = replace(baseline, final_quality_unmet=(("1", "4", 9, 3.0),))
+    assert not issues(size_only)
+    assert size_only.final_quality_unmet
+    assert "native_final_quality:0" in issues(
+        replace(baseline, final_quality_unmet=(("0", "4", 9, 3.0),))
+    )
+
+
+def test_native_size_preference_does_not_override_hard_compliance() -> None:
+    source = _source()
+    base = _request(source)
+    soft = UniformSizeControl(base.boundary_scope, 0.1, strength=SizeControlStrength.SOFT)
+    hard_scope = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        source.scope_entity_ids(2)[:1],
+    )
+    hard = UniformSizeControl(
+        hard_scope, 1.5, strength=SizeControlStrength.HARD, priority=1
+    )
+
+    def request(hard_control: UniformSizeControl) -> VolumeMeshingSpec:
+        return VolumeMeshingSpec(
+            base.target,
+            base.boundary_scope,
+            base.fill_strategy,
+            size_controls=(soft, hard_control),
+            region_seeds=base.region_seeds,
+            size_combination=SizeCombinationPolicy.EXPLICIT_PRIORITY,
+            size_compliance=SizeCompliancePolicy(absolute_tolerance=0.6),
+        )
+
+    specification = request(hard)
+    construction = _construct(source, specification)
+    assert any(row[0] == "1" for row in construction.final_quality_unmet)
+    assert not construction.final_quality_schedule_unmet
+    points = np.asarray(construction.mesh.coordinates)
+    report = _volume_compliance(source, specification, _schedule(), construction, points)
+    assert not report.issues
+    assert dict(report.achieved)["final_quality_unmet_count"] > 0
+
+    failing_hard = UniformSizeControl(
+        hard_scope, 0.1, strength=SizeControlStrength.HARD, priority=1
+    )
+    failure = _volume_compliance(
+        source, request(failing_hard), _schedule(), construction, points
+    )
+    assert any(
+        issue.startswith(f"size:{failing_hard.control_id}:") for issue in failure.issues
+    )
+
+
+def test_small_angle_wedge_exempts_only_input_forced_rows() -> None:
+    # The authored wedge apex ridge meets at 2 atan(1/16) = 7.153 degrees, below
+    # the 10-degree aim, so no tetrahedron on that ridge can meet the aim there.
+    # The triangular caps have the same apex corner angle, so every cap triangle
+    # at the apex has radius-edge ratio at least 1/(2 sin alpha) = 257/64 > 2.
+    from phydrax.meshing._input_forced_quality import (
+        input_forced_dihedral_exemptions,
+        input_forced_radius_edge_exemptions,
+    )
+    from tools.meshing_qualification.scenarios import constrained_solid_matrix as scenario
+
+    profile = next(
+        item for item in scenario._PROFILES if item.profile_id == "plc-small-angle"
+    )
+    source_input = scenario._input_for(profile)
+    source = scenario._source_for(profile, source_input)
+    specification, options, _ = scenario._request(profile, source, source_input)
+    declared = options.volume_schedule
+    assert declared is not None and declared.minimum_dihedral_degrees == 10.0
+    assert declared.radius_edge_bound == 2.0
+    # The scenario declares these shape targets soft; the input-forced
+    # exemptions are the acceptance rule of the same targets declared hard.
+    schedule = NativeVolumeSchedule(
+        radius_edge_bound=declared.radius_edge_bound,
+        minimum_dihedral_degrees=declared.minimum_dihedral_degrees,
+    )
+    assert schedule.shape_strength is SizeControlStrength.HARD
+    construction = generate_plc_volume(
+        source.complex,
+        specification,
+        schedule,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_map_id="",
+        frame_id=SpatialCoordinateContract.si().spatial_id,
+    )
+    points = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    complex_ = source.complex
+    apex = next(
+        row
+        for row, edge in enumerate(complex_.plc_edge_vertices)
+        if sorted(edge) == [0, 3]
+    )
+    apex_entity = int(complex_.plc_edge_entity_ids[apex])
+    input_angle = math.degrees(2.0 * math.atan(1.0 / 16.0))
+    rows = construction.final_quality_schedule_unmet
+    exemptions = input_forced_dihedral_exemptions(
+        complex_, construction, points, schedule.minimum_dihedral_degrees, rows
+    )
+    assert len(exemptions) == 2
+    cells = np.asarray(construction.mesh.blocks[0].vertices, dtype=np.int64)
+    cell_ids = np.asarray(construction.mesh.blocks[0].global_ids, dtype=np.int64)
+    on_apex = np.all(points[:, :2] == 0.0, axis=1)
+    for exemption in exemptions:
+        assert rows[exemption.row][0] == "2"
+        assert exemption.achieved_degrees == rows[exemption.row][3]
+        assert exemption.achieved_degrees == pytest.approx(3.576, abs=5e-4)
+        assert len(exemption.ridges) == 1
+        ridge = exemption.ridges[0]
+        assert (ridge.entity_id, ridge.ridge_id) == (
+            apex_entity,
+            complex_.plc_edge_ids[apex],
+        )
+        assert ridge.input_angle_degrees == pytest.approx(input_angle, abs=1e-12)
+        (cell_row,) = np.flatnonzero(cell_ids == exemption.cell_id)
+        assert np.count_nonzero(on_apex[cells[cell_row]]) == 2
+
+    def has_apex_cap_face(cell_row: int) -> bool:
+        cell = cells[cell_row]
+        for omitted in range(4):
+            face = np.delete(cell, omitted)
+            heights = points[face, 2]
+            if (
+                np.all(heights == heights[0])
+                and heights[0] in (0.0, 1.0)
+                and np.any(on_apex[face])
+            ):
+                return True
+        return False
+
+    native_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(construction.native_cell_ids.tolist())
+    }
+    radius_exemptions = input_forced_radius_edge_exemptions(
+        complex_, construction, points, schedule.radius_edge_bound, rows
+    )
+    expected_radius = {
+        index
+        for index, row in enumerate(rows)
+        if row[0] == "0" and has_apex_cap_face(native_rows[row[2]])
+    }
+    assert expected_radius
+    assert {exemption.row for exemption in radius_exemptions} == expected_radius
+    apex_vertices = {
+        int(complex_.vertex_entity_ids[0]): ((0, 1), (0, 2)),
+        int(complex_.vertex_entity_ids[3]): ((3, 4), (3, 5)),
+    }
+    edge_entities = {
+        tuple(sorted(edge)): int(entity)
+        for edge, entity in zip(
+            complex_.plc_edge_vertices, complex_.plc_edge_entity_ids, strict=True
+        )
+    }
+    for exemption in radius_exemptions:
+        assert exemption.achieved_ratio == rows[exemption.row][3]
+        assert len(exemption.corners) == 1
+        corner = exemption.corners[0]
+        assert corner.edge_entity_ids == tuple(
+            sorted(edge_entities[edge] for edge in apex_vertices[corner.vertex_entity_id])
+        )
+        assert corner.input_angle_degrees == pytest.approx(input_angle, abs=1e-12)
+        assert corner.forced_ratio == 257 / 64
+        assert corner.face_ratio >= corner.forced_ratio * (1.0 - 1e-12)
+        assert exemption.achieved_ratio >= corner.face_ratio * (1.0 - 1e-9)
+
+    report = _volume_compliance(source, specification, schedule, construction, points)
+    exempt_rows = {exemption.row for exemption in exemptions} | expected_radius
+    assert report.issues == tuple(
+        f"native_final_quality:{row[0]}"
+        for index, row in enumerate(rows)
+        if index not in exempt_rows
+    )
+    achieved = dict(report.achieved)
+    assert achieved["input_forced_dihedral_exemption_count"] == 2.0
+    assert achieved[
+        f"input_forced_dihedral:ridge:{apex_entity}:input_angle_degrees"
+    ] == pytest.approx(input_angle, abs=1e-12)
+    for exemption in exemptions:
+        key = (
+            f"input_forced_dihedral:cell:{exemption.cell_id}:ridge:{apex_entity}"
+            ":achieved_degrees"
+        )
+        assert achieved[key] == exemption.achieved_degrees
+    assert achieved["input_forced_radius_edge_exemption_count"] == len(expected_radius)
+    for exemption in radius_exemptions:
+        corner = exemption.corners[0]
+        corner_key = (
+            f"vertex:{corner.vertex_entity_id}:edges:"
+            f"{corner.edge_entity_ids[0]}:{corner.edge_entity_ids[1]}"
+        )
+        prefix = f"input_forced_radius_edge:cell:{exemption.cell_id}:{corner_key}"
+        assert achieved[f"{prefix}:face_ratio"] == corner.face_ratio
+        assert achieved[f"{prefix}:achieved_ratio"] == exemption.achieved_ratio
+        assert achieved[
+            f"input_forced_radius_edge:{corner_key}:input_angle_degrees"
+        ] == pytest.approx(input_angle, abs=1e-12)
+        assert achieved[f"input_forced_radius_edge:{corner_key}:forced_ratio"] == 257 / 64
+
+    def issues(
+        quality_rows: tuple[tuple[str, str, int, float], ...],
+        minimum_dihedral_degrees: float = 10.0,
+        radius_edge_bound: float = 2.0,
+    ) -> tuple[str, ...]:
+        return _volume_compliance(
+            source,
+            specification,
+            NativeVolumeSchedule(
+                radius_edge_bound=radius_edge_bound,
+                minimum_dihedral_degrees=minimum_dihedral_degrees,
+            ),
+            replace(construction, final_quality_unmet=quality_rows),
+            points,
+        ).issues
+
+    forced_row = exemptions[0].row
+    forced_native = rows[forced_row][2]
+    # A radius-edge row on the dihedral-forced cell is exempt only for a cap face.
+    assert issues((("0", "4", forced_native, 3.4), rows[forced_row])) == (
+        ()
+        if has_apex_cap_face(native_rows[forced_native])
+        else ("native_final_quality:0",)
+    )
+    # The same dihedral is hard when the ridge angle meets the requested aim.
+    assert issues((rows[forced_row],), 5.0) == ("native_final_quality:2",)
+    # A small dihedral in a cell off the sub-target ridge stays hard.
+    off_ridge = next(
+        row for row in range(cells.shape[0]) if np.count_nonzero(on_apex[cells[row]]) < 2
+    )
+    off_native = int(construction.native_cell_ids[off_ridge])
+    assert issues((("2", "4", off_native, 3.576),)) == ("native_final_quality:2",)
+    # A radius-edge row on a cell without a forcing cap face stays hard.
+    off_cap = next(row for row in range(cells.shape[0]) if not has_apex_cap_face(row))
+    off_cap_native = int(construction.native_cell_ids[off_cap])
+    assert issues((("0", "4", off_cap_native, 3.4),)) == ("native_final_quality:0",)
+    # A forced cap row is hard when 1/(2 sin alpha) does not exceed the bound.
+    cap_row = rows[min(expected_radius)]
+    assert issues((cap_row,), radius_edge_bound=5.0) == ("native_final_quality:0",)
+
+
+def test_small_angle_wedge_soft_shape_targets_publish_unmet_rows() -> None:
+    from phydrax._meshcore import TetMeshUnmetReason
+    from tools.meshing_qualification.scenarios import constrained_solid_matrix as scenario
+
+    profile = next(
+        item for item in scenario._PROFILES if item.profile_id == "plc-small-angle"
+    )
+    source_input = scenario._input_for(profile)
+    source = scenario._source_for(profile, source_input)
+    specification, options, _ = scenario._request(profile, source, source_input)
+    soft = options.volume_schedule
+    assert soft is not None and soft.shape_strength is SizeControlStrength.SOFT
+    hard = NativeVolumeSchedule(
+        radius_edge_bound=soft.radius_edge_bound,
+        minimum_dihedral_degrees=soft.minimum_dihedral_degrees,
+    )
+    assert hard.shape_strength is SizeControlStrength.HARD
+
+    def construct(schedule: NativeVolumeSchedule) -> VolumeConstruction:
+        return generate_plc_volume(
+            source.complex,
+            specification,
+            schedule,
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            source_map_id="",
+            frame_id=SpatialCoordinateContract.si().spatial_id,
+        )
+
+    construction = construct(soft)
+    # Strength is acceptance-side: native refinement targets are identical.
+    hard_construction = construct(hard)
+    assert construction.mesh.topology_id == hard_construction.mesh.topology_id
+    assert construction.final_quality_unmet == hard_construction.final_quality_unmet
+    points = np.asarray(construction.mesh.coordinates, dtype=np.float64)
+    rows = construction.final_quality_schedule_unmet
+    shape_rows = tuple(row for row in rows if row[0] in ("0", "2"))
+    assert shape_rows
+
+    hard_report = _volume_compliance(source, specification, hard, construction, points)
+    explicit_hard = _volume_compliance(
+        source,
+        specification,
+        NativeVolumeSchedule(
+            radius_edge_bound=hard.radius_edge_bound,
+            minimum_dihedral_degrees=hard.minimum_dihedral_degrees,
+            shape_strength=SizeControlStrength.HARD,
+        ),
+        construction,
+        points,
+    )
+    assert (explicit_hard.issues, explicit_hard.requested, explicit_hard.achieved) == (
+        hard_report.issues,
+        hard_report.requested,
+        hard_report.achieved,
+    )
+    hard_achieved = dict(hard_report.achieved)
+    assert hard_achieved["input_forced_dihedral_exemption_count"] == 2.0
+    assert hard_report.issues
+    assert not any(key.startswith("soft_shape_target") for key in hard_achieved)
+
+    report = _volume_compliance(source, specification, soft, construction, points)
+    assert report.issues == ()
+    assert report.requested == hard_report.requested
+    achieved = dict(report.achieved)
+    assert achieved["soft_shape_target_unmet_count"] == float(len(shape_rows))
+    assert not any(key.startswith("input_forced_") for key in achieved)
+    published = dict(
+        zip(
+            construction.native_cell_ids.tolist(),
+            construction.mesh.blocks[0].global_ids.tolist(),
+            strict=True,
+        )
+    )
+    names = {"0": "radius_edge_ratio", "2": "dihedral_degrees"}
+    for criterion, reason, native_cell, value in shape_rows:
+        key = (
+            f"soft_shape_target:cell:{published[native_cell]}:{names[criterion]}:"
+            f"{TetMeshUnmetReason(int(reason)).name.lower()}"
+        )
+        assert achieved[key] == value
+
+    def soft_issues(
+        quality_rows: tuple[tuple[str, str, int, float], ...],
+    ) -> tuple[str, ...]:
+        return _volume_compliance(
+            source,
+            specification,
+            soft,
+            replace(construction, final_quality_unmet=quality_rows),
+            points,
+        ).issues
+
+    cell = shape_rows[0][2]
+    # Validity, determinant and nonrepresentable rows stay hard under soft.
+    assert soft_issues((("4", "4", cell, -0.1),)) == ("native_final_quality:4",)
+    assert soft_issues((("4", "2", cell, 0.0),)) == ("native_final_quality:4",)
+    assert soft_issues((("3", "2", cell, math.nan),)) == ("native_final_quality:3",)
+    assert soft_issues((("0", "2", cell, math.inf),)) == ("native_final_quality:0",)
+
+    plan = NativeMeshingProvider(
+        NativeMeshingOptions("plc_tetrahedral", volume_schedule=soft)
+    ).plan(source, specification, coordinate_contract=scenario._CONTRACT)
+    result = plan.execute()
+    assert result.compliance.issues == ()
+    result_achieved = dict(result.compliance.achieved)
+    assert result_achieved["soft_shape_target_unmet_count"] > 0
+
+    # The implicit adaptive route's own aggregate shape gates follow the strength.
+    from phydrax.meshing.providers._native_implicit import _implicit_volume_compliance
+
+    shape_issues = {"radius_edge_bound", "minimum_dihedral_degrees"}
+    implicit_hard = _implicit_volume_compliance(
+        specification, hard, construction, 0.0, ()
+    )
+    assert shape_issues <= set(implicit_hard.issues)
+    assert "native_final_quality:0" in implicit_hard.issues
+    implicit_soft = _implicit_volume_compliance(
+        specification, soft, construction, 0.0, ()
+    )
+    assert not shape_issues & set(implicit_soft.issues)
+    assert not any(
+        issue.startswith("native_final_quality") for issue in implicit_soft.issues
+    )
+    assert dict(implicit_soft.achieved)["soft_shape_target_unmet_count"] == float(
+        len(shape_rows)
     )
 
 
@@ -1325,6 +2066,7 @@ def test_tampered_source_point_witness_is_refused(
         face_plane_tolerances=witness.face_plane_tolerances,
         domain_face_rows=witness.domain_face_rows,
         domain_id=witness.domain_id,
+        vertex_deviations=witness.vertex_deviations,
     )
     coverage = certify_domain_coverage(
         inputs.mesh,

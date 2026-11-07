@@ -8,6 +8,7 @@ from phydrax.geometry._meshing_domain import _PlacedSurfacePatch
 from phydrax.geometry.brep._assembly import BRepAffinePlacement
 from phydrax.geometry.brep._boolean_core import PeriodicPCurve
 from phydrax.geometry.brep._patches import (
+    CircleCurve,
     CylinderPatch,
     LineCurve,
     PlanePatch,
@@ -49,7 +50,7 @@ def test_seam_coordinates_use_symbolic_native_period() -> None:
 
 def test_plane_and_invertible_placement_bind_replay() -> None:
     plane = PlanePatch(O, X, Y)
-    placed = PlacedSurface(plane, np.eye(3), (3, 4, 5))
+    placed = PlacedSurface(plane, np.eye(3), np.asarray((3, 4, 5)))
     proof = certify_source_embedding(placed, BOX)
     assert proof is not None and proof.family == "plane"
     assert proof.replay(placed, BOX)
@@ -107,15 +108,19 @@ def test_revolution_cylinder_and_polar_plane_embedding() -> None:
     polar = certify_source_embedding(plane, disk, deck_axes=(0,), pole_roots=(F(0),))
     assert polar is not None and polar.family == "revolution-plane"
     assert polar.replay(plane, disk, deck_axes=(0,), pole_roots=(F(0),))
-    assert certify_source_embedding(
-        plane, ((F(0), F(-1)), (T, F(1))), deck_axes=(0,), pole_roots=(F(0),)
-    ) is None
-    assert certify_source_embedding(
-        plane, disk, deck_axes=(0,), pole_roots=(F(1),)
-    ) is None
-    assert certify_source_embedding(
-        plane, ((F(0), F(1)), (T, F(2))), deck_axes=(0,)
-    ) is not None
+    assert (
+        certify_source_embedding(
+            plane, ((F(0), F(-1)), (T, F(1))), deck_axes=(0,), pole_roots=(F(0),)
+        )
+        is None
+    )
+    assert (
+        certify_source_embedding(plane, disk, deck_axes=(0,), pole_roots=(F(1),)) is None
+    )
+    assert (
+        certify_source_embedding(plane, ((F(0), F(1)), (T, F(2))), deck_axes=(0,))
+        is not None
+    )
     assert certify_source_embedding(RevolutionSurface(LineCurve(O, Z), O, Z), BOX) is None
     assert (
         certify_source_embedding(RevolutionSurface(LineCurve(X, (1, 0, 1)), O, Z), BOX)
@@ -160,16 +165,28 @@ def test_ring_torus_double_deck_and_strict_radii() -> None:
     assert certify_source_embedding(spindle, BOX) is None
 
 
+def test_ring_revolution_uses_exact_meridian_frame_and_both_decks() -> None:
+    full = ((F(0), F(0)), (T, T))
+    ring = RevolutionSurface(CircleCurve((3, 0, 0), X, Z, 1), O, Z)
+    proof = certify_source_embedding(ring, full, deck_axes=(0, 1))
+    assert proof is not None and proof.family == "ring-torus"
+    assert proof.replay(ring, full, deck_axes=(0, 1))
+    assert certify_source_embedding(ring, full, deck_axes=(0,)) is None
+    spindle = RevolutionSurface(CircleCurve((1, 0, 0), X, Z, 2), O, Z)
+    assert certify_source_embedding(spindle, BOX) is None
+    off_plane = RevolutionSurface(CircleCurve((3, 1, 0), X, Z, 1), O, Z)
+    assert certify_source_embedding(off_plane, BOX) is None
+
+
 def test_rejects_inexact_and_forged_chart_inputs() -> None:
     plane = PlanePatch(O, X, Y)
+    # ty: ignore[invalid-argument-type]
     assert certify_source_embedding(plane, ((0.0, F(0)), (F(1), F(1)))) is None
     assert certify_source_embedding(plane, ((F(0), F(0)), (F(1), F(0)))) is None
     assert certify_source_embedding(plane, BOX, deck_axes=(False,)) is None
     assert certify_source_embedding(plane, BOX, pole_roots=(Q,)) is None
-    assert (
-        certify_source_embedding(plane, ((F(0), F(0)), (PeriodOffset(0.0, 1.0), F(1))))
-        is None
-    )
+    inexact_period = PeriodOffset(0.0, 1.0)  # ty: ignore[invalid-argument-type]
+    assert certify_source_embedding(plane, ((F(0), F(0)), (inexact_period, F(1)))) is None
 
 
 def test_iges_seam_roots_and_curved_source_monotonicity(tmp_path: Path) -> None:
@@ -214,3 +231,19 @@ def test_iges_seam_roots_and_curved_source_monotonicity(tmp_path: Path) -> None:
                 uses[index].pcurve, float(first), float(first + 1)
             )
             assert lower[0] > 0
+
+
+def test_repaired_step_original_source_sheets(tmp_path: Path) -> None:
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _external_case
+
+    model, _, _, _ = _external_case("external-routine", "step", tmp_path)
+    domain = MeshingDomain.from_brep(model)
+    assert len(domain.patches) == 6
+    for patch, family in enumerate(
+        ("cylinder", "plane", "cylinder", "plane", "ring-torus", "ring-torus")
+    ):
+        proof = certify_brep_trim_sheet(domain, patch)
+        assert proof is not None
+        assert proof.embedding.family == family
+        assert proof.replay(domain, patch)

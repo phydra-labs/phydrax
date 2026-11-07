@@ -12,6 +12,7 @@ from scipy.linalg import eigvalsh
 from scipy.sparse import bmat, coo_matrix, csc_matrix
 from scipy.sparse.linalg import spsolve
 
+import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization.fem._de_rham import FiniteElementDeRhamComplex
 from phydrax.discretization.fem._form_elements import FormElementFamily
@@ -730,6 +731,233 @@ def test_explicit_nested_refinement_transfer_commutes_with_d(dimension: int) -> 
         np.testing.assert_allclose(left, right, atol=3e-9, rtol=3e-9)
     with pytest.raises(ValueError):
         source.transfer(target)
+
+
+@pytest.mark.parametrize("dimension", (2, 3))
+def test_lowest_order_transfer_commutes_with_d_when_ids_do_not_ascend_with_rows(
+    dimension: int,
+) -> None:
+    """Form DOFs orient by global vertex ID, not by vertex row."""
+    mesh = _simplicial_grid(2, 2) if dimension == 2 else _reference_simplex(dimension)
+    refined, parents = _star_refinement(mesh)
+    count = mesh.coordinates.shape[0]
+    source_ids = 100 - 7 * np.arange(count, dtype=np.int64)
+    created = refined.coordinates.shape[0] - count
+    target_ids = np.concatenate(
+        (source_ids, 1000 - 7 * np.arange(created, dtype=np.int64))
+    )
+    mesh = CellMesh(mesh.coordinates, mesh.blocks, vertex_global_ids=source_ids)
+    refined = CellMesh(refined.coordinates, refined.blocks, vertex_global_ids=target_ids)
+    source = FiniteElementDeRhamComplex(mesh, family="trimmed", order=1)
+    target = FiniteElementDeRhamComplex(refined, family="trimmed", order=1)
+    transfer = source.transfer(target, parent_cells=parents).complex_map
+    for degree in range(dimension):
+        size = source.hilbert_complex().space(degree).size
+        coefficients = jnp.sin(0.39 * jnp.arange(size, dtype=jnp.float64) + 0.27)
+        left = target.exterior_derivative(degree, transfer.map(degree).mv(coefficients))
+        right = transfer.map(degree + 1).mv(
+            source.exterior_derivative(degree, coefficients)
+        )
+        np.testing.assert_allclose(left, right, atol=3e-9, rtol=3e-9)
+
+
+def _bisection_triangle_grid(columns: int, rows: int) -> CellMesh:
+    xs = np.linspace(0.0, 1.0, columns + 1)
+    ys = np.linspace(0.0, 1.0, rows + 1)
+    points = np.stack(np.meshgrid(xs, ys), axis=-1).reshape((-1, 2))
+    cells = []
+    for j, i in product(range(rows), range(columns)):
+        a = j * (columns + 1) + i
+        b, c, d = a + 1, a + columns + 2, a + columns + 1
+        cells.extend(((a, b, c), (a, c, d)))
+    return CellMesh.from_triangles(points, np.asarray(cells, dtype=np.int32))
+
+
+def _native_bisection(
+    source: phx.meshing.CellMeshingResult,
+    refine: npt.ArrayLike = (),
+    coarsen: npt.ArrayLike = (),
+    /,
+    *,
+    hierarchy: phx.meshing.BisectionHierarchy | None = None,
+) -> phx.meshing.MeshAdaptationResult:
+    from phydrax.meshing import (
+        execute_mesh_adaptation,
+        MarkedMeshAdaptation,
+        MeshAdaptationPolicy,
+        MeshAdaptationRoute,
+        prepare_mesh_adaptation,
+    )
+
+    request = MarkedMeshAdaptation(
+        np.asarray(refine, dtype=np.int64),
+        np.asarray(coarsen, dtype=np.int64),
+        hierarchy=hierarchy,
+    )
+    policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION)
+    return execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, request, policy=policy)
+    )
+
+
+def _all_cell_ids(mesh: CellMesh) -> npt.NDArray[np.int64]:
+    return np.sort(
+        np.concatenate(tuple(np.asarray(block.global_ids) for block in mesh.blocks))
+    )
+
+
+@pytest.mark.parametrize("order", (1, 2))
+@pytest.mark.parametrize("descending_ids", (False, True), ids=("ascending", "descending"))
+def test_native_bisection_coarsening_transfer_commutes_and_restores_coarse_fields(
+    order: int, descending_ids: bool
+) -> None:
+    """The exact fine→coarse bisection witness yields canonical coarse moments."""
+    mesh = _bisection_triangle_grid(2, 2)
+    if descending_ids:
+        count = mesh.coordinates.shape[0]
+        mesh = CellMesh(
+            mesh.coordinates,
+            mesh.blocks,
+            vertex_global_ids=100 - 7 * np.arange(count, dtype=np.int64),
+        )
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    refined = _native_bisection(source, _all_cell_ids(source.mesh))
+    assert isinstance(refined.hierarchy, phx.meshing.BisectionHierarchy)
+    coarsened = _native_bisection(
+        refined.target,
+        (),
+        _all_cell_ids(refined.target.mesh),
+        hierarchy=refined.hierarchy,
+    )
+    restored_mesh = coarsened.target.mesh
+    assert restored_mesh.topology_id == source.mesh.topology_id
+    np.testing.assert_array_equal(restored_mesh.coordinates, source.mesh.coordinates)
+    np.testing.assert_array_equal(
+        restored_mesh.vertex_global_ids, source.mesh.vertex_global_ids
+    )
+    assert refined.transition is not None and coarsened.transition is not None
+    refinement = refined.transition.geometry_transition
+    coarsening = coarsened.transition.geometry_transition
+    assert refinement is not None and coarsening is not None
+    assert coarsening.coarsening is not None
+    assert coarsening.coarsening_partition is None
+
+    def complex_on(endpoint: phx.meshing.CellMeshingResult) -> FiniteElementDeRhamComplex:
+        return FiniteElementDeRhamComplex(
+            endpoint.mesh,
+            family="trimmed",
+            order=order,
+            coordinate_spec=endpoint.geometry,
+        )
+
+    coarse, fine, restored = (
+        complex_on(endpoint) for endpoint in (source, refined.target, coarsened.target)
+    )
+    prolongation = coarse.transfer(fine, geometry_transition=refinement).complex_map
+    restriction = fine.transfer(restored, geometry_transition=coarsening).complex_map
+    for degree in range(3):
+        size = fine.hilbert_complex().space(degree).size
+        fine_field = jnp.sin(0.39 * jnp.arange(size, dtype=jnp.float64) + 0.27)
+        if degree < 2:
+            left = restored.exterior_derivative(
+                degree, restriction.map(degree).mv(fine_field)
+            )
+            right = restriction.map(degree + 1).mv(
+                fine.exterior_derivative(degree, fine_field)
+            )
+            np.testing.assert_allclose(left, right, atol=3e-9, rtol=3e-9)
+        coarse_size = coarse.hilbert_complex().space(degree).size
+        coarse_field = jnp.cos(0.61 * jnp.arange(coarse_size, dtype=jnp.float64) - 0.4)
+        np.testing.assert_allclose(
+            restriction.map(degree).mv(prolongation.map(degree).mv(coarse_field)),
+            coarse_field,
+            atol=1e-12,
+            rtol=1e-12,
+        )
+
+
+@pytest.mark.parametrize("order", (1, 2))
+@pytest.mark.parametrize("degree", range(3))
+def test_triangle_reference_partition_restricts_exactly_and_rejects_bad_covers(
+    order: int, degree: int
+) -> None:
+    from fractions import Fraction
+
+    from phydrax.discretization._nested_reference import nested_cell_reference_maps
+    from phydrax.discretization._nested_reference_types import (
+        ReferenceCellMapWitnesses,
+        ReferenceCellPartition,
+        validate_reference_cell_partition,
+    )
+    from phydrax.discretization.fem._exact_form_moments import (
+        exact_partitioned_reference_form_moments,
+        exact_reference_form_moments,
+    )
+    from phydrax.discretization.fem._form_elements import form_element
+    from phydrax.discretization.fem._partition_form_moments import (
+        prepare_partitioned_reference_entities,
+    )
+
+    zero, one, half = Fraction(0), Fraction(1), Fraction(1, 2)
+    # Bisect the reference triangle at its hypotenuse midpoint.
+    children = (
+        ((zero, zero), (one, zero), (half, half)),
+        ((half, half), (zero, one), (zero, zero)),
+    )
+
+    def partition(
+        cells: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    ) -> ReferenceCellPartition:
+        return ReferenceCellPartition(
+            (
+                ReferenceCellMapWitnesses(
+                    np.arange(len(cells), dtype=np.int64),
+                    np.full((len(cells),), 7, dtype=np.int64),
+                    "triangle",
+                    "triangle",
+                    np.asarray(cells, dtype=np.float64),
+                    cells,
+                ),
+            )
+        )
+
+    with pytest.raises(ValueError, match="cover"):
+        validate_reference_cell_partition(partition(children[:1]))
+    with pytest.raises(ValueError, match="overlapping"):
+        validate_reference_cell_partition(partition((children[0], children[0])))
+    element = form_element(
+        "triangle",
+        degree,
+        order,
+        family="trimmed",
+        twist="untwisted",
+        proxy="components",
+    )
+    assert element.form_basis is not None
+    whole = partition(children)
+    records = prepare_partitioned_reference_entities(whole, 7, element.form_basis)
+    hypotenuse = tuple(
+        piece
+        for record in records
+        for entity, pieces in record.pieces
+        if entity == (1, 2)
+        for piece in pieces
+    )
+    assert sorted(hypotenuse) == [((zero,), (half,)), ((half,), (one,))]
+    identity = np.eye(element.local_dof_count)
+    result = np.zeros_like(identity)
+    for record, reference_map in zip(
+        records, nested_cell_reference_maps(whole.maps[0]), strict=True
+    ):
+        prolong = exact_reference_form_moments(
+            element, element, reference_map, identity, identity, None
+        )
+        restrict = exact_partitioned_reference_form_moments(
+            element, element, record, identity, identity, None
+        )
+        assert np.all(restrict.exact)
+        result += restrict.values @ prolong.values
+    np.testing.assert_allclose(result, identity, atol=2e-11)
 
 
 def test_whole_mesh_reconstruction_crosses_homogeneous_block_boundaries() -> None:

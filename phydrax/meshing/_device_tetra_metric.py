@@ -35,6 +35,7 @@ from ._tetra_metric import (
     _collapse_phase,
     _current_edge_controls,
     _disjoint_candidates,
+    _implicit_metric_source,
     _metric_midpoint,
     _NativeState,
     _periodic_edge_orbit_groups,
@@ -381,13 +382,16 @@ def _execute_device_tetra_metric_route(
     source = prepared.source
     constraints = prepared.constraints
     state = _prepare_native_state(
-        source,
+        source.mesh,
+        source.geometry,
+        source.coordinate_contract,
         np.asarray(constraints.metric_values, dtype=np.float64),
         cell_classes=constraints.cell_classes,
         facet_classes=constraints.facet_classes,
         edge_classes=constraints.edge_classes,
         protected_edges=constraints.protected_edge_mask,
         fixed_vertices=constraints.fixed_vertex_mask,
+        implicit_source=_implicit_metric_source(source),
     )
     counters = {
         "splits": 0,
@@ -487,7 +491,11 @@ def _execute_device_tetra_metric_route(
     if total_applied == 0:
         return _unchanged(prepared, evidence, None, status=adaptation_status)
     accepted = _finalize_native(
-        prepared, edit, MeshTransitionKind.REMESH, conservative=False
+        prepared,
+        edit,
+        MeshTransitionKind.REMESH,
+        conservative=False,
+        exact_source_vertices=state.source_exact_points,
     )
     return _RouteOutcome(
         adaptation_status,

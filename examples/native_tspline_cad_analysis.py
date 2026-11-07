@@ -7,6 +7,8 @@ from __future__ import annotations
 import hashlib
 import json
 from fractions import Fraction
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import jax
 import jax.numpy as jnp
@@ -22,6 +24,13 @@ from phydrax.geometry.brep import (
     BRepModel,
     LineCurve,
     TSplineSurfacePatch,
+)
+from phydrax.interchange import (
+    CadInterchangeError,
+    load_brep_archive,
+    save_brep_archive,
+    write_iges,
+    write_step,
 )
 from phydrax.meshing import (
     CellFamilyPolicy,
@@ -155,7 +164,14 @@ def _brep_model(
         patches=(patch,),
         parameter_bounds=np.asarray((((0.0, 0.0), (1.0, 1.0)),)),
         orientation=np.asarray((1.0,)),
-        trim_domains=None,
+        trim_domains=(
+            phx.geometry.TrimDomain(
+                np.asarray(
+                    ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
+                    dtype=np.float64,
+                )
+            ),
+        ),
         physical_tags=("analysis-surface",),
         coordinate_contract=coordinate_contract,
         report=report,
@@ -171,6 +187,39 @@ def main() -> None:
     coordinate_contract = SpatialCoordinateContract.si()
     surface = _source_patch()
     model = _brep_model(surface, coordinate_contract)
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertex_query = projection.project(
+        np.asarray(((0.0, 0.0, 0.0),), dtype=np.float64),
+        np.asarray((0,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+    )
+    if int(vertex_query.status[0]) != 0 or float(vertex_query.residuals[0]) > 1.0e-12:
+        raise RuntimeError("Native T-spline BRep vertex query did not resolve exactly.")
+    # The native archive preserves the multi-piece ASTS transfer chain. STEP's
+    # single-piece carrier cannot encode this source without losing structure.
+    with TemporaryDirectory(prefix="phydrax-tspline-") as directory:
+        archive = Path(directory) / "source.phx"
+        save_brep_archive(model, archive)
+        restored = load_brep_archive(archive)
+        if restored.model_id != model.model_id or not isinstance(
+            restored.patches[0], TSplineSurfacePatch
+        ):
+            raise RuntimeError("Native T-spline archive lost its source identity.")
+        external_refusals = {}
+        for name, writer in (("step", write_step), ("iges", write_iges)):
+            try:
+                writer(model, Path(directory) / f"source.{name}")
+            except CadInterchangeError as error:
+                if (
+                    error.refusal.reason != "unsupported-entity"
+                    or "multi-piece T-spline" not in error.refusal.message
+                ):
+                    raise
+                external_refusals[name] = error.refusal.message
+            else:
+                raise RuntimeError(
+                    f"{name} unexpectedly accepted a multi-piece T-spline."
+                )
     scope = MeshingScope.whole(model, 2)
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(
@@ -297,6 +346,10 @@ def main() -> None:
         json.dumps(
             {
                 "cad_source_revision": model.source_revision,
+                "cad_vertex_query_status": int(vertex_query.status[0]),
+                "cad_vertex_query_residual": float(vertex_query.residuals[0]),
+                "native_archive_model_id": restored.model_id,
+                "external_export_refusals": external_refusals,
                 "exact_geometry_certificate_id": (
                     target_plan.exact_geometry_certificate.certificate_id
                 ),
@@ -324,6 +377,15 @@ def main() -> None:
                     residual_norm / jnp.maximum(rhs_norm, 1.0)
                 ),
                 "source_t_mesh_id": surface.source_mesh.mesh_id,
+                "source_tensor_cell_count": surface.source_mesh.cell_count,
+                "cad_local_cell_count": surface.mesh.cell_count,
+                "cad_t_junction_count": surface.mesh.t_junction_count,
+                "source_weight_minimum": float(min(surface.exact_source_weights)),
+                "source_weight_maximum": float(max(surface.exact_source_weights)),
+                "source_distinct_weight_count": len(set(surface.exact_source_weights)),
+                "maximum_homogeneous_realization_error": (
+                    surface.maximum_homogeneous_realization_error
+                ),
                 "source_transfer_id": surface.transfer_plans[0].plan_id,
                 "iga_transfer_id": refinement.basis_refinement.transfer_plan.plan_id,
                 "numeric_geometry_passed": target_plan.geometry_certificate.passed,

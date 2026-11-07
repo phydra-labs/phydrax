@@ -29,6 +29,7 @@
 #include "mesh.hpp"
 #include "plc3d.hpp"
 #include "topology_keys.hpp"
+#include "tet_mesh.hpp"
 
 namespace phx::mc {
 namespace {
@@ -76,7 +77,8 @@ std::array<Expansion, 3> declared_plane_normal(const double* plane) {
 // lies within `tolerance` of x. `distance` receives an upper bound of the
 // distance from x to the plane.
 bool declared_plane_admits(const double* plane, const std::array<Expansion, 3>& normal,
-                           double tolerance, const double* x, double& distance) {
+                           double tolerance, const double* x, double& distance,
+                           const double* affine_metric) {
   const double* origin = plane;
   // Twice the signed offset n . (c - o) at the corners c of the box, from
   // the exact doubled bounds x + next(x) of each axis.
@@ -107,12 +109,41 @@ bool declared_plane_admits(const double* plane, const std::array<Expansion, 3>& 
     offset = offset + normal[static_cast<std::size_t>(axis)] *
                           Expansion::difference(x[axis], origin[axis]);
   }
-  const Expansion length = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
-  distance = std::nextafter(std::fabs(offset.estimate()) / std::sqrt(length.estimate()) *
+  Expansion length = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+  Expansion metric_offset = offset;
+  if (affine_metric != nullptr) {
+    // A^{-T} n = cof(A) n / det(A). Keep the comparison exact in
+    // source coordinates, without rounding a transformed plane.
+    std::array<std::array<Expansion, 3>, 3> cofactors;
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        const int r = (i + 1) % 3, s = (i + 2) % 3;
+        const int c = (j + 1) % 3, d = (j + 2) % 3;
+        cofactors[i][j] = Expansion::product(affine_metric[3 * r + c],
+                                              affine_metric[3 * s + d]) -
+                          Expansion::product(affine_metric[3 * r + d],
+                                              affine_metric[3 * s + c]);
+      }
+    }
+    const Expansion determinant = cofactors[0][0] * Expansion(affine_metric[0]) +
+                                  cofactors[0][1] * Expansion(affine_metric[1]) +
+                                  cofactors[0][2] * Expansion(affine_metric[2]);
+    std::array<Expansion, 3> world_normal;
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        world_normal[i] = world_normal[i] + cofactors[i][j] * normal[j];
+      }
+    }
+    length = world_normal[0] * world_normal[0] + world_normal[1] * world_normal[1] +
+             world_normal[2] * world_normal[2];
+    metric_offset = determinant * offset;
+  }
+  distance = std::nextafter(std::fabs(metric_offset.estimate()) / std::sqrt(length.estimate()) *
                                 (1.0 + 0x1p-40),
                             std::numeric_limits<double>::infinity());
   if (below && above) return true;
-  return (length * Expansion::product(tolerance, tolerance) - offset * offset).sign() >= 0;
+  return (length * Expansion::product(tolerance, tolerance) -
+          metric_offset * metric_offset).sign() >= 0;
 }
 
 struct Box {
@@ -626,7 +657,7 @@ class SourcePreparer {
         const int32_t vertex = input_.polygon_vertices[corner];
         double distance = 0.0;
         if (!declared_plane_admits(input_.facet_planes + 9 * facet, normals[facet], tolerance,
-                                   point(vertex), distance)) {
+                                   point(vertex), distance, input_.affine_metric)) {
           output_.source_refusal = {distance, tolerance};
           return fail(PHX_MC_INVALID_INPUT, kPlcSourceDeviation, kPlcFacet,
                       static_cast<int64_t>(facet), kPlcPoint, vertex);
@@ -1016,7 +1047,12 @@ struct PlcPlanarPolygon {
   int orientation;
   std::vector<int32_t> source_triangles;
   std::vector<std::vector<int32_t>> boundary_loops;
+  std::array<double, 2> lower;
+  std::array<double, 2> upper;
   bool recovered = false;
+  // Complete cover from a previous pass. Only candidate vertices are stored:
+  // corner and volume slots can be renumbered when a source point is added.
+  std::vector<Triple> cover;
 };
 
 struct PlcEdgePoint {
@@ -1634,9 +1670,22 @@ class PlcRecoveryBuilder {
         }
       }
       if (!polygon_unassigned) continue;
+      std::array<double, 2> lower = {std::numeric_limits<double>::infinity(),
+                                     std::numeric_limits<double>::infinity()};
+      std::array<double, 2> upper = {-std::numeric_limits<double>::infinity(),
+                                     -std::numeric_limits<double>::infinity()};
+      for (const auto& loop : loops) {
+        for (int32_t vertex : loop) {
+          const double* p = point(vertex);
+          lower[0] = std::min(lower[0], p[x]);
+          lower[1] = std::min(lower[1], p[y]);
+          upper[0] = std::max(upper[0], p[x]);
+          upper[1] = std::max(upper[1], p[y]);
+        }
+      }
       PlcPlanarPolygon group{facet, source_triangle, axis,
                              {reference[0], reference[1], reference[2]}, orientation,
-                             members, std::move(loops)};
+                             members, std::move(loops), lower, upper, false, {}};
       const std::int32_t group_index = static_cast<std::int32_t>(planar_polygons_.size());
       planar_polygons_.push_back(std::move(group));
       for (std::int32_t polygon : component_polygons) {
@@ -1659,16 +1708,25 @@ class PlcRecoveryBuilder {
     bool inside = false;
     for (const auto& loop : polygon.boundary_loops) {
       for (std::size_t i = 0, j = loop.size() - 1; i < loop.size(); j = i++) {
+        const int y = (polygon.axis + 2) % 3;
         Expansion a[2], b[2];
-        projected(loop[i], polygon.axis, scale, a);
-        projected(loop[j], polygon.axis, scale, b);
+        a[1] = coordinate(ref(loop[i]), y).scaled(scale);
+        b[1] = coordinate(ref(loop[j]), y).scaled(scale);
+        const int a_side = (a[1] - q[1]).sign();
+        const int b_side = (b[1] - q[1]).sign();
+        // A horizontal ray cannot meet an edge strictly above or below it.
+        // Retain endpoints on the ray for the exact closed-boundary check.
+        if ((a_side > 0 && b_side > 0) || (a_side < 0 && b_side < 0)) continue;
+        const int x = (polygon.axis + 1) % 3;
+        a[0] = coordinate(ref(loop[i]), x).scaled(scale);
+        b[0] = coordinate(ref(loop[j]), x).scaled(scale);
         const int side = orient2d_sign(a, b, q);
         if (side == 0 && (q[0] - a[0]).sign() * (b[0] - q[0]).sign() >= 0 &&
             (q[1] - a[1]).sign() * (b[1] - q[1]).sign() >= 0) {
           return true;
         }
-        const bool a_above = (a[1] - q[1]).sign() > 0;
-        const bool b_above = (b[1] - q[1]).sign() > 0;
+        const bool a_above = a_side > 0;
+        const bool b_above = b_side > 0;
         const int rising = (b[1] - a[1]).sign();
         if (a_above != b_above && ((rising > 0 && side > 0) || (rising < 0 && side < 0))) {
           inside = !inside;
@@ -1678,15 +1736,30 @@ class PlcRecoveryBuilder {
     return inside;
   }
 
-  bool face_in_planar_polygon(const PlcPlanarPolygon& polygon, const Triple& face) const {
+  bool face_in_planar_polygon(const PlcPlanarPolygon& polygon, const Triple& face,
+                              std::vector<uint8_t>& vertex_membership) const {
     for (int slot = 0; slot < 3; ++slot) {
-      Expansion q[2];
-      projected(face[slot], polygon.axis, 1.0, q);
-      if (orient(polygon.plane_vertices[0], polygon.plane_vertices[1],
-                 polygon.plane_vertices[2], face[slot]) != 0 ||
-          !point_in_planar_polygon(polygon, q, 1.0)) {
-        return false;
+      uint8_t& membership = vertex_membership[static_cast<std::size_t>(face[slot])];
+      if (membership == 0) {
+        // Boundary vertices are exact input coordinates. Only ordinary
+        // vertices can be rejected using their carrier's projected box.
+        const ExactPointRef vertex = ref(face[slot]);
+        const int x = (polygon.axis + 1) % 3, y = (polygon.axis + 2) % 3;
+        const double* p = vertex.carrier;
+        const bool outside = vertex.exact == nullptr &&
+            (p[x] < polygon.lower[0] || p[x] > polygon.upper[0] ||
+             p[y] < polygon.lower[1] || p[y] > polygon.upper[1]);
+        bool contained = false;
+        if (!outside &&
+            orient(polygon.plane_vertices[0], polygon.plane_vertices[1],
+                   polygon.plane_vertices[2], face[slot]) == 0) {
+          Expansion q[2];
+          projected(face[slot], polygon.axis, 1.0, q);
+          contained = point_in_planar_polygon(polygon, q, 1.0);
+        }
+        membership = contained ? 2 : 1;
       }
+      if (membership == 1) return false;
     }
     const int axis = polygon.axis;
     // c lies on the closed segment ab, distinct from both endpoints.
@@ -1735,16 +1808,25 @@ class PlcRecoveryBuilder {
   int32_t recover_planar_polygons() {
     planar_source_faces_.clear();
     if (planar_polygons_.empty()) return PHX_MC_OK;
+    // Face lookup below uses incidence; local recovery may have journaled
+    // replacements since the preceding polygon pass.
+    sync_complex();
     TetrahedralComplex& complex = triangulation_->complex();
     struct PlanarFace {
       Triple oriented;
       int32_t owner;
       int slot;
+      int32_t scan_cell;
+      int scan_slot;
     };
     std::vector<PlanarFace> covered;
     std::vector<Triple> replaced;
+    // The triangulation and exact positions do not change during a polygon
+    // scan, so each vertex's plane/closed-membership result is reusable.
+    std::vector<uint8_t> vertex_membership(work_points_.size() / 3);
     for (PlcPlanarPolygon& polygon : planar_polygons_) {
       covered.clear();
+      std::fill(vertex_membership.begin(), vertex_membership.end(), 0);
       const int x = (polygon.axis + 1) % 3, y = (polygon.axis + 2) % 3;
       Expansion polygon_area;
       for (std::int32_t source_triangle : polygon.source_triangles) {
@@ -1762,29 +1844,39 @@ class PlcRecoveryBuilder {
       // tetrahedralization (in particular an internal material interface).
       // Stage the alternate triangulation; retain its authored subfaces for
       // exact facet recovery until complete coverage has been established.
-      for (std::size_t row = 0; row < complex.tets.size(); ++row) {
-        const int32_t cell = static_cast<int32_t>(row);
-        const Tetrahedron& tet = complex.tets[row];
-        if (tet.v[0] == kDeadVertex) continue;
-        for (int slot = 0; slot < 4; ++slot) {
-          const int32_t other = tet.n[slot];
-          if (other < cell) continue;
-          const Tetrahedron& neighbor = complex.tets[static_cast<std::size_t>(other)];
-          const int back = neighbor_slot(neighbor, cell);
-          if (is_ghost(tet) && is_ghost(neighbor)) continue;
-          const int32_t owner = is_ghost(tet) ? other : cell;
-          const int owner_slot = is_ghost(tet) ? back : slot;
+      bool reuse = polygon.recovered && !polygon.cover.empty();
+      if (reuse) {
+        for (const Triple& key : polygon.cover) {
+          int32_t cell = -1;
+          int slot = -1;
+          if (!face_cell(key, cell, slot) ||
+              !face_in_planar_polygon(polygon, key, vertex_membership)) {
+            reuse = false;
+            break;
+          }
+          const int32_t other = complex.tets[static_cast<std::size_t>(cell)].n[slot];
+          const int32_t scan_cell = std::min(cell, other);
+          const int scan_slot = scan_cell == cell
+              ? slot : neighbor_slot(complex.tets[static_cast<std::size_t>(other)], cell);
+          const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(scan_cell)];
+          const int32_t neighbor_cell = tet.n[scan_slot];
+          const Tetrahedron& neighbor = complex.tets[static_cast<std::size_t>(neighbor_cell)];
+          const int back = neighbor_slot(neighbor, scan_cell);
+          if (is_ghost(tet) && is_ghost(neighbor)) {
+            reuse = false;
+            break;
+          }
+          const int32_t owner = is_ghost(tet) ? neighbor_cell : scan_cell;
+          const int owner_slot = is_ghost(tet) ? back : scan_slot;
           Triple oriented{};
           oriented_facet(complex.tets[static_cast<std::size_t>(owner)].v, owner_slot,
                          oriented.data());
-          const Triple key = sorted_triple(oriented.data());
-          if (!face_in_planar_polygon(polygon, key)) continue;
           if (!is_ghost(tet) && !is_ghost(neighbor)) {
             Triple twin{};
             oriented_facet(neighbor.v, back, twin.data());
             if (FacetKey::of(oriented.data()) != FacetKey::of(twin.data()).reversed()) {
-              return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable,
-                          kPlcFacet, polygon.facet);
+              reuse = false;
+              break;
             }
           }
           if (orient2d_projected(ref(oriented[0]), ref(oriented[1]), ref(oriented[2]),
@@ -1797,7 +1889,60 @@ class PlcRecoveryBuilder {
             projected(oriented[(corner + 1) % 3], polygon.axis, 1.0, second);
             mesh_area = mesh_area + first[0] * second[1] - first[1] * second[0];
           }
-          covered.push_back({oriented, owner, owner_slot});
+          covered.push_back({oriented, owner, owner_slot, scan_cell, scan_slot});
+        }
+        if (reuse && (mesh_area - polygon_area).sign() != 0) reuse = false;
+        if (reuse) {
+          // The current faces still exactly cover the polygon. In a conforming
+          // tetrahedral complex no additional nondegenerate face can lie in
+          // that cover. Restore the full scan's cell/slot order before staging
+          // constraints, including its intersection-error ordering.
+          std::sort(covered.begin(), covered.end(), [](const PlanarFace& a, const PlanarFace& b) {
+            return std::pair{a.scan_cell, a.scan_slot} < std::pair{b.scan_cell, b.scan_slot};
+          });
+        } else {
+          covered.clear();
+          mesh_area = Expansion{};
+        }
+      }
+      if (!reuse) {
+        for (std::size_t row = 0; row < complex.tets.size(); ++row) {
+          const int32_t cell = static_cast<int32_t>(row);
+          const Tetrahedron& tet = complex.tets[row];
+          if (tet.v[0] == kDeadVertex) continue;
+          for (int slot = 0; slot < 4; ++slot) {
+            const int32_t other = tet.n[slot];
+            if (other < cell) continue;
+            const Tetrahedron& neighbor = complex.tets[static_cast<std::size_t>(other)];
+            const int back = neighbor_slot(neighbor, cell);
+            if (is_ghost(tet) && is_ghost(neighbor)) continue;
+            const int32_t owner = is_ghost(tet) ? other : cell;
+            const int owner_slot = is_ghost(tet) ? back : slot;
+            Triple oriented{};
+            oriented_facet(complex.tets[static_cast<std::size_t>(owner)].v, owner_slot,
+                           oriented.data());
+            const Triple key = sorted_triple(oriented.data());
+            if (!face_in_planar_polygon(polygon, key, vertex_membership)) continue;
+            if (!is_ghost(tet) && !is_ghost(neighbor)) {
+              Triple twin{};
+              oriented_facet(neighbor.v, back, twin.data());
+              if (FacetKey::of(oriented.data()) != FacetKey::of(twin.data()).reversed()) {
+                return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable,
+                            kPlcFacet, polygon.facet);
+              }
+            }
+            if (orient2d_projected(ref(oriented[0]), ref(oriented[1]), ref(oriented[2]),
+                                   polygon.axis) != polygon.orientation) {
+              std::swap(oriented[1], oriented[2]);
+            }
+            for (int corner = 0; corner < 3; ++corner) {
+              Expansion first[2], second[2];
+              projected(oriented[corner], polygon.axis, 1.0, first);
+              projected(oriented[(corner + 1) % 3], polygon.axis, 1.0, second);
+              mesh_area = mesh_area + first[0] * second[1] - first[1] * second[0];
+            }
+            covered.push_back({oriented, owner, owner_slot, cell, slot});
+          }
         }
       }
       if (covered.empty() || (mesh_area - polygon_area).sign() != 0) {
@@ -1824,6 +1969,18 @@ class PlcRecoveryBuilder {
                       kPlcFacet, polygon.facet);
         }
         complex.set_facet_constraint(face.owner, face.slot, polygon.facet);
+      }
+      if (!reuse) {
+        polygon.cover.clear();
+        const int32_t candidate_count = static_cast<int32_t>(candidate_.points.size() / 3);
+        for (const PlanarFace& face : covered) {
+          const Triple key = sorted_triple(face.oriented.data());
+          if (key[0] < 0 || key[2] >= candidate_count) {
+            polygon.cover.clear();
+            break;
+          }
+          polygon.cover.push_back(key);
+        }
       }
       polygon.recovered = true;
     }
@@ -1963,7 +2120,7 @@ class PlcRecoveryBuilder {
     // degrees) are the apices of the concentric split shells.
     const std::vector<double> radii = protection_radii(
         candidate_.points.data(), source_point_count_, source_edges,
-        candidate_.input_triangles);
+        candidate_.input_triangles, input_.affine_metric);
     shell_apex_.assign(static_cast<std::size_t>(source_point_count_), 0);
     for (std::size_t vertex = 0; vertex < radii.size(); ++vertex) {
       shell_apex_[vertex] = radii[vertex] > 0.0 ? 1 : 0;
@@ -2040,6 +2197,7 @@ class PlcRecoveryBuilder {
     const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
     triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr, count);
     triangulation_->set_exact_points(&exact_points_);
+    triangulation_->set_affine_metric(input_.affine_metric);
     alive_.assign(static_cast<std::size_t>(count), 1);
     std::vector<int32_t> all(static_cast<std::size_t>(count));
     std::iota(all.begin(), all.end(), 0);
@@ -2277,8 +2435,9 @@ class PlcRecoveryBuilder {
           continue;
         }
         const int32_t* v = cell(next).v;
-        if (insphere_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), position, v[0], v[1], v[2],
-                         v[3], vertex) > 0) {
+        if (triangulation_->delaunay_insphere(
+                ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), position,
+                v[0], v[1], v[2], v[3], vertex) > 0) {
           candidates.insert(next);
           grown.push_back(next);
         }
@@ -2392,6 +2551,11 @@ class PlcRecoveryBuilder {
     return vertex >= first_corner && vertex < first_corner + corner_count_;
   }
 
+  // A recovery or suppression Steiner point in the volume (add_volume_point).
+  bool volume_vertex(int32_t vertex) const {
+    return vertex >= static_cast<int32_t>(candidate_.points.size() / 3) + corner_count_;
+  }
+
   bool artificial_corner_tet(const Tetrahedron& tet) const {
     for (int32_t vertex : tet.v) {
       if (artificial_corner_vertex(vertex)) return true;
@@ -2483,8 +2647,19 @@ class PlcRecoveryBuilder {
                          const PlcEdgePoint& second) const {
     const int32_t source_first = candidate_.plc_edges[2 * edge];
     const int32_t source_second = candidate_.plc_edges[2 * edge + 1];
-    const double length =
-        std::sqrt(geometry::squared_distance(point(source_first), point(source_second)));
+    double squared = geometry::squared_distance(point(source_first), point(source_second));
+    if (input_.affine_metric != nullptr) {
+      squared = 0.0;
+      for (int row = 0; row < 3; ++row) {
+        double component = 0.0;
+        for (int col = 0; col < 3; ++col) {
+          component += input_.affine_metric[3 * row + col] *
+              (point(source_second)[col] - point(source_first)[col]);
+        }
+        squared += component * component;
+      }
+    }
+    const double length = std::sqrt(squared);
     const double span = second.parameter - first.parameter;
     const bool first_apex =
         first.vertex == source_first && shell_apex_[static_cast<std::size_t>(source_first)] != 0;
@@ -2498,6 +2673,23 @@ class PlcRecoveryBuilder {
   // True when a vertex other than p and q lies in the closed diametral ball
   // of pq, (w - p) . (w - q) <= 0, decided exactly on witnessed positions.
   bool encroached(int32_t p, int32_t q) const {
+    if (input_.affine_metric != nullptr) {
+      for (int32_t vertex = 0; vertex < static_cast<int32_t>(work_points_.size() / 3); ++vertex) {
+        if (vertex == p || vertex == q || alive_[static_cast<std::size_t>(vertex)] == 0) continue;
+        Expansion dot;
+        for (int row = 0; row < 3; ++row) {
+          Expansion wp, wq;
+          for (int col = 0; col < 3; ++col) {
+            const Expansion factor(input_.affine_metric[3 * row + col]);
+            wp = wp + factor * (coordinate(ref(vertex), col) - coordinate(ref(p), col));
+            wq = wq + factor * (coordinate(ref(vertex), col) - coordinate(ref(q), col));
+          }
+          dot = dot + wp * wq;
+        }
+        if (dot.sign() <= 0) return true;
+      }
+      return false;
+    }
     const double* a = point(p);
     const double* b = point(q);
     const double radius = 0.5 * std::sqrt(geometry::squared_distance(a, b));
@@ -2574,6 +2766,35 @@ class PlcRecoveryBuilder {
   // subface whose ball holds no other vertex is strongly Delaunay: it is a
   // face of every Delaunay tetrahedralization of the vertices.
   bool subface_encroached(int32_t a, int32_t b, int32_t c) const {
+    if (input_.affine_metric != nullptr) {
+      const auto transformed_difference = [&](int32_t vertex, Expansion* out) {
+        for (int row = 0; row < 3; ++row) {
+          for (int col = 0; col < 3; ++col) {
+            out[row] = out[row] + Expansion(input_.affine_metric[3 * row + col]) *
+                (coordinate(ref(vertex), col) - coordinate(ref(a), col));
+          }
+        }
+      };
+      const auto dot = [](const Expansion* p, const Expansion* q) {
+        return p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+      };
+      Expansion u[3], v[3];
+      transformed_difference(b, u);
+      transformed_difference(c, v);
+      const Expansion uu = dot(u, u), uv = dot(u, v), vv = dot(v, v);
+      const Expansion determinant = uu * vv - uv * uv;
+      if (determinant.sign() <= 0) return true;
+      for (int32_t vertex = 0; vertex < static_cast<int32_t>(work_points_.size() / 3); ++vertex) {
+        if (vertex == a || vertex == b || vertex == c ||
+            alive_[static_cast<std::size_t>(vertex)] == 0) continue;
+        Expansion x[3];
+        transformed_difference(vertex, x);
+        const Expansion xu = dot(x, u), xv = dot(x, v);
+        if ((dot(x, x) * determinant - xu * (uu * vv - vv * uv) -
+             xv * (uu * vv - uu * uv)).sign() <= 0) return true;
+      }
+      return false;
+    }
     Expansion pa[3], u[3], v[3];
     for (int axis = 0; axis < 3; ++axis) {
       pa[axis] = coordinate(ref(a), axis);
@@ -2643,10 +2864,13 @@ class PlcRecoveryBuilder {
     if (!geometry::point_in_domain(carrier)) {
       return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable, kPlcEdge, edge);
     }
-    const double deviation = outward_distance(carrier, position);
+    const double index_deviation = outward_distance(carrier, position);
+    const double deviation = input_.affine_metric == nullptr
+                                 ? index_deviation
+                                 : outward_affine_distance(input_.affine_metric, carrier, position);
     // A source point can coincide with no other vertex of a valid PLC; equal
     // carriers of distinct exact points would be indistinguishable output.
-    const ExactPointRef split{carrier, deviation == 0.0 ? nullptr : position};
+    const ExactPointRef split{carrier, index_deviation == 0.0 ? nullptr : position};
     if (const int32_t existing = carrier_vertex(carrier); existing >= 0) {
       if (same_point(split, ref(existing))) {
         return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcEdge, edge,
@@ -2666,7 +2890,7 @@ class PlcRecoveryBuilder {
     witness.deviation = deviation;
     candidate_.witnesses.push_back(witness);
     candidate_.vertex_dimension.push_back(1);
-    if (deviation != 0.0) exact_points_.assign(vertex, position, carrier);
+    if (index_deviation != 0.0) exact_points_.assign(vertex, position, carrier);
     edge_chains_[edge].insert(
         edge_chains_[edge].begin() + static_cast<std::ptrdiff_t>(interval + 1),
         {parameter, vertex});
@@ -2981,8 +3205,30 @@ class PlcRecoveryBuilder {
     return false;
   }
 
-  static double tetrahedron_shape(const double* a, const double* b, const double* c,
-                                  const double* d) {
+  double tetrahedron_shape(const double* a, const double* b, const double* c,
+                           const double* d) const {
+    if (input_.affine_metric != nullptr) {
+      double transformed[4][3] = {};
+      const double* corners[4] = {a, b, c, d};
+      for (int i = 1; i < 4; ++i) {
+        for (int row = 0; row < 3; ++row) {
+          for (int col = 0; col < 3; ++col) {
+            transformed[i][row] += input_.affine_metric[3 * row + col] *
+                (corners[i][col] - a[col]);
+          }
+        }
+      }
+      double squared = 0.0;
+      for (int i = 0; i < 4; ++i) {
+        for (int j = i + 1; j < 4; ++j) {
+          squared += geometry::squared_distance(transformed[i], transformed[j]);
+        }
+      }
+      double normal[3];
+      geometry::cross(transformed[1], transformed[2], normal);
+      const double volume = std::fabs(geometry::dot(normal, transformed[3]));
+      return volume / (squared * std::sqrt(squared));
+    }
     const double* corners[4] = {a, b, c, d};
     double squared = 0.0;
     for (int i = 0; i < 4; ++i) {
@@ -3857,9 +4103,9 @@ class PlcRecoveryBuilder {
   // Lawson flips toward the in-plane Delaunay triangulation of the children
   // of one source triangle. A child edge shared by two children (a, b, c)
   // and (b, a, d) that is not a chain interval is flipped to cd when d lies
-  // strictly inside the circumcircle of abc, decided exactly on the source
-  // plane: the sphere through a, b, c and the lifted point a + n (n the
-  // normal of abc) meets the plane in that circumcircle. A strictly
+  // strictly inside the physical circumcircle of abc, decided exactly on
+  // the physical source plane: the sphere through a, b, c and a + n (n the
+  // physical normal of abc) meets the plane in that circumcircle. A strictly
   // non-Delaunay edge has a strictly convex quadrilateral, so the flip keeps
   // the children a triangulation of the source triangle, and each flip
   // strictly lowers the lifted triangulation, so the pass ends (Lawson).
@@ -3876,6 +4122,23 @@ class PlcRecoveryBuilder {
         pd[axis] = coordinate(ref(d), axis);
         u[axis] = pb[axis] - pa[axis];
         v[axis] = pc[axis] - pa[axis];
+      }
+      if (input_.affine_metric != nullptr) {
+        Expansion transformed_b[3], transformed_c[3], transformed_d[3];
+        for (int row = 0; row < 3; ++row) {
+          for (int col = 0; col < 3; ++col) {
+            const Expansion factor(input_.affine_metric[3 * row + col]);
+            transformed_b[row] = transformed_b[row] + factor * u[col];
+            transformed_c[row] = transformed_c[row] + factor * v[col];
+            transformed_d[row] = transformed_d[row] + factor * (pd[col] - pa[col]);
+          }
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+          pa[axis] = Expansion();
+          pb[axis] = u[axis] = transformed_b[axis];
+          pc[axis] = v[axis] = transformed_c[axis];
+          pd[axis] = transformed_d[axis];
+        }
       }
       // orient3d(a, b, c, a + n) = |n|^2 > 0, so insphere > 0 is inside.
       pe[0] = pa[0] + (u[1] * v[2] - u[2] * v[1]);
@@ -3995,6 +4258,19 @@ class PlcRecoveryBuilder {
     geometry::difference(corners[1], corners[0], u);
     geometry::difference(corners[2], corners[0], v);
     geometry::difference(centroid, corners[0], w);
+    if (input_.affine_metric != nullptr) {
+      double world_u[3] = {}, world_v[3] = {}, world_w[3] = {};
+      for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+          world_u[row] += input_.affine_metric[3 * row + col] * u[col];
+          world_v[row] += input_.affine_metric[3 * row + col] * v[col];
+          world_w[row] += input_.affine_metric[3 * row + col] * w[col];
+        }
+      }
+      std::copy_n(world_u, 3, u);
+      std::copy_n(world_v, 3, v);
+      std::copy_n(world_w, 3, w);
+    }
     const double uu = geometry::dot(u, u), uv = geometry::dot(u, v), vv = geometry::dot(v, v);
     const double wu = geometry::dot(w, u), wv = geometry::dot(w, v);
     const double determinant = uu * vv - uv * uv;
@@ -4050,9 +4326,21 @@ class PlcRecoveryBuilder {
       const auto row = chain_intervals_.find(topology::undirected_edge(a, b));
       if (row == chain_intervals_.end()) continue;
       Expansion dot;
-      for (int axis = 0; axis < 3; ++axis) {
-        dot = dot + (coordinate(candidate, axis) - coordinate(ref(a), axis)) *
-                        (coordinate(candidate, axis) - coordinate(ref(b), axis));
+      if (input_.affine_metric == nullptr) {
+        for (int axis = 0; axis < 3; ++axis) {
+          dot = dot + (coordinate(candidate, axis) - coordinate(ref(a), axis)) *
+                          (coordinate(candidate, axis) - coordinate(ref(b), axis));
+        }
+      } else {
+        for (int axis = 0; axis < 3; ++axis) {
+          Expansion da, db;
+          for (int col = 0; col < 3; ++col) {
+            const Expansion factor(input_.affine_metric[3 * axis + col]);
+            da = da + factor * (coordinate(candidate, col) - coordinate(ref(a), col));
+            db = db + factor * (coordinate(candidate, col) - coordinate(ref(b), col));
+          }
+          dot = dot + da * db;
+        }
       }
       if (dot.sign() > 0) continue;
       const auto& chain = edge_chains_[row->second];
@@ -4065,9 +4353,12 @@ class PlcRecoveryBuilder {
       }
       return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcFacet, source.facet);
     }
-    const double deviation = outward_distance(carrier, position);
+    const double index_deviation = outward_distance(carrier, position);
+    const double deviation = input_.affine_metric == nullptr
+                                 ? index_deviation
+                                 : outward_affine_distance(input_.affine_metric, carrier, position);
     // Distinct exact points with equal carriers would be indistinguishable.
-    const ExactPointRef split{carrier, deviation == 0.0 ? nullptr : position};
+    const ExactPointRef split{carrier, index_deviation == 0.0 ? nullptr : position};
     if (const int32_t existing = carrier_vertex(carrier); existing >= 0) {
       if (same_point(split, ref(existing))) {
         return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcFacet, source.facet,
@@ -4101,12 +4392,15 @@ class PlcRecoveryBuilder {
     witness.deviation = deviation;
     candidate_.witnesses.push_back(witness);
     candidate_.vertex_dimension.push_back(2);
-    if (deviation != 0.0) exact_points_.assign(center, position, carrier);
+    if (index_deviation != 0.0) exact_points_.assign(center, position, carrier);
     source_faces_.erase(key);
     for (const auto& [child_key, child] : staged_source_faces) source_faces_.emplace(child_key, child);
-    legalize_source_children(source.source_triangle);
+    // The new source index still addresses an artificial corner in work_points_
+    // until insertion shifts the corner and volume slots. Legalization uses
+    // work-point predicates and must therefore run only after that shift.
     const int32_t insertion_status = insert_source_vertex_incrementally(center);
     if (insertion_status != PHX_MC_OK) return insertion_status;
+    legalize_source_children(source.source_triangle);
     restart = true;
     return PHX_MC_OK;
   }
@@ -4256,6 +4550,26 @@ class PlcRecoveryBuilder {
     std::vector<Triple> old_faces;
     std::vector<Triple> new_faces;
   };
+  bool protected_witness(int32_t s) const {
+    if (input_.protected_facets == nullptr) return false;
+    const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
+    if (witness.stratum == SourceStratum::kFacet) {
+      const auto triangle = static_cast<std::size_t>(witness.entity);
+      const auto polygon = static_cast<std::size_t>(candidate_.input_polygons[triangle]);
+      return input_.protected_facets[input_.polygon_facets[polygon]] != 0;
+    }
+    if (witness.stratum == SourceStratum::kSegment) {
+      const auto edge = static_cast<std::size_t>(witness.entity);
+      for (std::size_t use = edge_triangle_offsets_[edge]; use < edge_triangle_offsets_[edge + 1];
+           ++use) {
+        const auto triangle = static_cast<std::size_t>(edge_triangle_rows_[use]);
+        const auto polygon = static_cast<std::size_t>(candidate_.input_polygons[triangle]);
+        if (input_.protected_facets[input_.polygon_facets[polygon]] != 0) return true;
+      }
+    }
+    return false;
+  }
+
 
   // Whether split point s is suppressed under either policy: it lies on a
   // hidden internal edge (never published), or on a facet with a declared
@@ -4263,6 +4577,7 @@ class PlcRecoveryBuilder {
   // of a declared facet must round a point of the plane or lie within the
   // facet's tolerance of it).
   bool suppression_required(int32_t s) const {
+    if (protected_witness(s)) return true;
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
     std::vector<int32_t> facets;
     if (witness.stratum == SourceStratum::kSegment) {
@@ -4285,7 +4600,7 @@ class PlcRecoveryBuilder {
           ? 0.0 : input_.facet_plane_tolerances[facet];
       double distance = 0.0;
       return !declared_plane_admits(row, plane_normals_[static_cast<std::size_t>(facet)],
-                                    tolerance, point(s), distance);
+                                    tolerance, point(s), distance, input_.affine_metric);
     });
   }
 
@@ -4784,8 +5099,15 @@ class PlcRecoveryBuilder {
       // Whether `rival` lies inside the sphere through the side and `apex`.
       const auto holds = [&](int32_t apex, int32_t rival) {
         const std::array<int32_t, 4> tet = with(open.cell, open.slot, apex);
-        return insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
-                            tet[0], tet[1], tet[2], tet[3], rival) > 0;
+        // The standalone suppression-cavity fixture has no triangulation;
+        // it uses the original Euclidean predicate on its exact witnesses.
+        if (triangulation_ == nullptr) {
+          return insphere_sos(ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
+                              tet[0], tet[1], tet[2], tet[3], rival) > 0;
+        }
+        return triangulation_->delaunay_insphere(
+            ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
+            tet[0], tet[1], tet[2], tet[3], rival) > 0;
       };
       if (!exhaustive) {
         std::vector<int32_t> remaining = inner;
@@ -5033,7 +5355,8 @@ class PlcRecoveryBuilder {
   // With `layers` > 0 (passes after one that removed no point), a finite
   // wedge that none of these fill is merged with `layers` layers of the
   // cells around it (grow_wedge: only across unconstrained faces, never
-  // enclosing a vertex) and the merged cavity is filled by the same
+  // enclosing a source or boundary vertex; volume Steiner points it
+  // encloses leave with s) and the merged cavity is filled by the same
   // options, the exhaustive search only for the first layer (fill
   // existence is NP-complete; a larger cavity only gives the polynomial
   // options more room). Then the wedge and the merged cavity get the
@@ -5041,13 +5364,14 @@ class PlcRecoveryBuilder {
   // from one binary64 point over the sides it leaves open. `extended`
   // reports a failed attempt whose region can still grow. `memo` holds the
   // visibility facts of the point's earlier fills (SuppressionMemo), one
-  // lineage per target, wedge and kind of cavity. Merging removes
-  // no vertex but s and moves no subface, so the termination argument of
-  // the pass is unchanged; ordinary passes are as without merging. Every
-  // finite proposed cell is exactly positive on exact positions and the
-  // cavity edit checks that the proposal's boundary is the link of the
-  // removed cells with its marks, so the proposal tiles them. Otherwise
-  // nothing changes.
+  // lineage per target, wedge and kind of cavity. Merging removes no
+  // boundary vertex but s (only volume Steiner points besides, which no
+  // witness or constraint involves) and moves no subface, so the
+  // termination argument of the pass is unchanged; ordinary passes are as
+  // without merging. Every finite proposed cell is exactly positive on
+  // exact positions and the cavity edit checks that the proposal's boundary
+  // is the link of the removed cells with its marks, so the proposal tiles
+  // them. Otherwise nothing changes.
   int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, int layers,
                                   SuppressionMemo& memo, bool& removed, bool& extended) {
     removed = false;
@@ -5219,13 +5543,21 @@ class PlcRecoveryBuilder {
         for (int axis = 0; axis < 3; ++axis) direction[axis] += unit[static_cast<std::size_t>(axis)];
       }
       const double norm = std::sqrt(geometry::dot(direction, direction));
+      std::array<double, 3> index_direction{direction[0], direction[1], direction[2]};
+      if (input_.affine_metric != nullptr) {
+        TetMesh metric;
+        if (metric.set_affine_metric({input_.affine_metric, 9}) != PHX_MC_OK) {
+          return PHX_MC_INVALID_ARGUMENT;
+        }
+        index_direction = metric.metric_inverse_transform(index_direction);
+      }
       const auto cone_from_point = [&](std::vector<Proposal> walls) {
         bool found = false;
         double location[3];
         if (!normals.empty() && norm > 0.0 && std::isfinite(reach) && reach > 0.0) {
           for (double step = 0.25 * reach; step > 0x1p-40 * reach && !found; step *= 0.5) {
             for (int axis = 0; axis < 3; ++axis) {
-              location[axis] = point(s)[axis] + step * direction[axis] / norm;
+              location[axis] = point(s)[axis] + step * index_direction[axis] / norm;
             }
             if (!geometry::point_in_domain(location)) continue;
             const ExactPointRef center{location, nullptr};
@@ -5382,8 +5714,16 @@ class PlcRecoveryBuilder {
     // one (never across a subface, so the cavity stays on the same side of
     // every constraint), excluding the star and the cells merged by other
     // wedges. A cell is admissible unless it shares a subface with the
-    // cavity or every cell around one of its vertices would be removed: that
-    // vertex would be enclosed, and the fill keeps every vertex but s.
+    // cavity or every cell around one of its source or boundary vertices
+    // would be removed: that vertex would be enclosed, and the fill keeps
+    // every such vertex but s. A volume Steiner point (placed by a planar
+    // fan flip of recovery or by an earlier suppression; no witness or
+    // constraint involves it) may be enclosed: the fill, built from the
+    // walls, leaves it out and it is removed with s. Such points sit as
+    // close as the halvings that placed them allowed to the subfaces and
+    // segments of their own fans, which s may share, and a point that
+    // stays a wall vertex of every merged cavity can pin a wedge with no
+    // fill at any layer.
     // Admission only shrinks as the cavity grows, so a rejected cell stays
     // rejected. The walls are the new subfaces and the faces of the cavity
     // not shared by two of its cells. `extended` tells whether layer
@@ -5425,6 +5765,7 @@ class PlcRecoveryBuilder {
             }
             for (int k = 0; k < 4 && admissible; ++k) {
               const int32_t vertex = candidate.v[k];
+              if (volume_vertex(vertex)) continue;
               auto found = around.find(vertex);
               if (found == around.end()) {
                 std::vector<int32_t> incident;
@@ -5525,7 +5866,19 @@ class PlcRecoveryBuilder {
         cavity.push_back(link);
         for (int32_t vertex : tet.v) {
           if (vertex != s) {
-            reach = std::min(reach, std::sqrt(geometry::squared_distance(point(s), point(vertex))));
+            double distance = geometry::squared_distance(point(s), point(vertex));
+            if (input_.affine_metric != nullptr) {
+              distance = 0.0;
+              for (int axis = 0; axis < 3; ++axis) {
+                double component = 0.0;
+                for (int col = 0; col < 3; ++col) {
+                  component += input_.affine_metric[3 * axis + col] *
+                      (point(vertex)[col] - point(s)[col]);
+                }
+                distance += component * component;
+              }
+            }
+            reach = std::min(reach, std::sqrt(distance));
           }
         }
       }
@@ -5539,6 +5892,18 @@ class PlcRecoveryBuilder {
         geometry::difference(point(face[2]), point(face[0]), w);
         geometry::cross(u, w, normal);
         geometry::difference(point(tet.v[contact.slot]), point(s), offset);
+        if (input_.affine_metric != nullptr) {
+          double world_u[3] = {}, world_w[3] = {}, world_offset[3] = {};
+          for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+              world_u[row] += input_.affine_metric[3 * row + col] * u[col];
+              world_w[row] += input_.affine_metric[3 * row + col] * w[col];
+              world_offset[row] += input_.affine_metric[3 * row + col] * offset[col];
+            }
+          }
+          geometry::cross(world_u, world_w, normal);
+          std::copy_n(world_offset, 3, offset);
+        }
         const double length = std::sqrt(geometry::dot(normal, normal));
         if (!(length > 0.0)) continue;
         const double sign = geometry::dot(normal, offset) < 0.0 ? -1.0 : 1.0;
@@ -5627,6 +5992,20 @@ class PlcRecoveryBuilder {
         complex.set_facet_constraint(cell, slot, kNoConstraint);
       }
     }
+    // Volume points of merged cells that no proposed cell uses are enclosed
+    // (grow_wedge); they leave the complex with s. Every wall vertex is a
+    // vertex of the proposal, which tiles the cavity with the walls as its
+    // boundary, so these are exactly the interior vertices of the cavity.
+    std::vector<int32_t> enclosed;
+    if (!absorbed.empty()) {
+      std::unordered_set<int32_t> seen;
+      for (const Proposal& proposal : proposals) seen.insert(proposal.v.begin(), proposal.v.end());
+      for (int32_t cell : absorbed) {
+        for (int32_t vertex : complex.tets[static_cast<std::size_t>(cell)].v) {
+          if (volume_vertex(vertex) && seen.insert(vertex).second) enclosed.push_back(vertex);
+        }
+      }
+    }
     CavityEdit edit(complex);
     edit.begin();
     std::vector<int32_t> removed_cells = cells;
@@ -5683,6 +6062,10 @@ class PlcRecoveryBuilder {
     alive_[static_cast<std::size_t>(s)] = 0;
     set_vertex_hint(s, -1);
     suppressed_[static_cast<std::size_t>(s)] = 1;
+    for (int32_t vertex : enclosed) {
+      alive_[static_cast<std::size_t>(vertex)] = 0;
+      set_vertex_hint(vertex, -1);
+    }
     for (int32_t vertex : added) {
       const bool used = std::any_of(proposals.begin(), proposals.end(), [&](const Proposal& cell) {
         return std::find(cell.v.begin(), cell.v.end(), vertex) != cell.v.end();
@@ -5699,7 +6082,7 @@ class PlcRecoveryBuilder {
   // unmodified). A point on a hidden internal edge names the edge's facet.
   int32_t refuse_suppression(int32_t s) {
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
-    const bool fixed = input_.policy == BoundaryPolicy::kFixed;
+    const bool fixed = input_.policy == BoundaryPolicy::kFixed || protected_witness(s);
     const int32_t status = fixed ? PHX_MC_CONSTRAINT_INTERSECTION : PHX_MC_UNRESOLVED;
     int32_t triangle = witness.entity;
     if (witness.stratum == SourceStratum::kSegment) {
@@ -6050,7 +6433,7 @@ class PlcRecoveryBuilder {
     candidate_.vertex_dimension.resize(kept);
     candidate_.protection = protection_radii(
         candidate_.points.data(), static_cast<int64_t>(published_points),
-        candidate_.segments, candidate_.input_triangles);
+        candidate_.segments, candidate_.input_triangles, input_.affine_metric);
     for (std::size_t row : published_volume) {
       const double* coordinates =
           point(first_volume + static_cast<int32_t>(row));
@@ -6145,6 +6528,11 @@ int32_t fill_suppression_cavity(const SuppressionCavity& cavity, SuppressionCavi
 
 int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
   try {
+    if (input.affine_metric != nullptr) {
+      TetMesh metric;
+      const int32_t status = metric.set_affine_metric({input.affine_metric, 9});
+      if (status != PHX_MC_OK) return status;
+    }
     PlcRecovery prepared;
     const int32_t source_status = prepare_recovery_source(input, prepared);
     if (source_status != PHX_MC_OK) {

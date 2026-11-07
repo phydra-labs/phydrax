@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from phydrax.discretization._cell_geometry_transition_types import (
         CellGeometryTransition,
     )
-    from phydrax.discretization._fv_precision import FiniteVolumePrecisionPolicy
     from phydrax.discretization._nested_reference_types import (
         NestedReferenceWitnesses,
         ReferenceCellMapWitnesses,
@@ -62,28 +61,13 @@ if TYPE_CHECKING:
     )
     from phydrax.geometry._mapped_reference_boundary import MappedReferenceBoundarySource
     from phydrax.geometry._sphere_material_atlas import SphereMaterialCellAtlas
-    from phydrax.geometry._surface_source_support import (
-        PreparedSurfaceSourceSupport,
-        SurfaceSourceRootAtlas,
-    )
-    from phydrax.geometry.implicit._source_charts import (
-        ImplicitRootChartEvidence,
-        Interval,
-        RootEdgeTriangle,
-        SourceCellKey,
-    )
     from phydrax.graph._partition import GraphPartitionPlan
     from phydrax.linalg._spaces import AbstractVectorSpace
-    from phydrax.meshing._boundary_layer import BoundaryLayerEvidence
+    from phydrax.meshing._boundary_layer import BoundaryLayerMesh, BoundaryLayerPolicy
     from phydrax.meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
+    from phydrax.meshing._controls import BoundaryLayerControl
     from phydrax.meshing._layer_curving import LayerCurvingConstructionResult
-    from phydrax.meshing._layer_curving_records import (
-        LayerColumnProjectionIdentity,
-        LayerCurvingImplicitRootTrace,
-        LayerCurvingMappedChartTrace,
-        LayerCurvingProjectionTrace,
-        LayerCurvingSourceEvidence,
-    )
+    from phydrax.meshing._layer_curving_records import LayerCurvingSourceEvidence
     from phydrax.meshing._lineage import (
         EntityLineage,
         MeshLineage,
@@ -93,15 +77,15 @@ if TYPE_CHECKING:
         SurfaceSubdivisionBoundarySource,
     )
     from phydrax.meshing.providers._native_sources import NativePlcSource
-    from phydrax.solver._finite_volume_runtime import FiniteVolumeValidatedRuntimeState
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._interpolation import TMesh2D
 from phydrax._model._structure import (
     AdaptiveImplicitBoundarySourceArchiveRecipe,
+    AffinePlcBoundarySourceArchiveRecipe,
+    AffinePlcGeometrySourceArchiveRecipe,
     AnalyticImplicitProfileArchiveRecipe,
     FiniteElementAcceptedStateArchiveRecipe,
-    FiniteVolumeRuntimeStateArchiveRecipe,
     MappedReferenceBoundarySourceArchiveRecipe,
     MeshingDomainArchiveRecipe,
     MeshingDomainBoundarySourceArchiveRecipe,
@@ -176,9 +160,12 @@ from phydrax.equations._finite_element_material import (
     MaterialTransaction,
 )
 from phydrax.exterior._form_type import FormType, FormValueSpec
+from phydrax.geometry._affine_plc_domain import AffinePlcDomain
 from phydrax.geometry._atlas import TrimDomain
-from phydrax.geometry._contracts import CompiledGeometry, GeometryTolerance
-from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
+from phydrax.geometry._curve_boundary import (
+    ParametricCurveBoundarySource,
+    SegmentChartCurve,
+)
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._domain_certification import DomainCoverageCertificate
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
@@ -199,11 +186,13 @@ from phydrax.geometry._meshing_domain import (
     PatchPoleUse,
 )
 from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+from phydrax.geometry._planar_coverage import PlcSourcePointWitness
 from phydrax.geometry._planar_embedding import PlanarEmbedding
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
     SourceBoundaryDistanceWitness,
+    SourceBoundaryFaceImageWitness,
     SourceBoundaryPointWitness,
     SourceBoundaryQuery,
     SourceBoundaryRationalChartBank,
@@ -230,7 +219,6 @@ from phydrax.geometry._volume_material_map import (
     VolumeMaterialChain,
     VolumeMaterialMap,
 )
-from phydrax.geometry.analytic._extended import _TorusKernel
 from phydrax.geometry.analytic._primitives import _BallKernel, Sphere
 from phydrax.geometry.brep._assembly import (
     BRepAffinePlacement,
@@ -288,19 +276,13 @@ from phydrax.geometry.brep._root_bindings import (
     BRepVertexRoot,
 )
 from phydrax.geometry.brep._tspline import TSplineSurfacePatch
-from phydrax.geometry.design._schema import (
-    DesignState,
-    ParameterBinding,
-    ParameterId,
-    ParameterSchema,
-    ParameterSpec,
-)
 from phydrax.geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitBoundarySource,
     AdaptiveImplicitSurface,
     AdaptiveImplicitSurfaceArchiveRecipe,
     discover_adaptive_implicit_surface,
     ImplicitVolumeClass,
+    restore_adaptive_implicit_surface,
 )
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
@@ -358,6 +340,7 @@ from phydrax.meshing._hex_generation import extract_volume_hexes
 from phydrax.meshing._hex_schedule import NativeHexGridSchedule
 from phydrax.meshing._lineage import CellMeshTransition, VertexInterpolationStencil
 from phydrax.meshing._model_codec import (
+    _rebuild_compiled_analytic_geometry,
     MODEL_ARCHIVE_LIMITS,
     read_model_archive_fields,
     read_model_artifact,
@@ -2004,83 +1987,6 @@ def _curved_volume_material_chain() -> tuple[
     )
 
 
-def _rebuild_compiled_analytic_geometry(value: object, /) -> CompiledGeometry:
-    if not isinstance(value, CompiledGeometry):
-        raise TypeError("Analytic implicit profile requires a compiled geometry owner.")
-    stored_schema = value.state.schema
-    if value.schema != stored_schema:
-        raise ValueError(
-            "Compiled analytic geometry has inconsistent state and schema owners."
-        )
-    schema = ParameterSchema(
-        tuple(
-            ParameterSpec(
-                ParameterId(spec.parameter_id.feature_id, spec.parameter_id.name),
-                spec.shape,
-                spec.dtype,
-                spec.role,
-                spec.physical_scale,
-                spec.bounds,
-                spec.trainable,
-            )
-            for spec in stored_schema.specs
-        )
-    )
-
-    def rebuild_binding(binding: ParameterBinding, /) -> ParameterBinding:
-        parameter_id = ParameterId(
-            binding.parameter_id.feature_id,
-            binding.parameter_id.name,
-        )
-        if (
-            binding.index < 0
-            or binding.index >= len(schema.specs)
-            or schema.specs[binding.index].parameter_id != parameter_id
-        ):
-            raise ValueError(
-                "Compiled analytic parameter bindings differ from their schema."
-            )
-        return ParameterBinding(parameter_id, binding.index)
-
-    kernel_owner = value.kernel
-    if type(kernel_owner) is _BallKernel:
-        kernel = _BallKernel(
-            rebuild_binding(kernel_owner.center),
-            rebuild_binding(kernel_owner.radius),
-            dimension=kernel_owner.dimension,
-            source_id=kernel_owner.source_id,
-        )
-    elif type(kernel_owner) is _TorusKernel:
-        kernel = _TorusKernel(
-            rebuild_binding(kernel_owner.center),
-            rebuild_binding(kernel_owner.major),
-            rebuild_binding(kernel_owner.minor),
-            rebuild_binding(kernel_owner.angle),
-            full=kernel_owner.full,
-            source_id=kernel_owner.source_id,
-        )
-    else:
-        raise TypeError("Analytic implicit profile uses an unsupported geometry kernel.")
-    state = DesignState(schema, value.state.values)
-    tolerance = GeometryTolerance(value.tolerance.absolute, value.tolerance.relative)
-    geometry = CompiledGeometry(kernel, state, tolerance=tolerance)
-    if array_tree_fingerprint(geometry) != array_tree_fingerprint(value):
-        raise ValueError("Compiled analytic source fields differ after reconstruction.")
-    if not bool(np.asarray(geometry.validity().accepted)):
-        raise ValueError(
-            "Reconstructed analytic geometry does not have accepted validity."
-        )
-    return geometry
-
-
-def _rebuild_compiled_sphere_geometry(value: CompiledGeometry, /) -> CompiledGeometry:
-    if not isinstance(value, CompiledGeometry) or type(value.kernel) is not _BallKernel:
-        raise TypeError(
-            "The adaptive archive fixture requires the registered sphere kernel."
-        )
-    return _rebuild_compiled_analytic_geometry(value)
-
-
 def _rebuild_adaptive_surface_policy(
     value: AdaptiveImplicitSurfacePolicy, /
 ) -> AdaptiveImplicitSurfacePolicy:
@@ -2090,7 +1996,6 @@ def _rebuild_adaptive_surface_policy(
         enclosure=value.enclosure,
         relative_cell_diameter=value.relative_cell_diameter,
         root_tolerance=value.root_tolerance,
-        minimum_face_area=value.minimum_face_area,
         allow_approximate_zero_set=value.allow_approximate_zero_set,
         allow_nonsmooth_field=value.allow_nonsmooth_field,
     )
@@ -2103,20 +2008,10 @@ def _rebuild_adaptive_implicit_source(
         raise TypeError(
             "Adaptive implicit archive payload has the wrong source recipe type."
         )
-    geometry = _rebuild_compiled_sphere_geometry(value.geometry)
+    geometry = _rebuild_compiled_analytic_geometry(value.geometry)
     policy = _rebuild_adaptive_surface_policy(value.policy)
-    recipe = AdaptiveImplicitSurfaceArchiveRecipe(
-        geometry,
-        value.domain,
-        policy,
-        value.source_id,
-    )
-    surface = discover_adaptive_implicit_surface(
-        recipe.geometry,
-        domain=recipe.domain,
-        policy=recipe.policy,
-        source_id=recipe.source_id,
-    )
+    surface = restore_adaptive_implicit_surface(value, geometry, policy)
+    recipe = surface.archive_recipe
     if surface.region_ids != ("interior",):
         raise ValueError(
             "Recomputed adaptive source is not an established certification domain."
@@ -2719,11 +2614,13 @@ def _rebuild_periodic_topology(
     /,
     *,
     actual_geometry: CellGeometrySpec | None = None,
+    actual_mesh: CellMesh | None = None,
 ) -> PeriodicMeshTopology:
     return PeriodicMeshTopology.from_stored_fields(
         value,
         lifted,
         actual_geometry=actual_geometry,
+        actual_mesh=actual_mesh,
     )
 
 
@@ -2990,6 +2887,7 @@ def _rebuild_domain_coverage_certificate(
         domain,
         (
             PiecewiseLinearDomain,
+            AffinePlcDomain,
             MappedReferenceDomain,
             MeshingDomain,
             AdaptiveImplicitSurface,
@@ -3007,7 +2905,11 @@ def _rebuild_domain_coverage_certificate(
     )
     if source_witness is not None and not isinstance(
         source_witness,
-        (RestrictedDelaunayBoundaryWitness, RestrictedDelaunayCoverageTransportWitness),
+        (
+            RestrictedDelaunayBoundaryWitness,
+            RestrictedDelaunayCoverageTransportWitness,
+            PlcSourcePointWitness,
+        ),
     ):
         raise TypeError(
             "Coverage certificate lost its typed restricted-Delaunay witness."
@@ -3026,6 +2928,7 @@ def _rebuild_domain_coverage_certificate(
             (
                 SurfaceChartWitness,
                 SourceBoundaryChartWitness,
+                SourceBoundaryFaceImageWitness,
                 SourceBoundaryPointWitness,
                 SourceBoundaryDistanceWitness,
                 SurfaceEnvelopeDistanceWitness,
@@ -3164,446 +3067,6 @@ def _rebuild_cell_geometry_transition(
     return transition
 
 
-def _rebuild_boundary_layer_evidence(value: object, /) -> BoundaryLayerEvidence:
-    from phydrax.meshing._boundary_layer import BoundaryLayerEvidence
-    from phydrax.meshing._controls import BoundaryLayerCollisionPolicy
-
-    if (
-        not isinstance(value, BoundaryLayerEvidence)
-        or type(value) is not BoundaryLayerEvidence
-    ):
-        raise TypeError("Stored boundary-layer evidence has an unexpected concrete type.")
-    policy = BoundaryLayerCollisionPolicy(value.collision_policy.value)
-    rebuilt = BoundaryLayerEvidence(
-        requested_thicknesses=value.requested_thicknesses,
-        achieved_thicknesses=value.achieved_thicknesses,
-        minimum_thicknesses=value.minimum_thicknesses,
-        maximum_thicknesses=value.maximum_thicknesses,
-        achieved_growth_rates=value.achieved_growth_rates,
-        layer_active=value.layer_active,
-        column_count=value.column_count,
-        fan_column_count=value.fan_column_count,
-        corner_patch_count=value.corner_patch_count,
-        convex_ridge_count=value.convex_ridge_count,
-        concave_ridge_count=value.concave_ridge_count,
-        rim_vertex_count=value.rim_vertex_count,
-        minimum_visibility=value.minimum_visibility,
-        maximum_stretch=value.maximum_stretch,
-        collision_policy=policy,
-        predicted_collision_vertex_count=value.predicted_collision_vertex_count,
-        detected_collision_count=value.detected_collision_count,
-        resolution_iterations=value.resolution_iterations,
-        reduced_vertex_count=value.reduced_vertex_count,
-        terminated_vertex_count=value.terminated_vertex_count,
-        merged_vertex_count=value.merged_vertex_count,
-        minimum_scale=value.minimum_scale,
-        cell_counts=value.cell_counts,
-        certified_valid_count=value.certified_valid_count,
-    )
-    if rebuilt.evidence_id != value.evidence_id:
-        raise ValueError("Stored boundary-layer evidence identity changed.")
-    return rebuilt
-
-
-def _rebuild_layer_column_projection_identity(
-    value: object, /
-) -> LayerColumnProjectionIdentity:
-    from phydrax.meshing._layer_curving_records import LayerColumnProjectionIdentity
-
-    if (
-        not isinstance(value, LayerColumnProjectionIdentity)
-        or type(value) is not LayerColumnProjectionIdentity
-    ):
-        raise TypeError("Stored layer column identity has an unexpected concrete type.")
-    rebuilt = LayerColumnProjectionIdentity(
-        value.layer_indices,
-        value.source_wall_cell_ids,
-        value.front_row_ids,
-        value.front_row_identities,
-        value.source_column_ids,
-        value.source_column_identities,
-        value.source_column_root_vertex_ids,
-    )
-    if rebuilt.identity_id != value.identity_id:
-        raise ValueError("Stored layer column/root identity does not reproduce.")
-    return rebuilt
-
-
-def _rebuild_layer_curving_projection_trace(
-    value: object, /
-) -> LayerCurvingProjectionTrace:
-    from phydrax.meshing._layer_curving_records import LayerCurvingProjectionTrace
-
-    if (
-        not isinstance(value, LayerCurvingProjectionTrace)
-        or type(value) is not LayerCurvingProjectionTrace
-    ):
-        raise TypeError("Stored layer projection trace has an unexpected concrete type.")
-    column_identity = _rebuild_layer_column_projection_identity(value.column_identity)
-    trace = LayerCurvingProjectionTrace(
-        value.source_id,
-        value.source_revision,
-        value.frame_id,
-        value.geometry_node_rows,
-        value.target_cell_global_ids,
-        value.target_local_dofs,
-        value.source_root_cell_ids,
-        value.source_piece_ids,
-        column_identity,
-        value.requested_entity_ids,
-        value.returned_entity_ids,
-        value.requested_occurrence_paths,
-        value.returned_occurrence_paths,
-        value.queries,
-        value.parameters,
-        value.projected_points,
-        value.distance_lower_bounds,
-        value.residuals,
-        value.status,
-        value.returned_source_ids,
-        value.returned_source_revisions,
-        value.returned_frame_ids,
-        value.failures,
-        normals=value.normals,
-        tangents=value.tangents,
-        chart_witness_rows=value.chart_witness_rows,
-        target_reference_points=value.target_reference_points,
-    )
-    if trace.trace_id != value.trace_id:
-        raise ValueError("Stored layer projection trace identity changed.")
-    return trace
-
-
-def _rebuild_implicit_root_chart_evidence(value: object, /) -> ImplicitRootChartEvidence:
-    from phydrax.geometry.implicit._source_charts import ImplicitRootChartEvidence
-
-    field_names = {
-        "row",
-        "target_cell_global_id",
-        "target_entity_global_id",
-        "target_local_entity_index",
-        "source_cell_key",
-        "root_edge_keys",
-        "status",
-        "field_residual_bound",
-        "target_to_root_lower_bound",
-        "target_to_root_bound",
-        "source_normal_deviation_bounds",
-        "chart_jacobian_lower",
-        "chart_injectivity_margin",
-        "source_gradient_lower",
-        "detail",
-    }
-    if type(value) is not dict:
-        raise TypeError(
-            "Stored implicit root-chart evidence must be a primitive mapping."
-        )
-    fields: dict[str, object] = {}
-    for key, item in value.items():
-        if not isinstance(key, str):
-            raise TypeError("Implicit root-chart evidence field names must be strings.")
-        fields[key] = item
-    if set(fields) != field_names:
-        raise TypeError(
-            "Stored implicit root-chart evidence has an invalid primitive projection."
-        )
-
-    def integer(name: str, /) -> int:
-        result = fields[name]
-        if type(result) is not int:
-            raise TypeError(f"Implicit root-chart {name} must be an integer.")
-        return result
-
-    def real(name: str, /) -> float:
-        result = fields[name]
-        if type(result) is not float:
-            raise TypeError(f"Implicit root-chart {name} must be a float.")
-        return result
-
-    def text(name: str, /) -> str:
-        result = fields[name]
-        if not isinstance(result, str):
-            raise TypeError(f"Implicit root-chart {name} must be text.")
-        return result
-
-    def corner(raw: object, /) -> tuple[int, int, int]:
-        if type(raw) is not tuple or len(raw) != 3:
-            raise TypeError("Implicit root-edge corners must be integer triples.")
-        x, y, z = raw
-        if type(x) is not int or type(y) is not int or type(z) is not int:
-            raise TypeError("Implicit root-edge corners must contain exact integers.")
-        return x, y, z
-
-    def edge(raw: object, /) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
-        if type(raw) is not tuple or len(raw) != 2:
-            raise TypeError("Implicit root edges must retain two endpoint corners.")
-        first, second = raw
-        return corner(first), corner(second)
-
-    source_key_value = fields["source_cell_key"]
-    if type(source_key_value) is not tuple or len(source_key_value) != 4:
-        raise TypeError("Implicit source cell keys must be integer quadruples.")
-    key_a, key_b, key_c, key_d = source_key_value
-    if (
-        type(key_a) is not int
-        or type(key_b) is not int
-        or type(key_c) is not int
-        or type(key_d) is not int
-    ):
-        raise TypeError("Implicit source cell keys must contain exact integers.")
-    source_cell_key: SourceCellKey = (key_a, key_b, key_c, key_d)
-
-    edge_values = fields["root_edge_keys"]
-    if type(edge_values) is not tuple or len(edge_values) != 3:
-        raise TypeError("Implicit root-edge triangles must retain three edges.")
-    edge_a, edge_b, edge_c = edge_values
-    root_edge_keys: RootEdgeTriangle = (edge(edge_a), edge(edge_b), edge(edge_c))
-
-    interval_values = fields["source_normal_deviation_bounds"]
-    if type(interval_values) is not tuple or len(interval_values) != 2:
-        raise TypeError("Implicit source-normal deviation bounds must be an interval.")
-    interval_lower, interval_upper = interval_values
-    if type(interval_lower) is not float or type(interval_upper) is not float:
-        raise TypeError("Implicit source-normal deviation endpoints must be floats.")
-    normal_deviation: Interval = (interval_lower, interval_upper)
-    return ImplicitRootChartEvidence(
-        row=integer("row"),
-        target_cell_global_id=integer("target_cell_global_id"),
-        target_entity_global_id=integer("target_entity_global_id"),
-        target_local_entity_index=integer("target_local_entity_index"),
-        source_cell_key=source_cell_key,
-        root_edge_keys=root_edge_keys,
-        status=text("status"),
-        field_residual_bound=real("field_residual_bound"),
-        target_to_root_lower_bound=real("target_to_root_lower_bound"),
-        target_to_root_bound=real("target_to_root_bound"),
-        source_normal_deviation_bounds=normal_deviation,
-        chart_jacobian_lower=real("chart_jacobian_lower"),
-        chart_injectivity_margin=real("chart_injectivity_margin"),
-        source_gradient_lower=real("source_gradient_lower"),
-        detail=text("detail"),
-    )
-
-
-def _rebuild_layer_curving_implicit_trace(
-    value: object, /
-) -> LayerCurvingImplicitRootTrace:
-    from phydrax.meshing._layer_curving_records import LayerCurvingImplicitRootTrace
-
-    if (
-        not isinstance(value, LayerCurvingImplicitRootTrace)
-        or type(value) is not LayerCurvingImplicitRootTrace
-    ):
-        raise TypeError(
-            "Stored implicit layer root trace has an unexpected concrete type."
-        )
-    chart_evidence = tuple(
-        _rebuild_implicit_root_chart_evidence(item) for item in value.chart_evidence
-    )
-    column_identity = _rebuild_layer_column_projection_identity(value.column_identity)
-    trace = LayerCurvingImplicitRootTrace(
-        value.source_id,
-        value.source_revision,
-        value.frame_id,
-        value.map_witness_id,
-        value.root_chart_witness_id,
-        value.geometry_node_rows,
-        value.target_cell_global_ids,
-        value.target_local_dofs,
-        value.chart_rows,
-        value.target_reference_points,
-        value.target_points,
-        value.source_points,
-        value.displacement_upper,
-        value.root_error,
-        value.source_cell_keys,
-        value.root_edge_keys,
-        value.statuses,
-        chart_evidence,
-        column_identity,
-    )
-    if trace.trace_id != value.trace_id:
-        raise ValueError("Stored implicit layer root trace identity changed.")
-    return trace
-
-
-def _rebuild_layer_curving_mapped_trace(value: object, /) -> LayerCurvingMappedChartTrace:
-    from phydrax.meshing._layer_curving_records import LayerCurvingMappedChartTrace
-
-    if (
-        not isinstance(value, LayerCurvingMappedChartTrace)
-        or type(value) is not LayerCurvingMappedChartTrace
-    ):
-        raise TypeError("Stored mapped layer trace has an unexpected concrete type.")
-    column_identity = _rebuild_layer_column_projection_identity(value.column_identity)
-    trace = LayerCurvingMappedChartTrace(
-        value.source_id,
-        value.source_revision,
-        value.frame_id,
-        value.query_id,
-        value.geometry_node_rows,
-        value.target_cell_global_ids,
-        value.target_local_dofs,
-        value.chart_witness_rows,
-        value.target_reference_points,
-        value.root_reference_points,
-        value.source_parameters,
-        value.source_chart_ids,
-        value.source_entity_ids,
-        value.occurrence_paths,
-        value.root_face_global_ids,
-        value.root_cell_global_ids,
-        value.root_local_face_indices,
-        value.target_points,
-        value.source_points,
-        value.distance_lower_bounds,
-        value.distance_upper_bounds,
-        value.normals,
-        value.tangents,
-        column_identity,
-    )
-    if trace.trace_id != value.trace_id:
-        raise ValueError("Stored mapped layer trace identity changed.")
-    return trace
-
-
-def _rebuild_layer_curving_source_evidence(
-    value: object,
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
-    /,
-    *,
-    require_current: bool = True,
-) -> LayerCurvingSourceEvidence:
-    from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
-    from phydrax.geometry._source_boundary_records import (
-        SourceBoundaryProjectionQuery,
-        SourceBoundaryQuery,
-    )
-    from phydrax.meshing._layer_curving_records import LayerCurvingSourceEvidence
-
-    if (
-        not isinstance(value, LayerCurvingSourceEvidence)
-        or type(value) is not LayerCurvingSourceEvidence
-    ):
-        raise TypeError("Stored layer source evidence has an unexpected concrete type.")
-    source_query = _rebuild_continuation_value(value.source_query)
-    if not isinstance(source_query, SourceBoundaryQuery):
-        raise TypeError("Layer source evidence lost its source-bound query.")
-    if value.projection_trace is not None and not isinstance(
-        source_query, SourceBoundaryProjectionQuery
-    ):
-        raise TypeError("Projection trace requires a projection-capable source query.")
-    charts = None
-    if value.source_surface_charts is not None:
-        stored_charts = _rebuild_continuation_value(value.source_surface_charts)
-        if not isinstance(stored_charts, SurfaceSourceCharts) or not isinstance(
-            source_query, MeshingDomainBoundarySource
-        ):
-            raise TypeError(
-                "Layer source evidence lost its reconstructed SurfaceSourceCharts authority."
-            )
-        charts = SurfaceSourceCharts(
-            stored_charts.domain,
-            stored_charts.mesh,
-            stored_charts.geometry,
-            stored_charts.coordinate_contract,
-            stored_charts.root_parameters,
-            stored_charts.root_patches,
-            stored_charts.associations,
-            source_query,
-            source_root_cell_ids=stored_charts.source_root_cell_ids,
-            source_piece_ids=stored_charts.source_piece_ids,
-            root_parameter_exact=stored_charts.root_parameter_exact,
-        )
-        if charts.source_chart_id != stored_charts.source_chart_id:
-            raise ValueError(
-                "Layer source query differs from its retained surface-chart authority."
-            )
-    projection_trace = (
-        None
-        if value.projection_trace is None
-        else _rebuild_layer_curving_projection_trace(value.projection_trace)
-    )
-    implicit_root_trace = (
-        None
-        if value.implicit_root_trace is None
-        else _rebuild_layer_curving_implicit_trace(value.implicit_root_trace)
-    )
-    mapped_chart_trace = (
-        None
-        if value.mapped_chart_trace is None
-        else _rebuild_layer_curving_mapped_trace(value.mapped_chart_trace)
-    )
-    mapped_reference_maps = tuple(
-        _rebuild_reference_cell_map_witnesses(item)
-        for item in value.mapped_reference_maps
-    )
-    if not all(type(item) is ReferenceCellMapWitnesses for item in mapped_reference_maps):
-        raise TypeError(
-            "Layer source evidence lost its exact mapped reference-map banks."
-        )
-    implicit_chart_evidence = tuple(
-        _rebuild_implicit_root_chart_evidence(item)
-        for item in value.implicit_chart_evidence
-    )
-    chart_witness = _rebuild_continuation_value(value.chart_witness)
-    if not isinstance(chart_witness, SourceBoundaryChartWitness):
-        raise TypeError(
-            "Layer source evidence lost its reconstructed exact chart witness."
-        )
-    _validate_implicit_source_chart_witness(source_query, chart_witness)
-    fidelity = certify_source_fidelity(
-        mesh,
-        geometry,
-        source_query,
-        tolerance=value.fidelity.tolerance,
-        maximum_normal_deviation=value.fidelity.maximum_normal_deviation,
-        witness=chart_witness,
-    )
-    if fidelity.certificate_id != value.fidelity.certificate_id:
-        raise ValueError("Stored layer source-fidelity certificate does not reproduce.")
-    layer_evidence = _rebuild_boundary_layer_evidence(value.layer_evidence)
-    chart_column_identity = _rebuild_layer_column_projection_identity(
-        value.chart_column_identity
-    )
-    implicit_root_chart_witness = (
-        None
-        if value.implicit_root_chart_witness is None
-        else _rebuild_continuation_value(value.implicit_root_chart_witness)
-    )
-    if implicit_root_chart_witness is not None and not isinstance(
-        implicit_root_chart_witness, SourceBoundaryChartWitness
-    ):
-        raise TypeError("Layer source evidence lost its implicit root-chart witness.")
-    implicit_root_cell_vertex_global_ids = value.implicit_root_cell_vertex_global_ids
-    evidence = LayerCurvingSourceEvidence(
-        charts,
-        source_query,
-        value.layer_result_id,
-        layer_evidence,
-        chart_witness,
-        fidelity,
-        value.minimum_scaled_jacobian,
-        value.maximum_distortion,
-        chart_column_identity=chart_column_identity,
-        projection_trace=projection_trace,
-        implicit_root_trace=implicit_root_trace,
-        mapped_chart_trace=mapped_chart_trace,
-        mapped_reference_maps=mapped_reference_maps,
-        frame_id=value.frame_id,
-        implicit_map_witness_id=value.implicit_map_witness_id,
-        implicit_chart_evidence=implicit_chart_evidence,
-        implicit_root_chart_witness=implicit_root_chart_witness,
-        implicit_root_cell_vertex_global_ids=implicit_root_cell_vertex_global_ids,
-    )
-    if evidence.evidence_id != value.evidence_id:
-        raise ValueError("Stored layer source evidence identity changed.")
-    if require_current:
-        evidence.revalidate(mesh, geometry)
-    return evidence
-
-
 def _rebuild_entity_lineage(value: object, /) -> EntityLineage:
     from phydrax.meshing._lineage import EntityLineage
 
@@ -3729,6 +3192,8 @@ def _rebuild_piecewise_boundary_query_recipe(
         raise TypeError("Stored PWL boundary evidence has an unexpected concrete type.")
     if not isinstance(owner, SurfaceEnvelopeSource):
         raise TypeError("PWL boundary query recipe lost its SurfaceEnvelopeSource owner.")
+    if not isinstance(value.owner, SurfaceEnvelopeSourceArchiveRecipe):
+        raise TypeError("PWL boundary query recipe has an unexpected envelope recipe.")
     if (
         owner.source_id != value.owner.source_id
         or owner.source_revision != value.owner.expected_source_revision
@@ -4388,6 +3853,7 @@ def _rebuild_coverage_domain(
     | MappedReferenceDomain
     | MeshingDomain
     | AdaptiveImplicitSurface
+    | AffinePlcDomain
     | AnalyticImplicitProfile
 ):
     domain = _rebuild_continuation_value(value)
@@ -4395,6 +3861,7 @@ def _rebuild_coverage_domain(
         domain,
         (
             PiecewiseLinearDomain,
+            AffinePlcDomain,
             MappedReferenceDomain,
             MeshingDomain,
             AdaptiveImplicitSurface,
@@ -4412,6 +3879,7 @@ def _rebuild_source_fidelity_witness(value: object, /) -> SourceFidelityWitness:
         (
             SurfaceChartWitness,
             SourceBoundaryChartWitness,
+            SourceBoundaryFaceImageWitness,
             SourceBoundaryPointWitness,
             SourceBoundaryDistanceWitness,
             SurfaceEnvelopeDistanceWitness,
@@ -4436,18 +3904,26 @@ def _rebuild_scoped_fidelity_input(
 
 def _rebuild_restricted_coverage_witness(
     value: object, /
-) -> RestrictedDelaunayBoundaryWitness | RestrictedDelaunayCoverageTransportWitness:
+) -> (
+    RestrictedDelaunayBoundaryWitness
+    | RestrictedDelaunayCoverageTransportWitness
+    | PlcSourcePointWitness
+):
     witness = _rebuild_continuation_value(value)
     if not isinstance(
         witness,
-        (RestrictedDelaunayBoundaryWitness, RestrictedDelaunayCoverageTransportWitness),
+        (
+            RestrictedDelaunayBoundaryWitness,
+            RestrictedDelaunayCoverageTransportWitness,
+            PlcSourcePointWitness,
+        ),
     ):
         raise TypeError("Stored source coverage witness has no registered proof owner.")
     return witness
 
 
 def _rebuild_mesh_certification_premises(
-    value: object, /
+    value: object, source_mesh: CellMesh, actual_geometry: CellGeometrySpec, /
 ) -> tuple[MeshCertificationInputs, CellMeshAuditPolicy, str]:
     """Rebuild a stored report's premises; acceptance is recomputed once by the caller."""
     from phydrax.meshing._certification import MeshCertificationReport
@@ -4456,7 +3932,11 @@ def _rebuild_mesh_certification_premises(
     if type(value) is not MeshCertificationReport:
         raise TypeError("Stored mesh certification has an unexpected concrete type.")
     stored_quality = CellQualityReport.from_stored_fields(value.audit.quality)
-    inputs = _rebuild_as(value.inputs, MeshCertificationInputs)
+    inputs = _rebuild_continuation_value(
+        value.inputs, source_mesh=source_mesh, actual_geometry=actual_geometry
+    )
+    if not isinstance(inputs, MeshCertificationInputs):
+        raise TypeError("Stored certification lost its rebuilt input owner.")
     if isinstance(inputs.source, AdaptiveImplicitBoundarySource) and isinstance(
         inputs.fidelity_witness, SourceBoundaryChartWitness
     ):
@@ -4923,59 +4403,6 @@ def _read_exact_tensor_quad_fidelity(path: Path, expected: dict[str, object], /)
     )
 
 
-def _rebuild_surface_source_root_atlas(value: object, /) -> SurfaceSourceRootAtlas:
-    from phydrax.geometry._surface_source_support import SurfaceSourceRootAtlas
-
-    if type(value) is not SurfaceSourceRootAtlas:
-        raise TypeError("Stored surface root atlas has an unexpected concrete type.")
-    domain = _rebuild_as(value.domain, MeshingDomain)
-    mesh = _rebuild_as(value.mesh, CellMesh)
-    geometry = _rebuild_geometry_for_mesh(value.geometry, mesh)
-    contract = _rebuild_as(value.coordinate_contract, SpatialCoordinateContract)
-    atlas = SurfaceSourceRootAtlas(
-        domain,
-        mesh,
-        geometry,
-        value.root_parameters,
-        value.root_patches,
-        contract,
-        root_source_cell_ids=value.root_source_cell_ids,
-        root_parameter_bounds=value.root_parameter_bounds,
-    )
-    if atlas.atlas_id != value.atlas_id:
-        raise ValueError(
-            "Stored surface root atlas differs from exact source recomputation."
-        )
-    return atlas
-
-
-def _rebuild_prepared_surface_support(value: object, /) -> PreparedSurfaceSourceSupport:
-    from phydrax.geometry._surface_source_support import (
-        PreparedSurfaceSourceSupport,
-        SurfaceSourceRootAtlas,
-    )
-
-    if type(value) is not PreparedSurfaceSourceSupportArchiveRecipe:
-        raise TypeError(
-            "Stored prepared surface support has an unexpected archive recipe."
-        )
-    domain = _rebuild_as(value.domain, MeshingDomain)
-    original = _rebuild_continuation_value(value.original)
-    if not isinstance(original, (CellMeshingResult, SurfaceSourceRootAtlas)):
-        raise TypeError("Prepared surface support lost its accepted root owner.")
-    root_boundary = _rebuild_as(value.root_boundary_source, MeshingDomainBoundarySource)
-    support = PreparedSurfaceSourceSupport(
-        domain, original, value.root_parameters, root_boundary
-    )
-    # The identity binds every recomputed root bank (cells, atlas cells, source
-    # pieces, exact chart bounds, parameters, patches, vertices, coordinates).
-    if support.support_id != value.expected_support_id:
-        raise ValueError(
-            "Prepared surface support differs from its reconstructed root charts."
-        )
-    return support
-
-
 def _rebuild_surface_subdivision_source(
     value: object, /
 ) -> SurfaceSubdivisionBoundarySource:
@@ -4989,7 +4416,7 @@ def _rebuild_surface_subdivision_source(
             "Stored surface subdivision source has an unexpected recipe type."
         )
     root = _rebuild_as(value.root, MeshingDomainBoundarySource)
-    support = _rebuild_prepared_surface_support(value.support)
+    support = restore_model_archive_value(value.support)
     lineages = tuple(_rebuild_mesh_lineage(item) for item in value.lineages)
     vertex_stencils = tuple(
         _rebuild_vertex_interpolation_stencil(item) for item in value.vertex_stencils
@@ -5215,7 +4642,7 @@ def _rebuild_surface_chart_boundary_source(
         root, (MeshingDomainBoundarySource, SurfaceSubdivisionBoundarySource)
     ):
         raise TypeError("Surface chart query lost its canonical root boundary owner.")
-    support = _rebuild_prepared_surface_support(value.support)
+    support = restore_model_archive_value(value.support)
     if not isinstance(support, PreparedSurfaceSourceSupport):
         raise TypeError("Surface chart query lost its prepared support owner.")
     if isinstance(value.deformation, PreparedSphereChartDeformationArchiveRecipe):
@@ -5328,37 +4755,28 @@ def _rebuild_continuation_value(
     if (
         type(value).__module__ == "phydrax.geometry._surface_source_support"
         and type(value).__name__ == "SurfaceSourceRootAtlas"
+    ) or type(value) in (
+        PreparedSurfaceSourceSupportArchiveRecipe,
+        SurfaceNativeRestrictionBoundarySourceArchiveRecipe,
     ):
-        return _rebuild_surface_source_root_atlas(value)
-    if type(value) is PreparedSurfaceSourceSupportArchiveRecipe:
-        return _rebuild_prepared_surface_support(value)
-    if type(value) is SurfaceNativeRestrictionBoundarySourceArchiveRecipe:
-        from phydrax.geometry._surface_source_support import (
-            SurfaceNativeRestrictionBoundarySource,
-        )
-
-        root = _rebuild_as(value.root, MeshingDomainBoundarySource)
-        support = _rebuild_prepared_surface_support(value.support)
-        mesh = _rebuild_as(value.mesh, CellMesh)
-        geometry = _rebuild_geometry_for_mesh(value.geometry, mesh)
-        source = SurfaceNativeRestrictionBoundarySource(root, support, mesh, geometry)
-        if (
-            source.source_id != value.source_id
-            or source.source_revision != value.source_revision
-            or source.source_scope_id != value.source_scope_id
-        ):
-            raise ValueError("Cold native restriction source changed its identity.")
-        return source
+        return restore_model_archive_value(value)
     if (
         type(value).__module__ == "phydrax.discretization._surface_chart_records"
         and type(value).__name__ == "PreparedSurfaceChartDeformation"
     ):
         return _rebuild_surface_chart_deformation(value)
+    if type(value) is PlcSourcePointWitness:
+        return restore_model_archive_value(value)
     if (
         type(value).__module__ == "phydrax._model._structure"
         and type(value).__name__
         in {
             "SparseCoordinateOperatorArchiveRecipe",
+            "AffinePlcBoundarySourceArchiveRecipe",
+            "AffinePlcDomainArchiveRecipe",
+            "AffinePlcGeometrySourceArchiveRecipe",
+            "CompartmentMeshingSourceArchiveRecipe",
+            "LabelVolumeArchiveRecipe",
             "_FiniteElementSpecArchiveProjection",
         }
     ) or type(value).__module__ in {
@@ -5606,7 +5024,8 @@ def _rebuild_continuation_value(
             implicit_cell_keys=value.implicit_cell_keys,
             implicit_root_edge_keys=value.implicit_root_edge_keys,
             cad_plc=(
-                None if value.cad_plc is None
+                None
+                if value.cad_plc is None
                 else _rebuild_as(value.cad_plc, PiecewiseLinearComplex)
             ),
             cad_curve_association=value.cad_curve_association,
@@ -5614,6 +5033,27 @@ def _rebuild_continuation_value(
         )
         if witness.witness_id != value.witness_id:
             raise ValueError("Source boundary chart witness identity changed.")
+        return witness
+    if type(value) is SourceBoundaryFaceImageWitness:
+        witness = SourceBoundaryFaceImageWitness(
+            mesh_id=value.mesh_id,
+            geometry_id=value.geometry_id,
+            topology_id=value.topology_id,
+            source_id=value.source_id,
+            source_revision=value.source_revision,
+            source_query_id=value.source_query_id,
+            cell_global_ids=value.cell_global_ids,
+            entity_global_ids=value.entity_global_ids,
+            local_entity_indices=value.local_entity_indices,
+            source_chart_ids=value.source_chart_ids,
+            source_entity_ids=value.source_entity_ids,
+            occurrence_paths=value.occurrence_paths,
+            source_region_sides=value.source_region_sides,
+            orientations=value.orientations,
+            image_triangle_rational_tokens=value.image_triangle_rational_tokens,
+        )
+        if witness.witness_id != value.witness_id:
+            raise ValueError("Source boundary face image witness identity changed.")
         return witness
     if isinstance(value, SourceBoundaryPointWitness):
         witness = SourceBoundaryPointWitness(
@@ -5656,11 +5096,22 @@ def _rebuild_continuation_value(
             offset=value.offset,
             spacing=value.spacing,
             certificate_spacing=value.certificate_spacing,
+            envelope_mode=value.envelope_mode,
             bounds=value.bounds,
             envelope_vertices=value.envelope_vertices,
             envelope_triangles=value.envelope_triangles,
             target_vertex_global_ids=value.target_vertex_global_ids,
             target_facet_global_ids=value.target_facet_global_ids,
+            derived_source=(
+                None
+                if value.derived_source is None
+                else _rebuild_as(value.derived_source, PiecewiseLinearBoundarySource)
+            ),
+            derived_witness=(
+                None
+                if value.derived_witness is None
+                else _rebuild_as(value.derived_witness, SourceBoundaryChartWitness)
+            ),
         )
         if witness.witness_id != value.witness_id:
             raise ValueError("Surface envelope distance witness identity changed.")
@@ -5682,6 +5133,7 @@ def _rebuild_continuation_value(
             spacing=value.spacing,
             certificate_spacing=value.certificate_spacing,
             maximum_deviation=value.maximum_deviation,
+            envelope_mode=value.envelope_mode,
         )
         if type(source) is not SurfaceEnvelopeSource:
             raise TypeError(
@@ -6012,6 +5464,9 @@ def _rebuild_continuation_value(
             source_occurrence_paths=value.source_occurrence_paths,
             source_region_sides=value.source_region_sides,
             source_parameter_intervals=value.source_parameter_intervals,
+            target_parameter_intervals=value.target_parameter_intervals,
+            target_reference_pieces=value.target_reference_pieces,
+            source_boundary_witness_id=value.source_boundary_witness_id,
             source_parameter_points=value.source_parameter_points,
             parameters=value.parameters,
             orientations=value.orientations,
@@ -6029,6 +5484,9 @@ def _rebuild_continuation_value(
             curve_entity_ids=value.curve_entity_ids,
             occurrence_paths=value.occurrence_paths,
             chart_ids=value.chart_ids,
+            endpoint_source_keys=value.endpoint_source_keys,
+            endpoint_point_bounds=value.endpoint_point_bounds,
+            endpoint_parameter_bounds=value.endpoint_parameter_bounds,
         )
         if query.query_id != value.expected_query_id:
             raise ValueError(
@@ -6036,6 +5494,14 @@ def _rebuild_continuation_value(
             )
         query.require_current()
         return query
+    if type(value) is SegmentChartCurve:
+        curve = SegmentChartCurve(value.start, value.end, value.first, value.last)
+        if (
+            curve.origin_exact != value.origin_exact
+            or curve.direction_exact != value.direction_exact
+        ):
+            raise ValueError("Stored segment chart exact coefficients changed.")
+        return curve
     if isinstance(value, LineCurve):
         return LineCurve(value.origin, value.direction)
     if isinstance(value, ExactLineCurve):
@@ -6363,6 +5829,12 @@ def _rebuild_continuation_value(
             raise ValueError(
                 "Mesh certification geometry differs from its current source context."
             )
+        if actual_geometry is not None:
+            from phydrax.meshing._model_codec import _same_model_content
+
+            if not _same_model_content(geometry, actual_geometry):
+                raise ValueError("Mesh certification coordinate-map content changed.")
+            geometry = actual_geometry
         schedule = _rebuild_as(value.schedule, MeshCertificationSchedule)
         domain = None if value.domain is None else _rebuild_coverage_domain(value.domain)
         # One archived definition (an analytic profile serving as domain,
@@ -6376,6 +5848,10 @@ def _rebuild_continuation_value(
             if profile is not None and _same_tree_content(value.source, value.domain)
             else _rebuild_as(value.source, SourceBoundaryQuery)
         )
+        if value.layer_core_root_geometry is not None:
+            raise ValueError(
+                "Layer-root certification requires its independently restored source and root owner."
+            )
         inputs = MeshCertificationInputs(
             mesh,
             geometry,
@@ -6482,14 +5958,86 @@ def _rebuild_continuation_value(
         premises = (
             None
             if value.certification is None
-            else _rebuild_mesh_certification_premises(value.certification)
+            else _rebuild_mesh_certification_premises(value.certification, mesh, geometry)
         )
         certification_inputs = None if premises is None else premises[0]
         audit_policy = None if premises is None else premises[1]
+        for association in associations:
+            witness_id = association.source_boundary_witness_id
+            if witness_id is None:
+                continue
+            if certification_inputs is None:
+                raise ValueError(
+                    "Partial boundary support requires certified source inputs."
+                )
+            candidates = (
+                (certification_inputs.source, certification_inputs.fidelity_witness),
+                *(
+                    (query, witness)
+                    for query, witness, _ in certification_inputs.scoped_fidelity
+                ),
+            )
+            matches = tuple(
+                (query, witness)
+                for query, witness in candidates
+                if query is not None
+                and isinstance(
+                    witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+                )
+                and witness.witness_id == witness_id
+                and (query.source_id, query.source_revision)
+                == (association.source_id, association.source_revision)
+            )
+            if (
+                not matches
+                or len(
+                    {
+                        (witness.source_query_id, witness.witness_id)
+                        for _, witness in matches
+                    }
+                )
+                != 1
+            ):
+                raise ValueError(
+                    "Partial boundary support lost its unique source witness."
+                )
+            from phydrax.meshing.providers._native_sources import NativeLayerCoreSource
+
+            feature_source = certification_inputs.feature_source
+            association_source = (
+                feature_source if type(feature_source) is NativeLayerCoreSource else None
+            )
+            if association_source is not None:
+                association_source.validate_restored()
+            association.validate_source_boundary_support(
+                mesh,
+                geometry,
+                *matches[0],
+                association_source=association_source,
+                layer_core_root_geometry=certification_inputs.layer_core_root_geometry,
+            )
         if value.certification is not None and premises is not None:
             # Identity-determined claims are compared before any proof replay so a
             # tampered report is refused without recomputing acceptance.
-            value.certification.require_premises(
+            from copy import copy
+
+            stored_report = value.certification
+            coverage = stored_report.coverage
+            if (
+                coverage is not None
+                and type(coverage.source) is AffinePlcBoundarySourceArchiveRecipe
+            ):
+                # Renew the executable source projection before comparing stored
+                # claims; the actual coverage proof is still recomputed below.
+                stored_report = copy(stored_report)
+                renewed_coverage = copy(coverage)
+                object.__setattr__(
+                    renewed_coverage,
+                    "source",
+                    restore_model_archive_value(coverage.source),
+                )
+                object.__setattr__(stored_report, "coverage", renewed_coverage)
+            stored_report.require_premises(
                 premises[0],
                 audit_policy=premises[1],
                 organization=NativeMeshOrganization(
@@ -6501,16 +6049,11 @@ def _rebuild_continuation_value(
                     associations=associations,
                 ),
             )
-        layer_curving_evidence = (
-            None
-            if value.layer_curving_evidence is None
-            else _rebuild_layer_curving_source_evidence(
-                value.layer_curving_evidence,
-                mesh,
-                geometry,
-                require_current=False,
+        if value.layer_curving_evidence is not None:
+            raise TypeError(
+                "Layer-curving evidence requires its actual retained layer owner."
             )
-        )
+        layer_curving_evidence = None
         certified_result = certify_cell_mesh(
             mesh,
             contract,
@@ -6586,7 +6129,10 @@ def _rebuild_continuation_value(
         return _rebuild_cell_geometry_restriction_source(value)
     if type(value) is ExactPowerCellGeometrySource:
         domain_source = value.domain_source
-        if type(domain_source) in (PiecewiseLinearComplex, PiecewiseLinearComplexArchiveRecipe):
+        if type(domain_source) in (
+            PiecewiseLinearComplex,
+            PiecewiseLinearComplexArchiveRecipe,
+        ):
             domain_source = restore_model_archive_value(domain_source)
         elif type(domain_source) is MappedReferenceDomain:
             domain_source = _rebuild_as(domain_source, MappedReferenceDomain)
@@ -6635,6 +6181,12 @@ def _rebuild_continuation_value(
         )
         from phydrax.geometry._surface_source_support import _SplineSurfaceCoordinateMap
 
+        if type(value.source_map) is AffinePlcGeometrySourceArchiveRecipe:
+            if not isinstance(source_mesh, CellMesh):
+                raise ValueError("Affine PLC geometry requires its current mesh.")
+            from phydrax.geometry._surface_source_archive import _geometry
+
+            return _geometry(value, source_mesh)
         source_map = value.source_map
         if source_map is not None:
             if not isinstance(source_mesh, CellMesh):
@@ -6743,6 +6295,9 @@ def _rebuild_continuation_value(
             value.entity_dofs,
             value.tabulator_id,
             value.element_id,
+            None
+            if value.source_recipe is None
+            else _rebuild_as(value.source_recipe, FiniteElementAcceptedElementRecipe),
         )
     if isinstance(value, FiniteElementAcceptedFieldLayoutRecipe):
         return FiniteElementAcceptedFieldLayoutRecipe(
@@ -6841,128 +6396,6 @@ def _rebuild_continuation_value(
     raise TypeError(
         f"No explicit continuation constructor is registered for {type(value).__name__}."
     )
-
-
-def _rebuild_finite_volume_precision_policy(
-    value: object, /
-) -> FiniteVolumePrecisionPolicy:
-    from phydrax._precision import PrecisionResolution
-    from phydrax.discretization._fv_precision import FiniteVolumePrecisionPolicy
-
-    if not isinstance(value, FiniteVolumePrecisionPolicy):
-        raise TypeError("Stored FV precision policy has the wrong owner type.")
-    if type(value) is not FiniteVolumePrecisionPolicy:
-        raise TypeError("Stored FV precision policy has the wrong concrete owner type.")
-    resolution = None
-    if value.resolution_id is not None:
-        resolution = PrecisionResolution(
-            value.request,
-            value.provider,
-            dict(value.request.requested),
-        )
-        if resolution.resolution_id != value.resolution_id:
-            raise ValueError("Stored FV precision resolution identity changed.")
-    policy = FiniteVolumePrecisionPolicy(
-        value.storage_dtype,
-        reconstruction_dtype=value.reconstruction_dtype,
-        flux_dtype=value.flux_dtype,
-        reduction_dtype=value.reduction_dtype,
-        output_dtype=value.output_dtype,
-        checkpoint_dtype=value.checkpoint_dtype,
-        resolution=resolution,
-    )
-    if policy.policy_id != value.policy_id:
-        raise ValueError("Stored FV precision policy does not rebuild canonically.")
-    return policy
-
-
-def _rebuild_finite_volume_runtime_state_archive_recipe(
-    value: object,
-    source_runtime: object,
-    /,
-) -> FiniteVolumeValidatedRuntimeState:
-    from phydrax.solver._finite_volume_content import (
-        FiniteVolumeConservativeContentState,
-    )
-    from phydrax.solver._finite_volume_runtime import (
-        FiniteVolumeRuntimeState,
-        FiniteVolumeValidatedRuntimeState,
-        PreparedFiniteVolumeRuntime,
-    )
-    from phydrax.solver._finite_volume_topology_events import (
-        FiniteVolumeTopologyEventJournal,
-    )
-
-    if not isinstance(value, FiniteVolumeRuntimeStateArchiveRecipe):
-        raise TypeError("Stored FV runtime state must use its canonical archive recipe.")
-    if type(value) is not FiniteVolumeRuntimeStateArchiveRecipe:
-        raise TypeError("Stored FV runtime state recipe has the wrong concrete type.")
-    if not isinstance(source_runtime, PreparedFiniteVolumeRuntime):
-        raise TypeError(
-            "Restoring an FV state requires its current prepared source runtime."
-        )
-    stored_content = value.content_state
-    if not isinstance(stored_content, FiniteVolumeConservativeContentState):
-        raise TypeError("Stored FV archive lost its canonical conservative content.")
-    if type(stored_content) is not FiniteVolumeConservativeContentState:
-        raise TypeError("Stored FV archive content has the wrong concrete owner type.")
-    precision = _rebuild_finite_volume_precision_policy(stored_content.precision)
-    content = FiniteVolumeConservativeContentState(
-        stored_content.conservative_content,
-        stored_content.effective_cell_volumes,
-        stored_content.active_cell_mask,
-        stored_content.time,
-        topology_epoch_id=stored_content.topology_epoch_id,
-        geometry_family_id=stored_content.geometry_family_id,
-        geometry_layout_id=stored_content.geometry_layout_id,
-        geometry_version=stored_content.geometry_version,
-        evidence_policy_id=stored_content.evidence_policy_id,
-        evidence_version=stored_content.evidence_version,
-        precision=precision,
-        owned_cell_mask=stored_content.owned_cell_mask,
-    )
-    journal = FiniteVolumeTopologyEventJournal.from_archive_record(
-        dict(value.topology_journal_record),
-        dict(value.topology_journal_arrays),
-    )
-    sliding_plan = source_runtime.sliding_plan
-    sliding_coupling = None
-    if sliding_plan is None:
-        if value.sliding_coupling_id is not None:
-            raise ValueError("Stored FV state requires a missing source sliding plan.")
-    else:
-        if value.sliding_coupling_id is None:
-            raise ValueError(
-                "Stored sliding FV state omitted its exact coupling identity."
-            )
-        sliding_coupling = sliding_plan.coupling(value.sliding_shift)
-        if sliding_coupling.coupling_id != value.sliding_coupling_id:
-            raise ValueError(
-                "Stored FV sliding coupling differs from the current source plan."
-            )
-    state = FiniteVolumeRuntimeState(
-        content,
-        journal,
-        value.step_size,
-        accepted_step=value.accepted_step,
-        last_status=value.last_status,
-        controller_state=value.controller_state,
-        integrator_state=value.integrator_state,
-        output_cursor=value.output_cursor,
-        sliding_coupling=sliding_coupling,
-        sliding_shift=value.sliding_shift,
-        sliding_event_id=value.sliding_event_id,
-    )
-    restored = source_runtime.validate_restored_accepted_state(
-        state,
-        value.source_cell_ids,
-        expected_runtime_id=value.expected_runtime_id,
-        expected_epoch_id=value.expected_epoch_id,
-        expected_state_id=value.expected_state_id,
-    )
-    if not isinstance(restored, FiniteVolumeValidatedRuntimeState):
-        raise TypeError("FV source-state validation returned no production token.")
-    return restored
 
 
 def _canonical_dependencies(
@@ -7214,6 +6647,12 @@ def _rebuild_composition(value: object, /) -> Composition:
         lifted_mesh,
         actual_geometry=(
             geometry
+            if periodic_source._actual_geometry is not None
+            or periodic_source.coordinate_source_map_id is not None
+            else None
+        ),
+        actual_mesh=(
+            mesh
             if periodic_source._actual_geometry is not None
             or periodic_source.coordinate_source_map_id is not None
             else None
@@ -7494,13 +6933,16 @@ def _rebuild_composition(value: object, /) -> Composition:
 
 
 def _rebuild_layer_curving_composition(value: object, /) -> Composition:
+    from phydrax.meshing._layer_curving_records import LayerCurvingSourceEvidence
+
     if not isinstance(value, Composition) or set(value.entry_ids) != {
         "layer/mesh",
         "layer/geometry",
-        "layer/result",
+        "layer/owner",
+        "layer/evidence",
     }:
         raise TypeError(
-            "Layer-curving archive requires its mesh, geometry, and accepted result entries."
+            "Layer-curving archive requires its mesh, geometry, authored layers and evidence."
         )
     entries = {entry.entry_id: entry for entry in value.entries}
     mesh = _rebuild_continuation_value(entries["layer/mesh"].value)
@@ -7509,22 +6951,33 @@ def _rebuild_layer_curving_composition(value: object, /) -> Composition:
     geometry = _rebuild_geometry_for_mesh(entries["layer/geometry"].value, mesh)
     if not isinstance(geometry, CellGeometrySpec):
         raise TypeError("Layer-curving geometry entry must rebuild a CellGeometrySpec.")
-    result = _rebuild_continuation_value(entries["layer/result"].value)
-    if not isinstance(result, CellMeshingResult) or result.layer_curving_evidence is None:
-        raise TypeError("Layer-curving result lost its accepted source evidence.")
-    if (
-        result.mesh.mesh_id != mesh.mesh_id
-        or result.mesh.topology_id != mesh.topology_id
-        or result.geometry.geometry_layout_id != geometry.geometry_layout_id
-        or cell_geometry_id(result.geometry) != cell_geometry_id(geometry)
-    ):
-        raise ValueError(
-            "Layer-curving result differs from its independent mesh/geometry entries."
-        )
+    authored = entries["layer/owner"].value
+    stored_evidence = entries["layer/evidence"].value
+    if type(authored) is not tuple or len(authored) != 3:
+        raise TypeError("Layer-curving archive lost its actual layer authoring inputs.")
+    if type(stored_evidence) is not LayerCurvingSourceEvidence:
+        raise TypeError("Layer-curving archive lost its standalone source evidence.")
+    query = _rebuild_continuation_value(stored_evidence.source_query)
+    charts = (
+        None
+        if stored_evidence.source_surface_charts is None
+        else _rebuild_continuation_value(stored_evidence.source_surface_charts)
+    )
+    evidence, layers, control, policy = LayerCurvingSourceEvidence._restore_standalone(
+        stored_evidence,
+        mesh,
+        geometry,
+        authored[0],
+        query,
+        charts,
+        authored[1],
+        authored[2],
+    )
     identities = (
         ("layer/mesh", mesh.topology_id, mesh.mesh_id),
         ("layer/geometry", geometry.geometry_layout_id, cell_geometry_id(geometry)),
-        ("layer/result", result.mesh.topology_id, result.result_id),
+        ("layer/owner", layers.mesh.topology_id, layers.result_id),
+        ("layer/evidence", mesh.topology_id, evidence.evidence_id),
     )
     if any(
         entries[entry_id].structure_id != structure_id
@@ -7543,10 +6996,16 @@ def _rebuild_layer_curving_composition(value: object, /) -> Composition:
             "layer-curving-target-coordinate-map",
         ),
         (
-            "layer/result",
+            "layer/owner",
+            "model-state",
+            "phydrax.meshing",
+            "authored-boundary-layer-state",
+        ),
+        (
+            "layer/evidence",
             "discretization",
             "phydrax.meshing",
-            "layer-curving-result",
+            "layer-curving-source-evidence",
         ),
     )
     if any(
@@ -7568,12 +7027,13 @@ def _rebuild_layer_curving_composition(value: object, /) -> Composition:
             ),
         ),
         (
-            "layer/result",
+            "layer/evidence",
             (
                 entries["layer/mesh"].binding("structure"),
                 entries["layer/mesh"].binding("revision"),
                 entries["layer/geometry"].binding("structure"),
                 entries["layer/geometry"].binding("revision"),
+                entries["layer/owner"].binding("revision"),
             ),
         ),
     )
@@ -7585,7 +7045,8 @@ def _rebuild_layer_curving_composition(value: object, /) -> Composition:
     values = {
         "layer/mesh": mesh,
         "layer/geometry": geometry,
-        "layer/result": result,
+        "layer/owner": (layers, control, policy),
+        "layer/evidence": evidence,
     }
     rebuilt_entries = tuple(
         CompositionEntry(
@@ -7787,12 +7248,19 @@ def _mapped_reference_map_bindings_for_archive(
 
 def _write_layer_curving_archive_case(
     directory: Path,
-    curving_result: LayerCurvingConstructionResult,
+    authored: tuple[
+        LayerCurvingConstructionResult,
+        BoundaryLayerMesh,
+        BoundaryLayerControl,
+        BoundaryLayerPolicy,
+    ],
     archive_name: str,
     boundary_id: str,
     /,
 ) -> None:
     from phydrax.meshing._layer_curving import LayerCurvingConstructionResult
+
+    curving_result, layers, control, policy = authored
 
     if type(curving_result) is not LayerCurvingConstructionResult:
         raise TypeError(
@@ -7801,42 +7269,12 @@ def _write_layer_curving_archive_case(
     mesh = curving_result.construction.mesh
     geometry = curving_result.candidate_geometry
     evidence = curving_result.source_evidence
-    contract = SpatialCoordinateContract.si()
     if not isinstance(geometry, CellGeometrySpec) or evidence is None:
         raise TypeError(
             "The layer-curving fixture must retain accepted geometry and source evidence."
         )
-    base_result = certify_cell_mesh(mesh, contract, geometry=geometry)
-    result = CellMeshingResult(
-        base_result.mesh,
-        base_result.geometry,
-        base_result.coordinate_contract,
-        base_result.audit,
-        base_result.quality,
-        base_result.compliance,
-        base_result.trace,
-        base_result.provider,
-        base_result.runtime,
-        base_result.derivative_mode,
-        base_result.provenance,
-        boundary=base_result.boundary,
-        patches=base_result.patches,
-        zones=base_result.zones,
-        labels=base_result.labels,
-        attributes=base_result.attributes,
-        associations=base_result.associations,
-        adapter_reports=base_result.adapter_reports,
-        surface_source=base_result.surface_source,
-        region_boundary_evidence=base_result.region_boundary_evidence,
-        planar_embedding=base_result.planar_embedding,
-        certification=base_result.certification,
-        layer_curving_evidence=evidence,
-    )
-    mesh = result.mesh
-    geometry = result.geometry
-    evidence = result.layer_curving_evidence
-    if evidence is None:
-        raise TypeError("The certified result lost its layer-curving source evidence.")
+    if layers.result_id != evidence.layer_result_id:
+        raise ValueError("Layer evidence does not bind the actual authored layer state.")
     mesh_entry = CompositionEntry(
         mesh,
         entry_id="layer/mesh",
@@ -7859,30 +7297,40 @@ def _write_layer_curving_archive_case(
             mesh_entry.binding("revision"),
         ),
     )
-    result_entry = CompositionEntry(
-        result,
-        entry_id="layer/result",
+    owner_entry = CompositionEntry(
+        (layers, control, policy),
+        entry_id="layer/owner",
+        role="model-state",
+        owner_id="phydrax.meshing",
+        structure_id=layers.mesh.topology_id,
+        revision_id=layers.result_id,
+        semantics_id="authored-boundary-layer-state",
+    )
+    evidence_entry = CompositionEntry(
+        evidence,
+        entry_id="layer/evidence",
         role="discretization",
         owner_id="phydrax.meshing",
         structure_id=mesh.topology_id,
-        revision_id=result.result_id,
-        semantics_id="layer-curving-result",
+        revision_id=evidence.evidence_id,
+        semantics_id="layer-curving-source-evidence",
         dependencies=(
             mesh_entry.binding("structure"),
             mesh_entry.binding("revision"),
             geometry_entry.binding("structure"),
             geometry_entry.binding("revision"),
+            owner_entry.binding("revision"),
         ),
     )
     composition = Composition(
-        (mesh_entry, geometry_entry, result_entry),
+        (mesh_entry, geometry_entry, owner_entry, evidence_entry),
         boundary_id=boundary_id,
     )
     path = directory / archive_name
     write_model_artifact(path, composition, limits=None)
     print(
         json.dumps(
-            _layer_curving_archive_state(composition, mesh, geometry, result, evidence),
+            _layer_curving_archive_state(composition, mesh, geometry, evidence),
             sort_keys=True,
         )
     )
@@ -7892,7 +7340,6 @@ def _layer_curving_archive_state(
     composition: Composition,
     mesh: CellMesh,
     geometry: CellGeometrySpec,
-    result: CellMeshingResult,
     evidence: LayerCurvingSourceEvidence,
     /,
 ) -> dict[str, object]:
@@ -7906,7 +7353,7 @@ def _layer_curving_archive_state(
     state = _json_payload(
         {
             "composition_id": composition.composition_id,
-            "cell_result_id": result.result_id,
+            "layer_owner_id": composition.value("layer/owner")[0].result_id,
             "mesh_id": mesh.mesh_id,
             "geometry_id": cell_geometry_id(geometry),
             "source_id": evidence.source_id,
@@ -8060,6 +7507,8 @@ def _layer_curving_archive_state(
 
 
 def _read_layer_curving_evidence(path: Path, expected: dict[str, object], /) -> None:
+    from phydrax.meshing._layer_curving_records import LayerCurvingSourceEvidence
+
     composition = read_model_artifact(
         path,
         expected_type=Composition,
@@ -8068,13 +7517,12 @@ def _read_layer_curving_evidence(path: Path, expected: dict[str, object], /) -> 
     )
     mesh = composition.value("layer/mesh")
     geometry = composition.value("layer/geometry")
-    result = composition.value("layer/result")
+    evidence = composition.value("layer/evidence")
     if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
         raise TypeError("Layer-curving cold restore lost its endpoint owners.")
-    if not isinstance(result, CellMeshingResult) or result.layer_curving_evidence is None:
-        raise TypeError("Layer-curving cold restore lost its accepted result evidence.")
-    evidence = result.layer_curving_evidence
-    state = _layer_curving_archive_state(composition, mesh, geometry, result, evidence)
+    if not isinstance(evidence, LayerCurvingSourceEvidence):
+        raise TypeError("Layer-curving cold restore lost its standalone source evidence.")
+    state = _layer_curving_archive_state(composition, mesh, geometry, evidence)
     if state != expected:
         changed = sorted(
             name
@@ -8733,6 +8181,7 @@ def _piecewise_boundary_query_fixture() -> tuple[
         spacing=0.4,
         certificate_spacing=0.4,
         maximum_deviation=3.0,
+        envelope_mode="remeshed",
     )
     queries = tuple(
         PiecewiseLinearBoundarySource(source, dimension) for dimension in (2, 1, 0)

@@ -864,6 +864,7 @@ def migrate_periodic_simplex_forest(
     /,
     *,
     axis_name: str = "periodic_live_families",
+    validate_replicas: bool = False,
 ) -> PeriodicSimplexForest:
     """Route live families only to owners of their current leaves.
 
@@ -872,6 +873,11 @@ def migrate_periodic_simplex_forest(
     Subsequent reunification uses the same route and drops obsolete replicas.
     All payload traffic is neighbor-local; collectives contain only directories,
     message counts, and scalar cursor maxima.
+
+    When validating an existing placement, retain its recorded ownership and
+    exchange every replica rather than only the issuer's copy. Vertex owners
+    in a newly adapted forest can reflect source ownership, whereas migration
+    assigns minimum incident leaf ownership; those are distinct contracts.
     """
     from ._distribution import (
         _owner_exchange_message_banks,
@@ -901,6 +907,18 @@ def migrate_periodic_simplex_forest(
         require_exact_coverage=False,
         allow_duplicate_queries=True,
     )
+    if validate_replicas:
+        _owner_group_fail_if_any(
+            None
+            if np.array_equal(
+                new_active_owners,
+                np.asarray(records.cell_owner_ranks, dtype=np.int32)[active],
+            )
+            else "Live family leaf ownership differs from the current directory.",
+            execution_group,
+            f"{axis_name}_current_leaf_owners",
+            "live periodic family ownership",
+        )
     row_by_id = {int(identifier): row for row, identifier in enumerate(ids)}
     roots: dict[int, int] = {}
     for identifier in ids:
@@ -935,12 +953,16 @@ def migrate_periodic_simplex_forest(
         ],
         dtype=np.int64,
     ).reshape((-1, 2))
-    new_vertex_owners = _owner_group_minimum_owner_ranks(
-        vertex_ids, incidence, rank, execution_group, f"{axis_name}_vertex_owners"
-    )
+    if validate_replicas:
+        new_cell_owners = old_owners
+        new_vertex_owners = np.asarray(records.vertex_owner_ranks, dtype=np.int32)
+    else:
+        new_vertex_owners = _owner_group_minimum_owner_ranks(
+            vertex_ids, incidence, rank, execution_group, f"{axis_name}_vertex_owners"
+        )
     selected_by_owner: list[set[int]] = [set() for _ in range(parts)]
     for root, owners in destinations.items():
-        if issuers[root] == rank:
+        if validate_replicas or issuers[root] == rank:
             for owner in owners:
                 selected_by_owner[owner].add(root)
 

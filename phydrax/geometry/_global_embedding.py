@@ -7,19 +7,21 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import cache
 from itertools import chain, combinations, product
 from math import gcd, isfinite, lcm
-from typing import cast, Literal
+from typing import cast, Literal, NoReturn, SupportsIndex
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
+from .._exact_kernels import separation_screen, SeparationDecision
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._meshcore import meshcore_available
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import (
@@ -43,8 +45,10 @@ from ..discretization._coordinate_enclosure import (
     bernstein_coefficients,
     bernstein_degree,
     BernsteinDomain,
+    coefficient_endpoint,
     compose_expression,
     constant,
+    derivative,
     evaluate_expression,
     ExactScalar as CoordinateExactScalar,
     Expression,
@@ -73,6 +77,7 @@ from ._boundary_degree_embedding import (
 )
 from ._embedding_cells import (
     _cell_expressions,
+    _iter_embedding_cells,
     EmbeddingCell,
     prepare_embedding_cells,
     UnsupportedEmbeddingMap,
@@ -90,11 +95,14 @@ from ._embedding_state import (
 from ._exact_polyhedral_geometry import (
     _cross3,
     _dot3,
+    _segment_plane_points,
     _sub3,
+    contact_is_declared,
     determinant3,
     outward_tetrahedron_enclosures,
     Point2,
     Point3,
+    point_in_tetrahedron,
     point_in_triangle3,
     point_on_segment2,
     point_on_segment3,
@@ -127,7 +135,11 @@ from ._reference_chain_embedding import (
     certify_reference_chain_embedding,
     ReferenceChainEmbeddingCertificate,
 )
-from ._restricted_embedding import _trace_arguments, restriction_trace_equal
+from ._restricted_embedding import (
+    _affine_arguments,
+    _trace_arguments,
+    restriction_trace_equal,
+)
 from ._separating_normals import (
     admit_all,
     CellShadow,
@@ -139,6 +151,9 @@ from ._separating_normals import (
     unique_projective_normals,
 )
 from ._stratum_subdivision import (
+    _control_indices,
+    _controls,
+    _reference_slots,
     glued_face_monotone,
     glued_facet_monotone,
     StratumSubdivisionCache,
@@ -418,6 +433,58 @@ def _convex_planar_face_union(
     return True
 
 
+def _shared_edge_chain(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    common: frozenset[int],
+    points_by_id: dict[int, tuple[ExactScalar, ...]],
+    /,
+) -> tuple[int, int] | None:
+    """Prove that shared polyhedral edges tile one straight, connected segment."""
+    if first.kind != "polyhedron" or second.kind != "polyhedron":
+        return None
+    edges = tuple(
+        edge
+        for edge in set(_local_strata(first)).intersection(_local_strata(second))
+        if len(edge) == 2 and edge <= common
+    )
+    if not edges or frozenset(chain.from_iterable(edges)) != common:
+        return None
+    origin = points_by_id[min(common)]
+    axis = next(
+        (
+            dimension
+            for dimension in range(len(origin))
+            if any(
+                points_by_id[identifier][dimension] != origin[dimension]
+                for identifier in common
+            )
+        ),
+        None,
+    )
+    if axis is None:
+        return None
+    ordered = sorted(
+        tuple(sorted((points_by_id[identifier][axis], identifier) for identifier in edge))
+        for edge in edges
+    )
+    if any(edge[0][0] >= edge[1][0] for edge in ordered):
+        return None
+    # Geometric coincidence does not join distinct declared vertex identities.
+    if any(
+        first_edge[1][1] != second_edge[0][1]
+        for first_edge, second_edge in zip(ordered, ordered[1:])
+    ):
+        return None
+    endpoints = ordered[0][0][1], ordered[-1][1][1]
+    if not all(
+        _point_in_declared_stratum(points_by_id[identifier], endpoints, points_by_id)
+        for identifier in common
+    ):
+        return None
+    return endpoints
+
+
 def _contact_is_declared(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -436,16 +503,18 @@ def _contact_is_declared(
     if any(identifier not in point_by_id for identifier in shared):
         return False
     if common not in _local_strata(first) or common not in _local_strata(second):
-        # Restricted-power polyhedra may share one convex interface split into
-        # several coplanar faces; it is declared only as their exact union.
-        faces = _shared_face_union(first, second, common)
-        if faces is None:
-            return False
-        convex = _convex_planar_face_union(faces, point_by_id)
-        if convex is not True:
-            # Convex hull membership would overstate a nonconvex or nonplanar
-            # union, so the contact stays undecided rather than accepted.
-            return None
+        edge_chain = _shared_edge_chain(first, second, common, point_by_id)
+        if edge_chain is not None:
+            shared = edge_chain
+        else:
+            # Split interfaces are declared only through their complete convex
+            # face union, never the hull of disconnected shared vertices.
+            faces = _shared_face_union(first, second, common)
+            if faces is None:
+                return False
+            convex = _convex_planar_face_union(faces, point_by_id)
+            if convex is not True:
+                return None
     try:
         return all(
             _point_in_declared_stratum(point, shared, point_by_id) for point in points
@@ -1136,7 +1205,11 @@ def _affine_chart_cell(
 
 
 def _planar_faced_chart_cell(
-    cell: EmbeddingCell, arguments: tuple[Expression, ...], /
+    cell: EmbeddingCell,
+    arguments: tuple[Expression, ...],
+    /,
+    *,
+    physical_map_injective: bool = False,
 ) -> EmbeddingCell | None:
     """Represent a non-affine restriction chart by its exact planar-faced image.
 
@@ -1159,6 +1232,10 @@ def _planar_faced_chart_cell(
             tuple(evaluate_expression(expression, point) for expression in arguments)
             for point in cell.reference_vertices
         )
+        # This inexpensive exact rejection does not replace the whole-map
+        # injectivity and face-trace image proofs below.
+        for face in cell.facet_routes:
+            _face_plane(tuple(_point3(corners[index]) for index in face))
         bounds = tuple(
             polynomial_bounds(
                 expression, cast(BernsteinDomain, cell.domain), cell.dimension
@@ -1183,7 +1260,9 @@ def _planar_faced_chart_cell(
             tuple(value[1] for value in bounds),
             cell.facet_routes,
         )
-        if prove_mapped_cell_injective(chart) is None:
+        if not (physical_map_injective and arguments is cell.coordinates) and (
+            prove_mapped_cell_injective(chart) is None
+        ):
             return None
         for face in cell.facet_routes:
             if (
@@ -1947,11 +2026,12 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
 
 def _cell_map_findings(
     cells: tuple[EmbeddingCell, ...], /, *, binding: MeshCertificateBinding
-) -> tuple[list[MeshCertificateFinding], list[MeshEmbeddingWitness]]:
+) -> tuple[list[MeshCertificateFinding], list[MeshEmbeddingWitness], set[int]]:
     findings: list[MeshCertificateFinding] = []
     witnesses: list[MeshEmbeddingWitness] = []
     expressions: list[str] = []
-    for cell in cells:
+    injective_cells: set[int] = set()
+    for index, cell in enumerate(cells):
         if cell.affine or not cell.coordinates:
             continue
         try:
@@ -1972,6 +2052,7 @@ def _cell_map_findings(
                 )
             )
         else:
+            injective_cells.add(index)
             projection_matrix = tuple(
                 tuple(_coordinate_coefficient_identity(value) for value in row)
                 for row in witness.projection_matrix
@@ -1999,7 +2080,7 @@ def _cell_map_findings(
                 tuple(expressions),
             )
         )
-    return findings, witnesses
+    return findings, witnesses, injective_cells
 
 
 def _same_root_map(first: _RootChart, second: _RootChart, /) -> bool:
@@ -2056,6 +2137,47 @@ def _root_contact_is_declared(
     return all(point == first_point for point in points)
 
 
+def _cartesian_chart_contact(
+    first: EmbeddingCell, second: EmbeddingCell, /
+) -> Literal["declared", "outside", "unresolved"] | None:
+    """Decide contact of two exact affine Cartesian hexahedral chart images."""
+    boxes = []
+    for cell in (first, second):
+        if (
+            cell.kind != "hexahedron"
+            or cell.dimension != 3
+            or not cell.affine
+            or len(cell.corner_images) != 8
+            or any(len(point) != 3 for point in cell.corner_images)
+        ):
+            return None
+        axes_values = tuple(
+            tuple(sorted({point[axis] for point in cell.corner_images}))
+            for axis in range(3)
+        )
+        if any(len(values) != 2 for values in axes_values) or set(
+            cell.corner_images
+        ) != set(product(*axes_values)):
+            return None
+        boxes.append(axes_values)
+    first_by_id = dict(zip(first.vertex_ids, first.corner_images, strict=True))
+    second_by_id = dict(zip(second.vertex_ids, second.corner_images, strict=True))
+    if any(
+        first_by_id[key] != second_by_id[key]
+        for key in first_by_id.keys() & second_by_id.keys()
+    ):
+        return None
+    limits = tuple(
+        (max(left[0], right[0]), min(left[1], right[1]))
+        for left, right in zip(boxes[0], boxes[1], strict=True)
+    )
+    if any(lower > upper for lower, upper in limits):
+        return "declared"
+    corners = tuple(product(*(tuple(dict.fromkeys(pair)) for pair in limits)))
+    declared = _root_contact_is_declared(first, second, corners)
+    return "unresolved" if declared is None else "declared" if declared else "outside"
+
+
 def _root_chart_contact(
     first: _RootChart, second: _RootChart, /
 ) -> Literal["declared", "outside", "unresolved"] | None:
@@ -2072,6 +2194,9 @@ def _root_chart_contact(
         second.coordinates
     ):
         return None
+    box_contact = _cartesian_chart_contact(first_cell, second_cell)
+    if box_contact is not None:
+        return box_contact
     try:
         first_pieces = _cell_simplices(first_cell)
         second_pieces = _cell_simplices(second_cell)
@@ -2214,8 +2339,18 @@ def _adjacent_root_contact(
         try:
             separated = (
                 _shared_curved_facet_separation(
-                    replace(first.reference_cell, vertex_ids=first.source_vertex_ids),
-                    replace(second.reference_cell, vertex_ids=second.source_vertex_ids),
+                    replace(
+                        first.reference_cell,
+                        vertex_ids=first.source_vertex_ids,
+                        owning_mesh_id=None,
+                        owning_geometry_id=None,
+                    ),
+                    replace(
+                        second.reference_cell,
+                        vertex_ids=second.source_vertex_ids,
+                        owning_mesh_id=None,
+                        owning_geometry_id=None,
+                    ),
                     shared_roots,
                 )
                 is not None
@@ -2271,6 +2406,89 @@ def _projected_expression(
         linear_combinations(cell.coordinates, (normal,))[0],
         constant(offset, cell.dimension),
     )
+
+
+def _bilinear_quad_triangle_contact_is_declared(
+    quad_points: np.ndarray,
+    quad_ids: np.ndarray,
+    triangle_points: np.ndarray,
+    triangle_ids: np.ndarray,
+    /,
+    *,
+    sliding_side: bool = False,
+) -> bool:
+    """Prove a bilinear face meets a wall plane only in an allowed stratum.
+
+    Its signed plane distance is bilinear, with the four corner distances as
+    Bernstein controls.  A one-sided patch can touch the plane only in the
+    convex hull of its zero controls.  Exact intersection of that hull with
+    the triangle is an overapproximation, never a triangulation of the patch.
+    When those planes do not separate, the entire bilinear image is contained
+    in the tetrahedral convex hull of its controls.  For noncoplanar controls,
+    intersect that hull exactly with the triangle and accept only if every
+    vertex of the intersection lies in the declared shared stratum.
+    """
+    quad = tuple(
+        _point3(tuple(Fraction(float(value)) for value in row)) for row in quad_points
+    )
+    triangle_rows = tuple(
+        _point3(tuple(Fraction(float(value)) for value in row)) for row in triangle_points
+    )
+    if len(quad) != 4 or len(triangle_rows) != 3:
+        raise ValueError("Bilinear contact needs a quad and a triangle.")
+    triangle = (triangle_rows[0], triangle_rows[1], triangle_rows[2])
+    normal = _cross3(_sub3(triangle[1], triangle[0]), _sub3(triangle[2], triangle[0]))
+    if not any(normal):
+        return False
+    wall_signs = tuple(_sign(_dot3(normal, _sub3(point, triangle[0]))) for point in quad)
+    candidates = []
+    if not (
+        any(sign > 0 for sign in wall_signs) and any(sign < 0 for sign in wall_signs)
+    ):
+        if sliding_side:
+            return True
+        candidates.append(wall_signs)
+    for first, second, opposite in ((0, 1, 2), (1, 2, 0), (2, 0, 1)):
+        edge_normal = _cross3(normal, _sub3(triangle[second], triangle[first]))
+        inside = _sign(_dot3(edge_normal, _sub3(triangle[opposite], triangle[first])))
+        if not inside:
+            continue
+        signs = tuple(
+            _sign(_dot3(edge_normal, _sub3(point, triangle[first]))) for point in quad
+        )
+        if all(sign * inside <= 0 for sign in signs):
+            candidates.append(signs)
+    quad_keys = tuple(map(int, quad_ids))
+    triangle_keys = tuple(map(int, triangle_ids))
+    points_by_id = dict(zip(quad_keys, quad, strict=True))
+    for signs in candidates:
+        zero = tuple(point for point, sign in zip(quad, signs, strict=True) if sign == 0)
+        if not zero:
+            return True
+        contacts: set[Point3] = {
+            point for point in zero if point_in_triangle3(point, triangle)
+        }
+        for first, second in combinations(zero, 2):
+            contacts.update(_segment_plane_points(first, second, triangle))
+        for triple in combinations(zero, 3):
+            if any(_cross3(_sub3(triple[1], triple[0]), _sub3(triple[2], triple[0]))):
+                contacts.update(triangle_contact_points3(triple, triangle))
+        if sliding_side or contact_is_declared(
+            tuple(contacts), quad_keys, triangle_keys, points_by_id
+        ):
+            return True
+    if determinant3(*quad):
+        # A triangle/tetrahedron intersection is a convex polygon (possibly
+        # empty or degenerate). Its vertices are triangle vertices in the
+        # tetrahedron or intersections with tetrahedral faces. The existing
+        # exact simplex predicates enumerate both, including coplanar edges.
+        contacts = {point for point in triangle if point_in_tetrahedron(point, quad)}
+        for route in ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)):
+            face = (quad[route[0]], quad[route[1]], quad[route[2]])
+            contacts.update(triangle_contact_points3(face, triangle))
+        if contact_is_declared(tuple(contacts), quad_keys, triangle_keys, points_by_id):
+            return True
+    return False
 
 
 def _strict_image_separation(
@@ -3800,7 +4018,10 @@ def _shared_edge_separation(
         tuple(expression.get((degree,), Fraction(0)) for expression in curve_polynomials)
         for degree in range(1, curve_degree + 1)
     )
-    trace_normals: list[tuple[ExactScalar, ...]] = []
+    # Two independent polynomial coefficients determine the only plane that
+    # can contain the complete edge trace.  Do not enumerate cell candidates
+    # in that case: each admissible normal must be parallel to this one.
+    trace_normal = None
     for left, right in combinations(curve_directions, 2):
         normal = (
             left[1] * right[2] - left[2] * right[1],
@@ -3808,15 +4029,26 @@ def _shared_edge_separation(
             left[0] * right[1] - left[1] * right[0],
         )
         if any(_sign(value) for value in normal):
-            trace_normals.append(normal)
-    # Candidates that cannot contain the shared edge direction are screened.
-    seen: set[tuple[ExactScalar, ...]] = set()
-    normals = chain(
-        screened_candidate_planes(
-            first, second, shadows, orthogonal_screen((edge_direction,)), seen
-        ),
-        unique_projective_normals(trace_normals, seen),
-    )
+            trace_normal = normal
+            break
+    if trace_normal is not None:
+        if any(
+            _sign(
+                sum(
+                    (trace_normal[axis] * direction[axis] for axis in range(3)),
+                    Fraction(0),
+                )
+            )
+            for direction in curve_directions
+        ):
+            return None
+        normals = unique_projective_normals((trace_normal,))
+    else:
+        # A straight edge leaves a family of planes; screen the candidates
+        # against its exact direction before attempting full-polynomial proofs.
+        normals = screened_candidate_planes(
+            first, second, shadows, orthogonal_screen((edge_direction,))
+        )
     # Normals only propose a plane; exact traces and full-polynomial signs prove it.
     for normal in normals:
         if (
@@ -3877,8 +4109,51 @@ def _physical_linear_form(
     }
 
 
+def _line_image_residuals(
+    origin: tuple[CoordinateExactScalar, ...],
+    direction: tuple[CoordinateExactScalar, ...],
+    /,
+) -> (
+    tuple[
+        dict[tuple[int, ...], CoordinateExactScalar],
+        dict[tuple[int, ...], CoordinateExactScalar],
+    ]
+    | None
+):
+    """Two independent exact planes through a nonconstant spatial line."""
+    axis = min(range(3), key=lambda index: abs(float(direction[index])))
+    unit = tuple(Fraction(int(index == axis)) for index in range(3))
+    first_normal = (
+        direction[1] * unit[2] - direction[2] * unit[1],
+        direction[2] * unit[0] - direction[0] * unit[2],
+        direction[0] * unit[1] - direction[1] * unit[0],
+    )
+    second_normal = (
+        direction[1] * first_normal[2] - direction[2] * first_normal[1],
+        direction[2] * first_normal[0] - direction[0] * first_normal[2],
+        direction[0] * first_normal[1] - direction[1] * first_normal[0],
+    )
+    residuals: list[dict[tuple[int, ...], CoordinateExactScalar]] = []
+    for normal in (first_normal, second_normal):
+        if not any(_sign(value) for value in normal):
+            return None
+        residuals.append(
+            subtract(
+                _physical_linear_form(normal),
+                constant(
+                    sum(
+                        (normal[index] * origin[index] for index in range(3)),
+                        Fraction(0),
+                    ),
+                    3,
+                ),
+            )
+        )
+    return residuals[0], residuals[1]
+
+
 def _quadratic_edge_residuals(
-    trace: tuple[Expression, ...], /
+    trace: tuple[Expression, ...], /, *, allow_line_image: bool = False
 ) -> (
     tuple[
         dict[tuple[int, ...], CoordinateExactScalar],
@@ -3937,7 +4212,12 @@ def _quadratic_edge_residuals(
         tangent[0] * curvature[1] - tangent[1] * curvature[0],
     )
     if not any(_sign(value) for value in normal):
-        return None
+        if not allow_line_image:
+            return None
+        # Collinear coefficients give a line image even when its parameter is
+        # genuinely quadratic. Keep that parameter; only the exact locus is used.
+        direction = tangent if any(_sign(value) for value in tangent) else curvature
+        return _line_image_residuals(offset, direction)
     curvature_squared = sum((value * value for value in curvature), Fraction(0))
     if not _sign(curvature_squared):
         return None
@@ -4478,7 +4758,11 @@ def _shared_vertex_findings(
 
 
 def _stratum_residuals(
-    cell: EmbeddingCell, shared_ids: tuple[int, ...], /
+    cell: EmbeddingCell,
+    shared_ids: tuple[int, ...],
+    /,
+    *,
+    allow_line_image: bool = False,
 ) -> tuple[Expression, ...] | None:
     """Physical polynomials vanishing on the exact image of a shared stratum.
 
@@ -4486,6 +4770,8 @@ def _stratum_residuals(
     through it, and a quadratic edge its plane and in-plane conic residual. Each
     zero set contains the stratum image; ``None`` when no exact residual is
     available (faces are proved by `glued_face_monotone`).
+    Quadratic line images are optional for the late contact fallback, preserving
+    already completed proof routes and their exact witnesses.
     """
     if not shared_ids:
         return ()
@@ -4524,44 +4810,22 @@ def _stratum_residuals(
             default=0,
         )
         if degree == 2:
-            return _quadratic_edge_residuals(trace)
+            return _quadratic_edge_residuals(trace, allow_line_image=allow_line_image)
         if degree != 1:
             return None
         origin = tuple(
-            cast(dict, expression).get((0,), Fraction(0)) for expression in trace
+            cast(dict[tuple[int, ...], CoordinateExactScalar], expression).get(
+                (0,), Fraction(0)
+            )
+            for expression in trace
         )
         direction = tuple(
-            cast(dict, expression).get((1,), Fraction(0)) for expression in trace
-        )
-        axis = min(range(3), key=lambda index: abs(float(direction[index])))
-        unit = tuple(Fraction(int(index == axis)) for index in range(3))
-        first_normal = (
-            direction[1] * unit[2] - direction[2] * unit[1],
-            direction[2] * unit[0] - direction[0] * unit[2],
-            direction[0] * unit[1] - direction[1] * unit[0],
-        )
-        second_normal = (
-            direction[1] * first_normal[2] - direction[2] * first_normal[1],
-            direction[2] * first_normal[0] - direction[0] * first_normal[2],
-            direction[0] * first_normal[1] - direction[1] * first_normal[0],
-        )
-        residuals: list[Expression] = []
-        for normal in (first_normal, second_normal):
-            if not any(_sign(value) for value in normal):
-                return None
-            residuals.append(
-                subtract(
-                    _physical_linear_form(normal),
-                    constant(
-                        sum(
-                            (normal[index] * origin[index] for index in range(3)),
-                            Fraction(0),
-                        ),
-                        3,
-                    ),
-                )
+            cast(dict[tuple[int, ...], CoordinateExactScalar], expression).get(
+                (1,), Fraction(0)
             )
-        return tuple(residuals)
+            for expression in trace
+        )
+        return _line_image_residuals(origin, direction)
     return None
 
 
@@ -4600,10 +4864,722 @@ def _straight_planar_polygon(
                 return None
         if prove_mapped_cell_injective(cell) is None:
             return None
-        polygon = replace(cell, coordinate_expressions=())
+        polygon = replace(
+            cell,
+            coordinate_expressions=(),
+            owning_mesh_id=None,
+            owning_geometry_id=None,
+        )
         return polygon, _cell_simplices(polygon)
     except (TypeError, ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
         return None
+
+
+def _prism_shared_facet_boundary_separation(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    shared_ids: tuple[int, ...],
+    /,
+    *,
+    first_injective: bool,
+    second_injective: bool,
+) -> tuple[int, int] | None:
+    """Exclude contact outside a matched prism facet by its complete boundary.
+
+    The caller has independently proved both closed cell maps injective. Their
+    common facet must agree exactly, their inward derivatives must be on
+    opposite sides, and every pair of nonshared boundary triangles must meet
+    only in a declared part of the common facet. The two embedded balls then
+    have disjoint interiors and meet only in that facet. Quadrilateral boundary
+    maps are restricted to reference triangles, not replaced by planar faces.
+    """
+    if (
+        not first_injective
+        or not second_injective
+        or len(shared_ids) != 4
+        or any(
+            cell.kind != "prism"
+            or cell.dimension != 3
+            or len(cell.coordinates) != 3
+            or len(set(cell.vertex_ids)) != 6
+            or any(not isinstance(expression, dict) for expression in cell.coordinates)
+            for cell in (first, second)
+        )
+    ):
+        return None
+    canonical_faces = {
+        frozenset(int(index) for index in route): tuple(int(index) for index in route)
+        for route in reference_cell_topology("prism").entities[2]
+    }
+    for cell in (first, second):
+        if (
+            cell.reference_vertices != _exact_reference_vertices("prism")
+            or len(cell.facet_routes) != len(canonical_faces)
+            or {frozenset(face) for face in cell.facet_routes} != set(canonical_faces)
+        ):
+            return None
+        for face in cell.facet_routes:
+            canonical = canonical_faces[frozenset(face)]
+            if not any(
+                face
+                == tuple(
+                    canonical[(start + direction * step) % len(face)]
+                    for step in range(len(face))
+                )
+                for start in range(len(face))
+                for direction in (1, -1)
+            ):
+                return None
+    shared = set(shared_ids)
+    if restriction_trace_equal(first, second, shared_ids) is not True:
+        return None
+    faces = tuple(
+        next(
+            (
+                face
+                for face in cell.facet_routes
+                if {cell.vertex_ids[index] for index in face} == shared and len(face) == 4
+            ),
+            None,
+        )
+        for cell in (first, second)
+    )
+    if any(face is None for face in faces):
+        return None
+    first_face = cast(tuple[int, ...], faces[0])
+    ordered = tuple(first.vertex_ids[index] for index in first_face)
+    try:
+        arguments = _trace_arguments(first, ordered)
+        if arguments is None:
+            return None
+        trace = tuple(
+            compose_expression(expression, arguments) for expression in first.coordinates
+        )
+        if any(not isinstance(expression, dict) for expression in trace):
+            return None
+        center2 = (Fraction(1, 2), Fraction(1, 2))
+        tangents = tuple(
+            tuple(
+                evaluate_expression(derivative(expression, axis), center2)
+                for expression in trace
+            )
+            for axis in range(2)
+        )
+        normal = _cross3(_point3(tangents[0]), _point3(tangents[1]))
+        if not any(_sign(value) for value in normal):
+            return None
+        sides: list[int] = []
+        for cell in (first, second):
+            face_points = [
+                point
+                for identifier, point in zip(
+                    cell.vertex_ids, cell.reference_vertices, strict=True
+                )
+                if identifier in shared
+            ]
+            other_points = [
+                point
+                for identifier, point in zip(
+                    cell.vertex_ids, cell.reference_vertices, strict=True
+                )
+                if identifier not in shared
+            ]
+            if len(face_points) != 4 or len(other_points) != 2:
+                return None
+            center = tuple(
+                sum((point[axis] for point in face_points), Fraction(0)) / 4
+                for axis in range(3)
+            )
+            inside = tuple(
+                sum((point[axis] for point in other_points), Fraction(0)) / 2
+                for axis in range(3)
+            )
+            direction = tuple(inside[axis] - center[axis] for axis in range(3))
+            physical_direction = tuple(
+                sum(
+                    (
+                        evaluate_expression(derivative(expression, axis), center)
+                        * direction[axis]
+                        for axis in range(3)
+                    ),
+                    Fraction(0),
+                )
+                for expression in cell.coordinates
+            )
+            sides.append(_sign(_dot3(normal, _point3(physical_direction))))
+        if not sides[0] or sides[0] != -sides[1]:
+            return None
+
+        references = (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0)),
+            (Fraction(0), Fraction(1)),
+        )
+
+        def boundary_triangles(
+            cell: EmbeddingCell, side: int
+        ) -> tuple[EmbeddingCell, ...] | None:
+            result: list[EmbeddingCell] = []
+            for face in cell.facet_routes:
+                if {cell.vertex_ids[index] for index in face} == shared:
+                    continue
+                if len(face) not in (3, 4):
+                    return None
+                triangles = ((0, 1, 2),) if len(face) == 3 else ((0, 1, 2), (0, 2, 3))
+                for triangle in triangles:
+                    local = tuple(face[index] for index in triangle)
+                    identifiers = tuple(cell.vertex_ids[index] for index in local)
+                    lifted = _affine_arguments(
+                        tuple(cell.reference_vertices[index] for index in local)
+                    )
+                    coordinates = tuple(
+                        compose_expression(expression, lifted)
+                        for expression in cell.coordinates
+                    )
+                    if any(
+                        not isinstance(expression, dict) for expression in coordinates
+                    ):
+                        return None
+                    corners = tuple(
+                        tuple(
+                            evaluate_expression(expression, point)
+                            for expression in coordinates
+                        )
+                        for point in references
+                    )
+                    bounds = tuple(
+                        polynomial_bounds(expression, "simplex", 2)
+                        for expression in coordinates
+                    )
+                    result.append(
+                        EmbeddingCell(
+                            side * 100 + len(result),
+                            "prism-boundary",
+                            len(result),
+                            "triangle",
+                            2,
+                            "simplex",
+                            (0, 1, 2),
+                            identifiers,
+                            references,
+                            coordinates,
+                            corners,
+                            None,
+                            None,
+                            tuple(bound[0] for bound in bounds),
+                            tuple(bound[1] for bound in bounds),
+                            ((0, 1), (1, 2), (2, 0)),
+                        )
+                    )
+            return tuple(result) if len(result) == 6 else None
+
+        first_boundary = boundary_triangles(first, 0)
+        second_boundary = boundary_triangles(second, 1)
+        if first_boundary is None or second_boundary is None:
+            return None
+        cones = hulls = 0
+        for left in first_boundary:
+            for right in second_boundary:
+                common = tuple(sorted(set(left.vertex_ids) & set(right.vertex_ids)))
+                if not set(common) <= shared or len(common) > 2:
+                    return None
+                if restriction_trace_equal(left, right, common) is not True:
+                    return None
+                residuals = _stratum_residuals(left, common)
+                if residuals is None:
+                    return None
+                separated = subdivided_stratum_separation(
+                    left, right, common, residuals, StratumSubdivisionCache()
+                )
+                if separated is None:
+                    return None
+                cones += separated[0]
+                hulls += separated[1]
+        return cones, hulls
+    except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class _VertexConeFilter:
+    """Bounded outward Bernstein controls for whole mapped tetrahedra."""
+
+    lower: NDArray[np.float64]
+    upper: NDArray[np.float64]
+    corner_indices: NDArray[np.intp]
+    vertex_ids: NDArray[np.int64]
+    point_ids: NDArray[np.int64]
+    edge_indices: NDArray[np.intp]
+    edge_points: NDArray[np.int64]
+    straight_edges: NDArray[np.bool_]
+    valid: NDArray[np.bool_]
+
+    @classmethod
+    def prepare(cls, cells: tuple[EmbeddingCell, ...], /) -> _VertexConeFilter | None:
+        if not meshcore_available():
+            return None
+        count = len(cells)
+        lower = np.zeros((count, 10, 3), dtype=np.float64)
+        upper = np.zeros_like(lower)
+        corner_indices = np.zeros((count, 4), dtype=np.intp)
+        vertex_ids = np.zeros((count, 4), dtype=np.int64)
+        point_ids = np.zeros((count, 4), dtype=np.int64)
+        edge_indices = np.zeros((count, 4, 4), dtype=np.intp)
+        edge_points = np.zeros((count, 4, 4), dtype=np.int64)
+        straight_edges = np.zeros((count, 4, 4), dtype=np.bool_)
+        exact_points: dict[tuple[ExactScalar, ...], int] = {}
+        valid = np.zeros(count, dtype=np.bool_)
+        indices = _control_indices((4,), (2,))
+        for row, cell in enumerate(cells):
+            if (
+                cell.kind not in ("tetrahedron", "simplex:3")
+                or cell.dimension != 3
+                or len(cell.coordinates) != 3
+                or len(cell.vertex_ids) != 4
+                or len(cell.corner_images) != 4
+                or len(set(cell.vertex_ids)) != 4
+                or any(
+                    not isinstance(expression, dict) for expression in cell.coordinates
+                )
+            ):
+                continue
+            layout = _reference_slots(cell)
+            if layout is None or layout[0] != (4,):
+                continue
+            try:
+                if any(
+                    bernstein_degree(expression, "simplex", 3)[0] > 2
+                    for expression in cell.coordinates
+                    if isinstance(expression, dict)
+                ):
+                    continue
+                controls = _controls(cell.coordinates, (4,), (2,), 3)
+                if controls is None:
+                    continue
+                corners = tuple(
+                    indices.index(tuple(2 * int(slot == corner[0]) for slot in range(4)))
+                    for corner in layout[1]
+                )
+                if any(
+                    controls[indices[slot]] != cell.corner_images[index]
+                    for index, slot in enumerate(corners)
+                ):
+                    continue
+                lo = np.asarray(
+                    [
+                        [
+                            coefficient_endpoint(value, upper=False)
+                            for value in controls[index]
+                        ]
+                        for index in indices
+                    ],
+                    dtype=np.float64,
+                )
+                hi = np.asarray(
+                    [
+                        [
+                            coefficient_endpoint(value, upper=True)
+                            for value in controls[index]
+                        ]
+                        for index in indices
+                    ],
+                    dtype=np.float64,
+                )
+                if not np.all(np.isfinite(lo)) or not np.all(np.isfinite(hi)):
+                    continue
+            except (ValueError, ZeroDivisionError, OverflowError):
+                continue
+            lower[row], upper[row] = lo, hi
+            corner_indices[row] = corners
+            vertex_ids[row] = cell.vertex_ids
+            for index, point in enumerate(cell.corner_images):
+                point_ids[row, index] = exact_points.setdefault(point, len(exact_points))
+            for first in range(4):
+                for second in range(first + 1, 4):
+                    slots = (layout[1][first][0], layout[1][second][0])
+                    middle = indices.index(tuple(int(slot in slots) for slot in range(4)))
+                    point = controls[indices[middle]]
+                    edge_indices[row, first, second] = middle
+                    edge_indices[row, second, first] = middle
+                    point_id = exact_points.setdefault(point, len(exact_points))
+                    edge_points[row, first, second] = point_id
+                    edge_points[row, second, first] = point_id
+                    if all(
+                        2 * value == left + right
+                        for value, left, right in zip(
+                            point,
+                            cell.corner_images[first],
+                            cell.corner_images[second],
+                            strict=True,
+                        )
+                    ):
+                        straight_edges[row, first, second] = True
+                        straight_edges[row, second, first] = True
+            valid[row] = True
+        return cls(
+            lower,
+            upper,
+            corner_indices,
+            vertex_ids,
+            point_ids,
+            edge_indices,
+            edge_points,
+            straight_edges,
+            valid,
+        )
+
+    def matching_corners(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Exact vertex trace equality and no undeclared coincident corners."""
+        return np.all(
+            (self.vertex_ids[first, :, None] == self.vertex_ids[second, None, :])
+            == (self.point_ids[first, :, None] == self.point_ids[second, None, :]),
+            axis=(1, 2),
+        )
+
+    def certify(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Prove opposite strict control cones for one-shared-vertex pairs."""
+        result = np.zeros(first.shape, dtype=np.bool_)
+        matches = self.vertex_ids[first, :, None] == self.vertex_ids[second, None, :]
+        selected = np.flatnonzero(
+            self.valid[first] & self.valid[second] & (matches.sum(axis=(1, 2)) == 1)
+        )
+        if not selected.size:
+            return result
+        left, right = first[selected], second[selected]
+        flat = matches[selected].reshape(-1, 16).argmax(axis=1)
+        left_corner = self.corner_indices[left, flat // 4]
+        right_corner = self.corner_indices[right, flat % 4]
+        all_indices = np.broadcast_to(np.arange(10), (selected.size, 10))
+        left_other = all_indices[all_indices != left_corner[:, None]].reshape(-1, 9)
+        right_other = all_indices[all_indices != right_corner[:, None]].reshape(-1, 9)
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            first_lo = np.nextafter(
+                self.lower[left[:, None], left_other]
+                - self.upper[left, left_corner][:, None, :],
+                -np.inf,
+            )
+            first_hi = np.nextafter(
+                self.upper[left[:, None], left_other]
+                - self.lower[left, left_corner][:, None, :],
+                np.inf,
+            )
+            second_lo = np.nextafter(
+                self.lower[right, right_corner][:, None, :]
+                - self.upper[right[:, None], right_other],
+                -np.inf,
+            )
+            second_hi = np.nextafter(
+                self.upper[right, right_corner][:, None, :]
+                - self.lower[right[:, None], right_other],
+                np.inf,
+            )
+            lo = np.concatenate((first_lo, second_lo), axis=1)
+            hi = np.concatenate((first_hi, second_hi), axis=1)
+            points = 0.5 * lo + 0.5 * hi
+            lengths = np.linalg.norm(points, axis=2)
+            normals = np.mean(points / lengths[:, :, None], axis=1)
+        usable = np.all(np.isfinite(normals), axis=1) & np.all(lengths > 0, axis=1)
+        usable &= np.all(np.isfinite(lo), axis=(1, 2)) & np.all(
+            np.isfinite(hi), axis=(1, 2)
+        )
+        positions = np.flatnonzero(usable)
+        if not positions.size:
+            return result
+        count = positions.size
+        decision = separation_screen(
+            lo[positions].reshape(-1, 3),
+            hi[positions].reshape(-1, 3),
+            np.arange(count + 1, dtype=np.int64) * 18,
+            np.zeros((count, 3), dtype=np.float64),
+            np.zeros((count, 3), dtype=np.float64),
+            np.arange(count + 1, dtype=np.int64),
+            normals[positions],
+        )
+        result[selected[positions]] = decision == SeparationDecision.SEPARATED
+        return result
+
+    def certify_straight_edges(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Prove opposite residual cones around an exactly matching straight edge."""
+        result = np.zeros(first.shape, dtype=np.bool_)
+        matches = self.vertex_ids[first, :, None] == self.vertex_ids[second, None, :]
+        selected = np.flatnonzero(
+            self.valid[first] & self.valid[second] & (matches.sum(axis=(1, 2)) == 2)
+        )
+        if not selected.size:
+            return result
+        left, right = first[selected], second[selected]
+        flat = np.argsort(~matches[selected].reshape(-1, 16), axis=1)[:, :2]
+        a, b = flat[:, 0] // 4, flat[:, 1] // 4
+        c, d = flat[:, 0] % 4, flat[:, 1] % 4
+        eligible = (
+            self.straight_edges[left, a, b]
+            & self.straight_edges[right, c, d]
+            & (self.edge_points[left, a, b] == self.edge_points[right, c, d])
+        )
+        positions = np.flatnonzero(eligible)
+        if not positions.size:
+            return result
+        left, right = left[positions], right[positions]
+        a, b, c, d = a[positions], b[positions], c[positions], d[positions]
+        left_a, left_b = self.corner_indices[left, a], self.corner_indices[left, b]
+        right_a, right_b = self.corner_indices[right, c], self.corner_indices[right, d]
+        left_mid = self.edge_indices[left, a, b]
+        right_mid = self.edge_indices[right, c, d]
+        indices = np.broadcast_to(np.arange(10), (positions.size, 10))
+        left_other = indices[
+            (indices != left_a[:, None])
+            & (indices != left_b[:, None])
+            & (indices != left_mid[:, None])
+        ].reshape(-1, 7)
+        right_other = indices[
+            (indices != right_a[:, None])
+            & (indices != right_b[:, None])
+            & (indices != right_mid[:, None])
+        ].reshape(-1, 7)
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            edge_lo = np.nextafter(
+                self.lower[left, left_b] - self.upper[left, left_a], -np.inf
+            )
+            edge_hi = np.nextafter(
+                self.upper[left, left_b] - self.lower[left, left_a], np.inf
+            )
+
+            def residual(
+                cell: NDArray[np.intp],
+                other: NDArray[np.intp],
+            ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+                delta_lo = np.nextafter(
+                    self.lower[cell[:, None], other] - self.upper[left, left_a][:, None],
+                    -np.inf,
+                )
+                delta_hi = np.nextafter(
+                    self.upper[cell[:, None], other] - self.lower[left, left_a][:, None],
+                    np.inf,
+                )
+
+                def product(
+                    axis: int, component: int
+                ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+                    values = np.stack(
+                        (
+                            edge_lo[:, None, axis] * delta_lo[:, :, component],
+                            edge_lo[:, None, axis] * delta_hi[:, :, component],
+                            edge_hi[:, None, axis] * delta_lo[:, :, component],
+                            edge_hi[:, None, axis] * delta_hi[:, :, component],
+                        )
+                    )
+                    return (
+                        np.nextafter(np.min(values, axis=0), -np.inf),
+                        np.nextafter(np.max(values, axis=0), np.inf),
+                    )
+
+                lo, hi = [], []
+                for u, v in ((1, 2), (2, 0), (0, 1)):
+                    p_lo, p_hi = product(u, v)
+                    q_lo, q_hi = product(v, u)
+                    lo.append(np.nextafter(p_lo - q_hi, -np.inf))
+                    hi.append(np.nextafter(p_hi - q_lo, np.inf))
+                return np.stack(lo, axis=2), np.stack(hi, axis=2)
+
+            left_lo, left_hi = residual(left, left_other)
+            right_lo, right_hi = residual(right, right_other)
+            lo = np.concatenate((left_lo, -right_hi), axis=1)
+            hi = np.concatenate((left_hi, -right_lo), axis=1)
+            points = 0.5 * lo + 0.5 * hi
+            lengths = np.linalg.norm(points, axis=2)
+            rows = points / lengths[:, :, None]
+            normals = np.mean(rows, axis=1)
+            # Search directions only; failed guidance always falls back and
+            # the outward interval test below remains authoritative.
+            for _ in range(32):
+                products = np.einsum("nij,nj->ni", rows, normals)
+                worst = np.argmin(products, axis=1)
+                minimum = products[np.arange(len(worst)), worst]
+                active = minimum <= 0
+                if not np.any(active):
+                    break
+                step = rows[np.arange(len(worst)), worst] - normals
+                denominator = np.einsum("ni,ni->n", step, step)
+                numerator = -np.einsum("ni,ni->n", normals, step)
+                amount = np.divide(
+                    numerator,
+                    denominator,
+                    out=np.zeros_like(numerator),
+                    where=active & (denominator > 0),
+                )
+                normals += np.clip(amount, 0, 1)[:, None] * step
+        usable = np.all(np.isfinite(lo), axis=(1, 2)) & np.all(
+            np.isfinite(hi), axis=(1, 2)
+        )
+        usable &= np.all(np.isfinite(normals), axis=1) & np.all(lengths > 0, axis=1)
+        good = np.flatnonzero(usable)
+        if good.size:
+            count = good.size
+            decision = separation_screen(
+                lo[good].reshape(-1, 3),
+                hi[good].reshape(-1, 3),
+                np.arange(count + 1, dtype=np.int64) * 14,
+                np.zeros((count, 3), dtype=np.float64),
+                np.zeros((count, 3), dtype=np.float64),
+                np.arange(count + 1, dtype=np.int64),
+                normals[good],
+            )
+            result[selected[positions[good]]] = decision == SeparationDecision.SEPARATED
+        return result
+
+    def certify_curved_edges(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Prove opposite strict sides of the exact quadratic-edge plane."""
+        result = np.zeros(first.shape, dtype=np.bool_)
+        matches = self.vertex_ids[first, :, None] == self.vertex_ids[second, None, :]
+        selected = np.flatnonzero(
+            self.valid[first] & self.valid[second] & (matches.sum(axis=(1, 2)) == 2)
+        )
+        if not selected.size:
+            return result
+        left, right = first[selected], second[selected]
+        flat = np.argsort(~matches[selected].reshape(-1, 16), axis=1)[:, :2]
+        a, b = flat[:, 0] // 4, flat[:, 1] // 4
+        c, d = flat[:, 0] % 4, flat[:, 1] % 4
+        eligible = (
+            ~self.straight_edges[left, a, b]
+            & ~self.straight_edges[right, c, d]
+            & (self.edge_points[left, a, b] == self.edge_points[right, c, d])
+        )
+        positions = np.flatnonzero(eligible)
+        if not positions.size:
+            return result
+        left, right = left[positions], right[positions]
+        a, b, c, d = a[positions], b[positions], c[positions], d[positions]
+        left_a, left_b = self.corner_indices[left, a], self.corner_indices[left, b]
+        right_a, right_b = self.corner_indices[right, c], self.corner_indices[right, d]
+        left_mid, right_mid = (
+            self.edge_indices[left, a, b],
+            self.edge_indices[right, c, d],
+        )
+        indices = np.broadcast_to(np.arange(10), (positions.size, 10))
+        left_other = indices[
+            (indices != left_a[:, None])
+            & (indices != left_b[:, None])
+            & (indices != left_mid[:, None])
+        ].reshape(-1, 7)
+        right_other = indices[
+            (indices != right_a[:, None])
+            & (indices != right_b[:, None])
+            & (indices != right_mid[:, None])
+        ].reshape(-1, 7)
+
+        with np.errstate(over="ignore", invalid="ignore"):
+            origin_lo, origin_hi = self.lower[left, left_a], self.upper[left, left_a]
+
+            def difference(
+                cell: NDArray[np.intp], index: NDArray[np.intp]
+            ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+                return (
+                    np.nextafter(self.lower[cell, index] - origin_hi, -np.inf),
+                    np.nextafter(self.upper[cell, index] - origin_lo, np.inf),
+                )
+
+            def product(
+                a_lo: NDArray[np.float64],
+                a_hi: NDArray[np.float64],
+                b_lo: NDArray[np.float64],
+                b_hi: NDArray[np.float64],
+            ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+                values = np.stack((a_lo * b_lo, a_lo * b_hi, a_hi * b_lo, a_hi * b_hi))
+                return np.nextafter(values.min(axis=0), -np.inf), np.nextafter(
+                    values.max(axis=0), np.inf
+                )
+
+            edge_lo, edge_hi = difference(left, left_b)
+            mid_lo, mid_hi = difference(left, left_mid)
+            normal_lo, normal_hi = [], []
+            for u, v in ((1, 2), (2, 0), (0, 1)):
+                p_lo, p_hi = product(
+                    edge_lo[:, u], edge_hi[:, u], mid_lo[:, v], mid_hi[:, v]
+                )
+                q_lo, q_hi = product(
+                    edge_lo[:, v], edge_hi[:, v], mid_lo[:, u], mid_hi[:, u]
+                )
+                normal_lo.append(np.nextafter(p_lo - q_hi, -np.inf))
+                normal_hi.append(np.nextafter(p_hi - q_lo, np.inf))
+            normal_lo = np.stack(normal_lo, axis=1)
+            normal_hi = np.stack(normal_hi, axis=1)
+
+            def sides(
+                cell: NDArray[np.intp], other: NDArray[np.intp]
+            ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+                delta_lo = np.nextafter(
+                    self.lower[cell[:, None], other] - origin_hi[:, None], -np.inf
+                )
+                delta_hi = np.nextafter(
+                    self.upper[cell[:, None], other] - origin_lo[:, None], np.inf
+                )
+                terms_lo, terms_hi = product(
+                    normal_lo[:, None], normal_hi[:, None], delta_lo, delta_hi
+                )
+                lo = np.nextafter(terms_lo[:, :, 0] + terms_lo[:, :, 1], -np.inf)
+                hi = np.nextafter(terms_hi[:, :, 0] + terms_hi[:, :, 1], np.inf)
+                return (
+                    np.nextafter(lo + terms_lo[:, :, 2], -np.inf),
+                    np.nextafter(hi + terms_hi[:, :, 2], np.inf),
+                )
+
+            left_lo, left_hi = sides(left, left_other)
+            right_lo, right_hi = sides(right, right_other)
+        finite = np.all(np.isfinite(left_lo) & np.isfinite(left_hi), axis=1) & np.all(
+            np.isfinite(right_lo) & np.isfinite(right_hi), axis=1
+        )
+        separated = (np.all(left_lo > 0, axis=1) & np.all(right_hi < 0, axis=1)) | (
+            np.all(left_hi < 0, axis=1) & np.all(right_lo > 0, axis=1)
+        )
+        result[selected[positions]] = finite & separated
+        return result
+
+    def certify_disjoint(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Strictly separate complete Bernstein hulls of vertex-disjoint cells."""
+        result = np.zeros(first.shape, dtype=np.bool_)
+        matches = self.vertex_ids[first, :, None] == self.vertex_ids[second, None, :]
+        selected = np.flatnonzero(
+            self.valid[first] & self.valid[second] & ~np.any(matches, axis=(1, 2))
+        )
+        if not selected.size:
+            return result
+        left, right = first[selected], second[selected]
+        with np.errstate(over="ignore", invalid="ignore"):
+            first_center = np.mean(
+                0.5 * self.lower[left] + 0.5 * self.upper[left], axis=1
+            )
+            second_center = np.mean(
+                0.5 * self.lower[right] + 0.5 * self.upper[right], axis=1
+            )
+            normals = first_center - second_center
+        usable = np.all(np.isfinite(normals), axis=1) & np.any(normals != 0, axis=1)
+        positions = np.flatnonzero(usable)
+        if not positions.size:
+            return result
+        count = positions.size
+        offsets = np.arange(count + 1, dtype=np.int64) * 10
+        decision = separation_screen(
+            self.lower[left[positions]].reshape(-1, 3),
+            self.upper[left[positions]].reshape(-1, 3),
+            offsets,
+            self.lower[right[positions]].reshape(-1, 3),
+            self.upper[right[positions]].reshape(-1, 3),
+            offsets,
+            normals[positions],
+        )
+        result[selected[positions]] = decision == SeparationDecision.SEPARATED
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -4734,6 +5710,7 @@ def _nonperiodic_contacts(
     /,
     *,
     skip_internal_quadrilateral_separator: bool = False,
+    injective_cells: set[int] | None = None,
 ) -> list[MeshCertificateFinding]:
     if not cells:
         return [
@@ -4744,15 +5721,39 @@ def _nonperiodic_contacts(
     lower = np.asarray([cell.image_lower for cell in cells], dtype=np.float64)
     upper = np.asarray([cell.image_upper for cell in cells], dtype=np.float64)
     tree = prepare_bvh(lower, upper)
-    root_charts = _retained_root_charts(mesh, geometry, cells)
     separated_roots: dict[tuple[int, int], bool] = {}
+    original_cells = cells
+    contact_cells: list[EmbeddingCell] = []
     simplices: list[tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None] = []
     findings: list[MeshCertificateFinding] = []
-    vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
-    shadows: dict[int, CellShadow | None] = {}
-    stratum_residuals: dict[tuple[int, ...], tuple[Expression, ...] | None] = {}
-    subdivision_cache = StratumSubdivisionCache()
-    for cell in cells:
+    # Preserve the first source of each stratum, not its expensive derived
+    # polynomial. Rebuilding from that source gives the identical residual.
+    stratum_sources: dict[tuple[int, ...], int] = {}
+    for index, cell in enumerate(cells):
+        if not cell.affine and cell.coordinates and cell.dimension == 3:
+            # Whole-map injectivity and exact face images justify replacing
+            # the physical image by its planar-faced solid for contacts only.
+            straight = _planar_faced_chart_cell(
+                cell,
+                cell.coordinates,
+                physical_map_injective=(
+                    injective_cells is not None and index in injective_cells
+                ),
+            )
+            if straight is not None:
+                try:
+                    pieces = _cell_simplices(straight)
+                except (ValueError, ZeroDivisionError, UnsupportedEmbeddingMap):
+                    pass
+                else:
+                    contact_cells.append(straight)
+                    simplices.append(pieces)
+                    if proof_values is not None:
+                        proof_values.append(
+                            f"cell:{cell.global_id}:injective-map-exact-planar-face-image"
+                        )
+                    continue
+        contact_cells.append(cell)
         if not cell.affine and cell.coordinates:
             simplices.append(None)
             continue
@@ -4774,11 +5775,28 @@ def _nonperiodic_contacts(
                     detail=str(error),
                 )
             )
+    cells = tuple(contact_cells)
+    # Exact root preparation is unnecessary when all mapped images were
+    # independently reduced to planar-faced solids.
+    root_charts = (
+        _retained_root_charts(mesh, geometry, original_cells)
+        if any(not cell.affine and cell.coordinates for cell in cells)
+        else tuple(None for _ in cells)
+    )
     straight_polygons: dict[
         int,
         tuple[EmbeddingCell, tuple[tuple[tuple[ExactScalar, ...], ...], ...]] | None,
     ] = {}
     piece_filter = _VolumePieceFilter.prepare(mesh, cells, simplices)
+    vertex_cone_filter = (
+        _VertexConeFilter.prepare(original_cells)
+        if any(not cell.affine and cell.coordinates for cell in cells)
+        else None
+    )
+    curved_cells = np.asarray(
+        [bool(not cell.affine and cell.coordinates) for cell in cells], dtype=np.bool_
+    )
+    no_root = np.asarray([root is None for root in root_charts], dtype=np.bool_)
 
     def straight_polygon(
         index: int, /
@@ -4789,20 +5807,111 @@ def _nonperiodic_contacts(
             )
         return straight_polygons[index]
 
-    for first_block, second_block in bvh_overlap_pair_blocks(
-        tree, tree, include_touching=True
-    ):
+    def contact_blocks() -> Iterator[tuple[NDArray[np.intp], NDArray[np.intp]]]:
+        # A BVH block may contain a million candidate cell pairs. Piece
+        # filtering expands each pair into up to the product of its tetrahedra;
+        # bound temporary storage without omitting or repricing any pair.
+        for left, right in bvh_overlap_pair_blocks(tree, tree, include_touching=True):
+            for start in range(0, left.size, 1024):
+                yield left[start : start + 1024], right[start : start + 1024]
+
+    for first_block, second_block in contact_blocks():
+        # Retain derived material for at most 64 pairs that need exact work.
+        # Screened pairs allocate none of these caches and must not evict them.
+        # stratum_sources preserves the original first-source authority.
+        vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
+        shadows: dict[int, CellShadow | None] = {}
+        stratum_residuals: dict[tuple[int, ...], tuple[Expression, ...] | None] = {}
+        trace_cache: dict[tuple[int, tuple[int, ...]], tuple[Expression, ...] | None] = {}
+        subdivision_cache = StratumSubdivisionCache()
         ordered = first_block < second_block
         first_block, second_block = first_block[ordered], second_block[ordered]
         piece_certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
         if piece_filter is not None:
             cleared, piece_certificates = piece_filter.certify(first_block, second_block)
             first_block, second_block = first_block[~cleared], second_block[~cleared]
-        for first_index, second_index in zip(
-            first_block.tolist(), second_block.tolist(), strict=True
+        vertex_cones = (
+            vertex_cone_filter.certify(first_block, second_block)
+            if vertex_cone_filter is not None
+            else np.zeros(first_block.shape, dtype=np.bool_)
+        )
+        if vertex_cone_filter is not None and mesh.topological_dimension == 3:
+            eligible = (
+                vertex_cone_filter.matching_corners(first_block, second_block)
+                & (curved_cells[first_block] | curved_cells[second_block])
+                & no_root[first_block]
+                & no_root[second_block]
+            )
+            fast_vertices = vertex_cones & eligible
+            fast_disjoint = (
+                vertex_cone_filter.certify_disjoint(first_block, second_block) & eligible
+            )
+            fast_edges = (
+                vertex_cone_filter.certify_straight_edges(first_block, second_block)
+                & eligible
+            )
+            fast_curved_edges = (
+                vertex_cone_filter.certify_curved_edges(first_block, second_block)
+                & eligible
+            )
+        else:
+            fast_vertices = np.zeros(first_block.shape, dtype=np.bool_)
+            fast_disjoint = np.zeros(first_block.shape, dtype=np.bool_)
+            fast_edges = np.zeros(first_block.shape, dtype=np.bool_)
+            fast_curved_edges = np.zeros(first_block.shape, dtype=np.bool_)
+        proof_pair_count = 0
+        for pair_offset, (first_item, second_item) in enumerate(
+            zip(first_block, second_block, strict=True)
         ):
+            first_index, second_index = int(first_item), int(second_item)
+            if fast_vertices[pair_offset]:
+                if proof_values is not None:
+                    proof_values.append(
+                        f"cell-pair:{cells[first_index].global_id}:"
+                        f"{cells[second_index].global_id}:"
+                        "bernstein-subdivided-shared-stratum:1:cone-pieces:1:hull-pieces:0"
+                    )
+                continue
+            if fast_disjoint[pair_offset]:
+                if proof_values is not None:
+                    proof_values.append(
+                        f"cell-pair:{cells[first_index].global_id}:"
+                        f"{cells[second_index].global_id}:"
+                        "bernstein-subdivided-shared-stratum:0:cone-pieces:0:hull-pieces:1"
+                    )
+                continue
+            if fast_edges[pair_offset]:
+                if proof_values is not None:
+                    proof_values.append(
+                        f"cell-pair:{cells[first_index].global_id}:"
+                        f"{cells[second_index].global_id}:"
+                        "bernstein-straight-edge-cross-residual-cone"
+                    )
+                continue
+            if fast_curved_edges[pair_offset]:
+                if proof_values is not None:
+                    proof_values.append(
+                        f"cell-pair:{cells[first_index].global_id}:"
+                        f"{cells[second_index].global_id}:"
+                        "bernstein-quadratic-edge-plane-opposite-sides"
+                    )
+                continue
+            if proof_pair_count and proof_pair_count % 64 == 0:
+                vertex_frames.clear()
+                shadows.clear()
+                stratum_residuals.clear()
+                trace_cache.clear()
+                subdivision_cache = StratumSubdivisionCache()
+            proof_pair_count += 1
             first_cell, second_cell = cells[first_index], cells[second_index]
             first_pieces, second_pieces = simplices[first_index], simplices[second_index]
+            if (not first_cell.affine and first_cell.coordinates) or (
+                not second_cell.affine and second_cell.coordinates
+            ):
+                # Mixed mapped/planarized pairs still need the actual maps for
+                # residual and glued-map proofs.
+                first_cell = original_cells[first_index]
+                second_cell = original_cells[second_index]
             if (
                 first_cell.dimension != second_cell.dimension
                 or first_cell.dimension != mesh.topological_dimension
@@ -4820,7 +5929,12 @@ def _nonperiodic_contacts(
             shared = tuple(
                 sorted(set(first_cell.vertex_ids).intersection(second_cell.vertex_ids))
             )
-            trace = restriction_trace_equal(first_cell, second_cell, shared)
+            trace = restriction_trace_equal(
+                original_cells[first_index],
+                original_cells[second_index],
+                shared,
+                cache=trace_cache,
+            )
             if trace is False:
                 findings.append(
                     MeshCertificateFinding(
@@ -4908,10 +6022,19 @@ def _nonperiodic_contacts(
                         )
                     )
                     continue
+                if trace is True and len(shared) == 1 and vertex_cones[pair_offset]:
+                    if proof_values is not None:
+                        proof_values.append(
+                            f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                            "bernstein-subdivided-shared-stratum:1:cone-pieces:1:hull-pieces:0"
+                        )
+                    continue
                 if trace is True and len(shared) >= first_cell.dimension:
                     glued = (
                         "glued-face-monotone-map"
-                        if glued_face_monotone(first_cell, second_cell, shared)
+                        if glued_face_monotone(
+                            first_cell, second_cell, shared, subdivision_cache
+                        )
                         else "glued-facet-monotone-map"
                         if glued_facet_monotone(
                             first_cell, second_cell, shared, subdivision_cache
@@ -4925,11 +6048,38 @@ def _nonperiodic_contacts(
                                 f"{glued}"
                             )
                         continue
+                if (
+                    trace is True
+                    and first_cell.kind == second_cell.kind == "prism"
+                    and len(shared) == 4
+                    and injective_cells is not None
+                    and first_index in injective_cells
+                    and second_index in injective_cells
+                ):
+                    boundary_separation = _prism_shared_facet_boundary_separation(
+                        first_cell,
+                        second_cell,
+                        shared,
+                        first_injective=True,
+                        second_injective=True,
+                    )
+                    if boundary_separation is not None:
+                        if proof_values is not None:
+                            proof_values.append(
+                                f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                                "exact-prism-facet-boundary-separation:"
+                                f"cone-pieces:{boundary_separation[0]}:"
+                                f"hull-pieces:{boundary_separation[1]}"
+                            )
+                        continue
                 if trace is True and len(shared) <= 2:
                     stratum_key = tuple(sorted(shared))
                     if stratum_key not in stratum_residuals:
+                        source_index = stratum_sources.setdefault(
+                            stratum_key, first_index
+                        )
                         stratum_residuals[stratum_key] = _stratum_residuals(
-                            first_cell, stratum_key
+                            original_cells[source_index], stratum_key
                         )
                     residuals = stratum_residuals[stratum_key]
                     subdivided = (
@@ -5049,6 +6199,33 @@ def _nonperiodic_contacts(
                             f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:outward-bernstein-projection-separation"
                         )
                     continue
+                if trace is True and len(shared) == 2:
+                    stratum_key = tuple(sorted(shared))
+                    if stratum_residuals[stratum_key] is None:
+                        line_residuals = _stratum_residuals(
+                            original_cells[stratum_sources[stratum_key]],
+                            stratum_key,
+                            allow_line_image=True,
+                        )
+                        line_proof = (
+                            None
+                            if line_residuals is None
+                            else subdivided_stratum_separation(
+                                first_cell,
+                                second_cell,
+                                stratum_key,
+                                line_residuals,
+                                subdivision_cache,
+                            )
+                        )
+                        if line_proof is not None:
+                            if proof_values is not None:
+                                proof_values.append(
+                                    f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                                    f"bernstein-subdivided-shared-stratum:2:"
+                                    f"cone-pieces:{line_proof[0]}:hull-pieces:{line_proof[1]}"
+                                )
+                            continue
                 if trace is None and shared:
                     findings.append(
                         MeshCertificateFinding(
@@ -5177,6 +6354,7 @@ def _nonperiodic_contacts(
 
 def _periodic_contacts(
     mesh: CellMesh,
+    geometry: CellGeometrySpec,
     cells: tuple[EmbeddingCell, ...],
     topology: PeriodicMeshTopology,
     /,
@@ -5187,6 +6365,14 @@ def _periodic_contacts(
     )
 
     result = certify_periodic_affine_embedding(mesh, cells, topology)
+    if (
+        result.status == "unresolved"
+        and _periodic_facet_trace_certificate_id(mesh, geometry, cells, topology)
+        is not None
+    ):
+        from ._periodic_mapped_contacts import certify_periodic_mapped_contacts
+
+        result = certify_periodic_mapped_contacts(mesh, cells, topology)
     findings = [
         MeshCertificateFinding(
             check,
@@ -5543,7 +6729,38 @@ def _periodic_facet_trace_certificate_id(
     ):
         return None
     try:
-        rebuilt = CellMesh.from_stored_fields(mesh)
+        geometry_id = cell_geometry_id(geometry)
+    except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
+        return None
+    if any(
+        cell.owning_mesh_id != mesh.mesh_id or cell.owning_geometry_id != geometry_id
+        for cell in cells
+    ):
+        return None
+    # The provenance IDs bind the source and layout, but do not establish
+    # that the supplied chart objects still contain those actual map values.
+    # Reconstruct the complete current charts before using any of their
+    # vertices or facet restrictions as periodic evidence.
+    try:
+        if any(
+            current != supplied
+            for current, supplied in zip(
+                _iter_embedding_cells(mesh, geometry), cells, strict=True
+            )
+        ):
+            return None
+    except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
+        return None
+    try:
+        rebuilt = CellMesh.from_stored_fields(
+            mesh,
+            actual_geometry=(
+                geometry
+                if topology.coordinate_source_map_id is not None
+                or topology._actual_geometry is not None
+                else None
+            ),
+        )
     except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
         return None
     if (
@@ -5918,8 +7135,11 @@ def _proof(
         map_findings: list[MeshCertificateFinding] = []
         map_witnesses: list[MeshEmbeddingWitness] = []
         checks.append("forward_reference_chain_cell_injectivity")
+        injective_cells: set[int] = set()
     else:
-        map_findings, map_witnesses = _cell_map_findings(cells, binding=binding)
+        map_findings, map_witnesses, injective_cells = _cell_map_findings(
+            cells, binding=binding
+        )
         state_findings.extend(map_findings)
     checks.append("cell_map_injectivity")
     reference_chain_used = reference_chain_ready and not state_findings
@@ -6053,7 +7273,7 @@ def _proof(
                     )
                 else:
                     contact_findings, quotient_boundary = _periodic_contacts(
-                        mesh, cells, periodic
+                        mesh, geometry, cells, periodic
                     )
                     state_findings.extend(contact_findings)
                     checks.append("periodic_exact_cell_contacts")
@@ -6087,6 +7307,7 @@ def _proof(
             cells,
             contact_values,
             skip_internal_quadrilateral_separator=degree_boundary_candidate,
+            injective_cells=injective_cells,
         )
         boundary_values.extend(contact_values)
         checks.append("exact_cell_contacts")
@@ -6336,6 +7557,9 @@ class ValidatedGlobalEmbedding:
 
     def __delattr__(self, name: str) -> None:
         raise AttributeError("A validated embedding artifact is immutable.")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Validated global embedding cannot be serialized.")
 
     def require(
         self,

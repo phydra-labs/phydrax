@@ -531,6 +531,7 @@ bool valid_create_request(const phx_mc_tet_mesh_create_request& request) noexcep
       (request.face_orientations != nullptr && request.face_count == 0) ||
       (request.protection_radii != nullptr && request.point_count == 0) ||
       (request.protected_vertices != nullptr && request.point_count == 0) ||
+      (request.initial_vertex_sizes != nullptr && request.point_count == 0) ||
       (request.source_face_tolerances != nullptr && request.source_face_count == 0) ||
       (request.source_segment_tolerances != nullptr && request.source_segment_count == 0) ||
       (request.source_face_planes != nullptr && request.source_face_count == 0) ||
@@ -763,6 +764,7 @@ int32_t validate_snapshot_request(const phx_mc_tet_mesh_snapshot_request& reques
     return required(pointer, counts[bank]);
   };
   if (!check(request.vertex_ids, 0) || !check(request.points, 0) ||
+      !check(request.vertex_size_targets, 0) ||
       !check(request.witness_strata, 0) || !check(request.witness_entities, 0) ||
       !check(request.witness_parameters, 0) || !check(request.witness_deviations, 0) ||
       !check(request.vertex_dimensions, 0) || !check(request.protection_radii, 0) ||
@@ -771,7 +773,8 @@ int32_t validate_snapshot_request(const phx_mc_tet_mesh_snapshot_request& reques
       !check(request.vertex_edge_witness_endpoints, 0) ||
       !check(request.vertex_edge_parameters, 0) ||
       !check(request.cell_ids, 1) || !check(request.cell_vertices, 1) ||
-      !check(request.cell_regions, 1) || !check(request.facet_ids, 2) ||
+      !check(request.cell_regions, 1) || !check(request.cell_size_targets, 1) ||
+      !check(request.facet_ids, 2) ||
       !check(request.facet_vertices, 2) || !check(request.facet_sources, 2) ||
       !check(request.facet_orientations, 2) || !check(request.protected_facets, 2) ||
       !check(request.segment_ids, 3) || !check(request.segment_vertices, 3) ||
@@ -804,23 +807,72 @@ int32_t validate_snapshot_request(const phx_mc_tet_mesh_snapshot_request& reques
   return PHX_MC_OK;
 }
 
+int32_t prepare_implicit_owner(const phx_mc_tet_implicit_source* source,
+                               std::shared_ptr<phx::mc::TetImplicitSource>& owned) {
+  if (source == nullptr || source->group_count <= 0 ||
+      !addressable(source->group_count, 1, sizeof(int32_t)) || source->groups == nullptr ||
+      source->source_id_length <= 0 || source->source_revision_length <= 0 ||
+      source->binding_id_length <= 0 || !valid_utf8(source->source_id, source->source_id_length) ||
+      !valid_utf8(source->source_revision, source->source_revision_length) ||
+      !valid_utf8(source->binding_id, source->binding_id_length) ||
+      source->frame_id_length <= 0 || !valid_utf8(source->frame_id, source->frame_id_length)) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  owned = std::make_shared<phx::mc::TetImplicitSource>();
+  const auto bind = [](phx::mc::remesh::IntervalBoxProgram& destination,
+                       const phx_mc_interval_box_program& program) {
+    return destination.bind(
+        program.instructions, program.instruction_count, program.indices, program.index_count,
+        program.parameters, program.parameter_count, program.workspace_lower,
+        program.workspace_upper, program.workspace_size, program.outputs, program.output_count,
+        program.guards, program.guard_count);
+  };
+  int32_t status = bind(owned->value, source->value);
+  if (status != PHX_MC_OK) return status;
+  status = bind(owned->gradient, source->gradient);
+  if (status != PHX_MC_OK) return status;
+  owned->groups.assign(source->groups, source->groups + source->group_count);
+  owned->tolerance = source->tolerance;
+  owned->orientation = source->orientation;
+  owned->source_id.assign(source->source_id, static_cast<std::size_t>(source->source_id_length));
+  owned->source_revision.assign(source->source_revision,
+                                static_cast<std::size_t>(source->source_revision_length));
+  owned->binding_id.assign(source->binding_id, static_cast<std::size_t>(source->binding_id_length));
+  owned->frame_id.assign(source->frame_id, static_cast<std::size_t>(source->frame_id_length));
+  return PHX_MC_OK;
+}
+
 }  // namespace
 
 extern "C" {
 
-int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
+static int32_t create_tet_mesh(
+    const phx_mc_tet_mesh_create_request* request, const double* linear,
+    const phx_mc_tet_implicit_source* implicit) {
   if (request != nullptr && request->result != nullptr) *request->result = nullptr;
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
     if (!valid_create_request(*request)) return PHX_MC_INVALID_ARGUMENT;
     const auto policy = static_cast<phx::mc::BoundaryPolicy>(request->boundary_policy);
     auto handle = std::make_unique<phx_mc_tet_mesh>(policy);
-    handle->state.bind_source_identity(
+    if (implicit != nullptr) {
+      if (request->periodic_state != nullptr) return PHX_MC_INVALID_ARGUMENT;
+      std::shared_ptr<phx::mc::TetImplicitSource> owned;
+      int32_t status = prepare_implicit_owner(implicit, owned);
+      if (status != PHX_MC_OK) return status;
+      status = handle->state.prepare_implicit_source(std::move(owned));
+      if (status != PHX_MC_OK) return status;
+    }
+    if (linear != nullptr) {
+      const int32_t status = handle->state.set_affine_metric(input_span(linear, 9));
+      if (status != PHX_MC_OK) return status;
+    }
+    if (!handle->state.bind_source_identity(
         identity_string(request->source_id, request->source_id_length),
         identity_string(request->source_revision, request->source_revision_length),
         identity_string(request->source_map_id, request->source_map_id_length),
         identity_string(request->frame_id, request->frame_id_length),
-        request->identity_bound != 0);
+        request->identity_bound != 0)) return PHX_MC_INVALID_ARGUMENT;
 
     std::vector<SourceWitness> witnesses;
     if (request->witness_strata != nullptr) {
@@ -892,7 +944,7 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
               source_points.data() + 3 * static_cast<std::size_t>(source_segments[2 * entity]),
               source_points.data() + 3 * static_cast<std::size_t>(source_segments[2 * entity + 1]),
               nullptr};
-          witness.deviation = phx::mc::source_deviation(
+          witness.deviation = handle->state.metric_source_deviation(
               corners, witness.stratum, witness.parameters,
               request->points + 3 * row);
         } else if (witness.stratum == SourceStratum::kFacet && entity < source_faces.size() / 3) {
@@ -900,12 +952,12 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
               source_points.data() + 3 * static_cast<std::size_t>(source_faces[3 * entity]),
               source_points.data() + 3 * static_cast<std::size_t>(source_faces[3 * entity + 1]),
               source_points.data() + 3 * static_cast<std::size_t>(source_faces[3 * entity + 2])};
-          witness.deviation = phx::mc::source_deviation(
+          witness.deviation = handle->state.metric_source_deviation(
               corners, witness.stratum, witness.parameters,
               request->points + 3 * row);
         } else if (witness.stratum == SourceStratum::kPlane && entity < source_faces.size() / 3 &&
                    !source_face_planes.empty()) {
-          witness.deviation = phx::mc::declared_plane_deviation(
+          witness.deviation = handle->state.metric_declared_plane_deviation(
               source_face_planes.data() + 9 * entity, witness.parameters,
               request->points + 3 * row);
         }
@@ -964,12 +1016,15 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
             : input_span(request->facet_ids, request->face_count),
         request->segment_ids == nullptr
             ? std::span<const uint64_t>{}
-            : input_span(request->segment_ids, request->segment_count));
+            : input_span(request->segment_ids, request->segment_count),
+        request->initial_vertex_sizes == nullptr
+            ? std::span<const double>{}
+            : input_span(request->initial_vertex_sizes, request->point_count));
     if (id_status != PHX_MC_OK) return id_status;
     if (request->periodic_state != nullptr) {
       const phx_mc_tet_periodic_state_view& periodic = *request->periodic_state;
       const TetPeriodicIdentity identity = periodic_identity_from_view(periodic.identity_map);
-      handle->state.bind_periodic_identity(identity);
+      if (!handle->state.bind_periodic_identity(identity)) return PHX_MC_INVALID_INPUT;
       std::vector<TetPeriodicOrbit> orbits;
       std::vector<TetPeriodicQuotientCell> quotient_cells;
       std::vector<TetPeriodicEntityOrbitMap> entity_maps;
@@ -984,6 +1039,37 @@ int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
     }
     *request->result = handle.release();
     return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tet_mesh_create_with_affine_metric(
+    const phx_mc_tet_mesh_create_request* request, const double* linear) {
+  return create_tet_mesh(request, linear, nullptr);
+}
+
+int32_t phx_mc_tet_mesh_create_with_implicit(
+    const phx_mc_tet_mesh_create_request* request,
+    const phx_mc_tet_implicit_source* source) {
+  if (source == nullptr) {
+    if (request != nullptr && request->result != nullptr) *request->result = nullptr;
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return create_tet_mesh(request, nullptr, source);
+}
+
+int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
+  return phx_mc_tet_mesh_create_with_affine_metric(request, nullptr);
+}
+
+int32_t phx_mc_tet_mesh_protect_facet_sources(
+    phx_mc_tet_mesh* mesh, int64_t count, const int32_t* sources) {
+  return guarded([&]() -> int32_t {
+    if (mesh == nullptr || count < 0 || !required_bank(sources, count) ||
+        !addressable(count, 1, sizeof(int32_t))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    return mesh->state.protect_facet_sources(input_span(sources, count))
+               ? PHX_MC_OK : PHX_MC_INVALID_ARGUMENT;
   });
 }
 
@@ -1146,6 +1232,8 @@ int32_t phx_mc_tet_mesh_snapshot(const phx_mc_tet_mesh* mesh,
       const TetSnapshotVertex& vertex = snapshot.vertices[row];
       request->vertex_ids[row] = vertex.id;
       std::copy(vertex.carrier.begin(), vertex.carrier.end(), request->points + 3 * row);
+      const auto size = mesh->state.vertex_sizes().find(vertex.id);
+      request->vertex_size_targets[row] = size == mesh->state.vertex_sizes().end() ? 0.0 : size->second;
       request->witness_strata[row] = static_cast<int8_t>(vertex.witness.stratum);
       request->witness_entities[row] = vertex.witness.entity;
       request->witness_parameters[2 * row] = vertex.witness.parameters[0];
@@ -1175,6 +1263,13 @@ int32_t phx_mc_tet_mesh_snapshot(const phx_mc_tet_mesh* mesh,
       request->cell_ids[row] = cell.id;
       std::copy(cell.vertices.begin(), cell.vertices.end(), request->cell_vertices + 4 * row);
       request->cell_regions[row] = cell.region;
+      std::array<double, 4> corner_sizes{};
+      for (std::size_t corner = 0; corner < corner_sizes.size(); ++corner) {
+        const auto found = mesh->state.vertex_sizes().find(cell.vertices[corner]);
+        if (found != mesh->state.vertex_sizes().end()) corner_sizes[corner] = found->second;
+      }
+      const double target = phx::mc::cell_size_target(corner_sizes);
+      request->cell_size_targets[row] = std::isfinite(target) ? target : 0.0;
       if (!cell.ancestor_cell_ids.empty()) {
         copy_bank(cell.ancestor_cell_ids,
                   request->cell_ancestor_ids + cell_ancestor_offset);
@@ -1564,6 +1659,8 @@ int32_t phx_mc_tet_mesh_improve_quality(phx_mc_tet_mesh* mesh, uint64_t expected
                                 int64_t frame_id_length, double radius_edge_bound,
                                 double minimum_dihedral_degrees,
                                 double minimum_relative_determinant,
+                                int32_t boundary_collapse_quality,
+                                int64_t original_vertex_count, const uint64_t* original_vertex_ids,
                                 int64_t size_count, const double* sizes,
                                 int32_t* edit_status, int32_t* run_status,
                                 int64_t* inserted_vertices, int64_t* collapsed_vertices,
@@ -1572,7 +1669,12 @@ int32_t phx_mc_tet_mesh_improve_quality(phx_mc_tet_mesh* mesh, uint64_t expected
   if (mesh == nullptr || edit_status == nullptr || run_status == nullptr ||
       inserted_vertices == nullptr || collapsed_vertices == nullptr ||
       relocated_vertices == nullptr || unmet_cells == nullptr ||
-      score_quantum == nullptr || size_count < 0 ||
+      score_quantum == nullptr || size_count < 0 || original_vertex_count < 0 ||
+      (boundary_collapse_quality != 0 && boundary_collapse_quality != 1) ||
+      !addressable(original_vertex_count, 1, sizeof(uint64_t)) ||
+      (original_vertex_count > 0 && original_vertex_ids == nullptr) ||
+      (boundary_collapse_quality == 0 && original_vertex_count != 0) ||
+      (boundary_collapse_quality == 1 && original_vertex_count == 0) ||
       !addressable(size_count, 1, sizeof(double)) || (size_count > 0 && sizes == nullptr) ||
       !valid_identity_fields(identity_bound, source_id, source_id_length,
                              source_revision, source_revision_length, source_map_id,
@@ -1594,14 +1696,103 @@ int32_t phx_mc_tet_mesh_improve_quality(phx_mc_tet_mesh* mesh, uint64_t expected
     return PHX_MC_OK;
   }
   return guarded([&]() -> int32_t {
-    const std::int32_t status = phx::mc::improve_mesh(
-        mesh->state,
-        phx::mc::TetQualityRequest{radius_edge_bound, minimum_dihedral_degrees,
-                                   minimum_relative_determinant},
-        input_span(sizes, size_count), *inserted_vertices, *collapsed_vertices,
-        *relocated_vertices, *unmet_cells);
+    const phx::mc::TetQualityRequest request{radius_edge_bound, minimum_dihedral_degrees,
+                                             minimum_relative_determinant};
+    bool applied = false;
+    const std::int32_t status = boundary_collapse_quality
+        ? phx::mc::repair_boundary_quality(
+              mesh->state, request, input_span(sizes, size_count),
+              input_span(original_vertex_ids, original_vertex_count),
+              *inserted_vertices, *collapsed_vertices, *relocated_vertices,
+              *unmet_cells, applied)
+        : phx::mc::improve_mesh(
+              mesh->state, request, input_span(sizes, size_count), *inserted_vertices,
+              *collapsed_vertices, *relocated_vertices, *unmet_cells);
     *run_status = status;
-    *edit_status = PHX_MC_TET_EDIT_APPLIED;
+    *edit_status = !boundary_collapse_quality || applied || status == PHX_MC_OK
+        ? PHX_MC_TET_EDIT_APPLIED : PHX_MC_TET_EDIT_REJECTED_TOPOLOGY;
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tet_mesh_evaluate_quality(
+    const phx_mc_tet_mesh* mesh, uint64_t expected_generation,
+    double radius_edge_bound, double minimum_dihedral_degrees,
+    double minimum_relative_determinant, int64_t capacity, int64_t* count,
+    uint64_t* cell_ids, int32_t* criteria, int32_t* reasons, double* values) {
+  if (mesh == nullptr || count == nullptr || capacity < 0 ||
+      !addressable(capacity, 1, sizeof(uint64_t)) ||
+      !addressable(capacity, 1, sizeof(int32_t)) ||
+      !addressable(capacity, 1, sizeof(double))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  *count = 0;
+  if (expected_generation != mesh->state.generation()) return PHX_MC_STALE_GENERATION;
+  return guarded([&]() -> int32_t {
+    std::vector<phx::mc::TetUnmetRecord> records;
+    const int32_t status = phx::mc::evaluate_mesh_quality(
+        mesh->state, {radius_edge_bound, minimum_dihedral_degrees, minimum_relative_determinant},
+        records);
+    if (status != PHX_MC_OK) return status;
+    if (records.size() > static_cast<std::size_t>(std::numeric_limits<int64_t>::max())) {
+      return PHX_MC_INDEX_RANGE_ERROR;
+    }
+    *count = static_cast<int64_t>(records.size());
+    if (capacity == 0 && cell_ids == nullptr && criteria == nullptr &&
+        reasons == nullptr && values == nullptr) return PHX_MC_OK;
+    if (capacity < *count) return PHX_MC_CAPACITY_EXCEEDED;
+    if (!required_bank(cell_ids, *count) || !required_bank(criteria, *count) ||
+        !required_bank(reasons, *count) || !required_bank(values, *count)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    for (int64_t i = 0; i < *count; ++i) {
+      const auto& record = records[static_cast<std::size_t>(i)];
+      cell_ids[i] = record.cell_id;
+      criteria[i] = record.criterion;
+      reasons[i] = record.reason;
+      values[i] = record.value;
+    }
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_tet_mesh_evaluate_candidate_quality(
+    const phx_mc_tet_mesh* mesh, uint64_t expected_generation,
+    int64_t vertex_count, const double* points,
+    double radius_edge_bound, double minimum_dihedral_degrees,
+    double minimum_relative_determinant, int64_t capacity, int64_t* count,
+    uint64_t* cell_ids, int32_t* criteria, int32_t* reasons, double* values) {
+  if (mesh == nullptr || count == nullptr || vertex_count <= 0 || points == nullptr ||
+      !addressable(vertex_count, 3, sizeof(double)) || capacity < 0 ||
+      !addressable(capacity, 1, sizeof(uint64_t)) ||
+      !addressable(capacity, 1, sizeof(int32_t)) ||
+      !addressable(capacity, 1, sizeof(double))) return PHX_MC_INVALID_ARGUMENT;
+  *count = 0;
+  if (expected_generation != mesh->state.generation()) return PHX_MC_STALE_GENERATION;
+  return guarded([&]() -> int32_t {
+    std::vector<phx::mc::TetUnmetRecord> records;
+    const int32_t status = phx::mc::evaluate_mesh_quality(
+        mesh->state, {radius_edge_bound, minimum_dihedral_degrees, minimum_relative_determinant},
+        records, std::span<const double>(points, 3 * static_cast<std::size_t>(vertex_count)));
+    if (status != PHX_MC_OK) return status;
+    if (records.size() > static_cast<std::size_t>(std::numeric_limits<int64_t>::max())) {
+      return PHX_MC_INDEX_RANGE_ERROR;
+    }
+    *count = static_cast<int64_t>(records.size());
+    if (capacity == 0 && cell_ids == nullptr && criteria == nullptr &&
+        reasons == nullptr && values == nullptr) return PHX_MC_OK;
+    if (capacity < *count) return PHX_MC_CAPACITY_EXCEEDED;
+    if (!required_bank(cell_ids, *count) || !required_bank(criteria, *count) ||
+        !required_bank(reasons, *count) || !required_bank(values, *count)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    for (int64_t i = 0; i < *count; ++i) {
+      const auto& record = records[static_cast<std::size_t>(i)];
+      cell_ids[i] = record.cell_id;
+      criteria[i] = record.criterion;
+      reasons[i] = record.reason;
+      values[i] = record.value;
+    }
     return PHX_MC_OK;
   });
 }
@@ -1687,6 +1878,53 @@ int32_t phx_mc_tet_mesh_plane_records(const phx_mc_tet_mesh* mesh, int64_t capac
     }
     return PHX_MC_OK;
   });
+}
+
+int32_t phx_mc_tet_mesh_bind_implicit(
+    phx_mc_tet_mesh* mesh, const phx_mc_tet_implicit_source* source) {
+  if (mesh == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  return guarded([&]() -> int32_t {
+    std::shared_ptr<phx::mc::TetImplicitSource> owned;
+    const int32_t status = prepare_implicit_owner(source, owned);
+    if (status != PHX_MC_OK) return status;
+    return mesh->state.bind_implicit_source(std::move(owned));
+  });
+}
+
+int32_t phx_mc_tet_mesh_implicit_source(
+    const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_source* output) {
+  if (mesh == nullptr || output == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  const auto& source = mesh->state.implicit_source();
+  *output = {};
+  if (!source) return PHX_MC_OK;
+  const auto view = [](const phx::mc::remesh::IntervalBoxProgram& program) {
+    const auto& bytecode = program.program();
+    return phx_mc_interval_box_program{
+        bytecode.instructions().data(), static_cast<int64_t>(bytecode.instructions().size() / 8),
+        bytecode.indices().data(), static_cast<int64_t>(bytecode.indices().size()),
+        bytecode.parameters().data(), static_cast<int64_t>(bytecode.parameters().size()),
+        program.template_lower().data(), program.template_upper().data(),
+        static_cast<int64_t>(program.template_lower().size()), program.outputs().data(),
+        static_cast<int64_t>(program.outputs().size()), program.guards().data(),
+        static_cast<int64_t>(program.guards().size())};
+  };
+  output->value = view(source->value);
+  output->gradient = view(source->gradient);
+  output->groups = source->groups.data();
+  output->group_count = static_cast<int64_t>(source->groups.size());
+  output->tolerance = source->tolerance;
+  output->orientation = source->orientation;
+  output->source_id = source->source_id.data();
+  output->source_id_length = static_cast<int64_t>(source->source_id.size());
+  output->source_revision = source->source_revision.data();
+  output->source_revision_length = static_cast<int64_t>(source->source_revision.size());
+  output->binding_id = source->binding_id.data();
+  output->binding_id_length = static_cast<int64_t>(source->binding_id.size());
+  output->frame_id = source->frame_id.data();
+  output->frame_id_length = static_cast<int64_t>(source->frame_id.size());
+  output->transversality_refusals = source->transversality_refusals;
+  output->distance_refusals = source->distance_refusals;
+  return PHX_MC_OK;
 }
 
 void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh) { delete mesh; }

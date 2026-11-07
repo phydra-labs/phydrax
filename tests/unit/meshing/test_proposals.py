@@ -38,6 +38,7 @@ from phydrax.meshing._proposals import (
     project_mesh_proposal,
 )
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+from phydrax.meshing._tetra_metric import TetraMetricEvidence
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.meshing.providers._native import NativeMeshingProvider
 from phydrax.meshing.providers._native_implicit import (
@@ -874,6 +875,7 @@ def test_tetrahedral_metric_proposals_complete_graded_and_anisotropic_fields(
     assert adaptation is not None and adaptation.metric is not None
     assert adaptation.route is phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D
     assert adaptation.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    assert isinstance(adaptation.evidence, TetraMetricEvidence)
     assert adaptation.evidence.out_of_range_edges == 0
     assert transaction.commit(source).mesh.topology_id != source.mesh.topology_id
 
@@ -983,6 +985,80 @@ def test_implicit_size_proposals_use_three_dimensional_metric_adaptation(
     )
     assert cell_association.association_kind is GeometryAssociationKind.IMPLICIT
     assert cell_association.complete
+
+
+def test_implicit_tetra_metric_coarsening_reproves_actual_target(
+    _implicit_volume_source: tuple[Any, Any, Any],
+) -> None:
+    profile, source, _ = _implicit_volume_source
+    coordinates = np.asarray(source.mesh.coordinates, dtype=np.float64)
+    edges = np.asarray(source.mesh.connectivity.entities[1], dtype=np.int64)
+    lengths = np.linalg.norm(coordinates[edges[:, 1]] - coordinates[edges[:, 0]], axis=1)
+    size = 1.5 * float(np.median(lengths))
+    vertices = source.mesh.entity_set(0)
+    scope = MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        0,
+        vertices.entity_set_id,
+        vertices.entity_ids,
+    )
+    metric = phx.meshing.MeshMetricField(
+        scope,
+        np.broadcast_to(np.eye(3) / size**2, (len(coordinates), 3, 3)).copy(),
+        minimum_size=size,
+        maximum_size=size,
+        maximum_anisotropy=1.0,
+    )
+    prepared = phx.meshing.prepare_mesh_adaptation(
+        source,
+        phx.meshing.MetricMeshAdaptation(metric),
+        policy=phx.meshing.MeshAdaptationPolicy(
+            phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D,
+            association_transfer=phx.meshing.ImplicitAssociationTransfer(profile),
+        ),
+    )
+    result = phx.meshing.execute_mesh_adaptation(prepared)
+    assert isinstance(result.evidence, TetraMetricEvidence)
+    assert result.evidence.collapses > 0
+    assert result.target is not source
+    assert result.target.certification is not None
+    assert result.target.certification.passed
+
+
+def test_reissued_implicit_chart_refuses_wrong_boundary_support(
+    _implicit_volume_source: tuple[Any, Any, Any],
+) -> None:
+    from phydrax.meshing.providers._native_implicit import _implicit_volume_chart_witness
+    from phydrax.meshing.providers._native_volume import simplex_volume_entities
+
+    _, source, _ = _implicit_volume_source
+    assert source.certification is not None
+    authority = source.certification.inputs.feature_source
+    assert isinstance(authority, NativeImplicitSource)
+    assert authority.discovery is not None
+    _, faces = simplex_volume_entities(source.mesh)
+    mask = np.asarray(source.mesh.boundary_masks[2], dtype=np.bool_)
+    boundary = np.asarray(faces[mask], dtype=np.int64)
+    face_ids = np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)[mask]
+    assert len(boundary) > 1
+    wrong_ids = face_ids.copy()
+    wrong_ids[[0, 1]] = wrong_ids[[1, 0]]
+    with pytest.raises(ValueError, match="does not match its vertex incidence"):
+        _implicit_volume_chart_witness(
+            authority,
+            authority.discovery,
+            source.mesh,
+            source.geometry,
+            authority.discovery.boundary_source,
+            boundary,
+            np.arange(len(boundary), dtype=np.int64),
+            np.arange(len(source.mesh.coordinates), dtype=np.int64),
+            wrong_ids,
+            boundary,
+            np.zeros(len(boundary), dtype=np.int64),
+        )
 
 
 def test_implicit_surface_metric_proposals_preserve_exact_source_classes(

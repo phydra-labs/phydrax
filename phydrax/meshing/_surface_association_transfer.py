@@ -17,9 +17,13 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellMesh
+from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse
+from ..geometry._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness
+from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
 from ..typing import checked
+from ._certification_inputs import ScopedFidelityInput
 from ._association import (
     _child_sources,
     AssociationEntityClasses,
@@ -72,8 +76,6 @@ def _simplex_edges(mesh: CellMesh, /) -> np.ndarray:
     """Edge vertex rows aligned with the mesh's canonical edge entity set."""
     from ._topology_edit import entity_keys
 
-    if any(block.cell_kind != "triangle" for block in mesh.blocks):
-        raise ValueError("Surface association transfer requires triangular incidence.")
     keys = np.asarray(entity_keys(mesh, 1), dtype=np.int64)
     vertex_rows = {
         int(identifier): row
@@ -105,19 +107,23 @@ def _target_edge_parameter(
         )
     row = int(rows[0])
     source_ids = np.asarray(stencil.source_global_ids, dtype=np.int64)[row]
-    weights = np.asarray(stencil.weights, dtype=np.float64)[row]
-    valid = np.asarray(stencil.valid, dtype=np.bool_)[row] & (weights != 0.0)
+    exact = stencil.exact_weights[row]
+    valid = np.asarray(stencil.valid, dtype=np.bool_)[row] & np.asarray(
+        [value != 0 for value in exact], dtype=np.bool_
+    )
     support = source_ids[valid]
-    coefficients = weights[valid]
+    coefficients = tuple(exact[index] for index in np.flatnonzero(valid))
     if not np.all(np.isin(support, np.asarray(source_endpoint_ids, dtype=np.int64))):
         raise ValueError(
             "A trim-edge split stencil must remain on its exact source edge."
         )
+    if sum(coefficients, Fraction(0)) != 1:
+        raise ValueError("A trim-edge split stencil must preserve constants exactly.")
     parameter = sum(
         (
-            Fraction.from_float(float(weight))
+            weight
             for identifier, weight in zip(
-                support.tolist(), coefficients.tolist(), strict=True
+                support.tolist(), coefficients, strict=True
             )
             if identifier == source_endpoint_ids[1]
         ),
@@ -474,6 +480,10 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         vertex_stencil: VertexInterpolationStencil | None,
+        geometry_transition: CellGeometryTransition | None,
+        target_fidelity_witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
+        validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):
@@ -944,8 +954,8 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             parent_association_id=parent.association_id,
         )
 
+    @staticmethod
     def _curve_edges(
-        self,
         source: CellMeshingResult,
         lineage: MeshLineage,
         target: CellMesh,
@@ -1077,6 +1087,88 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             provenance=GeometryAssociationProvenance.LINEAGE,
             parent_association_id=parent.association_id,
         )
+
+
+def _curve_edges_with_root_ancestry(
+    source: CellMeshingResult,
+    lineage: MeshLineage,
+    target: CellMesh,
+    stencil: VertexInterpolationStencil,
+    parent: GeometryAssociation,
+    /,
+) -> GeometryAssociation:
+    """Replay edge intervals while retaining their original CAD source-edge parent."""
+    if (
+        parent.provenance is not GeometryAssociationProvenance.LINEAGE
+        or parent.parent_association_id is None
+        or np.any(np.asarray(parent.parent_dimensions) != 1)
+    ):
+        raise ValueError("CAD curve ancestry requires a declared root edge association.")
+    inherited = SurfaceAssociationTransfer._curve_edges(
+        source, lineage, target, stencil, parent
+    )
+    if inherited is None:
+        raise ValueError("CAD chart transfer lost its source curve edges.")
+    parent_roots = dict(
+        zip(
+            np.asarray(parent.target_global_ids, dtype=np.int64).tolist(),
+            np.asarray(parent.parent_ids, dtype=np.int64).tolist(),
+            strict=True,
+        )
+    )
+    record = lineage.entity_lineage(1)
+    old_ids = np.asarray(record.source_global_ids, dtype=np.int64)
+    new_ids = np.asarray(record.target_global_ids, dtype=np.int64)
+    kinds = np.asarray(record.relation_kinds, dtype=np.int32)
+    roots: list[int] = []
+    for target_id in np.asarray(inherited.target_global_ids, dtype=np.int64).tolist():
+        rows = np.flatnonzero(new_ids == target_id)
+        if not rows.size or np.any(
+            ~np.isin(
+                kinds[rows],
+                (
+                    int(EntityLineageKind.PRESERVED),
+                    int(EntityLineageKind.REFINED_FROM),
+                    int(EntityLineageKind.COARSENED_INTO),
+                ),
+            )
+        ):
+            raise ValueError("CAD curve edges require exact retained, refined or coarsened lineage.")
+        parents = old_ids[rows].tolist()
+        if any(identifier not in parent_roots for identifier in parents):
+            raise ValueError("CAD curve edge lineage includes an unassociated parent.")
+        root_ids = {parent_roots[identifier] for identifier in parents}
+        if len(root_ids) != 1 or next(iter(root_ids)) < 0:
+            raise ValueError("CAD curve coarsening crosses original source-edge ancestry.")
+        roots.append(next(iter(root_ids)))
+    return GeometryAssociation(
+        inherited.association_kind,
+        inherited.source_id,
+        inherited.source_revision,
+        inherited.target_entity_set_id,
+        np.asarray(inherited.target_global_ids),
+        inherited.source_entity_ids,
+        np.asarray(inherited.residuals),
+        resolved=np.asarray(inherited.resolved),
+        ambiguous=np.asarray(inherited.ambiguous),
+        exact=False,
+        source_dimensions=np.asarray(inherited.source_dimensions),
+        source_indices=np.asarray(inherited.source_indices),
+        source_roles=inherited.source_roles,
+        source_occurrence_paths=inherited.source_occurrence_paths,
+        source_region_sides=inherited.source_region_sides,
+        source_parameter_intervals=inherited.source_parameter_intervals,
+        target_parameter_intervals=inherited.target_parameter_intervals,
+        target_reference_pieces=inherited.target_reference_pieces,
+        source_boundary_witness_id=inherited.source_boundary_witness_id,
+        source_parameter_points=inherited.source_parameter_points,
+        parameters=np.asarray(inherited.parameters),
+        orientations=np.asarray(inherited.orientations),
+        parent_dimensions=np.ones(len(roots), dtype=np.int8),
+        parent_ids=np.asarray(roots, dtype=np.int64),
+        provenance=GeometryAssociationProvenance.LINEAGE,
+        parent_association_id=parent.parent_association_id,
+    )
 
 
 __all__ = ["SurfaceAssociationTransfer"]

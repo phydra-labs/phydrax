@@ -7,18 +7,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from itertools import combinations
 from typing import final
 
 import equinox as eqx
 import numpy as np
 
-from ..._fingerprint import canonical_fingerprint
-from ..._meshcore import MeshcoreStatus
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
+from ...geometry._affine_plc_boundary import AffinePlcBoundarySource
+from ...geometry._affine_plc_domain import AffinePlcDomain
+from ...geometry._affine_plc_geometry import map_affine_plc_mesh
+from ...geometry._compartments import CompartmentMeshingSource
 from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ...geometry._planar_coverage import PlcSourcePointWitness
@@ -32,6 +36,10 @@ from .._association import (
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import VolumeFillStrategy, VolumeMeshingSpec
 from .._controls import FeatureKind, RegionControl, RegionSeed
+from .._input_forced_quality import (
+    input_forced_dihedral_exemptions,
+    input_forced_radius_edge_exemptions,
+)
 from .._native_construction import (
     NativeCertificationRequest,
     NativeMeshConstruction,
@@ -48,10 +56,14 @@ from .._result import MeshingComplianceReport
 from .._scope import _SourceEntityScopes, MeshingEntityKind, MeshingScope
 from .._sizing import SizeControlStrength, UniformSizeControl
 from .._volume_generation import (
+    _shape_targets_gated,
+    _soft_shape_target_evidence,
+    _split_shape_target_rows,
     generate_plc_volume,
     NativeVolumeSchedule,
     VolumeConstruction,
 )
+from ._native_affine_plc_witness import affine_plc_boundary_chart_witness
 from ._native_options import NativeMeshingOptions
 from ._native_plc_geometry import (
     mapped_plc_boundary_chart_witness,
@@ -59,6 +71,7 @@ from ._native_plc_geometry import (
     mapped_plc_point_witness,
     mapped_plc_reference_map,
     physical_plc_tetrahedra,
+    plc_curve_chart_witness,
     simplex_volume_entities,
 )
 from ._native_sources import NativePlcSource
@@ -1108,12 +1121,12 @@ def _plc_source_point_witness(
     unsplit boundary consists of source vertices, whose carriers are exact.
     """
     domain = construction.domain
-    if not isinstance(domain, PiecewiseLinearDomain):
+    if not isinstance(domain, (PiecewiseLinearDomain, AffinePlcDomain)):
         return None
     input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)
     strata = np.asarray(construction.witness_strata, dtype=np.int64)
     inserted = (input_vertices < 0) & (strata > 0)
-    if not np.any(inserted):
+    if not np.any(inserted) and not isinstance(domain, AffinePlcDomain):
         return None
     kinds = np.where(input_vertices >= 0, 0, np.where(strata > 0, strata, -1))
     entities = np.where(
@@ -1147,6 +1160,7 @@ def _plc_source_point_witness(
         face_plane_tolerances=tolerances,
         domain_face_rows=np.flatnonzero(sides[:, 0] != sides[:, 1]),
         domain_id=domain.domain_id,
+        vertex_deviations=None,
     )
 
 
@@ -1201,12 +1215,20 @@ def _mesh_scope(
 
 @final
 class PreparedPlcVolume(StrictModule, NonTrainableState):
-    """Prepared native PLC request whose execution returns construction data."""
+    """Prepared native PLC request whose execution returns construction data.
+
+    ``carrier`` is an optional kept conforming tetrahedralization (vertices,
+    tetrahedra) of a one-region triangle PLC, refined in place instead of a
+    fresh constraint recovery.
+    """
 
     source: NativePlcSource
     specification: VolumeMeshingSpec
     coordinate_contract: SpatialCoordinateContract
     schedule: NativeVolumeSchedule
+    global_affine: np.ndarray | None
+    affine_source: CompartmentMeshingSource | None
+    carrier: tuple[np.ndarray, np.ndarray] | None
     prepared_id: str = eqx.field(static=True)
 
     @checked
@@ -1217,6 +1239,9 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
         coordinate_contract: SpatialCoordinateContract,
         schedule: NativeVolumeSchedule,
         /,
+        *,
+        affine_source: CompartmentMeshingSource | None = None,
+        carrier: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> None:
         if (
             source.mapped_domain is not None
@@ -1226,18 +1251,59 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mapped PLC source and target use different spatial coordinate contracts."
             )
+        global_affine = None
+        if affine_source is not None:
+            affine_source.validate_source_integrity()
+            if (affine_source.source_id, affine_source.source_revision) != (
+                source.source_id,
+                source.source_revision,
+            ):
+                raise ValueError(
+                    "Global affine source must bind the exact PLC source revision."
+                )
+            global_affine = np.asarray(
+                affine_source.labels.asset.spatial_affine.matrix, dtype=np.float64
+            )
+        if global_affine is not None:
+            global_affine = np.array(global_affine, dtype=np.float64, copy=True)
+            if (
+                global_affine.shape != (4, 4)
+                or not np.all(np.isfinite(global_affine))
+                or not np.array_equal(global_affine[3], (0.0, 0.0, 0.0, 1.0))
+                or source.mapped_domain is not None
+            ):
+                raise ValueError(
+                    "Global affine PLC mapping requires one finite affine matrix and no rooted map."
+                )
+            global_affine.setflags(write=False)
+        if carrier is not None:
+            if source.mapped_domain is not None or global_affine is not None:
+                raise ValueError(
+                    "A kept PLC carrier is refined only in its Cartesian frame."
+                )
+            carrier = (
+                np.array(carrier[0], dtype=np.float64, copy=True),
+                np.array(carrier[1], dtype=np.int64, copy=True),
+            )
+            for values in carrier:
+                values.setflags(write=False)
         self.source = source
         self.specification = specification
         self.coordinate_contract = coordinate_contract
         self.schedule = schedule
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "native-plc-volume-preparation",
-                "source": source.binding_id,
-                "specification": specification.specification_id,
-                "schedule": schedule.schedule_id,
-            }
-        )
+        self.global_affine = global_affine
+        self.affine_source = affine_source
+        self.carrier = carrier
+        preparation: dict[str, object] = {
+            "kind": "native-plc-volume-preparation",
+            "source": source.binding_id,
+            "specification": specification.specification_id,
+            "schedule": schedule.schedule_id,
+            "global_affine": None if global_affine is None else global_affine.tolist(),
+        }
+        if carrier is not None:
+            preparation["kept_carrier"] = array_tree_fingerprint(carrier)
+        self.prepared_id = canonical_fingerprint(preparation)
 
     def execute(self) -> NativeMeshConstruction:
         mapped_geometry = (
@@ -1250,6 +1316,15 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
             if mapped_geometry is None or mapped_geometry.source_map_id is None
             else mapped_geometry.source_map_id
         )
+        if self.global_affine is not None:
+            source_map_id = canonical_fingerprint(
+                {
+                    "kind": "global-affine-plc-map",
+                    "source": self.source.source_id,
+                    "revision": self.source.source_revision,
+                    "matrix": self.global_affine.tolist(),
+                }
+            )
         construction = generate_plc_volume(
             self.source.complex,
             self.specification,
@@ -1259,14 +1334,41 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
             source_map_id=source_map_id,
             frame_id=self.coordinate_contract.spatial_id,
             source_domain=self.source.mapped_domain,
+            global_affine=self.global_affine,
+            affine_source=self.affine_source,
+            carrier=self.carrier,
         )
-        physical = physical_plc_tetrahedra(self.source, construction)
-        geometry = physical.geometry
-        reference_map = mapped_plc_reference_map(self.source, construction)
+        source_point_witness = _plc_source_point_witness(self.source, construction)
+        if self.global_affine is None:
+            physical = physical_plc_tetrahedra(self.source, construction)
+            geometry = physical.geometry
+            physical_points = physical.points
+            reference_map = mapped_plc_reference_map(self.source, construction)
+        else:
+            if not isinstance(construction.domain, AffinePlcDomain):
+                raise RuntimeError(
+                    "Global affine PLC construction lost its source domain."
+                )
+            physical_mesh, geometry = map_affine_plc_mesh(
+                construction.domain, construction.mesh, witness=source_point_witness
+            )
+            construction = replace(
+                construction,
+                mesh=physical_mesh,
+                face_orientations=(
+                    -construction.face_orientations
+                    if construction.domain.determinant < 0
+                    else construction.face_orientations
+                ),
+            )
+            physical_points = np.asarray(physical_mesh.coordinates, dtype=np.float64)
+            reference_map = None
         compliance = _volume_compliance(
-            self.source, self.specification, self.schedule, construction, physical.points
+            self.source, self.specification, self.schedule, construction, physical_points
         )
-        fidelity_source: MappedReferenceBoundarySource | None = None
+        fidelity_source: (
+            MappedReferenceBoundarySource | AffinePlcBoundarySource | None
+        ) = None
         fidelity_tolerance: float | None = None
         fidelity_witness: SourceBoundaryChartWitness | None = None
         scoped_fidelity = []
@@ -1351,8 +1453,38 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
                 scoped_fidelity.append(
                     (feature_query, feature_witness, feature.maximum_deviation)
                 )
+        elif isinstance(construction.domain, AffinePlcDomain):
+            face_facets = np.asarray(construction.source_face_facets, dtype=np.int64)
+            sides = np.asarray(self.source.complex.facet_regions, dtype=np.int64)[
+                face_facets
+            ]
+            fidelity_source = AffinePlcBoundarySource(
+                self.source, construction.domain, face_facets[sides[:, 0] != sides[:, 1]]
+            )
+            fidelity_witness = affine_plc_boundary_chart_witness(
+                self.source, fidelity_source, construction, construction.mesh, geometry
+            )
+            fidelity_tolerance = (
+                self.specification.maximum_deviation
+                if self.specification.maximum_deviation is not None
+                else 0.0
+            )
+        if self.source.mapped_domain is None and self.global_affine is None:
+            for feature in self.specification.protected_features:
+                if feature.hard and feature.feature_kind is FeatureKind.CURVE:
+                    feature_query, feature_witness = plc_curve_chart_witness(
+                        self.source,
+                        construction,
+                        geometry,
+                        np.asarray(feature.scope.entity_ids, dtype=np.int64),
+                    )
+                    scoped_fidelity.append(
+                        (feature_query, feature_witness, feature.maximum_deviation)
+                    )
         schedule = MeshCertificationSchedule(
-            "mapped_volume" if self.source.mapped_domain is not None else "volume_plc"
+            "mapped_volume"
+            if self.source.mapped_domain is not None or self.global_affine is not None
+            else "volume_plc"
         )
         certification = NativeCertificationRequest(
             schedule,
@@ -1366,7 +1498,7 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
             protected_features=self.specification.protected_features,
             scoped_fidelity=tuple(scoped_fidelity),
             feature_source=self.source if self.specification.protected_features else None,
-            source_coverage_witness=_plc_source_point_witness(self.source, construction),
+            source_coverage_witness=source_point_witness,
         )
         return NativeMeshConstruction(
             construction.mesh,
@@ -1399,24 +1531,101 @@ def _volume_compliance(
     /,
 ) -> MeshingComplianceReport:
     points = np.asarray(physical_points, dtype=np.float64)
-    requested: list[tuple[str, float]] = [
-        ("radius_edge_bound", schedule.radius_edge_bound),
-        ("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees),
-    ]
+    requested: list[tuple[str, float]] = []
+    if schedule.radius_edge_bound is not None:
+        requested.append(("radius_edge_bound", schedule.radius_edge_bound))
+    requested.append(("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees))
     achieved: list[tuple[str, float]] = [
         ("refinement_status", float(int(construction.refinement_status))),
         ("improvement_status", float(int(construction.improvement_status))),
         ("refinement_unmet_count", float(len(construction.refinement_unmet))),
         ("improvement_unmet_count", float(len(construction.improvement_unmet))),
+        (
+            "refinement_inserted_vertices",
+            float(construction.refinement_inserted_vertices),
+        ),
+        ("final_quality_unmet_count", float(len(construction.final_quality_unmet))),
     ]
-    issues: list[str] = []
-    if construction.improvement_status is not MeshcoreStatus.OK:
-        issues.append("native_improvement_status")
-    if construction.improvement_unmet:
-        issues.extend(
-            f"native_improvement:{criterion}"
-            for criterion, _reason, _cell_id, _value in construction.improvement_unmet
+    # Approved input-forced exemptions: only a dihedral row forced by an
+    # authored sub-target ridge, or a radius-edge row forced by an authored
+    # facet corner, is evidence instead of a finding. A soft schedule first
+    # moves every unmet shape row out of the gate into soft evidence.
+    schedule_rows, soft_rows = _split_shape_target_rows(
+        schedule, construction.final_quality_schedule_unmet
+    )
+    exemptions = input_forced_dihedral_exemptions(
+        source.complex,
+        construction,
+        points,
+        schedule.minimum_dihedral_degrees,
+        schedule_rows,
+    )
+    radius_exemptions = input_forced_radius_edge_exemptions(
+        source.complex,
+        construction,
+        points,
+        schedule.radius_edge_bound,
+        schedule_rows,
+    )
+    exempt_rows = {exemption.row for exemption in exemptions} | {
+        exemption.row for exemption in radius_exemptions
+    }
+    if exemptions:
+        achieved.append(("input_forced_dihedral_exemption_count", float(len(exemptions))))
+    ridge_angles: dict[int, float] = {}
+    for exemption in exemptions:
+        for ridge in exemption.ridges:
+            ridge_angles[ridge.entity_id] = ridge.input_angle_degrees
+            achieved.append(
+                (
+                    f"input_forced_dihedral:cell:{exemption.cell_id}:ridge:"
+                    f"{ridge.entity_id}:achieved_degrees",
+                    exemption.achieved_degrees,
+                )
+            )
+    achieved.extend(
+        (f"input_forced_dihedral:ridge:{entity_id}:input_angle_degrees", angle)
+        for entity_id, angle in sorted(ridge_angles.items())
+    )
+    if radius_exemptions:
+        achieved.append(
+            ("input_forced_radius_edge_exemption_count", float(len(radius_exemptions)))
         )
+    corner_evidence: dict[str, tuple[float, float]] = {}
+    for radius_exemption in radius_exemptions:
+        for corner in radius_exemption.corners:
+            corner_key = (
+                f"vertex:{corner.vertex_entity_id}:edges:"
+                f"{corner.edge_entity_ids[0]}:{corner.edge_entity_ids[1]}"
+            )
+            corner_evidence[corner_key] = (
+                corner.input_angle_degrees,
+                corner.forced_ratio,
+            )
+            prefix = (
+                f"input_forced_radius_edge:cell:{radius_exemption.cell_id}:{corner_key}"
+            )
+            achieved.extend(
+                (
+                    (f"{prefix}:face_ratio", corner.face_ratio),
+                    (f"{prefix}:achieved_ratio", radius_exemption.achieved_ratio),
+                )
+            )
+    for corner_key, (angle, forced_ratio) in sorted(corner_evidence.items()):
+        achieved.extend(
+            (
+                (f"input_forced_radius_edge:{corner_key}:input_angle_degrees", angle),
+                (f"input_forced_radius_edge:{corner_key}:forced_ratio", forced_ratio),
+            )
+        )
+    if not _shape_targets_gated(schedule):
+        achieved.extend(_soft_shape_target_evidence(construction, soft_rows))
+    issues: list[str] = []
+    issues.extend(
+        f"native_final_quality:{criterion}"
+        for row, (criterion, _reason, _cell_id, _value) in enumerate(schedule_rows)
+        if row not in exempt_rows
+    )
     for control in specification.size_controls:
         if not isinstance(control, UniformSizeControl):
             issues.append(f"size_control:{control.control_id}:unsupported")

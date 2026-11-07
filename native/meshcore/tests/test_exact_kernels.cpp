@@ -3,6 +3,7 @@
 // pair stream: exact values, typed range refusals, and 1-vs-N thread identity.
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cfenv>
 #include <cstdlib>
 #include <new>
@@ -12,11 +13,13 @@
 #include <limits>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "check.hpp"
 #include "dyadic.hpp"
+#include "exact_scalar.hpp"
 #include "phydrax_meshcore.h"
 #include "wide_integer.hpp"
 
@@ -579,6 +582,41 @@ void test_bvh_pair_stream() {
   PHX_CHECK(*std::max_element(sizes_small.begin(), sizes_small.end()) <= 8);
 }
 
+void test_rounded_quotient_zero_sign() {
+  using phx::mc::Dyadic;
+  using phx::mc::exact::rounded_quotient;
+  for (double denominator : {1.0, -1.0, 3.0, -3.0}) {
+    const double zero = rounded_quotient(Dyadic(0.0), Dyadic(denominator));
+    PHX_CHECK(zero == 0.0 && !std::signbit(zero));
+  }
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  const double negative_underflow = rounded_quotient(Dyadic(-tiny), Dyadic(4.0));
+  const double negative_underflow_reversed = rounded_quotient(Dyadic(tiny), Dyadic(-4.0));
+  PHX_CHECK(negative_underflow == 0.0 && std::signbit(negative_underflow));
+  PHX_CHECK(negative_underflow_reversed == 0.0 && std::signbit(negative_underflow_reversed));
+  PHX_CHECK(rounded_quotient(Dyadic(tiny), Dyadic(1.0)) == tiny);
+  PHX_CHECK(rounded_quotient(Dyadic(-tiny), Dyadic(1.0)) == -tiny);
+  PHX_CHECK(rounded_quotient(Dyadic(1.0), Dyadic(2.0)) == 0.5);
+  PHX_CHECK(rounded_quotient(Dyadic(1.0), Dyadic(-2.0)) == -0.5);
+  // IEEE-754 bit patterns independently obtained from Python Fraction -> float.
+  PHX_CHECK(std::bit_cast<uint64_t>(rounded_quotient(Dyadic(1.0), Dyadic(3.0))) ==
+            UINT64_C(0x3fd5555555555555));
+  PHX_CHECK(std::bit_cast<uint64_t>(rounded_quotient(Dyadic(-1.0), Dyadic(3.0))) ==
+            UINT64_C(0xbfd5555555555555));
+  PHX_CHECK(std::bit_cast<uint64_t>(
+                rounded_quotient(Dyadic(tiny) * Dyadic(3.0), Dyadic(2.0))) == UINT64_C(2));
+  PHX_CHECK(std::bit_cast<uint64_t>(
+                rounded_quotient(Dyadic(-tiny) * Dyadic(3.0), Dyadic(2.0))) ==
+            UINT64_C(0x8000000000000002));
+  bool refused = false;
+  try {
+    (void)rounded_quotient(Dyadic(0.0), Dyadic(0.0));
+  } catch (const std::invalid_argument&) {
+    refused = true;
+  }
+  PHX_CHECK(refused);
+}
+
 void test_interval_containment() {
   using phx::mc::Dyadic;
   const double tiny = std::numeric_limits<double>::denorm_min();
@@ -806,6 +844,7 @@ int main() {
   test_bisect();
   test_separation_screen();
   test_bvh_pair_stream();
+  test_rounded_quotient_zero_sign();
   test_interval_containment();
   test_boundary_sizes_and_exponents();
   test_bvh_structure_and_failure();

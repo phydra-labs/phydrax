@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import final
 
 import equinox as eqx
@@ -304,6 +305,166 @@ def test_two_accepted_plastic_steps_match_standalone_fem_dynamics() -> None:
         )
 
 
+def test_plastic_newmark_continuation_consumes_rates_and_committed_history() -> None:
+    problem, participant, initial, plasticity = _case()
+    args = {"valid": jnp.asarray(True, dtype=jnp.bool_)}
+    mechanics = phx.applications.solid_mechanics
+    policy = _plan(participant).policy
+    plan = mechanics.prepare_finite_element_dynamics(
+        problem,
+        initial,
+        0.05,
+        args=args,
+        nonlinear_method=policy.method,
+        nonlinear_termination=policy.termination,
+        material_update=plasticity.update,
+        material_update_id="j2-trial",
+    )
+
+    def advance(state: FiniteElementDynamicsState) -> FiniteElementDynamicsState:
+        result = mechanics.solve_finite_element_dynamics_step(
+            mechanics.prepare_finite_element_dynamics_step(plan, state, 0.05, args=args)
+        )
+        assert bool(result.accepted)
+        return result.promote()
+
+    first = advance(initial)
+    assert first.materials is not None
+    expected = advance(first)
+    material = first.materials.states[0]
+    assert float(material.committed[-1]) > 0.0
+
+    # Reconstitute the actual values, including accepted material version, rather
+    # than proving only that restart arrays can be copied.
+    restored_material = phx.equations.MaterialTransaction(
+        (
+            phx.equations.MaterialState(
+                material.site_id,
+                material.model_id,
+                np.array(material.committed),
+                trial=np.array(material.trial),
+                state_version=material.state_version,
+            ),
+        )
+    )
+    restored = FiniteElementDynamicsState(
+        np.array(first.displacement),
+        np.array(first.velocity),
+        np.array(first.acceleration),
+        time=np.array(first.time),
+        step=np.array(first.step),
+        state_version=np.array(first.state_version),
+        materials=restored_material,
+    )
+    actual = advance(restored)
+    for name in ("displacement", "velocity", "acceleration"):
+        np.testing.assert_allclose(
+            getattr(actual, name), getattr(expected, name), rtol=1e-8, atol=1e-9
+        )
+    assert actual.materials is not None and expected.materials is not None
+    np.testing.assert_allclose(
+        actual.materials.states[0].committed,
+        expected.materials.states[0].committed,
+        rtol=1e-8,
+        atol=1e-9,
+    )
+    # Independent Newmark average-acceleration identities.
+    dt = 0.05
+    np.testing.assert_allclose(
+        actual.displacement,
+        first.displacement
+        + dt * first.velocity
+        + 0.25 * dt**2 * (first.acceleration + actual.acceleration),
+        rtol=1e-8,
+        atol=1e-9,
+    )
+    np.testing.assert_allclose(
+        actual.velocity,
+        first.velocity + 0.5 * dt * (first.acceleration + actual.acceleration),
+        rtol=1e-8,
+        atol=1e-9,
+    )
+    # The free, uniform-density tetrahedron has equal mass row sums; internal
+    # stresses cannot change its total linear momentum.
+    np.testing.assert_allclose(
+        np.sum(np.asarray(actual.velocity), axis=0),
+        np.sum(np.asarray(first.velocity), axis=0),
+        atol=1e-8,
+    )
+    assert actual.materials.states[0].state_version == material.state_version + 1
+    without_history = FiniteElementDynamicsState(
+        first.displacement,
+        first.velocity,
+        first.acceleration,
+        time=first.time,
+        step=first.step,
+        state_version=first.state_version,
+        materials=initial.materials,
+    )
+    without_velocity = FiniteElementDynamicsState(
+        first.displacement,
+        jnp.zeros_like(first.velocity),
+        first.acceleration,
+        time=first.time,
+        step=first.step,
+        state_version=first.state_version,
+        materials=first.materials,
+    )
+    without_acceleration = FiniteElementDynamicsState(
+        first.displacement,
+        first.velocity,
+        jnp.zeros_like(first.acceleration),
+        time=first.time,
+        step=first.step,
+        state_version=first.state_version,
+        materials=first.materials,
+    )
+    assert not np.allclose(
+        advance(without_history).displacement, actual.displacement, rtol=1e-7, atol=1e-9
+    )
+    for perturbed in (without_velocity, without_acceleration):
+        assert not np.allclose(
+            advance(perturbed).displacement, actual.displacement, rtol=1e-7, atol=1e-9
+        )
+
+
+def test_nested_periodic_cone_uses_exact_lift_and_stencil() -> None:
+    from phydrax.meshing._lineage import VertexInterpolationStencil
+    from tools.meshing_qualification.scenarios.cold_owner_local import (
+        _nested_periodic_cone,
+    )
+
+    f = Fraction
+    parent = ((f(1), f(0)), (f(2), f(0)), (f(1), f(1)))
+    child = ((f(1), f(0)), (f(3, 2), f(0)), (f(1), f(1)))
+    stencil = VertexInterpolationStencil(
+        "source",
+        "target",
+        np.asarray((10, 13, 12), dtype=np.int64),
+        np.asarray(((10, -1), (10, 11), (12, -1)), dtype=np.int64),
+        np.asarray(((1.0, 0.0), (0.5, 0.5), (1.0, 0.0))),
+        np.asarray(((True, False), (True, True), (True, False))),
+        exact_weights=((f(1), f(0)), (f(1, 2), f(1, 2)), (f(1), f(0))),
+    )
+    parent_cone, child_cone, interpolation = _nested_periodic_cone(
+        (10, 11, 12), (10, 13, 12), parent, child, stencil
+    )
+    assert interpolation[1] == (f(1, 2), f(1, 2), f(0), f(0))
+    assert interpolation[3] == (f(0), f(0), f(0), f(1))
+    for row, expected in zip(interpolation, child_cone, strict=True):
+        assert (
+            tuple(
+                sum((row[i] * parent_cone[i][axis] for i in range(4)), f(0))
+                for axis in range(3)
+            )
+            == expected
+        )
+    # The same quotient vertex with a different winding is not the same lift.
+    wrong_lift = (child[0], (f(1, 2), f(0)), child[2])
+    with pytest.raises(ValueError, match="periodic lift disagree"):
+        _nested_periodic_cone((10, 11, 12), (10, 13, 12), parent, wrong_lift, stencil)
+
+
 @pytest.mark.parametrize("failure", ("participant", "global-envelope"))
 def test_rejected_plastic_step_preserves_committed_fem_revision(failure: str) -> None:
     _, participant, initial, _ = _case()
@@ -379,3 +540,56 @@ def test_equilibrium_commits_material_version_without_advancing_fem_clock() -> N
     np.testing.assert_array_equal(
         history.materials.states[0].trial, history.materials.states[0].committed
     )
+
+
+def test_rejected_native_newmark_preserves_pending_material_trial() -> None:
+    problem, participant, initial, plasticity = _case()
+    assert initial.materials is not None
+    original = initial.materials.states[0]
+    pending = original.committed + jnp.asarray(0.125, dtype=original.committed.dtype)
+    materials = MaterialTransaction(
+        (
+            phx.equations.MaterialState(
+                original.site_id,
+                original.model_id,
+                original.committed,
+                trial=pending,
+                state_version=7,
+            ),
+        )
+    )
+    previous = FiniteElementDynamicsState(
+        initial.displacement,
+        initial.velocity,
+        initial.acceleration,
+        time=initial.time,
+        step=initial.step,
+        state_version=initial.state_version,
+        materials=materials,
+    )
+    mechanics = phx.applications.solid_mechanics
+    policy = _plan(participant).policy
+    valid_args = {"valid": jnp.asarray(True, dtype=jnp.bool_)}
+    plan = mechanics.prepare_finite_element_dynamics(
+        problem,
+        previous,
+        0.05,
+        args=valid_args,
+        nonlinear_method=policy.method,
+        nonlinear_termination=policy.termination,
+        material_update=plasticity.update,
+        material_update_id="j2-trial",
+    )
+    rejected = mechanics.solve_finite_element_dynamics_step(
+        mechanics.prepare_finite_element_dynamics_step(
+            plan, previous, 0.05, args={"valid": jnp.asarray(False, dtype=jnp.bool_)}
+        )
+    )
+    assert not bool(rejected.accepted)
+    assert bool(rejected.rollback_applied)
+    for state in (rejected.accepted_state, rejected.promote()):
+        assert state.materials is not None
+        restored = state.materials.states[0]
+        assert restored.state_version == 7
+        np.testing.assert_array_equal(restored.committed, original.committed)
+        np.testing.assert_array_equal(restored.trial, pending)

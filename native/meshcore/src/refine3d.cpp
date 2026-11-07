@@ -49,6 +49,35 @@ struct ScopeExit {
 template <class Exit>
 ScopeExit(Exit) -> ScopeExit<Exit>;
 
+std::array<double, 3> metric_point(const TetMesh& mesh, const double* p) {
+  return mesh.metric_transform({p[0], p[1], p[2]});
+}
+
+double metric_distance(const TetMesh& mesh, const double* a, const double* b) {
+  if (!mesh.metric_active()) return std::sqrt(geometry::squared_distance(a, b));
+  const auto d = mesh.metric_transform({a[0] - b[0], a[1] - b[1], a[2] - b[2]});
+  return std::hypot(std::hypot(d[0], d[1]), d[2]);
+}
+
+double metric_segment_distance(const TetMesh& mesh, const double* p, const double* a,
+                               const double* b) {
+  if (!mesh.metric_active()) return geometry::point_segment_distance(p, a, b);
+  const auto wp = mesh.metric_transform({p[0] - a[0], p[1] - a[1], p[2] - a[2]});
+  const std::array<double, 3> wa{};
+  const auto wb = mesh.metric_transform({b[0] - a[0], b[1] - a[1], b[2] - a[2]});
+  return geometry::point_segment_distance(wp.data(), wa.data(), wb.data());
+}
+
+double metric_triangle_distance(const TetMesh& mesh, const double* p, const double* a,
+                                const double* b, const double* c) {
+  if (!mesh.metric_active()) return geometry::point_triangle_distance(p, a, b, c);
+  const auto wp = mesh.metric_transform({p[0] - a[0], p[1] - a[1], p[2] - a[2]});
+  const std::array<double, 3> wa{};
+  const auto wb = mesh.metric_transform({b[0] - a[0], b[1] - a[1], b[2] - a[2]});
+  const auto wc = mesh.metric_transform({c[0] - a[0], c[1] - a[1], c[2] - a[2]});
+  return geometry::point_triangle_distance(wp.data(), wa.data(), wb.data(), wc.data());
+}
+
 bool tetrahedron_geometry(const TetMesh& mesh, const TetSnapshotCell& cell,
                           std::array<std::int32_t, 4>& slots,
                           geometry::TetrahedronShape& shape) {
@@ -58,7 +87,19 @@ bool tetrahedron_geometry(const TetMesh& mesh, const TetSnapshotCell& cell,
     if (!mesh.live_vertex(slots[corner])) return false;
     points[corner] = mesh.point(slots[corner]);
   }
-  return geometry::tetrahedron_shape(points, shape);
+  if (!mesh.metric_active()) return geometry::tetrahedron_shape(points, shape);
+  std::array<std::array<double, 3>, 4> world{};
+  const double* transformed[4];
+  for (int corner = 0; corner < 4; ++corner) {
+    world[corner] = mesh.metric_transform(
+        {points[corner][0] - points[0][0], points[corner][1] - points[0][1],
+         points[corner][2] - points[0][2]});
+    transformed[corner] = world[corner].data();
+  }
+  if (!geometry::tetrahedron_shape(transformed, shape)) return false;
+  const auto center = mesh.metric_inverse_transform(shape.circumcenter);
+  for (int axis = 0; axis < 3; ++axis) shape.circumcenter[axis] = points[0][axis] + center[axis];
+  return true;
 }
 
 bool same_carrier(const double* first, const double* second) {
@@ -142,11 +183,11 @@ bool facet_weights(const TetMesh& mesh, std::int32_t slot, std::int32_t row,
 // Installs the witness (stratum, row, parameters) on `vertex` with its
 // carrier, the correctly rounded exact source point, and the exact
 // realization bound as its deviation.
-bool install_witness(const double* const* corners, SourceStratum stratum, std::int32_t row,
-                     const double* parameters, TetEditVertex& vertex) {
+bool install_witness(const TetMesh& mesh, const double* const* corners, SourceStratum stratum,
+                     std::int32_t row, const double* parameters, TetEditVertex& vertex) {
   if (!source_parameters_valid(stratum, parameters)) return false;
   double deviation = 0.0;
-  if (!source_carrier(corners, stratum, parameters, vertex.carrier.data(), deviation)) {
+  if (!mesh.source_carrier_metric(corners, stratum, parameters, vertex.carrier.data(), deviation)) {
     return false;
   }
   vertex.witness.stratum = stratum;
@@ -289,7 +330,7 @@ bool violates(const TetMesh& mesh, const TetSnapshotCell& cell,
   std::array<std::int32_t, 4> slots{};
   geometry::TetrahedronShape shape;
   if (!tetrahedron_geometry(mesh, cell, slots, shape)) return true;
-  if (shape.radius_edge_ratio > radius_edge_bound) return true;
+  if (radius_edge_bound > 0.0 && shape.radius_edge_ratio > radius_edge_bound) return true;
   double target = 0.0;
   return mean_target_size(cell.vertices, sizes, target) &&
          shape.circumradius > target;
@@ -327,7 +368,7 @@ void collect_unmet(const TetMesh& mesh, const TetMeshSnapshot& snapshot,
     }
     const auto found = causes.find(cell.id);
     const UnmetCause cause = found == causes.end() ? UnmetCause{} : found->second;
-    if (shape.radius_edge_ratio > radius_edge_bound) {
+    if (radius_edge_bound > 0.0 && shape.radius_edge_ratio > radius_edge_bound) {
       records.push_back({cell.id, PHX_MC_TET_UNMET_RADIUS_EDGE, cause.reason,
                          shape.radius_edge_ratio, cause.apex_vertex, cause.apex_angle});
       cell_unmet = true;
@@ -435,7 +476,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
       for (int second = first + 1; second < 4; ++second) {
         const std::int32_t a = tetrahedron.v[first];
         const std::int32_t b = tetrahedron.v[second];
-        const double length = std::sqrt(geometry::squared_distance(mesh.point(a), mesh.point(b)));
+        const double length = metric_distance(mesh, mesh.point(a), mesh.point(b));
         sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], length);
         sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], length);
         lengths.push_back(length);
@@ -478,11 +519,14 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   double cell = lengths[lengths.size() / 2];
   const auto feature_box = [&](std::span<const std::int32_t> corners, double* lower,
                                double* upper) {
-    for (int axis = 0; axis < 3; ++axis) {
-      lower[axis] = upper[axis] = mesh.point(corners[0])[axis];
-      for (std::int32_t corner : corners.subspan(1)) {
-        lower[axis] = std::min(lower[axis], mesh.point(corner)[axis]);
-        upper[axis] = std::max(upper[axis], mesh.point(corner)[axis]);
+    const auto first = metric_point(mesh, mesh.point(corners[0]));
+    std::copy(first.begin(), first.end(), lower);
+    std::copy(first.begin(), first.end(), upper);
+    for (std::int32_t corner : corners.subspan(1)) {
+      const auto point = metric_point(mesh, mesh.point(corner));
+      for (int axis = 0; axis < 3; ++axis) {
+        lower[axis] = std::min(lower[axis], point[axis]);
+        upper[axis] = std::max(upper[axis], point[axis]);
       }
     }
   };
@@ -501,7 +545,8 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     const std::int32_t vertex = static_cast<std::int32_t>(slot);
     if (!mesh.live_vertex(vertex)) continue;
-    if (!register_box(point_grid, cell, mesh.point(vertex), mesh.point(vertex), vertex)) {
+    const auto world = metric_point(mesh, mesh.point(vertex));
+    if (!register_box(point_grid, cell, world.data(), world.data(), vertex)) {
       return false;
     }
   }
@@ -523,26 +568,27 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     const double* p = mesh.point(vertex);
     double lambda = sizes[slot];
     if (!std::isfinite(lambda)) return false;
-    const double lower[3]{p[0] - lambda, p[1] - lambda, p[2] - lambda};
-    const double upper[3]{p[0] + lambda, p[1] + lambda, p[2] + lambda};
+    const auto world = metric_point(mesh, p);
+    const double lower[3]{world[0] - lambda, world[1] - lambda, world[2] - lambda};
+    const double upper[3]{world[0] + lambda, world[1] + lambda, world[2] + lambda};
     const bool visited =
         visit_box(point_grid, cell, lower, upper, [&](std::int32_t other) {
           if (other != vertex) {
-            lambda = std::min(lambda, std::sqrt(geometry::squared_distance(p, mesh.point(other))));
+            lambda = std::min(lambda, metric_distance(mesh, p, mesh.point(other)));
           }
         }) &&
         visit_box(line_grid, cell, lower, upper, [&](std::int32_t row) {
           const auto& line = lines[static_cast<std::size_t>(row)];
           if (line[0] != vertex && line[1] != vertex) {
-            lambda = std::min(lambda, geometry::point_segment_distance(
-                                          p, mesh.point(line[0]), mesh.point(line[1])));
+            lambda = std::min(lambda, metric_segment_distance(
+                                          mesh, p, mesh.point(line[0]), mesh.point(line[1])));
           }
         }) &&
         visit_box(plane_grid, cell, lower, upper, [&](std::int32_t row) {
           const auto& plane = planes[static_cast<std::size_t>(row)];
           if (plane[0] != vertex && plane[1] != vertex && plane[2] != vertex) {
-            lambda = std::min(lambda, geometry::point_triangle_distance(
-                                          p, mesh.point(plane[0]), mesh.point(plane[1]),
+            lambda = std::min(lambda, metric_triangle_distance(
+                                          mesh, p, mesh.point(plane[0]), mesh.point(plane[1]),
                                           mesh.point(plane[2])));
           }
         });
@@ -552,7 +598,12 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     double resolution = 0.0;
     for (int axis = 0; axis < 3; ++axis) {
       const double magnitude = std::abs(p[axis]);
-      resolution = std::max(resolution, std::nextafter(magnitude, infinity) - magnitude);
+      const double step = std::nextafter(magnitude, infinity) - magnitude;
+      std::array<double, 3> delta{};
+      delta[axis] = step;
+      const auto transformed = mesh.metric_transform(delta);
+      resolution = std::max(resolution, std::hypot(std::hypot(transformed[0], transformed[1]),
+                                                   transformed[2]));
     }
     lambda = std::max(lambda, resolution);
     sizes[slot] = lambda;
@@ -583,7 +634,8 @@ class SpacingIndex {
     while (std::ldexp(base_, static_cast<int>(level)) < radius) ++level;
     if (!build(level)) return false;
     GridKey center;
-    if (!grid_cell(point, std::ldexp(base_, static_cast<int>(level)), center)) return false;
+    const auto world = metric_point(mesh_, point);
+    if (!grid_cell(world.data(), std::ldexp(base_, static_cast<int>(level)), center)) return false;
     for (std::int64_t dx = -1; dx <= 1; ++dx) {
       for (std::int64_t dy = -1; dy <= 1; ++dy) {
         for (std::int64_t dz = -1; dz <= 1; ++dz) {
@@ -591,7 +643,7 @@ class SpacingIndex {
               GridKey{{center.cell[0] + dx, center.cell[1] + dy, center.cell[2] + dz}});
           if (found == levels_[level].end()) continue;
           for (std::int32_t vertex : found->second) {
-            if (std::sqrt(geometry::squared_distance(point, mesh_.point(vertex))) < radius) {
+            if (metric_distance(mesh_, point, mesh_.point(vertex)) < radius) {
               return false;
             }
           }
@@ -617,7 +669,8 @@ class SpacingIndex {
 
   bool add(std::size_t level, std::int32_t vertex) {
     GridKey key;
-    if (!grid_cell(mesh_.point(vertex), std::ldexp(base_, static_cast<int>(level)), key)) {
+    const auto world = metric_point(mesh_, mesh_.point(vertex));
+    if (!grid_cell(world.data(), std::ldexp(base_, static_cast<int>(level)), key)) {
       return false;
     }
     levels_[level][key].push_back(vertex);
@@ -758,7 +811,10 @@ bool acute_input_features(
     }
   }
   const auto direction = [&](std::int32_t from, std::int32_t to, double* out) {
-    for (int axis = 0; axis < 3; ++axis) out[axis] = mesh.point(to)[axis] - mesh.point(from)[axis];
+    const double* a = mesh.point(from);
+    const double* b = mesh.point(to);
+    const auto world = mesh.metric_transform({b[0] - a[0], b[1] - a[1], b[2] - a[2]});
+    std::copy(world.begin(), world.end(), out);
   };
 
   for (const auto& [apex, ends] : segment_ends) {
@@ -891,7 +947,8 @@ class ProtectionIndex {
   // The lowest-indexed feature whose protected region holds `point`, else -1.
   std::int32_t find(const double* point) const {
     GridKey key;
-    if (grid_.empty() || !grid_cell(point, cell_, key)) return -1;
+    const auto world = metric_point(mesh_, point);
+    if (grid_.empty() || !grid_cell(world.data(), cell_, key)) return -1;
     const auto found = grid_.find(key);
     if (found == grid_.end()) return -1;
     std::int32_t protecting = -1;
@@ -900,9 +957,9 @@ class ProtectionIndex {
       const AcuteFeature& feature = features_[static_cast<std::size_t>(row)];
       const double distance =
           feature.ridge < 0
-              ? std::sqrt(geometry::squared_distance(point, mesh_.point(feature.apex)))
-              : geometry::point_segment_distance(point, mesh_.point(feature.apex),
-                                                 mesh_.point(feature.ridge));
+              ? metric_distance(mesh_, point, mesh_.point(feature.apex))
+              : metric_segment_distance(mesh_, point, mesh_.point(feature.apex),
+                                        mesh_.point(feature.ridge));
       if (distance < feature.radius) protecting = row;
     }
     return protecting;
@@ -910,8 +967,8 @@ class ProtectionIndex {
 
  private:
   void box(const AcuteFeature& feature, double* lower, double* upper) const {
-    const double* apex = mesh_.point(feature.apex);
-    const double* end = feature.ridge < 0 ? apex : mesh_.point(feature.ridge);
+    const auto apex = metric_point(mesh_, mesh_.point(feature.apex));
+    const auto end = feature.ridge < 0 ? apex : metric_point(mesh_, mesh_.point(feature.ridge));
     for (int axis = 0; axis < 3; ++axis) {
       lower[axis] = std::min(apex[axis], end[axis]) - feature.radius;
       upper[axis] = std::max(apex[axis], end[axis]) + feature.radius;
@@ -932,7 +989,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                          std::int64_t& unmet_cells) {
   inserted_vertices = 0;
   unmet_cells = 0;
-  if (!std::isfinite(radius_edge_bound) || radius_edge_bound <= 0.0) {
+  if (!std::isfinite(radius_edge_bound) || radius_edge_bound < 0.0) {
     return PHX_MC_INVALID_ARGUMENT;
   }
 
@@ -987,6 +1044,29 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       return PHX_MC_INTERNAL_ERROR;
     }
   }
+  // Embedded segments: constrained segments on no constrained face (a curve
+  // inside a region). No cavity boundary face carries one, so its
+  // encroachment is tested on the cells around a center, its split cavity is
+  // seeded with its edge star, and its halves stay embedded.
+  std::set<EdgeKey> embedded_segments;
+  for (const TetSnapshotSegment& segment : mesh.segments_) {
+    const std::int32_t first = mesh.vertex_slot(segment.vertices[0]);
+    const std::int32_t second = mesh.vertex_slot(segment.vertices[1]);
+    if (!mesh.live_vertex(first) || !mesh.live_vertex(second)) return PHX_MC_INTERNAL_ERROR;
+    const std::span<const std::int32_t> star = incidence.edge_star(first, second);
+    bool on_face = false;
+    for (std::int32_t cell : star) {
+      for (int face = 0; face < 4 && !on_face; ++face) {
+        const std::int32_t opposite = mesh.tet(cell).v[face];
+        on_face = opposite != first && opposite != second &&
+                  mesh.complex_.constraint(cell, face) != kNoConstraint;
+      }
+      if (on_face) break;
+    }
+    if (!star.empty() && !on_face) {
+      embedded_segments.insert(sorted_edge(segment.vertices[0], segment.vertices[1]));
+    }
+  }
   // TetMesh::insert_local_boundary_point leaves the banks out of ID order.
   const auto restore_bank_order = [&]() noexcept {
     std::sort(mesh.facets_.begin(), mesh.facets_.end(),
@@ -1034,7 +1114,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       double parameters[2]{};
       return locate_in_rows(mesh, stratum, through_rows, midpoint, row, parameters) &&
              mesh.source_corners(stratum, row, corners) &&
-             install_witness(corners, stratum, row, parameters, vertex) &&
+             install_witness(mesh, corners, stratum, row, parameters, vertex) &&
              !same_carrier(vertex.carrier.data(), mesh.point(first_slot)) &&
              !same_carrier(vertex.carrier.data(), mesh.point(second_slot));
     };
@@ -1051,7 +1131,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         }
         const double parameters[2]{0.5 * first + 0.5 * second, 0.0};
         if (std::min(first, second) < parameters[0] && parameters[0] < std::max(first, second) &&
-            install_witness(corners, SourceStratum::kSegment, row, parameters, vertex)) {
+            install_witness(mesh, corners, SourceStratum::kSegment, row, parameters, vertex)) {
           return true;
         }
         break;
@@ -1099,7 +1179,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
             facet_weights(mesh, second_slot, row, corners, second)) {
           if (exact_half_sum(first[0], second[0], parameters[0]) &&
               exact_half_sum(first[1], second[1], parameters[1]) &&
-              install_witness(corners, SourceStratum::kFacet, row, parameters, vertex)) {
+              install_witness(mesh, corners, SourceStratum::kFacet, row, parameters, vertex)) {
             return true;
           }
           break;
@@ -1118,13 +1198,15 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // faces, shrink it until it is star-shaped from c and keeps every vertex and
   // constrained segment on its boundary, then cone it to c through the
   // cavity-local TetMesh::insert_local_cone commit.
-  // Encroachment follows Shewchuk's order: when c lies beyond a constrained
-  // face, or inside the diametral ball of a constrained segment or the
-  // equatorial ball of a constrained face bounding its cavity, a boundary
-  // that may be split is split instead of inserting c: the encroached
-  // subsegment at its midpoint, else the encroached subfacet at its
-  // circumcenter (a subsegment that circumcenter encroaches, or that the walk
-  // to it crosses, is split instead), each at an exact source parameter. A
+  // Encroachment follows Shewchuk's order: when c lies inside the diametral
+  // ball of an embedded segment (on no constrained face) that is an edge of
+  // c's conflict region, beyond a constrained face, or inside the diametral
+  // ball of a constrained segment or the equatorial ball of a constrained
+  // face bounding its cavity, a boundary that may be split is split instead
+  // of inserting c: the encroached subsegment at its midpoint, else the
+  // encroached subfacet at its circumcenter (a subsegment that circumcenter
+  // encroaches, or that the walk to it crosses, is split instead), each at
+  // an exact source parameter. A
   // fixed boundary keeps its faces: a c inside the domain is still inserted
   // (the cavity stops at the fixed faces and the cone is proved valid), and a
   // c beyond a fixed face leaves the cell unmet with reason FIXED_BOUNDARY.
@@ -1211,7 +1293,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     double size = std::numeric_limits<double>::infinity();
     for (std::int32_t vertex : neighbors) {
       size = std::min(size, feature_sizes[static_cast<std::size_t>(vertex)] +
-                                std::sqrt(geometry::squared_distance(point, mesh.point(vertex))));
+                                metric_distance(mesh, point, mesh.point(vertex)));
     }
     return size;
   };
@@ -1249,7 +1331,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   for (const auto& [group, declared] : mesh.declared_groups_) {
     const double* plane = mesh.face_plane(declared.rows.front());
     std::array<double, 3> normal{};
-    cross3(plane + 3, plane + 6, normal.data());
+    const auto u = mesh.metric_transform({plane[3], plane[4], plane[5]});
+    const auto v = mesh.metric_transform({plane[6], plane[7], plane[8]});
+    cross3(u.data(), v.data(), normal.data());
     plane_normals.emplace(group, normal);
   }
   std::vector<AcuteFeature> acute_features;
@@ -1309,12 +1393,16 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     return PHX_MC_OK;
   };
   // Equatorial ball of a triangle: the smallest sphere through its corners.
-  const auto circumcircle = [](const double* const corners[3], double* center) {
+  const auto circumcircle = [&](const double* const corners[3], double* center) {
     double ab[3], ac[3];
-    for (int axis = 0; axis < 3; ++axis) {
-      ab[axis] = corners[1][axis] - corners[0][axis];
-      ac[axis] = corners[2][axis] - corners[0][axis];
-    }
+    const auto ab_world = mesh.metric_transform({corners[1][0] - corners[0][0],
+                                                  corners[1][1] - corners[0][1],
+                                                  corners[1][2] - corners[0][2]});
+    const auto ac_world = mesh.metric_transform({corners[2][0] - corners[0][0],
+                                                  corners[2][1] - corners[0][1],
+                                                  corners[2][2] - corners[0][2]});
+    std::copy(ab_world.begin(), ab_world.end(), ab);
+    std::copy(ac_world.begin(), ac_world.end(), ac);
     const double normal[3]{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
                            ab[0] * ac[1] - ab[1] * ac[0]};
     const double normal_squared =
@@ -1323,6 +1411,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     const double ab_squared = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
     const double ac_squared = ac[0] * ac[0] + ac[1] * ac[1] + ac[2] * ac[2];
     double radius_squared = 0.0;
+    std::array<double, 3> world_offset{};
     for (int axis = 0; axis < 3; ++axis) {
       const int next = (axis + 1) % 3;
       const int last = (axis + 2) % 3;
@@ -1330,20 +1419,26 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                              ac_squared * (normal[next] * ab[last] - normal[last] * ab[next])) /
                             (2.0 * normal_squared);
       radius_squared += offset * offset;
-      center[axis] = corners[0][axis] + offset;
+      world_offset[axis] = offset;
     }
+    const auto index_offset = mesh.metric_inverse_transform(world_offset);
+    for (int axis = 0; axis < 3; ++axis) center[axis] = corners[0][axis] + index_offset[axis];
     return radius_squared;
   };
   const auto in_equatorial_ball = [&](const double* const corners[3], const double* point) {
     double center[3];
     const double radius_squared = circumcircle(corners, center);
-    return radius_squared > 0.0 && geometry::squared_distance(point, center) < radius_squared;
+    if (!mesh.metric_active()) {
+      return radius_squared > 0.0 && geometry::squared_distance(point, center) < radius_squared;
+    }
+    const double distance = metric_distance(mesh, point, center);
+    return radius_squared > 0.0 && distance * distance < radius_squared;
   };
   // Diametral ball of a segment.
-  const auto in_diametral_ball = [](const double* a, const double* b, const double* point) {
-    double dot = 0.0;
-    for (int axis = 0; axis < 3; ++axis) dot += (point[axis] - a[axis]) * (point[axis] - b[axis]);
-    return dot < 0.0;
+  const auto in_diametral_ball = [&](const double* a, const double* b, const double* point) {
+    const std::array<double, 3> first{point[0] - a[0], point[1] - a[1], point[2] - a[2]};
+    const std::array<double, 3> second{point[0] - b[0], point[1] - b[1], point[2] - b[2]};
+    return mesh.metric_dot(first, second) < 0.0;
   };
 
   // The constrained faces of `source` through the edge (first, second) other
@@ -1398,7 +1493,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // constrained segment `segment_edge`) with the Bowyer-Watson cavity of the
   // disks grown from `seeds` (finite sides of the constrained faces holding
   // it) across the non-segment edges of their facets into the subfacets whose
-  // circumcircles contain it, else of the seeds alone, under the insertion
+  // circumcircles contain it, else of the seeds alone, or with no seeds (an
+  // embedded segment) of the segment's edge star, under the insertion
   // guard for the natural radius `radius` (none when 0) and size target
   // `target` (none when 0). A guarded vertex inside the protected region of
   // an acute input feature is not inserted unless `sizing_pass` (the size
@@ -1406,10 +1502,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // guard bound it); `protecting` is set to that feature. A facet vertex
   // inside the diametral ball of a subsegment of its cavity is not inserted;
   // `encroached_segment` is set to that subsegment. Fills `fan_rows` with the
-  // facet rows it wrote. Returns OK and sets `split` when the vertex was
+  // facet rows it wrote and `split_halves` with the halves of a split
+  // embedded segment. Returns OK and sets `split` when the vertex was
   // inserted.
   std::int32_t protecting = -1;
   bool sizing_pass = false;
+  bool selective_fixed = false;
   TetInsertionCavity cavity;
   std::vector<std::uint64_t> created_cells;
   std::vector<std::int32_t> cavity_vertices;
@@ -1419,8 +1517,11 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   std::vector<std::size_t> split_segment_rows;
   std::vector<std::size_t> fan_rows;
   std::vector<std::int32_t> boundary_cavity;
+  std::vector<std::int32_t> segment_star;
   std::vector<FaceKey> removed_keys;
   std::optional<EdgeKey> encroached_segment;
+  // The halves of the embedded segment the last boundary insertion split.
+  std::optional<std::array<EdgeKey, 2>> split_halves;
   const auto insert_boundary_vertex =
       [&](TetEditVertex& inserted, std::span<const std::pair<std::int32_t, int>> seeds,
           const EdgeKey* segment_edge, double radius, double target,
@@ -1429,6 +1530,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     protecting = -1;
     encroached_segment.reset();
     fan_rows.clear();
+    split_halves.reset();
     if (mesh.next_vertex_id_ == std::numeric_limits<std::uint64_t>::max() ||
         inserted_vertices == std::numeric_limits<std::int64_t>::max()) {
       return PHX_MC_INDEX_RANGE_ERROR;
@@ -1491,8 +1593,16 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
               ? std::array<std::int32_t, 2>{-1, -1}
               : std::array<std::int32_t, 2>{mesh.vertex_slot((*segment_edge)[0]),
                                             mesh.vertex_slot((*segment_edge)[1])};
-      if (mesh.boundary_insertion_cavity(inserted, disk_sides, split_slots, boundary_cavity) !=
-          TetCavityStatus::kFound) {
+      segment_star.clear();
+      if (seeds.empty()) {
+        // An embedded segment: no disk, so the whole-disk pass is the only one.
+        if (!whole_disk || segment_edge == nullptr) break;
+        const std::span<const std::int32_t> star =
+            incidence.edge_star(split_slots[0], split_slots[1]);
+        segment_star.assign(star.begin(), star.end());
+      }
+      if (mesh.boundary_insertion_cavity(inserted, disk_sides, split_slots, segment_star,
+                                         boundary_cavity) != TetCavityStatus::kFound) {
         continue;
       }
       cavity_vertices.clear();
@@ -1542,11 +1652,21 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         const std::size_t row = split_segment_rows.front();
         const std::size_t appended = mesh.segments_.size() - 1;
         segment_rows_by_edge.erase(*segment_edge);
-        for (const std::size_t half : {row, appended}) {
+        const bool embedded = embedded_segments.erase(*segment_edge) != 0;
+        std::array<EdgeKey, 2> halves{};
+        for (int index = 0; index < 2; ++index) {
+          const std::size_t half = index == 0 ? row : appended;
           const auto& vertices = mesh.segments_[half].vertices;
-          if (!segment_rows_by_edge.emplace(sorted_edge(vertices[0], vertices[1]), half).second) {
+          halves[static_cast<std::size_t>(index)] = sorted_edge(vertices[0], vertices[1]);
+          if (!segment_rows_by_edge.emplace(halves[static_cast<std::size_t>(index)], half)
+                   .second) {
             return PHX_MC_INTERNAL_ERROR;
           }
+        }
+        if (embedded) {
+          embedded_segments.insert(halves[0]);
+          embedded_segments.insert(halves[1]);
+          split_halves = halves;
         }
       }
       if (target > 0.0) sizes.emplace(inserted.id, target);
@@ -1582,6 +1702,10 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         }
         const auto row = facet_rows_by_face.find(face_key_of(cell, face));
         if (row == facet_rows_by_face.end()) return PHX_MC_INTERNAL_ERROR;
+        if (mesh.facets_[row->second].protected_facet) {
+          selective_fixed = true;
+          return PHX_MC_OK;
+        }
         if (std::find(edge_facet_rows.begin(), edge_facet_rows.end(), row->second) ==
             edge_facet_rows.end()) {
           edge_facet_rows.push_back(row->second);
@@ -1589,7 +1713,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         }
       }
     }
-    if (edge_sides.empty()) return PHX_MC_OK;
+    // An edge on no constrained face is split only as an embedded segment,
+    // its cavity seeded with its edge star.
+    if (edge_sides.empty() && !embedded_segments.contains(edge)) return PHX_MC_OK;
     const auto segment = segment_rows_by_edge.find(edge);
     const bool on_segment = segment != segment_rows_by_edge.end();
     TetEditVertex inserted;
@@ -1598,7 +1724,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       return PHX_MC_OK;
     }
     const double radius =
-        guarded ? 0.5 * std::sqrt(geometry::squared_distance(mesh.point(first), mesh.point(second)))
+        guarded ? 0.5 * metric_distance(mesh, mesh.point(first), mesh.point(second))
                 : 0.0;
     return insert_boundary_vertex(inserted, edge_sides, on_segment ? &edge : nullptr, radius,
                                   target, split);
@@ -1618,6 +1744,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     split = false;
     std::pair<std::int32_t, int> current;
     if (!finite_side(cell, face, current)) return PHX_MC_OK;
+    const auto protected_row = facet_rows_by_face.find(face_key_of(current.first, current.second));
+    if (protected_row == facet_rows_by_face.end()) return PHX_MC_INTERNAL_ERROR;
+    if (mesh.facets_[protected_row->second].protected_facet) {
+      selective_fixed = true;
+      return PHX_MC_OK;
+    }
     const std::int32_t source = mesh.complex_.constraint(current.first, current.second);
     std::int32_t facet[3];
     oriented_facet(mesh.tet(current.first).v, current.second, facet);
@@ -1641,7 +1773,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       const double* corners[3]{mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2])};
       if (!(circumcircle(corners, center.data()) > 0.0)) return PHX_MC_OK;
     }
-    const double radius = std::sqrt(geometry::squared_distance(center.data(), mesh.point(facet[0])));
+    const double radius = metric_distance(mesh, center.data(), mesh.point(facet[0]));
     // Walk across the facet's subfacets to the one containing the center.
     for (std::size_t step = 0;; ++step) {
       if (step > mesh.facets_.size()) return PHX_MC_OK;
@@ -1702,7 +1834,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       if (!locate_in_rows(mesh, SourceStratum::kFacet, through_rows, center.data(), row,
                           parameters) ||
           !mesh.source_corners(SourceStratum::kFacet, row, corners) ||
-          !install_witness(corners, SourceStratum::kFacet, row, parameters, inserted)) {
+          !install_witness(mesh, corners, SourceStratum::kFacet, row, parameters, inserted)) {
         return PHX_MC_OK;
       }
     }
@@ -1718,13 +1850,61 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     return split_segment(mesh.vertex_slot(edge[0]), mesh.vertex_slot(edge[1]));
   };
 
+  // The embedded subsegment whose diametral ball holds `center` among the
+  // edges of the center's conflict region: the cells reached from `root`
+  // (the cell whose circumcenter it is) across unconstrained faces into cells
+  // whose circumspheres strictly hold it. The first found in that
+  // deterministic order is set in `encroached`.
+  std::vector<std::int32_t> conflict_stack;
+  std::unordered_set<std::int32_t> conflict_cells;
+  const auto encroached_embedded_segment = [&](std::int32_t root, const double* center,
+                                               EdgeKey& encroached) {
+    if (embedded_segments.empty()) return false;
+    conflict_cells.clear();
+    conflict_cells.insert(root);
+    conflict_stack.assign(1, root);
+    while (!conflict_stack.empty()) {
+      const std::int32_t cell = conflict_stack.back();
+      conflict_stack.pop_back();
+      const Tetrahedron& tetrahedron = mesh.tet(cell);
+      for (int corner = 0; corner < 4; ++corner) {
+        for (int other = corner + 1; other < 4; ++other) {
+          const std::int32_t a = tetrahedron.v[corner];
+          const std::int32_t b = tetrahedron.v[other];
+          const EdgeKey edge = sorted_edge(mesh.vertex_id(a), mesh.vertex_id(b));
+          if (embedded_segments.contains(edge) &&
+              in_diametral_ball(mesh.point(a), mesh.point(b), center)) {
+            encroached = edge;
+            return true;
+          }
+        }
+      }
+      for (int face = 0; face < 4; ++face) {
+        const std::int32_t next = tetrahedron.n[face];
+        if (mesh.complex_.constraint(cell, face) != kNoConstraint || !mesh.complex_.live(next) ||
+            is_ghost(mesh.tet(next)) || conflict_cells.contains(next)) {
+          continue;
+        }
+        const Tetrahedron& candidate = mesh.tet(next);
+        if (mesh.metric_insphere(mesh.point(candidate.v[0]), mesh.point(candidate.v[1]),
+                                 mesh.point(candidate.v[2]), mesh.point(candidate.v[3]),
+                                 center) > 0) {
+          conflict_cells.insert(next);
+          conflict_stack.push_back(next);
+        }
+      }
+    }
+    return false;
+  };
+
   // Boundary edges longer than their size targets are split first, longest
   // relative to its target first (ties: smallest key). Splitting never moves
   // a vertex, so a queued ratio stays exact until its edge is split; split
   // edges never reappear. A facet edge whose midpoint would encroach a
   // subsegment splits that subsegment first (under the insertion guard) and
   // is queued again: an unchecked midpoint next to a segment starts a chain
-  // of ever thinner subfacets converging onto it.
+  // of ever thinner subfacets converging onto it. Embedded segments are
+  // queued with the facet edges and their halves after each split.
   sizing_pass = true;
   std::set<EdgeKey> blocked_boundary_edges;
   if (!sizes.empty() && boundary_splittable) {
@@ -1738,7 +1918,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       const std::int32_t second_slot = mesh.vertex_slot(edge[1]);
       if (!mesh.live_vertex(first_slot) || !mesh.live_vertex(second_slot)) return false;
       const double ratio =
-          std::sqrt(geometry::squared_distance(mesh.point(first_slot), mesh.point(second_slot))) /
+          metric_distance(mesh, mesh.point(first_slot), mesh.point(second_slot)) /
           edge_target;
       if (ratio > 1.0) boundary_queue.emplace(-ratio, edge);
       return true;
@@ -1750,6 +1930,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     };
     for (const TetSnapshotFacet& facet : mesh.facets_) {
       if (!queue_facet_edges(facet)) return PHX_MC_INTERNAL_ERROR;
+    }
+    for (const EdgeKey& edge : embedded_segments) {
+      if (!queue_boundary_edge(edge[0], edge[1])) return PHX_MC_INTERNAL_ERROR;
     }
     while (!boundary_queue.empty()) {
       const EdgeKey selected_edge = boundary_queue.begin()->second;
@@ -1782,11 +1965,17 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       for (std::size_t row : fan_rows) {
         if (!queue_facet_edges(mesh.facets_[row])) return PHX_MC_INTERNAL_ERROR;
       }
+      if (split_halves.has_value()) {
+        for (const EdgeKey& half : *split_halves) {
+          if (!queue_boundary_edge(half[0], half[1])) return PHX_MC_INTERNAL_ERROR;
+        }
+      }
     }
   }
   sizing_pass = false;
 
   while (!queue.empty()) {
+    selective_fixed = false;
     const std::uint64_t cell_id = queue.begin()->second;
     queue.erase(queue.begin());
     const std::int32_t root_slot = mesh.cell_slot(cell_id);
@@ -1807,14 +1996,39 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       continue;
     }
 
+    // Shewchuk: an encroached embedded subsegment is split before anything
+    // else; no constrained face of the cavity carries it.
+    std::int32_t embedded_protected = -1;
+    if (boundary_splittable) {
+      EdgeKey encroached{};
+      if (encroached_embedded_segment(root_slot, center, encroached)) {
+        bool split = false;
+        protecting = -1;
+        double mean_size = 0.0;
+        double edge_target = 0.0;
+        const bool has_size = boundary_target(encroached, mean_size, edge_target);
+        const std::int32_t error =
+            split_boundary_edge(encroached, has_size ? mean_size : 0.0, true, split);
+        if (error != PHX_MC_OK) return error;
+        if (split) {
+          enqueue(cell_id);
+          continue;
+        }
+        embedded_protected = protecting;
+      }
+    }
+
     const TetCavityStatus located = mesh.insertion_cavity(root_slot, center, true, cavity);
     if (located == TetCavityStatus::kRefused) {
-      unmet_causes[cell_id] = {PHX_MC_TET_UNMET_REFUSED};
+      unmet_causes[cell_id] = embedded_protected >= 0
+                                  ? input_angle(embedded_protected)
+                                  : UnmetCause{PHX_MC_TET_UNMET_REFUSED};
       continue;
     }
     if (located == TetCavityStatus::kBlocked) {
       bool split = false;
       protecting = -1;
+      selective_fixed = false;
       if (boundary_splittable) {
         const std::int32_t error =
             split_encroached_face(cavity.blocked_cell, cavity.blocked_face, center, split);
@@ -1825,15 +2039,16 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       } else if (protecting >= 0) {
         unmet_causes[cell_id] = input_angle(protecting);
       } else {
-        unmet_causes[cell_id] = {boundary_splittable ? PHX_MC_TET_UNMET_REFUSED
-                                                     : PHX_MC_TET_UNMET_FIXED_BOUNDARY};
+        unmet_causes[cell_id] = {!boundary_splittable || selective_fixed
+                                     ? PHX_MC_TET_UNMET_FIXED_BOUNDARY
+                                     : PHX_MC_TET_UNMET_REFUSED};
       }
       continue;
     }
     // Shewchuk: an encroached subsegment, then an encroached subfacet, of the
     // cavity's constrained boundary is split before the center is inserted;
     // a protected or refused split leaves that boundary fixed for this center.
-    std::int32_t protected_by = -1;
+    std::int32_t protected_by = embedded_protected;
     if (boundary_splittable) {
       std::int32_t encroached_cell = -1;
       int encroached_face = -1;
@@ -1865,6 +2080,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       if (encroached_cell >= 0) {
         bool split = false;
         protecting = -1;
+        selective_fixed = false;
         const std::int32_t error =
             split_encroached_face(encroached_cell, encroached_face, center, split);
         if (error != PHX_MC_OK) return error;
@@ -1876,7 +2092,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
     }
     const UnmetCause refused =
-        protected_by >= 0 ? input_angle(protected_by) : UnmetCause{PHX_MC_TET_UNMET_REFUSED};
+        protected_by >= 0 ? input_angle(protected_by)
+        : UnmetCause{selective_fixed ? PHX_MC_TET_UNMET_FIXED_BOUNDARY
+                                    : PHX_MC_TET_UNMET_REFUSED};
 
     double center_size = 0.0;
     const bool has_center_size = mean_target_size(parent.vertices, sizes, center_size);
@@ -1943,9 +2161,10 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     if (!boundary_target(edge, mean_size, edge_target)) continue;
     const double* first = mesh.point(first_slot);
     const double* second = mesh.point(second_slot);
-    const double length = std::hypot(
-        std::hypot(second[0] - first[0], second[1] - first[1]),
-        second[2] - first[2]);
+    const double length = mesh.metric_active()
+                              ? metric_distance(mesh, first, second)
+                              : std::hypot(std::hypot(second[0] - first[0], second[1] - first[1]),
+                                           second[2] - first[2]);
     const double ratio = length / edge_target;
     if (!(ratio > 1.0)) continue;
     for (std::int32_t cell : star) {

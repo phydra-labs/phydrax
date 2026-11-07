@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import numpy as np
 
 from ...discretization._cell_mesh import CellMesh
@@ -72,6 +74,21 @@ def periodic_size_compliance(
         values = lengths[mask]
         if values.size == 0:
             raise ValueError("Periodic uniform size scope selects no quotient edges.")
+        exact_zero = (
+            topology.exact_coordinate_source is not None
+            and tolerance.absolute_tolerance == 0.0
+            and tolerance.relative_tolerance == 0.0
+        )
+        exact_values = (
+            sorted(
+                value
+                for value, selected_edge in zip(squared, mask, strict=True)
+                if selected_edge
+            )
+            if exact_zero
+            else ()
+        )
+        target_square = Fraction.from_float(control.target_size) ** 2
         for statistic in statistics:
             quantile = 0.50 if statistic == "p50" else 0.95
             actual = float(np.quantile(values, quantile, method="linear"))
@@ -79,14 +96,36 @@ def periodic_size_compliance(
             requested.append((name, control.target_size))
             achieved.append((name, actual))
             allowed = tolerance.absolute_tolerance + tolerance.relative_tolerance * control.target_size
-            if abs(actual - control.target_size) > allowed:
+            if exact_zero:
+                rank = float(np.float64(quantile) * np.float64(len(exact_values) - 1))
+                lower = int(rank)
+                upper = min(lower + int(rank != lower), len(exact_values) - 1)
+                weight = Fraction.from_float(rank) - lower
+                left, right = exact_values[lower], exact_values[upper]
+                cross = target_square - (1 - weight) ** 2 * left - weight**2 * right
+                violated = cross < 0 or cross**2 != 4 * (1 - weight) ** 2 * weight**2 * left * right
+                if not violated:
+                    achieved[-1] = (name, control.target_size)
+            else:
+                violated = abs(actual - control.target_size) > allowed
+            if violated:
                 issues.append(
                     f"Periodic quotient-edge {statistic} size {actual:g} differs from target {control.target_size:g} beyond the declared compliance tolerance."
                 )
-        if control.minimum_size is not None and np.any(values < control.minimum_size):
-            issues.append("Periodic quotient edges violate a declared minimum size.")
-        if control.maximum_size is not None and np.any(values > control.maximum_size):
-            issues.append("Periodic quotient edges violate a declared maximum size.")
+        if control.minimum_size is not None:
+            below = (
+                exact_values[0] < Fraction.from_float(control.minimum_size) ** 2
+                if exact_zero else np.any(values < control.minimum_size)
+            )
+            if below:
+                issues.append("Periodic quotient edges violate a declared minimum size.")
+        if control.maximum_size is not None:
+            above = (
+                exact_values[-1] > Fraction.from_float(control.maximum_size) ** 2
+                if exact_zero else np.any(values > control.maximum_size)
+            )
+            if above:
+                issues.append("Periodic quotient edges violate a declared maximum size.")
     return tuple(requested), tuple(achieved), tuple(issues)
 
 @checked

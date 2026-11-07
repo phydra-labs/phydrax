@@ -310,6 +310,86 @@ def arrange(regions: tuple[tuple[object, ...], ...], /) -> tuple[Cell, ...]:
     )
 
 
+def selected_cell_boundaries(cells: tuple[Cell, ...], /) -> tuple[Loops, ...]:
+    """Coalesce selected arrangement cells into exact, oriented region boundaries.
+
+    Shared reverse atomic halfedges cancel. All surviving vertices, including
+    collinear arrangement breakpoints, are retained. Boundary contacts that do
+    not define disjoint simple loops are rejected rather than resolved.
+    """
+    edges: set[Segment] = set()
+    for cell in cells:
+        if not cell.loops:
+            raise ValueError("Selected planar cells must have an outer loop.")
+        for index, loop in enumerate(cell.loops):
+            if len(loop) < 3 or len(set(loop)) != len(loop):
+                raise ValueError("Selected planar cell loops must be simple.")
+            signed = area(loop)
+            if not signed or (signed > 0) != (index == 0):
+                raise ValueError("Selected planar cell loops have invalid orientation.")
+            for edge in zip(loop, (*loop[1:], loop[0]), strict=True):
+                if edge in edges:
+                    raise ValueError("Selected planar cells repeat a directed halfedge.")
+                edges.add(edge)
+
+    ordered_edges = sorted(edges)
+    for index, first in enumerate(ordered_edges):
+        for second in ordered_edges[index + 1 :]:
+            if second == (first[1], first[0]):
+                continue
+            contacts = intersections(first, second)
+            if any(point not in first or point not in second for point in contacts):
+                raise ValueError("Selected planar cells do not have atomic halfedges.")
+            if len(contacts) > 1:
+                raise ValueError("Selected planar cell halfedges overlap.")
+
+    boundary = {edge for edge in edges if (edge[1], edge[0]) not in edges}
+    outgoing: dict[Point, Point] = {}
+    incoming: dict[Point, Point] = {}
+    for start, end in boundary:
+        if start in outgoing or end in incoming:
+            raise ValueError("Selected planar cell boundary is nonmanifold or self-touching.")
+        outgoing[start] = end
+        incoming[end] = start
+    if outgoing.keys() != incoming.keys():
+        raise ValueError("Selected planar cell boundary is not closed.")
+
+    unused = set(boundary)
+    loops: list[tuple[Point, ...]] = []
+    while unused:
+        first = min(unused)
+        edge = first
+        vertices: list[Point] = []
+        while True:
+            if edge not in unused:
+                raise ValueError("Selected planar cell boundary is not a simple loop.")
+            unused.remove(edge)
+            vertices.append(edge[0])
+            edge = (edge[1], outgoing[edge[1]])
+            if edge == first:
+                break
+        loop = tuple(vertices)
+        if len(loop) < 3 or not area(loop):
+            raise ValueError("Selected planar cell boundary has zero area.")
+        loops.append(loop)
+
+    outers = sorted(loop for loop in loops if area(loop) > 0)
+    holes: list[list[tuple[Point, ...]]] = [[] for _ in outers]
+    for loop in loops:
+        if area(loop) > 0:
+            continue
+        candidates = [
+            index for index, outer in enumerate(outers) if inside_loop(loop[0], outer)
+        ]
+        if not candidates:
+            raise ValueError("Selected planar cell hole has no containing outer boundary.")
+        owner = min(candidates, key=lambda index: area(outers[index]))
+        holes[owner].append(loop)
+    return tuple(
+        (outer, *sorted(holes[index])) for index, outer in enumerate(outers)
+    )
+
+
 __all__ = [
     "Cell",
     "Loops",
@@ -321,4 +401,5 @@ __all__ = [
     "intersections",
     "on_segment",
     "rational_loops",
+    "selected_cell_boundaries",
 ]

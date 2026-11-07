@@ -7,6 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_complex import PolyhedralConnectivity
@@ -19,24 +20,34 @@ from phydrax.meshing import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
-from phydrax.meshing._lineage import EntityLineageKind
-from phydrax.meshing._plc_source import PiecewiseLinearComplex
-from phydrax.meshing._polyhedral_adaptation import (
-    PolyhedralAdaptationOperation,
-    PolyhedralAdaptationOutcome,
-    PolyhedralAdaptationRequest,
-    adapt_polyhedral_mesh,
-)
 from phydrax.meshing._adaptation import (
+    execute_mesh_adaptation,
     MeshAdaptationPolicy,
     MeshAdaptationRoute,
-    execute_mesh_adaptation,
     prepare_mesh_adaptation,
 )
 from phydrax.meshing._canonical import certify_cell_mesh
-from phydrax.meshing._polyhedral_generation import NativePolyhedralSchedule
+from phydrax.meshing._lineage import EntityLineageKind
+from phydrax.meshing._organization import MeshAttribute, MeshAttributeRole
+from phydrax.meshing._plc_source import PiecewiseLinearComplex
+from phydrax.meshing._polyhedral_adaptation import (
+    adapt_polyhedral_mesh,
+    PolyhedralAdaptationOperation,
+    PolyhedralAdaptationOutcome,
+    PolyhedralAdaptationRequest,
+)
 from phydrax.meshing._polyhedral_adaptation_shared import polyhedral_face_loops
-from phydrax.meshing.providers._native_sources import NativePolyhedralSource
+from phydrax.meshing._polyhedral_generation import (
+    generate_polyhedral_volume,
+    NativePolyhedralSchedule,
+)
+from phydrax.meshing._result import CellMeshingResult
+from phydrax.meshing.providers import (
+    NativeMeshingOptions,
+    NativeMeshingProvider,
+    NativePlcSource,
+    NativePolyhedralSource,
+)
 
 
 pytestmark = pytest.mark.meshcore
@@ -77,11 +88,13 @@ def _material_l_mesh() -> tuple[CellMesh, np.ndarray]:
     cells: list[tuple[np.ndarray, ...]] = []
     for x_offset, y_offset in ((0, 0), (1, 0), (0, 1)):
         local = tuple(
-            vertex((x + x_offset, y + y_offset, z))
-            for x, y, z in _CUBE_VERTICES
+            vertex((x + x_offset, y + y_offset, z)) for x, y, z in _CUBE_VERTICES
         )
         cells.append(
-            tuple(np.asarray([local[index] for index in face], dtype=np.int32) for face in _CUBE_FACES)
+            tuple(
+                np.asarray([local[index] for index in face], dtype=np.int32)
+                for face in _CUBE_FACES
+            )
         )
     mesh = CellMesh.from_polyhedra(
         np.asarray(points, dtype=np.float64),
@@ -193,8 +206,7 @@ def _plc_material_l() -> PiecewiseLinearComplex:
     interfaces: list[tuple[tuple[int, ...], tuple[int, int]]] = []
     for x_offset, y_offset, region in ((0, 0, 0), (1, 0, 0), (0, 1, 1)):
         local = tuple(
-            vertex((x + x_offset, y + y_offset, z))
-            for x, y, z in _CUBE_VERTICES
+            vertex((x + x_offset, y + y_offset, z)) for x, y, z in _CUBE_VERTICES
         )
         for face in _CUBE_FACES:
             loop = tuple(local[index] for index in face)
@@ -298,11 +310,16 @@ def test_material_l_plane_split_closes_faces_and_preserves_regions() -> None:
     assert isinstance(connectivity, PolyhedralConnectivity)
     assert connectivity.cell_count == 5
     signatures = _shared_face_signatures(target)
-    assert len(signatures) == int(np.count_nonzero(np.asarray(connectivity.face_neighbor) >= 0))
-    assert all(value > 0.0 for value in np.asarray(outcome.conservative_remap.target_volumes))
-    assert sum(_cell_box_measure(target, int(identifier)) for identifier in outcome.hierarchy.target_cell_ids) == pytest.approx(
-        _l_volume_oracle(), abs=1e-13
+    assert len(signatures) == int(
+        np.count_nonzero(np.asarray(connectivity.face_neighbor) >= 0)
     )
+    assert all(
+        value > 0.0 for value in np.asarray(outcome.conservative_remap.target_volumes)
+    )
+    assert sum(
+        _cell_box_measure(target, int(identifier))
+        for identifier in outcome.hierarchy.target_cell_ids
+    ) == pytest.approx(_l_volume_oracle(), abs=1e-13)
     assert _material_interface_area(outcome) == pytest.approx(1.0, abs=1e-13)
     assert set(_cell_classes_by_id(outcome).values()) == {0, 1}
     assert outcome.edit.shared_faces is not None
@@ -356,9 +373,9 @@ def test_material_l_site_regeneration_uses_physical_conservative_overlap() -> No
     assert outcome.common_refinement.evidence.source_gap_count == 0
     assert outcome.common_refinement.evidence.target_gap_count == 0
     assert bool(np.asarray(outcome.conservative_remap.report.coverage_complete))
-    assert float(np.sum(np.asarray(outcome.conservative_remap.target_volumes))) == pytest.approx(
-        _l_volume_oracle(), abs=1e-9
-    )
+    assert float(
+        np.sum(np.asarray(outcome.conservative_remap.target_volumes))
+    ) == pytest.approx(_l_volume_oracle(), abs=1e-9)
     assert _material_interface_area(outcome) == pytest.approx(1.0, abs=1e-9)
 
     source_connectivity = source.connectivity
@@ -410,3 +427,150 @@ def test_native_polyhedral_route_publishes_conservative_plane_split() -> None:
         _cell_box_measure(target, int(identifier))
         for identifier in np.asarray(connectivity.cell_global_ids, dtype=np.int64)
     ) == pytest.approx(_l_volume_oracle(), abs=1e-13)
+
+
+def test_native_power_regeneration_republishes_site_evidence_and_refuses_user_data() -> (
+    None
+):
+    request = _regeneration_request()
+    successor = request.regeneration_source
+    specification = request.volume_specification
+    assert successor is not None and specification is not None
+    initial = NativePolyhedralSource(
+        successor.complex,
+        successor.source_id,
+        "initial-sites",
+        sites=np.asarray(
+            ((0.5, 0.5, 0.5), (1.5, 0.5, 0.5), (0.5, 1.5, 0.5)),
+            dtype=np.float64,
+        ),
+        weights=np.zeros(3, dtype=np.float64),
+        site_ids=("old-west", "old-east", "old-upper"),
+    )
+    source_spec = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
+        MeshingScope.whole(initial, 2),
+        VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(),
+        region_seeds=specification.region_seeds,
+    )
+    source = (
+        NativeMeshingProvider(NativeMeshingOptions("plc_restricted_power"))
+        .plan(initial, source_spec, coordinate_contract=SpatialCoordinateContract.si())
+        .execute()
+    )
+    policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_POLYHEDRAL)
+    adapted = execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, request, policy=policy)
+    )
+    target = adapted.target
+    assert target.certification is not None and target.certification.passed
+    assert target.certification.inputs.source_revision == successor.source_revision
+    assert {a.name for a in target.attributes} == {
+        "power_site_index",
+        "power_component_index",
+        "power_site_parent_index",
+        "power_site_weight",
+    }
+    assert {f"power-site:{site}" for site in successor.site_ids} <= {
+        label.name for label in target.labels
+    }
+    attributes = {attribute.name: attribute for attribute in target.attributes}
+    site_attribute = attributes["power_site_index"]
+    site_rows = np.asarray(site_attribute.values, dtype=np.int64)
+    ids = np.asarray(site_attribute.scope.entity_ids, dtype=np.int64)
+    labels = {label.name: label for label in target.labels}
+    for index, site in enumerate(successor.site_ids):
+        assert np.array_equal(
+            np.sort(ids[site_rows == index]),
+            np.asarray(labels[f"power-site:{site}"].scope.entity_ids, dtype=np.int64),
+        )
+    assert np.array_equal(
+        np.asarray(attributes["power_site_weight"].values),
+        np.asarray(successor.weights)[site_rows],
+    )
+    assert all(
+        a.source_revision == successor.source_revision for a in target.associations
+    )
+    assert adapted.transition is not None
+    assert adapted.transition.source_mesh_id == source.mesh.mesh_id
+    assert adapted.transition.target.mesh.mesh_id == target.mesh.mesh_id
+    assert adapted.conservative_remap is not None
+    assert bool(np.asarray(adapted.conservative_remap.report.coverage_complete))
+
+    extra = MeshAttribute(
+        "user_temperature",
+        MeshAttributeRole.USER,
+        source.attributes[0].scope,
+        np.ones(len(source.attributes[0].scope.entity_ids), dtype=np.float64),
+    )
+    assert source.certification is not None
+    audited = certify_cell_mesh(
+        source.mesh,
+        source.coordinate_contract,
+        geometry=source.geometry,
+        certification_inputs=source.certification.inputs,
+        patches=source.patches,
+        zones=source.zones,
+        labels=source.labels,
+        attributes=(*source.attributes, extra),
+        associations=source.associations,
+        region_boundary_evidence=source.region_boundary_evidence,
+    )
+    with_user_data = CellMeshingResult(
+        source.mesh,
+        source.geometry,
+        source.coordinate_contract,
+        audited.audit,
+        source.quality,
+        source.compliance,
+        source.trace,
+        source.provider,
+        source.runtime,
+        source.derivative_mode,
+        source.provenance,
+        patches=source.patches,
+        zones=source.zones,
+        labels=source.labels,
+        attributes=(*source.attributes, extra),
+        associations=source.associations,
+        region_boundary_evidence=source.region_boundary_evidence,
+        certification=audited.certification,
+    )
+    with pytest.raises(ValueError, match="explicit attribute remap"):
+        prepare_mesh_adaptation(with_user_data, request, policy=policy)
+
+
+def test_auto_power_site_is_the_first_recovered_carrier_centroid() -> None:
+    request = _regeneration_request()
+    original = request.regeneration_source
+    spec = request.volume_specification
+    assert original is not None and spec is not None
+    source = NativePlcSource(original.complex, original.source_id, "automatic-sites")
+    source_spec = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
+        MeshingScope.whole(source, 2),
+        VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(),
+        region_seeds=spec.region_seeds,
+    )
+    construction = generate_polyhedral_volume(
+        source, source_spec, NativePolyhedralSchedule(),
+        frame_id=SpatialCoordinateContract.si().spatial_id,
+    )
+    carrier = construction.carrier.mesh
+    first = np.asarray(carrier.blocks[0].vertices[0], dtype=np.int64)
+    expected = np.mean(np.asarray(carrier.coordinates, dtype=np.float64)[first], axis=0)
+    np.testing.assert_array_equal(construction.site_points, expected[None, :])
+    np.testing.assert_array_equal(construction.site_weights, np.zeros(1, dtype=np.float64))
+    assert construction.site_ids == (
+        canonical_fingerprint(
+            {
+                "kind": "plc-first-carrier-tetrahedron-centroid-site",
+                "source_binding": source.binding_id,
+                "carrier_mesh": carrier.mesh_id,
+                "carrier_cell_id": int(carrier.blocks[0].global_ids[0]),
+                "coordinates": array_tree_fingerprint(expected[None, :]),
+            }
+        ),
+    )

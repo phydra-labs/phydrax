@@ -23,6 +23,12 @@ from phydrax.meshing._association import (
     GeometryAssociationKind,
     GeometrySourceEntityRole,
 )
+from phydrax.meshing._boundary_layer import (
+    BoundaryLayerMesh,
+    BoundaryLayerPolicy,
+    prepare_boundary_layers,
+)
+from phydrax.meshing._controls import BoundaryLayerControl, BoundaryLayerCornerPolicy
 from phydrax.meshing._curving import HighOrderCurvingPolicy
 from phydrax.meshing._layer_curving import (
     curve_layer_core_construction,
@@ -37,7 +43,7 @@ from phydrax.meshing.providers._native_layer import (
 )
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
 
-from .layer_curving_fixtures import _layer_mesh, _mixed_construction
+from .layer_curving_fixtures import _boundary_layer_control, _mixed_construction
 
 
 def certified_implicit_layer_wall(
@@ -55,7 +61,9 @@ def certified_implicit_layer_wall(
     )
 
 
-def make_implicit_layer_curving_archive_case() -> LayerCurvingConstructionResult:
+def make_implicit_layer_curving_archive_case() -> tuple[
+    LayerCurvingConstructionResult, BoundaryLayerMesh, BoundaryLayerControl, BoundaryLayerPolicy
+]:
     """Build accepted high-order layer evidence from an adaptive smooth implicit source."""
     geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 0.04).compile()
     source_id = "archive-adaptive-implicit-layer-source"
@@ -129,7 +137,11 @@ def make_implicit_layer_curving_archive_case() -> LayerCurvingConstructionResult
         source_roles=(GeometrySourceEntityRole.FACET,) * wall_vertex_ids.size,
         source_occurrence_paths=(occurrence,) * wall_vertex_ids.size,
     )
-    layers = _layer_mesh(wall, wall_vertex_association, thickness=0.0005)
+    control = _boundary_layer_control(wall, 0.0005, corner=BoundaryLayerCornerPolicy.FAN)
+    policy = BoundaryLayerPolicy()
+    layers = prepare_boundary_layers(
+        wall, control, wall_association=wall_vertex_association, policy=policy
+    )
     _, construction = _mixed_construction(
         layers,
         native_source.source_id,
@@ -161,7 +173,7 @@ def make_implicit_layer_curving_archive_case() -> LayerCurvingConstructionResult
             "The adaptive implicit layer archive fixture requires accepted, certified root-chart evidence: "
             f"{result.failure or result.status.value}"
         )
-    return result
+    return result, layers, control, policy
 
 
 __all__ = ["make_implicit_layer_curving_archive_case"]

@@ -75,6 +75,7 @@ from ._fast_diagonalization import (
     TensorFastDiagonalizationPreconditioner,
 )
 from ._form_elements import DofLabel, form_element, FormBasis, FormElementFamily
+from ._source_surface import SurfaceFiniteElementGeometry
 from ._form_reconstruction import FormFieldReconstructionKernel
 from ._generic import (
     assemble_masked_finite_element,
@@ -332,6 +333,8 @@ from ._surface_chart_transfer import (
 from ._topology_transfer import (
     FiniteElementL2Projection,
     FiniteElementTopologyTransfer,
+    nested_nodal_transfer,
+    NestedNodalTransferSemantics,
     prepare_l2_projection_target,
     prepare_l2_projection_transfer,
     PreparedL2ProjectionTarget,
@@ -446,12 +449,15 @@ __all__ = [
     "FiniteElementPeriodicFacetPair",
     "FiniteElementPeriodicTransform",
     "FiniteElementPlan",
+    "SurfaceFiniteElementGeometry",
     "FiniteElementPrecisionPolicy",
     "FiniteElementRecoveryEvidence",
     "FiniteElementReferenceReport",
     "FiniteElementRuntimeData",
     "FiniteElementSpec",
     "FiniteElementTopologyTransfer",
+    "nested_nodal_transfer",
+    "NestedNodalTransferSemantics",
     "FusedMortarAction",
     "FusedTensorTransfer",
     "GeneralHPForest",

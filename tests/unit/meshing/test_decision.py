@@ -205,6 +205,43 @@ def test_objective_stops_without_remeshing_when_baseline_meets_tolerance() -> No
         "baseline-already-meets-target",
     )
 
+def test_explicit_improve_intent_preserves_target_and_admissibility_gates() -> None:
+    objective = MeshAdaptationObjective("sphere-field-error", 0.1, intent="improve")
+    default = MeshAdaptationObjective("sphere-field-error", 0.1)
+    assert objective.objective_id_hash != default.objective_id_hash
+    baseline = _error("accepted", "baseline", field=0.03, geometry=0.01)
+    check = _solve_check()
+    good = _candidate(
+        "good", AdaptationAction.H, field=0.005, geometry=0.005,
+        seconds=1.0, solve_check=check,
+    )
+    unchanged = _candidate(
+        "unchanged", AdaptationAction.H, field=0.03, geometry=0.01,
+        seconds=0.0, solve_check=check,
+    )
+    invalid = _candidate(
+        "invalid", AdaptationAction.H, field=0.001, geometry=0.001,
+        seconds=0.0, solve_check=check, issues=("transfer-unavailable",),
+    )
+    unmet = _candidate(
+        "unmet", AdaptationAction.H, field=0.2, geometry=0.0,
+        seconds=0.0, solve_check=check,
+    )
+    decision = objective.decide(baseline, (good, unchanged, invalid, unmet))
+    assert decision.selected is good
+    assert not decision.satisfied_without_adaptation
+    dispositions = dict(decision.dispositions)
+    assert "physical-error-not-improved" in dispositions["unchanged"]
+    assert "transfer-unavailable" in dispositions["invalid"]
+    assert "physical-target-unmet" in dispositions["unmet"]
+    stale = objective.decide(
+        _error("another-source", "baseline", field=0.03, geometry=0.01), (good,)
+    )
+    assert stale.selected is None
+    assert "stale-source" in dict(stale.dispositions)["good"]
+    assert not stale.satisfied_without_adaptation
+
+
 
 def test_foreign_solver_evidence_cannot_admit_a_route() -> None:
     objective = MeshAdaptationObjective("sphere-field-error", 0.1)

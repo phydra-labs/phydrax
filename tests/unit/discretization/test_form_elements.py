@@ -1,6 +1,6 @@
 """Independent dimensions, duality, and polynomial differential contracts."""
 
-from itertools import combinations
+from itertools import combinations, permutations
 from math import comb
 
 import jax
@@ -10,6 +10,7 @@ import numpy.typing as npt
 import pytest
 
 from phydrax.discretization.fem._form_elements import (
+    _form_entity_chart,
     form_element,
     FormElementFamily,
 )
@@ -99,6 +100,130 @@ def test_polynomial_differential_is_exact_and_nilpotent(
         assert kernel_dimension == (1 if degree == 0 else previous_rank)
         previous = differential
         previous_rank = rank
+
+
+@pytest.mark.parametrize("order", (1, 2, 3))
+def test_prism_product_form_dimensions_duality_and_exact_complex(order: int) -> None:
+    triangle = (
+        comb(order + 2, 2),
+        order * (order + 2),
+        order * (order + 1) // 2,
+    )
+    interval = (order + 1, order)
+    expected = (
+        triangle[0] * interval[0],
+        triangle[1] * interval[0] + triangle[0] * interval[1],
+        triangle[2] * interval[0] + triangle[1] * interval[1],
+        triangle[2] * interval[1],
+    )
+    bases = []
+    for degree in range(4):
+        basis = form_element(
+            "prism",
+            degree,
+            order,
+            family="prism-trimmed",
+            twist="untwisted",
+            proxy="components",
+        ).form_basis
+        assert basis is not None
+        assert basis.local_dof_count == expected[degree]
+        values, _ = basis.tabulate_components(basis.functional_points)
+        pairing = np.einsum(
+            "iqc,qjc->ij", np.asarray(basis.functional_weights), np.asarray(values)
+        )
+        np.testing.assert_allclose(pairing, np.eye(expected[degree]), atol=2e-8)
+        bases.append(basis)
+    matrices = [
+        source.exact_exterior_derivative_matrix(target)
+        for source, target in zip(bases[:-1], bases[1:], strict=True)
+    ]
+    for first, second in zip(matrices[:-1], matrices[1:], strict=True):
+        for row in second:
+            for column in zip(*first, strict=True):
+                assert sum(a * b for a, b in zip(row, column, strict=True)) == 0
+
+
+@pytest.mark.parametrize("degree", (0, 1, 2))
+@pytest.mark.parametrize("face", ((0, 1, 2), (0, 1, 3, 4)))
+def test_prism_exact_facet_trace_reconstruction(
+    degree: int, face: tuple[int, ...]
+) -> None:
+    prism = form_element(
+        "prism",
+        degree,
+        2,
+        family="prism-trimmed",
+        twist="untwisted",
+        proxy="components",
+    ).form_basis
+    assert prism is not None
+    tensor = len(face) == 4
+    facet = form_element(
+        "quadrilateral" if tensor else "triangle",
+        degree,
+        2,
+        family="tensor-trimmed" if tensor else "trimmed",
+        twist="untwisted",
+        proxy="components",
+    ).form_basis
+    assert facet is not None
+    points = np.asarray(((0.13, 0.21), (0.37, 0.19), (0.24, 0.48)))
+    _, origin, jacobian = _form_entity_chart(3, "prism-trimmed", face)
+    values, _ = prism.tabulate_components(points @ jacobian.T + origin)
+    facet_values, _ = facet.tabulate_components(points)
+    ambient_blades = tuple(combinations(range(3), degree))
+    local_blades = tuple(combinations(range(2), degree))
+    pullback = np.asarray(
+        [
+            [
+                np.linalg.det(jacobian[np.ix_(ambient, local)]) if degree else 1.0
+                for ambient in ambient_blades
+            ]
+            for local in local_blades
+        ]
+    )
+    expected = np.einsum("lc,qbc->qbl", pullback, np.asarray(values))
+    transition = np.asarray(prism.exact_entity_trace_matrix(face), dtype=float)
+    actual = np.einsum("qac,ab->qbc", np.asarray(facet_values), transition)
+    np.testing.assert_allclose(actual, expected, atol=2e-8)
+
+
+@pytest.mark.parametrize("degree", (1, 2))
+def test_prism_orientation_and_physical_jvp(degree: int) -> None:
+    proxy = "circulation" if degree == 1 else "flux"
+    element = form_element(
+        "prism",
+        degree,
+        2,
+        family="prism-trimmed",
+        twist="untwisted",
+        proxy=proxy,
+    )
+    basis = element.form_basis
+    assert basis is not None
+    identity = np.eye(basis.local_dof_count)
+    for p in permutations(range(3)):
+        for flip in range(2):
+            vertices = tuple(p[v % 3] + 3 * ((v // 3) ^ flip) for v in range(6))
+            inverse = tuple(vertices.index(v) for v in range(6))
+            action = np.asarray(basis.exact_permutation_matrix(vertices), dtype=float)
+            reverse = np.asarray(basis.exact_permutation_matrix(inverse), dtype=float)
+            np.testing.assert_allclose(action @ reverse, identity, atol=2e-8)
+    entity_action = np.asarray(
+        basis.exact_entity_permutation_matrix((5, 2, 4, 0, 3, 1)), dtype=float
+    )
+    assert np.linalg.matrix_rank(entity_action) == basis.local_dof_count
+    jacobian = jnp.asarray(((1.2, 0.1, 0.0), (0.0, 0.9, 0.2), (0.1, 0.0, 1.1)))
+    point = jnp.asarray((0.2, 0.3, 0.4))
+    direction = jnp.asarray((0.3, -0.2, 0.1))
+
+    def mapped(x: jax.Array) -> jax.Array:
+        values, _ = element.tabulate(x[None, :])
+        return map_reference_values(values[0], element.value_spec, jacobian)
+
+    _, tangent = jax.jvp(mapped, (point,), (direction,))
+    np.testing.assert_allclose(tangent, jax.jacfwd(mapped)(point) @ direction, atol=2e-8)
 
 
 @pytest.mark.parametrize("dimension", (1, 2, 3, 4))

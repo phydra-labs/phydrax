@@ -2855,6 +2855,7 @@ def target_surface_source(
         ),
         root_parameter_exact=exact_charts,
         boundary_occurrences=boundary_occurrences,
+        trim_roots=source_charts.trim_roots,
     )
 
 

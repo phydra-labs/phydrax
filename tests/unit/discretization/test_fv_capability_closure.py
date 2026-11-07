@@ -3,6 +3,8 @@
 #
 
 
+from fractions import Fraction
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,9 +12,12 @@ import pytest
 
 from phydrax._precision import PrecisionRequest, PrecisionResolution
 from phydrax.discretization import CellMesh
+from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.discretization.finite_volume import (
     FiniteVolumePrecisionPolicy,
     GeostrophicBalancePlan,
+    HybridDiffusionBoundary,
+    HybridMimeticDiffusion,
     lower_dgsem_shallow_water,
     lower_global_spectral_shallow_water,
     lower_sbp_shallow_water,
@@ -33,6 +38,76 @@ from phydrax.equations._finite_volume_advanced import (
     ShallowWaterExnerSystem,
 )
 from phydrax.equations._hyperbolic_systems import ShallowWaterSystem
+from phydrax.linalg import DenseLU, LinearSolvePolicy
+
+
+@pytest.mark.parametrize(
+    "vertices",
+    (
+        (
+            (0.22265625, 0.9890625, 0.6000000000000001),
+            (0.23323934062070742, 1.0, 0.598034986748605),
+            (0.22573931060433014, 1.0, 0.5983017514542878),
+            (0.22959894883118698, 1.0, 0.6012504013680428),
+        ),
+        (
+            (0.20947265625, 0.9603515625, 0.55),
+            (0.2164175237621592, 1.0, 0.5328684535026391),
+            (0.19505740198062824, 1.0, 0.5379454072437395),
+            (0.18939760179963475, 0.9763986037901143, 0.5552360742001581),
+        ),
+    ),
+)
+def test_translated_small_polyhedral_cell_preserves_affine_mimetic_geometry(
+    vertices: tuple,
+) -> None:
+    # Actual unit-box tetrahedra 1230 and 4873 expose cancellation in area
+    # vectors and face centroids, respectively.
+    coordinates = np.asarray(vertices)
+    mesh = CellMesh.from_polyhedra(
+        coordinates,
+        (
+            (
+                (1, 2, 3),
+                (0, 3, 2),
+                (0, 1, 3),
+                (0, 2, 1),
+            ),
+        ),
+    )
+    geometry = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
+    exact = tuple(tuple(Fraction(float(value)) for value in row) for row in coordinates)
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, PolyhedralConnectivity)
+    faces = np.asarray(connectivity.face_vertex_values)
+    offsets = np.asarray(connectivity.face_vertex_offsets)
+    for row, area in enumerate(np.asarray(geometry.area_vectors)):
+        face_vertices = faces[offsets[row] : offsets[row + 1]]
+        a, b, c = (exact[int(vertex)] for vertex in face_vertices)
+        u = tuple(b[i] - a[i] for i in range(3))
+        v = tuple(c[i] - a[i] for i in range(3))
+        expected = np.asarray(
+            (
+                float((u[1] * v[2] - u[2] * v[1]) / 2),
+                float((u[2] * v[0] - u[0] * v[2]) / 2),
+                float((u[0] * v[1] - u[1] * v[0]) / 2),
+            )
+        )
+        expected *= int(np.asarray(geometry.owner_signs)[row])
+        np.testing.assert_allclose(area, expected, rtol=0.0, atol=6.0e-20)
+    diffusion = HybridMimeticDiffusion(geometry)
+    gradient = jnp.asarray((0.3, -0.5, 0.9))
+    expected_cells = geometry.cell_centers @ gradient + 2.0
+    expected_faces = geometry.face_centers @ gradient + 2.0
+    boundary = HybridDiffusionBoundary(
+        geometry,
+        dirichlet={int(row): float(value) for row, value in enumerate(expected_faces)},
+    )
+    tensor = jnp.asarray(((2.0, 0.4, -0.2), (0.4, 1.5, 0.3), (-0.2, 0.3, 3.0)))
+    result = diffusion.solve(tensor, boundary, policy=LinearSolvePolicy(DenseLU()))
+    assert result.successful
+    np.testing.assert_allclose(result.value[:1], expected_cells, rtol=0.0, atol=1.0e-11)
+    np.testing.assert_allclose(result.value[1:], expected_faces, rtol=0.0, atol=1.0e-11)
 
 
 def test_fv_capability_closure_scenario_1() -> None:

@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Host elimination over exact fields with zero and rank decisions."""
+"""Host exact-field algebra, elimination, and small-matrix property evidence."""
 
 from __future__ import annotations
 
@@ -161,6 +161,81 @@ def matmul_exact(
             )
         )
     return tuple(result)
+
+
+def _integer_symmetric_product(
+    factors: tuple[Sequence[Sequence[Fraction | int]], ...], /
+) -> tuple[tuple[tuple[int, ...], ...], int]:
+    if not factors:
+        raise ValueError("An exact symmetric product requires at least one factor.")
+    size = len(factors[0])
+    if size not in (1, 2, 3):
+        raise ValueError("Exact symmetric products require order one through three.")
+    product: tuple[tuple[int, ...], ...] = ()
+    denominator = 1
+    for index, factor in enumerate(factors):
+        if len(factor) != size or any(len(row) != size for row in factor):
+            raise ValueError(
+                "Exact symmetric product factors must have equal square shapes."
+            )
+        if any(
+            isinstance(value, bool) or not isinstance(value, Fraction | int)
+            for row in factor
+            for value in row
+        ):
+            raise TypeError("Exact symmetric products require integers or Fractions.")
+        scale = lcm(*(value.denominator for row in factor for value in row))
+        integers = tuple(
+            tuple(value.numerator * (scale // value.denominator) for value in row)
+            for row in factor
+        )
+        product = (
+            integers
+            if index == 0
+            else tuple(
+                tuple(
+                    sum(
+                        product[row][inner] * integers[inner][column]
+                        for inner in range(size)
+                    )
+                    for column in range(size)
+                )
+                for row in range(size)
+            )
+        )
+        denominator *= scale
+    return (
+        tuple(
+            tuple(product[row][column] + product[column][row] for column in range(size))
+            for row in range(size)
+        ),
+        2 * denominator,
+    )
+
+
+def symmetric_product_minors_exact(
+    *factors: Sequence[Sequence[Fraction | int]],
+) -> tuple[Fraction, ...]:
+    """Leading minors of the symmetric part of an ordered rational product.
+
+    Factors have common square order one through three. Each is cleared to an
+    integer matrix with one positive denominator; multiplication and determinants
+    stay integral. Only the requested principal-minor evidence is normalized to
+    rational values. All-positive minors decide positive definiteness exactly.
+    """
+    numerator, denominator = _integer_symmetric_product(factors)
+    return tuple(
+        Fraction(
+            determinant_small_algebra(
+                tuple(row[:order] for row in numerator[:order]),
+                add=int.__add__,
+                subtract=int.__sub__,
+                multiply=int.__mul__,
+            ),
+            denominator**order,
+        )
+        for order in range(1, len(numerator) + 1)
+    )
 
 
 # Below this many rows Fraction elimination is cheaper than lifting.

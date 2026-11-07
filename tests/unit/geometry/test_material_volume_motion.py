@@ -13,10 +13,13 @@ from phydrax.discretization._cell_geometry_transition_types import (
     CellGeometryTransitionEvidence,
     MaterialChartDeformation,
 )
-from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
+from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
 from phydrax.geometry._common_root_volume_overlap import MaterialReferenceVolumeWitness
 from phydrax.geometry._domain_certification import DomainCoverageCertificate
+from phydrax.geometry._domain_coverage import certify_domain_coverage
+from phydrax.geometry._global_embedding import certify_global_embedding
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 from phydrax.geometry._volume_material_deformation import (
     declare_material_reference,
@@ -35,8 +38,10 @@ from tests._support.volume_material_map_fixtures import (
     make_curved_root,
     make_material_coverage_pair,
     make_material_source,
+    make_root_restriction,
     reference_map_witness,
     ROOT_REFERENCE_TETRAHEDRON,
+    with_root_restriction,
 )
 
 
@@ -466,3 +471,170 @@ def test_material_reference_refuses_foreign_frame_inverted_and_singular_maps() -
             root_mesh,
             root_geometry,
         )
+
+
+def test_descendant_material_reference_restores_motion_with_distinct_chart_parent() -> (
+    None
+):
+    root, root_geometry, _ = make_curved_root()
+    parent, parent_geometry, _ = make_root_restriction(
+        root,
+        root_geometry,
+        cells=(ROOT_REFERENCE_TETRAHEDRON,),
+        cell_ids=(91,),
+        block_name="parent",
+    )
+    charts = (affine_reference_chart(ROOT_REFERENCE_TETRAHEDRON),)
+    parent_maps = reference_map_witness(
+        (0,),
+        (7,),
+        (ROOT_REFERENCE_TETRAHEDRON,),
+        chart_arguments=charts,
+    )
+    parent_geometry = with_root_restriction(
+        root,
+        root_geometry,
+        parent,
+        parent_geometry,
+        parent_maps,
+    )
+    domain, _, _ = make_material_coverage_pair(
+        root,
+        root_geometry,
+        parent,
+        parent_geometry,
+        region_id=_REGION,
+        occurrence_path=_OCCURRENCE,
+    )
+    source_mesh = CellMesh(
+        parent.coordinates,
+        (
+            CellBlock(
+                "child",
+                "tetrahedron",
+                parent.blocks[0].vertices,
+                global_ids=np.asarray((101,), dtype=np.int64),
+            ),
+        ),
+        vertex_global_ids=parent.vertex_global_ids,
+    )
+    source_geometry = CellGeometrySpec(
+        {"child": root_geometry.elements[0]},
+        {"child": root_geometry.geometry_dofs[0]},
+        root_geometry.coordinates,
+    )
+    source_geometry = with_root_restriction(
+        parent,
+        parent_geometry,
+        source_mesh,
+        source_geometry,
+        reference_map_witness(
+            (0,),
+            (91,),
+            (ROOT_REFERENCE_TETRAHEDRON,),
+            chart_arguments=charts,
+        ),
+    )
+    chart_parent = (parent, parent_geometry)
+    validity = certify_cell_geometry_validity(source_geometry, mesh=source_mesh)
+    coverage = certify_domain_coverage(
+        source_mesh,
+        source_geometry,
+        domain,
+        np.zeros(1, dtype=np.int64),
+        embedding=certify_global_embedding(source_mesh, source_geometry, validity),
+        chart_parent=chart_parent,
+    )
+    assert coverage.status == "certified", coverage.findings
+    source_map = make_material_source(domain)
+    reference = declare_material_reference(
+        source_mesh,
+        source_geometry,
+        source_map,
+        (_ENTITY,),
+        (_REGION,),
+        coverage,
+        frame_id=_FRAME,
+        policy=MaterialReferencePolicy.ACCEPTED_CONFIGURATION,
+        occurrence_paths=(_OCCURRENCE,),
+        chart_parent=chart_parent,
+    )
+    target_mesh, target_geometry = _move_endpoint(
+        source_mesh,
+        source_geometry,
+        lambda points: points @ np.diag((2.0, 1.0, 1.0)).T,
+    )
+    _, target_coverage = _coverage(target_mesh, target_geometry)
+    maps = dict(reference.identity_reference_maps)
+    deformation = VolumeMaterialDeformation(
+        reference,
+        source_mesh,
+        source_geometry,
+        target_mesh,
+        target_geometry,
+        source_reference_maps=maps,
+        target_reference_maps=maps,
+        source_coverage=coverage,
+        target_coverage=target_coverage,
+        source_frame_id=_FRAME,
+        target_frame_id=_FRAME,
+        source_chart_parent=chart_parent,
+    )
+    material_map = prepare_volume_material_map(
+        source_mesh,
+        source_geometry,
+        target_mesh,
+        target_geometry,
+        deformation,
+        (_ENTITY,),
+        (_ENTITY,),
+        (_REGION,),
+        (_REGION,),
+        source_coverage=coverage,
+        target_coverage=target_coverage,
+        source_occurrence_paths=(_OCCURRENCE,),
+        target_occurrence_paths=(_OCCURRENCE,),
+        source_chart_parent=chart_parent,
+    )
+    with pytest.raises(ValueError, match="source coverage is stale"):
+        VolumeMaterialMap.revalidate(
+            material_map,
+            source_mesh,
+            source_geometry,
+            target_mesh,
+            target_geometry,
+            root_mesh=source_mesh,
+            root_geometry=source_geometry,
+            root_coverage=coverage,
+            source_chart_parent=chart_parent,
+        )
+    restored = VolumeMaterialMap.revalidate(
+        material_map,
+        source_mesh,
+        source_geometry,
+        target_mesh,
+        target_geometry,
+        root_mesh=source_mesh,
+        root_geometry=source_geometry,
+        root_coverage=coverage,
+        root_chart_parent=chart_parent,
+        source_chart_parent=chart_parent,
+    )
+    np.testing.assert_allclose(
+        restored.target_physical_measures,
+        2.0 * restored.source_physical_measures,
+        rtol=1e-13,
+        atol=1e-13,
+    )
+    np.testing.assert_allclose(
+        restored.apply_material_extensive(jnp.asarray((2.75,), dtype=jnp.float64)),
+        np.asarray((2.75,), dtype=np.float64),
+        rtol=1e-13,
+        atol=1e-13,
+    )
+    np.testing.assert_allclose(
+        restored.apply_material_density(jnp.asarray((6.0,), dtype=jnp.float64)),
+        np.asarray((3.0,), dtype=np.float64),
+        rtol=1e-13,
+        atol=1e-13,
+    )

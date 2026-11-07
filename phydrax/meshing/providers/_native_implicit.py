@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
-from typing import final, NamedTuple
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass, replace
+from typing import Any, final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -18,19 +19,19 @@ from jax.typing import ArrayLike
 
 import phydrax.discretization._cell_mesh as cell_mesh_owner
 
-from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
+from ..._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import (
     IntervalBoxProgram,
     MeshcoreError,
-    MeshcoreStatus,
     zero_set_remesh,
 )
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization import CellGeometrySpec
+from ...discretization import CellGeometrySpec, PreparedTensorGrid
 from ...discretization._cell_geometry_validity import cell_geometry_id
+from ...geometry._contracts import CompiledGeometry
 from ...geometry._interval_enclosure import (
     IntervalExtensionError,
     prepare_interval_function,
@@ -49,6 +50,9 @@ from ...geometry.implicit import (
     AdaptiveImplicitSurfaceStatus,
     AnalyticImplicitProfile,
     discover_adaptive_implicit_surface,
+    discover_implicit_surface,
+    ImplicitSurfacePlan,
+    ImplicitSurfacePolicy,
     ImplicitVolumeClass,
 )
 from ...geometry.implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
@@ -89,6 +93,9 @@ from .._result import MeshingComplianceReport
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import SizeControlStrength, UniformSizeControl
 from .._volume_generation import (
+    _shape_targets_gated,
+    _soft_shape_target_evidence,
+    _split_shape_target_rows,
     generate_plc_volume,
     NativeVolumeSchedule,
     VolumeConstruction,
@@ -209,9 +216,9 @@ def implicit_support_issues(
     if options.route not in (None, "implicit_surface"):
         unsupported.append("the selected implicit_surface native route")
     if options.implicit_policy is not None and not isinstance(
-        options.implicit_policy, AdaptiveImplicitSurfacePolicy
+        options.implicit_policy, (AdaptiveImplicitSurfacePolicy, ImplicitSurfacePolicy)
     ):
-        unsupported.append("an AdaptiveImplicitSurfacePolicy schedule")
+        unsupported.append("an implicit surface policy")
     if specification.planar_embedding is not None:
         unsupported.append("planar embeddings")
     if specification.background_metric is not None:
@@ -547,6 +554,143 @@ def _effective_policy(
     )
 
 
+_DISCOVERY_VALIDATION_BATCH = 16384
+
+
+def _discovery_roots_match(
+    roots: np.ndarray, errors: np.ndarray, points: np.ndarray, point_errors: np.ndarray, /
+) -> bool:
+    """Match byte-exact points and numerically equal errors, including duplicates."""
+    if len(roots) != len(errors):
+        raise ValueError("zip() argument 2 is shorter or longer than argument 1")
+    root_bits = tuple(roots[:, axis].view(np.uint64) for axis in range(3))
+    order = None
+    for start in range(0, len(points), _DISCOVERY_VALIDATION_BATCH):
+        stop = min(start + _DISCOVERY_VALIDATION_BATCH, len(points))
+        query = points[start:stop]
+        query_errors = point_errors[start:stop]
+        bits = tuple(query[:, axis].view(np.uint64) for axis in range(3))
+        # The common aligned case needs no global permutation at all.
+        if (
+            stop <= len(roots)
+            and all(
+                np.array_equal(bits[axis], root_bits[axis][start:stop])
+                for axis in range(3)
+            )
+            and np.array_equal(query_errors, errors[start:stop])
+        ):
+            continue
+        if not len(roots):
+            return False
+        if order is None:
+            # Only the permutation is proportional to the root count; all key
+            # comparisons and search scratch below are bounded batches.
+            order = np.lexsort((errors, root_bits[2], root_bits[1], root_bits[0]))
+        low = np.zeros(len(query), dtype=np.int64)
+        high = np.full(len(query), len(roots), dtype=np.int64)
+        while np.any(low < high):
+            active = low < high
+            mid = (low[active] + high[active]) // 2
+            rows = order[mid]
+            equal = np.ones(len(rows), dtype=np.bool_)
+            less = np.zeros(len(rows), dtype=np.bool_)
+            for axis in range(3):
+                left = root_bits[axis][rows]
+                right = bits[axis][active]
+                less |= equal & (left < right)
+                equal &= left == right
+            less |= equal & (errors[rows] < query_errors[active])
+            active_rows = np.flatnonzero(active)
+            low[active_rows[less]] = mid[less] + 1
+            high[active_rows[~less]] = mid[~less]
+        valid = low < len(roots)
+        if not np.all(valid):
+            return False
+        rows = order[low]
+        if any(
+            not np.array_equal(root_bits[axis][rows], bits[axis]) for axis in range(3)
+        ) or not np.array_equal(errors[rows], query_errors):
+            return False
+    return True
+
+
+def _discovery_possible_boxes(cover: Any, /) -> Iterator[np.ndarray]:
+    """Yield possible-zero boxes in cover order using bounded scratch."""
+    for start in range(0, len(cover.value_lower), _DISCOVERY_VALIDATION_BATCH):
+        stop = min(start + _DISCOVERY_VALIDATION_BATCH, len(cover.value_lower))
+        possible = (cover.value_lower[start:stop] <= 0.0) & (
+            cover.value_upper[start:stop] >= 0.0
+        )
+        yield np.asarray(cover.boxes[start:stop][possible], dtype=np.float64)
+
+
+def _direct_discovery_cover_matches(
+    cover: Any,
+    points: np.ndarray,
+    errors: np.ndarray,
+    boxes: np.ndarray,
+    radius: float,
+    /,
+) -> bool:
+    """Prove the direct unique-box sample case without materializing the samples."""
+    count = len(points)
+    if (
+        points.shape != (count, 3)
+        or errors.shape != (count,)
+        or boxes.shape != (count, 2, 3)
+        or not math.isfinite(radius)
+        or radius <= 0
+    ):
+        return False
+    dtype = np.dtype([(f"coordinate_{axis}", np.float64) for axis in range(6)])
+    keys = np.ascontiguousarray(boxes).reshape((-1, 6)).view(dtype).reshape(-1)
+    order = np.argsort(keys, kind="stable")
+    for start in range(0, count, _DISCOVERY_VALIDATION_BATCH):
+        stop = min(start + _DISCOVERY_VALIDATION_BATCH, count)
+        selected = keys[order[start:stop]]
+        if (start and keys[order[start - 1]] == selected[0]) or np.any(
+            selected[1:] == selected[:-1]
+        ):
+            return False
+    used = np.zeros((count,), dtype=np.bool_)
+    total = 0
+    for possible in _discovery_possible_boxes(cover):
+        n = len(possible)
+        if not n:
+            continue
+        query = np.ascontiguousarray(possible).reshape((-1, 6)).view(dtype).reshape(-1)
+        positions = np.searchsorted(keys, query, side="left", sorter=order)
+        if np.any(positions >= count):
+            return False
+        rows = order[positions]
+        if np.any(keys[rows] != query) or np.any(used[rows]) or len(np.unique(rows)) != n:
+            return False
+        used[rows] = True
+        extents = np.nextafter(possible[:, 1] - possible[:, 0], np.inf)
+        squared = np.nextafter(extents * extents, np.inf)
+        radii = np.nextafter(
+            np.sqrt(np.nextafter(np.sum(squared, axis=1), np.inf)), np.inf
+        )
+        first = np.nextafter(np.abs(points[rows] - possible[:, 0]), np.inf)
+        second = np.nextafter(np.abs(points[rows] - possible[:, 1]), np.inf)
+        delta = np.maximum(first, second)
+        distance_squared = np.zeros((n,), dtype=np.float64)
+        for axis in range(3):
+            distance_squared = np.nextafter(
+                distance_squared + np.nextafter(delta[:, axis] * delta[:, axis], np.inf),
+                np.inf,
+            )
+        distances = np.nextafter(np.sqrt(np.nextafter(distance_squared, np.inf)), np.inf)
+        if (
+            np.any(~np.isfinite(radii))
+            or np.any(radii > radius)
+            or np.any(distances > radii)
+        ):
+            return False
+        total += n
+    return total == count and bool(np.all(used))
+
+
 def _validate_discovery(
     source: NativeImplicitSource,
     surface: AdaptiveImplicitSurface,
@@ -580,33 +724,36 @@ def _validate_discovery(
     witness_points = np.asarray(surface.boundary_witnesses, dtype=np.float64)
     witness_errors = np.asarray(surface.boundary_errors, dtype=np.float64)
     witness_boxes = np.asarray(surface.boundary_witness_boxes, dtype=np.float64)
-    extents = np.nextafter(witness_boxes[:, 1] - witness_boxes[:, 0], np.inf)
-    squared = np.nextafter(extents * extents, np.inf)
-    witness_radii = np.nextafter(
-        np.sqrt(np.nextafter(np.sum(squared, axis=1), np.inf)),
-        np.inf,
-    )
-    maximum_radius = float(np.max(witness_radii))
+    maximum_radius = -np.inf
+    for start in range(0, len(witness_boxes), _DISCOVERY_VALIDATION_BATCH):
+        boxes = witness_boxes[start : start + _DISCOVERY_VALIDATION_BATCH]
+        extents = np.nextafter(boxes[:, 1] - boxes[:, 0], np.inf)
+        squared = np.nextafter(extents * extents, np.inf)
+        radii = np.nextafter(
+            np.sqrt(np.nextafter(np.sum(squared, axis=1), np.inf)), np.inf
+        )
+        maximum_radius = np.maximum(maximum_radius, np.max(radii))
+    if not len(witness_boxes):
+        raise ValueError(
+            "zero-size array to reduction operation maximum which has no identity"
+        )
+    maximum_radius = float(maximum_radius)
+    if type(surface) is AdaptiveImplicitSurface and _direct_discovery_cover_matches(
+        cover, witness_points, witness_errors, witness_boxes, maximum_radius
+    ):
+        return
     samples = surface.boundary_source.boundary_cover(maximum_radius)
     sample_points = np.asarray(samples.points, dtype=np.float64)
     sample_errors = np.asarray(samples.point_error, dtype=np.float64)
     sample_radii = np.asarray(samples.covering_radius, dtype=np.float64)
-    possible_boxes = np.asarray(cover.boxes[cover.possible_zero_mask], dtype=np.float64)
-    root_errors_by_point: dict[bytes, set[float]] = {}
-    for point, error in zip(witness_points, witness_errors, strict=True):
-        key = np.ascontiguousarray(point).tobytes()
-        root_errors_by_point.setdefault(key, set()).add(float(error))
+    if len(witness_points) != len(witness_errors):
+        raise ValueError("zip() argument 2 is shorter or longer than argument 1")
+    possible_count = sum(len(boxes) for boxes in _discovery_possible_boxes(cover))
     sample_roots_match = (
-        sample_points.shape
-        == (
-            possible_boxes.shape[0],
-            3,
-        )
-        and sample_errors.shape == (possible_boxes.shape[0],)
-        and all(
-            float(error)
-            in root_errors_by_point.get(np.ascontiguousarray(point).tobytes(), set())
-            for point, error in zip(sample_points, sample_errors, strict=True)
+        sample_points.shape == (possible_count, 3)
+        and sample_errors.shape == (possible_count,)
+        and _discovery_roots_match(
+            witness_points, witness_errors, sample_points, sample_errors
         )
     )
     if not sample_roots_match:
@@ -616,11 +763,15 @@ def _validate_discovery(
             provider_code="native_implicit_discovery_incomplete",
             stage="source_inspection",
         )
-    if possible_boxes.shape[0]:
-        first_delta = np.nextafter(np.abs(sample_points - possible_boxes[:, 0]), np.inf)
-        second_delta = np.nextafter(np.abs(sample_points - possible_boxes[:, 1]), np.inf)
+    box_radii_match = True
+    offset = 0
+    for boxes in _discovery_possible_boxes(cover):
+        count = len(boxes)
+        points = sample_points[offset : offset + count]
+        first_delta = np.nextafter(np.abs(points - boxes[:, 0]), np.inf)
+        second_delta = np.nextafter(np.abs(points - boxes[:, 1]), np.inf)
         delta = np.maximum(first_delta, second_delta)
-        distance_squared = np.zeros((possible_boxes.shape[0],), dtype=np.float64)
+        distance_squared = np.zeros((count,), dtype=np.float64)
         for axis in range(3):
             distance_squared = np.nextafter(
                 distance_squared + np.nextafter(delta[:, axis] * delta[:, axis], np.inf),
@@ -629,14 +780,15 @@ def _validate_discovery(
         box_cover_upper = np.nextafter(
             np.sqrt(np.nextafter(distance_squared, np.inf)), np.inf
         )
-    else:
-        box_cover_upper = np.empty((0,), dtype=np.float64)
+        if np.any(box_cover_upper > sample_radii[offset : offset + count]):
+            box_radii_match = False
+        offset += count
     if (
         samples.semantics != "certified"
         or not samples.complete
         or not np.all(np.isfinite(sample_radii))
         or np.any(sample_radii > maximum_radius)
-        or np.any(box_cover_upper > sample_radii)
+        or not box_radii_match
     ):
         raise _failure(
             MeshingFailureCategory.INVALID_SOURCE,
@@ -976,6 +1128,20 @@ def _mesh_connected(faces: np.ndarray, /) -> bool:
 
 
 def _minimum_angle(vertices: np.ndarray, faces: np.ndarray, /) -> float:
+    minimum = np.float64(np.inf)
+    if not len(faces):
+        return float(np.min(np.empty((0,), dtype=np.float64)))
+    for start in range(0, len(faces), _DISCOVERY_VALIDATION_BATCH):
+        minimum = np.minimum(
+            minimum,
+            _minimum_angle_batch(
+                vertices, faces[start : start + _DISCOVERY_VALIDATION_BATCH]
+            ),
+        )
+    return float(minimum)
+
+
+def _minimum_angle_batch(vertices: np.ndarray, faces: np.ndarray, /) -> float:
     triangles = vertices[faces]
     side_a = np.linalg.norm(triangles[:, 2] - triangles[:, 1], axis=1)
     side_b = np.linalg.norm(triangles[:, 0] - triangles[:, 2], axis=1)
@@ -1124,6 +1290,9 @@ def _organization(
     faces: np.ndarray,
     fidelity_bound: float,
     /,
+    *,
+    vertex_deviations: np.ndarray | None = None,
+    fixed_plan_id: str | None = None,
 ) -> NativeMeshOrganization:
     cover = discovery.cover
     if cover is None:
@@ -1176,10 +1345,12 @@ def _organization(
             vertex_set.entity_set_id,
             vertex_ids,
             (source_key[0],) * vertex_ids.size,
-            np.full(
-                (vertex_ids.size,),
-                discovery.policy.root_tolerance,
-                dtype=np.float64,
+            (
+                np.full(
+                    (vertex_ids.size,), discovery.policy.root_tolerance, dtype=np.float64
+                )
+                if vertex_deviations is None
+                else vertex_deviations
             ),
             source_roles=(GeometrySourceEntityRole.FACET,) * vertex_ids.size,
             source_occurrence_paths=(source_key[1],) * vertex_ids.size,
@@ -1193,10 +1364,15 @@ def _organization(
             source_revision=source.source_revision,
             coordinate_contract=coordinate_contract,
             provenance=(
-                "geometry-owned-adaptive-implicit-surface",
+                (
+                    "geometry-owned-adaptive-implicit-surface"
+                    if fixed_plan_id is None
+                    else "geometry-owned-fixed-lattice-implicit-surface"
+                ),
                 source.binding_id,
                 discovery.evidence.evidence_id,
                 cover.cover_id,
+                *((fixed_plan_id,) if fixed_plan_id is not None else ()),
             ),
             cell_tags=tags,
         ),
@@ -1406,13 +1582,29 @@ def _face_radius_edge_ratios(vertices: np.ndarray, faces: np.ndarray, /) -> np.n
     return ratios
 
 
+def _maximum_face_radius_edge_ratio(vertices: np.ndarray, faces: np.ndarray, /) -> float:
+    if not len(faces):
+        return float(np.max(np.empty((0,), dtype=np.float64)))
+    maximum = np.float64(-np.inf)
+    for start in range(0, len(faces), _DISCOVERY_VALIDATION_BATCH):
+        maximum = np.maximum(
+            maximum,
+            np.max(
+                _face_radius_edge_ratios(
+                    vertices, faces[start : start + _DISCOVERY_VALIDATION_BATCH]
+                )
+            ),
+        )
+    return float(maximum)
+
+
 def _carrier_quality(
     vertices: np.ndarray, faces: np.ndarray, suffix: str, /
 ) -> tuple[tuple[str, float], ...]:
     return (
         (
             f"carrier_maximum_radius_edge_ratio_{suffix}",
-            float(np.max(_face_radius_edge_ratios(vertices, faces))),
+            _maximum_face_radius_edge_ratio(vertices, faces),
         ),
         (
             f"carrier_minimum_angle_degrees_{suffix}",
@@ -1422,10 +1614,10 @@ def _carrier_quality(
 
 
 def _implicit_field_box_programs(
-    source: NativeImplicitSource, /
+    geometry: CompiledGeometry, /
 ) -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
     """Lower f and grad f of the implicit source to one-box native interval programs."""
-    kernel, state = source.geometry.kernel, source.geometry.state
+    kernel, state = geometry.kernel, geometry.state
 
     def value(point: Array) -> Array:
         return kernel.boundary_field(state, point[None, :])[0]
@@ -1478,93 +1670,188 @@ def _nearest_scaffold_rows(
     faces: np.ndarray,
     /,
 ) -> np.ndarray:
-    """Scaffold triangle with the nearest centroid for every carrier triangle.
+    """Find exact nearest scaffold centroids in bounded spatial shards.
 
-    The lowest scaffold row of least squared centroid distance wins. Packed-BVH
-    box rounds propose, per carrier triangle, every scaffold centroid within an
-    outward-rounded box of half-width ``r``; a carrier whose least candidate
-    distance is provably below ``r`` holds every centroid of least distance,
-    the others retry with ``2 r``. Candidate squared distances are the same
-    binary64 expressions as the exhaustive scan, so the chosen rows are too.
-    Nonfinite centroids keep the exhaustive scan.
+    A sampled centroid supplies an actual upper bound. Each shard's canonical
+    packed BVH enumerates every centroid in an outward-rounded box around that
+    bound; squared distances and the lowest-row tie are then evaluated exactly
+    as in the exhaustive NumPy scan. The outward ULP before the square root
+    includes distances whose squares round to zero. Nonfinite cases use the same
+    exhaustive reduction in bounded blocks.
     """
-    scaffold_centroids = np.mean(scaffold_vertices[scaffold_faces], axis=1)
-    centroids = np.mean(vertices[faces], axis=1)
-    if (
-        centroids.shape[0] == 0
-        or scaffold_centroids.shape[0] == 0
-        or not (
-            np.all(np.isfinite(scaffold_centroids)) and np.all(np.isfinite(centroids))
-        )
-    ):
-        rows = np.empty((faces.shape[0],), dtype=np.int64)
-        for start in range(0, faces.shape[0], 512):
-            block = centroids[start : start + 512]
-            squared = np.sum(
-                (block[:, None, :] - scaffold_centroids[None, :, :]) ** 2, axis=2
-            )
-            rows[start : start + block.shape[0]] = np.argmin(squared, axis=1)
+
+    def triangle_centroids(points: np.ndarray, triangles: np.ndarray) -> np.ndarray:
+        first = np.mean(points[triangles[:4096]], axis=1)
+        result = np.empty((len(triangles), *first.shape[1:]), dtype=first.dtype)
+        result[: len(first)] = first
+        for start in range(len(first), len(triangles), 4096):
+            stop = min(start + 4096, len(triangles))
+            result[start:stop] = np.mean(points[triangles[start:stop]], axis=1)
+        return result
+
+    first_scaffold = np.mean(scaffold_vertices[scaffold_faces[:16384]], axis=1)
+    centroids = triangle_centroids(vertices, faces)
+    rows = np.full(len(centroids), -1, dtype=np.int64)
+    if not len(scaffold_faces):
+        if len(centroids):
+            raise ValueError("attempt to get argmin of an empty sequence")
         return rows
-    scaffold_bvh = prepare_bvh(scaffold_centroids, scaffold_centroids, dtype=np.float64)
-    margin = 1.0 - 2.0**-40
-    # Each carrier starts at the larger of the mean centroid spacing and its
-    # distance to the scaffold box, and never needs more than the distance to
-    # an evenly spaced sample of centroids (widened so that bound is accepted).
-    lower, upper = (
-        np.min(scaffold_centroids, axis=0),
-        np.max(scaffold_centroids, axis=0),
-    )
-    spacing = float(np.linalg.norm(upper - lower)) / max(
-        1.0, scaffold_centroids.shape[0] ** (1.0 / 3.0)
-    )
-    outside = np.linalg.norm(centroids - np.clip(centroids, lower, upper), axis=1)
-    sample = scaffold_centroids[
-        np.unique(np.linspace(0, scaffold_centroids.shape[0] - 1, 64).astype(np.int64))
-    ]
-    cap = np.empty((centroids.shape[0],), dtype=np.float64)
-    for start in range(0, centroids.shape[0], 4096):
-        block = centroids[start : start + 4096]
-        cap[start : start + block.shape[0]] = np.sqrt(
-            np.min(np.sum((block[:, None, :] - sample[None, :, :]) ** 2, axis=2), axis=1)
+    best = np.full(len(centroids), np.inf, dtype=np.float64)
+    finite_points = np.all(np.isfinite(centroids), axis=1)
+    tiny = np.finfo(np.float64).tiny
+    sample_rows = np.unique(np.linspace(0, len(scaffold_faces) - 1, 64).astype(np.int64))
+    sample = np.mean(scaffold_vertices[scaffold_faces[sample_rows]], axis=1)
+    for start in range(0, len(centroids), 32):
+        stop = min(start + 32, len(centroids))
+        squared = np.sum(
+            (centroids[start:stop, None, :] - sample[None, :, :]) ** 2, axis=2
         )
-    cap = np.nextafter(cap * (1.0 + 2.0**-30), np.inf) + np.finfo(np.float64).tiny
-    radius = np.minimum(
-        np.maximum(max(spacing, float(np.finfo(np.float64).tiny)), outside), cap
-    )
-    rows = np.full((centroids.shape[0],), -1, dtype=np.int64)
-    pending = np.arange(centroids.shape[0], dtype=np.int64)
-    while pending.size:
-        points = centroids[pending]
-        reach = radius[pending][:, None]
-        query_bvh = prepare_bvh(
-            np.nextafter(points - reach, -np.inf),
-            np.nextafter(points + reach, np.inf),
-            dtype=np.float64,
-        )
-        owners_local, columns = bvh_overlap_pairs_host(
-            query_bvh, scaffold_bvh, include_touching=True
-        )
-        accepted = np.zeros((pending.size,), dtype=np.bool_)
-        if owners_local.size:
-            # Pairs arrive sorted by (carrier, scaffold row).
-            squared = np.sum(
-                (points[owners_local] - scaffold_centroids[columns]) ** 2, axis=1
+        local = np.argmin(squared, axis=1)
+        rows[start:stop] = sample_rows[local]
+        best[start:stop] = squared[np.arange(stop - start), local]
+
+    def exhaustive(points: np.ndarray, source: np.ndarray) -> np.ndarray:
+        squared = np.sum((points[:, None, :] - source[None, :, :]) ** 2, axis=2)
+        return np.argmin(squared, axis=1)
+
+    for source_start in range(0, len(scaffold_faces), 16384):
+        source_stop = min(source_start + 16384, len(scaffold_faces))
+        source = (
+            first_scaffold
+            if source_start == 0
+            else np.mean(
+                scaffold_vertices[scaffold_faces[source_start:source_stop]], axis=1
             )
-            present, starts = np.unique(owners_local, return_index=True)
-            least = np.minimum.reduceat(squared, starts)
-            # Every point of distance <= r * margin lies inside the query box.
-            limit = (radius[pending][present] * margin) ** 2 * margin
-            accepted[present] = least <= limit
-            least_by_owner = np.full((pending.size,), np.inf)
-            least_by_owner[present] = least
-            first = np.flatnonzero(
-                accepted[owners_local] & (squared == least_by_owner[owners_local])
+        )
+        source_finite = bool(np.all(np.isfinite(source)))
+        use_bvh = source_finite and source.dtype == centroids.dtype == np.dtype(
+            np.float64
+        )
+        active = (~np.isnan(best)) | (~finite_points & (rows > source_start))
+        if not source_finite:
+            active |= rows > source_start
+        if use_bvh:
+            lower, upper = np.min(source, axis=0), np.max(source, axis=0)
+            reach = (
+                np.nextafter(
+                    np.sqrt(np.nextafter(best, np.inf)) * (1.0 + 2.0**-30), np.inf
+                )
+                + tiny
             )
-            winners, first_rows = np.unique(owners_local[first], return_index=True)
-            rows[pending[winners]] = columns[first[first_rows]]
-        pending = pending[~accepted]
-        radius[pending] = np.minimum(2.0 * radius[pending], cap[pending])
+            overlap = np.all(
+                (centroids + reach[:, None] >= lower)
+                & (centroids - reach[:, None] <= upper),
+                axis=1,
+            )
+            active &= (rows < 0) | ~np.isfinite(best) | ~finite_points | overlap
+        pending = np.flatnonzero(active)
+        if not len(pending):
+            continue
+        source_bvh = (
+            prepare_bvh(source, source, dtype=np.float64)
+            if use_bvh and np.any(finite_points[pending])
+            else None
+        )
+        for start in range(0, len(pending), 32):
+            selected = pending[start : start + 32]
+            points = centroids[selected]
+            accelerated = finite_points[selected] & use_bvh & np.isfinite(best[selected])
+            local = np.full(len(selected), -1, dtype=np.int64)
+            if np.any(accelerated):
+                subset = np.flatnonzero(accelerated)
+                radius = reach[selected[subset], None]
+                low = np.nextafter(points[subset] - radius, -np.inf)
+                high = np.nextafter(points[subset] + radius, np.inf)
+                finite_box = np.all(np.isfinite(low) & np.isfinite(high), axis=1)
+                if np.any(~finite_box):
+                    selected_fallback = subset[~finite_box]
+                    local[selected_fallback] = exhaustive(
+                        points[selected_fallback], source
+                    )
+                if np.any(finite_box):
+                    if source_bvh is None:
+                        raise RuntimeError("Finite BVH candidates require a source BVH.")
+                    selected_bvh = subset[finite_box]
+                    query_bvh = prepare_bvh(
+                        low[finite_box], high[finite_box], dtype=np.float64
+                    )
+                    least = np.full(len(selected_bvh), np.inf, dtype=np.float64)
+                    nearest = np.full(
+                        len(selected_bvh), np.iinfo(np.int64).max, dtype=np.int64
+                    )
+                    for owners, columns in bvh_overlap_pair_blocks(
+                        query_bvh, source_bvh, include_touching=True, item_block=4096
+                    ):
+                        squared = np.sum(
+                            (points[selected_bvh[owners]] - source[columns]) ** 2,
+                            axis=1,
+                        )
+                        prior = least.copy()
+                        np.minimum.at(least, owners, squared)
+                        nearest[least < prior] = np.iinfo(np.int64).max
+                        equal = squared == least[owners]
+                        np.minimum.at(nearest, owners[equal], columns[equal])
+                    del query_bvh
+                    found_local = nearest != np.iinfo(np.int64).max
+                    local[selected_bvh[found_local]] = nearest[found_local]
+            if np.any(~accelerated):
+                local[~accelerated] = exhaustive(points[~accelerated], source)
+            found = local >= 0
+            if np.any(found):
+                found_rows = selected[found]
+                found_local = local[found]
+                squared = np.sum(
+                    (centroids[found_rows] - source[found_local]) ** 2, axis=1
+                )
+                candidate_rows = source_start + found_local
+                replace = (
+                    (rows[found_rows] < 0)
+                    | (squared < best[found_rows])
+                    | (np.isnan(squared) & ~np.isnan(best[found_rows]))
+                    | (
+                        (
+                            (squared == best[found_rows])
+                            | (np.isnan(squared) & np.isnan(best[found_rows]))
+                        )
+                        & (candidate_rows < rows[found_rows])
+                    )
+                )
+                changed = found_rows[replace]
+                rows[changed] = candidate_rows[replace]
+                best[changed] = squared[replace]
+        del source_bvh
     return rows
+
+
+def _implicit_carrier_admission_tolerance(
+    source: NativeImplicitSource, specification: VolumeMeshingSpec, /
+) -> float:
+    """Resolve an authored whole-surface bound for newly remeshed faces."""
+    features = specification.protected_features
+    if features:
+        issues = _implicit_protected_feature_issues(source, features)
+        if issues:
+            raise _failure(
+                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                "; ".join(issues),
+                provider_code="native_implicit_carrier_remesh",
+                stage="source_inspection",
+            )
+    declared = [feature.maximum_deviation for feature in features if feature.hard]
+    if specification.maximum_deviation is not None:
+        declared.append(specification.maximum_deviation)
+    if not declared or min(declared) <= 0.0:
+        raise _failure(
+            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "Implicit carrier remeshing requires an explicitly positive whole-surface "
+            "fidelity bound; exact or unspecified fidelity cannot establish one.",
+            provider_code="native_implicit_carrier_remesh",
+            stage="source_inspection",
+        )
+    profile = source.authoring_profile
+    if profile is not None:
+        declared.append(profile.tube_radius)
+    return float(min(declared))
 
 
 def _remesh_implicit_carrier(
@@ -1574,16 +1861,18 @@ def _remesh_implicit_carrier(
     vertices: np.ndarray,
     faces: np.ndarray,
     carrier_distance: float,
+    admission_tolerance: float,
+    incidence: tuple[np.ndarray, np.ndarray] | None = None,
     /,
 ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, float]:
     """Remesh the scaffold carrier under the native zero-set band admission.
 
-    Every created triangle is certified within ``carrier_distance`` (the
-    scaffold's declared bound) of the zero set and transversal to the field
-    gradient; untouched scaffold triangles keep the scaffold certificate. The
+    Every created triangle is certified within ``admission_tolerance`` of the
+    zero set and transversal to the field gradient; untouched scaffold
+    triangles keep their independently established ``carrier_distance``. The
     result must meet the FIXED-fill radius-edge bound or the route refuses.
     """
-    value, gradient = _implicit_field_box_programs(source)
+    value, gradient = _implicit_field_box_programs(source.geometry)
     edge_length = _carrier_edge_length(vertices, faces, specification)
     try:
         remeshed = zero_set_remesh(
@@ -1591,10 +1880,12 @@ def _remesh_implicit_carrier(
             faces,
             value,
             gradient,
-            carrier_distance,
+            admission_tolerance,
             carrier_distance,
             edge_length,
             _CARRIER_MINIMUM_ANGLE_DEGREES,
+            incidence=incidence,
+            admission_limited_coarsening=True,
         )
     except (MeshcoreError, ValueError, OverflowError) as error:
         raise _failure(
@@ -1603,8 +1894,21 @@ def _remesh_implicit_carrier(
             provider_code="native_implicit_carrier_remesh",
             stage="surface_meshing",
         ) from error
-    worst = float(np.max(_face_radius_edge_ratios(remeshed.vertices, remeshed.triangles)))
-    if not worst <= schedule.radius_edge_bound:
+    worst = _maximum_face_radius_edge_ratio(remeshed.vertices, remeshed.triangles)
+    if schedule.radius_edge_bound is None and not np.isfinite(worst):
+        raise _failure(
+            MeshingFailureCategory.QUALITY_REJECTED,
+            "The certified zero-set remesh has a nonrepresentable carrier triangle.",
+            provider_code="native_implicit_carrier_remesh",
+            stage="surface_meshing",
+        )
+    # A soft schedule keeps the remeshed carrier and publishes the resulting
+    # tetrahedral shape rows; a nonrepresentable triangle stays a refusal.
+    if (
+        schedule.radius_edge_bound is not None
+        and not worst <= schedule.radius_edge_bound
+        and (_shape_targets_gated(schedule) or not np.isfinite(worst))
+    ):
         raise _failure(
             MeshingFailureCategory.QUALITY_REJECTED,
             "The certified zero-set remesh of the implicit carrier leaves a boundary "
@@ -1614,10 +1918,10 @@ def _remesh_implicit_carrier(
             stage="surface_meshing",
         )
     return (
-        np.array(remeshed.vertices, dtype=np.float64, copy=True),
-        np.array(remeshed.triangles, dtype=np.int64, copy=True),
+        remeshed.vertices,
+        remeshed.triangles,
         remeshed.distance,
-        np.array(remeshed.counters, dtype=np.int64, copy=True),
+        remeshed.counters,
         edge_length,
     )
 
@@ -1721,6 +2025,30 @@ def _scaffold_carrier_identities(
     return carrier_id, vertex_ids, source_triangle_ids
 
 
+def _implicit_remeshed_carrier_identity(
+    source: NativeImplicitSource,
+    discovery: AdaptiveImplicitSurface,
+    edge_length: float,
+    admission_tolerance: float,
+    scaffold_distance: float,
+    /,
+) -> str:
+    """Bind the actual source, remeshing controls, and both distance bounds."""
+    return canonical_fingerprint(
+        {
+            "kind": "adaptive-implicit-volume-carrier",
+            "source": source.binding_id,
+            "discovery": discovery.evidence.evidence_id,
+            "zero_set_remesh": (
+                edge_length,
+                _CARRIER_MINIMUM_ANGLE_DEGREES,
+                admission_tolerance,
+                scaffold_distance,
+            ),
+        }
+    )
+
+
 def _implicit_plc_carrier(
     source: NativeImplicitSource,
     discovery: AdaptiveImplicitSurface,
@@ -1742,7 +2070,7 @@ def _implicit_plc_carrier(
             stage="source_inspection",
         )
     vertices = np.asarray(extracted.vertices, dtype=np.float64)
-    triangles = np.asarray(extracted.faces, dtype=np.int64)
+    triangles = np.asarray(extracted.faces)
     if (
         vertices.ndim != 2
         or vertices.shape[1] != 3
@@ -1759,9 +2087,10 @@ def _implicit_plc_carrier(
         discovery.evidence.maximum_surface_box_diagonal + discovery.policy.root_tolerance
     )
     before = _carrier_quality(vertices, triangles, "before")
-    if float(np.max(_face_radius_edge_ratios(vertices, triangles))) <= (
-        schedule.radius_edge_bound
+    if np.isfinite(before[0][1]) and (
+        schedule.radius_edge_bound is None or before[0][1] <= schedule.radius_edge_bound
     ):
+        triangles = np.asarray(triangles, dtype=np.int64)
         carrier_id, vertex_ids, source_triangle_ids = _scaffold_carrier_identities(
             source, discovery, vertices, triangles
         )
@@ -1770,26 +2099,32 @@ def _implicit_plc_carrier(
         evidence = (("carrier_remeshed", 0.0), *before)
     else:
         # The scaffold carrier provably cannot meet the FIXED-fill bound.
+        admission_tolerance = _implicit_carrier_admission_tolerance(source, specification)
         scaffold_vertices, scaffold_triangles = vertices, triangles
+        incidence = None
+        if 3 * len(triangles) <= np.iinfo(np.int32).max:
+            topology = extracted.topology
+            incidence = (
+                np.asarray(topology.vertex_face_offsets),
+                np.asarray(topology.vertex_faces),
+            )
         vertices, triangles, carrier_distance, counters, edge_length = (
             _remesh_implicit_carrier(
-                source, specification, schedule, vertices, triangles, scaffold_distance
+                source,
+                specification,
+                schedule,
+                vertices,
+                triangles,
+                scaffold_distance,
+                admission_tolerance,
+                incidence,
             )
         )
         face_scaffold_rows = _nearest_scaffold_rows(
             scaffold_vertices, scaffold_triangles, vertices, triangles
         )
-        carrier_id = canonical_fingerprint(
-            {
-                "kind": "adaptive-implicit-volume-carrier",
-                "source": source.binding_id,
-                "discovery": discovery.evidence.evidence_id,
-                "zero_set_remesh": (
-                    edge_length,
-                    _CARRIER_MINIMUM_ANGLE_DEGREES,
-                    scaffold_distance,
-                ),
-            }
+        carrier_id = _implicit_remeshed_carrier_identity(
+            source, discovery, edge_length, admission_tolerance, scaffold_distance
         )
         vertex_ids = tuple(
             canonical_fingerprint(
@@ -1817,6 +2152,7 @@ def _implicit_plc_carrier(
             *before,
             *_carrier_quality(vertices, triangles, "after"),
             ("carrier_remesh_edge_length", edge_length),
+            ("carrier_remesh_admission_tolerance", admission_tolerance),
             ("carrier_remesh_unmet_count", float(counters[4])),
             ("carrier_remesh_transversality_refusals", float(counters[6])),
             ("carrier_remesh_distance_refusals", float(counters[7])),
@@ -2101,7 +2437,10 @@ def _implicit_volume_chart_witness(
     mesh: cell_mesh_owner.CellMesh,
     geometry: CellGeometrySpec,
     query: AdaptiveImplicitBoundarySource,
-    construction: VolumeConstruction,
+    boundary_faces: np.ndarray,
+    face_sources: np.ndarray,
+    input_vertices: np.ndarray,
+    target_face_ids: np.ndarray,
     carrier_triangles: np.ndarray,
     face_scaffold_rows: np.ndarray,
     /,
@@ -2137,8 +2476,8 @@ def _implicit_volume_chart_witness(
         raise ValueError("Implicit volume carrier lost triangle-to-root ancestry.")
     source_cell_rows = scaffold_cell_rows[scaffold_rows]
     source_root_rows = scaffold_root_rows[scaffold_rows]
-    boundary_faces = np.asarray(construction.boundary_faces, dtype=np.int64)
-    face_sources = np.asarray(construction.face_source_facets, dtype=np.int64)
+    boundary_faces = np.asarray(boundary_faces, dtype=np.int64)
+    face_sources = np.asarray(face_sources, dtype=np.int64)
     if (
         boundary_faces.ndim != 2
         or boundary_faces.shape[1] != 3
@@ -2153,7 +2492,7 @@ def _implicit_volume_chart_witness(
             "Implicit volume boundary must retain every original carrier facet."
         )
 
-    input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)
+    input_vertices = np.asarray(input_vertices, dtype=np.int64)
     if input_vertices.shape != (mesh.coordinates.shape[0],):
         raise ValueError(
             "Implicit volume vertices lost their retained carrier-vertex ancestry."
@@ -2190,9 +2529,7 @@ def _implicit_volume_chart_witness(
                     local_facet,
                     reference_faces[local_facet],
                 )
-    target_face_ids = np.asarray(
-        _boundary_face_entities(mesh, construction), dtype=np.int64
-    )
+    target_face_ids = np.asarray(target_face_ids, dtype=np.int64)
     if target_face_ids.shape != (boundary_faces.shape[0],):
         raise ValueError(
             "Implicit volume boundary face IDs must align with retained triangles."
@@ -2221,6 +2558,10 @@ def _implicit_volume_chart_witness(
             )
         parent_id, cell_row, local_facet, local_vertices = owner
         cell_vertices = np.asarray(block.vertices, dtype=np.int64)[cell_row]
+        if set(face) != {int(cell_vertices[local]) for local in local_vertices}:
+            raise ValueError(
+                "Implicit boundary face ID does not match its vertex incidence."
+            )
         source_vertices = (
             int(source_triangles[source_facet, 0]),
             int(source_triangles[source_facet, 1]),
@@ -2318,6 +2659,340 @@ def _implicit_volume_chart_witness(
         implicit_cell_keys=np.asarray(implicit_cells, dtype=np.int64),
         implicit_root_edge_keys=np.asarray(implicit_edges, dtype=np.int64),
     )
+
+
+def _implicit_remeshed_volume_chart_witness(
+    source: NativeImplicitSource,
+    discovery: AdaptiveImplicitSurface,
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+) -> SourceBoundaryChartWitness:
+    """Propose root ancestry for the actual target boundary; proof remains separate."""
+    scaffold = discovery.mesh
+    if scaffold is None:
+        raise ValueError(
+            "Implicit volume witness requires the retained source triangle carrier."
+        )
+    from ...discretization._reference_cell import reference_cell_topology
+
+    if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind not in (
+        "tetrahedron",
+        "simplex:3",
+    ):
+        raise ValueError("Implicit volume chart witnesses require tetrahedral cells.")
+    block = mesh.blocks[0]
+    _, cell_faces = volume_cell_entity_rows(
+        mesh, np.asarray(block.global_ids, dtype=np.int64)
+    )
+    mask = np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
+    face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+    if face_ids.shape != mask.shape:
+        raise ValueError("Implicit volume boundary incidence is not aligned.")
+    oriented = np.empty((len(mask), 3), dtype=np.int64)
+    cells = np.asarray(block.vertices, dtype=np.int64)
+    for local, corners in enumerate(reference_cell_topology(block.cell_kind).entities[2]):
+        face_rows = cell_faces[:, local]
+        exterior = mask[face_rows]
+        oriented[face_rows[exterior]] = cells[exterior][:, corners]
+    boundary = oriented[mask]
+    rows = _nearest_scaffold_rows(
+        np.asarray(scaffold.vertices, dtype=np.float64),
+        np.asarray(scaffold.faces),
+        np.asarray(mesh.coordinates, dtype=np.float64),
+        boundary,
+    )
+    return _implicit_volume_chart_witness(
+        source,
+        discovery,
+        mesh,
+        geometry,
+        discovery.boundary_source,
+        boundary,
+        np.arange(len(boundary), dtype=np.int64),
+        np.arange(len(mesh.coordinates), dtype=np.int64),
+        face_ids[mask],
+        boundary,
+        rows,
+    )
+
+
+def _fixed_source_contract_identity(
+    source: NativeImplicitSource,
+    policy: ImplicitSurfacePolicy,
+    coordinate_contract: SpatialCoordinateContract,
+    /,
+) -> str:
+    from ..._model._structure import model_structure_recipe
+    from .._model_codec import _register_model_archive_types
+
+    if source.grid is None:
+        raise ValueError("Fixed implicit source identity requires its authored grid.")
+    _register_model_archive_types()
+    return canonical_fingerprint(
+        {
+            "kind": "fixed-implicit-source-contract",
+            "source": source.source_id,
+            "geometry_structure": model_structure_recipe(source.geometry, path="fixed.source.geometry"),
+            "geometry_arrays": array_tree_fingerprint(source.geometry),
+            "grid_structure": model_structure_recipe(source.grid, path="fixed.source.grid"),
+            "grid_arrays": array_tree_fingerprint(source.grid),
+            "policy": asdict(policy),
+            "coordinate_contract": coordinate_contract.spatial_id,
+        }
+    )
+
+
+def _fixed_preparation_identity(
+    origin_geometry: CompiledGeometry,
+    origin_grid: PreparedTensorGrid,
+    surface_plan: ImplicitSurfacePlan,
+    discovery_recipe: tuple[object, ...],
+    specification: SurfaceMeshingSpec,
+    revision_bindings: tuple[tuple[str, str], ...],
+    /,
+) -> str:
+    """Bind the complete fixed plan and its scientific discovery inputs."""
+    from ..._model._structure import model_structure_recipe
+    from .._model_codec import _register_model_archive_types
+
+    _register_model_archive_types()
+    projection = surface_plan.projection
+    return canonical_fingerprint(
+        {
+            "kind": "native-fixed-implicit-preparation",
+            "discovery_structure": model_structure_recipe(discovery_recipe, path="fixed.discovery"),
+            "discovery_arrays": array_tree_fingerprint(discovery_recipe),
+            "specification_structure": model_structure_recipe(specification, path="fixed.specification"),
+            "specification_arrays": array_tree_fingerprint(specification),
+            "revision_bindings": revision_bindings,
+            "origin_geometry_structure": model_structure_recipe(origin_geometry, path="fixed.origin"),
+            "origin_geometry_arrays": array_tree_fingerprint(origin_geometry),
+            "origin_grid_structure": model_structure_recipe(origin_grid, path="fixed.grid"),
+            "origin_grid_arrays": array_tree_fingerprint(origin_grid),
+            "surface_kernel": model_structure_recipe(surface_plan.kernel, path="fixed.kernel"),
+            "projection_kernel": model_structure_recipe(projection.kernel, path="fixed.projection.kernel"),
+            "surface_arrays": array_tree_fingerprint(surface_plan),
+            "surface_schema": surface_plan.schema.schema_id,
+            "surface_tolerance": asdict(surface_plan.tolerance),
+            "surface_policy": asdict(surface_plan.policy),
+            "surface_source": surface_plan.source_id,
+            "surface_topology": surface_plan.topology_id,
+            "surface_plan": surface_plan.plan_id,
+            "projection_schema": projection.schema.schema_id,
+            "projection_tolerance": asdict(projection.tolerance),
+            "projection_policy": asdict(projection.policy),
+            "projection_source": projection.source_id,
+            "projection_plan": projection.plan_id,
+        }
+    )
+
+
+@final
+class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
+    """Fixed-lattice dual realization with independently certified source charts."""
+
+    source: NativeImplicitSource
+    specification: SurfaceMeshingSpec
+    coordinate_contract: SpatialCoordinateContract
+    discovery_recipe: tuple[object, ...]
+    surface_plan: ImplicitSurfacePlan
+    origin_geometry: CompiledGeometry
+    origin_grid: PreparedTensorGrid
+    revision_bindings: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    preparation_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source: NativeImplicitSource,
+        specification: SurfaceMeshingSpec,
+        coordinate_contract: SpatialCoordinateContract,
+        discovery: AdaptiveImplicitSurface,
+        surface_plan: ImplicitSurfacePlan,
+        /,
+        *,
+        origin_geometry: CompiledGeometry | None = None,
+        origin_grid: PreparedTensorGrid | None = None,
+        revision_bindings: tuple[tuple[str, str], ...] | None = None,
+    ) -> None:
+        grid = source.grid if origin_grid is None else origin_grid
+        origin = source.geometry if origin_geometry is None else origin_geometry
+        if grid is None:
+            raise ValueError("Fixed implicit preparation requires an authored grid.")
+        from ...geometry._mesh_certificates import _same_tree_content
+
+        domain = _grid_domain(source)
+        regenerated_discovery = _discover(
+            source, domain, _effective_policy(None, specification, domain)
+        )
+        recipe = discovery.archive_recipe
+        discovery_data = tuple(getattr(recipe, name) for name in recipe.__dataclass_fields__)
+        fresh_recipe = regenerated_discovery.archive_recipe
+        fresh_data = tuple(
+            getattr(fresh_recipe, name) for name in fresh_recipe.__dataclass_fields__
+        )
+        if not _same_tree_content(discovery_data, fresh_data):
+            raise ValueError("Fixed implicit discovery is not the current source authority.")
+        del regenerated_discovery
+        contract_id = _fixed_source_contract_identity(source, surface_plan.policy, coordinate_contract)
+        bindings = (
+            ((source.source_revision, contract_id),)
+            if revision_bindings is None else tuple(sorted(revision_bindings))
+        )
+        if (
+            len({revision for revision, _ in bindings}) != len(bindings)
+            or any(not revision or not identity for revision, identity in bindings)
+            or dict(bindings).get(source.source_revision) != contract_id
+        ):
+            raise ValueError("Fixed implicit revision bindings do not match the current source.")
+        self.source = source
+        self.specification = specification
+        self.coordinate_contract = coordinate_contract
+        self.discovery_recipe = discovery_data
+        self.surface_plan = surface_plan
+        self.origin_geometry = origin
+        self.origin_grid = grid
+        self.revision_bindings = bindings
+        self.preparation_id = _fixed_preparation_identity(
+            origin, grid, surface_plan, self.discovery_recipe, specification, bindings
+        )
+
+    def require_current(self, /) -> AdaptiveImplicitSurface:
+        from ...geometry._mesh_certificates import _same_tree_content
+
+        source = self.source
+        rebuilt = NativeImplicitSource(
+            source.geometry, source.source_id, source.source_revision,
+            grid=source.grid, discovery=source.discovery,
+            authoring_profile=source.authoring_profile,
+        )
+        if not _same_tree_content(rebuilt, source):
+            raise ValueError("Fixed implicit source binding is no longer current.")
+        if (
+            source.grid is None
+            or not _same_tree_content(source.grid, self.origin_grid)
+            or not _same_tree_content(source.geometry.kernel, self.origin_geometry.kernel)
+            or not _same_tree_content(source.geometry.kernel, self.surface_plan.kernel)
+            or not _same_tree_content(self.surface_plan.kernel, self.surface_plan.projection.kernel)
+            or self.revision_bindings != tuple(sorted(self.revision_bindings))
+            or dict(self.revision_bindings).get(source.source_revision)
+            != _fixed_source_contract_identity(source, self.surface_plan.policy, self.coordinate_contract)
+            or self.preparation_id != _fixed_preparation_identity(
+                self.origin_geometry, self.origin_grid, self.surface_plan,
+                self.discovery_recipe, self.specification, self.revision_bindings,
+            )
+        ):
+            raise ValueError(
+                "Fixed implicit preparation or discovery authority no longer matches "
+                "its current source and plan."
+            )
+        regenerated = discover_implicit_surface(
+            self.origin_geometry, self.origin_grid,
+            policy=self.surface_plan.policy, source_id=self.surface_plan.source_id,
+        )
+        if not _same_tree_content(regenerated, self.surface_plan):
+            raise ValueError("Fixed implicit plan no longer matches its owning discovery.")
+        domain = _grid_domain(source)
+        discovery = _discover(
+            source, domain, _effective_policy(None, self.specification, domain)
+        )
+        recipe = discovery.archive_recipe
+        current_data = tuple(getattr(recipe, name) for name in recipe.__dataclass_fields__)
+        if not _same_tree_content(current_data, self.discovery_recipe):
+            raise ValueError("Fixed implicit discovery authority is no longer current.")
+        return discovery
+
+    def execute(self, /) -> NativeMeshConstruction:
+        from ._native_layer import _implicit_carrier_root_witness
+
+        discovery = self.require_current()
+        source = self.source
+        realization = self.surface_plan.realize(source.geometry.state)
+        if not bool(np.asarray(realization.accepted)):
+            raise _failure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                f"Fixed-lattice implicit realization failed with status {int(np.asarray(realization.evidence.status))}.",
+                provider_code="native_implicit_fixed_realization",
+                stage="surface_meshing",
+            )
+        vertices = np.asarray(realization.vertices, dtype=np.float64)
+        faces = np.asarray(self.surface_plan.faces, dtype=np.int64)
+        mesh = cell_mesh_owner.CellMesh.from_triangles(
+            vertices, faces.astype(np.int32, copy=False), numeric_version=source.source_revision
+        )
+        geometry = CellGeometrySpec.affine(mesh)
+        query = _NativeImplicitBoundaryQuery(
+            discovery.boundary_source,
+            source.source_id,
+            source.source_revision,
+            self.coordinate_contract.spatial_id,
+            authoring_profile=source.authoring_profile,
+        )
+        distance = query.boundary_distance(vertices)
+        if (
+            distance.semantics != "certified"
+            or not np.all(np.isfinite(distance.upper))
+            or not np.array_equal(mesh.entity_set(0).entity_ids, mesh.vertex_global_ids)
+        ):
+            raise ValueError("Fixed implicit vertices require aligned certified source-distance bounds.")
+        vertex_bound = np.asarray(distance.upper, dtype=np.float64)
+        # Distance to a closed set is 1-Lipschitz.  The L1 diameter bounds
+        # the displacement from a corner to any point of its triangle.
+        corners = vertices[faces]
+        diameter = max(
+            math.nextafter(
+                math.fsum(
+                    math.nextafter(abs(float(a) - float(b)), math.inf)
+                    for a, b in zip(first, second, strict=True)
+                ),
+                math.inf,
+            )
+            for triangle in corners
+            for first, second in (
+                (triangle[0], triangle[1]),
+                (triangle[1], triangle[2]),
+                (triangle[2], triangle[0]),
+            )
+        )
+        fidelity_bound = math.nextafter(float(np.max(vertex_bound)) + diameter, math.inf)
+        compliance = _compliance(self.specification, vertices, faces, fidelity_bound)
+        if not compliance.passed:
+            raise _failure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                "; ".join(compliance.issues),
+                provider_code="native_implicit_compliance",
+                stage="specification_compliance",
+            )
+        organization = _organization(
+            source, discovery, self.coordinate_contract, mesh, faces, fidelity_bound,
+            vertex_deviations=vertex_bound, fixed_plan_id=self.surface_plan.plan_id,
+        )
+        witness = _implicit_carrier_root_witness(
+            source.source_id, source.source_revision, query, discovery.boundary_source,
+            mesh, geometry,
+        )
+        scoped = tuple(
+            (query, witness, feature.maximum_deviation)
+            for feature in self.specification.protected_features if feature.hard
+        )
+        tolerance = self.specification.maximum_deviation
+        if tolerance is None:
+            tolerance = fidelity_bound
+        certification = NativeCertificationRequest(
+            MeshCertificationSchedule("surface"),
+            source.source_id,
+            source.source_revision,
+            fidelity_source=query,
+            fidelity_tolerance=tolerance,
+            protected_features=self.specification.protected_features,
+            fidelity_witness=witness,
+            scoped_fidelity=scoped,
+            feature_source=source,
+        )
+        return NativeMeshConstruction(
+            mesh, self.coordinate_contract, compliance, certification,
+            geometry=geometry, organization=organization,
+        )
 
 
 @final
@@ -2624,10 +3299,10 @@ def _implicit_volume_compliance(
         coordinates,
         tetrahedra,
     )
-    requested: list[tuple[str, float]] = [
-        ("radius_edge_bound", schedule.radius_edge_bound),
-        ("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees),
-    ]
+    requested: list[tuple[str, float]] = []
+    if schedule.radius_edge_bound is not None:
+        requested.append(("radius_edge_bound", schedule.radius_edge_bound))
+    requested.append(("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees))
     achieved: list[tuple[str, float]] = [
         ("maximum_radius_edge_ratio", maximum_radius_edge),
         ("minimum_dihedral_degrees", minimum_dihedral),
@@ -2635,21 +3310,37 @@ def _implicit_volume_compliance(
         ("improvement_status", float(int(construction.improvement_status))),
         ("refinement_unmet_count", float(len(construction.refinement_unmet))),
         ("improvement_unmet_count", float(len(construction.improvement_unmet))),
+        (
+            "refinement_inserted_vertices",
+            float(construction.refinement_inserted_vertices),
+        ),
+        ("final_quality_unmet_count", float(len(construction.final_quality_unmet))),
         ("source_fidelity_bound", fidelity_bound),
         *carrier_evidence,
     ]
+    gated_rows, soft_rows = _split_shape_target_rows(
+        schedule, construction.final_quality_schedule_unmet
+    )
+    shape_gated = _shape_targets_gated(schedule)
+    if not shape_gated:
+        achieved.extend(_soft_shape_target_evidence(construction, soft_rows))
     issues: list[str] = []
-    if maximum_radius_edge > schedule.radius_edge_bound:
+    issues.extend(
+        f"native_final_quality:{criterion}"
+        for criterion, _reason, _cell_id, _value in gated_rows
+    )
+    if schedule.radius_edge_bound is None and not np.isfinite(maximum_radius_edge):
+        issues.append("nonrepresentable_radius_edge")
+    if schedule.minimum_dihedral_degrees == 0.0 and not np.isfinite(minimum_dihedral):
+        issues.append("nonrepresentable_dihedral")
+    if (
+        schedule.radius_edge_bound is not None
+        and maximum_radius_edge > schedule.radius_edge_bound
+        and (shape_gated or not np.isfinite(maximum_radius_edge))
+    ):
         issues.append("radius_edge_bound")
-    if minimum_dihedral < schedule.minimum_dihedral_degrees:
+    if shape_gated and minimum_dihedral < schedule.minimum_dihedral_degrees:
         issues.append("minimum_dihedral_degrees")
-    if construction.improvement_status is not MeshcoreStatus.OK:
-        issues.append("native_improvement_status")
-    if construction.improvement_unmet:
-        issues.extend(
-            f"native_improvement:{criterion}"
-            for criterion, _reason, _cell_id, _value in construction.improvement_unmet
-        )
     size_policy = specification.size_compliance
     for control in specification.size_controls:
         if not isinstance(control, UniformSizeControl):
@@ -3041,7 +3732,10 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
             mesh,
             geometry,
             adaptive_source,
-            construction,
+            construction.boundary_faces,
+            construction.face_source_facets,
+            construction.input_vertices,
+            _boundary_face_entities(mesh, construction),
             self.carrier_triangles,
             self.face_scaffold_rows,
         )
@@ -3073,6 +3767,60 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
         )
 
 
+def prepare_native_fixed_rebind(
+    source: NativeImplicitSource,
+    specification: SurfaceMeshingSpec,
+    options: NativeMeshingOptions,
+    coordinate_contract: SpatialCoordinateContract,
+    prior: _PreparedFixedImplicitRoute,
+    /,
+) -> _PreparedFixedImplicitRoute:
+    """Rebind a qualified fixed lattice to a new source revision, without rediscovery."""
+    from ...geometry._mesh_certificates import _same_tree_content
+
+    prior.require_current()
+    surface_plan = prior.surface_plan
+    if (
+        source.source_revision == prior.source.source_revision
+        and not _same_tree_content(source.geometry.state, prior.source.geometry.state)
+    ):
+        raise ValueError("Changed fixed implicit geometry requires a new source revision.")
+    policy = options.implicit_policy
+    if not isinstance(policy, ImplicitSurfacePolicy) or source.grid is None:
+        raise ValueError("Fixed implicit rebind requires its authored fixed-grid policy.")
+    if implicit_support_issues(source, specification, options):
+        raise ValueError("Fixed implicit rebind does not support the requested surface controls.")
+    axes = tuple(np.asarray(axis.point_coordinates) for axis in source.grid.structured_axes)
+    grid_points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape((-1, 3))
+    if (
+        surface_plan.source_id != source.source_id
+        or surface_plan.schema != source.geometry.schema
+        or surface_plan.tolerance != source.geometry.tolerance
+        or surface_plan.policy != policy
+        or not _same_tree_content(surface_plan.kernel, source.geometry.kernel)
+        or not _same_tree_content(prior.origin_grid, source.grid)
+        or not np.array_equal(np.asarray(surface_plan.grid_points), grid_points)
+    ):
+        raise ValueError("Fixed implicit rebind changed its source kernel, schema, lattice, or policy.")
+    contract_id = _fixed_source_contract_identity(source, policy, coordinate_contract)
+    bindings = dict(prior.revision_bindings)
+    previous = bindings.get(source.source_revision)
+    if previous is not None and previous != contract_id:
+        raise ValueError("A fixed implicit source revision cannot be reused for different scientific content.")
+    bindings[source.source_revision] = contract_id
+    realization = surface_plan.realize(source.geometry.state)
+    if not bool(np.asarray(realization.accepted)):
+        raise ValueError(
+            f"Fixed implicit rebind crossed a stopped event: status {int(np.asarray(realization.evidence.status))}."
+        )
+    discovery = _resolve_discovery(source, specification, None)
+    return _PreparedFixedImplicitRoute(
+        source, specification, coordinate_contract, discovery, surface_plan,
+        origin_geometry=prior.origin_geometry, origin_grid=prior.origin_grid,
+        revision_bindings=tuple(sorted(bindings.items())),
+    )
+
+
 @checked
 def prepare_native_implicit(
     source: NativeImplicitSource | AnalyticImplicitProfile,
@@ -3082,6 +3830,7 @@ def prepare_native_implicit(
     /,
 ) -> (
     _PreparedImplicitRoute
+    | _PreparedFixedImplicitRoute
     | _PreparedImplicitVolumeRoute
     | PreparedRestrictedImplicitVolume
 ):
@@ -3154,14 +3903,16 @@ def prepare_native_implicit(
                 provider_code="native_implicit_preflight",
                 stage="source_inspection",
             )
-        if options.implicit_policy is not None and not isinstance(
-            options.implicit_policy, AdaptiveImplicitSurfacePolicy
-        ):
-            raise _failure(
-                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "The implicit_surface route requires AdaptiveImplicitSurfacePolicy.",
-                provider_code="native_implicit_preflight",
-                stage="source_inspection",
+        if isinstance(options.implicit_policy, ImplicitSurfacePolicy):
+            if source.grid is None:
+                raise ValueError("Fixed-lattice implicit meshing requires the authored grid.")
+            surface_plan = discover_implicit_surface(
+                source.geometry, source.grid,
+                policy=options.implicit_policy, source_id=source.source_id,
+            )
+            discovery = _resolve_discovery(source, specification, None)
+            return _PreparedFixedImplicitRoute(
+                source, specification, coordinate_contract, discovery, surface_plan
             )
         discovery = _resolve_discovery(source, specification, options.implicit_policy)
         return _PreparedImplicitRoute(

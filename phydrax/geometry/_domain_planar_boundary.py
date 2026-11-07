@@ -43,6 +43,7 @@ from ._planar_primitives import cross, plane_key, projection_axes, signed_area2
 
 
 if TYPE_CHECKING:
+    from ._affine_plc_domain import AffinePlcDomain
     from ._domain_coverage import PiecewiseLinearDomain
 
 
@@ -496,7 +497,7 @@ def oriented_target_facets(
     /,
     *,
     coordinate_space: Literal["physical", "reference"] = "physical",
-    source_domain: PiecewiseLinearDomain | None = None,
+    source_domain: PiecewiseLinearDomain | AffinePlcDomain | None = None,
     geometry: CellGeometrySpec | None = None,
     exact_face_images: bool = False,
     source_points: PlcSourcePoints | None = None,

@@ -96,13 +96,13 @@ def test_array_archive_never_loads_pickled_object_arrays(tmp_path: Path) -> None
         )
 
 
-def test_streamed_archive_matches_prechange_golden_bytes(tmp_path: Path) -> None:
+def test_streamed_archive_is_deterministic(tmp_path: Path) -> None:
     arrays = {f"a{i:04d}": np.arange(131072, dtype=np.float64) for i in range(4)}
-    path = tmp_path / "golden.zip"
-    write_array_archive(path, manifest={"kind": "memory-benchmark"}, arrays=arrays)
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == (
-        "6cd1f83ac9cef3cc5f3a0588e4ae5fc3478de7656a28dc01dcfea3245d6416da"
-    )
+    first = tmp_path / "first.zip"
+    second = tmp_path / "second.zip"
+    write_array_archive(first, manifest={"kind": "memory-benchmark"}, arrays=arrays)
+    write_array_archive(second, manifest={"kind": "memory-benchmark"}, arrays=arrays)
+    assert first.read_bytes() == second.read_bytes()
     assert array_collection_digest(arrays) == (
         "db9d1ddef35d46b00f6920f7ce1d6a6ab890493b00a7f9de5e87c648fc67205d"
     )

@@ -55,6 +55,18 @@ Probability normalization still uses the original host validation tolerance.
 
 ::: phydrax.discretization.SparseHodge
 
+`SparseHodge` admits positive definiteness through native numerical Cholesky,
+using approximate-minimum-degree symbolic ordering. Its factor-entry allowance
+is derived from the native factor-byte budget and the float64 storage size,
+rather than an independent fixed entry count. The native default factor-byte
+and symbolic-work budgets remain in force, including the complete panel,
+index, and base-storage accounting before factor allocation. Generic
+`SparseFactorizationPolicy` defaults are unchanged. Ordering and preparation
+identities can change; no diagonal shift, pivot replacement, or assumed
+positive definiteness replaces the numerical proof. These plan budgets do not
+bound total process memory: FE tables, compilation, and other live owners
+remain additional allocations.
+
 `CochainDiscretization(topology, hodges, /, *, boundary_masks=None,
 coordinates=None, primal_measures=None, dual_measures=None, key=None,
 numeric_revision=None, time=0.0, differentials=None)` binds topology to

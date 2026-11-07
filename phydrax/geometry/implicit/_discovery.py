@@ -581,7 +581,6 @@ def discover_implicit_surface(
         policy.projection.root_tolerance,
     )
     faces = _dual_faces(geometry, inside, crossings, dual, base_vertices, policy)
-    # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces, num_vertices=base_vertices.shape[0])
     if not topology.watertight:
         raise ValueError("Implicit surface discovery did not produce a closed surface.")

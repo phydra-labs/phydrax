@@ -1997,13 +1997,70 @@ def _certify_edge_vertex_gap_bounds(
                 or carrier_payload(root.curve) == carrier_payload(curve)
             )
             and vertex_root.supports_endpoint(root)
-            and root.parameter_enclosure()
-            == (float(ranges[edge, endpoint]), float(ranges[edge, endpoint]))
-            and root.certifies_point_root(
-                IntersectionCurvePointRoot(curve, float(ranges[edge, endpoint]))
-            )
         ):
-            return 0.0
+            # The root and the vertex binding certify one source point, but
+            # both the edge parameter and vertex have numeric representatives.
+            # Bound their residual via the certified branch derivative and the
+            # independently certified vertex-root enclosure.
+            lower, upper = root.parameter_enclosure()
+            representative = float(ranges[edge, endpoint])
+            if (
+                not root.affine_transforms
+                and 0.0 <= lower <= representative <= upper <= curve.num_charts
+                and lower < upper
+            ):
+                from .._interval_enclosure import interval_add, interval_multiply
+
+                pcurve = curve.p_curve("first")
+                try:
+                    chart = pcurve.bounding_box(lower, upper)
+                    tangent = pcurve.derivative_bounds(lower, upper)
+                    jacobian = curve.first.patch.derivative_bounds(chart)
+                    derivative = interval_add(
+                        interval_multiply(
+                            (jacobian[0][:, 0], jacobian[1][:, 0]),
+                            (tangent[0][0], tangent[1][0]),
+                        ),
+                        interval_multiply(
+                            (jacobian[0][:, 1], jacobian[1][:, 1]),
+                            (tangent[0][1], tangent[1][1]),
+                        ),
+                    )
+                except (NotImplementedError, ValueError):
+                    pass
+                else:
+                    if all(np.all(np.isfinite(bound)) for bound in derivative):
+                        speed = np.maximum(np.abs(derivative[0]), np.abs(derivative[1]))
+                        vertex_lower, vertex_upper = vertex_box(vertex)
+                        dt = max(
+                            Fraction(representative) - Fraction(lower),
+                            Fraction(upper) - Fraction(representative),
+                        )
+                        squared = sum(
+                            (
+                                (
+                                    max(
+                                        abs(
+                                            Fraction(float(vertex_lower[axis]))
+                                            - Fraction(float(points[vertex, axis]))
+                                        ),
+                                        abs(
+                                            Fraction(float(vertex_upper[axis]))
+                                            - Fraction(float(points[vertex, axis]))
+                                        ),
+                                    )
+                                    + dt * Fraction(float(speed[axis]))
+                                )
+                                ** 2
+                                for axis in range(3)
+                            ),
+                            Fraction(0),
+                        )
+                        return square_root_interval(squared)[1]
+            if lower == upper == representative and root.certifies_point_root(
+                IntersectionCurvePointRoot(curve, representative)
+            ):
+                return 0.0
         if (
             isinstance(root, ConicParameterEndpoint)
             and vertex_root is not None

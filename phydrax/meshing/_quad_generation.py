@@ -32,6 +32,7 @@ from ..discretization._cell_geometry import (
 )
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
+    CELL_VALIDITY_DETERMINANT_FLOOR,
     CellValidityStatus,
     certify_cell_geometry_validity,
 )
@@ -57,6 +58,7 @@ from ._dual_extraction import (
     fresh_vertex_global_ids,
     QuadLayoutObstruction,
     SurfaceCrossField,
+    SurfaceQuadFieldEvent,
     SurfaceQuadLayout,
 )
 
@@ -671,8 +673,14 @@ def prepare_surface_cross_field(
     *,
     feature_edges: ConvertibleToArray | None = None,
     feature_angle: float | None = None,
+    guide_angles: ConvertibleToArray | None = None,
 ) -> SurfaceCrossField:
-    """Solve a sparse transported fourfold field and expose its vertex indices."""
+    """Solve a source-bound field with optional soft per-triangle guidance.
+
+    Guidance is expressed in radians in the returned source-triangle frames,
+    modulo quarter turns. Feature edges remain the independently supplied
+    physical constraints and are not created or removed by guidance.
+    """
     data = _triangle_data(mesh)
     if data.cells.shape[0] == 0:
         raise ValueError("Cross-field preparation requires at least one source triangle.")
@@ -682,6 +690,16 @@ def prepare_surface_cross_field(
     ):
         raise ValueError("feature_angle must lie in [0, pi] or be None.")
     frames = _triangle_frames(mesh, data.cells)
+    guidance = (
+        np.empty((0,), dtype=np.float64)
+        if guide_angles is None
+        else np.asarray(guide_angles, dtype=np.float64)
+    )
+    if guidance.shape not in ((0,), (data.cells.shape[0],)) or not np.all(
+        np.isfinite(guidance)
+    ):
+        raise ValueError("guide_angles must contain one finite angle per source triangle.")
+    guidance = np.remainder(guidance + np.pi / 4.0, np.pi / 2.0) - np.pi / 4.0
     explicit = _feature_inputs(feature_edges, data.edges.shape[0])
     features = _dihedral_feature_rows(
         mesh, data.cells, data.edges, data.edge_owners, threshold
@@ -715,8 +733,8 @@ def prepare_surface_cross_field(
         data.cells.shape[0],
         links,
         transports,
-        feature_face_rows,
-        feature_directions,
+        np.concatenate((feature_face_rows, np.arange(guidance.size, dtype=np.int32))),
+        np.concatenate((feature_directions, guidance)),
     )
     residuals = (
         np.abs(
@@ -739,6 +757,7 @@ def prepare_surface_cross_field(
         transports,
         feature_face_rows,
         feature_directions,
+        guidance,
         residuals,
         solve_residual,
         relative_residual,
@@ -1002,6 +1021,25 @@ def _quad_shape_quality(
     )
 
 
+def _split_quad_templates_valid(cycle: tuple[int, int, int, int], points: np.ndarray, /) -> bool:
+    """Check represented midpoint templates against the existing validity floor."""
+    corners = points[np.asarray(cycle, dtype=np.int64)]
+    mids = np.asarray(
+        [0.5 * (corners[i] + corners[(i + 1) % 4]) for i in range(4)]
+    )
+    center = np.mean(corners, axis=0)
+    split_points = np.concatenate((corners, mids, center[None, :]), axis=0)
+    children = (
+        (0, 4, 8, 7), (1, 5, 8, 4), (2, 6, 8, 5), (3, 7, 8, 6),
+        (0, 4, 6, 3), (4, 1, 2, 6), (1, 5, 7, 0), (5, 2, 3, 7),
+    )
+    for child in children:
+        value = _quad_shape_quality(child, split_points)
+        if value is None or not math.isfinite(value) or value <= CELL_VALIDITY_DETERMINANT_FLOOR:
+            return False
+    return True
+
+
 def _pair_candidate(
     edge_row: int,
     faces: tuple[int, int],
@@ -1112,12 +1150,20 @@ def prepare_surface_quad_layout(
     ``complete=False`` instead returns the maximal positive pairing; triangles
     it leaves unpaired are subdivided by the quad mesh builder.
     """
+    from ..geometry._mesh_certificates import _same_tree_content
+
     data = _triangle_data(mesh)
     if (
         cross_field.source_topology_id != mesh.topology_id
         or cross_field.source_geometry_id != mesh.geometry_id
+        or cross_field.source.mesh_id != mesh.mesh_id
+        or not _same_tree_content(cross_field.source, mesh)
     ):
         raise ValueError("cross_field must bind the source mesh topology and geometry.")
+    if cross_field.field_id != cross_field._scientific_id():
+        raise QuadLayoutObstruction(
+            "field_evidence", "Cross-field content does not match its scientific identity."
+        )
     tolerance = float(maximum_field_error)
     if not math.isfinite(tolerance) or not 0.0 <= tolerance <= 2.0:
         raise ValueError("maximum_field_error must lie in [0, 2].")
@@ -1201,9 +1247,14 @@ def prepare_surface_quad_layout(
             "field_evidence",
             "Cross-field patch labels do not match its cut transport graph.",
         )
+    guidance = np.asarray(cross_field.guide_angles, dtype=np.float64)
     solved_angles, solve_residual, relative_residual, field_energy = (
         _sparse_cross_field_solution(
-            data.cells.shape[0], links, transports, feature_rows, feature_angles
+            data.cells.shape[0],
+            links,
+            transports,
+            np.concatenate((feature_rows, np.arange(guidance.size, dtype=np.int32))),
+            np.concatenate((feature_angles, guidance)),
         )
     )
     angle_difference = (
@@ -1334,6 +1385,16 @@ def prepare_surface_quad_layout(
             points,
         )
         if candidate is None:
+            continue
+        # Only partial pairings need midpoint propagation. Check the actual
+        # rounded child templates before selecting those pairs; an exactly
+        # convex parent may round into a degenerate split child.
+        if (
+            not complete
+            and affine_source
+            and points.shape[1] == 2
+            and not _split_quad_templates_valid(candidate.vertices, points)
+        ):
             continue
         if candidate.alignment_error > tolerance:
             continue
@@ -1536,11 +1597,44 @@ def _maximum_partial_pairing(
         (np.ones(face_rows.size, dtype=np.float64), (face_rows, columns)),
         shape=(face_count, len(candidates)),
     ).tocsc()
-    # Each pair saves one subdivided cell; alignment and shape only break ties.
+    # Maximize cardinality first. A weighted sum cannot enforce this for
+    # arbitrarily large patches: accumulated alignment penalties can otherwise
+    # outweigh an additional pair.
+    integrality = np.ones((len(candidates),), dtype=np.int8)
+    bounds = MilpBounds(
+        np.zeros((len(candidates),), dtype=np.float64),
+        np.ones((len(candidates),), dtype=np.float64),
+    )
+    face_constraint = LinearConstraint(
+        incidence,
+        np.zeros((face_count,), dtype=np.float64),
+        np.ones((face_count,), dtype=np.float64),
+    )
+    cardinality = milp(
+        -np.ones((len(candidates),), dtype=np.float64),
+        integrality=integrality,
+        bounds=bounds,
+        constraints=face_constraint,
+    )
+    if not cardinality.success or cardinality.x is None:
+        raise QuadLayoutObstruction(
+            "patch_solver",
+            "The sparse integer pair solver returned no partial matching.",
+            source_cell_rows=range(face_count),
+        )
+    maximum = int(np.rint(np.sum(cardinality.x)))
+    if not np.allclose(
+        cardinality.x, np.rint(cardinality.x), rtol=0.0, atol=1.0e-8
+    ):
+        raise QuadLayoutObstruction(
+            "patch_solver",
+            "The sparse integer pair solver returned a nonintegral matching.",
+            source_cell_rows=range(face_count),
+        )
     costs = np.asarray(
         [
-            -1.0
-            + 1.0e-3 * (candidate.alignment_error + 0.25 * (1.0 - candidate.quad_quality))
+            candidate.alignment_error
+            + 0.25 * (1.0 - candidate.quad_quality)
             + 1.0e-12 * (candidate.edge_row + 1)
             for candidate in candidates
         ],
@@ -1548,15 +1642,13 @@ def _maximum_partial_pairing(
     )
     matching = milp(
         costs,
-        integrality=np.ones((len(candidates),), dtype=np.int8),
-        bounds=MilpBounds(
-            np.zeros((len(candidates),), dtype=np.float64),
-            np.ones((len(candidates),), dtype=np.float64),
-        ),
-        constraints=LinearConstraint(
-            incidence,
-            np.zeros((face_count,), dtype=np.float64),
-            np.ones((face_count,), dtype=np.float64),
+        integrality=integrality,
+        bounds=bounds,
+        constraints=(
+            face_constraint,
+            LinearConstraint(
+                np.ones((1, len(candidates)), dtype=np.float64), maximum, maximum
+            ),
         ),
     )
     if not matching.success or matching.x is None:
@@ -1566,8 +1658,10 @@ def _maximum_partial_pairing(
             source_cell_rows=range(face_count),
         )
     selection = np.rint(matching.x).astype(np.int64)
-    if not np.allclose(matching.x, selection, rtol=0.0, atol=1.0e-8) or np.any(
-        np.asarray(incidence @ selection) > 1
+    if (
+        not np.allclose(matching.x, selection, rtol=0.0, atol=1.0e-8)
+        or np.any(np.asarray(incidence @ selection) > 1)
+        or int(selection.sum()) != maximum
     ):
         raise QuadLayoutObstruction(
             "patch_solver",
@@ -1602,9 +1696,12 @@ def _surface_quad_layout(
             "source_topology": mesh.topology_id,
             "source_geometry": mesh.geometry_id,
             "source_coordinate_geometry": source_geometry.geometry_layout_id,
+            "source_coordinate_values": cell_geometry_id(source_geometry),
             "cross_field": {
+                "field_id": cross_field.field_id,
                 "angles": np.asarray(cross_field.angles),
                 "patches": patches,
+                "guide_angles": np.asarray(cross_field.guide_angles),
                 "features": np.asarray(cross_field.feature_edges),
                 "singular_vertices": singular_vertices,
                 "singularity_indices": singularity_indices,
@@ -2542,6 +2639,7 @@ def extract_surface_quads(
             "Quad extraction source triangles must have certified positive cell maps."
         )
     layout = None
+    complete_layout = True
     if cross_field is not None:
         try:
             layout = prepare_surface_quad_layout(
@@ -2563,6 +2661,7 @@ def extract_surface_quads(
                 source_geometry=source_geometry,
                 complete=False,
             )
+            complete_layout = False
     (
         target,
         supports,
@@ -2626,6 +2725,18 @@ def extract_surface_quads(
         source_edge_ids=source_edge_ids,
         source_edge_parameter_numerators=source_edge_parameter_numerators,
         source_edge_parameter_denominators=source_edge_parameter_denominators,
+        field_event=(
+            None
+            if layout is None or cross_field is None
+            else SurfaceQuadFieldEvent(
+                source,
+                source_geometry,
+                cross_field,
+                layout,
+                maximum_field_error=maximum_field_error,
+                complete=complete_layout,
+            )
+        ),
     )
 
 

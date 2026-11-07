@@ -106,6 +106,36 @@ Lowest-order scalar vertices and circulation incidence remain canonical.
 
 ::: phydrax.discretization.CellGeometrySpec
 
+For equations posed on a retained source surface rather than its faceted
+carrier, construct `SurfaceFiniteElementGeometry.from_result(result, source_query)`
+and pass it as `source_surface` to `FiniteElementPlan`. The binding proves the
+current source restrictions, cell admissibility, and pointwise agreement of
+neighboring cell traces. Physical quadrature points, Jacobians, and metric factors
+use this source map in both assembled and local variational actions.
+
+`coordinate_spec` remains the independently retained mesh carrier; it is not
+replaced by flattened parameter coordinates. The source-surface route currently
+accepts triangular cells and untwisted, identity-mapped H1 P1 fields with scalar
+reference bases. Changed carrier coordinates or source-map data invalidate the
+binding. Source-surface facet quadrature and geometry differentiation are
+explicitly unsupported; state-only differentiation remains available. Source
+geometry fidelity and PDE discretization error remain separate scientific claims.
+
+Affine parameter charts retain their exact rational semantics; directed
+coefficient-rounding bounds describe their floating-point realization separately.
+Pole and cross-patch continuity is not inferred from matching vertex coordinates.
+Admitted source-bound sphere and torus maps use radial and normal-fiber charts,
+respectively, with independent embedding and degree/coverage proofs. Capped
+cylinder maps use proved circle-rim fans and matching native rim parameters.
+These routes require their actual source and topology premises; surface names
+or approximately equal dimensions do not establish admission.
+
+A circle-fan apex has a physical point value but no unique Jacobian. Use
+`evaluate_points` for point values, including apex degrees of freedom; derivative
+evaluation at that apex is refused rather than replaced with a fabricated tangent.
+
+::: phydrax.discretization.SurfaceFiniteElementGeometry
+
 ---
 
 ::: phydrax.discretization.FiniteElementFieldSpec

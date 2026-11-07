@@ -3,7 +3,7 @@
 #
 
 
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -29,13 +29,45 @@ from phydrax.meshing._overset import (
     prepare_overset_connectivity,
 )
 from phydrax.meshing._overset_finite_volume import (
+    _unique_receptor_faces,
     prepare_owner_local_finite_volume_overset,
+)
+from phydrax.solver._finite_volume_archive_context import (
+    _finite_volume_archive_target_receptor_spec,
+    _resolve_finite_volume_archive_source,
+)
+from tools.meshing_qualification.scenarios.cold_owner_local_fv import (
+    _finite_volume_cell_state_bank_revision,
 )
 
 
-if TYPE_CHECKING:
-    from phydrax.meshing._contracts import SurfaceMeshingSpec
-    from phydrax.meshing.providers._native_periodic import NativePeriodicSource
+def test_fv_archive_resolves_registered_source_by_exact_identity() -> None:
+    def source(time: Any, state: Any, coordinates: Any, args: Any) -> Any:
+        return state * args
+
+    assert _resolve_finite_volume_archive_source(None, None) is None
+    assert _resolve_finite_volume_archive_source("driven", {"driven": source}) is source
+    with pytest.raises(ValueError, match="Unregistered FV source"):
+        _resolve_finite_volume_archive_source("other", {"driven": source})
+    invalid_source: Any = None
+    with pytest.raises(TypeError, match="must be callable"):
+        _resolve_finite_volume_archive_source("driven", {"driven": invalid_source})
+
+
+def test_fv_cell_key_address_uses_both_global_id_words() -> None:
+    from phydrax._sampling._addressing import derive_key, SampleAddress
+
+    root = jax.random.key(731)
+    address = SampleAddress("finite-volume", "owner-local-repartition", role="cell")
+    identifiers = (7, (1 << 32) + 7, (2 << 32) + 7)
+    keys = [
+        derive_key(root, address, identifier >> 32, identifier & 0xFFFFFFFF)
+        for identifier in identifiers
+    ]
+    words = [np.asarray(jax.random.key_data(key)) for key in keys]
+    assert all(not np.array_equal(words[0], value) for value in words[1:])
+    replay = derive_key(root, address, identifiers[1] >> 32, identifiers[1] & 0xFFFFFFFF)
+    np.testing.assert_array_equal(jax.random.key_data(replay), words[1])
 
 
 def _mesh(system: Any) -> Any:
@@ -49,6 +81,77 @@ def _mesh(system: Any) -> Any:
         cell_global_ids=np.asarray((101, 103)),
         component_names=system.component_names,
     )
+
+
+def test_owner_local_receptor_faces_are_independent_of_routes_and_storage() -> None:
+    vertices = np.asarray(
+        ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
+    )
+    cells = np.asarray(((0, 1, 4, 3), (1, 2, 5, 4)), dtype=np.int32)
+    vertex_ids = np.arange(10, 16)
+    cell_ids = np.asarray((101, 103))
+
+    def prepare(vertex_order: np.ndarray, cell_order: np.ndarray) -> Any:
+        inverse = np.argsort(vertex_order)
+        return phx.discretization.UnstructuredFiniteVolumePlan(
+            vertices[vertex_order],
+            quadrilaterals=inverse[cells[cell_order]],
+            vertex_global_ids=vertex_ids[vertex_order],
+            cell_global_ids=cell_ids[cell_order],
+        ).prepare()
+
+    def artifacts(geometry: Any, ids: tuple[int, ...]) -> dict[int, Any]:
+        positions = {
+            int(identifier): row
+            for row, identifier in enumerate(np.asarray(geometry.cell_global_ids))
+        }
+        rows = np.asarray([positions[identifier] for identifier in ids], dtype=np.int32)
+        faces, points, normals, measures, orientations = _unique_receptor_faces(
+            geometry, rows
+        )
+        overset = phx.discretization.UnstructuredOversetPlan(
+            geometry,
+            geometry,
+            rows,
+            np.arange(len(ids) + 1, dtype=np.int32),
+            rows,
+            np.ones(len(ids)),
+            receptor_face_ids=faces,
+            receptor_face_points=points,
+            receptor_face_normals=normals,
+            receptor_face_measures=measures,
+            receptor_face_cells=rows,
+            receptor_face_orientations=orientations,
+            receptor_route_faces=np.arange(len(ids), dtype=np.int32),
+        )
+        result = {}
+        for index, identifier in enumerate(ids):
+            # Quadrature is a weighted set; native edge ordering may reverse it.
+            order = np.lexsort(np.asarray(overset.receptor_face_points)[index].T[::-1])
+            result[identifier] = (
+                np.asarray(overset.receptor_face_points)[index, order],
+                np.asarray(overset.receptor_face_normals)[index, order],
+                np.asarray(overset.receptor_face_measures)[index, order],
+            )
+        return result
+
+    first = prepare(np.arange(6), np.asarray((0, 1)))
+    permuted = prepare(np.asarray((5, 2, 4, 1, 3, 0)), np.asarray((1, 0)))
+    reference = artifacts(first, (101, 103))
+    for candidate in (
+        artifacts(first, (103, 101)),
+        artifacts(first, (101,)),
+        artifacts(first, (103,)),
+        artifacts(permuted, (101, 103)),
+        artifacts(permuted, (103,)),
+    ):
+        for identifier, values in candidate.items():
+            for actual, expected in zip(values, reference[identifier], strict=True):
+                np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1.0e-14)
+    np.testing.assert_allclose(reference[101][0][:, 0], 1.0)
+    np.testing.assert_allclose(reference[103][0][:, 0], 2.0)
+    for _, normals, _ in reference.values():
+        np.testing.assert_allclose(normals, np.asarray(((1.0, 0.0), (1.0, 0.0))))
 
 
 def _compiled(
@@ -87,6 +190,14 @@ def _compiled(
         receptor_face_normals=face_normals,
         receptor_face_measures=face_measures,
         receptor_face_cells=np.asarray((receptor_cell,), dtype=np.int32),
+        receptor_face_orientations=np.asarray(
+            (
+                1
+                if int(np.asarray(discretization.owner_cells)[face_id]) == receptor_cell
+                else -1,
+            ),
+            dtype=np.int8,
+        ),
         receptor_route_faces=np.asarray((0,), dtype=np.int32),
     )
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
@@ -411,6 +522,11 @@ def _moving_overset_case(
             receptor_face_normals=face_normals,
             receptor_face_measures=face_measures,
             receptor_face_cells=route_receptor_cells,
+            receptor_face_orientations=np.where(
+                np.asarray(geometry.owner_cells)[route_face_ids] == route_receptor_cells,
+                1,
+                -1,
+            ).astype(np.int8),
             receptor_route_faces=np.arange(route_receptor_cells.size, dtype=np.int32),
         )
 
@@ -669,6 +785,9 @@ def _three_cell_overset_dynamics(
             face_id : face_id + 1
         ],
         receptor_face_cells=np.asarray((1,), dtype=np.int32),
+        receptor_face_orientations=np.asarray(
+            (1 if owners[face_id] == 1 else -1,), dtype=np.int8
+        ),
         receptor_route_faces=np.zeros((len(donor_cells),), dtype=np.int32),
     )
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
@@ -744,6 +863,7 @@ def test_overset_face_shared_by_several_donor_pieces_balances_its_face_flux() ->
             receptor_face_normals=overset.receptor_face_normals,
             receptor_face_measures=overset.receptor_face_measures,
             receptor_face_cells=np.asarray((1,), dtype=np.int32),
+            receptor_face_orientations=overset.receptor_face_orientations,
             receptor_route_faces=np.asarray((0, 1), dtype=np.int32),
         )
 
@@ -791,6 +911,15 @@ def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes()
         receptor_face_normals=normals,
         receptor_face_measures=measures,
         receptor_face_cells=np.asarray((receptor_cell,), dtype=np.int32),
+        receptor_face_orientations=np.asarray(
+            (
+                1
+                if int(np.asarray(discretization.owner_cells)[internal_face])
+                == receptor_cell
+                else -1,
+            ),
+            dtype=np.int8,
+        ),
         receptor_route_faces=np.asarray((0,), dtype=np.int32),
     )
     gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
@@ -1492,6 +1621,7 @@ def test_native_whole_slab_layer_body_overset_on_background_conserves() -> None:
         # Triangle faces pad their quadrature with a zero-weight point.
         receptor_face_measures=np.asarray(geometry.face_quadrature_weights)[face_ids],
         receptor_face_cells=receptors,
+        receptor_face_orientations=np.ones(receptors.size, dtype=np.int8),
         receptor_route_faces=np.repeat(np.arange(receptors.size, dtype=np.int32), counts),
     )
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
@@ -1565,7 +1695,9 @@ def test_owner_local_composite_fv_layout_lowers_and_conserves_each_part() -> Non
         OwnerLocalCompositeCellGeometry,
     )
     from phydrax.solver._finite_volume_runtime import FiniteVolumeStepPolicy
-    from tests.unit.meshing.test_native_overset import _owner_local_periodic_assembly
+    from tools.meshing_qualification.scenarios.cold_owner_local_fv import (
+        _owner_local_periodic_assembly,
+    )
 
     if jax.process_count() != 1:
         pytest.skip("This composite layout contract uses one local process group.")
@@ -1752,7 +1884,9 @@ def test_owner_local_periodic_fv_joins_seams_and_matches_serial_residual() -> No
     from phydrax._execution_resources import ExecutionGroupSpec
     from phydrax._execution_runtime import ExecutionGroup
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
-    from tests.unit.meshing.test_native_overset import _owner_local_periodic_assembly
+    from tools.meshing_qualification.scenarios.cold_owner_local_fv import (
+        _owner_local_periodic_assembly,
+    )
 
     devices = tuple(sorted(jax.devices(), key=lambda device: device.process_index))
     ranks = tuple(device.process_index for device in devices)
@@ -1800,6 +1934,47 @@ def test_owner_local_periodic_fv_joins_seams_and_matches_serial_residual() -> No
     assert geometry.periodic_face_translations is not None
     seams = np.any(np.asarray(geometry.periodic_face_translations) != 0.0, axis=1)
     assert np.any(seams)
+    owned_ids = set(np.asarray(view.cell_ids)[owned].tolist())
+    receptor_rows = np.asarray(
+        [
+            row
+            for row, identifier in enumerate(np.asarray(geometry.cell_global_ids))
+            if int(identifier) in owned_ids
+        ],
+        dtype=np.int32,
+    )
+    faces, points, normals, weights, orientations = _unique_receptor_faces(
+        geometry, receptor_rows
+    )
+    overset = phx.discretization.UnstructuredOversetPlan(
+        geometry,
+        geometry,
+        receptor_rows,
+        np.arange(receptor_rows.size + 1, dtype=np.int32),
+        receptor_rows,
+        np.asarray(geometry.cell_volumes)[receptor_rows],
+        receptor_face_ids=faces,
+        receptor_face_points=points,
+        receptor_face_normals=normals,
+        receptor_face_measures=weights,
+        receptor_face_cells=receptor_rows,
+        receptor_face_orientations=orientations,
+        receptor_route_faces=np.arange(receptor_rows.size, dtype=np.int32),
+    )
+    for index, row in enumerate(receptor_rows):
+        single = _unique_receptor_faces(geometry, np.asarray((row,), dtype=np.int32))
+        for actual, expected in zip(
+            single,
+            (
+                overset.receptor_face_ids,
+                overset.receptor_face_points,
+                overset.receptor_face_normals,
+                overset.receptor_face_measures,
+                overset.receptor_face_orientations,
+            ),
+            strict=True,
+        ):
+            np.testing.assert_allclose(actual, np.asarray(expected)[index : index + 1])
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
         geometry.boundary_patch_names,
         {
@@ -1865,7 +2040,7 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     from phydrax.meshing._overset import prepare_overset_field_transfer
     from phydrax.solver._finite_volume_runtime import FiniteVolumeRuntimeState
     from phydrax.solver._finite_volume_topology_events import TopologyEventStatus
-    from tests.unit.meshing.test_native_overset import (
+    from tools.meshing_qualification.scenarios.cold_owner_local_fv import (
         _owner_local_periodic_assembly,
     )
 
@@ -2735,7 +2910,10 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     # target; graph migration moves them, so rebind it on the repartitioned part.
     repartitioned_specs = {
         receptor_name: _finite_volume_archive_target_receptor_spec(
-            successor_specs[receptor_name], repartitioned_receptor_part, group
+            successor_specs[receptor_name],
+            current_receptor_part,
+            repartitioned_receptor_part,
+            group,
         )
     }
     target_connectivity_candidate = successor_connectivity.reregister(
@@ -2792,10 +2970,12 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
             dependencies=(repartition_route.binding("revision"),),
         )
 
-    def accepted_repartition_composition_for(state: Any, history: Any, /) -> Any:
+    def accepted_repartition_composition_for(
+        state: Any, history: Any, rng: Any, /
+    ) -> Any:
         epoch = state.topology_journal.epoch_table[-1]
         return Composition(
-            (*repartition_entries, repartition_state_entry_for(state), history),
+            (*repartition_entries, repartition_state_entry_for(state), history, rng),
             boundary_id=canonical_fingerprint(
                 {
                     "kind": "finite-volume-accepted-boundary",
@@ -2826,8 +3006,34 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         semantics_id="stable-cell-id-history",
         dependencies=(repartition_route.binding("revision"),),
     )
+
+    def cell_keys(ids: np.ndarray) -> jax.Array:
+        from phydrax._sampling._addressing import derive_key, SampleAddress
+
+        unsigned = ids.astype(np.uint64)
+        low = jnp.asarray(unsigned.astype(np.uint32))
+        high = jnp.asarray((unsigned >> np.uint64(32)).astype(np.uint32))
+        root = jax.random.key(731)
+        address = SampleAddress("finite-volume", "owner-local-repartition", role="cell")
+        return jax.vmap(lambda hi, lo: derive_key(root, address, hi, lo))(high, low)
+
+    rng_spec = phx.solver.FiniteVolumeOwnerLocalCellStateBankSpec(
+        "test/owner-local-cell-rng", history_cell_ids, 0
+    )
+    rng_entry = CompositionEntry(
+        cell_keys(history_cell_ids),
+        entry_id=rng_spec.entry_id,
+        role="rng",
+        owner_id="test.native-owner-local-fv",
+        structure_id=current_receptor_view.geometry_layout_id,
+        revision_id=canonical_fingerprint(
+            {"kind": "test-cell-rng", "cell_ids": history_cell_ids}
+        ),
+        semantics_id="typed-stable-cell-rng",
+        dependencies=(repartition_route.binding("revision"),),
+    )
     repartition_composition = accepted_repartition_composition_for(
-        repartition_state, history_entry
+        repartition_state, history_entry, rng_entry
     )
     source_row_counts = np.asarray(
         multihost_utils.process_allgather(
@@ -2863,7 +3069,7 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         accepted_composition=repartition_composition,
         execution_group=group,
         owner_local_part_name=receptor_name,
-        cell_state_banks=(invalid_history_spec,),
+        cell_state_banks=(invalid_history_spec, rng_spec),
     )
     assert isinstance(
         failed_repartition, phx.solver.FiniteVolumeOwnerLocalRepartitionResult
@@ -2910,7 +3116,7 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     repartition_state = failed_repartition_state
     repartition_epoch = repartition_state.topology_journal.epoch_table[-1]
     repartition_composition = accepted_repartition_composition_for(
-        repartition_state, history_entry
+        repartition_state, history_entry, rng_entry
     )
     source_integral_before_repartition = global_integral(repartition_state)
     retry_source_state_id = source_runtime.accepted_state_id(
@@ -2932,7 +3138,7 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
         accepted_composition=repartition_composition,
         execution_group=group,
         owner_local_part_name=receptor_name,
-        cell_state_banks=(cell_state_bank_spec,),
+        cell_state_banks=(cell_state_bank_spec, rng_spec),
     )
     assert isinstance(repartitioned, phx.solver.FiniteVolumeOwnerLocalRepartitionResult)
     repartition_flags = np.asarray(
@@ -2951,6 +3157,14 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     np.testing.assert_array_equal(
         migrated_history,
         (target_history_ids * 3 + 7).reshape((-1, 1)),
+    )
+    migrated_rng = repartitioned.repartition_receipt.composition.entry(
+        rng_entry.entry_id
+    ).value
+    assert jax.random.key_impl(migrated_rng) == jax.random.key_impl(rng_entry.value)
+    np.testing.assert_array_equal(
+        jax.random.key_data(migrated_rng),
+        jax.random.key_data(cell_keys(target_history_ids)),
     )
     repartitioned_state = repartitioned.runtime_state
     repartitioned_epoch = repartitioned_state.topology_journal.epoch_table[-1]
@@ -3094,1722 +3308,3 @@ def test_native_owner_local_fv_motion_event_restarts_and_advances(
     )
 
 
-def _finite_volume_cell_state_bank_revision(bank_spec: Any, values: Any, /) -> str:
-    from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
-
-    return canonical_fingerprint(
-        {
-            "kind": "finite-volume-owner-local-cell-state-bank",
-            "entry_id": bank_spec.entry_id,
-            "cell_ids": tuple(bank_spec.cell_ids),
-            "cell_axis": bank_spec.cell_axis,
-            "values": array_tree_fingerprint(values),
-        }
-    )
-
-
-def _finite_volume_archive_surface_spec(
-    source: "NativePeriodicSource", /
-) -> "SurfaceMeshingSpec":
-    from phydrax.meshing._contracts import (
-        CellFamilyPolicy,
-        CellMeshingTarget,
-        SurfaceMeshingSpec,
-    )
-    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-    from phydrax.meshing._sizing import SizeCompliancePolicy, UniformSizeControl
-
-    scope = MeshingScope(
-        source.source_id,
-        source.source_revision,
-        MeshingEntityKind.GEOMETRY,
-        2,
-        source.scope_entity_set_id(2),
-        source.scope_entity_ids(2),
-    )
-    return SurfaceMeshingSpec(
-        CellMeshingTarget(
-            2,
-            2,
-            CellFamilyPolicy(required=("triangle",)),
-        ),
-        scope,
-        size_controls=(UniformSizeControl(scope, 0.35),),
-        size_compliance=SizeCompliancePolicy(relative_tolerance=0.5),
-    )
-
-
-def _finite_volume_archive_boundary_scope(
-    view: Any,
-    local_rank: int,
-    /,
-) -> Any | None:
-    from phydrax.discretization._view_support import OwnerLocalCellGeometry
-
-    if not isinstance(view, OwnerLocalCellGeometry):
-        raise TypeError("FV boundary scope requires its current compact local view.")
-    if local_rank != 1:
-        return None
-    facet_dimension = view.topological_dimension - 1
-    _, facet_ids = view.entity_binding(facet_dimension)
-    vertex_ids = np.asarray(view.vertex_ids, dtype=np.int64)
-    vertex_owners = np.asarray(view.vertex_owner_ranks, dtype=np.int32)
-    owner_by_vertex = {
-        int(identifier): int(owner)
-        for identifier, owner in zip(vertex_ids, vertex_owners, strict=True)
-    }
-    boundary_ids = []
-    for identifier, loop in zip(
-        facet_ids,
-        view.entity_vertex_loops(facet_dimension, facet_ids),
-        strict=True,
-    ):
-        facet_vertices = vertex_ids[np.asarray(loop, dtype=np.int64)]
-        if any(owner_by_vertex[int(vertex)] == local_rank for vertex in facet_vertices):
-            boundary_ids.append(int(identifier))
-    if not boundary_ids:
-        return None
-    return view.scope(facet_dimension, np.asarray(boundary_ids, dtype=np.int64))
-
-
-def _finite_volume_archive_target_receptor_spec(
-    source_spec: Any, target_part: Any, execution_group: Any, /
-) -> Any:
-    """Rebind a receptor spec across a repartition through its global scope.
-
-    Rank-local boundary scopes name this rank's resident facets; after graph
-    migration the same global facets live on their new owners, so the union of
-    every rank's source facets is intersected with the target resident facets.
-    """
-    from phydrax.meshing._distribution import _owner_group_allgather
-
-    boundary = source_spec.boundary
-    local_ids = (
-        np.zeros((0,), dtype=np.int64)
-        if boundary is None
-        else np.asarray(boundary.entity_ids, dtype=np.int64)
-    )
-    counts = np.asarray(
-        _owner_group_allgather(
-            np.asarray((local_ids.size,), dtype=np.int64),
-            execution_group,
-            "fv_archive_target_boundary_counts",
-        ),
-        dtype=np.int64,
-    ).reshape((-1,))
-    width = max(int(np.max(counts)), 1)
-    padded = np.full((width,), -1, dtype=np.int64)
-    padded[: local_ids.size] = local_ids
-    rows = np.asarray(
-        _owner_group_allgather(padded, execution_group, "fv_archive_target_boundary_ids"),
-        dtype=np.int64,
-    ).reshape((-1, width))
-    global_ids = {int(value) for value in rows.reshape(-1).tolist() if value >= 0}
-    view = target_part.carrier
-    facet_dimension = view.topological_dimension - 1
-    _, facet_ids = view.entity_binding(facet_dimension)
-    resident = np.asarray(
-        sorted(
-            int(identifier)
-            for identifier in np.asarray(facet_ids, dtype=np.int64).tolist()
-            if int(identifier) in global_ids
-        ),
-        dtype=np.int64,
-    )
-    return OversetPartSpec(
-        source_spec.part_name,
-        boundary=(
-            None if resident.size == 0 else target_part.scope(facet_dimension, resident)
-        ),
-        priority=source_spec.priority,
-        owner_rank=source_spec.owner_rank,
-    )
-
-
-def _finite_volume_archive_overset_part_spec(value: Any, /) -> Any:
-    from phydrax._model._structure import FiniteVolumeOversetPartSpecArchiveRecipe
-    from phydrax.meshing._overset import OversetPartSpec
-
-    if type(value) is FiniteVolumeOversetPartSpecArchiveRecipe:
-        rebuilt = OversetPartSpec(
-            value.part_name,
-            wall=value.wall,
-            boundary=value.boundary,
-            excluded=value.excluded,
-            solid_index=value.solid_index,
-            priority=value.priority,
-            owner_rank=value.owner_rank,
-            image_rotation=value.image_rotation,
-            image_translation=value.image_translation,
-        )
-        if rebuilt.spec_id != value.expected_spec_id:
-            raise ValueError("Stored FV overset part spec identity changed.")
-        return rebuilt
-    if type(value) is OversetPartSpec:
-        if value.solid_query is not None:
-            raise TypeError("Cold FV context cannot persist an unregistered solid query.")
-        return OversetPartSpec(
-            value.part_name,
-            wall=value.wall,
-            boundary=value.boundary,
-            excluded=value.excluded,
-            solid_index=value.solid_index,
-            priority=value.priority,
-            owner_rank=value.owner_rank,
-            image_rotation=value.image_rotation,
-            image_translation=value.image_translation,
-        )
-    raise TypeError("FV overset context requires its canonical part-spec record.")
-
-
-def _finite_volume_archive_overset_policy(value: Any, /) -> Any:
-    from phydrax._model._structure import FiniteVolumeOversetPolicyArchiveRecipe
-    from phydrax.meshing._overset import OversetPolicy
-
-    if type(value) is FiniteVolumeOversetPolicyArchiveRecipe:
-        rebuilt = OversetPolicy(
-            fringe_layers=value.fringe_layers,
-            donor_priority=value.donor_priority,
-        )
-        if rebuilt.policy_id != value.expected_policy_id:
-            raise ValueError("Stored FV overset policy identity changed.")
-        return rebuilt
-    if type(value) is OversetPolicy:
-        return OversetPolicy(
-            fringe_layers=value.fringe_layers,
-            donor_priority=value.donor_priority,
-        )
-    raise TypeError("FV overset context requires its canonical policy record.")
-
-
-def _finite_volume_archive_execution_group(context: Any, /) -> Any:
-    from phydrax._execution_resources import ExecutionGroupSpec
-    from phydrax._execution_runtime import ExecutionGroup
-
-    devices = tuple(sorted(jax.devices(), key=lambda device: device.process_index))
-    process_indices = tuple(device.process_index for device in devices)
-    if process_indices != context.process_indices or len(devices) != len(
-        context.process_indices
-    ):
-        raise ValueError(
-            "Fresh FV worker placement differs from the archived group ranks."
-        )
-    specification = ExecutionGroupSpec(
-        context.group_id,
-        context.process_indices,
-        context.device_keys,
-        mesh_axes=context.mesh_axes,
-        parent_group_id=context.parent_group_id,
-        process_host_ids=context.process_host_ids,
-    )
-    return ExecutionGroup(specification, devices)
-
-
-def _finite_volume_archive_rebuild_context_views(
-    context: Any,
-    execution_group: Any,
-    /,
-) -> Any:
-    from phydrax.discretization._view_support import OwnerLocalCellGeometry
-    from phydrax.graph._partition import GraphPartitionPlan
-    from phydrax.meshing._contracts import SurfaceMeshingSpec
-
-    if len(context.source_views) != len(context.part_names) or len(
-        context.source_specifications
-    ) != len(context.part_names):
-        raise ValueError("FV archive source views/specifications are not aligned.")
-    source_specifications = tuple(
-        SurfaceMeshingSpec.from_stored_fields(value)
-        for value in context.source_specifications
-    )
-    source_views = tuple(
-        OwnerLocalCellGeometry.from_stored_fields(
-            value,
-            execution_group,
-            current_specification=specification,
-            axis_name=f"{context.owner_local_axis_name}_archive_source_{name}",
-        )
-        for name, value, specification in zip(
-            context.part_names,
-            context.source_views,
-            source_specifications,
-            strict=True,
-        )
-    )
-    target_specification = SurfaceMeshingSpec.from_stored_fields(
-        context.target_specification
-    )
-    target_plan = GraphPartitionPlan.from_stored_fields(
-        context.target_graph_partition_plan
-    )
-    # The stored target view is the expected result of the graph repartition,
-    # which the context build replays from the restored source views and the
-    # stored plan; the replayed view must reproduce its exact local identity.
-    target_view = context.target_view
-    if type(target_view) is not OwnerLocalCellGeometry:
-        raise TypeError("FV archive target view must be a canonical owner-local view.")
-    return context._replace(
-        source_views=source_views,
-        source_specifications=source_specifications,
-        source_overset_specs=tuple(
-            _finite_volume_archive_overset_part_spec(value)
-            for value in context.source_overset_specs
-        ),
-        source_overset_policy=_finite_volume_archive_overset_policy(
-            context.source_overset_policy
-        ),
-        target_overset_specs=tuple(
-            _finite_volume_archive_overset_part_spec(value)
-            for value in context.target_overset_specs
-        ),
-        target_graph_partition_plan=target_plan,
-        target_specification=target_specification,
-        target_view=target_view,
-    )
-
-
-def _finite_volume_archive_build_context(
-    context: Any,
-    execution_group: Any,
-    /,
-    *,
-    validate_expected: bool,
-) -> dict[str, Any]:
-    from phydrax._execution_runtime import ExecutionGroup
-    from phydrax.discretization._topology_epoch import TopologyEpoch
-    from phydrax.discretization._view_support import OwnerLocalCellGeometry
-    from phydrax.discretization.finite_volume._coupling import (
-        UnstructuredFiniteVolumeCouplingPlan,
-    )
-    from phydrax.discretization.finite_volume._unstructured_dynamics import (
-        UnstructuredFiniteVolumeBoundarySet,
-        UnstructuredFiniteVolumeMethodPlan,
-    )
-    from phydrax.equations._conservation import (
-        compile_conservation_problem,
-        ConservationProblemIR,
-    )
-    from phydrax.equations._hyperbolic_systems import EulerSystem
-    from phydrax.equations._materials import IdealGasMaterial
-    from phydrax.graph._partition import GraphPartitionPlan
-    from phydrax.meshing._assembly import MeshAssembly, MeshPart, MeshPartManifest
-    from phydrax.meshing._distribution import partition_owner_local_graph
-    from phydrax.meshing._overset import (
-        prepare_overset_connectivity,
-        prepare_overset_field_transfer,
-    )
-    from phydrax.meshing.providers._native_periodic import (
-        _repartition_owner_local_periodic_assembly,
-    )
-    from phydrax.solver._finite_volume_runtime import (
-        FiniteVolumeStepPolicy,
-        PreparedFiniteVolumeRuntime,
-    )
-    from phydrax.solver._finite_volume_topology_events import (
-        FiniteVolumeTopologyArtifacts,
-    )
-    from tests.unit.interchange._native_cad_archive_worker import (
-        _rebuild_finite_volume_precision_policy,
-    )
-
-    if not isinstance(validate_expected, bool):
-        raise TypeError("validate_expected must be bool.")
-    if not isinstance(execution_group, ExecutionGroup):
-        raise TypeError("FV archive replay requires its explicit live ExecutionGroup.")
-    if (
-        len(context.part_names) != len(context.source_views)
-        or len(context.part_names) != len(context.source_specifications)
-        or len(context.process_indices) != len(execution_group.spec.process_indices)
-    ):
-        raise ValueError("FV archive source or group declarations are incomplete.")
-    if (
-        context.system_kind != "euler"
-        or context.source_id is not None
-        or context.reconstruction_kind != "piecewise-constant"
-        or context.flux_kind != "rusanov"
-        or context.boundary_condition_kind != "extrapolation"
-        or context.positivity_fallback_kind != "einfeldt-hll"
-    ):
-        raise ValueError(
-            "FV archive runtime recipe selects an unregistered callable path."
-        )
-    donor_name = context.donor_part_name
-    receptor_name = context.receptor_part_name
-    if (
-        donor_name not in context.part_names
-        or receptor_name not in context.part_names
-        or donor_name == receptor_name
-    ):
-        raise ValueError("FV archive runtime recipe has invalid donor/receptor roles.")
-
-    source_views: dict[str, OwnerLocalCellGeometry] = {}
-    for name, stored_view in zip(context.part_names, context.source_views, strict=True):
-        if type(stored_view) is not OwnerLocalCellGeometry:
-            raise TypeError(
-                "FV archive source views must be canonical owner-local geometries."
-            )
-        source_views[name] = stored_view
-    if any(source_views[name].part_name != name for name in context.part_names):
-        raise ValueError(
-            "FV archive source view names differ from their typed authority."
-        )
-    if any(
-        view.specification_id is not None
-        and specification.specification_id != view.specification_id
-        for view, specification in zip(
-            (source_views[name] for name in context.part_names),
-            context.source_specifications,
-            strict=True,
-        )
-    ):
-        raise ValueError("FV archive view/specification binding changed.")
-    source_parts = tuple(
-        MeshPart(
-            name,
-            source_views[name],
-            coordinate_contract=source_views[name].coordinate_contract,
-        )
-        for name in context.part_names
-    )
-    source_manifests = tuple(MeshPartManifest.from_part(part) for part in source_parts)
-    local_rank = execution_group.spec.process_indices.index(jax.process_index())
-    source_assembly = MeshAssembly(
-        source_parts,
-        global_parts=source_manifests,
-        local_rank=local_rank,
-    )
-    source_overset_specs = tuple(
-        _finite_volume_archive_overset_part_spec(value)
-        for value in context.source_overset_specs
-    )
-    source_policy = _finite_volume_archive_overset_policy(context.source_overset_policy)
-    if tuple(spec.part_name for spec in source_overset_specs) != (
-        source_assembly.global_part_names
-    ):
-        raise ValueError("FV archive source overset specs differ from part order.")
-    source_receptor_spec = next(
-        spec for spec in source_overset_specs if spec.part_name == receptor_name
-    )
-    source_candidate = prepare_overset_connectivity(
-        source_assembly,
-        source_overset_specs,
-        policy=source_policy,
-        execution_group=execution_group,
-    )
-    donor_view = source_views[donor_name]
-    receptor_view = source_views[receptor_name]
-    system = EulerSystem(
-        context.spatial_dimension,
-        material=IdealGasMaterial(
-            context.material_gamma,
-            context.material_gas_constant,
-            density_floor=context.material_density_floor,
-            pressure_floor=context.material_pressure_floor,
-        ),
-    )
-
-    def require_neighbor_carriers(
-        view: OwnerLocalCellGeometry,
-        part_name: str,
-        /,
-    ) -> None:
-        from jax.experimental import multihost_utils
-
-        cell_ids = np.asarray(view.cell_ids, dtype=np.int64)
-        owned = np.asarray(view.owned, dtype=np.bool_)
-        graph_ids = np.asarray(view.owned_cell_ids, dtype=np.int64)
-        offsets = np.asarray(view.cell_neighbor_offsets, dtype=np.int64)
-        neighbor_ids = np.asarray(view.cell_neighbor_ids, dtype=np.int64)
-        neighbor_owner_ranks = np.asarray(
-            view.cell_neighbor_owner_ranks,
-            dtype=np.int32,
-        )
-        if (
-            owned.shape != cell_ids.shape
-            or offsets.shape != (graph_ids.size + 1,)
-            or offsets[-1] != neighbor_ids.size
-            or neighbor_owner_ranks.shape != neighbor_ids.shape
-            or set(graph_ids.tolist()) != set(cell_ids[owned].tolist())
-        ):
-            raise ValueError("FV archive source neighbor metadata is malformed.")
-        local_cells = set(int(identifier) for identifier in cell_ids.tolist())
-        missing_records: list[tuple[int, int, int]] = []
-        for row, owned_cell_id in enumerate(graph_ids.tolist()):
-            for neighbor_row in range(int(offsets[row]), int(offsets[row + 1])):
-                neighbor_id = int(neighbor_ids[neighbor_row])
-                if neighbor_id not in local_cells:
-                    missing_records.append(
-                        (
-                            int(owned_cell_id),
-                            neighbor_id,
-                            int(neighbor_owner_ranks[neighbor_row]),
-                        )
-                    )
-        process_indices = execution_group.spec.process_indices
-        rank_counts = np.asarray(
-            multihost_utils.process_allgather(
-                np.asarray((len(missing_records),), dtype=np.int32)
-            ),
-            dtype=np.int64,
-        ).reshape((-1,))
-        if not np.any(rank_counts):
-            return
-        record_width = max(1, int(np.max(rank_counts)))
-        padded_records = np.full((record_width, 3), -1, dtype=np.int64)
-        if missing_records:
-            padded_records[: len(missing_records)] = np.asarray(
-                missing_records,
-                dtype=np.int64,
-            )
-        gathered_records = np.asarray(
-            multihost_utils.process_allgather(padded_records, tiled=False),
-            dtype=np.int64,
-        ).reshape((len(process_indices), record_width, 3))
-        cell_counts = np.asarray(
-            multihost_utils.process_allgather(
-                np.asarray((cell_ids.size,), dtype=np.int32)
-            ),
-            dtype=np.int64,
-        ).reshape((-1,))
-        cell_width = max(1, int(np.max(cell_counts)))
-        padded_cell_ids = np.full((cell_width,), -1, dtype=np.int64)
-        padded_cell_ids[: cell_ids.size] = cell_ids
-        gathered_cell_ids = np.asarray(
-            multihost_utils.process_allgather(padded_cell_ids, tiled=False),
-            dtype=np.int64,
-        ).reshape((len(process_indices), cell_width))
-        missing_summary: list[tuple[int, int, int, int, tuple[int, ...]]] = []
-        for owner_position, count in enumerate(rank_counts):
-            process_index = process_indices[owner_position]
-            for record in gathered_records[owner_position, : int(count)]:
-                owned_cell_id, neighbor_id, expected_owner = (
-                    int(value) for value in record
-                )
-                present_ranks = tuple(
-                    process_indices[position]
-                    for position, local_count in enumerate(cell_counts)
-                    if neighbor_id in gathered_cell_ids[position, : int(local_count)]
-                )
-                missing_summary.append(
-                    (
-                        process_index,
-                        owned_cell_id,
-                        neighbor_id,
-                        expected_owner,
-                        present_ranks,
-                    )
-                )
-        raise ValueError(
-            f"FV archive source {part_name!r} lacks owned-cell neighbor carriers "
-            f"(process, owned cell, missing neighbor, expected owner, local carrier "
-            f"processes): {missing_summary!r}"
-        )
-
-    require_neighbor_carriers(donor_view, donor_name)
-    require_neighbor_carriers(receptor_view, receptor_name)
-    donor_blocks = tuple(
-        block for block in donor_view.blocks if np.asarray(block.cell_ids).size
-    )
-    if len(donor_blocks) > 1:
-        raise ValueError("FV archive source requires one donor block per owner.")
-    local_reconstructions: dict[str, Any] = {}
-    coefficient_ids: dict[str, np.ndarray] = {}
-    if donor_blocks:
-        donor_block = donor_blocks[0]
-        local_reconstructions[donor_name] = (
-            phx.discretization.prepare_owner_local_finite_volume_field_reconstruction(
-                donor_view,
-                donor_block.name,
-                context.field_name,
-            )
-        )
-        coefficient_ids[donor_name] = np.asarray(donor_block.cell_ids, dtype=np.int64)
-    source_transfer = prepare_overset_field_transfer(
-        source_candidate, local_reconstructions, context.field_name
-    )
-    source_connectivity = source_transfer.prepare_owner_local_exchange(
-        coefficient_ids,
-        execution_group,
-        source_views,
-    ).connectivity
-    if not source_connectivity.owner_local or not source_connectivity.complete:
-        raise ValueError("FV archive source connectivity did not replay completely.")
-    source_coupling = prepare_owner_local_finite_volume_overset(
-        source_connectivity,
-        {donor_name: donor_view, receptor_name: receptor_view},
-        donor_name,
-        receptor_name,
-        execution_group,
-        component_names=system.component_names,
-        field_name=context.field_name,
-        axis_name=f"{context.owner_local_axis_name}_source_overset",
-    )
-    receptor_geometry = source_coupling.geometry
-    source_overset = source_coupling.overset
-
-    precision = _rebuild_finite_volume_precision_policy(context.precision_policy)
-    if validate_expected and (
-        precision.policy_id != context.expected_precision_policy_id
-        or system.system_id != context.expected_system_id
-    ):
-        raise ValueError("FV archive system or precision identity changed.")
-
-    def build_dynamics(
-        geometry: Any,
-        overset: Any,
-        expected_patches: tuple[str, ...],
-        expected_boundary_set_id: str,
-        expected_dynamics_id: str,
-        /,
-    ) -> tuple[Any, Any, Any]:
-        patch_names = tuple(geometry.boundary_patch_names)
-        if validate_expected and patch_names != expected_patches:
-            raise ValueError("FV geometry boundary patch list changed.")
-        boundaries = UnstructuredFiniteVolumeBoundarySet(
-            patch_names,
-            {name: phx.discretization.ExtrapolationBoundary() for name in patch_names},
-        )
-        if validate_expected and boundaries.boundary_set_id != expected_boundary_set_id:
-            raise ValueError("FV boundary policy identity changed.")
-        method = UnstructuredFiniteVolumeMethodPlan(
-            phx.discretization.PiecewiseConstantReconstruction(),
-            phx.discretization.RusanovFluxPlan(
-                smooth_epsilon=context.flux_smooth_epsilon
-            ),
-        )
-        if validate_expected and method.method_id != context.expected_method_id:
-            raise ValueError("FV numerical method identity changed.")
-        problem = ConservationProblemIR(
-            context.problem_name,
-            context.field_name,
-            system,
-            boundaries,
-        )
-        coupling = UnstructuredFiniteVolumeCouplingPlan(
-            overset=overset,
-            topology_event_capacity=context.topology_event_capacity,
-            topology_event_policy=context.topology_event_policy,
-        )
-        dynamics = compile_conservation_problem(
-            problem,
-            geometry,
-            method,
-            precision=precision,
-            coupling=coupling,
-        ).dynamics
-        if validate_expected and dynamics.dynamics_id != expected_dynamics_id:
-            raise ValueError("FV compiled dynamics identity changed.")
-        return dynamics, boundaries, method
-
-    source_dynamics, source_boundaries, method = build_dynamics(
-        receptor_geometry,
-        source_overset,
-        context.source_boundary_patch_names,
-        context.expected_source_boundary_set_id,
-        context.expected_source_dynamics_id,
-    )
-    positivity = phx.discretization.FluxPositivityPlan(
-        context.positivity_iterations,
-        fallback_flux=phx.discretization.EinfeldtHLLFluxPlan(),
-    )
-    step_policy = FiniteVolumeStepPolicy(
-        cfl=context.step_cfl,
-        maximum_retries=context.maximum_retries,
-        reduction_factor=context.step_reduction_factor,
-        minimum_step_size=context.step_minimum_step_size,
-    )
-    if validate_expected and (
-        positivity.plan_id != context.expected_positivity_id
-        or step_policy.policy_id != context.expected_step_policy_id
-    ):
-        raise ValueError("FV time-step or positivity policy identity changed.")
-    source_runtime = PreparedFiniteVolumeRuntime(
-        source_dynamics,
-        positivity,
-        step_policy,
-        execution_group=execution_group,
-        owner_local_geometry=source_coupling.composite,
-        owner_local_axis_name=context.owner_local_axis_name,
-    )
-    if validate_expected:
-        archived_source_epoch = TopologyEpoch.from_archive_record(
-            context.source_topology_epoch_record
-        )
-        archived_source_artifacts = FiniteVolumeTopologyArtifacts.from_archive_record(
-            context.source_topology_artifacts_record,
-            archived_source_epoch,
-        )
-        if (
-            source_runtime.runtime_id != context.expected_source_runtime_id
-            or source_runtime.topology_epoch_id != context.expected_source_epoch_id
-            or source_runtime.initial_topology_epoch.epoch_id
-            != archived_source_epoch.epoch_id
-            or source_runtime.initial_topology_artifacts.artifacts_id
-            != context.expected_source_artifacts_id
-            or source_runtime.initial_topology_artifacts.artifacts_id
-            != archived_source_artifacts.artifacts_id
-            or source_connectivity.connectivity_id
-            != context.expected_source_connectivity_id
-        ):
-            raise ValueError("FV source runtime/topology authority changed.")
-
-    target_plan = GraphPartitionPlan.from_stored_fields(
-        context.target_graph_partition_plan
-    )
-    target_specification = phx.meshing.SurfaceMeshingSpec.from_stored_fields(
-        context.target_specification
-    )
-    receptor_part = source_assembly.part(receptor_name)
-    receptor_manifest = next(
-        item for item in source_assembly.part_manifest if item.name == receptor_name
-    )
-    receptor_assembly = MeshAssembly(
-        (receptor_part,),
-        global_parts=(receptor_manifest,),
-        local_rank=local_rank,
-    )
-    migration = partition_owner_local_graph(
-        receptor_assembly,
-        target_plan,
-        execution_group,
-        axis_name=f"{context.owner_local_axis_name}_target_partition",
-    )
-    target_assembly = _repartition_owner_local_periodic_assembly(
-        receptor_assembly,
-        migration,
-        execution_group,
-        current_specification=target_specification,
-        graph_partition_plan=target_plan,
-        axis_name=f"{context.owner_local_axis_name}_target_view",
-    )
-    target_part = target_assembly.part(receptor_name)
-    replayed_target_view = target_part.carrier
-    if not isinstance(replayed_target_view, OwnerLocalCellGeometry):
-        raise TypeError("Graph repartition did not rebuild its owner-local target view.")
-    if validate_expected and len(context.target_overset_specs) != 1:
-        raise ValueError("FV archive must retain its exact target overset declaration.")
-    if context.target_overset_specs:
-        stored_target_spec = _finite_volume_archive_overset_part_spec(
-            context.target_overset_specs[0]
-        )
-        derived_target_spec = _finite_volume_archive_target_receptor_spec(
-            source_receptor_spec, target_part, execution_group
-        )
-        target_overset_spec = _finite_volume_archive_overset_part_spec(
-            derived_target_spec
-        )
-        if stored_target_spec.spec_id != target_overset_spec.spec_id:
-            raise ValueError("Stored target overset spec differs from owner replay.")
-    else:
-        target_overset_spec = _finite_volume_archive_target_receptor_spec(
-            source_receptor_spec, target_part, execution_group
-        )
-    target_candidate = source_connectivity.reregister(
-        {receptor_name: target_part},
-        successor_specs={receptor_name: target_overset_spec},
-        execution_group=execution_group,
-        axis_name=f"{context.owner_local_axis_name}_target_reregister",
-    )
-    target_transfer = prepare_overset_field_transfer(
-        target_candidate, local_reconstructions, context.field_name
-    )
-    target_views: dict[str, OwnerLocalCellGeometry] = {}
-    for part in target_candidate.assembly.parts:
-        if not isinstance(part.carrier, OwnerLocalCellGeometry):
-            raise TypeError("Target overset search requires owner-local geometry.")
-        target_views[part.name] = part.carrier
-    target_connectivity = target_transfer.prepare_owner_local_exchange(
-        coefficient_ids,
-        execution_group,
-        target_views,
-    ).connectivity
-    target_view = target_connectivity.assembly.part(receptor_name).carrier
-    if not isinstance(target_view, OwnerLocalCellGeometry):
-        raise TypeError("Candidate connectivity lost its owner-local target view.")
-    if validate_expected and (
-        target_view.distribution_id != context.expected_target_distribution_id
-        or context.target_view.distribution_id != replayed_target_view.distribution_id
-        or context.target_view.local_view_id != replayed_target_view.local_view_id
-        or not np.array_equal(
-            np.asarray(context.target_view.cell_ids, dtype=np.int64),
-            np.asarray(replayed_target_view.cell_ids, dtype=np.int64),
-        )
-        or not np.array_equal(
-            np.asarray(context.target_view.owned, dtype=np.bool_),
-            np.asarray(replayed_target_view.owned, dtype=np.bool_),
-        )
-        or not np.array_equal(
-            np.asarray(context.target_view.vertex_ids, dtype=np.int64),
-            np.asarray(replayed_target_view.vertex_ids, dtype=np.int64),
-        )
-        or target_plan.plan_id != context.expected_target_plan_id
-        or target_connectivity.connectivity_id != context.expected_target_connectivity_id
-    ):
-        raise ValueError("FV target view, plan, or connectivity identity changed.")
-    target_coupling = prepare_owner_local_finite_volume_overset(
-        target_connectivity,
-        {donor_name: donor_view, receptor_name: target_view},
-        donor_name,
-        receptor_name,
-        execution_group,
-        component_names=system.component_names,
-        field_name=context.field_name,
-        axis_name=f"{context.owner_local_axis_name}_target_overset",
-    )
-    target_geometry = target_coupling.geometry
-    target_overset = target_coupling.overset
-    target_dynamics, target_boundaries, _ = build_dynamics(
-        target_geometry,
-        target_overset,
-        context.target_boundary_patch_names,
-        context.expected_target_boundary_set_id,
-        context.expected_target_dynamics_id,
-    )
-    source_epoch = source_runtime.initial_topology_epoch
-    graph_migration = target_view.graph_migration_evidence
-    if graph_migration is None:
-        raise ValueError("Replayed target view lost its graph migration evidence.")
-    target_epoch = TopologyEpoch(
-        source_epoch.index + 1,
-        source_epoch.geometry_id,
-        source_epoch.topology_id,
-        target_coupling.composite.distribution_id,
-    )
-    target_artifacts = FiniteVolumeTopologyArtifacts(
-        target_epoch,
-        target_geometry.prepared_id,
-        topology_artifact_id=target_connectivity.connectivity_id,
-        metrics_artifact_id=graph_migration.evidence_id,
-        operators_artifact_id=target_dynamics.dynamics_id,
-    )
-    if validate_expected:
-        archived_target_epoch = TopologyEpoch.from_archive_record(
-            context.target_topology_epoch_record
-        )
-        archived_target_artifacts = FiniteVolumeTopologyArtifacts.from_archive_record(
-            context.target_topology_artifacts_record,
-            archived_target_epoch,
-        )
-        if (
-            target_epoch.epoch_id != context.expected_target_epoch_id
-            or target_artifacts.artifacts_id != context.expected_target_artifacts_id
-            or target_epoch.epoch_id != archived_target_epoch.epoch_id
-            or target_artifacts.artifacts_id != archived_target_artifacts.artifacts_id
-        ):
-            raise ValueError("Replayed FV target epoch/artifact authority changed.")
-    rebuilt_context = context._replace(
-        source_views=tuple(source_views[name] for name in context.part_names),
-        source_overset_specs=source_overset_specs,
-        source_overset_policy=source_policy,
-        target_overset_specs=(target_overset_spec,),
-        target_graph_partition_plan=target_plan,
-        target_specification=target_specification,
-        target_view=target_view,
-        source_boundary_patch_names=tuple(source_boundaries.patch_names),
-        target_boundary_patch_names=tuple(target_boundaries.patch_names),
-        expected_target_plan_id=target_plan.plan_id,
-        expected_source_dynamics_id=source_dynamics.dynamics_id,
-        expected_source_boundary_set_id=source_boundaries.boundary_set_id,
-        expected_target_boundary_set_id=target_boundaries.boundary_set_id,
-        expected_source_runtime_id=source_runtime.runtime_id,
-        expected_source_epoch_id=source_runtime.topology_epoch_id,
-        expected_source_artifacts_id=source_runtime.initial_topology_artifacts.artifacts_id,
-        source_topology_epoch_record=source_runtime.initial_topology_epoch.to_archive_record(),
-        source_topology_artifacts_record=source_runtime.initial_topology_artifacts.to_archive_record(),
-        target_topology_epoch_record=target_epoch.to_archive_record(),
-        target_topology_artifacts_record=target_artifacts.to_archive_record(),
-        expected_source_connectivity_id=source_connectivity.connectivity_id,
-        expected_target_distribution_id=target_view.distribution_id,
-        expected_target_connectivity_id=target_connectivity.connectivity_id,
-        expected_target_dynamics_id=target_dynamics.dynamics_id,
-        expected_system_id=system.system_id,
-        expected_method_id=method.method_id,
-        expected_positivity_id=positivity.plan_id,
-        expected_precision_policy_id=precision.policy_id,
-        expected_step_policy_id=step_policy.policy_id,
-        expected_target_epoch_id=target_epoch.epoch_id,
-        expected_target_artifacts_id=target_artifacts.artifacts_id,
-    )
-    return {
-        "context": rebuilt_context,
-        "group": execution_group,
-        "source_assembly": source_assembly,
-        "source_views": source_views,
-        "source_connectivity": source_connectivity,
-        "source_runtime": source_runtime,
-        "source_geometry": receptor_geometry,
-        "source_dynamics": source_dynamics,
-        "target_view": target_view,
-        "target_connectivity": target_connectivity,
-        "target_dynamics": target_dynamics,
-        "system": system,
-        "source_cell_ids": np.asarray(
-            source_runtime.owner_local_cell_ids(), dtype=np.int64
-        ),
-        "receptor_name": receptor_name,
-        "source_epoch": source_runtime.initial_topology_epoch,
-        "source_artifacts": source_runtime.initial_topology_artifacts,
-        "target_epoch": target_epoch,
-        "target_artifacts": target_artifacts,
-    }
-
-
-def _write_native_owner_local_fv_repartition_archive(
-    artifact_root: str,
-    /,
-) -> None:
-    import json
-    from pathlib import Path
-
-    from jax.experimental import multihost_utils
-
-    from phydrax._execution_resources import ExecutionGroupSpec
-    from phydrax._execution_runtime import ExecutionGroup
-    from phydrax._fingerprint import canonical_fingerprint
-    from phydrax._model._structure import (
-        FiniteVolumeOwnerLocalRepartitionContextArchiveRecipe,
-    )
-    from phydrax.discretization._view_support import OwnerLocalCellGeometry
-    from phydrax.graph._partition import GraphPartitionPlan
-    from phydrax.lifecycle import Composition, CompositionEntry
-    from phydrax.meshing._assembly import MeshAssembly
-    from phydrax.meshing._model_codec import write_model_artifact
-    from phydrax.solver._finite_volume_runtime import (
-        FiniteVolumeStepPolicy,
-    )
-    from tests.unit.meshing.test_native_overset import (
-        _owner_local_periodic_assembly,
-    )
-
-    devices = tuple(sorted(jax.devices(), key=lambda device: device.process_index))
-    process_indices = tuple(device.process_index for device in devices)
-    if (
-        jax.process_count() != 3
-        or process_indices != (0, 1, 2)
-        or len(jax.local_devices()) != 1
-    ):
-        raise RuntimeError("FV archive writer requires three fresh process owners.")
-    rank = jax.process_index()
-    group_spec = ExecutionGroupSpec(
-        "native-owner-local-fv-cold-context",
-        process_indices,
-        tuple((device.process_index, device.id) for device in devices),
-        mesh_axes=(("owner_local_fv_archive", 3),),
-    )
-    group = ExecutionGroup(group_spec, devices)
-    donor_name, receptor_name = "fv-archive-donor", "fv-archive-receptor"
-    donor_points = np.asarray(
-        ((0.11, 0.13), (0.58, 0.17), (0.31, 0.62), (0.84, 0.77)),
-        dtype=np.float64,
-    )
-    receptor_points = np.asarray(
-        ((0.19, 0.21), (0.63, 0.11), (0.23, 0.70), (0.77, 0.83)),
-        dtype=np.float64,
-    )
-    point_owners = np.asarray((1, 1, 0, 0), dtype=np.int32)
-    donor_assembly = _owner_local_periodic_assembly(
-        donor_name, donor_points, point_owners, group
-    )
-    receptor_assembly = _owner_local_periodic_assembly(
-        receptor_name, receptor_points, point_owners, group
-    )
-    source_assembly = MeshAssembly(
-        (*donor_assembly.parts, *receptor_assembly.parts),
-        global_parts=(
-            *donor_assembly.part_manifest,
-            *receptor_assembly.part_manifest,
-        ),
-        local_rank=rank,
-    )
-    source_parts = {part.name: part for part in source_assembly.parts}
-    source_views: dict[str, OwnerLocalCellGeometry] = {}
-    for name, part in source_parts.items():
-        view = part.carrier
-        if type(view) is not OwnerLocalCellGeometry:
-            raise TypeError(
-                "FV archive writer requires canonical owner-local source views."
-            )
-        source_views[name] = view
-    part_names = tuple(source_assembly.global_part_names)
-    source_specifications = tuple(
-        _finite_volume_archive_surface_spec(source_views[name].source_value)
-        for name in part_names
-    )
-    receptor_boundary = _finite_volume_archive_boundary_scope(
-        source_views[receptor_name],
-        rank,
-    )
-    source_overset_specs = tuple(
-        OversetPartSpec(
-            donor_name,
-            priority=2,
-            owner_rank=0,
-        )
-        if name == donor_name
-        else OversetPartSpec(
-            receptor_name,
-            boundary=receptor_boundary,
-            priority=1,
-            owner_rank=1,
-        )
-        for name in part_names
-    )
-    source_overset_policy = OversetPolicy(
-        fringe_layers=1,
-        donor_priority="part-priority",
-    )
-    receptor_specification = source_specifications[part_names.index(receptor_name)]
-    target_graph_plan = GraphPartitionPlan(
-        len(process_indices),
-        target_shares=np.asarray((0.0, 0.0, 1.0), dtype=np.float64),
-        maximum_imbalance=1.0,
-        require_nonempty=False,
-    )
-    system = phx.equations.EulerSystem(2)
-    flux_plan = phx.discretization.RusanovFluxPlan()
-    method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
-        phx.discretization.PiecewiseConstantReconstruction(),
-        flux_plan,
-    )
-    precision = phx.discretization.FiniteVolumePrecisionPolicy()
-    positivity = phx.discretization.FluxPositivityPlan()
-    step_policy = FiniteVolumeStepPolicy(maximum_retries=2)
-    context = FiniteVolumeOwnerLocalRepartitionContextArchiveRecipe(
-        group_id=group_spec.group_id,
-        process_indices=group_spec.process_indices,
-        device_keys=group_spec.device_keys,
-        mesh_axes=group_spec.mesh_axes,
-        parent_group_id=group_spec.parent_group_id,
-        process_host_ids=group_spec.process_host_ids,
-        part_names=part_names,
-        donor_part_name=donor_name,
-        receptor_part_name=receptor_name,
-        source_views=tuple(source_views[name] for name in part_names),
-        source_specifications=source_specifications,
-        source_overset_specs=source_overset_specs,
-        source_overset_policy=source_overset_policy,
-        target_overset_specs=(),
-        target_graph_partition_plan=target_graph_plan,
-        target_specification=receptor_specification,
-        target_view=None,
-        source_topology_epoch_record=None,
-        source_topology_artifacts_record=None,
-        target_topology_epoch_record=None,
-        target_topology_artifacts_record=None,
-        source_boundary_patch_names=(),
-        target_boundary_patch_names=(),
-        system_kind="euler",
-        spatial_dimension=system.dimension,
-        expected_system_id=system.system_id,
-        problem_name="owner-local-fv-cold-repartition",
-        field_name="state",
-        source_id=None,
-        reconstruction_kind="piecewise-constant",
-        flux_kind="rusanov",
-        expected_method_id=method.method_id,
-        flux_smooth_epsilon=flux_plan.smooth_epsilon,
-        material_gamma=system.material.gamma,
-        material_gas_constant=system.material.gas_constant,
-        material_density_floor=system.material.density_floor,
-        material_pressure_floor=system.material.pressure_floor,
-        precision_policy=precision,
-        positivity_iterations=positivity.iterations,
-        positivity_fallback_kind="einfeldt-hll",
-        step_cfl=step_policy.cfl,
-        step_reduction_factor=step_policy.reduction_factor,
-        step_minimum_step_size=step_policy.minimum_step_size,
-        boundary_condition_kind="extrapolation",
-        maximum_retries=step_policy.maximum_retries,
-        topology_event_capacity=8,
-        topology_event_policy="accepted_step",
-        owner_local_axis_name="owner_local_fv_archive_runtime",
-        expected_target_plan_id=target_graph_plan.plan_id,
-        expected_source_dynamics_id="",
-        expected_source_boundary_set_id="",
-        expected_target_boundary_set_id="",
-        expected_positivity_id=positivity.plan_id,
-        expected_source_runtime_id="",
-        expected_source_epoch_id="",
-        expected_precision_policy_id=precision.policy_id,
-        expected_step_policy_id=step_policy.policy_id,
-        expected_source_artifacts_id="",
-        expected_source_connectivity_id="",
-        expected_target_distribution_id="",
-        expected_target_connectivity_id="",
-        expected_target_dynamics_id="",
-        expected_target_epoch_id="",
-        expected_target_artifacts_id="",
-    )
-    bundle = _finite_volume_archive_build_context(context, group, validate_expected=False)
-    context = bundle["context"]
-    source_runtime = bundle["source_runtime"]
-    source_views = bundle["source_views"]
-    source_geometry = bundle["source_geometry"]
-    source_cell_ids = bundle["source_cell_ids"]
-    receptor_view = source_views[receptor_name]
-    cell_ids = np.asarray(source_geometry.cell_global_ids, dtype=np.int64)
-    primitive = np.zeros((cell_ids.size, 4), dtype=np.float64)
-    primitive[:, 0] = 1.0 + (cell_ids % 19) * 0.01
-    primitive[:, 3] = 1.0
-    primitive[:, 1] = 0.2 + (cell_ids % 5) * 0.01
-    primitive[:, 2] = -0.1 + (cell_ids % 3) * 0.01
-    input_primitive = primitive.copy()
-    owned = np.asarray(source_runtime.owner_local_owned_cell_mask, dtype=np.bool_)
-    input_primitive[~owned, 0] = 3.0
-    input_primitive[~owned, 3] = 3.0
-    initial = source_runtime.initialize_state(
-        system.primitive_to_conserved(jnp.asarray(input_primitive)),
-        0.0,
-        1.0e-4,
-    )
-    accepted = source_runtime.advance(initial)
-    accepted_flags = np.asarray(
-        multihost_utils.process_allgather(
-            np.asarray((int(bool(np.asarray(accepted.accepted))),), dtype=np.int32)
-        )
-    ).reshape((-1,))
-    if not np.all(accepted_flags == 1):
-        raise ValueError("Archive source FV solve did not produce an accepted boundary.")
-    state_id = source_runtime.accepted_state_id(accepted.runtime_state, source_cell_ids)
-    token = source_runtime.validate_restored_accepted_state(
-        accepted.runtime_state,
-        source_cell_ids,
-        expected_runtime_id=source_runtime.runtime_id,
-        expected_epoch_id=source_runtime.topology_epoch_id,
-        expected_state_id=state_id,
-    )
-    history_cell_ids = np.sort(np.asarray(receptor_view.owned_cell_ids, dtype=np.int64))
-    history_values = (history_cell_ids * 3 + 7).reshape((-1, 1))
-    bank_spec = phx.solver.FiniteVolumeOwnerLocalCellStateBankSpec(
-        "test/owner-local-cell-history",
-        history_cell_ids,
-        0,
-    )
-    history_revision = _finite_volume_cell_state_bank_revision(bank_spec, history_values)
-    context_entry = CompositionEntry(
-        context,
-        entry_id="finite-volume/context",
-        role="discretization",
-        owner_id="phydrax.solver.PreparedFiniteVolumeRuntime",
-        structure_id=context.expected_source_epoch_id,
-        revision_id=context.expected_source_runtime_id,
-        semantics_id=context.expected_source_connectivity_id,
-    )
-    state_entry = CompositionEntry(
-        token,
-        entry_id="finite-volume/state",
-        role="physical-state",
-        owner_id="phydrax.solver.PreparedFiniteVolumeRuntime",
-        structure_id=token.runtime_state.content_state.geometry_layout_id,
-        revision_id=token.state_id,
-        semantics_id=system.system_id,
-        dependencies=(context_entry.binding("revision"),),
-    )
-    history_entry = CompositionEntry(
-        history_values,
-        entry_id=bank_spec.entry_id,
-        role="history",
-        owner_id="test.native-owner-local-fv",
-        structure_id=token.runtime_state.content_state.geometry_layout_id,
-        revision_id=history_revision,
-        semantics_id="stable-cell-id-history",
-        dependencies=(
-            context_entry.binding("structure"),
-            state_entry.binding("revision"),
-        ),
-    )
-    schema_revision = canonical_fingerprint(
-        {
-            "kind": "finite-volume-cell-state-bank-layouts",
-            "schemas": (
-                (
-                    bank_spec.entry_id,
-                    tuple(
-                        int(cell_id)
-                        for cell_id in np.asarray(bank_spec.cell_ids, dtype=np.int64)
-                    ),
-                    bank_spec.cell_axis,
-                ),
-            ),
-        }
-    )
-    schema_entry = CompositionEntry(
-        (bank_spec,),
-        entry_id="finite-volume/cell-state-bank-layouts",
-        role="discretization",
-        owner_id="phydrax.solver",
-        structure_id=token.runtime_state.content_state.geometry_layout_id,
-        revision_id=schema_revision,
-        semantics_id="finite-volume-cell-state-bank-layouts",
-        dependencies=(state_entry.binding("revision"),),
-    )
-    artifact = Composition(
-        (context_entry, state_entry, history_entry, schema_entry),
-        boundary_id=canonical_fingerprint(
-            {
-                "kind": "finite-volume-owner-local-repartition-archive",
-                "runtime": token.runtime_id,
-                "state": token.state_id,
-                "target": context.expected_target_connectivity_id,
-            }
-        ),
-    )
-    write_model_artifact(
-        Path(artifact_root) / f"owner-local-fv-state-{rank}.phx",
-        artifact,
-        limits=None,
-    )
-    multihost_utils.sync_global_devices("finite-volume-context-archive-written")
-    print(
-        json.dumps(
-            {
-                "rank": rank,
-                "phase": "write",
-                "source_runtime_id": context.expected_source_runtime_id,
-                "state_id": token.state_id,
-                "target_connectivity_id": context.expected_target_connectivity_id,
-            },
-            sort_keys=True,
-        )
-    )
-
-
-def _read_native_owner_local_fv_repartition_archive(
-    artifact_root: str,
-    /,
-) -> None:
-    import json
-    from pathlib import Path
-
-    from jax.experimental import multihost_utils
-
-    from phydrax._fingerprint import canonical_fingerprint
-    from phydrax._model._structure import (
-        FiniteVolumeOwnerLocalCellStateBankArchiveRecipe,
-        FiniteVolumeOwnerLocalRepartitionContextArchiveRecipe,
-        FiniteVolumeRuntimeStateArchiveRecipe,
-    )
-    from phydrax.lifecycle import Composition, CompositionEntry
-    from phydrax.meshing._model_codec import read_model_artifact
-    from phydrax.solver._finite_volume_runtime import (
-        FiniteVolumeOwnerLocalCellStateBankSpec,
-        FiniteVolumeValidatedRuntimeState,
-    )
-    from tests.unit.interchange._native_cad_archive_worker import (
-        _rebuild_finite_volume_runtime_state_archive_recipe,
-    )
-
-    rank = jax.process_index()
-    archive_path = Path(artifact_root) / f"owner-local-fv-state-{rank}.phx"
-    restored_context: dict[str, Any] = {}
-
-    def restore_archive(value: Any, /) -> Any:
-        expected_entries = {
-            "finite-volume/context",
-            "finite-volume/state",
-            "test/owner-local-cell-history",
-            "finite-volume/cell-state-bank-layouts",
-        }
-        if not isinstance(value, Composition) or set(value.entry_ids) != expected_entries:
-            raise TypeError("Cold FV archive lost its exact typed context/state entries.")
-        entries = {entry.entry_id: entry for entry in value.entries}
-        stored_context_entry = entries["finite-volume/context"]
-        stored_context = stored_context_entry.value
-        if (
-            type(stored_context)
-            is not FiniteVolumeOwnerLocalRepartitionContextArchiveRecipe
-        ):
-            raise TypeError(
-                "Cold FV archive lost its callable-free runtime context recipe."
-            )
-        group = _finite_volume_archive_execution_group(stored_context)
-        validated_context = _finite_volume_archive_rebuild_context_views(
-            stored_context, group
-        )
-        bundle = _finite_volume_archive_build_context(
-            validated_context, group, validate_expected=True
-        )
-        if (
-            stored_context_entry.revision_id
-            != bundle["context"].expected_source_runtime_id
-            or stored_context_entry.structure_id
-            != bundle["context"].expected_source_epoch_id
-            or stored_context_entry.semantics_id
-            != bundle["context"].expected_source_connectivity_id
-        ):
-            raise ValueError("Cold FV context Composition identity changed.")
-
-        stored_state_entry = entries["finite-volume/state"]
-        state_recipe = stored_state_entry.value
-        if type(state_recipe) is not FiniteVolumeRuntimeStateArchiveRecipe:
-            raise TypeError("Cold FV archive lost its accepted-state recipe.")
-        token = _rebuild_finite_volume_runtime_state_archive_recipe(
-            state_recipe, bundle["source_runtime"]
-        )
-        if not isinstance(token, FiniteVolumeValidatedRuntimeState):
-            raise TypeError("FV archive restore did not produce its validated token.")
-        stored_history_entry = entries["test/owner-local-cell-history"]
-        raw_schemas = entries["finite-volume/cell-state-bank-layouts"].value
-        if not isinstance(raw_schemas, tuple) or len(raw_schemas) != 1:
-            raise ValueError("Cold FV archive needs one explicit cell-bank schema.")
-        schema = raw_schemas[0]
-        if type(schema) is not FiniteVolumeOwnerLocalCellStateBankArchiveRecipe:
-            raise TypeError(
-                "Cold FV cell-bank layout is not its canonical archive recipe."
-            )
-        bank_spec = FiniteVolumeOwnerLocalCellStateBankSpec(
-            schema.entry_id, schema.cell_ids, schema.cell_axis
-        )
-        history_values = np.asarray(stored_history_entry.value)
-        axis = bank_spec.cell_axis
-        if axis < 0:
-            axis += history_values.ndim
-        schema_revision = canonical_fingerprint(
-            {
-                "kind": "finite-volume-cell-state-bank-layouts",
-                "schemas": (
-                    (
-                        bank_spec.entry_id,
-                        tuple(
-                            int(cell_id)
-                            for cell_id in np.asarray(bank_spec.cell_ids, dtype=np.int64)
-                        ),
-                        bank_spec.cell_axis,
-                    ),
-                ),
-            }
-        )
-        if (
-            history_values.ndim < 1
-            or not 0 <= axis < history_values.ndim
-            or history_values.shape[axis] != np.asarray(bank_spec.cell_ids).size
-            or stored_history_entry.entry_id != bank_spec.entry_id
-            or stored_history_entry.revision_id
-            != _finite_volume_cell_state_bank_revision(bank_spec, history_values)
-            or stored_history_entry.structure_id
-            != bundle["source_runtime"].geometry_layout_id
-            or stored_history_entry.semantics_id != "stable-cell-id-history"
-            or entries["finite-volume/cell-state-bank-layouts"].revision_id
-            != schema_revision
-            or stored_state_entry.revision_id != token.state_id
-            or stored_state_entry.structure_id
-            != token.runtime_state.content_state.geometry_layout_id
-            or stored_state_entry.semantics_id != bundle["system"].system_id
-        ):
-            raise ValueError("Cold FV state/history/context identity changed.")
-
-        replacements = {
-            "finite-volume/context": bundle["context"],
-            "finite-volume/state": token,
-            "finite-volume/cell-state-bank-layouts": (bank_spec,),
-        }
-        rebuilt_entries = tuple(
-            CompositionEntry(
-                replacements.get(stored.entry_id, stored.value),
-                entry_id=stored.entry_id,
-                role=stored.role,
-                owner_id=stored.owner_id,
-                structure_id=stored.structure_id,
-                revision_id=stored.revision_id,
-                semantics_id=stored.semantics_id,
-                dependencies=stored.dependencies,
-            )
-            for stored in value.entries
-        )
-        rebuilt = Composition(rebuilt_entries, boundary_id=value.boundary_id)
-        if (
-            rebuilt.composition_id != value.composition_id
-            or rebuilt.structure_id != value.structure_id
-        ):
-            raise ValueError("Cold FV context Composition identity changed.")
-        restored_context.update(
-            {
-                **bundle,
-                "token": token,
-                "history_entry": stored_history_entry,
-                "bank_spec": bank_spec,
-            }
-        )
-        return rebuilt
-
-    composition = read_model_artifact(
-        archive_path,
-        expected_type=Composition,
-        restore=restore_archive,
-        limits=None,
-    )
-    context = restored_context["context"]
-    group = restored_context["group"]
-    source_runtime = restored_context["source_runtime"]
-    source_connectivity = restored_context["source_connectivity"]
-    target_connectivity = restored_context["target_connectivity"]
-    target_dynamics = restored_context["target_dynamics"]
-    token = composition.value("finite-volume/state")
-    history_record = composition.entry("test/owner-local-cell-history")
-    bank_spec = composition.value("finite-volume/cell-state-bank-layouts")[0]
-    route_entries = source_connectivity.composition_entries()
-    route = next(entry for entry in route_entries if entry.role == "interface-route")
-    state = token.runtime_state
-    state_entry = CompositionEntry(
-        state,
-        entry_id="finite-volume/state",
-        role="physical-state",
-        owner_id="phydrax.solver.PreparedFiniteVolumeRuntime",
-        structure_id=state.content_state.geometry_layout_id,
-        revision_id=source_runtime.accepted_state_id(state, token.source_cell_ids),
-        semantics_id=restored_context["system"].system_id,
-        dependencies=(route.binding("revision"),),
-    )
-    history_entry = CompositionEntry(
-        history_record.value,
-        entry_id=history_record.entry_id,
-        role=history_record.role,
-        owner_id=history_record.owner_id,
-        structure_id=history_record.structure_id,
-        revision_id=history_record.revision_id,
-        semantics_id=history_record.semantics_id,
-        dependencies=(route.binding("revision"),),
-    )
-    accepted_composition = Composition(
-        (*route_entries, state_entry, history_entry),
-        boundary_id=canonical_fingerprint(
-            {
-                "kind": "finite-volume-cold-accepted-boundary",
-                "epoch": token.epoch_id,
-                "state": token.state_id,
-            }
-        ),
-    )
-    repartitioned = source_runtime.commit_owner_local_repartition(
-        token,
-        source_connectivity,
-        target_connectivity,
-        target_dynamics,
-        accepted_composition=accepted_composition,
-        execution_group=group,
-        owner_local_part_name=context.receptor_part_name,
-        cell_state_banks=(bank_spec,),
-    )
-    accepted_flags = np.asarray(
-        multihost_utils.process_allgather(
-            np.asarray((int(bool(np.asarray(repartitioned.accepted))),), dtype=np.int32)
-        )
-    ).reshape((-1,))
-    if not np.all(accepted_flags == 1):
-        raise ValueError(
-            f"Cold accepted FV graph repartition was refused: {repartitioned.refusal}"
-        )
-    if (
-        repartitioned.successor_runtime is None
-        or repartitioned.repartition_receipt is None
-    ):
-        raise ValueError("Cold FV repartition did not publish its successor runtime.")
-    target_ids = np.asarray(
-        restored_context["target_view"].owned_cell_ids, dtype=np.int64
-    )
-    migrated_history = np.asarray(
-        repartitioned.repartition_receipt.composition.value(bank_spec.entry_id)
-    )
-    np.testing.assert_array_equal(migrated_history, (target_ids * 3 + 7).reshape((-1, 1)))
-    source_epoch = token.runtime_state.topology_journal.epoch_table[-1]
-    target_epoch = repartitioned.runtime_state.topology_journal.epoch_table[-1]
-    if target_epoch.partition_id == source_epoch.partition_id:
-        raise ValueError("Cold FV graph migration did not change partition identity.")
-    target_artifacts = repartitioned.runtime_state.topology_journal.artifact_table[-1]
-    if (
-        target_epoch.epoch_id != context.expected_target_epoch_id
-        or target_artifacts.artifacts_id != context.expected_target_artifacts_id
-    ):
-        raise ValueError("Cold FV repartition did not reproduce target epoch artifacts.")
-    target_owner_mask = repartitioned.runtime_state.content_state.owned_cell_mask
-    if target_owner_mask is None:
-        raise ValueError("Cold FV repartition lost explicit target ownership.")
-    # The composite layout keeps the donor part; ownership checks below are on
-    # the migrated receptor rows.
-    receptor_rows = np.isin(
-        np.asarray(
-            repartitioned.successor_runtime.dynamics.discretization.cell_global_ids,
-            dtype=np.int64,
-        ),
-        np.asarray(restored_context["target_view"].cell_ids, dtype=np.int64),
-    )
-    receptor_owner_mask = np.asarray(target_owner_mask, dtype=np.bool_) & receptor_rows
-    target_counts = np.asarray(
-        multihost_utils.process_allgather(np.asarray((target_ids.size,), dtype=np.int32))
-    ).reshape((-1,))
-    if (
-        target_counts.shape != (3,)
-        or target_counts[0] != 0
-        or target_counts[1] != 0
-        or target_counts[2] <= 0
-    ):
-        raise ValueError("Cold FV graph plan did not replay its declared target owners.")
-    if target_ids.size == 0 and np.any(receptor_owner_mask):
-        raise ValueError("Cold FV empty target owner retained owned state rows.")
-    next_step = repartitioned.successor_runtime.advance(repartitioned.runtime_state)
-    next_step_flags = np.asarray(
-        multihost_utils.process_allgather(
-            np.asarray((int(bool(np.asarray(next_step.accepted))),), dtype=np.int32)
-        )
-    ).reshape((-1,))
-    if not np.all(next_step_flags == 1):
-        raise ValueError("Cold FV repartitioned runtime did not accept its next solve.")
-    next_state = next_step.runtime_state
-    prior_content = np.asarray(
-        repartitioned.runtime_state.content_state.conservative_content
-    )
-    next_content = np.asarray(next_state.content_state.conservative_content)
-    owner_mask = receptor_owner_mask
-    if (
-        prior_content.shape != next_content.shape
-        or owner_mask.shape != prior_content.shape[:1]
-        or target_ids.size != np.count_nonzero(owner_mask)
-        or not np.all(np.isfinite(next_content[owner_mask]))
-    ):
-        raise ValueError("Cold FV continuation lost finite owned physical content.")
-    owned_state_changed = bool(
-        target_ids.size and np.any(prior_content[owner_mask] != next_content[owner_mask])
-    )
-    changed_flags = np.asarray(
-        multihost_utils.process_allgather(
-            np.asarray((int(owned_state_changed),), dtype=np.int32)
-        )
-    ).reshape((-1,))
-    if changed_flags.shape != (3,) or changed_flags[2] != 1:
-        raise ValueError("Cold FV next solve did not change target-owned physical state.")
-    positivity = next_step.positivity
-    local_admissible = bool(np.asarray(positivity.fallback_valid)) and bool(
-        np.asarray(positivity.limited_state_valid)
-    )
-    if target_ids.size:
-        minimum_density = float(np.asarray(positivity.minimum_density))
-        local_admissible = (
-            local_admissible and np.isfinite(minimum_density) and minimum_density > 0.0
-        )
-    admissible_flags = np.asarray(
-        multihost_utils.process_allgather(
-            np.asarray((int(local_admissible),), dtype=np.int32)
-        )
-    ).reshape((-1,))
-    if admissible_flags.shape != (3,) or admissible_flags[2] != 1:
-        raise ValueError("Cold FV next solve lacks positive admissibility evidence.")
-    from phydrax.discretization._conservation_ledger import (
-        AcceptedConservationIntegralLedger,
-    )
-
-    ledger = next_step.accepted_flux_integrals
-    if not isinstance(ledger, AcceptedConservationIntegralLedger):
-        raise ValueError("Cold FV next solve lacks its accepted flux-balance ledger.")
-    source_sum, boundary_sum, net_sum = ledger.conservation_sums()
-    if (
-        ledger.start_topology_epoch_id != target_epoch.epoch_id
-        or ledger.end_topology_epoch_id != target_epoch.epoch_id
-        or float(np.asarray(ledger.end_time)) <= float(np.asarray(ledger.start_time))
-        or int(np.asarray(ledger.accepted_step))
-        != int(np.asarray(next_state.accepted_step))
-        or any(
-            not np.all(np.isfinite(np.asarray(values)))
-            for values in (source_sum, boundary_sum, net_sum)
-        )
-    ):
-        raise ValueError("Cold FV next solve has invalid native balance evidence.")
-    if (
-        int(np.asarray(next_state.accepted_step))
-        != int(np.asarray(repartitioned.runtime_state.accepted_step)) + 1
-    ):
-        raise ValueError("Cold FV continuation did not advance one accepted step.")
-    print(
-        json.dumps(
-            {
-                "phase": "read",
-                "rank": rank,
-                "state_id": token.state_id,
-                "target_epoch": target_epoch.epoch_id,
-                "next_step": int(np.asarray(next_step.runtime_state.accepted_step)),
-            },
-            sort_keys=True,
-        )
-    )
-
-
-def _native_owner_local_fv_archive_rank_worker(
-    artifact_root: str,
-    phase: str,
-    /,
-) -> None:
-    import sys
-    import traceback
-
-    from phydrax._execution_launch import require_local_process_supervision
-
-    supervisor = require_local_process_supervision()
-    try:
-        if phase == "write":
-            _write_native_owner_local_fv_repartition_archive(artifact_root)
-        elif phase == "read":
-            _read_native_owner_local_fv_repartition_archive(artifact_root)
-        else:
-            raise ValueError("FV archive worker phase must be write or read.")
-    except BaseException as error:
-        traceback.print_exc()
-        sys.stderr.flush()
-        supervisor.fail(
-            f"FV archive {phase!r} failed on rank {supervisor.process_id}: "
-            f"{type(error).__name__}: {error}"
-        )
-        raise
-
-
-def test_native_owner_local_fv_archive_cold_repartitions_and_continues(
-    tmp_path: Any,
-) -> None:
-    """Cold-read typed state in a new three-owner group before graph migration."""
-    import json
-    import os
-    import shutil
-    import socket
-    import sys
-    from pathlib import Path
-
-    from phydrax import config as pxconfig
-    from phydrax._execution_launch import (
-        launch_local_processes,
-        LocalProcessLaunchError,
-        LocalProcessLaunchPlan,
-    )
-    from phydrax._model._structure import FiniteVolumeRuntimeStateArchiveRecipe
-    from phydrax.meshing._model_codec import read_model_archive, write_model_archive
-
-    if jax.process_count() != 1:
-        pytest.skip("The cold FV coordinator must run outside a live process group.")
-    if os.name != "posix":
-        pytest.skip("The cold FV process group requires POSIX supervision.")
-    if os.environ.get("PYTEST_XDIST_WORKER") is not None:
-        pytest.skip("The three-owner cold FV qualification runs outside xdist.")
-    repository = Path(__file__).resolve().parents[3]
-    artifact_root = Path(tmp_path) / "owner-local-fv-cold"
-    artifact_root.mkdir()
-    worker_script = (
-        "import runpy, sys; "
-        "runpy.run_path(sys.argv[1])['_native_owner_local_fv_archive_rank_worker']"
-        "(sys.argv[2], sys.argv[3])"
-    )
-    base_environment = dict(os.environ)
-    for name in (
-        "PHYDRAX_COORDINATOR_ADDRESS",
-        "PHYDRAX_NUM_PROCESSES",
-        "PHYDRAX_PROCESS_ID",
-        "PHYDRAX_LOCAL_DEVICE_IDS",
-        "PHYDRAX_COORDINATOR_BIND_ADDRESS",
-    ):
-        base_environment.pop(name, None)
-    environment = pxconfig.environment(
-        pxconfig.RuntimeConfig(
-            enable_x64=True,
-            platforms=("cpu",),
-            cpu_device_count=1,
-            cpu_collectives_implementation="gloo",
-        ),
-        base=base_environment,
-    )
-    environment.update(
-        PYTHONPATH=str(repository),
-        OMP_NUM_THREADS="1",
-        OPENBLAS_NUM_THREADS="1",
-        XLA_PYTHON_CLIENT_PREALLOCATE="false",
-    )
-
-    def launch_phase(root: Path, phase: str) -> list[dict[str, Any]]:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-            listener.bind(("127.0.0.1", 0))
-            port = listener.getsockname()[1]
-        try:
-            results = launch_local_processes(
-                (
-                    sys.executable,
-                    "-c",
-                    worker_script,
-                    str(Path(__file__).resolve()),
-                    str(root),
-                    phase,
-                ),
-                LocalProcessLaunchPlan(3, f"127.0.0.1:{port}", devices_per_process=1),
-                environment=environment,
-                cwd=str(repository),
-                timeout_seconds=900.0,
-            )
-        except LocalProcessLaunchError as error:
-            output_directory = root / "rank-failure-logs" / phase
-            output_directory.mkdir(parents=True, exist_ok=True)
-            for result in error.results:
-                rank_directory = output_directory / f"rank-{result.process_id}"
-                rank_directory.mkdir(exist_ok=True)
-                (rank_directory / "stdout.txt").write_bytes(result.stdout)
-                (rank_directory / "stderr.txt").write_bytes(result.stderr)
-                (rank_directory / "status.txt").write_text(
-                    f"returncode={result.returncode}\n"
-                    f"output_truncated={result.output_truncated}\n",
-                    encoding="utf-8",
-                )
-            error.add_note(f"Full per-rank output saved under {output_directory}.")
-            raise
-        reports = [
-            json.loads(result.stdout.decode().strip().splitlines()[-1])
-            for result in results
-        ]
-        assert [item["rank"] for item in reports] == [0, 1, 2]
-        assert all(item["phase"] == phase for item in reports)
-        return reports
-
-    launch_phase(artifact_root, "write")
-    for rank in range(3):
-        assert (artifact_root / f"owner-local-fv-state-{rank}.phx").is_file()
-    launch_phase(artifact_root, "read")
-
-    tampered_root = Path(tmp_path) / "owner-local-fv-tampered"
-    state_identity_index = FiniteVolumeRuntimeStateArchiveRecipe._fields.index(
-        "expected_state_id"
-    )
-    tampered_root.mkdir()
-    for rank in range(3):
-        source = artifact_root / f"owner-local-fv-state-{rank}.phx"
-        destination = tampered_root / source.name
-        if rank != 0:
-            shutil.copyfile(source, destination)
-            continue
-        manifest, arrays = read_model_archive(source, limits=None)
-
-        def tamper_state_identity(node: Any) -> bool:
-            if isinstance(node, dict):
-                if str(node.get("type", "")).endswith(
-                    "FiniteVolumeRuntimeStateArchiveRecipe"
-                ):
-                    fields = node.get("fields")
-                    items = node.get("items")
-                    identity = (
-                        fields.get("expected_state_id")
-                        if isinstance(fields, dict)
-                        else items[state_identity_index]
-                        if isinstance(items, list) and len(items) > state_identity_index
-                        else None
-                    )
-                    if isinstance(identity, dict) and isinstance(
-                        identity.get("value"), str
-                    ):
-                        current = identity["value"]
-                        identity["value"] = "0" * 64 if current != "0" * 64 else "1" * 64
-                        return True
-                return any(tamper_state_identity(child) for child in node.values())
-            if isinstance(node, list):
-                return any(tamper_state_identity(child) for child in node)
-            return False
-
-        assert tamper_state_identity(manifest["model_recipe"])
-        write_model_archive(destination, manifest=manifest, arrays=arrays, limits=None)
-
-    with pytest.raises(LocalProcessLaunchError) as refused:
-        launch_phase(tampered_root, "read")
-    assert any(
-        "Restored source state identity changed" in result.stderr.decode(errors="replace")
-        for result in refused.value.results
-    )

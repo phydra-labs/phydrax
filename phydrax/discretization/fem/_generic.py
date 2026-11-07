@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 from itertools import combinations
 from math import prod
 from typing import Any, final
@@ -26,11 +27,13 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._algebra import map_reference_values, pullback, vector_to_form
 from ...exterior._form_type import FormType
+from ...geometry._source_array_identity import source_arrays_equal
 from ...linalg import (
     ArraySpace,
     BlockSpace,
     OperatorProperties,
 )
+from ...linalg._exact import matmul_exact, solve_exact
 from ...sparse import (
     EdgeRelation,
     gather_routes,
@@ -90,7 +93,8 @@ from .._support import DiscreteSupport
 from .._topology import EntitySelection
 from .._views import FieldTraceSide
 from ._precision import FiniteElementPrecisionPolicy
-from ._reference import FiniteElementSpec, lagrange_element
+from ._reference import discontinuous_element, FiniteElementSpec, lagrange_element
+from ._source_surface import SurfaceFiniteElementGeometry
 
 
 def _linear_reference_element(cell_kind: str, /) -> FiniteElementSpec:
@@ -147,7 +151,10 @@ def _validate_resolved_elements(
     mesh: CellMesh, elements: tuple[FiniteElementSpec, ...], /
 ) -> None:
     for block, element in zip(mesh.blocks, elements, strict=True):
-        if block.cell_kind != element.cell_kind:
+        if (
+            reference_cell_topology(block.cell_kind).family
+            != reference_cell_topology(element.cell_kind).family
+        ):
             raise ValueError(
                 f"Element {element.cell_kind!r} is incompatible with block {block.name!r} ({block.cell_kind!r})."
             )
@@ -161,6 +168,8 @@ def _validate_resolved_elements(
         raise ValueError("One field must use one mapping across mesh blocks.")
     if len({element.value_shape for element in elements}) != 1:
         raise ValueError("One field must use one value shape across mesh blocks.")
+    if len({element.value_spec.value_spec_id for element in elements}) != 1:
+        raise ValueError("One field must use one scientific form identity across blocks.")
 
 
 @final
@@ -465,9 +474,26 @@ def _record_form_entity_widths(
             for face, dofs in zip(faces, element.entity_dofs[dimension], strict=True):
                 entity = lookups[dimension][tuple(sorted(cell[list(face)]))]
                 old = widths[dimension][entity]
-                if old not in (0, len(dofs)):
+                if old not in (-1, len(dofs)):
                     raise ValueError("Shared form entities require equal moment spaces.")
                 widths[dimension][entity] = len(dofs)
+
+
+def _linear_reference_center_gradients(
+    cell_kind: str, cache: dict[str, np.ndarray] | None, /
+) -> np.ndarray:
+    """Reuse only the immutable reference chart within one owning operation."""
+    if cache is not None:
+        saved = cache.get(cell_kind)
+        if saved is not None:
+            return saved
+    chart = _linear_reference_element(cell_kind)
+    gradients = np.asarray(
+        chart.tabulate(np.mean(np.asarray(chart.reference_nodes), axis=0)[None])[1][0]
+    )
+    if cache is not None:
+        cache[cell_kind] = gradients
+    return gradients
 
 
 def _form_cell_orientation_sign(
@@ -476,6 +502,7 @@ def _form_cell_orientation_sign(
     element: FiniteElementSpec,
     cell: np.ndarray,
     global_vertices: tuple[int, ...],
+    reference_gradient_cache: dict[str, np.ndarray] | None = None,
     /,
 ) -> int:
     """Return the cell-chart and physical coorientation character."""
@@ -485,7 +512,7 @@ def _form_cell_orientation_sign(
     sign = 1
     if basis.form_degree == mesh.topological_dimension:
         permutation = basis.canonical_permutation(global_vertices)
-        if basis.family == "tensor-trimmed":
+        if basis.family in ("tensor-trimmed", "prism-trimmed"):
             chart = _linear_reference_element(block.cell_kind)
             reference_vertices = np.asarray(chart.reference_nodes)
             affine = np.linalg.lstsq(
@@ -504,9 +531,8 @@ def _form_cell_orientation_sign(
                 for j in range(i + 1, len(permutation))
             )
     if element.value_spec.form_type.twist == "twisted":
-        chart = _linear_reference_element(block.cell_kind)
-        gradients = np.asarray(
-            chart.tabulate(np.mean(np.asarray(chart.reference_nodes), axis=0)[None])[1][0]
+        gradients = _linear_reference_center_gradients(
+            block.cell_kind, reference_gradient_cache
         )
         jacobian = np.asarray(mesh.coordinates)[cell].T @ gradients
         if jacobian.shape[0] != jacobian.shape[1]:
@@ -537,17 +563,204 @@ def _orient_form_cell_matrix(
     matrix *= _form_cell_orientation_sign(mesh, block, element, cell, global_vertices)
 
 
+def _prism_form_entity_chart_vertices(face: tuple[int, ...], /) -> tuple[int, ...]:
+    triangle = tuple(sorted({vertex % 3 for vertex in face}))
+    interval = tuple(sorted({vertex // 3 for vertex in face}))
+    if len(triangle) == 1:
+        return tuple(triangle[0] + 3 * z for z in interval)
+    if len(interval) == 1:
+        return tuple(vertex + 3 * interval[0] for vertex in triangle)
+    if len(triangle) == 2:
+        return (
+            triangle[0] + 3 * interval[0],
+            triangle[1] + 3 * interval[0],
+            triangle[1] + 3 * interval[1],
+            triangle[0] + 3 * interval[1],
+        )
+    return face
+
+
+def _prism_canonical_form_coordinates(
+    element: FiniteElementSpec, /
+) -> tuple[tuple[tuple[Fraction, ...], ...], tuple[tuple[Any, ...], ...]]:
+    """Exact local-to-normalized moment map and entity orientation descriptors."""
+    from ._form_elements import FormBasis, FormElementFamily
+
+    basis = element.form_basis
+    if basis is None or basis.family != "prism-trimmed":
+        raise ValueError("Prism normalization requires the product form basis.")
+    count = element.local_dof_count
+    identity = tuple(
+        tuple(Fraction(int(row == column)) for column in range(count))
+        for row in range(count)
+    )
+    source_to_normalized = [list(row) for row in identity]
+    descriptors = []
+    entity_bases: dict[tuple[int, FormElementFamily], FormBasis] = {}
+
+    def entity_basis(dimension: int, family: FormElementFamily, /) -> FormBasis:
+        key = (dimension, family)
+        if key not in entity_bases:
+            entity_bases[key] = FormBasis(
+                dimension, basis.form_degree, basis.order, family, "untwisted"
+            )
+        return entity_bases[key]
+
+    for dimension in (1, 2):
+        if basis.form_degree > dimension:
+            continue
+        for face, dofs in zip(
+            basis.entity_vertices[dimension], element.entity_dofs[dimension], strict=True
+        ):
+            if not dofs:
+                continue
+            interval = tuple(sorted({vertex // 3 for vertex in face}))
+            tensor_trace = len(face) == 4 or (dimension == 1 and len(interval) == 2)
+            source_family: FormElementFamily = (
+                "tensor-trimmed" if tensor_trace else "trimmed"
+            )
+            source = entity_basis(dimension, source_family)
+            target_family: FormElementFamily = (
+                "trimmed" if dimension == 1 else source_family
+            )
+            target = entity_basis(dimension, target_family)
+            trace = basis.exact_entity_trace_matrix(face)
+            if target is not source:
+                source_exponents = {
+                    value: index for index, value in enumerate(source.exponents)
+                }
+                conversion = tuple(
+                    tuple(
+                        sum(
+                            (
+                                target.exact_functional_moments[row][alpha][component]
+                                * source.exact_coefficients[source_exponents[exponent]][
+                                    component
+                                ][column]
+                                for alpha, exponent in enumerate(target.exponents)
+                                if exponent in source_exponents
+                                for component in range(len(source.exact_coefficients[0]))
+                            ),
+                            Fraction(0),
+                        )
+                        for column in range(source.local_dof_count)
+                    )
+                    for row in range(target.local_dof_count)
+                )
+                trace = matmul_exact(conversion, trace)
+            interior = tuple(
+                index
+                for index, label in enumerate(target.dof_labels)
+                if len(label[0]) == len(face)
+            )
+            if len(interior) != len(dofs):
+                raise ValueError("Prism trace and canonical entity moment ranks differ.")
+            for local, entity_row in zip(dofs, interior, strict=True):
+                source_to_normalized[local] = list(trace[entity_row])
+            chart_vertices = _prism_form_entity_chart_vertices(face)
+            descriptors.append((tuple(dofs), target, interior, chart_vertices))
+    inverse = solve_exact(
+        source_to_normalized,
+        identity,
+        singular_message="Prism canonical trace conversion is rank deficient.",
+    )
+    return tuple(tuple(row) for row in inverse), tuple(descriptors)
+
+
+def _exact_prism_canonical_form_cell(
+    mesh: CellMesh,
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    cell: np.ndarray,
+    normalization: tuple[tuple[Fraction, ...], ...],
+    descriptors: tuple[tuple[Any, ...], ...],
+    /,
+) -> tuple[tuple[Fraction, ...], ...]:
+    basis = element.form_basis
+    if basis is None:
+        raise ValueError("Prism orientation requires form-basis metadata.")
+    global_vertices = tuple(
+        np.asarray(mesh.vertex_global_ids, dtype=np.int64)[cell].tolist()
+    )
+    count = element.local_dof_count
+    action = [
+        [Fraction(int(row == column)) for column in range(count)] for row in range(count)
+    ]
+    for dofs, entity, interior, chart_vertices in descriptors:
+        ids = tuple(global_vertices[vertex] for vertex in chart_vertices)
+        oriented = entity.exact_permutation_matrix(entity.canonical_permutation(ids))
+        for row, local_row in enumerate(dofs):
+            for column, local_column in enumerate(dofs):
+                action[local_row][local_column] = oriented[interior[row]][
+                    interior[column]
+                ]
+    cell_dofs = element.entity_dofs[mesh.topological_dimension][0]
+    if cell_dofs:
+        oriented = basis.exact_permutation_matrix(
+            basis.canonical_permutation(global_vertices)
+        )
+        for row in cell_dofs:
+            for column in cell_dofs:
+                action[row][column] = oriented[row][column]
+    sign = _form_cell_orientation_sign(mesh, block, element, cell, global_vertices)
+    if sign not in (-1, 1):
+        raise ValueError("Prism cell orientation must be nonzero.")
+    return tuple(
+        tuple(sign * value for value in row)
+        for row in matmul_exact(normalization, action)
+    )
+
+
 def _canonical_form_dof_layout(
     mesh: CellMesh, elements: tuple[FiniteElementSpec, ...], /
 ) -> _FiniteElementDofLayout:
     """Prepare permutation-covariant entity moment coordinates."""
+    if {block.cell_kind for block in mesh.blocks} in (
+        {"prism", "tetrahedron"},
+        {"prism", "simplex:3"},
+    ):
+        from ._form_elements import form_element
+
+        first = elements[0].form_basis
+        if first is None or first.order not in (1, 2):
+            raise ValueError(
+                "Mixed form routing requires canonical order-one or order-two forms."
+            )
+        for block, element in zip(mesh.blocks, elements, strict=True):
+            basis = element.form_basis
+            family = "prism-trimmed" if block.cell_kind == "prism" else "trimmed"
+            if (
+                basis is None
+                or basis.family != family
+                or basis.order != first.order
+                or basis.form_degree != first.form_degree
+                or element.value_spec.value_spec_id
+                != elements[0].value_spec.value_spec_id
+            ):
+                raise ValueError(
+                    "Mixed form traces require the same scientific moment space."
+                )
+            expected = form_element(
+                block.cell_kind,
+                basis.form_degree,
+                basis.order,
+                family=family,
+                twist=element.value_spec.form_type.twist,
+                proxy=element.value_spec.proxy,
+            )
+            if element.element_id != expected.element_id:
+                raise ValueError(
+                    "Mixed form routing requires canonical reference factories."
+                )
     entities = _topology_vertex_sets(mesh)
     lookups = tuple(
         {vertices: index for index, vertices in enumerate(level)} for level in entities
     )
-    widths = [np.zeros((len(level),), dtype=np.int32) for level in entities]
+    widths = [np.full((len(level),), -1, dtype=np.int32) for level in entities]
     for block, element in zip(mesh.blocks, elements, strict=True):
         _record_form_entity_widths(block, element, lookups, widths)
+    if any(np.any(level < 0) for level in widths):
+        raise ValueError("Form entity routing left unassigned mesh entities.")
     counts = tuple(int(np.sum(level)) for level in widths)
     offsets = np.cumsum((0, *counts), dtype=np.int64)
     starts = tuple(
@@ -581,17 +794,69 @@ def _canonical_form_block_routes(
     /,
 ) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
     routes, transforms = [], []
+    reference_gradient_cache: dict[str, np.ndarray] = {}
     for block, element in zip(mesh.blocks, elements, strict=True):
         basis = element.form_basis
         if basis is None:
             raise ValueError("Canonical form routing requires form-basis metadata.")
+        prism_normalization = (
+            _prism_canonical_form_coordinates(element)
+            if basis.family == "prism-trimmed"
+            else None
+        )
         local = np.empty((block.cell_count, element.local_dof_count), dtype=np.int32)
         matrices = np.empty(
             (block.cell_count, element.local_dof_count, element.local_dof_count),
             dtype=np.float64,
         )
-        for row, cell in enumerate(np.asarray(block.vertices)):
-            _orient_form_cell_matrix(matrices[row], mesh, block, element, cell)
+        vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        orientation_cache: dict[tuple[tuple[int, ...], int], np.ndarray] = {}
+        cells = np.asarray(block.vertices)
+        coorientation = None
+        if (
+            basis.form_degree != mesh.topological_dimension
+            and element.value_spec.form_type.twist == "twisted"
+        ):
+            gradients = _linear_reference_center_gradients(
+                block.cell_kind, reference_gradient_cache
+            )
+            jacobians = (
+                np.swapaxes(np.asarray(mesh.coordinates)[cells], -1, -2) @ gradients
+            )
+            if jacobians.shape[-2] != jacobians.shape[-1]:
+                raise ValueError(
+                    "Twisted embedded FE moments require explicit ambient coorientation."
+                )
+            coorientation = np.sign(np.linalg.det(jacobians)).astype(np.int8)
+        for row, cell in enumerate(cells):
+            global_vertices = tuple(int(value) for value in vertex_ids[cell])
+            if coorientation is not None:
+                sign = int(coorientation[row])
+            elif basis.form_degree != mesh.topological_dimension:
+                sign = 1
+            else:
+                sign = _form_cell_orientation_sign(
+                    mesh, block, element, cell, global_vertices, reference_gradient_cache
+                )
+            if sign not in (-1, 1):
+                raise ValueError("Form cell orientation must be nonzero.")
+            key = (tuple(sorted(range(len(cell)), key=global_vertices.__getitem__)), sign)
+            matrix = orientation_cache.get(key)
+            if matrix is None:
+                matrix = np.empty(
+                    (element.local_dof_count, element.local_dof_count), dtype=np.float64
+                )
+                if prism_normalization is None:
+                    _orient_form_cell_matrix(matrix, mesh, block, element, cell)
+                else:
+                    matrix[:] = np.asarray(
+                        _exact_prism_canonical_form_cell(
+                            mesh, block, element, cell, *prism_normalization
+                        ),
+                        dtype=np.float64,
+                    )
+                orientation_cache[key] = matrix
+            matrices[row] = matrix
             for dimension, faces in enumerate(basis.entity_vertices):
                 for face, dofs in zip(faces, element.entity_dofs[dimension], strict=True):
                     # Vertex-set matching, never positional reference-face matching.
@@ -602,6 +867,98 @@ def _canonical_form_block_routes(
         routes.append(local)
         transforms.append(matrices)
     return tuple(routes), tuple(transforms)
+
+
+def _prism_nodal_h1_dof_layout(
+    mesh: CellMesh, elements: tuple[FiniteElementSpec, ...], /
+) -> _FiniteElementDofLayout:
+    """Route canonical prism and mixed P1/P2 traces by exact quarter-vertex weights."""
+    entities = _topology_vertex_sets(mesh)
+    lookups = tuple(
+        {vertices: index for index, vertices in enumerate(level)} for level in entities
+    )
+    signatures: list[list[tuple[tuple[int, ...], ...] | None]] = [
+        [None] * len(level) for level in entities
+    ]
+    occurrences = []
+    block_routes = []
+    for block, element in zip(mesh.blocks, elements, strict=True):
+        if (
+            element.degree not in (1, 2)
+            or element.element_id
+            != lagrange_element(block.cell_kind, element.degree).element_id
+        ):
+            raise ValueError("Mixed nodal routing requires canonical P1/P2 elements.")
+        topology = reference_cell_topology(block.cell_kind)
+        chart = _linear_reference_element(block.cell_kind)
+        weights = np.asarray(chart.tabulate(element.reference_nodes)[0], dtype=np.float64)
+        quarter_weights = np.rint(4.0 * weights).astype(np.int32)
+        if not np.allclose(4.0 * weights, quarter_weights, rtol=0.0, atol=1.0e-6):
+            raise ValueError("Mixed P1/P2 nodal weights are not quarter-integral.")
+        local = np.full((block.cell_count, element.local_dof_count), -1, dtype=np.int32)
+        block_routes.append(local)
+        for row, cell in enumerate(np.asarray(block.vertices, dtype=np.int32)):
+            for dimension, level in enumerate(topology.entities):
+                for local_entity, vertices in enumerate(level):
+                    dofs = element.entity_dofs[dimension][local_entity]
+                    canonical = tuple(sorted(int(cell[v]) for v in vertices))
+                    entity = lookups[dimension][canonical]
+                    order = tuple(
+                        sorted(range(len(vertices)), key=lambda i: cell[vertices[i]])
+                    )
+                    keys = tuple(
+                        tuple(
+                            int(value)
+                            for value in quarter_weights[
+                                dof, np.asarray(vertices)[list(order)]
+                            ]
+                        )
+                        for dof in dofs
+                    )
+                    signature = tuple(sorted(keys))
+                    if len(set(keys)) != len(keys):
+                        raise ValueError("Nodal entity coordinates must be distinct.")
+                    previous = signatures[dimension][entity]
+                    if previous is not None and previous != signature:
+                        raise ValueError(
+                            "Shared H1 traces have incompatible nodal coordinates."
+                        )
+                    signatures[dimension][entity] = signature
+                    occurrences.append((local, row, dofs, dimension, entity, keys))
+    widths = tuple(
+        np.asarray(
+            [len(value) if value is not None else 0 for value in level], dtype=np.int32
+        )
+        for level in signatures
+    )
+    counts = tuple(int(np.sum(level)) for level in widths)
+    offsets = np.cumsum((0, *counts), dtype=np.int64)
+    starts = tuple(
+        offsets[degree] + np.cumsum(np.r_[0, level[:-1]], dtype=np.int64)
+        for degree, level in enumerate(widths)
+    )
+    for local, row, dofs, dimension, entity, keys in occurrences:
+        signature = signatures[dimension][entity]
+        assert signature is not None
+        for dof, key in zip(dofs, keys, strict=True):
+            local[row, dof] = starts[dimension][entity] + signature.index(key)
+    if any(np.any(route < 0) for route in block_routes):
+        raise ValueError("Mixed nodal elements must assign every local DOF to an entity.")
+    boundary = np.zeros((int(offsets[-1]),), dtype=np.bool_)
+    for degree, level in enumerate(widths):
+        mask = np.asarray(mesh.topology.entity_sets[degree].subset("boundary").mask)
+        for entity in np.flatnonzero(mask):
+            start = starts[degree][entity]
+            boundary[start : start + level[entity]] = True
+    return _FiniteElementDofLayout(
+        conformity="H1",
+        association="entity",
+        global_count=int(offsets[-1]),
+        entity_dof_counts=counts,
+        entity_dofs_per_entity=tuple(_uniform_entity_width(level) for level in widths),
+        canonical_routes=tuple(block_routes),
+        canonical_boundary=boundary,
+    )
 
 
 _HIGH_ORDER_H1_CONNECTIVITIES = (
@@ -700,6 +1057,12 @@ def _prepare_finite_element_dof_layout(
                 return _single_association_dof_layout(
                     mesh, conformity, "vertex", mesh.coordinates.shape[0]
                 )
+            if {block.cell_kind for block in mesh.blocks} in (
+                {"prism"},
+                {"prism", "tetrahedron"},
+                {"prism", "simplex:3"},
+            ):
+                return _prism_nodal_h1_dof_layout(mesh, resolved)
             return _high_order_h1_dof_layout(mesh, resolved)
         case _:
             raise ValueError(f"Unsupported finite-element conformity {conformity!r}.")
@@ -987,8 +1350,12 @@ def _build_finite_element_dof_routes(
                 local = layout.canonical_routes[len(block_dofs)]
                 orientation = np.ones_like(local, dtype=np.float64)
             case "entity":
-                local = _high_order_h1_block_routes(
-                    mesh, layout, block, element, vertices, cell_offset
+                local = (
+                    layout.canonical_routes[len(block_dofs)]
+                    if layout.canonical_routes is not None
+                    else _high_order_h1_block_routes(
+                        mesh, layout, block, element, vertices, cell_offset
+                    )
                 )
                 orientation = np.ones_like(local, dtype=np.float64)
             case "vertex":
@@ -1231,7 +1598,11 @@ def _build_finite_element_dof_coordinates(
                 raise RuntimeError("Canonical form boundary was not prepared.")
             boundary = layout.canonical_boundary
         case "entity":
-            boundary = _high_order_h1_boundary_mask(mesh, layout)
+            boundary = (
+                layout.canonical_boundary
+                if layout.canonical_boundary is not None
+                else _high_order_h1_boundary_mask(mesh, layout)
+            )
         case "vertex":
             boundary = _vertex_boundary_mask(mesh, layout.global_count)
         case _:
@@ -1342,6 +1713,8 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
     boundary_dof_mask: Array
     dof_coordinates: Array
     dof_map_id: str = eqx.field(static=True)
+    source_surface: SurfaceFiniteElementGeometry | None
+    source_reference_nodes: tuple[Array, ...]
 
     def __init__(
         self,
@@ -1351,6 +1724,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         *,
         component_shape: Sequence[int] = (),
         coordinate_spec: CellGeometrySpec | None = None,
+        source_surface: SurfaceFiniteElementGeometry | None = None,
     ) -> None:
         resolved = tuple(elements)
         if len(resolved) != len(mesh.blocks):
@@ -1383,6 +1757,18 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         ) = _build_finite_element_dof_coordinates(
             mesh, resolved, layout, block_dofs, geometry
         )
+        if source_surface is not None:
+            source_surface.require_carrier(geometry.coordinates)
+            source_points = jnp.concatenate(
+                tuple(
+                    source_surface.evaluate_points(
+                        index, element.reference_nodes
+                    ).reshape((-1, 3))
+                    for index, element in enumerate(resolved)
+                ),
+                axis=0,
+            )
+            dof_coordinates = source_points[jnp.asarray(coordinate_owners)]
 
         canonical_routes, canonical_orientations = _canonical_finite_element_routes(
             mesh, block_dofs, orientations
@@ -1412,6 +1798,10 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         self.association = association
         self.boundary_dof_mask = jnp.asarray(boundary)
         self.dof_coordinates = jnp.asarray(dof_coordinates)
+        self.source_surface = source_surface
+        self.source_reference_nodes = tuple(
+            jnp.asarray(element.reference_nodes) for element in resolved
+        )
         self.dof_map_id = canonical_fingerprint(
             {
                 "kind": "finite-element-dof-map",
@@ -1438,6 +1828,20 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
     def evaluate_coordinates(self, coordinates: ArrayLike, /) -> Array:
         """DOF points for runtime coordinate-map values of the bound geometry."""
         points = jnp.asarray(coordinates)
+        if self.source_surface is not None:
+            points = self.source_surface.require_carrier(points)
+            mapped = jnp.concatenate(
+                tuple(
+                    self.source_surface.evaluate_points(index, nodes).reshape((-1, 3))
+                    for index, nodes in enumerate(self.source_reference_nodes)
+                ),
+                axis=0,
+            )
+            return eqx.error_if(
+                mapped[self.coordinate_owners],
+                ~source_arrays_equal(points, self.source_surface.carrier_coordinates),
+                "Source surface geometry cannot be reused after carrier coordinates change.",
+            )
         if points.ndim != 2 or points.shape[0] != self.coordinate_count:
             raise ValueError(
                 "DOF coordinate evaluation requires the bound coordinate-map values."
@@ -1783,6 +2187,85 @@ def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
             raise ValueError(failure)
 
 
+def _validate_mixed_geometry_traces(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> None:
+    """Compare exact physical charts on every shared triangle or quadrilateral."""
+    from .._cell_geometry_transition_types import _geometry_map_expressions
+    from .._coordinate_enclosure import (
+        add,
+        axes,
+        compose_expression,
+        constant,
+        expression_sequence_equal,
+        scale,
+    )
+
+    elements, routes, _ = geometry.resolve(mesh)
+    maps = _geometry_map_expressions(mesh, geometry, (elements, routes))
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    variables = axes(2)
+    owners: dict[tuple[int, ...], tuple[int, tuple[Any, ...]]] = {}
+    for block in mesh.blocks:
+        topology = reference_cell_topology(block.cell_kind)
+        reference_vertices = topology.vertices
+        for cell, identifier in zip(
+            np.asarray(block.vertices), np.asarray(block.global_ids), strict=True
+        ):
+            for face in topology.entities[2]:
+                ids = tuple(int(vertex_ids[cell[vertex]]) for vertex in face)
+                if len(ids) == 3:
+                    ordered = tuple(sorted(ids))
+                elif len(ids) == 4:
+                    cycles = tuple(
+                        tuple(sequence[(start + offset) % 4] for offset in range(4))
+                        for sequence in (ids, tuple(reversed(ids)))
+                        for start in range(4)
+                    )
+                    ordered = min(cycles)
+                else:
+                    raise ValueError(
+                        "Mixed geometry requires triangular or quadrilateral facets."
+                    )
+                by_id = dict(zip(ids, face, strict=True))
+                corners = tuple(reference_vertices[by_id[value]] for value in ordered)
+                second_axis = corners[2] if len(corners) == 3 else corners[3]
+                chart = tuple(
+                    add(
+                        add(
+                            constant(Fraction(float(corners[0][axis])), 2),
+                            scale(
+                                variables[0],
+                                Fraction(float(corners[1][axis] - corners[0][axis])),
+                            ),
+                        ),
+                        scale(
+                            variables[1],
+                            Fraction(float(second_axis[axis] - corners[0][axis])),
+                        ),
+                    )
+                    for axis in range(3)
+                )
+                key = tuple(sorted(ids))
+                previous = owners.pop(key, None)
+                if previous is None:
+                    owners[key] = (int(identifier), chart)
+                    continue
+                first_id, first_chart = previous
+                first = tuple(
+                    compose_expression(value, first_chart)
+                    for value in maps.expressions(first_id)
+                )
+                second = tuple(
+                    compose_expression(value, chart)
+                    for value in maps.expressions(int(identifier))
+                )
+                if not expression_sequence_equal(first, second):
+                    raise ValueError(
+                        "Mixed coordinate charts disagree on a shared facet."
+                    )
+
+
 def _validate_mixed_prism_tetrahedron_admission(
     mesh: CellMesh,
     fields: tuple[FiniteElementFieldSpec, ...],
@@ -1790,52 +2273,42 @@ def _validate_mixed_prism_tetrahedron_admission(
     coordinate_spec: CellGeometrySpec,
     /,
 ) -> None:
-    if {block.cell_kind for block in mesh.blocks} != {"prism", "tetrahedron"}:
+    if {block.cell_kind for block in mesh.blocks} not in (
+        {"prism", "tetrahedron"},
+        {"prism", "simplex:3"},
+    ):
         return
     if not isinstance(mesh.connectivity, PolyhedralConnectivity):
         raise ValueError(
             "Mixed prism/tetrahedron finite elements require PolyhedralConnectivity."
         )
-    canonical_elements = tuple(
-        _linear_reference_element(block.cell_kind) for block in mesh.blocks
-    )
-    if any(
-        element.conformity == "H1" and element.degree > 1
-        for elements in resolved_fields
-        for element in elements
-    ):
-        raise ValueError(
-            "Mixed prism/tetrahedron conforming finite elements support degree 1 only."
-        )
     for field, elements in zip(fields, resolved_fields, strict=True):
-        if field.component_shape or any(
-            element.element_id != canonical.element_id
-            for element, canonical in zip(elements, canonical_elements, strict=True)
-        ):
-            raise ValueError(
-                "Mixed prism/tetrahedron finite elements admit only scalar P1 H1 Lagrange fields."
-            )
-    coordinate_elements, coordinate_dofs, coordinate_values = coordinate_spec.resolve(
-        mesh
-    )
-    if coordinate_values.shape != mesh.coordinates.shape or any(
-        not isinstance(element, FiniteElementSpec)
-        or element.element_id != canonical.element_id
-        or not np.array_equal(
-            np.asarray(routes, dtype=np.int32),
-            np.asarray(block.vertices, dtype=np.int32),
-        )
-        for block, element, routes, canonical in zip(
-            mesh.blocks,
-            coordinate_elements,
-            coordinate_dofs,
-            canonical_elements,
-            strict=True,
-        )
-    ):
-        raise ValueError(
-            "Mixed prism/tetrahedron finite elements require affine P1 vertex geometry."
-        )
+        form_flags = tuple(element.form_basis is not None for element in elements)
+        if any(form_flags):
+            if not all(form_flags) or field.component_shape:
+                raise ValueError(
+                    f"Mixed field {field.name!r} requires one canonical form fiber on every block."
+                )
+            # This validates factory identity, common form/twist/order, exact
+            # prism-to-entity normalization, rank and every shared moment width.
+            _canonical_form_dof_layout(mesh, elements)
+            continue
+        for block, element in zip(mesh.blocks, elements, strict=True):
+            if element.conformity == "H1" and element.degree in (1, 2):
+                expected = lagrange_element(block.cell_kind, element.degree)
+            elif element.conformity == "L2" and element.degree in (0, 1):
+                expected = discontinuous_element(block.cell_kind, element.degree)
+            else:
+                raise ValueError(
+                    f"Mixed field {field.name!r} requires a certified matching trace space."
+                )
+            if element.element_id != expected.element_id:
+                raise ValueError(
+                    f"Mixed field {field.name!r} requires the canonical nodal element."
+                )
+        if elements[0].conformity == "H1":
+            _prism_nodal_h1_dof_layout(mesh, elements)
+    _validate_mixed_geometry_traces(mesh, coordinate_spec)
 
 
 def _coefficient_dtype(value: DTypeLike, /) -> np.dtype:
@@ -1868,6 +2341,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
     precision_policy: FiniteElementPrecisionPolicy
     coefficient_dtype: np.dtype = eqx.field(static=True)
     coordinate_measure: CoordinateMeasurePlan | None
+    source_surface: SurfaceFiniteElementGeometry | None
     key: DiscretizationKey
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -1883,6 +2357,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         coordinate_spec: CellGeometrySpec | None = None,
         coefficient_dtype: DTypeLike = jnp.float64,
         coordinate_measure: CoordinateMeasurePlan | None = None,
+        source_surface: SurfaceFiniteElementGeometry | None = None,
     ) -> None:
         dtype = _coefficient_dtype(coefficient_dtype)
         _validate_mesh_geometry(mesh)
@@ -1903,6 +2378,35 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         )
         if not isinstance(coordinates, CellGeometrySpec):
             raise TypeError("coordinate_spec must be CellGeometrySpec or None.")
+        if source_surface is not None:
+            if not isinstance(source_surface, SurfaceFiniteElementGeometry):
+                raise TypeError(
+                    "source_surface must be SurfaceFiniteElementGeometry or None."
+                )
+            if (
+                source_surface.topology_id != mesh.topology_id
+                or source_surface.geometry_layout_id != coordinates.geometry_layout_id
+            ):
+                raise ValueError(
+                    "Source surface must bind the exact carrier mesh and geometry."
+                )
+            source_surface.require_carrier(coordinates.coordinates)
+            if coordinate_measure is not None:
+                raise ValueError(
+                    "Source surface geometry does not support reduced coordinate measures."
+                )
+            if any(
+                element.mapping != "identity"
+                or element.conformity != "H1"
+                or element.degree != 1
+                or element.value_shape != ()
+                or element.value_spec.form_type.twist != "untwisted"
+                for field in resolved_fields
+                for element in field
+            ):
+                raise ValueError(
+                    "Source surface geometry requires untwisted scalar-basis identity-mapped H1 P1 fields."
+                )
         _validate_mixed_prism_tetrahedron_admission(
             mesh,
             field_specs,
@@ -1939,16 +2443,26 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         self.precision_policy = precision
         self.coefficient_dtype = dtype
         self.coordinate_measure = coordinate_measure
+        self.source_surface = source_surface
         self.key = DiscretizationKey("finite_element", DiscretizationRole.PHYSICAL)
-        self.capabilities = (
-            DiscretizationCapability.PROJECTION,
-            DiscretizationCapability.RECONSTRUCTION,
-            DiscretizationCapability.TRACE,
-            DiscretizationCapability.BOUNDARY_INTEGRAL,
-            DiscretizationCapability.VARIATIONAL_ASSEMBLY,
-            DiscretizationCapability.SPARSE_ASSEMBLY,
-            DiscretizationCapability.MATRIX_FREE,
-            DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
+        self.capabilities = tuple(
+            capability
+            for capability in (
+                DiscretizationCapability.PROJECTION,
+                DiscretizationCapability.RECONSTRUCTION,
+                DiscretizationCapability.TRACE,
+                DiscretizationCapability.BOUNDARY_INTEGRAL,
+                DiscretizationCapability.VARIATIONAL_ASSEMBLY,
+                DiscretizationCapability.SPARSE_ASSEMBLY,
+                DiscretizationCapability.MATRIX_FREE,
+                DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
+            )
+            if source_surface is None
+            or capability
+            not in (
+                DiscretizationCapability.BOUNDARY_INTEGRAL,
+                DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
+            )
         )
         self.plan_id = canonical_fingerprint(
             {
@@ -1958,6 +2472,11 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
                 "coordinate_spec": coordinates.geometry_layout_id,
                 "precision_policy": precision.policy_id,
                 "coefficient_dtype": dtype.str,
+                **(
+                    {"source_surface": source_surface.source_geometry_id}
+                    if source_surface is not None
+                    else {}
+                ),
                 **(
                     {"coordinate_measure": coordinate_measure.plan_id}
                     if coordinate_measure is not None
@@ -2036,6 +2555,7 @@ def _prepare_finite_element_field(
     /,
     *,
     coordinate_measure: CoordinateMeasurePlan | None = None,
+    source_surface: SurfaceFiniteElementGeometry | None = None,
 ) -> tuple[
     tuple[FiniteElementSpec, ...],
     FiniteElementDofMap,
@@ -2051,6 +2571,7 @@ def _prepare_finite_element_field(
         elements,
         component_shape=field.component_shape,
         coordinate_spec=coordinate_spec,
+        source_surface=source_surface,
     )
     vector_shape = (dof_map.global_dof_count,) + field.component_shape
     vector_space = ArraySpace(vector_shape, dtype=coefficient_dtype)
@@ -2089,9 +2610,11 @@ def _prepare_finite_element_field(
             geometry_dofs=geometry_dofs,
             precision_policy=precision_policy,
             coordinate_measure=coordinate_measure,
+            source_surface=source_surface,
+            source_block_index=block_index,
         )
-        for block, element, coordinate_element, geometry_dofs in zip(
-            mesh.blocks, elements, coordinate_elements, coordinate_dofs, strict=True
+        for block_index, (block, element, coordinate_element, geometry_dofs) in enumerate(
+            zip(mesh.blocks, elements, coordinate_elements, coordinate_dofs, strict=True)
         )
     )
     return elements, dof_map, space, geometries
@@ -2156,6 +2679,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     precision_policy: FiniteElementPrecisionPolicy
     coefficient_dtype: np.dtype = eqx.field(static=True)
     coordinate_measure: CoordinateMeasurePlan | None
+    source_surface: SurfaceFiniteElementGeometry | None
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -2184,6 +2708,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 plan.coordinate_spec,
                 plan.precision_policy,
                 coordinate_measure=plan.coordinate_measure,
+                source_surface=plan.source_surface,
             )
             all_elements.append(elements)
             dof_maps.append(dof_map)
@@ -2262,6 +2787,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         self.precision_policy = plan.precision_policy
         self.coefficient_dtype = plan.coefficient_dtype
         self.coordinate_measure = plan.coordinate_measure
+        self.source_surface = plan.source_surface
         self.support = mesh.support
         self.block_space = BlockSpace(
             tuple(space.vector_space for space in spaces),
@@ -2620,6 +3146,10 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
 
         See `prepare_finite_element_side_trace`.
         """
+        if self.source_surface is not None:
+            raise ValueError(
+                "Source surface facet quadrature is not represented by the carrier trace."
+            )
         from ._point_interpolation import prepare_finite_element_side_trace
 
         return prepare_finite_element_side_trace(
@@ -2646,13 +3176,26 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         block_index = self.dof_maps[field_index].block_names.index(str(block_name))
         points = jnp.asarray(reference_points)
         realized = self.default_runtime if runtime is None else runtime
-        geometry = self.evaluate_block_geometry(
-            field_name,
-            block_index,
-            realized.coordinates,
-            points,
-            jnp.ones((points.shape[0],), dtype=points.dtype),
-        )
+        if self.source_surface is None:
+            geometry = self.evaluate_block_geometry(
+                field_name,
+                block_index,
+                realized.coordinates,
+                points,
+                jnp.ones((points.shape[0],), dtype=points.dtype),
+            )
+            basis = geometry.basis_values
+        else:
+            coordinates = self.source_surface.require_carrier(realized.coordinates)
+            basis, _ = self.elements[field_index][block_index].tabulate(points)
+            basis = eqx.error_if(
+                basis,
+                self.source_surface.source_changed()
+                | ~source_arrays_equal(
+                    coordinates, self.source_surface.carrier_coordinates
+                ),
+                "Source surface geometry changed after proof.",
+            )
         local = jnp.asarray(coefficients)[
             self.dof_maps[field_index].cell_dofs[block_index]
         ]
@@ -2661,11 +3204,11 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             self.dof_maps[field_index].cell_transforms[block_index],
             local,
         )
-        if geometry.basis_values.ndim == 2:
-            return ein.contract("qi,ci...->cq...", geometry.basis_values, local)
-        if geometry.basis_values.ndim == 3:
-            return ein.contract("cqi,ci...->cq...", geometry.basis_values, local)
-        return ein.contract("cqiv,ci->cqv", geometry.basis_values, local)
+        if basis.ndim == 2:
+            return ein.contract("qi,ci...->cq...", basis, local)
+        if basis.ndim == 3:
+            return ein.contract("cqi,ci...->cq...", basis, local)
+        return ein.contract("cqiv,ci->cqv", basis, local)
 
     def _field_index(self, field_name: str, /) -> int:
         requested = str(field_name)
@@ -2699,13 +3242,22 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 geometry_dofs=geometry_dofs,
                 precision_policy=self.precision_policy,
                 coordinate_measure=self.coordinate_measure,
+                source_surface=self.source_surface,
+                source_block_index=block_index,
             )
-            for block, element, coordinate_element, geometry_dofs in zip(
-                self.mesh.blocks,
-                self.elements[field_index],
-                self.coordinate_elements,
-                self.coordinate_dofs,
-                strict=True,
+            for block_index, (
+                block,
+                element,
+                coordinate_element,
+                geometry_dofs,
+            ) in enumerate(
+                zip(
+                    self.mesh.blocks,
+                    self.elements[field_index],
+                    self.coordinate_elements,
+                    self.coordinate_dofs,
+                    strict=True,
+                )
             )
         )
 
@@ -2733,6 +3285,8 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             reference_weights=reference_weights,
             precision_policy=self.precision_policy,
             coordinate_measure=self.coordinate_measure,
+            source_surface=self.source_surface,
+            source_block_index=index,
         )
 
     def _field_operator_geometry(
@@ -3259,6 +3813,8 @@ def _prepare_block_geometry(
     geometry_dofs: ArrayLike | None = None,
     precision_policy: FiniteElementPrecisionPolicy,
     coordinate_measure: CoordinateMeasurePlan | None = None,
+    source_surface: SurfaceFiniteElementGeometry | None = None,
+    source_block_index: int = 0,
 ) -> FiniteElementBlockGeometry:
     if (reference_points is None) != (reference_weights is None):
         raise ValueError(
@@ -3301,7 +3857,25 @@ def _prepare_block_geometry(
     )
     routes = block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs)
     coordinate_values = mesh.coordinates if coordinates is None else coordinates
-    if identity_mapped and not isinstance(
+    if source_surface is not None:
+        coordinate_values = source_surface.require_carrier(coordinate_values)
+        physical_points, jacobian = source_surface.evaluate(
+            source_block_index, reference_points
+        )
+        physical_points, jacobian = eqx.error_if(
+            (physical_points, jacobian),
+            ~source_arrays_equal(coordinate_values, source_surface.carrier_coordinates),
+            "Source surface geometry cannot be reused after carrier coordinates change.",
+        )
+        inverse_jacobian, _, measure_factor, _, successful = (
+            cell_jacobian_inverse_and_measure(jacobian)
+        )
+        inverse_jacobian = jnp.where(successful[..., None, None], inverse_jacobian, 0.0)
+        measure_factor = jnp.where(successful, measure_factor, 0.0)
+        gradient_table = _InverseJacobianGradientTable(
+            inverse_jacobian, reference_gradients
+        )
+    elif identity_mapped and not isinstance(
         geometry_element, PerCellRestrictedCellGeometryElement
     ):
         physical_points, physical_gradients, measure_factor = (
@@ -3343,8 +3917,13 @@ def _prepare_block_geometry(
                 inverse_jacobian, reference_gradients
             )
         else:
-            physical_basis = map_reference_values(
-                basis_values[None], element.value_spec, jacobian[:, :, None]
+            # Bound temporary Piola-map work without changing the retained
+            # per-cell basis table or its physical quadrature.
+            physical_basis = _row_chunked_map(
+                lambda cell_jacobian: map_reference_values(
+                    basis_values[None], element.value_spec, cell_jacobian[:, :, None]
+                ),
+                jacobian,
             )
     measure_factor = eqx.error_if(
         measure_factor,

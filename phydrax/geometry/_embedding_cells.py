@@ -344,6 +344,10 @@ class EmbeddingCell:
 
     pyramid_normalizations: tuple[PyramidApexNormalization, ...] | None = None
     pyramid_reference_arguments: tuple[Expression, ...] | None = None
+    # Present only on charts prepared directly from these complete operands.
+    # Derived/reindexed/shifted charts do not carry mesh-reuse authority.
+    owning_mesh_id: str | None = None
+    owning_geometry_id: str | None = None
 
     @property
     def coordinates(self) -> tuple[Expression, ...]:
@@ -410,8 +414,10 @@ def _cell_expressions(
     element: ScalarCoordinateElement,
     local: tuple[tuple[ExactScalar, ...], ...],
     row: int,
+    basis: tuple[Expression, ...] | None = None,
 ) -> tuple[Expression, ...]:
-    basis = coordinate_effective_basis(element, cell_row=row)
+    if basis is None:
+        basis = coordinate_effective_basis(element, cell_row=row)
     if not basis:
         raise UnsupportedEmbeddingMap(
             "Coordinate element has no exact effective source basis."
@@ -484,10 +490,11 @@ def _mapped_cell_chart(
     domain: str,
     references: tuple[tuple[Fraction, ...], ...],
     ambient: int,
+    basis: tuple[Expression, ...] | None = None,
     /,
 ) -> _CellChart:
     """Chart of a cell from its exact composed per-cell coordinate expressions."""
-    coordinates = _cell_expressions(element, local, row)
+    coordinates = _cell_expressions(element, local, row, basis)
     if len(coordinates) != ambient:
         raise UnsupportedEmbeddingMap(
             "Exact source map ambient dimension does not match the mesh."
@@ -544,6 +551,11 @@ def _mapped_cell_chart(
     ):
         offset = None
         matrix = None
+    else:
+        # Exact source-expression equality, not corner interpolation, licenses
+        # this polynomial representation. Retaining a removable pyramid
+        # denominator would obstruct strict boundary-stratum sign proofs.
+        coordinates = affine_expressions
     return (
         coordinates,
         corners,
@@ -572,6 +584,10 @@ def _iter_embedding_cells(
     take their chart directly from the exact corner rows; every other fixed-
     reference cell composes its exact per-cell expressions.
     """
+    from ..discretization._cell_geometry_validity import cell_geometry_id
+
+    owning_mesh_id = mesh.mesh_id
+    owning_geometry_id = cell_geometry_id(geometry)
     elements, routes, _ = geometry.resolve(mesh)
     bank = geometry.source_coordinates()
     vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
@@ -609,6 +625,7 @@ def _iter_embedding_cells(
                 frame = _straight_simplex_frame(
                     element, references, dimension, route_rows.shape[1]
                 )
+        chart_bases: dict[bytes, tuple[Expression, ...]] = {}
         for local_index in range(rows.shape[0]):
             row = rows[local_index : local_index + 1].reshape(-1)
             route = route_rows[local_index : local_index + 1].reshape(-1)
@@ -689,6 +706,20 @@ def _iter_embedding_cells(
                         cast(tuple[tuple[Fraction, ...], ...], local), frame
                     )
                 else:
+                    basis = None
+                    if isinstance(element, PerCellRestrictedCellGeometryElement):
+                        from ..discretization._cell_geometry_validity import _map_digest
+
+                        chart_key = _map_digest(
+                            kind, element.chart_arguments(local_index)
+                        )
+                        if chart_key is not None:
+                            basis = chart_bases.get(chart_key)
+                            if basis is None:
+                                basis = coordinate_effective_basis(
+                                    element, cell_row=local_index
+                                )
+                                chart_bases[chart_key] = basis
                     chart = _mapped_cell_chart(
                         element,
                         local,
@@ -698,6 +729,7 @@ def _iter_embedding_cells(
                         domain,
                         references,
                         ambient,
+                        basis,
                     )
                 cell_references = references
                 cell_domain = domain
@@ -729,6 +761,8 @@ def _iter_embedding_cells(
                 facet_routes,
                 normalizations,
                 arguments,
+                owning_mesh_id,
+                owning_geometry_id,
             )
         block_offset += block.cell_count
 

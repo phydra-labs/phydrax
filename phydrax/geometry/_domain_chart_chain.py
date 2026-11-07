@@ -6,13 +6,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from ..discretization._cell_complex import PolyhedralConnectivity
 from ..discretization._cell_geometry import (
@@ -52,7 +54,11 @@ from ._exact_polyhedral_geometry import tetrahedron_contact_points
 from ._mapped_reference_domain import MappedReferenceDomain
 from ._mesh_certificates import _same_tree_content
 from ._planar_coverage import FacetOverlap, partition_overlaps
-from ._planar_primitives import area2, intersection
+from ._planar_primitives import _float_down, _float_up, area2, intersection
+
+
+if TYPE_CHECKING:
+    from ._global_embedding import ValidatedGlobalEmbedding
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +267,56 @@ def _overlap_interior(first: _ChildCell, second: _ChildCell, dimension: int, /) 
             if _positive_simplex_intersection(first_simplex, second_simplex, dimension):
                 return True
     return False
+
+
+def _overlapping_child_pairs(
+    children: list[_ChildCell], dimension: int, /
+) -> tuple[tuple[int, int], ...]:
+    """Find every positive-volume overlap, retaining original pair order."""
+    if len(children) < 2:
+        return ()
+    bounds = tuple(_box_bounds(child.vertices, dimension) for child in children)
+    try:
+        lower = np.asarray(
+            [[_float_down(interval[0]) for interval in box] for box in bounds],
+            dtype=np.float64,
+        )
+        upper = np.asarray(
+            [[_float_up(interval[1]) for interval in box] for box in bounds],
+            dtype=np.float64,
+        )
+        finite = bool(
+            np.all(np.isfinite(lower))
+            and np.all(np.isfinite(upper))
+            and np.all(np.abs(lower) <= np.finfo(np.float64).max / 2)
+            and np.all(np.abs(upper) <= np.finfo(np.float64).max / 2)
+        )
+    except OverflowError:
+        finite = False
+    if finite:
+        tree = prepare_bvh(lower, upper, dtype=np.float64)
+        candidates: Iterable[tuple[int, int]] = (
+            (int(first), int(second))
+            for first_ids, second_ids in bvh_overlap_pair_blocks(
+                tree, tree, include_touching=True
+            )
+            for first, second in zip(first_ids, second_ids, strict=True)
+            if first < second
+        )
+    else:
+        # Unrepresentable outward boxes cannot exclude any exact pair.
+        candidates = combinations(range(len(children)), 2)
+    overlaps = []
+    for first, second in candidates:
+        if any(
+            min(bounds[first][axis][1], bounds[second][axis][1])
+            <= max(bounds[first][axis][0], bounds[second][axis][0])
+            for axis in range(dimension)
+        ):
+            continue
+        if _overlap_interior(children[first], children[second], dimension):
+            overlaps.append((first, second))
+    return tuple(sorted(overlaps))
 
 
 def _finding(
@@ -663,6 +719,9 @@ def _certify_intermediate_parent_chain(
     geometry: CellGeometrySpec,
     cell_regions: np.ndarray,
     /,
+    *,
+    chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+    _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
 ) -> MappedChartProof | None:
     """Certify a child of a mapped child through its parent's own root proof.
 
@@ -674,14 +733,20 @@ def _certify_intermediate_parent_chain(
     compositions of both witness banks, checked against the target physical
     maps. ``None`` means the operands do not form such a two-level chain.
     """
-    from ..discretization._cell_geometry_validity import certify_cell_geometry_validity
-    from ._global_embedding import certify_global_embedding
+    from ..discretization._cell_geometry_validity import (
+        CellValidityPolicy,
+        certify_cell_geometry_validity,
+    )
+    from ._global_embedding import ValidatedGlobalEmbedding
     from ._reference_chain_embedding import certify_reference_chain_embedding
 
     restriction = geometry.restriction_source
     source_map = geometry.source_map
-    parent_mesh = getattr(source_map, "source_mesh", None)
-    parent_geometry = getattr(source_map, "source_geometry", None)
+    if chart_parent is None:
+        parent_mesh = getattr(source_map, "source_mesh", None)
+        parent_geometry = getattr(source_map, "source_geometry", None)
+    else:
+        parent_mesh, parent_geometry = chart_parent
     if (
         restriction is None
         or not isinstance(parent_mesh, CellMesh)
@@ -692,6 +757,24 @@ def _certify_intermediate_parent_chain(
         or getattr(source_map, "target_topology_id", mesh.topology_id) != mesh.topology_id
     ):
         return None
+    if chart_parent is not None:
+        from ._mesh_certificates import _same_tree_content
+        from ._surface_source_archive import _geometry
+
+        try:
+            rebuilt_mesh = CellMesh.from_stored_fields(
+                parent_mesh,
+                actual_geometry=parent_geometry
+                if parent_mesh.periodic_topology is not None
+                else None,
+            )
+            rebuilt_geometry = _geometry(parent_geometry, rebuilt_mesh)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if not _same_tree_content(parent_mesh, rebuilt_mesh) or not _same_tree_content(
+            parent_geometry, rebuilt_geometry
+        ):
+            return None
     parent_restriction = parent_geometry.restriction_source
     if (
         parent_restriction is None
@@ -747,14 +830,29 @@ def _certify_intermediate_parent_chain(
     reference_maps = restriction.block_parent_reference_maps
     chain_id = ""
     try:
-        parent_validity = certify_cell_geometry_validity(
-            parent_geometry, mesh=parent_mesh
-        )
-        parent_embedding = certify_global_embedding(
-            parent_mesh, parent_geometry, parent_validity
-        )
+        if _validated_parent_embedding is None:
+            parent_validity = certify_cell_geometry_validity(
+                parent_geometry, mesh=parent_mesh
+            )
+            parent_embedding = ValidatedGlobalEmbedding(
+                parent_mesh, parent_geometry, parent_validity
+            )
+        else:
+            if type(_validated_parent_embedding) is not ValidatedGlobalEmbedding:
+                raise TypeError("Mapped parent requires a validated embedding proof.")
+            parent_embedding = _validated_parent_embedding
+            parent_validity = parent_embedding.validity
+            if parent_validity.policy_id != CellValidityPolicy().policy_id:
+                raise ValueError("Mapped parent validity uses different proof controls.")
+            parent_embedding.require(parent_mesh, parent_geometry, parent_validity)
         chain = certify_reference_chain_embedding(
-            parent_mesh, parent_geometry, mesh, geometry, reference_maps, parent_embedding
+            parent_mesh,
+            parent_geometry,
+            mesh,
+            geometry,
+            reference_maps,
+            parent_embedding.certificate,
+            _validated_parent_embedding=parent_embedding,
         )
     except (TypeError, ValueError, IndexError, ZeroDivisionError) as error:
         findings.append(
@@ -902,10 +1000,30 @@ def certify_child_chart_partition(
     geometry: CellGeometrySpec,
     cell_regions: np.ndarray,
     /,
+    *,
+    chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+    _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
 ) -> MappedChartProof:
     """Prove every target chart lies in, partitions, and covers its root cell."""
     dimension = domain.ambient_dimension
     findings: list[MeshCertificateFinding] = []
+    if _validated_parent_embedding is not None:
+        from ._global_embedding import ValidatedGlobalEmbedding
+
+        restriction = geometry.restriction_source
+        if (
+            type(_validated_parent_embedding) is not ValidatedGlobalEmbedding
+            or chart_parent is None
+            or restriction is None
+            or (
+                restriction.source_geometry_id == domain.reference_geometry_id
+                and restriction.source_topology_id == domain.reference_mesh.topology_id
+            )
+        ):
+            raise ValueError("Validated parent embedding requires an intermediate chart parent.")
+        _validated_parent_embedding.require(
+            chart_parent[0], chart_parent[1], _validated_parent_embedding.validity
+        )
     root_overlaps, root_target_facet_count, root_findings = _root_boundary_proof(domain)
     findings.extend(root_findings)
     if isinstance(geometry.source_map, MappedPowerCellGeometrySource):
@@ -943,10 +1061,33 @@ def certify_child_chart_partition(
             or restriction.source_topology_id != domain.reference_mesh.topology_id
         ):
             two_level = _certify_intermediate_parent_chain(
-                domain, mesh, geometry, np.asarray(cell_regions, dtype=np.int64)
+                domain,
+                mesh,
+                geometry,
+                np.asarray(cell_regions, dtype=np.int64),
+                chart_parent=chart_parent,
+                _validated_parent_embedding=_validated_parent_embedding,
             )
             if two_level is not None:
                 return two_level
+            if chart_parent is None and not (
+                isinstance(getattr(geometry.source_map, "source_mesh", None), CellMesh)
+                and isinstance(
+                    getattr(geometry.source_map, "source_geometry", None),
+                    CellGeometrySpec,
+                )
+            ):
+                findings.append(
+                    _finding(
+                        "mapped_chart_parent_premise",
+                        "unresolved",
+                        "mesh",
+                        detail="Child-chart ancestry requires its actual parent mesh and geometry.",
+                    )
+                )
+                return MappedChartProof(
+                    (), (), root_overlaps, tuple(findings), root_target_facet_count
+                )
             findings.append(
                 _finding(
                     "mapped_chart_source_identity",
@@ -1162,11 +1303,23 @@ def certify_child_chart_partition(
                             ancestor=matching_roots[-1],
                             cell_row=block_row,
                         )
-                        chart = (
-                            None
-                            if raw_chart is None
-                            else _coordinate_expression_row(raw_chart)
-                        )
+                        if raw_chart is None and len(chain) == 1:
+                            # Same-element ancestry supplies an identity candidate;
+                            # the physical composition is still checked below.
+                            chart = tuple(
+                                {
+                                    tuple(
+                                        int(axis == column) for axis in range(dimension)
+                                    ): Fraction(1)
+                                }
+                                for column in range(dimension)
+                            )
+                        else:
+                            chart = (
+                                None
+                                if raw_chart is None
+                                else _coordinate_expression_row(raw_chart)
+                            )
                     except (TypeError, ValueError, IndexError) as error:
                         findings.append(
                             _finding(
@@ -1390,18 +1543,17 @@ def certify_child_chart_partition(
                 )
             )
             continue
-        for first_index, first in enumerate(children):
-            for second in children[first_index + 1 :]:
-                if _overlap_interior(first, second, dimension):
-                    findings.append(
-                        _finding(
-                            "mapped_chart_overlap",
-                            "violated",
-                            "cell",
-                            (first.target_cell_id, second.target_cell_id),
-                            detail="Two child charts have a positive-volume intersection inside the same source root cell.",
-                        )
-                    )
+        for first_index, second_index in _overlapping_child_pairs(children, dimension):
+            first, second = children[first_index], children[second_index]
+            findings.append(
+                _finding(
+                    "mapped_chart_overlap",
+                    "violated",
+                    "cell",
+                    (first.target_cell_id, second.target_cell_id),
+                    detail="Two child charts have a positive-volume intersection inside the same source root cell.",
+                )
+            )
         try:
             expected = reference_cell_measure(root.cell_kind)
         except (TypeError, ValueError) as error:

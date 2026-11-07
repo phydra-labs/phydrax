@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -207,4 +209,28 @@ def test_isolated_probe_policy_does_not_allow_upstream_configuration_mutation(
     )
     assert configuration_bypass_errors(tmp_path) == (
         f"configuration-bypass:tests/unit/test_jax_indexing.py:3:{_UPSTREAM}.config",
+    )
+
+
+def test_fem_facades_load_only_requested_owners() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+import phydrax.dynamics as dynamics
+assert "phydrax.dynamics.analysis" not in sys.modules
+assert "phydrax.dynamics.identification" not in sys.modules
+from phydrax.dynamics._second_order import SecondOrderDifferentialSystem
+assert dynamics.SecondOrderDifferentialSystem is SecondOrderDifferentialSystem
+import phydrax.applications.solid_mechanics as mechanics
+assert "phydrax.applications.solid_mechanics._learned_design" not in sys.modules
+from phydrax.applications.solid_mechanics._fem_dynamics import FiniteElementDynamicsState
+assert mechanics.FiniteElementDynamicsState is FiniteElementDynamicsState
+assert "phydrax.applications.solid_mechanics._learned_design" not in sys.modules
+""",
+        ],
+        cwd=_ROOT,
+        check=True,
     )

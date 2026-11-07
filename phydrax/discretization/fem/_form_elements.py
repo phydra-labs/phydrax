@@ -12,7 +12,7 @@ from collections.abc import Iterable, Sequence
 from fractions import Fraction
 from functools import lru_cache
 from hashlib import sha256
-from itertools import combinations, product
+from itertools import combinations, permutations, product
 from math import comb, factorial, lcm, prod
 from typing import final, Literal, NamedTuple
 
@@ -40,7 +40,7 @@ from .._reference_cell import reference_cell_topology
 from ._reference import FiniteElementSpec
 
 
-type FormElementFamily = Literal["trimmed", "full", "tensor-trimmed"]
+type FormElementFamily = Literal["trimmed", "full", "tensor-trimmed", "prism-trimmed"]
 type DofLabel = tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]
 type _Polynomial = dict[tuple[int, ...], float]
 type _ExactPolynomial = dict[tuple[int, ...], Fraction]
@@ -895,6 +895,8 @@ def _tensor_vertices(n: int) -> tuple[tuple[int, ...], ...]:
 def _form_orientation_generators(
     dimension: int, family: FormElementFamily, /
 ) -> tuple[tuple[int, ...], ...]:
+    if family == "prism-trimmed":
+        return ((1, 0, 2, 4, 3, 5), (0, 2, 1, 3, 5, 4), (3, 4, 5, 0, 1, 2))
     if family != "tensor-trimmed":
         result = []
         for axis in range(dimension):
@@ -1115,6 +1117,8 @@ def _canonical_entity_ids(
 
 
 def _form_reference_vertices(n: int, family: FormElementFamily) -> _HostArray:
+    if family == "prism-trimmed":
+        return np.asarray(reference_cell_topology("prism").vertices, dtype=np.float64)
     if family == "tensor-trimmed":
         return np.asarray(_tensor_vertices(n), dtype=np.float64)
     return np.concatenate((np.zeros((1, n)), np.eye(n)), axis=0)
@@ -1159,7 +1163,12 @@ def _exact_vertex_permutation_affine(
     /,
 ) -> tuple[tuple[Fraction, ...], _ExactMatrix]:
     reference = (
-        _tensor_vertices(n)
+        tuple(
+            tuple(int(x) for x in vertex)
+            for vertex in reference_cell_topology("prism").vertices
+        )
+        if family == "prism-trimmed"
+        else _tensor_vertices(n)
         if family == "tensor-trimmed"
         else (
             (0,) * n,
@@ -1539,6 +1548,15 @@ def _form_entity_chart(
     family: FormElementFamily,
     face: tuple[int, ...],
 ) -> tuple[tuple[int, ...], _HostArray, _HostArray]:
+    if family == "prism-trimmed":
+        triangle = tuple(sorted({vertex % 3 for vertex in face}))
+        interval = tuple(sorted({vertex // 3 for vertex in face}))
+        vertices = _form_reference_vertices(3, family)
+        origin = vertices[triangle[0] + 3 * interval[0]]
+        neighbors = [vertex + 3 * interval[0] for vertex in triangle[1:]]
+        if len(interval) == 2:
+            neighbors.append(triangle[0] + 3 * interval[1])
+        return (), origin, (vertices[neighbors] - origin).T
     if family == "tensor-trimmed":
         return _tensor_entity_chart(n, face)
     vertices = _form_reference_vertices(n, family)
@@ -1699,6 +1717,111 @@ class _TensorFactors(StrictModule):
         return values, jnp.stack(derivatives, axis=-1)
 
 
+@lru_cache(maxsize=32)
+def _prism_product_data(
+    k: int, r: int
+) -> tuple[
+    _Prepared, _ExactCoefficientBank, tuple[_GeneratorLabel, ...], _ExactMomentBank
+]:
+    """Product of triangle and interval complexes, with factor moment functionals."""
+    blades = tuple(combinations(range(3), k))
+    exponents = tuple(alpha + (z,) for alpha in _exponents(2, r) for z in range(r + 1))
+    exponent_lookup: dict[tuple[int, ...], int] = {
+        alpha: i for i, alpha in enumerate(exponents)
+    }
+    entities = tuple(
+        tuple(tuple(sorted(face)) for face in level)
+        for level in reference_cell_topology("prism").entities
+    )
+    entity_lookup = {frozenset(face): face for level in entities for face in level}
+    factors = []
+    for i in range(max(0, k - 1), min(2, k) + 1):
+        j = k - i
+        triangle = FormBasis(2, i, r, "trimmed", "untwisted")
+        interval = FormBasis(1, j, r, "tensor-trimmed", "untwisted")
+        factors.append((i, j, triangle, interval))
+
+    candidates = []
+    dofs = []
+    point_blocks = []
+    weight_blocks = []
+    nodes = []
+    offset = 0
+    for i, j, triangle, interval in factors:
+        tri_blades = tuple(combinations(range(2), i))
+        for a in range(len(triangle.exact_generator_labels)):
+            for b in range(len(interval.exact_generator_labels)):
+                candidates.append((i, j, triangle, interval, a, b))
+        triangle_prepared = _prepare_simplex(2, i, r, "trimmed")
+        interval_prepared = _prepare_tensor(1, j, r)
+        tp = triangle_prepared.points
+        zp = interval_prepared.points
+        points = np.concatenate(
+            (np.repeat(tp, len(zp), axis=0), np.tile(zp, (len(tp), 1))), axis=1
+        )
+        point_blocks.append(points)
+        tw = triangle_prepared.weights
+        zw = interval_prepared.weights
+        for a, tl in enumerate(triangle.dof_labels):
+            for b, zl in enumerate(interval.dof_labels):
+                vertices = frozenset(v + 3 * z for z in zl[0] for v in tl[0])
+                face = entity_lookup[vertices]
+                label = (face, (i, a, b), ())
+                dofs.append((label, i, j, triangle, interval, a, b))
+                weights = np.zeros((len(points), len(blades)), dtype=np.float64)
+                for c, blade in enumerate(tri_blades):
+                    component = blades.index(blade + ((2,) if j else ()))
+                    weights[:, component] = np.outer(tw[a, :, c], zw[b, :, 0]).reshape(-1)
+                weight_blocks.append((offset, weights))
+                nodes.append(
+                    np.concatenate(
+                        (triangle_prepared.nodes[a], interval_prepared.nodes[b])
+                    )
+                )
+        offset += len(points)
+
+    labels = tuple(item[0] for item in dofs)
+    all_weights = np.zeros((len(dofs), offset, len(blades)), dtype=np.float64)
+    for row, (start, weights) in enumerate(weight_blocks):
+        all_weights[row, start : start + len(weights)] = weights
+    prepared = _Prepared(
+        exponents,
+        labels,
+        entities,
+        np.concatenate(point_blocks),
+        all_weights,
+        np.stack(nodes),
+    )
+    generators = [[[Fraction(0) for _ in candidates] for _ in blades] for _ in exponents]
+    for column, (i, j, triangle, interval, a, b) in enumerate(candidates):
+        for t, alpha in enumerate(triangle.exponents):
+            for z, beta in enumerate(interval.exponents):
+                index = exponent_lookup[alpha + beta]
+                for c, blade in enumerate(combinations(range(2), i)):
+                    component = blades.index(blade + ((2,) if j else ()))
+                    generators[index][component][column] = (
+                        triangle.exact_generators[t][c][a]
+                        * interval.exact_generators[z][0][b]
+                    )
+    moments = [[[Fraction(0) for _ in blades] for _ in exponents] for _ in dofs]
+    for row, (_, i, j, triangle, interval, a, b) in enumerate(dofs):
+        for t, alpha in enumerate(triangle.exponents):
+            for z, beta in enumerate(interval.exponents):
+                index = exponent_lookup[alpha + beta]
+                for c, blade in enumerate(combinations(range(2), i)):
+                    component = blades.index(blade + ((2,) if j else ()))
+                    moments[row][index][component] = (
+                        triangle.exact_functional_moments[a][t][c]
+                        * interval.exact_functional_moments[b][z][0]
+                    )
+    exact_generators = tuple(
+        tuple(tuple(row) for row in components) for components in generators
+    )
+    exact_moments = tuple(tuple(tuple(row) for row in monomials) for monomials in moments)
+    generator_labels = tuple(((i, a, b), (j,)) for i, j, _, _, a, b in candidates)
+    return prepared, exact_generators, generator_labels, exact_moments
+
+
 @final
 class FormBasis(StrictModule):
     """A moment-dual polynomial basis and its complete interpolation functionals.
@@ -1747,13 +1870,29 @@ class FormBasis(StrictModule):
             raise ValueError(
                 "Full forms require order >= 0; trimmed forms require order >= 1."
             )
-        prepared = (
-            _prepare_tensor(dimension, form_degree, order)
-            if family_ == "tensor-trimmed"
-            else _prepare_simplex(dimension, form_degree, order, family_)
-        )
+        if family_ == "prism-trimmed":
+            if dimension != 3:
+                raise ValueError("Prism forms require dimension three.")
+            (
+                prepared,
+                exact_generators,
+                exact_generator_labels,
+                exact_functional_moments,
+            ) = _prism_product_data(form_degree, order)
+            exact_coefficients = _exact_dual_coefficients(
+                exact_generators, exact_functional_moments
+            )
+            tensor_factors = None
+        else:
+            prepared = (
+                _prepare_tensor(dimension, form_degree, order)
+                if family_ == "tensor-trimmed"
+                else _prepare_simplex(dimension, form_degree, order, family_)
+            )
         blades = tuple(combinations(range(dimension), form_degree))
-        if family_ == "tensor-trimmed":
+        if family_ == "prism-trimmed":
+            pass
+        elif family_ == "tensor-trimmed":
             exact_coefficients = _exact_tensor_coefficients(
                 dimension,
                 order,
@@ -2011,6 +2150,31 @@ class FormBasis(StrictModule):
         )
         if not indices:
             return reference_points, result
+        if self.family == "prism-trimmed":
+            triangle_face = tuple(sorted({vertex % 3 for vertex in entity_vertices}))
+            interval_face = tuple(sorted({vertex // 3 for vertex in entity_vertices}))
+            triangle_dimension = len(triangle_face) - 1
+            blocks = {}
+            for index in indices:
+                i, a, b = self.dof_labels[index][1]
+                j = self.form_degree - i
+                if i not in blocks:
+                    triangle = FormBasis(2, i, self.order, "trimmed", "untwisted")
+                    interval = FormBasis(1, j, self.order, "tensor-trimmed", "untwisted")
+                    _, tw = triangle.functional_weights_at(
+                        triangle_face, points[:, :triangle_dimension], quadrature
+                    )
+                    _, zw = interval.functional_weights_at(
+                        interval_face,
+                        points[:, triangle_dimension:],
+                        jnp.ones_like(quadrature),
+                    )
+                    blocks[i] = (tw, zw)
+                tw, zw = blocks[i]
+                for c, blade in enumerate(combinations(range(2), i)):
+                    component = blades.index(blade + ((2,) if j else ()))
+                    result = result.at[index, :, component].set(tw[a, :, c] * zw[b, :, 0])
+            return reference_points, result
         if self.family == "tensor-trimmed":
             block = _tensor_density_weights(
                 self.dof_labels, indices, free, blades, points, quadrature
@@ -2039,6 +2203,8 @@ class FormBasis(StrictModule):
                 "Exterior derivative target must have next degree, same dimension and twist."
             )
         minimum_order = self.order - int(target.family == "full")
+        if (target.family == "prism-trimmed") != (self.family == "prism-trimmed"):
+            raise ValueError("Prism and non-prism derivative spaces cannot be mixed.")
         if (target.family == "tensor-trimmed") != (self.family == "tensor-trimmed"):
             raise ValueError("Tensor and simplicial derivative spaces cannot be mixed.")
         if target.order < minimum_order:
@@ -2159,6 +2325,18 @@ class FormBasis(StrictModule):
         self, global_vertices: tuple[int, ...], /
     ) -> tuple[int, ...]:
         """Map local vertices to a deterministic, geometrically legal chart."""
+        if self.family == "prism-trimmed":
+            if len(global_vertices) != 6 or len(set(global_vertices)) != 6:
+                raise ValueError("Prism chart requires six distinct global vertices.")
+            symmetries = tuple(
+                tuple(p[v % 3] + 3 * ((v // 3) ^ flip) for v in range(6))
+                for p in permutations(range(3))
+                for flip in range(2)
+            )
+            return min(
+                symmetries,
+                key=lambda p: tuple(global_vertices[p.index(i)] for i in range(6)),
+            )
         if self.family != "tensor-trimmed":
             ordered = tuple(sorted(global_vertices))
             return tuple(ordered.index(vertex) for vertex in global_vertices)
@@ -2174,7 +2352,11 @@ class FormBasis(StrictModule):
         permutation, this assembly transform does not move entity blocks.
         """
         expected = (
-            2**self.dimension if self.family == "tensor-trimmed" else self.dimension + 1
+            6
+            if self.family == "prism-trimmed"
+            else 2**self.dimension
+            if self.family == "tensor-trimmed"
+            else self.dimension + 1
         )
         if len(global_vertices) != expected or len(set(global_vertices)) != expected:
             raise ValueError("Provide one distinct global identifier per local vertex.")
@@ -2198,7 +2380,11 @@ class FormBasis(StrictModule):
     ) -> _ExactMatrix:
         """Return the exact local-to-global entity moment action."""
         expected = (
-            2**self.dimension if self.family == "tensor-trimmed" else self.dimension + 1
+            6
+            if self.family == "prism-trimmed"
+            else 2**self.dimension
+            if self.family == "tensor-trimmed"
+            else self.dimension + 1
         )
         if len(global_vertices) != expected or len(set(global_vertices)) != expected:
             raise ValueError("Provide one distinct global identifier per local vertex.")
@@ -2226,6 +2412,11 @@ class FormBasis(StrictModule):
         count: int,
         global_vertices: tuple[int, ...],
     ) -> Array:
+        if self.family == "prism-trimmed":
+            return jnp.asarray(
+                self._exact_entity_moment_transform(m, face, count, global_vertices),
+                dtype=self.coefficients.dtype,
+            )
         if m == 0 or (self.family == "full" and self.order == 0):
             return jnp.eye(count, dtype=self.coefficients.dtype)
         entity = FormBasis(m, self.form_degree, self.order, self.family, "untwisted")
@@ -2244,6 +2435,8 @@ class FormBasis(StrictModule):
         count: int,
         global_vertices: tuple[int, ...],
     ) -> _ExactMatrix:
+        if self.family == "prism-trimmed":
+            return self._exact_prism_entity_transform(m, face, global_vertices)
         if m == 0 or (self.family == "full" and self.order == 0):
             return tuple(
                 tuple(Fraction(int(row == column)) for column in range(count))
@@ -2257,6 +2450,106 @@ class FormBasis(StrictModule):
         ids = _canonical_entity_ids(self.family, self.dimension, m, face, global_vertices)
         full = entity.exact_permutation_matrix(entity.canonical_permutation(ids))
         return tuple(tuple(full[row][column] for column in interior) for row in interior)
+
+    def _exact_prism_entity_transform(
+        self, m: int, face: tuple[int, ...], global_vertices: tuple[int, ...]
+    ) -> _ExactMatrix:
+        indices = _entity_dof_indices(self.dof_labels, face)
+        if m == 0:
+            return ((Fraction(1),),)
+        if m == 3:
+            full = self.exact_permutation_matrix(
+                self.canonical_permutation(global_vertices)
+            )
+            return tuple(
+                tuple(full[row][column] for column in indices) for row in indices
+            )
+        entity, trace_matrix = self._prism_trace_data(face, m)
+        interior = _interior_dof_indices(entity.dof_labels, len(face))
+        transition = tuple(
+            tuple(trace_matrix[row][column] for column in indices) for row in interior
+        )
+        if len(face) == 4:
+            face_order = (face[0], face[1], face[3], face[2])
+        else:
+            face_order = face
+        ids = tuple(global_vertices[v] for v in face_order)
+        action = entity.exact_permutation_matrix(entity.canonical_permutation(ids))
+        block = tuple(
+            tuple(action[row][column] for column in interior) for row in interior
+        )
+        return tuple(
+            tuple(row) for row in solve_exact(transition, matmul_exact(block, transition))
+        )
+
+    def exact_entity_trace_matrix(self, face: tuple[int, ...], /) -> _ExactMatrix:
+        """Restrict prism moments to canonical simplex or tensor entity moments.
+
+        Rows use the complete entity basis ordering; columns use this basis's
+        ordering. The chart uses the triangle coordinates followed by the
+        interval coordinate, with the vertex order declared in entity_vertices.
+        """
+        if self.family != "prism-trimmed":
+            raise ValueError("Exact product trace matrices require a prism basis.")
+        dimensions = tuple(
+            m for m, level in enumerate(self.entity_vertices) if face in level
+        )
+        if (
+            not dimensions
+            or not 1 <= dimensions[0] <= 2
+            or self.form_degree > dimensions[0]
+        ):
+            raise ValueError("Choose a prism edge or facet admitting this form degree.")
+        return self._prism_trace_data(face, dimensions[0])[1]
+
+    def _prism_trace_data(
+        self, face: tuple[int, ...], m: int
+    ) -> tuple[FormBasis, _ExactMatrix]:
+        tensor = len(face) == 4 or (m == 1 and face[0] % 3 == face[1] % 3)
+        family: FormElementFamily = "tensor-trimmed" if tensor else "trimmed"
+        entity = FormBasis(m, self.form_degree, self.order, family, "untwisted")
+        _, origin_float, jacobian_float = _form_entity_chart(3, self.family, face)
+        origin = tuple(Fraction(int(value)) for value in origin_float)
+        jacobian = tuple(
+            tuple(Fraction(int(value)) for value in row) for row in jacobian_float
+        )
+        pullback, _ = _exact_simplex_pairing(jacobian, 3, self.form_degree)
+        positions = {exponent: index for index, exponent in enumerate(entity.exponents)}
+        components = len(pullback)
+        trace = [
+            [
+                [Fraction(0) for _ in range(self.local_dof_count)]
+                for _ in range(components)
+            ]
+            for _ in entity.exponents
+        ]
+        for source, exponent in enumerate(self.exponents):
+            image = _exact_substitute_monomial(exponent, origin, jacobian)
+            for alpha, scale in image.items():
+                if not scale:
+                    continue
+                target = positions.get(alpha)
+                if target is None:
+                    raise ValueError(
+                        "Prism trace leaves the canonical facet polynomial space."
+                    )
+                for local in range(components):
+                    for ambient, factor in enumerate(pullback[local]):
+                        if factor:
+                            for index in range(self.local_dof_count):
+                                trace[target][local][index] += (
+                                    scale
+                                    * factor
+                                    * self.exact_coefficients[source][ambient][index]
+                                )
+        transition = matmul_exact(
+            [
+                [value for row in moments for value in row]
+                for moments in entity.exact_functional_moments
+            ],
+            [row for monomial in trace for row in monomial],
+        )
+        return entity, tuple(tuple(row) for row in transition)
 
 
 def _canonical_cube_permutation(
@@ -2324,13 +2617,18 @@ def _admit_form_cell(
         "triangle",
         "tetrahedron",
     ) or cell_kind.startswith("simplex:")
-    if not simplex and not tensor:
+    if cell_kind == "prism":
+        if family_ != "prism-trimmed":
+            raise ValueError("Prism cells require family='prism-trimmed'.")
+    elif not simplex and not tensor:
         raise ValueError(
-            "Form elements require a simplex or tensor-product reference cell."
+            "Form elements require a simplex, tensor-product, or prism cell."
         )
-    if tensor and family_ != "tensor-trimmed":
+    elif family_ == "prism-trimmed":
+        raise ValueError("Prism-trimmed forms require a prism cell.")
+    elif tensor and family_ != "tensor-trimmed":
         raise ValueError("Tensor cells require family='tensor-trimmed'.")
-    if simplex and cell_kind != "interval" and family_ == "tensor-trimmed":
+    elif simplex and cell_kind != "interval" and family_ == "tensor-trimmed":
         raise ValueError("Tensor-trimmed forms require a tensor cell or interval.")
     return dimension, family_
 
@@ -2378,8 +2676,10 @@ def form_element(
     twist: FormTwist | None = None,
     proxy: FormProxy | None = None,
 ) -> FiniteElementSpec:
-    """Construct all-order P_r^- Lambda^k, P_r Lambda^k or Q_r^- Lambda^k.
+    """Construct simplex, tensor, or triangle-times-interval trimmed forms.
 
+    Use ``family="prism-trimmed"`` for a prism. The product space in degree k
+    is the direct sum of triangle degree i and interval degree j with i+j=k.
     ``order`` is the FEEC polynomial index (lowest trimmed order is one).
     Flux and density proxies require explicit twist. In ambiguous degrees
     (one-dimensional cells and degree one in two dimensions), proxy is required.

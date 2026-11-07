@@ -95,6 +95,17 @@ def test_porous_media_scenario_1() -> None:
     np.testing.assert_allclose(
         result.value[expected_cells.size :], expected_faces, atol=1.0e-12
     )
+    system, _ = diffusion.linear_system(jnp.eye(3), boundary)
+    assert not system.operator.properties.certifies("positive_definite")
+    assert not system.operator.properties.self_adjoint
+    default_result = diffusion.solve(jnp.eye(3), boundary)
+    assert default_result.successful
+    np.testing.assert_allclose(
+        default_result.value[: expected_cells.size], expected_cells, rtol=0.0, atol=1.0e-8
+    )
+    np.testing.assert_allclose(
+        default_result.value[expected_cells.size :], expected_faces, rtol=0.0, atol=1.0e-8
+    )
     plan, pressure, face_pressure = _hydrostatic_plan()
     previous = plan.initialize(pressure, face_pressure)
     flux = plan.fluxes(previous.pressure_Pa, previous.face_pressure_Pa)

@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from ..._coordinate_measure import CoordinateMeasurePlan
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...geometry._source_array_identity import source_arrays_equal
 from .._cell_geometry import PerCellRestrictedCellGeometryElement
 from .._cell_geometry_validity import cell_jacobian_inverse_and_measure
 from .._integration_domain import IntegrationDomain
@@ -31,6 +32,7 @@ from .._local_variational import (
     LocalVariationalOffer,
     PreparedLocalRegion,
 )
+from ._source_surface import SurfaceFiniteElementGeometry
 
 
 if TYPE_CHECKING:
@@ -452,6 +454,107 @@ class FiniteElementGeometryActions(LocalGeometryActions):
 
 
 @final
+class SourceSurfaceGeometryActions(LocalGeometryActions):
+    """Source immersion evaluated on the selected fixed carrier cell rows."""
+
+    action_id: str = eqx.field(static=True)
+    runtime_layout_id: str = eqx.field(static=True)
+    entity_count: int = eqx.field(static=True)
+    domain_kind: str = eqx.field(static=True)
+    source: SurfaceFiniteElementGeometry
+    block_index: int = eqx.field(static=True)
+    rows: Array
+    reference_points: Array
+    reference_weights: Array
+    cached_points: Array
+    cached_jacobian: Array
+    cached_inverse_jacobian: Array
+    cached_measure: Array
+    cache_reference: tuple[Array, ...]
+
+    def __init__(
+        self,
+        source: SurfaceFiniteElementGeometry,
+        block_index: int,
+        rows: ArrayLike,
+        points: ArrayLike,
+        weights: ArrayLike,
+        /,
+    ) -> None:
+        from ...geometry._brep_capped_material import BRepCappedMaterialMap
+
+        self.source = source
+        self.block_index = int(block_index)
+        self.rows = jnp.asarray(rows, dtype=jnp.int32)
+        self.reference_points = jnp.asarray(points)
+        self.reference_weights = jnp.asarray(weights)
+        host_rows = np.asarray(rows, dtype=np.int32)
+        if (
+            isinstance(source.material_map, BRepCappedMaterialMap)
+            and host_rows.size != source.parameters[block_index].shape[0]
+        ):
+            material_rows = source.material_map.prepare_rows(block_index, host_rows)
+            physical, jacobian = material_rows.evaluate(self.reference_points)
+        else:
+            physical, jacobian = source.evaluate(block_index, self.reference_points)
+            physical, jacobian = physical[self.rows], jacobian[self.rows]
+        inverse, measure, successful = _batched_jacobian_inverse(jacobian)
+        measure = eqx.error_if(
+            measure,
+            jnp.any(~successful | ~jnp.isfinite(measure) | (measure <= 0.0)),
+            "Finite-element source metric must be positive and finite.",
+        )
+        self.cached_points = physical
+        self.cached_jacobian = jacobian
+        self.cached_inverse_jacobian = inverse
+        self.cached_measure = measure
+        self.cache_reference = (
+            physical, jacobian, inverse, measure,
+            self.reference_points, self.reference_weights, self.rows,
+        )
+        self.runtime_layout_id = source.geometry_layout_id
+        self.entity_count = int(self.rows.shape[0])
+        self.domain_kind = "cell"
+        self.action_id = canonical_fingerprint({
+            "kind": "source-surface-local-geometry",
+            "source": source.source_geometry_id,
+            "block": self.block_index,
+            "rows": array_tree_fingerprint(self.rows),
+            "points": array_tree_fingerprint(self.reference_points),
+            "weights": array_tree_fingerprint(self.reference_weights),
+        })
+
+    def realize(self, runtime: object, /) -> LocalMetricResult:
+        from ._generic import FiniteElementRuntimeData
+
+        if not isinstance(runtime, FiniteElementRuntimeData):
+            raise TypeError("runtime must be FiniteElementRuntimeData.")
+        if runtime.geometry_layout_id != self.runtime_layout_id:
+            raise ValueError("Source surface runtime has a different carrier layout.")
+        coordinates = self.source.require_carrier(runtime.coordinates)
+        cached = (
+            self.cached_points,
+            self.cached_jacobian,
+            self.cached_inverse_jacobian,
+            self.cached_measure,
+        )
+        changed = self.source.source_changed() | ~source_arrays_equal(
+            coordinates, self.source.carrier_coordinates
+        )
+        current_values = (*cached, self.reference_points, self.reference_weights, self.rows)
+        for current, original in zip(current_values, self.cache_reference, strict=True):
+            if current.shape != original.shape or current.dtype != original.dtype:
+                raise ValueError("Source surface metric cache layout changed after proof.")
+            changed = changed | ~source_arrays_equal(current, original)
+        points, jacobian, inverse, measure = eqx.error_if(
+            cached, changed, "Source surface metric or carrier changed after proof."
+        )
+        return LocalMetricResult(
+            points, measure * self.reference_weights[None, :], jacobian, inverse
+        )
+
+
+@final
 class FiniteElementLocalProvider(StrictModule):
     """Adapter from stable FE storage to the prepared-local contract."""
 
@@ -590,11 +693,23 @@ class FiniteElementLocalProvider(StrictModule):
             raise ValueError("Finite-element cell domain belongs to another support.")
         names = tuple(str(name) for name in field_names)
         if any(
-            element.continuity != "conforming" or element.value_spec.form_type.degree != 0
+            element.value_spec.form_type.degree != 0
+            or (
+                element.continuity != "conforming"
+                and not (
+                    element.continuity == "discontinuous"
+                    and element.form_basis is None
+                    and element.mapping == "identity"
+                    and element.value_spec.form_type.twist == "untwisted"
+                )
+            )
             for name in names
             for element in discretization.elements[discretization._field_index(name)]
         ):
-            raise ValueError("Generic prepared-local FE execution currently requires H1.")
+            raise ValueError(
+                "Generic prepared-local FE execution requires conforming scalar "
+                "or identity-mapped discontinuous scalar elements."
+            )
         mode = "dense" if str(kernel_mode) == "auto" else str(kernel_mode)
         if mode not in ("dense", "partial", "sum_factorized", "collocated"):
             raise ValueError("Unknown FE prepared-local kernel mode.")
@@ -616,6 +731,9 @@ class FiniteElementLocalProvider(StrictModule):
             )
             if selected.size == 0 and entity_set:
                 continue
+            # ``selected`` enumerates distinct block rows in increasing order.
+            # A nonempty full count therefore names exactly the identity route.
+            all_block_rows = bool(block.cell_count and selected.size == block.cell_count)
             entities = block_cells[selected]
             rows_by_entity = {
                 int(entity): row
@@ -653,18 +771,19 @@ class FiniteElementLocalProvider(StrictModule):
                     if maximum_derivative_order == 2
                     else None
                 )
+                coefficient_transform = None
+                if element.form_basis is not None:
+                    coefficient_transform = discretization.dof_maps[
+                        field_index
+                    ].cell_transforms[block_index]
+                    if not all_block_rows:
+                        coefficient_transform = coefficient_transform[selected]
                 references.append(
                     FiniteElementReferenceActions(
                         basis,
                         gradients,
                         basis_hessians=hessians,
-                        coefficient_transform=(
-                            discretization.dof_maps[field_index].cell_transforms[
-                                block_index
-                            ][selected]
-                            if element.form_basis is not None
-                            else None
-                        ),
+                        coefficient_transform=coefficient_transform,
                         maximum_derivative_order=maximum_derivative_order,
                         kernel_modes=(mode,),
                         action_id=canonical_fingerprint(
@@ -682,27 +801,33 @@ class FiniteElementLocalProvider(StrictModule):
                         ),
                     )
                 )
-                gathers.append(
-                    discretization.dof_maps[field_index].cell_dofs[block_index][selected]
+                cell_dofs = discretization.dof_maps[field_index].cell_dofs[block_index]
+                gathers.append(cell_dofs if all_block_rows else cell_dofs[selected])
+            if discretization.source_surface is not None:
+                if maximum_derivative_order == 2:
+                    raise ValueError("Source surface local geometry does not provide inverse-map Hessians.")
+                geometry = SourceSurfaceGeometryActions(
+                    discretization.source_surface, block_index, selected, points, weights
                 )
-            coordinate_basis, coordinate_gradients, coordinate_hessians = (
-                _coordinate_actions(
-                    discretization.coordinate_elements[block_index],
-                    points,
-                    selected,
-                    hessians=maximum_derivative_order == 2,
+            else:
+                coordinate_basis, coordinate_gradients, coordinate_hessians = (
+                    _coordinate_actions(
+                        discretization.coordinate_elements[block_index],
+                        points,
+                        selected,
+                        hessians=maximum_derivative_order == 2,
+                    )
                 )
-            )
-            geometry = FiniteElementGeometryActions(
-                discretization.default_runtime.geometry_layout_id,
-                domain.kind,
-                coordinate_basis,
-                coordinate_gradients,
-                discretization.coordinate_dofs[block_index][selected],
-                weights,
-                coordinate_hessians=coordinate_hessians,
-                coordinate_measure=discretization.coordinate_measure,
-            )
+                geometry = FiniteElementGeometryActions(
+                    discretization.default_runtime.geometry_layout_id,
+                    domain.kind,
+                    coordinate_basis,
+                    coordinate_gradients,
+                    discretization.coordinate_dofs[block_index][selected],
+                    weights,
+                    coordinate_hessians=coordinate_hessians,
+                    coordinate_measure=discretization.coordinate_measure,
+                )
             selected_domain = IntegrationDomain(
                 "cell",
                 entities,

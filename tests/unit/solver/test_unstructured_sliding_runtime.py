@@ -288,6 +288,7 @@ def _certified_face_values(discretization: Any, face_ids: Any, face_cells: Any) 
         "receptor_face_normals": normals,
         "receptor_face_measures": np.asarray(discretization.face_quadrature_weights)[ids],
         "receptor_face_cells": cells,
+        "receptor_face_orientations": orientation.astype(np.int8),
     }
 
 

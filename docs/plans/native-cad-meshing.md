@@ -304,6 +304,8 @@ A quadrilateral mesh with T-junctions remains a mesh. It is not accepted as a T-
 ## 9. Native generation and improvement
 
 All named A files below are donor-only on current dev; E files already exist. Routes return construction data/edits to the common scientific acceptance owner, not private successful-result types.
+**Approved mapped source/root overlay cutover:** retain the original PLC facets, edges, occurrences, material sides, frame-sweep stations and coordinate maps. Partition authored facets and edges exactly against root faces and edges, with canonical reduced rational piece coordinates and independently proved source and root coverage. Split pieces keep their original entity identities and carry distinct root-qualified chart identities; they are not new physical source entities. Relation, query, witness, association and result identities and their PyTree/archive representations consequently change; original source and numerical geometry identities do not. Cold restore reconstructs the authority and revalidates the exact partitions and identities, not transient proof tokens or replayed requests.
+
 
 | Files | Action and acceptance |
 |---|---|
@@ -318,6 +320,15 @@ All named A files below are donor-only on current dev; E files already exist. Ro
 
 **Required combination work, not merely admission labels:** source-aware tensor-metric finishing after initial tetrahedral fill; periodic-orbit-synchronized 3D tetrahedral edits; curved-source preservation and high-order coordinate transitions through selected edits; mixed-family refine/coarsen with layer/interface closure; labeled material junctions and original source fidelity through regeneration. Route/family/order/operation support is recorded from implemented positive cases, not an unrestricted Cartesian-product claim.
 
+**Approved thin-channel sizing correction:** the original `planar-thin-channel`
+positive uses a 0.02 m uniform target and corresponding 0.03 m maximum size,
+instead of 0.8 m and 1.2 m. Preserve its authored geometry, 25° minimum angle,
+hard median-size acceptance, and 50% relative size tolerance. The former
+controls are incompatible: the neck and minimum angle require at least 29 mesh
+edges, while the region area permits at most 12 edges of length at least 0.4 m,
+too few for the requested median. The user explicitly selected a finer positive
+workflow rather than converting this case into an expected rejection.
+
 ## 10. Layers, high order, structured and general cell families
 
 | Files | Action and acceptance |
@@ -330,7 +341,50 @@ All named A files below are donor-only on current dev; E files already exist. Ro
 | A `meshing/_polyhedral_generation.py`; A `providers/_native_polyhedral.py`; E `geometry/_triangulation.py`, `discretization/_polygon_geometry.py`, `_polygon_query.py`, `_cell_complex.py`, `_cell_mesh.py` | Restricted Voronoi/power pieces over nonconvex/cavity/material domains, reciprocal oriented faces and source/site/component ancestry. Join only legal same-region pieces. Preserve exact/bounded coordinate maps and consumer decomposition/conditioning. |
 | E `discretization/_tensor.py`, `_tensor_entities.py`, `_tensor_index.py`, `_hexahedral.py`, `multiblock/_core.py`, `_interpolation.py`, `_constraint_extension.py`; E spatial/AMR balanced-tree owners only where required | Reuse current layouts, oriented templates, explicit interfaces and balanced spatial topology. No second octree, AMR executor or structured mesh carrier. Nonconforming interfaces use actual existing mortar/transfer, never pretend conforming gluing. |
 
+**Approved archived-ridge cap policy:** the user explicitly permits conforming cap subdivision for the original archived ridge case, with matching layer/core refinement. Preserve the authored source geometry, existing node positions, physical layer heights and growth, materials, and all quality targets. New cap nodes and facet subdivisions require exact source ancestry and conforming interface coverage. This is an explicit opt-in; other fixed-cap requests retain their fixed topology. The original fixed-cap request is geometrically infeasible: its unit cap edge borders a strip of height approximately 0.03, forcing an incident tetrahedron radius-to-shortest-edge ratio greater than 8.33 against the requested bound of 2, even after noncap-only refinement.
+
+**Approved unit-box boundary policy:** the user explicitly permits conforming boundary subdivision for the original unit-box layer/core workflow, preserving the original source geometry, existing vertices, layer heights and growth, materials, and quality targets. Exact binary64-rational analysis found 128 violating noncap side facets and no violating cap facets, so prefer subdivision of noncap side facets while keeping the cap fixed; coordinated cap refinement is permitted only if needed. Subdivision must preserve exact source entity and occurrence ancestry and independently prove source and interface coverage. This approval is specific to the unit-box request, not a general change to fixed-boundary requests.
+
+**Approved curved-hybrid boundary policy:** the user explicitly permits conforming boundary remeshing for the original curved periodic layer/core workflow, including matched cap refinement when necessary. Preserve the exact mapped source geometry, all existing vertex positions, periodic and material interfaces, physical layer heights and minimum thickness, visibility, stretch, the original lower growth bound, and unchanged mesh quality limits. The user additionally approved raising only the physical growth upper bound to 1.001: exact nearest-wall analysis of the four retained original columns establishes growth approximately 1.000798388786, above the original upper bound 1.0000000001. Reprove the original mapped root charts, source occurrences, interface coverage, periodic action and actual physical controls for every refined column. These opt-ins do not alter other fixed-boundary requests.
+
+**Approved input-forced quality exemption:** the user explicitly approved that canonical tetrahedral acceptance exempts only quality rows proved to be forced by the authored input. A row is exempt only when its cell is exactly incident to an authored ridge whose exact input dihedral angle is below the requested dihedral target, and the failing quantity is that ridge dihedral, which no mesh can raise above the input angle. Each exemption is reported in the acceptance evidence with the ridge, its exact input angle and the achieved value. Every other quality row stays a hard gate. Rows near a small input angle that are not provably forced (for example radius-edge rows or dihedrals away from the ridge) are refinement defects, not exemptions. The original small-angle wedge (input 7.153°, target 10°) is the motivating case.
+
+The user subsequently extended this approval to radius-edge rows forced by an authored face angle. A radius-edge row is exempt only when the cell has a face that triangulates an authored planar source facet at one of that facet's vertices whose exact interior angle α satisfies 1/(2·sin α) above the requested radius-edge bound. Every triangle of that facet incident to the vertex then has an angle of at most α, so it and every tetrahedron on it exceed the bound regardless of the mesher. The exemption covers only that radius-edge row. The record reports the source vertex, the exact angle, the forced lower bound 1/(2·sin α), the face triangle's own ratio and the achieved cell ratio. Radius-edge rows on cells without such a face remain hard findings.
+
+**Approved shape-target strength:** the user approved an explicit strength for native tetrahedral shape targets (radius-edge bound and minimum dihedral), mirroring `SizeControlStrength`. Hard remains the default: today's gate plus the approved input-forced exemptions. A soft request still refines and improves toward the target, but publishes every unmet cell (criterion, achieved value, reason) as evidence instead of refusing. Validity, determinant, orientation, size, source-fidelity, coverage and physics gates stay hard regardless. An original profile may declare soft only where the donor source authored the target as an aim (published as unmet evidence, not gated), and each receipt cites that donor source. Soft strength enters request and result identities; hard requests keep their identities.
+
+**Approved bounded carrier deviation for nested refinement:** the user approved
+keeping exactly nested refinement when a boundary vertex's parents are rounded
+source points. A created boundary vertex's exact source point is the exact
+stencil combination of its parents' exact source points, which lies exactly in
+its declared stratum. Its binary64 carrier keeps the nested position and may
+differ from that source point by a recorded deviation bound. The bound is
+propagated exactly from the parents' bounds plus the new rounding and stored
+as `carrier_deviation` in the PLC source-point records. Certification checks
+the carrier against that bound instead of requiring the correct rounding;
+stratum membership stays exact, and exact nested transfer is preserved. Source
+points without parents keep the correctly rounded contract. Stored records and
+dependent identities change for refined vertices.
+
+For planar bilinear boundary faces crossing distinct authored source strata,
+use exact whole-face image evidence and separately identified physical overlap
+pieces. Their target support is the pullback through the full bound face map,
+not an affine virtual reference triangle. Extend the canonical source-fidelity
+record and the typed support variants in `target_reference_pieces`; update
+issuance, association validation/transfer, currentness, and archive replay
+together. Prove source and target coverage without merging coplanar source
+identities or setting false per-triangle correspondence errors to zero.
+
 **General quad/hex research acceptance is mandatory and separate:** positive non-sweepable parts, multiply connected domains/cavities, curved feature intersections and material interfaces; whole-cell positivity, global embedding, exact required family, fidelity and quality. Trace frame singularities, boundary parity, decomposition and map inversion failures to exact obstructions. Develop and independently test transition templates and orientation/coverage. Dual subdivision, box/sweep success or all-negative admission does not close the general gate. If a required positive remains unresolved, report that gate uncompleted; do not rename the route or narrow the corpus.
+
+**Approved validity-proof identity change:** use canonical directed interval
+enclosures of the exact rational Jacobian and determinant when they prove the
+existing validity obligations, retaining the existing exact method when
+unresolved. Source geometry, coordinate realization, scientific thresholds,
+failure semantics, and requested quality remain unchanged. Proof bounds and
+certificate identities may change; regenerate affected certificates, archive
+evidence, and qualification records. Do not imitate historical proof payloads or
+describe this as identity-preserving optimization.
 
 ## 11. Geometry and field transitions, periodicity, distribution and consumers
 
@@ -548,6 +602,15 @@ Use one compact implementation/verification record: changed ownership surface, e
   actual ancestry; nearby UV shadows or distance bounds are not seam identity.
   Regenerate changed witness/certificate/archive identities, with numerical arrays
   remaining dynamic.
+- **Approved periodic witness cutover:** retain the actual exact vertex-coordinate
+  witness separately in `PeriodicMeshTopology`, rather than only its hash.
+  Preserve the full nonlinear coordinate map. Independently revalidate the
+  witness, every incident exact mapped corner, deck actions, and oriented facet
+  traces during currentness checks and restoration. Migrate producers, topology
+  edits, codecs, tests, and affected artifacts in one clean cutover; no old
+  missing-field shim or hash-as-proof. Keep numerical witness leaves dynamic,
+  prevent carrier cycles, and preserve the distinction between incidence
+  identity and geometry identity.
 - Measured performance claims match actual comparable workloads and hardware. Lack of evidence is stated, not replaced with capability counts or cost-model counters.
 
 ## 13. Selected Solidcraft-derived extensions
@@ -746,3 +809,210 @@ cache metadata.
 - These items extend the plan's acceptance obligations; none is marked implemented
   by this addition. Preserve all original section 12 completion requirements and
   explicitly track remaining extension work rather than silently dropping it.
+
+## 14. Selected TPMS-Generator-derived extensions
+
+Added by explicit user request after reviewing
+[TPMS-Generator at `b9b2c841f827229886f13113d30ec893f15dcca9`](https://github.com/meysamznj/TPMS-Generator/tree/b9b2c841f827229886f13113d30ec893f15dcca9)
+(MIT). The donor is a single-file PyQt application (`app.py`). It samples six
+trigonometric nodal fields (gyroid and its mirror, Schwarz D, Schwarz P, I-WP,
+lidinoid) or a string-`eval` custom formula on a float32 grid. It then extracts
+`±τ` or `c` isosurfaces by marching cubes. Sheet walls use `τ = ½·k̄·t`, with a
+hard-coded family "average gradient" k̄, so the requested thickness is a heuristic.
+The constant-padded field is clipped against a box, cylinder or sphere with
+Manifold3D Booleans. The donor reports porosity, surface area and specific surface
+from the resulting STL, with optional QEM decimation.
+Nothing in that pipeline is certified. This section adopts the useful
+*scientific product*: periodic lattice metamaterials for AM, FEA and CFD. Every
+claim is built on Phydrax's certified owners. Formulas are mathematics; no donor
+code is copied.
+
+### 14.1 Gap analysis against current owners
+
+- Interval enclosures already cover `sin`/`cos` and gradients through the traced JAX
+  program (`geometry/_interval_enclosure.py`), so TPMS fields are admissible to
+  enclosure-complete adaptive discovery (`geometry/implicit/_adaptive_discovery.py`).
+- Adaptive and fixed-lattice implicit discovery and implicit volume fill refuse
+  periodic axes and `periodic_constraints` (`_discovery.py`, `_curve_discovery.py`,
+  `providers/_native_implicit.py`). A periodic quotient TPMS cell is therefore not
+  meshable today. This is the foundational gap.
+- Sharp CSG with analytic envelopes exists (`geometry/analytic/_operations.SharpCSG`).
+  Certified crease curves between an implicit field and an analytic envelope
+  surface, plus the trimmed envelope caps they bound, do not.
+- Orbit-locked periodic tetrahedral adaptation (`providers/_native_periodic_tet.py`),
+  periodic FE transfer and `solid_mechanics.PeriodicHomogenizationCase`
+  (Hill–Mandel evidence) exist, but never consume an implicit periodic cell.
+- No source owns trigonometric-polynomial (Fourier) level-set families, critical
+  levels, or sheet-thickness semantics.
+
+### 14.2 Priority and readiness
+
+1. Completion of the original section-12 corpus remains first; these extensions
+   do not displace it.
+2. Trigonometric nodal source family and certified critical levels (14.3), and
+   periodic adaptive discovery (14.4): the foundations.
+3. Periodic quotient surface and volume meshing (14.4), then lattice metrics (14.6).
+4. Finite specimens clipped by analytic envelopes with certified creases and caps
+   (14.5).
+5. Periodic homogenization consumers and fixed-topology design sensitivities (14.7).
+6. Qualification profiles, export, documentation and benchmarks (14.8), run in
+   the strict tier order of the execution protocol.
+
+### 14.3 Trigonometric nodal level-set sources
+
+**Mechanism:** represent each family exactly as a finite trigonometric polynomial
+on the lattice's reduced coordinates `u ∈ ℝ³/ℤ³`, as a canonical table of rational
+coefficients times products of `sin`/`cos(2π·n·u)`. The gyroid, Schwarz P/D, I-WP,
+lidinoid and the gyroid's mirror image are named tables with cited formulas.
+Arbitrary user Fourier tables use the same representation. They are labelled
+honestly as *nodal approximations* of the minimal surfaces, not exact minimal
+surfaces; mean curvature is reported, not assumed zero.
+
+**Owners:** N `geometry/analytic/_trigonometric_level_set.py` (a `GeometrySource`
+with the family table, `PeriodicCell` lattice, level `c` and region selector
+`network`/`complement`/`sheet`). Families and region selectors are closed
+`Literal` selectors parsed once. Reuse `discretization/_periodic_cell.PeriodicCell`
+for the lattice, including anisotropic and skew affine cells.
+
+**Required behavior and evidence:**
+- Evaluate on exactly reduced fractional coordinates, so that lattice-equivalent
+  points give bitwise-identical field values and enclosures. Periodic orbit
+  consistency must not depend on `sin(2π) ≈ 0` rounding.
+- Take the exact Lipschitz and Hessian bounds from the coefficient table
+  (Σ|a|·‖2πn‖ terms) for interval and Lipschitz enclosure policies.
+- Certify critical levels: enclose all solutions of `∇F = 0` in the quotient cell
+  by interval Newton/Krawczyk through the existing native interval and nonlinear
+  owners, and enclose their critical values. A requested level `c`, or sheet band
+  `±τ`, whose enclosure meets a critical-value enclosure is refused as singular.
+  Topology changes (for example Schwarz P at `|c| = 1`) are certified events,
+  never meshed silently.
+- Symmetry facts used as oracles must be proved from the table, not assumed. For
+  example, a measure-preserving lattice map `g` of the quotient cell with
+  `F∘g = −F` gives an exact volume fraction of ½ at `c = 0`. For Schwarz P that
+  is the half-lattice shift `u ↦ u + (½,½,½)`; for the gyroid it is inversion
+  `u ↦ −u`.
+- No string expression parser and no `eval`. Arbitrary user fields remain JAX
+  callables admitted only through the existing interval-extension contract, which
+  refuses unsupported primitives.
+
+### 14.4 Periodic discovery and quotient meshing
+
+**Mechanism:** discover the zero set on the three-torus quotient of the declared
+lattice. The box cover is identified across opposite cell faces, and the exact
+translation group comes from `PeriodicCell`. Then build a periodic surface carrier
+and a periodic constrained tetrahedral fill whose face triangulations are
+identical under the lattice action.
+
+**Owners:** E `geometry/implicit/_adaptive_discovery.py`, `_policy.py`,
+`_source_charts.py`, `_certified_implicit.py` (quotient-aware cover, scaffold
+and topology); E `providers/_native_implicit.py`, `meshing/_implicit_volume.py`
+(admit `periodic_constraints` for periodic sources); reuse
+`discretization/_periodic_topology.PeriodicMeshTopology`, `_native_periodic_tet.py`
+orbit maps, and native PLC/refine3d with paired periodic faces. Coordinate the
+native periodic fill with the refine3d owner, and do not create a second periodic
+topology representation.
+
+**Required behavior and evidence:**
+- Report quotient topology per cell (components, Euler characteristic and genus of
+  the quotient surface; component counts of the network and complement) from the
+  certified cover. Compare against cited literature values only for the declared
+  primitive or conventional cell.
+- Every periodic face pair is exact under the lattice action. Orbit
+  representatives and windings come from the canonical periodic topology owner.
+- Source fidelity, coverage and the approved hard/soft shape-target semantics are
+  unchanged. Orbit-locked adaptation and compatible transfer on the quotient reuse
+  the existing periodic adaptation owners.
+
+### 14.5 Sheet semantics and finite specimens
+
+**Sheet thickness:** the level band `{|F| ≤ τ}` has nonuniform wall thickness.
+Expose it honestly through two explicit, separately named semantics:
+1. A *level band* with requested `τ`. Its certified minimum wall thickness is
+   `2τ / sup‖∇F‖` over the band, enclosed by intervals; the achieved thickness
+   distribution is reported as measured evidence.
+2. A *minimum-thickness target*. Solve for the smallest `τ` whose certified
+   minimum thickness meets the requested printable wall `t`. This replaces the
+   donor's `½·k̄·t` heuristic.
+
+A true geometric offset (exact distance band) is a different source. It is added
+only if certified distance queries to the nodal surface can carry it, and never
+relabelled from a level band.
+
+**Finite specimens:** intersect the lattice source with an analytic `Box`,
+`Cylinder` or `Sphere` through `SharpCSG`, keeping exact set semantics. The crease
+curves are the zero set of `F` restricted to each envelope surface chart. Discover
+them with the existing two-dimensional implicit curve discovery on the envelope's
+parametric chart. They become protected features and trim the envelope caps,
+which seal the cut ends like the donor's Boolean caps, but with certified
+geometry. Owners: E `geometry/implicit/_curve_discovery.py` (parametric-chart
+mode), E `meshing/_surface_construction.py` and the implicit volume route (mixed
+implicit-face and trimmed-analytic-cap boundary), reusing source-fidelity and
+protected-feature evidence. Creases tangent to an envelope are certified
+unresolved events, not meshed.
+
+### 14.6 Lattice metrics
+
+- Certified solid volume fraction (relative density, porosity) enclosure from the
+  final discovery cover: inside, outside and unresolved leaf volumes, which are
+  independent of the mesh. Report it alongside the accepted mesh measure and its
+  source-fidelity bound.
+- Surface area and specific surface area from the accepted mesh, reported as
+  measured quantities with the fidelity evidence. They are not claimed certified
+  unless an area enclosure is proved.
+- Owners: E `geometry/implicit/_adaptive_discovery.py` (cover measure enclosure)
+  and the existing meshing result measure/evidence owners. No donor-style metric
+  dictionary.
+
+### 14.7 Physics and design consumers
+
+- Periodic homogenization: solve cell problems on the periodic quotient mesh with
+  `PeriodicHomogenizationCase` and Hill–Mandel evidence for effective elasticity,
+  and the scalar analogue for effective conductivity. Effective permeability needs
+  a periodic Stokes cell problem and is planned only if that solver owner exists.
+  Cubic symmetry of the effective tensor is a checked consequence for cubic
+  families, not an imposed constraint.
+- Design: lattice parameters (level `c`, `τ` or the thickness target, cell
+  scales) are `DesignState` parameters. Realization uses the fixed-lattice,
+  fixed-topology `ImplicitSurfacePlan` route, giving JAX sensitivities of volume
+  fraction and homogenized properties. Certified critical-level crossings and
+  topology changes invalidate sensitivities as events, consistent with the
+  existing design event semantics.
+- Spatially graded lattices (position-dependent `c` or cell size) are
+  nonperiodic finite-specimen sources. They are a later extension and are never
+  meshed as a periodic quotient.
+
+### 14.8 Qualification, export and documentation
+
+- N `tools/meshing_qualification/scenarios/native_tpms.py`, registered in the
+  qualification CLI:
+  - periodic gyroid sheet cell: quotient topology, exact periodic face pairing,
+    the certified volume-fraction enclosure against an independent high-order
+    quadrature of `{|F| ≤ τ}`, and homogenized conductivity with checked cubic
+    symmetry;
+  - Schwarz P network at `c = 0`: volume fraction ½ proved by symmetry, plus
+    network/complement component counts;
+  - Schwarz P at a level inside its critical-value enclosure: certified singular
+    refusal;
+  - diamond specimen clipped by a cylinder: certified creases and caps, a
+    watertight oriented solid, FE linear-elastic compression, and volume/porosity
+    oracles;
+  - an independent-process cold restore of one periodic lattice result.
+- Export: STL/3MF write of the accepted surface through the existing interchange
+  catalog. Solid export requires a closed, oriented 2-manifold certificate, and
+  STL is declared lossy with respect to the source.
+- Guide section in `docs/guides_meshing.md`, an example
+  `examples/native_tpms_lattice.py`, changelog, public API and capability
+  regeneration, and typing fixtures for the new public source.
+- Benchmarks: discovery, periodic fill, crease discovery and homogenization,
+  phase-separated, scaling with cells per specimen and level near criticality.
+
+### 14.9 Explicit exclusions
+
+- No marching cubes, Manifold3D, trimesh, scikit-image, PyVista/VTK, PyQt or
+  GPU-detection code. No float32 fields and no constant-padding closure trick.
+- No string formula parser or `eval`.
+- No average-gradient `τ` heuristic presented as wall thickness.
+- No QEM decimation: size reduction stays the certified native remesh within the
+  fidelity band.
+- These items extend the plan's acceptance obligations; none is implemented by this
+  addition, and the original section-12 completion requirements are unchanged.

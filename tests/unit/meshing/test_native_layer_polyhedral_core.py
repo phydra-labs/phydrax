@@ -87,7 +87,8 @@ def _bind_layer_source(
         region_ids=complex_.region_ids,
         core_region_map=np.arange(len(complex_.region_ids), dtype=np.int64),
         fidelity_source=charts.boundary_source,
-        source_surface_charts=charts,
+        source_wall_charts=charts,
+        source_boundary_charts=charts,
         maximum_deviation=0.0,
         core_facet_source_ids=complex_.facet_ids,
         core_facet_source_occurrence_paths=complex_.facet_occurrence_paths,
@@ -205,6 +206,24 @@ def test_layer_core_refuses_polyhedral_fill_without_authored_power_source() -> N
 
     assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_CAPABILITY
     assert "authored core power source" in str(failure.value)
+
+
+def test_layer_core_refuses_soft_volume_shape_strength() -> None:
+    fixture = _make_fixture()
+    source, specification = _source_and_specification(fixture, include_power_source=True)
+    options = NativeMeshingOptions(
+        "layer_core",
+        volume_schedule=NativeVolumeSchedule(shape_strength=SizeControlStrength.SOFT),
+        polyhedral_schedule=NativePolyhedralSchedule(require_every_site=True),
+    )
+
+    with pytest.raises(MeshingFailure) as failure:
+        NativeMeshingProvider(options).plan(
+            source, specification, coordinate_contract=_COORDINATES
+        )
+
+    assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_COMBINATION
+    assert "hard NativeVolumeSchedule shape strength" in str(failure.value)
 
 
 def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure() -> None:

@@ -31,6 +31,8 @@ from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
     CellValidityStatus,
+    CellValidityPolicy,
+    ComputedCellValidity,
     certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import SimplicialConnectivity
@@ -43,6 +45,7 @@ from ..discretization._coordinate_enclosure import (
     multiply,
     Polynomial,
     polynomial_bounds,
+    RestrictedCoordinateMapPreparation,
     scale,
     sum_polynomials,
 )
@@ -1835,15 +1838,18 @@ def _mapped_root_quality(
                 "Mapped source quality requires exact per-cell root restrictions."
             )
         routes_host = np.asarray(route, dtype=np.int64)
+        preparation = RestrictedCoordinateMapPreparation(
+            element, coefficients, routes_host, mode="source"
+        )
         for row in range(block.cell_count):
             local = tuple(coefficients[int(index)] for index in routes_host[row])
-            basis: tuple[Expression, ...] = coordinate_effective_basis(
-                element, cell_row=row
-            )
-            components: tuple[tuple[ExactScalar, ...], ...] = tuple(
-                tuple(local[dof][axis] for dof in range(len(local))) for axis in range(3)
-            )
-            expressions = linear_combinations(basis, components)
+            expressions = preparation.expressions(row)
+            if expressions is None:
+                basis = coordinate_effective_basis(element, cell_row=row)
+                components: tuple[tuple[ExactScalar, ...], ...] = tuple(
+                    tuple(local[dof][axis] for dof in range(len(local))) for axis in range(3)
+                )
+                expressions = linear_combinations(basis, components)
             jacobian = tuple(
                 tuple(derivative(expression, axis) for axis in range(3))
                 for expression in expressions
@@ -2124,7 +2130,7 @@ def realize_mapped_grid_hexes(
     frame: PreparedSourceHexFrame,
     schedule: _NativeHexGridSchedule,
     /,
-) -> MappedGridHexConstruction:
+) -> tuple[MappedGridHexConstruction, ComputedCellValidity]:
     """Compose each integer source-root cell through its exact curved map."""
     if (
         grid.domain_id != domain.domain_id
@@ -2332,7 +2338,8 @@ def realize_mapped_grid_hexes(
         source_mesh=target if restricted_map is not None else None,
         restriction_source=restriction,
     )
-    validity = certify_cell_geometry_validity(geometry, mesh=target)
+    computed_validity = ComputedCellValidity(geometry, target, CellValidityPolicy(), None)
+    validity = computed_validity.certificate
     if validity.invalid_count or validity.unresolved_count:
         raise ValueError(
             "Mapped root-grid cells must have certified positive coordinate maps."
@@ -2373,7 +2380,7 @@ def realize_mapped_grid_hexes(
         entity_ids.append(np.asarray([value[1] for value in parents], dtype=np.int64))
     regions = np.concatenate(grid.block_regions)
     parents = np.concatenate(source_parent_rows)
-    return MappedGridHexConstruction(
+    construction = MappedGridHexConstruction(
         target,
         geometry,
         validity,
@@ -2391,6 +2398,7 @@ def realize_mapped_grid_hexes(
         grid.connection_id,
         schedule.schedule_id,
     )
+    return construction, computed_validity
 
 
 __all__ = [

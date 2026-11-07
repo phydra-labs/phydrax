@@ -105,6 +105,27 @@ class Triangulation3D {
   // Exact positions of witnessed vertices; with a bank, every predicate tuple
   // that contains a witnessed vertex evaluates its exact position.
   void set_exact_points(const ExactVertexBank* bank) noexcept { exact_ = bank; }
+  // Delaunay conflicts use physical distances but keep index-space geometry.
+  void set_affine_metric(const double* linear) {
+    metric_ = linear;
+    if (linear == nullptr) {
+      metric_orientation_ = 1;
+      return;
+    }
+    const double origin[3] = {0.0, 0.0, 0.0};
+    const double x[3] = {linear[0], linear[3], linear[6]};
+    const double y[3] = {linear[1], linear[4], linear[7]};
+    const double z[3] = {linear[2], linear[5], linear[8]};
+    metric_orientation_ = orient3d(origin, x, y, z);
+  }
+  int delaunay_insphere(const ExactPointRef& a, const ExactPointRef& b,
+                        const ExactPointRef& c, const ExactPointRef& d,
+                        const ExactPointRef& e, int64_t ia, int64_t ib,
+                        int64_t ic, int64_t id, int64_t ie) const {
+    if (metric_ == nullptr) return insphere_sos(a, b, c, d, e, ia, ib, ic, id, ie);
+    return affine_insphere_sos(metric_, metric_orientation_, a, b, c, d, e,
+                               ia, ib, ic, id, ie);
+  }
 
   // Shift live tetrahedron references and per-point stamps for a point-bank
   // insertion; callers rebind the coordinate span before geometric use.
@@ -427,8 +448,8 @@ class Triangulation3D {
   bool finite_conflict(const Tetrahedron& current, int32_t p) const {
     const int32_t* v = current.v;
     if (weights_.empty()) {
-      return insphere_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p), v[0], v[1], v[2],
-                          v[3], p) > 0;
+      return delaunay_insphere(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p),
+                               v[0], v[1], v[2], v[3], p) > 0;
     }
     return power3d_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p),
                        weights_[v[0]], weights_[v[1]], weights_[v[2]], weights_[v[3]],
@@ -572,6 +593,8 @@ class Triangulation3D {
 
   std::span<const double> points_;
   const ExactVertexBank* exact_ = nullptr;
+  const double* metric_ = nullptr;
+  int metric_orientation_ = 1;
   std::span<const double> weights_;
   TetrahedralComplex complex_;
   CavityEdit edit_;

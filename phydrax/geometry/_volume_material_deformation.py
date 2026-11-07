@@ -149,6 +149,8 @@ def _require_coverage(
     coverage: DomainCoverageCertificate,
     role: str,
     /,
+    *,
+    chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
 ) -> DomainCoverageCertificate:
     if not isinstance(coverage, DomainCoverageCertificate):
         raise TypeError(f"{role} endpoint requires a DomainCoverageCertificate.")
@@ -177,6 +179,7 @@ def _require_coverage(
             source=coverage.source,
             fidelity=coverage.fidelity,
             source_coverage_witness=coverage.source_coverage_witness,
+            chart_parent=chart_parent,
         )
     except (TypeError, ValueError) as error:
         raise ValueError(
@@ -215,6 +218,7 @@ class MaterialReferenceDeclaration(StrictModule, NonTrainableState):
         occurrence_paths: tuple[tuple[str, ...], ...]
         | list[tuple[str, ...]]
         | None = None,
+        chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> None:
         from ._volume_material_map import (
             _material_occurrence_paths,
@@ -248,7 +252,13 @@ class MaterialReferenceDeclaration(StrictModule, NonTrainableState):
             source_map, entities, regions, occurrence_paths, "reference"
         )
         root_coverage = _require_endpoint_source_coverage(
-            root_mesh, root_geometry, source_map, regions, root_coverage, "reference"
+            root_mesh,
+            root_geometry,
+            source_map,
+            regions,
+            root_coverage,
+            "reference",
+            chart_parent=chart_parent,
         )
         identity_maps = _identity_reference_maps(root_mesh)
         self.root_mesh = root_mesh
@@ -303,6 +313,8 @@ class MaterialReferenceDeclaration(StrictModule, NonTrainableState):
         source_map: Any,
         root_coverage: DomainCoverageCertificate,
         /,
+        *,
+        chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> MaterialReferenceDeclaration:
         if not isinstance(value, MaterialReferenceDeclaration):
             raise TypeError("value must be MaterialReferenceDeclaration.")
@@ -316,6 +328,7 @@ class MaterialReferenceDeclaration(StrictModule, NonTrainableState):
             frame_id=value.frame_id,
             policy=value.policy,
             occurrence_paths=value.occurrence_paths,
+            chart_parent=chart_parent,
         )
         if rebuilt.declaration_id != value.declaration_id:
             raise ValueError("Stored material reference declaration does not revalidate.")
@@ -334,6 +347,7 @@ def declare_material_reference(
     frame_id: str,
     policy: MaterialReferencePolicy,
     occurrence_paths: tuple[tuple[str, ...], ...] | list[tuple[str, ...]] | None = None,
+    chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
 ) -> MaterialReferenceDeclaration:
     """Explicitly author this accepted configuration as the material reference."""
     if policy is not MaterialReferencePolicy.ACCEPTED_CONFIGURATION:
@@ -350,6 +364,7 @@ def declare_material_reference(
         frame_id=frame_id,
         policy=policy,
         occurrence_paths=occurrence_paths,
+        chart_parent=chart_parent,
     )
 
 
@@ -402,6 +417,8 @@ class VolumeMaterialDeformation(StrictModule, NonTrainableState):
         source_frame_id: str,
         target_frame_id: str,
         coordinate_transition: Any = None,
+        source_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+        target_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> None:
         from ..discretization._cell_geometry_transition_types import (
             CellGeometryTransition,
@@ -426,10 +443,28 @@ class VolumeMaterialDeformation(StrictModule, NonTrainableState):
                 "Material deformation endpoints must remain in the declared reference frame."
             )
         source_coverage = _require_coverage(
-            source_mesh, source_geometry, reference.source_map, source_coverage, "source"
+            source_mesh,
+            source_geometry,
+            reference.source_map,
+            source_coverage,
+            "source",
+            chart_parent=(
+                (reference.root_mesh, reference.root_geometry)
+                if source_chart_parent is None
+                else source_chart_parent
+            ),
         )
         target_coverage = _require_coverage(
-            target_mesh, target_geometry, reference.source_map, target_coverage, "target"
+            target_mesh,
+            target_geometry,
+            reference.source_map,
+            target_coverage,
+            "target",
+            chart_parent=(
+                (reference.root_mesh, reference.root_geometry)
+                if target_chart_parent is None
+                else target_chart_parent
+            ),
         )
         source_maps = _canonical_reference_maps(
             source_mesh, source_reference_maps, "source"
@@ -559,6 +594,8 @@ class VolumeMaterialDeformation(StrictModule, NonTrainableState):
         source_coverage: DomainCoverageCertificate,
         target_coverage: DomainCoverageCertificate,
         coordinate_transition: Any = None,
+        source_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+        target_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> VolumeMaterialDeformation:
         if not isinstance(value, VolumeMaterialDeformation):
             raise TypeError("value must be VolumeMaterialDeformation.")
@@ -579,6 +616,8 @@ class VolumeMaterialDeformation(StrictModule, NonTrainableState):
                 if coordinate_transition is None
                 else coordinate_transition
             ),
+            source_chart_parent=source_chart_parent,
+            target_chart_parent=target_chart_parent,
         )
         if rebuilt.deformation_id != value.deformation_id:
             raise ValueError("Stored volume material deformation does not revalidate.")

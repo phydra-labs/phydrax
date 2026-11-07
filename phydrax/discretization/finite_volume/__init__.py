@@ -93,6 +93,10 @@ _DEFERRED_EXPORTS = {
     "DistributedMarkerExchange": "._distributed_marker_transfer",
     "DistributedMarkerOwnershipPlan": "._distributed_marker_transfer",
     "DistributedMarkerTransferDiagnostics": "._distributed_marker_transfer",
+    "DrivenEulerSource": "._driven_euler_source",
+    "DrivenEulerSourceArgs": "._driven_euler_source",
+    "advance_driven_euler_banks": "._driven_euler_source",
+    "driven_euler_cell_keys": "._driven_euler_source",
     "DyadicFiniteVolumeDiscretization": "._dyadic",
     "DyadicFiniteVolumePlan": "._dyadic",
     "ConvexStateLimiterPlan": "._dynamics",
@@ -537,6 +541,12 @@ if TYPE_CHECKING:
         DistributedMarkerExchange,
         DistributedMarkerOwnershipPlan,
         DistributedMarkerTransferDiagnostics,
+    )
+    from ._driven_euler_source import (
+        advance_driven_euler_banks,
+        driven_euler_cell_keys,
+        DrivenEulerSource,
+        DrivenEulerSourceArgs,
     )
     from ._dyadic import DyadicFiniteVolumeDiscretization, DyadicFiniteVolumePlan
     from ._dynamics import (
@@ -1007,6 +1017,10 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "DrivenEulerSource",
+    "DrivenEulerSourceArgs",
+    "advance_driven_euler_banks",
+    "driven_euler_cell_keys",
     "DyadicFiniteVolumeDiscretization",
     "DyadicFiniteVolumePlan",
     "ALEBoundaryContext",

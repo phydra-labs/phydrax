@@ -1466,3 +1466,50 @@ def test_tspline_analytic_counterpart_retains_exact_source_origin() -> None:
 
     assert Fraction.from_float(float(lower[2])) <= offset
     assert offset <= Fraction.from_float(float(upper[2]))
+
+
+@pytest.mark.parametrize("reverse", (False, True), ids=("forward", "reversed"))
+def test_affine_trim_incidence_keeps_boundary_unresolved_without_false_exclusions(
+    reverse: bool,
+) -> None:
+    from phydrax.geometry._atlas import TrimDomain
+    from phydrax.geometry.brep._patches import PlaneCylinderSectionPCurve
+
+    corners = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(1), Fraction(1)),
+        (Fraction(0), Fraction(1)),
+    )
+    segments = tuple(
+        CurveTrimSegment(
+            PlaneCylinderSectionPCurve(
+                first,
+                (last[0] - first[0], last[1] - first[1]),
+                (Fraction(0), Fraction(0)),
+                (Fraction(0), Fraction(0)),
+                parameter_range=(0.0, 1.0),
+            ),
+            0.0,
+            1.0,
+            reversed=reverse,
+        )
+        for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
+    )
+    domain = TrimDomain(curve_loops=(segments[::-1] if reverse else segments,))
+    result = domain.classify(
+        np.asarray(
+            (
+                (0.5, 0.0),
+                (0.0, 0.0),
+                (0.5, 0.5),
+                (2.0, 0.0),
+                (0.5, 2.0**-40),
+                (0.5, -(2.0**-40)),
+            ),
+            dtype=np.float64,
+        )
+    )
+    np.testing.assert_array_equal(result.resolved, (False, False, True, True, True, True))
+    np.testing.assert_array_equal(result.inside, (False, False, True, False, True, False))
+    np.testing.assert_array_equal(result.boundary, (False,) * 6)

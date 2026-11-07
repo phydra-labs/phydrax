@@ -72,6 +72,11 @@ struct PlcInput {
   // facet's declared tolerance of it (null tolerances are 0).
   const double* facet_planes = nullptr;
   const double* facet_plane_tolerances = nullptr;
+  // Optional row-major linear map from source coordinates to world coordinates.
+  const double* affine_metric = nullptr;
+  // Facet-count flags: protect these input facets and all their boundary edges.
+  // Null means no selective protection.
+  const std::uint8_t* protected_facets = nullptr;
 };
 
 namespace detail {
@@ -291,6 +296,7 @@ int32_t prepare_plc_source(const PlcInput& input, PlcRecovery& result);
 
 std::vector<double> protection_radii(const double* points, int64_t point_count,
                                      std::span<const int32_t> edges,
-                                     std::span<const int32_t> triangles);
+                                     std::span<const int32_t> triangles,
+                                     const double* affine_metric = nullptr);
 
 }  // namespace phx::mc

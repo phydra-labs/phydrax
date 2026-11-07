@@ -3,11 +3,298 @@
 ## Unreleased
 
 ### Added
+- Registered T-spline CAD-to-analysis qualification now covers nonconstant
+  weighted-field prolongation, fixed-route derivative oracles, manufactured
+  surface Poisson analysis, and independent-process archive continuation.
+- Explicitly absent native radius-edge targets through
+  `NativeVolumeSchedule(radius_edge_bound=None)`, preserving numeric defaults,
+  request identities, retained sizing and geometric validity checks.
+- Native fixed closed-cap core sources with retained coordinate-frame,
+  occurrence and internal-interface authority, plus source-bound automatic
+  PLC power sites and certified regeneration publication.
+- Selected periodic-power construction and compact resident source banks,
+  with remote face witnesses checked during independent cold reattachment.
+- Public native B-Rep archive save/load functions in `phydrax.interchange`
+  and canonical native source constructors in `phydrax.meshing.providers`.
+- Canonical candidate profiles for fourteen native CAD/meshing workflow
+  families, including T-spline CAD-to-analysis, with explicit CPU/binary64
+  support and required scientific, cold-restoration, and installed-native
+  gates. Registration does not imply release or campaign completion.
+- Source-bound quad cross-field requests drive validated native recombination,
+  with distinct field-dependent topologies, feature/valence/quality checks, and
+  independently reconstructed field-layout events on accepted results.
+  `SurfaceMeshingSpec.cross_field` and
+  `CellMeshingResult.surface_quad_field_event` intentionally change canonical
+  request/result PyTrees, archive field sets, and fingerprints, including
+  absent values; historical exact artifacts are not relabeled as current ones.
+- Mesh adaptation objectives distinguish default `meet-target` stopping from
+  explicit `improve` intent without changing the physical target or relaxing
+  candidate feasibility, reanalysis, or strict-improvement requirements.
+  Intent is included in canonical objective and decision identities.
 - Prescribed-boundary rational B-spline surface bridges with exact parametric
   C1/C2 seam construction, sufficient global embedding and source separation
   proofs, and an explicit B-Rep-to-manifold second-geometry-jet binding.
+- Owner-local finite-element material sites declare global cell, quadrature-rule,
+  reference-site, and placement identity. Portable checkpoints retain committed
+  and trial state, versions, ownership, and physical continuation inputs.
+- Owner-local finite-volume continuation retains cell-addressed material,
+  history, typed RNG, and clock banks across independent-process restoration
+  and repartitioning. Accepted-only auxiliary updates preserve rejected state.
+- Authored planar source translations for mesh motion, with independently
+  constructed successor sources, coordinate-currentness checks, and rollback
+  against the declared source revision.
+- `SurfaceEnvelopeSource(envelope_mode=...)` selects the band-remeshed surface
+  (`"remeshed"`) or the kernel's marching-tetrahedra surface and kept volume
+  (`"kernel"`). `generate_plc_volume(carrier=...)` refines a kept volume in
+  place. Envelope sources, their witnesses, open authored sheets and their
+  queries now restore from native archives. The mode is part of envelope,
+  witness and reproduction identities, so existing envelope IDs change.
+- `MarkedMeshAdaptation(inherited_cell_markers=...)` carries named cell markers,
+  including material markers, through exact bisection ancestry; unsupported
+  routes and unknown markers are refused.
+- Periodic bisection coarsening removes a vertex only together with all its
+  lifted copies, and compatible de Rham transfers on 2D bisection coarsening use
+  the exact coarsening partition.
+- `NativeVolumeSchedule(shape_strength=...)` distinguishes gated (`HARD`, the
+  default) from aimed (`SOFT`) radius-edge and dihedral targets. Soft targets
+  refine identically and publish unmet rows as evidence. Validity, size,
+  fidelity and coverage gates are unchanged, and hard schedule identities are
+  preserved.
+- Native PLC volume acceptance exempts quality rows proved forced by the authored
+  input: dihedral rows at a ridge whose exact input angle is below the target,
+  and radius-edge rows on cells whose face sits at an authored facet angle α
+  with 1/(2·sin α) above the bound. Each exemption is reported with its exact
+  input angle and achieved value; all other quality rows remain hard findings.
+- Structured multiblock routes accept interface `PatchControl`s that select every
+  source facet between one region pair, publishing the material-interface patch
+  and refusing partial selections.
+- Exact periodic vertex-interpolation stencils may carry `RadicalElement`
+  weights for exact algebraic periodic carriers. Rational weights keep their
+  existing payload and stencil identities; `RadicalElement` values are now
+  immutable, and purely rational radicals canonicalize to `Fraction`.
+
+### Changed
+- `AdaptiveImplicitSurfacePolicy.minimum_face_area` is removed. A contour
+  triangle is degenerate only when its orientation cannot be certified against
+  the root error bounds, so tiny valid corner-cut faces are no longer refused by
+  a unit-dependent area floor. Adaptive implicit policy and option identities
+  change intentionally, and archives storing the removed field no longer restore.
+- Adaptive implicit volume carriers use an admission-limited zero-set remesh pass
+  that centers vertices within the fidelity band before short-edge collapse, so
+  carrier size statistics reach their requested window. Envelope, layer, design
+  and CAD surface routes do not request the pass and keep their outputs.
+- Selected periodic-power construction avoids repeated exact work without
+  changing its outputs. Exact power-vertex resolution checks the required plane
+  equality before the global minimum scan and reuses already-admitted exact
+  points. Neighbor candidates are screened in vectorized binary64 blocks with a
+  proved rounding-error band, deciding every band pair exactly. Identical image,
+  coordinate, neighbor-graph and carrier inputs are reused across support rounds.
+  Mesh, topology and source-map identities are unchanged.
+- Exact real-root isolation reuses one square-free factorization and Sturm
+  sequence per polynomial, with integer Horner evaluation and sign-change
+  splitting of single-root intervals, across tolerance refinements. Projection
+  and intersection results are bit-identical; the STEP quadric curving prelude's
+  association and first projection run several times faster.
+- Live CAD PLCs, surface-source restriction proofs, source-fidelity witness
+  validations and CAD curve-ancestry replays share one process-local proof
+  ledger. A proof is reused only for the same live objects whose full content
+  and exact scalar settings still match. Copies, rebuilds, in-place edits and
+  archive restores replay every proof, and currentness is rechecked on every
+  call. Exact spline source bases are cached by full exact content in a bounded
+  128-entry table. A curved-quarter cold read drops from about 66 s to 43 s
+  with identical IDs.
 
 ### Fixed
+- Adaptive implicit source-chart certification narrows each undecided piece's
+  root interval with interval Newton before the tolerance test. Pieces near
+  the tolerance band therefore certify or refuse as violated instead of
+  subdividing without bound. A face is refused as straddling the tolerance only
+  at binary64 resolution. Acceptance IDs change for faces that previously
+  needed tolerance subdivision.
+- Intersection-curve parameter enclosures for point queries stay inside the
+  chart's surface region, so trimmed T-spline meshing no longer refuses a
+  parameter box that crosses the patch domain by rounding.
+- Native PLC refinement splits protected embedded segments that no facet
+  carries, so encroached interior segments are refined instead of leaving
+  unmet final quality.
+- Native PLC Steiner suppression may enclose unconstrained volume Steiner points
+  while merging a recovery wedge; source and boundary vertices remain protected.
+  This removes an unresolved recovery on a reconstructed lobed sphere.
+- Hierarchy coarsening reads retained root vertices through target vertex IDs,
+  so periodic rebinding that reorders rows no longer loses exact endpoints, and
+  periodic exact coordinate rows survive coarsening of algebraic meshes.
+- Periodic region and feature controls bind the authored source entity sets
+  rather than the provider's internally canonicalized rows.
+- Exact algebraic periodic carrier publication places each cell in the
+  fundamental domain by its exact centroid, removing nonmanifold publication of
+  material carriers.
+- Boundary-layer extrusion selects CAD solids by their canonical BRep occurrence
+  identity rather than a literal occurrence string.
+- Planar structured boundary anchoring leaves chart vertices without a source
+  vertex unanchored while still requiring each source vertex to be claimed once
+  along the oriented chain.
+- Native surface-source and surface-root-atlas archive restoration rebuilds nested
+  mesh and geometry records through their owners before reconstruction.
+- Warped boundary-layer faces can certify declared wall contact through an exact
+  tetrahedral control-hull intersection when plane separation is inconclusive,
+  without approximating the bilinear face or admitting wall penetration.
+- PLC source-face refinement inserts the new point before legalizing child
+  faces, so exact predicates use its source coordinates instead of an artificial
+  corner. This removes a deterministic two-flip cycle in material-cavity recovery.
+- Curving rollback retains the initial exact-query projection cache rather than
+  repeating source intersections after candidate evaluation; returned geometry,
+  residual evidence and refusal status remain unchanged.
+- Standalone native image qualification constructs its source manifest through
+  the canonical artifact owner instead of importing another qualification tool.
+  Installed native guards verify the actual loaded library belongs to the
+  installed meshcore wheel, not merely a matching version string.
+- Native exact quotient rounding canonicalizes exact zero to positive zero
+  without changing negative nonzero underflow or zero-denominator refusal.
+  Dependent execution-array and container fingerprints may change.
+- Exact affine coordinate maps use canonical polynomial embedding charts after
+  complete source-expression equality, removing false unresolved pyramid/prism
+  vertex and edge contacts without replacing curved maps by corner surrogates.
+- The public `execution.ExecutionGroup` retains its concrete static type,
+  allowing native plan execution to distinguish serial results from
+  distributed assemblies in source and installed-wheel consumer annotations.
+- Combined FE/FV qualification and standalone distributed FE reporting share
+  the same executed restart component when selected together, avoiding a
+  duplicate full workflow without reusing prior-run acceptance.
+- B-Rep adaptation replays complete CAD root, face, and edge ancestry before
+  accepting mixed B-Rep/curve association tables. Every curve row is bound to
+  its target edge and exact root interval partition; omitted, swapped,
+  overlapping, or foreign ancestry is refused rather than silently dropped.
+- Model row-recipe restoration releases its recursive visitor memo on success
+  and refusal, preserving shared restored nodes without retaining scientific
+  owners until cyclic garbage collection.
+- Implicit qualification releases completed source-field and adaptation
+  intermediates before the target physical solve.
+- Native model artifacts admit up to 16 MiB of scientific manifest metadata
+  while preserving their format, content identities, and existing array,
+  container, dtype, shape, and nesting admission checks.
+- Source-edge and affine edge/face replay use conservative prepared spatial
+  bounds before their exact checks. Nearest-wall column proofs use indexed
+  candidates while preserving exact co-nearest supports and source identities.
+- CAD curve-lift validation reuses exact rooted patch endpoint preparation
+  within one operation while retaining each endpoint's source and chart checks.
+- Prepared CAD sources reuse host interval programs for repeated fallback
+  surface boxes, retaining the actual patch owner and the original rounding,
+  override, and refusal behavior.
+- Curved-contact rational matrix products and symmetric-product principal
+  minors use the canonical exact integer accumulator. Only final minor evidence
+  is normalized to rational values; algebraic extensions retain exact arithmetic.
+- Implicit chart residual evidence encloses absolute field magnitude on both
+  sides of zero, rather than retaining a negative signed upper endpoint.
+- Meshing benchmarks report source/execution proof-depth decision shares and
+  full-versus-parent-assisted certificate parity with separate parent replay
+  timings. All-invalid workloads retain their evidence without reducing an
+  empty set of certified determinant bounds.
+- Dense finite-element functionals retain the prepared reference quadrature
+  separately from each field's physical points and weights. Coupled fields and
+  custom cell residuals use the same rule, and functional geometry retains its
+  actual block identity.
+- Implicit polygon output staging uses explicitly released mapped numeric
+  buffers, preserving final owning arrays and exact row order. Connected
+  triangle complexes retain their canonical component labels without a
+  redundant whole-face sort and relabel copy.
+- Native mapped-core quality proposals prove the retained per-vertex size field
+  over their exact reference cavities and preserve it during source rebind.
+  Conforming boundary repair protects authored vertices and constrained facets.
+- Native implicit carrier remeshing accepts validated int32 incidence without
+  widening the source mesh and uses bounded file-backed scratch with explicit
+  I/O failure status.
+- Identical overall and scoped fidelity requests share the proof computed in
+  their current certification operation. Distinct bounds, including signed
+  zero, retain distinct certificates. Live surface handoffs also require exact
+  control representations and unchanged scientific witness content; cold
+  reconstruction still reproves inputs.
+  Implicit cover-existence checks no longer allocate a whole-cover mask.
+- Sparse Hodge admission uses native approximate-minimum-degree Cholesky and
+  derives its factor-entry allowance from the existing factor-byte budget.
+  Full factor-byte and symbolic-work checks remain enforced, and numerical
+  Cholesky still rejects indefinite or singular metrics. Preparation ordering
+  and plan identities intentionally change; generic sparse policy defaults do not.
+- Material source association, reference authoring, deformation, overlap, and
+  revalidation propagate explicit intermediate mapped-chart parents. Coverage
+  reproof distinguishes the actual immediate parent from the authored material
+  reference without retaining historical geometry in coordinate banks.
+- Quadratic tetrahedral validity uses bounded outward-interval block screening
+  of the original source and execution maps, with exact fallback for
+  inconclusive cells. Screened cells can omit reusable map indices, so later
+  parent-assisted proofs re-screen them; changed bounds and index availability
+  can change certificate or containing artifact identities.
+- Adaptive implicit volume carrier remeshing uses the declared hard
+  whole-surface fidelity bound for new faces, limited by an analytic profile's
+  established tube, and separately retains the original scaffold bound for
+  untouched faces. The selected bound is included in carrier identity and
+  achieved evidence. Foreign scopes and absent or zero bounds required for
+  remeshing are refused; final additive fidelity, chart, and source-coverage
+  proofs remain required.
+- Polyhedral finite-volume face areas and face, cell and quadrature centroids use
+  local coordinates to avoid cancellation on small translated cells while
+  retaining the original affine first-moment and solver tolerances.
+- Hybrid mimetic diffusion uses GMRES by default without asserting unproved
+  self-adjoint or positive-definite properties for its matrix-free operator.
+- Placed sphere boundary covers retain interval-certified source coordinates and
+  derivatives using the sphere's binary coefficients and exact placement.
+- Source trim covers prove mixed native-period and exact literal seam junctions
+  on the same chart sheet, retaining the original source parameter intervals.
+- Native B-Rep tessellation retains source-edge parameters in their original
+  curve gauge rather than applying the normalized chart conversion twice.
+- The planar thin-channel qualification uses a 0.02 m target and 0.03 m
+  maximum consistent with its 0.02 m channel, retaining hard median-size
+  compliance, the 25° minimum angle, and the authored source geometry.
+- Native interval networks retain authored junction topology and all incident
+  source-curve closures. Exact chart-bound endpoint replay rejects altered
+  parameters, occurrences, and missing proof while preserving Kirchhoff assembly.
+- Categorical image volume meshing retains one explicit global affine over the
+  index-space PLC, including reflected orientation, exact source-point and
+  region coverage evidence, and physical-metric native controls.
+- Native surface-envelope fills use source-faithful conforming PLC subdivision,
+  complete facet and protected-edge ancestry, and certified carrier-rounding
+  displacement in the original-source fidelity proof.
+- Mapped periodic embedding supports exactly translational isometry groups and
+  proves disjoint curved-image contacts through exact Bernstein subdivision;
+  unsupported nontranslational groups retain explicit unresolved evidence.
+- Accepted-result restoration validates canonical semantic provenance without
+  encoding its static payload twice. Native provenance premises preserve tuple,
+  list, and signed-zero identity distinctions.
+- Native PLC volume compliance evaluates final quality and retained size targets
+  without modifying the mesh. Initial refinement and improvement records remain
+  historical evidence, separate from generation-bound final residuals; native
+  combined-size residuals remain diagnostic while individual hard controls
+  are enforced with their own compliance policies.
+- Composed PLC boundary carriers round once from their original exact source
+  stencils. Read-only candidate evaluation rechecks orientation, quality, and
+  retained size targets without rewriting historical native state or residuals.
+- Material checkpoint reconstruction validates raw site and placement metadata
+  against canonical identities and binds numerical contents at the checkpoint
+  boundary without making dynamic material arrays static.
+- Dynamics and solid-mechanics exports load their canonical owners lazily.
+  Owner-local metadata collectives reuse bounded byte channels, prepared mapped
+  queries traverse the host BVH, and empty periodic owners retain collective
+  validation without unnecessary local bisection.
+- Native torus volume bounds use an analytic longitude primitive with certified
+  boundary integration for exact translated, oriented, and oblique frames.
+- B-spline curve control-hull bounds require containment in the exact knot
+  domain. Exact prepared placed-spline spans provide normal bounds for
+  nonbinary placements without admitting unsupported non-spline sources.
+- Native solid queries can restrict each point to an exact solid and occurrence;
+  an empty selected occurrence path denotes the unplaced definition frame.
+- Repartitioned overset receptors bind physical faces through stable scientific
+  vertex identities and explicit owner/neighbor incidence, including periodic
+  self-faces. Boundary, wall, and excluded scopes retain their declared meaning
+  instead of reusing rank-local facet ordinals.
+- Finite-volume rejection reports the final attempted retry while retaining the
+  original accepted content and time-step state. Geometry preparation preserves
+  triangle areas across different local batch lengths.
+- Owner-local geometry restoration rebuilds executable archive dependencies
+  before mathematical replay; periodic replica validation preserves declared
+  vertex ownership rather than silently migrating it.
+- Authored straight-line revolution walls and caps now have exact-source point,
+  Jacobian, and Hessian interval programs, including affine placements and
+  rational or radical profile coefficients. Retained axis coefficients preserve
+  the existing carrier representation.
 - Native closest-point projection covers regular orthogonal-cylinder intersection
   branches with exact stationary-root, sheet, and endpoint evidence. Trimmed
   straight cylinders retain certified distance bounds even when no nearest
@@ -124,10 +411,11 @@
 - Whole-solid CAD layer sweeps now retain an exterior cap with no core region
   when authored slabs exactly cover the controlled solid. Periodic layer/core
   source preparation carries the accepted orbit identity and bound source charts.
-- Serial moving overset P1 Poisson updates now rebuild every part, certify
-  complete physical-overlap transport of the unit source and per-part boundary
-  plus receptor flux balance, then stage one atomic composition rebind. Orphans,
-  incomplete overlap, and rejected boundaries leave accepted composition intact.
+- Serial moving overset P1 Poisson updates use the exact physical partition
+  bound to the accepted mesh, geometry, authored wall sources, and priority.
+  Motion and cold registration replay rebuild that authority before the coupled
+  solve and atomic composition rebind. Unproved cut ambiguity, orphans, stale
+  partitions, incomplete overlap, and rejected boundaries fail closed.
 - Add solver-aware mesh-adaptation objectives for physical error or QoI targets.
   Only candidates meeting the declared tolerance, route/state evidence, and
   canonical linear-solve check are eligible; measured route and reanalysis

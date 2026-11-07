@@ -31,7 +31,7 @@ from typing import Any
 
 import numpy as np
 
-from ...algebraic._exact_univariate import _gcd, isolate_real_roots
+from ...algebraic._exact_univariate import _gcd, RealRootIsolator
 from ._intersection_curve import (
     _large_seam_frame,
     _orthogonal_cylinder_curve_branch_sign,
@@ -167,12 +167,18 @@ def _distance(
 
 @dataclass(slots=True)
 class _PreparedProjection:
-    """Per-query exact source, chart and root state for candidate isolation."""
+    """Per-query exact source, chart and root state for candidate isolation.
+
+    Each isolator belongs to this query's exact polynomial, so refinements at
+    shrinking widths reuse finished exact subdivision without changing results.
+    """
+
     aa: P
     bb: P
     h: P
-    polynomial: P
+    root_isolator: RealRootIsolator
     common: P
+    common_isolator: RealRootIsolator | None
     axis: int
     candidates: list[_Candidate]
     ctx: Any
@@ -187,7 +193,9 @@ class _PreparedProjection:
     qz: Fraction
     roots: tuple[tuple[Fraction, Fraction, int], ...]
     seam_gcd: P
+    seam_gcd_isolator: RealRootIsolator | None
     seam_polynomial: P | None
+    seam_isolator: RealRootIsolator | None
     seam_roots: tuple[tuple[Fraction, Fraction, int], ...]
     sign: int
     starts: np.ndarray
@@ -198,17 +206,17 @@ class _PreparedProjection:
         root_index: int, seam_index: int
     ) -> tuple[int, Fraction, Fraction, Fraction, Fraction]:
         """Order two isolated algebraic roots, proving equality by their gcd."""
-        assert self.seam_polynomial is not None
+        assert self.seam_polynomial is not None and self.seam_isolator is not None
         width = self.tolerance
         while True:
-            rl, rh, _ = isolate_real_roots(self.polynomial, tolerance=width)[root_index]
-            sl, sh, _ = isolate_real_roots(self.seam_polynomial, tolerance=width)[seam_index]
+            rl, rh, _ = self.root_isolator.isolate(tolerance=width)[root_index]
+            sl, sh, _ = self.seam_isolator.isolate(tolerance=width)[seam_index]
             if rh < sl:
                 return -1, rl, rh, sl, sh
             if sh < rl:
                 return 1, rl, rh, sl, sh
-            if len(self.seam_gcd) > 1:
-                common_intervals = isolate_real_roots(self.seam_gcd, tolerance=width / 64)
+            if self.seam_gcd_isolator is not None:
+                common_intervals = self.seam_gcd_isolator.isolate(tolerance=width / 64)
                 if any(
                     rl <= gl <= gh <= rh and sl <= gl <= gh <= sh
                     for gl, gh, _ in common_intervals
@@ -223,7 +231,7 @@ class _PreparedProjection:
         width = self.tolerance
         digits = 80
         while True:
-            rl, rh, _ = isolate_real_roots(self.polynomial, tolerance=width)[root_index]
+            rl, rh, _ = self.root_isolator.isolate(tolerance=width)[root_index]
             if rl == rh == 0 and turn == 0 and target == 0:
                 return 0, rl, rh
             local = interval_context(digits)
@@ -472,7 +480,7 @@ class _PreparedProjection:
             if angle.a > target.b:
                 return 1
             return None
-        if self.seam_polynomial is None:
+        if self.seam_polynomial is None or self.seam_isolator is None:
             return None
         if len(self.seam_polynomial) < 3:
             return 0
@@ -488,7 +496,7 @@ class _PreparedProjection:
         seam_index, seam_turn = possible[0]
         width, digits = self.tolerance, 80
         while True:
-            sl, sh, _ = isolate_real_roots(self.seam_polynomial, tolerance=width)[seam_index]
+            sl, sh, _ = self.seam_isolator.isolate(tolerance=width)[seam_index]
             local = interval_context(digits)
             seam_theta = 2 * local.atan2(_interval(local, sl, sh), local.mpf(1)) + seam_turn * 2 * local.pi
             exact_angle = (2 * turn + 1) * local.pi
@@ -598,8 +606,8 @@ class _PreparedProjection:
             while True:
                 shared = (
                     ()
-                    if len(self.common) <= 1
-                    else isolate_real_roots(self.common, tolerance=width / 64)
+                    if self.common_isolator is None
+                    else self.common_isolator.isolate(tolerance=width / 64)
                 )
                 if any(lo <= cl <= ch <= hi for cl, ch, _ in shared):
                     break
@@ -616,7 +624,7 @@ class _PreparedProjection:
                     break
                 width /= 16
                 digits += 20
-                lo, hi, _ = isolate_real_roots(self.polynomial, tolerance=width)[index]
+                lo, hi, _ = self.root_isolator.isolate(tolerance=width)[index]
             if reject:
                 continue
             arg = _interval(self.ctx, lo, hi)
@@ -752,11 +760,13 @@ def _select_candidate_projection(
 
 def _prepare_seam_roots(
     family: _OrthogonalCylinderFamily, sign: int, polynomial: P, tolerance: Fraction,
-) -> tuple[P | None, tuple[tuple[Fraction, Fraction, int], ...], P]:
+) -> tuple[
+    P | None, RealRootIsolator | None, tuple[tuple[Fraction, Fraction, int], ...], P
+]:
     """Isolate the rational large-seam authority and its stationary gcd."""
     _, sine_frame, seam_angle = _large_seam_frame(family)
     if seam_angle != 0 or not sine_frame[1]:
-        return None, (), (F(1),)
+        return None, None, (), (F(1),)
     seam_n = -sign * (1 if sine_frame[1] > 0 else -1) * sine_frame[0] * family.large_radius
     a, b = family.small_normal_coefficients
     seam_polynomial = _trim((
@@ -764,9 +774,11 @@ def _prepare_seam_roots(
         2 * family.small_radius * b,
         family.delta_n - family.small_radius * a - seam_n,
     ))
+    isolator = RealRootIsolator(seam_polynomial)
     return (
         seam_polynomial,
-        isolate_real_roots(seam_polynomial, tolerance=tolerance),
+        isolator,
+        isolator.isolate(tolerance=tolerance),
         _gcd(polynomial, seam_polynomial),
     )
 
@@ -840,9 +852,12 @@ def project_intersection_curve(
     tolerance = (
         F.from_float(min(policy.parametric_tolerance, policy.ambiguity_tolerance)) / 16
     )
-    roots = isolate_real_roots(polynomial, tolerance=tolerance)
+    # This first pass only needs ordered isolating intervals. Node and common
+    # root comparisons below use the default rational-recognizing isolation.
+    root_isolator = RealRootIsolator(polynomial)
+    roots = root_isolator.isolate(tolerance=tolerance, recognize_rational_roots=False)
     common = _gcd(aa, bb)
-    seam_polynomial, seam_roots, seam_gcd = _prepare_seam_roots(
+    seam_polynomial, seam_isolator, seam_roots, seam_gcd = _prepare_seam_roots(
         family, sign, polynomial, tolerance
     )
 
@@ -850,8 +865,9 @@ def project_intersection_curve(
         aa=aa,
         bb=bb,
         h=h,
-        polynomial=polynomial,
+        root_isolator=root_isolator,
         common=common,
+        common_isolator=RealRootIsolator(common) if len(common) > 1 else None,
         axis=axis,
         candidates=candidates,
         ctx=ctx,
@@ -866,7 +882,9 @@ def project_intersection_curve(
         qz=qz,
         roots=roots,
         seam_gcd=seam_gcd,
+        seam_gcd_isolator=RealRootIsolator(seam_gcd) if len(seam_gcd) > 1 else None,
         seam_polynomial=seam_polynomial,
+        seam_isolator=seam_isolator,
         seam_roots=seam_roots,
         sign=sign,
         starts=starts,

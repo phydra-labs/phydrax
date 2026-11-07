@@ -46,7 +46,8 @@ from ..geometry.brep._constructors import (
     ProfileLoop,
     ProfilePlane,
 )
-from ..geometry.brep._patches import LineCurve, PlanePatch
+from ..geometry.brep._patches import ExactLineCurve, LineCurve, PlanePatch
+from ..geometry.brep._projection_contracts import brep_entity_id
 from ..typing import checked
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._controls import BoundaryLayerControl, BoundaryLayerRoute
@@ -412,7 +413,7 @@ def _solid_volume(model: BRepModel, solid_index: int, /) -> float:
                 edge_index = geometry.coedge_edges[coedge]
                 curve_index = geometry.edge_curves[edge_index]
                 if curve_index < 0 or not isinstance(
-                    geometry.curves[curve_index], LineCurve
+                    geometry.curves[curve_index], (LineCurve, ExactLineCurve)
                 ):
                     raise _unsupported(
                         "Exact slab volume identity requires line-bounded faces."
@@ -462,8 +463,29 @@ def _solid_volume(model: BRepModel, solid_index: int, /) -> float:
 
 
 def _solid_selection(model: BRepModel, solid_index: int, /) -> CADSelectionSet:
+    """Select the solid's unique source occurrence by its exact entity identity."""
     revision = cad_revision_from_brep_model(model)
-    return CADSelectionSet.from_revision(revision, (f"solid:{solid_index}",))
+    entity_ids = {
+        brep_entity_id(
+            model.source_id,
+            model.source_revision,
+            3,
+            solid_index,
+            occurrence_path=occurrence.path,
+        )
+        for occurrence in model.geometry.iter_occurrences()
+        if occurrence.solid_index == solid_index
+    }
+    matches = tuple(
+        occurrence.occurrence_id
+        for occurrence in revision.occurrences
+        if occurrence.kind == "solid" and occurrence.entity_id in entity_ids
+    )
+    if len(entity_ids) != 1 or len(matches) != 1:
+        raise _unsupported(
+            "A controlled solid must resolve to exactly one CAD source occurrence."
+        )
+    return CADSelectionSet.from_revision(revision, matches)
 
 
 def prepare_boundary_layer_extrusion(
@@ -516,8 +538,22 @@ def prepare_boundary_layer_extrusion(
         layer_models.append(layer_model)
         layer_planes.append((normal, offset, area))
 
+    # A solid whose wall slabs exactly fill it keeps no core region: an empty
+    # declared region is not a partition region. Coverage is re-proved below.
+    slab_volumes_by_owner: dict[int, float] = {}
+    for owner, (_, _, area) in zip(owners, layer_planes, strict=True):
+        slab_volumes_by_owner[owner] = (
+            slab_volumes_by_owner.get(owner, 0.0) + area * total
+        )
+    covered = set()
+    for owner, slab_volume in slab_volumes_by_owner.items():
+        source_volume = _solid_volume(source, owner)
+        if abs(source_volume - slab_volume) <= 1.0e-9 * source_volume:
+            covered.add(owner)
     core_ids = tuple(
-        f"core:{solid_index}" for solid_index in range(source.topology.num_solids)
+        f"core:{solid_index}"
+        for solid_index in range(source.topology.num_solids)
+        if solid_index not in covered
     )
     partition_operands = [
         BRepPartitionOperand(
@@ -527,13 +563,13 @@ def prepare_boundary_layer_extrusion(
         )
         for layer_id, model in zip(layer_ids, layer_models, strict=True)
     ]
-    for solid_index, core_id in enumerate(core_ids):
+    for core_id in core_ids:
         partition_operands.append(
             BRepPartitionOperand(
                 core_id,
                 source,
                 BRepPartitionRole.REGION,
-                selection=_solid_selection(source, solid_index),
+                selection=_solid_selection(source, int(core_id.split(":")[1])),
             )
         )
     partition = partition_brep(

@@ -45,6 +45,7 @@ set(PHX_MC_SOURCES
   src/feature_protection.cpp
   src/graph_partition.cpp
   src/hex_topology.cpp
+  src/implicit_polygon.cpp
   src/quad_topology.cpp
   src/interval_program.cpp
   src/intersections.cpp
@@ -97,6 +98,7 @@ set(PHX_MC_HEADERS
   src/predicates.hpp
   src/restricted_delaunay.hpp
   src/rounding.hpp
+  src/scratch_faces.hpp
   src/source_construction.hpp
   src/tet_mesh.hpp
   src/spatial_sort.hpp

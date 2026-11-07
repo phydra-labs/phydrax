@@ -5,14 +5,12 @@
 // domain decomposition, combinatorial vertex reconciliation, connected
 // restricted-cell components and conforming polyhedral assembly.
 //
-// Pieces.  For every tet T the sites whose cells meet T are found breadth
-// first over the regular-triangulation adjacency, starting at the owner of the
-// centroid of T (a greedy power-distance walk); a nonempty piece enqueues only
-// the neighbors that share a bisector face with it inside T, because the
-// restricted power diagram of a convex tet is a face-to-face partition whose
-// dual graph is connected.  Each piece is the exact clip of T by the
-// bisector halfspaces of its site (clip3d.cpp); the bisector of i towards j is
-// the exact negation of the bisector of j towards i.
+// Pieces. Complete requests discover sites meeting each tet breadth first over
+// regular-triangulation adjacency. Selected requests clip selected sites and
+// their actual face neighbors as bounded support, without recursive expansion.
+// Each piece is the exact clip of T by the bisector halfspaces of its site
+// (clip3d.cpp); the bisector of i towards j is the exact negation of j towards i.
+// Only selected cells are published; support components identify remote faces.
 //
 // Vertex identity.  A vertex of a piece (s, T) lies on bisector faces, each
 // naming a neighbor site, and on faces of T.  Its identity is the set S of
@@ -71,6 +69,8 @@ struct PowerCellsResult {
   std::vector<int32_t> face_vertices;
   std::vector<int32_t> face_cells;
   std::vector<int32_t> face_facets;
+  std::vector<int32_t> face_remote_sites;
+  std::vector<int32_t> face_remote_tets;
   std::vector<int32_t> cell_sites;
   std::vector<int32_t> cell_regions;
   std::vector<double> cell_volumes;
@@ -111,6 +111,8 @@ struct Input {
   const int32_t* tet_regions;
   const int32_t* tet_face_facets;
   const ExactPowerCoordinates* exact_coordinates = nullptr;
+  int64_t selected_site_count = -1;
+  const int32_t* selected_sites = nullptr;
 };
 
 bool add_count(int64_t& total, int64_t count, int64_t width = 1) {
@@ -154,7 +156,7 @@ struct Piece {
 };
 
 using Edge = std::pair<int32_t, int32_t>;
-using GroupKey = std::tuple<int32_t, int32_t, int32_t>;  // cell, other, facet
+using GroupKey = std::tuple<int32_t, int32_t, int32_t, int32_t, int32_t>;
 
 int32_t validate_layout(const Input& in) {
   if (in.site_count < 1 || in.point_count < 4 || in.tet_count < 1 ||
@@ -291,7 +293,7 @@ class Builder {
       }
     }
     for (const auto& [key, index] : pending) {
-      if (index >= 0) {
+      if (index >= 0 && in_.selected_site_count < 0) {
         const Piece& piece = pieces_[fragments_[index].piece];
         return fail(kMissingPiece, piece.site, piece.tet, PHX_MC_OK,
                     PHX_MC_DEGENERATE_INPUT);
@@ -316,6 +318,7 @@ class Builder {
   std::vector<int8_t> split_;
   std::vector<int32_t> piece_cell_;
   std::vector<int32_t> cell_roots_;
+  std::vector<int32_t> output_cells_;
   int32_t cell_count_ = 0;
   std::vector<int64_t> identity_stamp_;
   int64_t identity_epoch_ = 0;
@@ -418,6 +421,59 @@ class Builder {
   }
 
   int32_t clip_all() {
+    if (in_.selected_site_count >= 0) {
+      for (int32_t tet = 0; tet < in_.tet_count; ++tet) {
+        for (int64_t i = 0; i < in_.selected_site_count; ++i) {
+          bool nonempty = false;
+          const int32_t status = clip_piece(in_.selected_sites[i], tet, nonempty);
+          if (status != PHX_MC_OK) return status;
+        }
+      }
+      // Seed only sites actually touching a selected piece, including a
+      // bisector coincident with a carrier face. Explore the same support
+      // site across its tet faces to recover its complete components, but
+      // never recursively add its bisector neighbors.
+      const int32_t reconciled = reconcile_tet_faces();
+      if (reconciled != PHX_MC_OK) return reconciled;
+      std::vector<const Key*> vertex_keys(keys_.size(), nullptr);
+      for (const auto& [key, vertex] : keys_) vertex_keys[vertex] = &key;
+      std::set<int64_t> queued;
+      std::deque<std::pair<int32_t, int32_t>> queue;
+      const auto enqueue = [&](int32_t site, int32_t tet) {
+        if (site < 0 || tet < 0 ||
+            std::binary_search(in_.selected_sites,
+                               in_.selected_sites + in_.selected_site_count, site))
+          return;
+        if (queued.insert(piece_key(site, tet)).second) queue.emplace_back(site, tet);
+      };
+      const int32_t selected_fragments = static_cast<int32_t>(fragments_.size());
+      for (int32_t i = 0; i < selected_fragments; ++i) {
+        const Fragment& fragment = fragments_[i];
+        const Piece& piece = pieces_[fragment.piece];
+        if (fragment.kind == FragmentKind::kBisector) {
+          enqueue(fragment.ref, piece.tet);
+        } else if (fragment_mates_[i] < 0) {
+          const int32_t neighbor = tet_neighbor_[4 * piece.tet + fragment.ref];
+          if (neighbor >= 0)
+            enqueue(remote_carrier_site(fragment, neighbor, vertex_keys), neighbor);
+        }
+      }
+      while (!queue.empty()) {
+        const auto [site, tet] = queue.front();
+        queue.pop_front();
+        bool nonempty = false;
+        const int32_t status = clip_piece(site, tet, nonempty);
+        if (status != PHX_MC_OK) return status;
+        if (!nonempty) continue;
+        const Piece& piece = pieces_.back();
+        for (int32_t f = piece.fragment_begin; f < piece.fragment_end; ++f) {
+          const Fragment& fragment = fragments_[f];
+          if (fragment.kind == FragmentKind::kTetFace)
+            enqueue(site, tet_neighbor_[4 * tet + fragment.ref]);
+        }
+      }
+      return PHX_MC_OK;
+    }
     int32_t start = -1;
     for (int32_t s = 0; s < in_.site_count; ++s) {
       if (in_.neighbor_offsets[s + 1] > in_.neighbor_offsets[s]) {
@@ -604,9 +660,7 @@ class Builder {
     piece.tet = tet;
     piece.fragment_begin = static_cast<int32_t>(fragments_.size());
     piece.volume = poly.volume;
-    for (int axis = 0; axis < 3; ++axis) {
-      piece.moment[axis] = poly.moment[axis];
-    }
+    for (int axis = 0; axis < 3; ++axis) piece.moment[axis] = poly.moment[axis];
     piece.second = second_moment(s);
     const int32_t index = static_cast<int32_t>(pieces_.size());
     for (int f = 0; f < face_count; ++f) {
@@ -722,6 +776,7 @@ class Builder {
         if (neighbor < 0 || in_.tet_face_facets[slot] >= 0) {
           continue;
         }
+        if (fragment_mates_[index] < 0) continue;
         const int32_t other = fragments_[fragment_mates_[index]].piece;
         if (pieces_[other].site != piece.site) {
           continue;
@@ -744,6 +799,7 @@ class Builder {
           continue;
         }
         const int32_t index = static_cast<int32_t>(&fragment - fragments_.data());
+        if (fragment_mates_[index] < 0) continue;
         const int32_t other = fragments_[fragment_mates_[index]].piece;
         if (topology::find_root(parent, fragment.piece) ==
             topology::find_root(parent, other)) {
@@ -776,6 +832,16 @@ class Builder {
             topology::find_root(parent, p)];
         piece_cell_[p] = cell;
       }
+      output_cells_.assign(cell_roots_.size(), -1);
+      int32_t output_count = 0;
+      for (std::size_t cell = 0; cell < cell_roots_.size(); ++cell) {
+        const int32_t site = pieces_[cell_roots_[cell]].site;
+        if (in_.selected_site_count < 0 ||
+            std::binary_search(in_.selected_sites, in_.selected_sites + in_.selected_site_count,
+                               site))
+          output_cells_[cell] = output_count++;
+      }
+      cell_count_ = output_count;
       return PHX_MC_OK;
     }
   }
@@ -865,20 +931,65 @@ class Builder {
     return true;
   }
 
+  // Equal-power witnesses common to the carrier face identify the possible
+  // owners across it; compare power at the opposite corner of the other tet.
+  int32_t remote_carrier_site(const Fragment& fragment, int32_t neighbor,
+                              const std::vector<const Key*>& vertex_keys) const {
+    const Piece& piece = pieces_[fragment.piece];
+    const Key& first = *vertex_keys[fragment_vertices_[fragment.start]];
+    const auto end = std::find(first.begin(), first.end(), -1);
+    const int32_t* tet = in_.tets + 4 * static_cast<int64_t>(piece.tet);
+    int32_t opposite = -1;
+    for (int k = 0; k < 4; ++k) {
+      const int32_t vertex = in_.tets[4 * static_cast<int64_t>(neighbor) + k];
+      bool on_face = false;
+      for (int j = 0; j < 4; ++j)
+        if (j != fragment.ref && tet[j] == vertex) on_face = true;
+      if (!on_face) opposite = vertex;
+    }
+    if (opposite < 0) return -1;
+    int32_t best = piece.site;
+    for (auto it = first.begin(); it != end; ++it) {
+      const int32_t candidate = *it;
+      bool common = true;
+      for (int32_t k = 1; k < fragment.size && common; ++k) {
+        const Key& key = *vertex_keys[fragment_vertices_[fragment.start + k]];
+        common = std::binary_search(key.begin(), std::find(key.begin(), key.end(), -1),
+                                    candidate);
+      }
+      if (common && TetrahedronClipper::point_power_side(
+              point(opposite), site(candidate), in_.weights[candidate],
+              site(best), in_.weights[best], exact_site(candidate), exact_site(best)) > 0)
+        best = candidate;
+    }
+    return best;
+  }
+
   int32_t assemble() {
     std::map<GroupKey, std::vector<int32_t>> groups;
+    std::vector<const Key*> vertex_keys(keys_.size(), nullptr);
+    for (const auto& [key, vertex] : keys_) vertex_keys[vertex] = &key;
     for (int32_t index = 0; index < static_cast<int32_t>(fragments_.size()); ++index) {
       const Fragment& fragment = fragments_[index];
       const Piece& piece = pieces_[fragment.piece];
       const int32_t cell = piece_cell_[fragment.piece];
       int32_t other = 0;
       int32_t facet = -1;
+      int32_t remote_site = -1;
+      int32_t remote_tet = -1;
       if (fragment.kind == FragmentKind::kBisector) {
         const int32_t q = find_piece(fragment.ref, piece.tet);
         if (q < 0) {
-          return fail(kMissingPiece, piece.site, piece.tet, PHX_MC_OK, PHX_MC_DEGENERATE_INPUT);
+          if (in_.selected_site_count < 0 ||
+              std::binary_search(in_.selected_sites,
+                                 in_.selected_sites + in_.selected_site_count, fragment.ref))
+            return fail(kMissingPiece, piece.site, piece.tet, PHX_MC_OK, PHX_MC_DEGENERATE_INPUT);
+          other = -1;
+          remote_site = fragment.ref;
+          remote_tet = piece.tet;
+        } else {
+          other = piece_cell_[q];
         }
-        other = piece_cell_[q];
       } else {
         const int32_t slot = 4 * piece.tet + fragment.ref;
         const int32_t neighbor = tet_neighbor_[slot];
@@ -886,25 +997,35 @@ class Builder {
         if (neighbor < 0) {
           other = -1 - facet;
         } else {
-          const int32_t q = fragments_[fragment_mates_[index]].piece;
-          other = piece_cell_[q];
-          if (other == cell) {
-            continue;
+          if (fragment_mates_[index] < 0) {
+            remote_site = remote_carrier_site(fragment, neighbor, vertex_keys);
+            if (remote_site < 0 || remote_site == piece.site ||
+                std::binary_search(in_.selected_sites,
+                                   in_.selected_sites + in_.selected_site_count, remote_site))
+              return fail(kMissingPiece, piece.site, piece.tet, PHX_MC_OK,
+                          PHX_MC_DEGENERATE_INPUT);
+            other = -1;
+            remote_tet = neighbor;
+          } else {
+            const int32_t q = fragments_[fragment_mates_[index]].piece;
+            other = piece_cell_[q];
+            if (other == cell) continue;
           }
         }
       }
-      groups[{cell, other, facet}].push_back(index);
+      groups[{cell, other, facet, remote_site, remote_tet}].push_back(index);
     }
     std::vector<std::vector<int32_t>> loops;
-    std::vector<std::array<int32_t, 3>> loop_owners;
+    std::vector<std::array<int32_t, 5>> loop_owners;
     for (const auto& [key, group] : groups) {
-      const auto [cell, other, facet] = key;
-      if (other >= 0 && other < cell) {
+      const auto [cell, other, facet, remote_site, remote_tet] = key;
+      if (output_cells_[cell] < 0) continue;
+      if (other >= 0 && output_cells_[other] >= 0 && other < cell) {
         continue;
       }
       std::vector<Edge> edges = boundary_edges(group);
       if (other >= 0) {
-        const auto reverse = groups.find({other, cell, facet});
+        const auto reverse = groups.find({other, cell, facet, -1, -1});
         if (reverse == groups.end()) {
           return fail(kMissingPiece, pieces_[cell_roots_[cell]].site, -1, PHX_MC_OK,
                       PHX_MC_DEGENERATE_INPUT);
@@ -931,8 +1052,39 @@ class Builder {
         }
       }
       for (auto& loop : merged) {
+        int32_t output_other = other >= 0 ? output_cells_[other] : other;
+        int32_t output_remote_site = remote_site;
+        int32_t output_remote_tet = remote_tet;
+        if (other >= 0 && output_other < 0) {
+          // Choose a fragment incident to this loop, not merely any fragment
+          // in the component group: separate loops may use different tets.
+          int32_t witness = -1;
+          for (const int32_t index : group) {
+            const Fragment& fragment = fragments_[index];
+            for (int32_t k = 0; k < fragment.size; ++k) {
+              if (fragment_vertices_[fragment.start + k] == loop[0] &&
+                  fragment_vertices_[fragment.start + (k + 1) % fragment.size] == loop[1]) {
+                witness = index;
+                break;
+              }
+            }
+            if (witness >= 0) break;
+          }
+          if (witness < 0)
+            return fail(kInconsistentFace, pieces_[cell_roots_[cell]].site, -1,
+                        PHX_MC_OK, PHX_MC_DEGENERATE_INPUT);
+          const Fragment& fragment = fragments_[witness];
+          const Piece& piece = pieces_[fragment.piece];
+          const int32_t remote_piece = fragment.kind == FragmentKind::kBisector
+              ? find_piece(fragment.ref, piece.tet)
+              : fragments_[fragment_mates_[witness]].piece;
+          output_remote_site = pieces_[remote_piece].site;
+          output_remote_tet = pieces_[remote_piece].tet;
+          output_other = -1;
+        }
         loops.push_back(std::move(loop));
-        loop_owners.push_back({cell, other, facet});
+        loop_owners.push_back({output_cells_[cell], output_other, facet,
+                               output_remote_site, output_remote_tet});
       }
     }
     return publish(loops, loop_owners);
@@ -995,7 +1147,8 @@ class Builder {
     out_.cell_moments.assign(3 * static_cast<std::size_t>(cell_count_), 0.0);
     out_.cell_second_moments.assign(static_cast<std::size_t>(cell_count_), 0.0);
     for (std::size_t p = 0; p < pieces_.size(); ++p) {
-      const int32_t cell = piece_cell_[p];
+      const int32_t cell = output_cells_[piece_cell_[p]];
+      if (cell < 0) continue;
       const Piece& piece = pieces_[p];
       out_.cell_sites[cell] = piece.site;
       out_.cell_regions[cell] = in_.tet_regions[piece.tet];
@@ -1010,7 +1163,7 @@ class Builder {
   // Removes vertices on exactly two edges (never shrinking a loop below a
   // triangle), compacts the used vertices and writes the output arrays.
   int32_t publish(std::vector<std::vector<int32_t>>& loops,
-                  const std::vector<std::array<int32_t, 3>>& owners) {
+                  const std::vector<std::array<int32_t, 5>>& owners) {
     const std::size_t vertex_total = keys_.size();
     std::vector<std::vector<int32_t>> adjacent(vertex_total);
     for (const auto& loop : loops) {
@@ -1090,11 +1243,14 @@ class Builder {
       out_.face_cells.push_back(owners[f][0]);
       out_.face_cells.push_back(owners[f][1]);
       out_.face_facets.push_back(owners[f][2]);
+      out_.face_remote_sites.push_back(owners[f][3]);
+      out_.face_remote_tets.push_back(owners[f][4]);
     }
     for (std::size_t p = 0; p < pieces_.size(); ++p) {
+      if (output_cells_[piece_cell_[p]] < 0) continue;
       out_.piece_sites.push_back(pieces_[p].site);
       out_.piece_tets.push_back(pieces_[p].tet);
-      out_.piece_cells.push_back(piece_cell_[p]);
+      out_.piece_cells.push_back(output_cells_[piece_cell_[p]]);
       out_.piece_volumes.push_back(pieces_[p].volume);
       out_.piece_moments.insert(out_.piece_moments.end(), pieces_[p].moment,
                                 pieces_[p].moment + 3);
@@ -1134,6 +1290,8 @@ int32_t validate_exact_image_layout(const phx_mc_restricted_power_cells_exact_re
       in.image_site_owners == nullptr || in.image_coordinate_offsets == nullptr ||
       in.failed_image_coordinate == nullptr || in.failed_component == nullptr ||
       (in.component_count != 0 && in.image_coordinate_components == nullptr) ||
+      in.selected_site_count < -1 || in.selected_site_count > in.image_count ||
+      (in.selected_site_count > 0 && in.selected_sites == nullptr) ||
       !addressable(in.original_site_count, 3, sizeof(double)) ||
       !addressable(in.original_site_count, 1, sizeof(double)) ||
       !addressable(in.image_count, 1, sizeof(int32_t)) ||
@@ -1272,6 +1430,14 @@ int32_t phx_mc_restricted_power_cells_exact(
     *in.failed_component = -1;
     int32_t status = validate_exact_image_layout(in);
     if (status != PHX_MC_OK) return status;
+    std::vector<int32_t> selected;
+    if (in.selected_site_count > 0) {
+      selected.assign(in.selected_sites, in.selected_sites + in.selected_site_count);
+      std::sort(selected.begin(), selected.end());
+      if (selected.front() < 0 || selected.back() >= in.image_count ||
+          std::adjacent_find(selected.begin(), selected.end()) != selected.end())
+        return PHX_MC_INVALID_INPUT;
+    }
     status = validate_exact_image_source(in);
     if (status != PHX_MC_OK) return status;
     ExactImageCoordinates images(in.image_count);
@@ -1279,7 +1445,9 @@ int32_t phx_mc_restricted_power_cells_exact(
     const Input input{
         in.image_count, nullptr, images.weights.data(), in.neighbor_offsets, in.neighbors,
         in.split_sites, in.point_count, in.points, in.tet_count, in.tets,
-        in.tet_regions, in.tet_face_facets, images.coordinates.data()};
+        in.tet_regions, in.tet_face_facets, images.coordinates.data(),
+        in.selected_site_count == in.image_count ? -1 : in.selected_site_count,
+        selected.data()};
     status = validate_layout(input);
     if (status != PHX_MC_OK) return status;
     auto result = std::make_unique<phx_mc_power_cells>();
@@ -1311,6 +1479,24 @@ int32_t phx_mc_power_cells_failure(const phx_mc_power_cells* result, int64_t* re
   *clip_status = result->result.failure.clip_status;
   return PHX_MC_OK;
 }
+int32_t phx_mc_power_cells_export_face_remotes(
+    const phx_mc_power_cells* result, int64_t face_capacity,
+    int32_t* remote_sites, int32_t* remote_tets) {
+  if (result == nullptr || face_capacity < 0 ||
+      !phx::mc::addressable(face_capacity, 1, sizeof(int32_t)))
+    return PHX_MC_INVALID_ARGUMENT;
+  const auto& r = result->result;
+  const int64_t faces = static_cast<int64_t>(r.face_remote_sites.size());
+  if (face_capacity < faces) return PHX_MC_CAPACITY_EXCEEDED;
+  if (faces > 0 && (remote_sites == nullptr || remote_tets == nullptr))
+    return PHX_MC_INVALID_ARGUMENT;
+  if (faces > 0) {
+    std::copy(r.face_remote_sites.begin(), r.face_remote_sites.end(), remote_sites);
+    std::copy(r.face_remote_tets.begin(), r.face_remote_tets.end(), remote_tets);
+  }
+  return PHX_MC_OK;
+}
+
 int64_t phx_mc_power_cells_site_witness_size(const phx_mc_power_cells* result) {
   return result == nullptr ? -1 : static_cast<int64_t>(result->result.vertex_sites.size());
 }

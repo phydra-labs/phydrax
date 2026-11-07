@@ -13,9 +13,12 @@ import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+from phydrax.geometry._planar_coverage import PlcSourcePointWitness
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
+    SourceBoundaryCoverQuery,
     SourceBoundaryPointWitness,
     SurfaceEnvelopeDistanceWitness,
 )
@@ -24,6 +27,7 @@ from phydrax.geometry.reconstruction._core import (
     ReconstructedGeometrySource,
     ReconstructionReport,
 )
+from phydrax.geometry.reconstruction._envelope import SurfaceEnvelopeMode
 from phydrax.geometry.reconstruction._sheet import (
     AuthoredTriangleSheet,
     TriangleSheetRepairEvidence,
@@ -40,7 +44,9 @@ from phydrax.meshing._contracts import (
 from phydrax.meshing._controls import FeatureKind, ProtectedFeature, RegionControl
 from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+from phydrax.meshing._sizing import UniformSizeControl
 from phydrax.meshing._surface_envelope import (
+    _association_target_groups,
     prepare_native_surface_envelope,
     SurfaceEnvelopeSource,
 )
@@ -87,6 +93,7 @@ def _reconstructed_tetrahedron() -> ReconstructedGeometrySource:
 def _request(
     *,
     protected_features: tuple[tuple[int, bool], ...] = (),
+    envelope_mode: SurfaceEnvelopeMode = "remeshed",
 ) -> tuple[
     ReconstructedGeometrySource,
     SurfaceEnvelopeSource,
@@ -105,6 +112,7 @@ def _request(
         spacing=0.4,
         certificate_spacing=0.4,
         maximum_deviation=3.0,
+        envelope_mode=envelope_mode,
     )
     specification, options = _specification(source, protected_features)
     return original, source, specification, options, contract
@@ -255,13 +263,22 @@ def test_surface_envelope_route_retains_original_and_derived_region_authority() 
     assert certification.fidelity_source.owner is source
     assert certification.fidelity_source.entity_dimension == 2
     assert certification.fidelity_source.is_full_scope
-    assert certification.fidelity_tolerance == 0.0
+    assert certification.fidelity_tolerance is not None
+    assert np.isfinite(certification.fidelity_tolerance)
+    assert certification.fidelity_tolerance >= 0.0
     derived_witness = certification.fidelity_witness
     assert isinstance(derived_witness, SourceBoundaryChartWitness)
     assert derived_witness.source_id == source.source_id
     assert derived_witness.source_revision == source.source_revision
     assert derived_witness.chart_dimension == 2
     certification.fidelity_source.validate_chart_witness(derived_witness)
+    boundary_face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)[
+        np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
+    ]
+    np.testing.assert_array_equal(
+        np.sort(derived_witness.entity_global_ids), np.sort(boundary_face_ids)
+    )
+    assert source.plc_source.complex.boundary == "conforming"
 
     assert len(certification.scoped_fidelity) == 1
     envelope_query, witness, tolerance = certification.scoped_fidelity[0]
@@ -272,17 +289,46 @@ def test_surface_envelope_route_retains_original_and_derived_region_authority() 
     assert witness.offset == source.offset
     assert witness.spacing == source.spacing
     assert tolerance == source.maximum_deviation
+    assert witness.derived_source is certification.fidelity_source
+    assert witness.derived_witness is derived_witness
+    np.testing.assert_array_equal(
+        np.sort(witness.target_facet_global_ids), np.sort(boundary_face_ids)
+    )
     np.testing.assert_array_equal(witness.bounds, source.result.bounds)
     witness.require_current(mesh, construction.geometry, envelope_query)
+    original_certificate = certify_source_fidelity(
+        mesh,
+        construction.geometry,
+        envelope_query,
+        tolerance=tolerance,
+        witness=witness,
+    )
+    achieved = dict(construction.compliance.achieved)
+    assert (
+        achieved["derived_envelope_maximum_deviation"] == certification.fidelity_tolerance
+    )
+    assert (
+        achieved["source_envelope_input_to_envelope_upper"]
+        == original_certificate.source_to_mesh_upper
+    )
+    assert (
+        achieved["source_envelope_envelope_to_input_upper"]
+        == original_certificate.mesh_to_source_upper
+    )
+    assert (
+        achieved["source_envelope_envelope_to_input_lower"]
+        == original_certificate.mesh_to_source_lower
+    )
 
     domain = construction.certification.domain
-    assert domain is source.domain
+    assert isinstance(domain, PiecewiseLinearDomain)
     assert domain.source_id == source.source_id
     assert domain.source_revision == source.source_revision
     np.testing.assert_array_equal(
         construction.certification.cell_regions,
         np.zeros((mesh.blocks[0].cell_count,), dtype=np.int64),
     )
+    assert construction.organization.region_boundary_evidence
 
     cell_association = next(
         association
@@ -310,6 +356,144 @@ def test_surface_envelope_route_retains_original_and_derived_region_authority() 
     assert construction.compliance.passed
     assert all(
         label.name != "internal_curve" for label in construction.organization.labels
+    )
+
+
+def test_envelope_associations_preserve_many_to_one_facet_ancestry() -> None:
+    _, source, original, options, contract = _request()
+    specification = VolumeMeshingSpec(
+        original.target,
+        original.boundary_scope,
+        original.fill_strategy,
+        size_controls=(UniformSizeControl(original.boundary_scope, 0.2),),
+        region_controls=original.region_controls,
+        maximum_deviation=original.maximum_deviation,
+    )
+    construction = prepare_native_surface_envelope(
+        source, specification, options, contract
+    ).execute()
+    groups = _association_target_groups(
+        source,
+        construction,
+        2,
+        source.scope_entity_ids_by_mesh_row[2],
+        GeometrySourceEntityRole.FACET,
+    )
+    assert len(groups) == source.domain.facets.shape[0]
+    assert any(len(group) > 1 for group in groups)
+    boundary_ids = np.asarray(construction.mesh.entity_set(2).entity_ids)[
+        np.asarray(construction.mesh.boundary_masks[2], dtype=np.bool_)
+    ]
+    np.testing.assert_array_equal(
+        np.sort(np.asarray([identifier for group in groups for identifier in group])),
+        np.sort(boundary_ids),
+    )
+
+
+def test_envelope_refinement_retains_all_target_facet_charts(tmp_path: Any) -> None:
+    _, source, original_specification, options, contract = _request()
+    specification = VolumeMeshingSpec(
+        original_specification.target,
+        original_specification.boundary_scope,
+        original_specification.fill_strategy,
+        size_controls=(UniformSizeControl(original_specification.boundary_scope, 0.2),),
+        region_controls=original_specification.region_controls,
+        maximum_deviation=original_specification.maximum_deviation,
+    )
+    construction = prepare_native_surface_envelope(
+        source, specification, options, contract
+    ).execute()
+    mesh = construction.mesh
+    request = construction.certification
+    chart = request.fidelity_witness
+    assert isinstance(request.fidelity_source, PiecewiseLinearBoundarySource)
+    assert isinstance(chart, SourceBoundaryChartWitness)
+    assert chart.entity_global_ids.size > source.domain.facets.shape[0]
+    assert len(set(chart.source_chart_ids)) == source.domain.facets.shape[0]
+    request.fidelity_source.validate_chart_witness(chart)
+    boundary_ids = np.asarray(mesh.entity_set(2).entity_ids)[
+        np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
+    ]
+    np.testing.assert_array_equal(np.sort(chart.entity_global_ids), np.sort(boundary_ids))
+    assert isinstance(request.source_coverage_witness, PlcSourcePointWitness)
+    assert isinstance(request.domain, PiecewiseLinearDomain)
+    assert request.source_coverage_witness.domain_id == request.domain.domain_id
+    assert construction.organization.boundary is not None
+    boundary = construction.organization.boundary.mesh
+    faces = np.asarray(boundary.blocks[0].vertices, dtype=np.int64)
+    points = np.asarray(boundary.coordinates, dtype=np.float64)[faces]
+    assert faces.shape[0] == boundary_ids.size
+    assert (
+        np.sum(np.einsum("ij,ij->i", points[:, 0], np.cross(points[:, 1], points[:, 2])))
+        > 0.0
+    )
+    original_query, distance_witness, tolerance = request.scoped_fidelity[0]
+    assert isinstance(original_query, SourceBoundaryCoverQuery)
+    assert isinstance(distance_witness, SurfaceEnvelopeDistanceWitness)
+    assert distance_witness.derived_witness is chart
+    assert tolerance == source.maximum_deviation
+    distance_witness.require_current(mesh, construction.geometry, original_query)
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        write_model_artifact,
+    )
+    from tests.unit.interchange._native_cad_archive_worker import (
+        _rebuild_continuation_value,
+    )
+
+    path = tmp_path / "subdivided-envelope-witness.phx"
+    write_model_artifact(path, distance_witness, limits=MODEL_ARCHIVE_LIMITS)
+    restored = read_model_artifact(
+        path,
+        expected_type=SurfaceEnvelopeDistanceWitness,
+        restore=_rebuild_continuation_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.witness_id == distance_witness.witness_id
+    assert restored.reproduction is None
+    assert restored.derived_source is not None
+    assert restored.derived_witness is not None
+    assert restored.derived_witness.witness_id == chart.witness_id
+    restored.require_current(mesh, construction.geometry, original_query)
+    import subprocess
+    import sys
+
+    content_id = model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
+    script = """
+import sys
+from phydrax.geometry._source_boundary_records import SurfaceEnvelopeDistanceWitness
+from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, read_model_artifact
+from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._sizing import UniformSizeControl
+from phydrax.meshing._surface_envelope import prepare_native_surface_envelope
+from tests.unit.interchange._native_cad_archive_worker import _rebuild_continuation_value
+from tests.unit.meshing.test_native_surface_envelope_route import _request
+_, source, original, options, contract = _request()
+specification = VolumeMeshingSpec(
+    original.target, original.boundary_scope, original.fill_strategy,
+    size_controls=(UniformSizeControl(original.boundary_scope, 0.2),),
+    region_controls=original.region_controls,
+    maximum_deviation=original.maximum_deviation,
+)
+construction = prepare_native_surface_envelope(source, specification, options, contract).execute()
+witness = read_model_artifact(
+    sys.argv[1], expected_type=SurfaceEnvelopeDistanceWitness,
+    restore=_rebuild_continuation_value, limits=MODEL_ARCHIVE_LIMITS,
+    expected_content_id=sys.argv[2],
+)
+assert witness.reproduction is None
+assert witness.derived_source is not None and witness.derived_witness is not None
+query, fresh, _ = construction.certification.scoped_fidelity[0]
+assert witness.witness_id == fresh.witness_id
+witness.require_current(construction.mesh, construction.geometry, query)
+"""
+    subprocess.run(
+        (sys.executable, "-c", script, str(path), content_id),
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -493,6 +677,7 @@ def test_envelope_currentness_trusts_only_a_reproduction_record_of_its_own_conte
     foreign = _envelope.SurfaceEnvelopeReproduction(
         input_id=source.reproduction.input_id,
         output_id=source.reproduction.input_id,
+        carrier_id=source.reproduction.carrier_id,
     )
     mismatched = eqx.tree_at(lambda envelope: envelope.reproduction, source, foreign)
     mismatched.require_current()
@@ -547,12 +732,15 @@ def test_envelope_witness_trusts_only_a_reproduction_record_of_its_own_content(
             offset=witness.offset,
             spacing=witness.spacing,
             certificate_spacing=witness.certificate_spacing,
+            envelope_mode=witness.envelope_mode,
             bounds=witness.bounds,
             envelope_vertices=envelope_vertices,
             envelope_triangles=witness.envelope_triangles,
             target_vertex_global_ids=witness.target_vertex_global_ids,
             target_facet_global_ids=witness.target_facet_global_ids,
             reproduction=record,
+            derived_source=witness.derived_source,
+            derived_witness=witness.derived_witness,
         )
 
     # The retained record binds the witnessed content: no kernel run.
@@ -563,6 +751,7 @@ def test_envelope_witness_trusts_only_a_reproduction_record_of_its_own_content(
     foreign = _envelope.SurfaceEnvelopeReproduction(
         input_id=source.reproduction.input_id,
         output_id=source.reproduction.input_id,
+        carrier_id=source.reproduction.carrier_id,
     )
     rebuilt(foreign, witness.envelope_vertices).require_current(mesh, geometry, query)
     assert runs == [1]
@@ -572,6 +761,216 @@ def test_envelope_witness_trusts_only_a_reproduction_record_of_its_own_content(
     with pytest.raises(ValueError, match="do not reproduce"):
         rebuilt(source.reproduction, moved).require_current(mesh, geometry, query)
     assert runs == [1, 1]
+
+
+def test_kernel_envelope_keeps_the_marching_carrier_as_its_volume() -> None:
+    _, source, specification, options, contract = _request(envelope_mode="kernel")
+    _, remeshed, *_ = _request()
+    carrier = source.kept_carrier()
+    assert carrier is not None
+    assert remeshed.kept_carrier() is None
+    points, cells = carrier
+    surface_count = source.domain.vertices.shape[0]
+    assert points.shape[0] > surface_count and cells.shape[0] > 0
+    np.testing.assert_array_equal(points[:surface_count], source.domain.vertices)
+    # The mode is part of the envelope, its entity allocation and its record.
+    assert source.envelope_mode == "kernel"
+    assert source.envelope_id != remeshed.envelope_id
+    assert source.allocation_id != remeshed.allocation_id
+    assert source.reproduction.input_id != remeshed.reproduction.input_id
+    source.require_current()
+
+    construction = prepare_native_surface_envelope(
+        source, specification, options, contract
+    ).execute()
+    mesh = construction.mesh
+    interior = ~np.asarray(mesh.boundary_masks[0], dtype=np.bool_)
+    assert np.any(interior)
+    achieved = dict(construction.compliance.achieved)
+    assert achieved["source_envelope_kernel_carrier_vertices"] == points.shape[0]
+    assert achieved["source_envelope_kernel_carrier_tetrahedra"] == cells.shape[0]
+    assert construction.organization is not None
+    boundary = construction.organization.boundary
+    assert boundary is not None
+    assert "surface_envelope_mode:kernel" in boundary.metadata.provenance
+    query, witness, tolerance = construction.certification.scoped_fidelity[0]
+    assert isinstance(witness, SurfaceEnvelopeDistanceWitness)
+    assert witness.envelope_mode == "kernel"
+    assert tolerance == source.maximum_deviation
+    certificate = certify_source_fidelity(
+        mesh, construction.geometry, query, tolerance=tolerance, witness=witness
+    )
+    assert certificate.status == "certified"
+    assert certificate.source_to_mesh_upper <= source.maximum_deviation
+
+
+def test_kernel_envelope_binds_its_mode_and_its_carrier() -> None:
+    _, source, specification, options, contract = _request(envelope_mode="kernel")
+    construction = prepare_native_surface_envelope(
+        source, specification, options, contract
+    ).execute()
+    mesh, geometry = construction.mesh, construction.geometry
+    query, witness, _ = construction.certification.scoped_fidelity[0]
+    assert isinstance(witness, SurfaceEnvelopeDistanceWitness)
+    # The same envelope claimed as a remeshed one does not reproduce.
+    relabeled = SurfaceEnvelopeDistanceWitness(
+        mesh_id=witness.mesh_id,
+        geometry_id=witness.geometry_id,
+        topology_id=witness.topology_id,
+        source_id=witness.source_id,
+        source_revision=witness.source_revision,
+        source_query_id=witness.source_query_id,
+        offset=witness.offset,
+        spacing=witness.spacing,
+        certificate_spacing=witness.certificate_spacing,
+        envelope_mode="remeshed",
+        bounds=witness.bounds,
+        envelope_vertices=witness.envelope_vertices,
+        envelope_triangles=witness.envelope_triangles,
+        target_vertex_global_ids=witness.target_vertex_global_ids,
+        target_facet_global_ids=witness.target_facet_global_ids,
+        reproduction=witness.reproduction,
+        derived_source=witness.derived_source,
+        derived_witness=witness.derived_witness,
+    )
+    assert relabeled.witness_id != witness.witness_id
+    with pytest.raises(ValueError, match="do not reproduce"):
+        relabeled.require_current(mesh, geometry, query)
+    with pytest.raises((TypeError, ValueError), match="envelope_mode"):
+        SurfaceEnvelopeSource(
+            source.original,
+            source_id=source.source_id,
+            coordinate_contract=contract,
+            offset=source.offset,
+            spacing=source.spacing,
+            certificate_spacing=source.certificate_spacing,
+            maximum_deviation=source.maximum_deviation,
+            envelope_mode="extracted",  # ty: ignore[invalid-argument-type]
+        )
+    # A retained carrier its record does not bind is refused.
+    cells = np.array(source.result.tetrahedra, copy=True)
+    cells[0, (0, 1)] = cells[0, (1, 0)]
+    tampered = eqx.tree_at(
+        lambda envelope: envelope.result,
+        source,
+        source.result._replace(tetrahedra=cells),
+    )
+    with pytest.raises(ValueError, match="does not reproduce"):
+        tampered.require_current()
+
+
+def test_kept_carrier_must_tetrahedralize_exactly_its_plc_region() -> None:
+    from phydrax.meshing._volume_generation import _kept_carrier_recovery
+
+    _, source, *_ = _request(envelope_mode="kernel")
+    carrier = source.kept_carrier()
+    assert carrier is not None
+    points, cells = carrier
+    complex_ = source.plc_source.complex
+    segments = np.asarray(complex_.plc_edge_vertices, dtype=np.int64)
+    recovery = _kept_carrier_recovery(complex_, carrier, segments)
+    np.testing.assert_array_equal(recovery.tetrahedra, cells)
+    np.testing.assert_array_equal(
+        recovery.faces, np.asarray(complex_.polygon_vertices).reshape((-1, 3))
+    )
+    assert not np.any(recovery.witness_strata)
+    # Dropping a cell exposes interior faces: not the PLC region.
+    with pytest.raises(ValueError, match="exactly"):
+        _kept_carrier_recovery(complex_, (points, cells[1:]), segments)
+    moved = np.array(points, copy=True)
+    moved[0, 0] = np.nextafter(moved[0, 0], np.inf)
+    with pytest.raises(ValueError, match="vertex bank it extends"):
+        _kept_carrier_recovery(complex_, (moved, cells), segments)
+
+
+@pytest.mark.parametrize("original_kind", ("reconstructed", "authored_sheet"))
+def test_kernel_envelope_and_its_construction_witnesses_cold_restore(
+    tmp_path: Any, original_kind: str
+) -> None:
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    if original_kind == "reconstructed":
+        _, source, specification, options, contract = _request(envelope_mode="kernel")
+    else:
+        contract = SpatialCoordinateContract.si()
+        source = SurfaceEnvelopeSource(
+            AuthoredTriangleSheet(
+                np.asarray(((0.0, 0.0, 0.0), (0.2, 0.0, 0.0), (0.0, 0.2, 0.0))),
+                np.asarray(((0, 1, 2),), dtype=np.int64),
+                feature_id="archived-open-sheet",
+            ),
+            source_id="archived-open-sheet-envelope",
+            coordinate_contract=contract,
+            offset=0.263,
+            spacing=0.11,
+            certificate_spacing=0.05,
+            maximum_deviation=0.55,
+            envelope_mode="kernel",
+        )
+        specification, options = _specification(source, ())
+    construction = prepare_native_surface_envelope(
+        source, specification, options, contract
+    ).execute()
+    query, witness, _ = construction.certification.scoped_fidelity[0]
+    pwl_query = construction.certification.fidelity_source
+    assert isinstance(pwl_query, PiecewiseLinearBoundarySource)
+    entries = tuple(
+        CompositionEntry(
+            value,
+            entry_id=name,
+            role="topology",
+            owner_id="phydrax.meshing",
+            structure_id=source.plc_source.binding_id,
+            revision_id=source.envelope_id,
+            semantics_id=f"kernel-envelope-{name}",
+        )
+        for name, value in (
+            ("source", source),
+            ("original-query", query),
+            ("envelope-query", pwl_query),
+            ("witness", witness),
+        )
+    )
+    path = write_model_artifact(
+        tmp_path / "kernel-envelope.phx",
+        Composition(entries, boundary_id="kernel-envelope-cold"),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    cold = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    restored = cold.value("source")
+    assert type(restored) is SurfaceEnvelopeSource
+    assert restored is not source
+    assert restored.envelope_mode == "kernel"
+    assert restored.envelope_id == source.envelope_id
+    restored_carrier = restored.kept_carrier()
+    assert restored_carrier is not None
+    np.testing.assert_array_equal(restored_carrier[1], source.result.tetrahedra)
+    restored_query = cold.value("original-query")
+    assert (restored_query.source_id, restored_query.source_revision) == (
+        query.source_id,
+        query.source_revision,
+    )
+    restored_pwl = cold.value("envelope-query")
+    assert isinstance(restored_pwl, PiecewiseLinearBoundarySource)
+    assert restored_pwl.source_query_id == pwl_query.source_query_id
+    restored_witness = cold.value("witness")
+    assert isinstance(restored_witness, SurfaceEnvelopeDistanceWitness)
+    assert restored_witness.envelope_mode == "kernel"
+    assert restored_witness.witness_id == witness.witness_id
+    restored_witness.require_current(
+        construction.mesh, construction.geometry, restored_query
+    )
 
 
 def test_surface_envelope_source_refuses_an_insufficient_distance_bound() -> None:
@@ -585,6 +984,7 @@ def test_surface_envelope_source_refuses_an_insufficient_distance_bound() -> Non
             spacing=0.4,
             certificate_spacing=0.4,
             maximum_deviation=1.5,
+            envelope_mode="remeshed",
         )
     # The offset must dominate the native sampling error sqrt(3) h + h_c.
     with pytest.raises(ValueError, match="must exceed"):
@@ -596,6 +996,7 @@ def test_surface_envelope_source_refuses_an_insufficient_distance_bound() -> Non
             spacing=0.16,
             certificate_spacing=0.08,
             maximum_deviation=3.0,
+            envelope_mode="remeshed",
         )
 
 
@@ -737,6 +1138,7 @@ def test_surface_envelope_wraps_an_authored_imperfect_open_sheet() -> None:
         spacing=0.5,
         certificate_spacing=0.5,
         maximum_deviation=3.0,
+        envelope_mode="remeshed",
     )
     assert source.original is not sheet
     assert source.original.source_revision == sheet.source_revision

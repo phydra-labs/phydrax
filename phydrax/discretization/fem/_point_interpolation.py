@@ -1670,6 +1670,10 @@ def prepare_finite_element_side_trace(
     """
     if not isinstance(discretization, FiniteElementDiscretization):
         raise TypeError("discretization must be FiniteElementDiscretization.")
+    if discretization.source_surface is not None:
+        raise ValueError(
+            "Source surface facet quadrature is not represented by the carrier trace."
+        )
     if not isinstance(rule, FacetTraceRule):
         raise TypeError("rule must be a FacetTraceRule.")
     quantity = parse(quantity, SideTraceQuantity, "quantity")

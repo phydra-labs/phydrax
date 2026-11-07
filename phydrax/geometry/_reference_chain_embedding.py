@@ -50,7 +50,7 @@ from ._restricted_embedding import reference_chart_composition_equal
 
 
 if TYPE_CHECKING:
-    from ._global_embedding import GlobalEmbeddingCertificate
+    from ._global_embedding import GlobalEmbeddingCertificate, ValidatedGlobalEmbedding
 
 
 ReferenceChainStatus = Literal["certified", "violated", "unresolved"]
@@ -1165,6 +1165,8 @@ def certify_reference_chain_embedding(
     reference_maps: Mapping[str, ReferenceCellMapWitnesses | None],
     parent_embedding: GlobalEmbeddingCertificate,
     /,
+    *,
+    _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
 ) -> ReferenceChainEmbeddingCertificate:
     """Prove a hexahedral reference-cell chain is a degree-one parent partition.
 
@@ -1233,6 +1235,7 @@ def certify_reference_chain_embedding(
 
     from ._global_embedding import (
         GlobalEmbeddingCertificate as CanonicalGlobalEmbeddingCertificate,
+        ValidatedGlobalEmbedding,
     )
 
     if not isinstance(parent_embedding, CanonicalGlobalEmbeddingCertificate):
@@ -1244,10 +1247,21 @@ def certify_reference_chain_embedding(
             )
         )
         return finish()
+    if _validated_parent_embedding is not None:
+        if (
+            type(_validated_parent_embedding) is not ValidatedGlobalEmbedding
+            or _validated_parent_embedding.certificate is not parent_embedding
+        ):
+            raise ValueError("Reference-chain proof requires its actual validated embedding.")
+        _validated_parent_embedding.require(
+            parent_mesh, parent_geometry, parent_embedding.validity
+        )
     try:
         parent_embedding.require_current(parent_mesh, parent_geometry)
-        rebuilt_parent_embedding = CanonicalGlobalEmbeddingCertificate.from_stored_fields(
-            parent_embedding
+        rebuilt_parent_embedding = (
+            CanonicalGlobalEmbeddingCertificate.from_stored_fields(parent_embedding)
+            if _validated_parent_embedding is None
+            else parent_embedding
         )
     except (TypeError, ValueError, IndexError) as error:
         findings.append(

@@ -69,6 +69,39 @@ def _mesh(points: np.ndarray, cells: np.ndarray, kind: str) -> Any:
     )
 
 
+def test_named_p1_element_resolves_on_native_simplex_block() -> None:
+    points, cells = _tetrahedra(1)
+    mesh = _mesh(points, cells, "simplex:3")
+    element = phx.discretization.lagrange_element("tetrahedron", 1)
+    field = phx.discretization.FiniteElementFieldSpec("u", element)
+    space = phx.discretization.FiniteElementPlan(mesh, field).prepare()
+    assert mesh.blocks[0].cell_kind == "simplex:3"
+    assert field.resolve(mesh)[0].element_id == element.element_id
+    assert space.dof_maps[0].dof_coordinates.shape == points.shape
+    incompatible = phx.discretization.FiniteElementFieldSpec(
+        "u", phx.discretization.lagrange_element("triangle", 1)
+    )
+    with pytest.raises(ValueError, match="incompatible"):
+        incompatible.resolve(mesh)
+
+
+def test_native_simplex_p1_manufactured_diffusion() -> None:
+    from phydrax.meshing._canonical import certify_cell_mesh
+    from tools.meshing_qualification.scenarios.native_implicit import (
+        _solve_physical_epoch,
+    )
+
+    points, cells = _tetrahedra(2)
+    mesh = _mesh(points, cells, "simplex:3")
+    result = certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    error, values, evidence = _solve_physical_epoch(result)
+    assert np.isfinite(error)
+    assert np.all(np.isfinite(values))
+    residual = evidence["normalized_residual"]
+    assert isinstance(residual, float)
+    assert residual <= 1.0e-8
+
+
 def _annulus(parameters: np.ndarray) -> np.ndarray:
     radius = 1.0 + parameters[..., 0]
     angle = 0.5 * np.pi * parameters[..., 1]

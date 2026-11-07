@@ -392,6 +392,8 @@ def _require_endpoint_source_coverage(
     coverage: DomainCoverageCertificate,
     role: str,
     /,
+    *,
+    chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
 ) -> DomainCoverageCertificate:
     if not isinstance(coverage, DomainCoverageCertificate):
         raise VolumeMaterialMapError(
@@ -434,6 +436,7 @@ def _require_endpoint_source_coverage(
             source=coverage.source,
             fidelity=coverage.fidelity,
             source_coverage_witness=coverage.source_coverage_witness,
+            chart_parent=chart_parent,
         )
     except (TypeError, ValueError) as error:
         raise VolumeMaterialMapError(
@@ -488,6 +491,8 @@ class EulerianVolumeOverlapMap(StrictModule, NonTrainableState):
         target_occurrence_paths: Sequence[Sequence[str]] | None = None,
         common_root: CommonRootVolumeWitness | None = None,
         integration_policy: CurvedOverlapIntegrationPolicy | None = None,
+        source_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+        target_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> None:
         if not all(
             isinstance(value, CellMesh) for value in (source_mesh, target_mesh)
@@ -620,6 +625,11 @@ class EulerianVolumeOverlapMap(StrictModule, NonTrainableState):
         target_paths = _material_occurrence_paths(
             source_map, target_entities, target_regions, target_occurrence_paths, "target"
         )
+        chart_parent = (
+            None
+            if common_root is None
+            else (common_root.root_mesh, common_root.root_geometry)
+        )
         source_coverage = _require_endpoint_source_coverage(
             source_mesh,
             source_geometry,
@@ -627,6 +637,9 @@ class EulerianVolumeOverlapMap(StrictModule, NonTrainableState):
             source_regions,
             source_coverage,
             "source",
+            chart_parent=chart_parent
+            if source_chart_parent is None
+            else source_chart_parent,
         )
         target_coverage = _require_endpoint_source_coverage(
             target_mesh,
@@ -635,6 +648,9 @@ class EulerianVolumeOverlapMap(StrictModule, NonTrainableState):
             target_regions,
             target_coverage,
             "target",
+            chart_parent=chart_parent
+            if target_chart_parent is None
+            else target_chart_parent,
         )
         overlap_source = np.asarray(refinement.source_cells, dtype=np.int64)
         overlap_target = np.asarray(refinement.target_cells, dtype=np.int64)
@@ -761,6 +777,8 @@ class EulerianVolumeOverlapMap(StrictModule, NonTrainableState):
         root_geometry: CellGeometrySpec | None = None,
         source_coverage: DomainCoverageCertificate | None = None,
         target_coverage: DomainCoverageCertificate | None = None,
+        source_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+        target_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> EulerianVolumeOverlapMap:
         """Rebuild Eulerian overlap and coverage from restored endpoint owners."""
         if not isinstance(value, EulerianVolumeOverlapMap):
@@ -824,6 +842,8 @@ class EulerianVolumeOverlapMap(StrictModule, NonTrainableState):
             target_occurrence_paths=value.target_occurrence_paths,
             common_root=common_root,
             integration_policy=integration_policy,
+            source_chart_parent=source_chart_parent,
+            target_chart_parent=target_chart_parent,
         )
         if rebuilt.map_id != value.map_id:
             raise ValueError(
@@ -989,6 +1009,8 @@ def prepare_eulerian_volume_overlap(
     target_occurrence_paths: Sequence[Sequence[str]] | None = None,
     common_root: CommonRootVolumeWitness | None = None,
     integration_policy: CurvedOverlapIntegrationPolicy | None = None,
+    source_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+    target_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
 ) -> EulerianVolumeOverlapMap:
     return EulerianVolumeOverlapMap(
         source_mesh,
@@ -1007,6 +1029,8 @@ def prepare_eulerian_volume_overlap(
         target_occurrence_paths=target_occurrence_paths,
         common_root=common_root,
         integration_policy=integration_policy,
+        source_chart_parent=source_chart_parent,
+        target_chart_parent=target_chart_parent,
     )
 
 
@@ -1122,6 +1146,8 @@ class VolumeMaterialMap(StrictModule, NonTrainableState):
         source_occurrence_paths: Sequence[Sequence[str]] | None = None,
         target_occurrence_paths: Sequence[Sequence[str]] | None = None,
         integration_policy: CurvedOverlapIntegrationPolicy | None = None,
+        source_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+        target_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> None:
         if not all(
             isinstance(value, CellMesh) for value in (source_mesh, target_mesh)
@@ -1155,10 +1181,28 @@ class VolumeMaterialMap(StrictModule, NonTrainableState):
                 "Material-reference transfer requires complete reference and endpoint coverage."
             )
         source_coverage = _require_coverage(
-            source_mesh, source_geometry, source_map, source_coverage, "source"
+            source_mesh,
+            source_geometry,
+            source_map,
+            source_coverage,
+            "source",
+            chart_parent=(
+                (reference.root_mesh, reference.root_geometry)
+                if source_chart_parent is None
+                else source_chart_parent
+            ),
         )
         target_coverage = _require_coverage(
-            target_mesh, target_geometry, source_map, target_coverage, "target"
+            target_mesh,
+            target_geometry,
+            source_map,
+            target_coverage,
+            "target",
+            chart_parent=(
+                (reference.root_mesh, reference.root_geometry)
+                if target_chart_parent is None
+                else target_chart_parent
+            ),
         )
         if (
             source_coverage.certificate_id != deformation.source_coverage_id
@@ -1635,6 +1679,9 @@ class VolumeMaterialMap(StrictModule, NonTrainableState):
         source_coverage: DomainCoverageCertificate | None = None,
         target_coverage: DomainCoverageCertificate | None = None,
         coordinate_transition: Any = None,
+        root_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+        source_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+        target_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     ) -> VolumeMaterialMap:
         if not isinstance(value, VolumeMaterialMap):
             raise TypeError("value must be VolumeMaterialMap.")
@@ -1645,6 +1692,7 @@ class VolumeMaterialMap(StrictModule, NonTrainableState):
             root_geometry,
             source_map,
             root_coverage,
+            chart_parent=root_chart_parent,
         )
         deformation = VolumeMaterialDeformation.revalidate(
             value.deformation,
@@ -1660,6 +1708,8 @@ class VolumeMaterialMap(StrictModule, NonTrainableState):
             if target_coverage is None
             else target_coverage,
             coordinate_transition=coordinate_transition,
+            source_chart_parent=source_chart_parent,
+            target_chart_parent=target_chart_parent,
         )
         rebuilt = prepare_volume_material_map(
             source_mesh,
@@ -1677,6 +1727,8 @@ class VolumeMaterialMap(StrictModule, NonTrainableState):
             source_occurrence_paths=value.source_occurrence_paths,
             target_occurrence_paths=value.target_occurrence_paths,
             integration_policy=value.integration_policy,
+            source_chart_parent=source_chart_parent,
+            target_chart_parent=target_chart_parent,
         )
         if rebuilt.map_id != value.map_id:
             raise ValueError(
@@ -1940,6 +1992,8 @@ def prepare_volume_material_map(
     source_occurrence_paths: Sequence[Sequence[str]] | None = None,
     target_occurrence_paths: Sequence[Sequence[str]] | None = None,
     integration_policy: CurvedOverlapIntegrationPolicy | None = None,
+    source_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
+    target_chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
 ) -> VolumeMaterialMap:
     return VolumeMaterialMap(
         source_mesh,
@@ -1957,6 +2011,8 @@ def prepare_volume_material_map(
         source_occurrence_paths=source_occurrence_paths,
         target_occurrence_paths=target_occurrence_paths,
         integration_policy=integration_policy,
+        source_chart_parent=source_chart_parent,
+        target_chart_parent=target_chart_parent,
     )
 
 

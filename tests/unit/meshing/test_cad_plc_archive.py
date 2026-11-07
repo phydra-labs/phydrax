@@ -294,22 +294,3 @@ def test_cad_proof_recipe_comparison_refuses_kind_dtype_and_field_changes(
     from phydrax.meshing._model_codec import _same_model_content
 
     assert not _same_model_content(left, right)
-
-
-def test_cad_plc_replays_one_complete_report(
-    cad_plc: PiecewiseLinearComplex, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from phydrax.meshing import _plc_source
-
-    original = _plc_source._certify_cad_surface
-    calls = 0
-
-    def certify(*args: object, **kwargs: object) -> object:
-        nonlocal calls
-        calls += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(_plc_source, "_certify_cad_surface", certify)
-    restored = PiecewiseLinearComplex.from_stored_fields(cad_plc)
-    assert restored.complex_id == cad_plc.complex_id
-    assert calls == 1

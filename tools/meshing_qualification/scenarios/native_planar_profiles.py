@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import pi
+import resource
+import sys
+from time import perf_counter
 from typing import Any, NamedTuple
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -15,10 +19,10 @@ from phydrax.discretization import (
     lagrange_element,
 )
 from phydrax.discretization._cell_complex import PolygonalConnectivity
+from phydrax.geometry._brep_capped_material import BRepCappedMaterialMap
 from phydrax.geometry._meshing_domain import (
     MeshingDomain,
     MeshingDomainCurve,
-    MeshingDomainRegion,
     MeshingSurfacePatch,
     PatchCurveUse,
     PatchPoleUse,
@@ -26,6 +30,8 @@ from phydrax.geometry._meshing_domain import (
 from phydrax.geometry.brep import (
     brep_cylinder,
     brep_planar_face,
+    brep_sphere,
+    brep_torus,
     CylinderPatch,
     LineCurve,
     PlanarEmbedding,
@@ -33,9 +39,8 @@ from phydrax.geometry.brep import (
     PlanePatch,
     ProfileLoop,
     ProfilePlane,
-    SpherePatch,
-    TorusPatch,
 )
+from phydrax.geometry.brep._correspondence import _exact_brep_pole_collapse
 from phydrax.geometry.simplicial import PlanarMeshRegion, SegmentMesh
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
@@ -58,6 +63,7 @@ from phydrax.meshing.providers._native_sources import (
 )
 
 from .._runtime import accepted_result_record, require_meshcore, runtime_identity
+from ._closed_surface_accuracy import closed_surface_accuracy
 
 
 _TAU = 2.0 * pi
@@ -108,56 +114,31 @@ def _side(
     direction: tuple[float, float],
     first: float,
     last: float,
+    *,
+    reversed_use: bool = False,
 ) -> PatchCurveUse:
+    if reversed_use:
+        return PatchCurveUse(curve, LineCurve(origin, direction), last, first, sense=-1)
     return PatchCurveUse(curve, LineCurve(origin, direction), first, last)
 
 
 def _sphere_domain(source_id: str, revision: str, /) -> MeshingDomain:
-    radius = 1.0
-    patch = SpherePatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), radius)
-    loop = (
-        PatchPoleUse(
-            0,
-            LineCurve((0.0, -_HALF_PI), (_TAU, 0.0)),
-            0.0,
-            1.0,
-        ),
-        _side(0, (_TAU, 0.0), (0.0, 1.0), -_HALF_PI, _HALF_PI),
-        PatchPoleUse(
-            1,
-            LineCurve((_TAU, _HALF_PI), (-_TAU, 0.0)),
-            0.0,
-            1.0,
-        ),
-        _side(0, (0.0, 0.0), (0.0, 1.0), _HALF_PI, -_HALF_PI),
+    model = brep_sphere(
+        1.0,
+        coordinate_contract=SpatialCoordinateContract.si(),
+        source_id=f"{source_id}:{revision}",
     )
-    return MeshingDomain(
-        (MeshingSurfacePatch(patch, (loop,)),),
-        (MeshingDomainCurve(0, 1),),
-        2,
-        source_id=source_id,
-        source_revision=revision,
-        regions=(MeshingDomainRegion("ball", ((0, 1),)),),
-    )
+    return MeshingDomain.from_brep(model)
 
 
 def _torus_domain(source_id: str, revision: str, /) -> MeshingDomain:
-    major, minor = 2.0, 0.6
-    patch = TorusPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), major, minor)
-    loop = (
-        _side(0, (0.0, 0.0), (1.0, 0.0), 0.0, _TAU),
-        _side(1, (_TAU, 0.0), (0.0, 1.0), 0.0, _TAU),
-        _side(0, (0.0, _TAU), (1.0, 0.0), _TAU, 0.0),
-        _side(1, (0.0, 0.0), (0.0, 1.0), _TAU, 0.0),
+    model = brep_torus(
+        2.0,
+        0.6,
+        coordinate_contract=SpatialCoordinateContract.si(),
+        source_id=f"{source_id}:{revision}",
     )
-    return MeshingDomain(
-        (MeshingSurfacePatch(patch, (loop,)),),
-        (MeshingDomainCurve(0, 0), MeshingDomainCurve(0, 0)),
-        1,
-        source_id=source_id,
-        source_revision=revision,
-        regions=(MeshingDomainRegion("ring", ((0, 1),)),),
-    )
+    return MeshingDomain.from_brep(model)
 
 
 def _capped_cylinder_domain(source_id: str, revision: str, /) -> MeshingDomain:
@@ -228,7 +209,7 @@ def _folded_plates_domain(source_id: str, revision: str, /) -> MeshingDomain:
                 _side(4, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0),
                 _side(5, (1.0, 0.0), (0.0, 1.0), 0.0, 1.0),
                 _side(6, (0.0, 1.0), (1.0, 0.0), 1.0, 0.0),
-                _side(0, (0.0, 0.0), (0.0, 1.0), 1.0, 0.0),
+                _side(0, (0.0, 0.0), (0.0, 1.0), 1.0, 0.0, reversed_use=True),
             ),
         ),
     )
@@ -382,6 +363,10 @@ def _planar_definition(
         source = NativePlanarSource(
             region,
             _profile_revision(profile),
+            vertex_entity_ids=np.arange(8, dtype=np.int64),
+            edge_entity_ids=np.arange(8, dtype=np.int64),
+            embedded_vertex_entity_ids=np.asarray((8, 9), dtype=np.int64),
+            embedded_edge_entity_ids=np.asarray((8,), dtype=np.int64),
             embedded=embedded,
         )
         area = 3.84
@@ -415,7 +400,12 @@ def _planar_definition(
         region = PlanarMeshRegion(
             vertices, (tuple(range(vertices.shape[0])),), feature_id=source_id
         )
-        source = NativePlanarSource(region, _profile_revision(profile))
+        source = NativePlanarSource(
+            region,
+            _profile_revision(profile),
+            vertex_entity_ids=np.arange(12, dtype=np.int64),
+            edge_entity_ids=np.arange(12, dtype=np.int64),
+        )
         return (
             source,
             0.324,
@@ -565,6 +555,91 @@ def _domain_source_entities(domain: MeshingDomain, /) -> set[str]:
     }
 
 
+def _collapsed_pole_evidence(
+    domain: MeshingDomain, result: phx.meshing.CellMeshingResult, /
+) -> tuple[dict[str, object], ...]:
+    authority = domain.brep_authority
+    if authority is None:
+        return ()
+    geometry = authority.geometry
+    vertex_set = result.mesh.entity_set(0)
+    vertex_rows = {
+        int(identifier): row
+        for row, identifier in enumerate(result.mesh.vertex_global_ids)
+    }
+    records: list[dict[str, object]] = []
+    for curve, edge in enumerate(domain.source_indices[1]):
+        if geometry.edge_curves[edge] >= 0:
+            continue
+        first_vertex, last_vertex = geometry.edge_vertices[edge]
+        if first_vertex != last_vertex:
+            raise RuntimeError("A collapsed source edge must have one authored vertex.")
+        occurrence = domain.source_occurrences[1][curve]
+        corners = [
+            row for row, vertex in enumerate(domain.source_indices[0])
+            if vertex == first_vertex and domain.source_occurrences[0][row] == occurrence
+        ]
+        if len(corners) != 1:
+            raise RuntimeError("A collapsed source edge lacks its occurrence-bound corner.")
+        corner = corners[0]
+        proved_uses = 0
+        for patch, face in enumerate(domain.source_indices[2]):
+            if domain.source_occurrences[2][patch] != occurrence:
+                continue
+            for loop_index, coedges in enumerate(geometry.face_loops[face]):
+                for use_index, coedge in enumerate(coedges):
+                    if geometry.coedge_edges[coedge] != edge:
+                        continue
+                    use = domain.patches[patch].loops[loop_index][use_index]
+                    first, last = map(float, geometry.edge_ranges[edge])
+                    if (
+                        not isinstance(use, PatchPoleUse)
+                        or use.corner != corner
+                        or not _exact_brep_pole_collapse(
+                            None, authority.patches[face], geometry.pcurves[coedge],
+                            first, last, geometry.vertex_exact_points[first_vertex],
+                            geometry.vertex_roots[first_vertex],
+                            geometry.coedge_endpoint_roots[coedge],
+                        )
+                    ):
+                        raise RuntimeError("A declared collapsed edge lacks an exact pole proof.")
+                    proved_uses += 1
+        if not proved_uses:
+            raise RuntimeError("A declared collapsed edge has no source pole use.")
+        corner_id = domain.entity_id(0, corner)
+        targets = []
+        for association in result.associations:
+            if (
+                association.source_id != domain.source_id
+                or association.source_revision != domain.source_revision
+                or association.target_entity_set_id != vertex_set.entity_set_id
+            ):
+                continue
+            for row, source in enumerate(association.source_entity_ids):
+                if (
+                    source == corner_id
+                    and association.source_occurrence_paths[row] == occurrence
+                    and int(association.source_dimensions[row]) == 0
+                    and bool(association.resolved[row])
+                    and not bool(association.ambiguous[row])
+                ):
+                    targets.append(int(association.target_global_ids[row]))
+        if len(targets) != 1 or targets[0] not in vertex_rows:
+            raise RuntimeError("A source pole lacks one associated target corner.")
+        point = np.asarray(result.mesh.coordinates)[vertex_rows[targets[0]]]
+        if not np.array_equal(point, domain.corner_points[corner]):
+            raise RuntimeError("An associated source pole changed its physical point.")
+        records.append({
+            "source_edge_id": domain.entity_id(1, curve),
+            "source_corner_id": corner_id,
+            "occurrence_path": occurrence,
+            "target_vertex_id": targets[0],
+            "physical_point": tuple(float(value) for value in point),
+            "proved_coedge_uses": proved_uses,
+        })
+    return tuple(records)
+
+
 def _planar_source_entities(source: NativePlanarSource, /) -> set[str]:
     identifiers = {
         source.source_entity_key_for_scope(dimension, int(entity_id))[0]
@@ -575,16 +650,50 @@ def _planar_source_entities(source: NativePlanarSource, /) -> set[str]:
     return identifiers
 
 
+def _checkpoint_number(value: float, /) -> float | str:
+    return value if np.isfinite(value) else str(value)
+
+
 def _solve_manufactured_surface(
     result: phx.meshing.CellMeshingResult,
     profile: str,
     geometry: str,
     /,
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
+    started = perf_counter()
+    phase_started = started
+
+    def phase(name: str) -> None:
+        nonlocal phase_started
+        if checkpoint is None:
+            return
+        now = perf_counter()
+        checkpoint({
+            "profile_id": profile,
+            "event": "finite-element-phase",
+            "phase": name,
+            "phase_seconds": now - phase_started,
+            "elapsed_seconds": now - started,
+            "peak_rss": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
+            "peak_rss_unit": "bytes" if sys.platform == "darwin" else "kibibytes",
+        })
+        phase_started = now
+    if result.certification is None or result.certification.inputs.source is None:
+        raise RuntimeError("Surface PDE requires the certified source boundary query.")
+    source_surface = phx.discretization.SurfaceFiniteElementGeometry.from_result(
+        result, result.certification.inputs.source
+    )
+    phase("source-material-map")
     field = FiniteElementFieldSpec("u", lagrange_element("triangle", 1))
     space = FiniteElementPlan(
-        result.mesh, field, coordinate_spec=result.geometry
+        result.mesh,
+        field,
+        coordinate_spec=result.geometry,
+        source_surface=source_surface,
     ).prepare()
+    phase("finite-element-prepare")
 
     def exact(points: Any) -> Any:
         if geometry == "sphere":
@@ -617,13 +726,32 @@ def _solve_manufactured_surface(
                 return z * (1.0 + (2.0 * rho - 2.0) / (0.6**2 * rho))
             z = points[..., 2]
             second = 2.0 * 1.5**2 - 12.0 * 1.5 * z + 12.0 * z * z
-            return jnp.where((z == 0.0) | (z == 1.5), 0.0, exact(points) - second)
+            return exact(points) - second
 
         source = phx.equations.coefficient(
             forcing,
             coefficient_id=f"{profile}:manufactured-source",
         )
-        actions.append(phx.equations.SourceAction("u", source))
+        source_domain = None
+        if geometry == "capped_cylinder":
+            material = source_surface.material_map
+            if not isinstance(material, BRepCappedMaterialMap):
+                raise RuntimeError("Capped surface forcing requires its certified material map.")
+            side_rows = []
+            offset = 0
+            for mesh_block, material_block in zip(
+                result.mesh.blocks, material.blocks, strict=True
+            ):
+                for side in material_block.sides:
+                    side_rows.extend((np.asarray(side.indices, dtype=np.int64) + offset).tolist())
+                offset += mesh_block.cell_count
+            if not side_rows:
+                raise RuntimeError("Capped surface forcing has no certified cylindrical side.")
+            source_domain = phx.discretization.IntegrationDomain(
+                "cell", np.asarray(sorted(side_rows), dtype=np.int64),
+                space.cell_domain.support_id, space.cell_domain.entity_set_id,
+            )
+        actions.append(phx.equations.SourceAction("u", source, domain=source_domain))
     form = phx.equations.FiniteElementForm(
         f"{profile.replace(':', '-')}-manufactured-surface",
         "u",
@@ -640,10 +768,30 @@ def _solve_manufactured_surface(
             dirichlet_values=exact,
         )
     operator, rhs = problem.linear_system()
-    solved = phx.linalg.solve(operator, rhs)
+    if checkpoint is not None:
+        jax.block_until_ready(rhs)
+    phase("form-and-linear-system")
+    solved = phx.linalg.solve(
+        operator, rhs,
+        policy=phx.linalg.LinearSolvePolicy(
+            tolerance=phx.linalg.TolerancePolicy(relative=1e-12, absolute=1e-14)
+        ),
+    )
+    if checkpoint is not None:
+        jax.block_until_ready(solved.value)
+    phase("linear-solve")
     values = np.asarray(problem.expand(solved.value), dtype=np.float64)
     dof_coordinates = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
     expected = np.asarray(exact(jnp.asarray(dof_coordinates)), dtype=np.float64)
+    if checkpoint is not None:
+        checkpoint({
+            "profile_id": profile,
+            "event": "finite-element-coefficients",
+            "value_shape": values.shape,
+            "expected_shape": expected.shape,
+            "values_finite": bool(np.all(np.isfinite(values))),
+            "successful": bool(jnp.all(solved.successful)),
+        })
     if values.shape != expected.shape or not np.all(np.isfinite(values)):
         raise RuntimeError(
             "Native surface FE consumer returned malformed manufactured coefficients."
@@ -652,6 +800,31 @@ def _solve_manufactured_surface(
     residual = float(jnp.linalg.norm(problem.residual(solved.value)))
     rhs_norm = float(jnp.linalg.norm(rhs))
     normalized_residual = residual / max(1.0, rhs_norm)
+    phase("residual-and-field-error")
+    if checkpoint is not None:
+        checkpoint({
+            "profile_id": profile,
+            "event": "finite-element-measurement",
+            "maximum_dof_solution_error": _checkpoint_number(solution_error),
+            "residual_norm": _checkpoint_number(residual),
+            "rhs_norm": _checkpoint_number(rhs_norm),
+            "normalized_residual": _checkpoint_number(normalized_residual),
+            "normalized_residual_tolerance": _PDE_RESIDUAL_TOLERANCE,
+            "solution_error_tolerance": _PDE_RESIDUAL_TOLERANCE if not closed else None,
+        })
+    accuracy = None
+    if closed:
+        accuracy = closed_surface_accuracy(
+            space, source_surface.material_map, geometry, values, expected,
+        )
+        if checkpoint is not None:
+            checkpoint({
+                "profile_id": profile,
+                "event": "finite-element-accuracy",
+                **accuracy,
+            })
+        if not accuracy["energy_accuracy_passed"]:
+            raise RuntimeError(f"Closed surface manufactured energy oracle failed: {accuracy}.")
     if (
         not bool(jnp.all(solved.successful))
         or not np.isfinite(solution_error)
@@ -676,10 +849,14 @@ def _solve_manufactured_surface(
         "normalized_residual": normalized_residual,
         "normalized_residual_tolerance": _PDE_RESIDUAL_TOLERANCE,
         "solution_error_tolerance": _PDE_RESIDUAL_TOLERANCE if not closed else None,
+        "closed_surface_accuracy": accuracy,
     }
 
 
-def _qualify_surface(profile: str, geometry: str, /) -> dict[str, object]:
+def _qualify_surface(
+    profile: str, geometry: str, /, *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
+) -> dict[str, object]:
     definition = _surface_definition(profile, geometry)
     area_oracle = _surface_area_oracle(geometry)
     source_measure_relative_error = abs(definition.area - area_oracle) / area_oracle
@@ -724,13 +901,26 @@ def _qualify_surface(profile: str, geometry: str, /) -> dict[str, object]:
     protected_features: tuple[ProtectedFeature, ...] = ()
     compliance = None
     if combined:
+        physical_curves = {
+            use.curve
+            for patch in domain.patches
+            for loop in patch.loops
+            for use in loop
+            if isinstance(use, PatchCurveUse)
+        }
+        curve_ids = []
+        for identifier in domain.scope_entity_ids(1):
+            key, path = domain.source_entity_key_for_scope(1, int(identifier))
+            row = domain.resolve_entity_id(1, key, occurrence_path=path)
+            if row in physical_curves:
+                curve_ids.append(int(identifier))
         curve_scope = MeshingScope(
             domain.source_id,
             domain.source_revision,
             phx.meshing.MeshingEntityKind.GEOMETRY,
             1,
-            domain.entity_set_id(1),
-            np.asarray(domain.scope_indices(1), dtype=np.int64),
+            domain.scope_entity_set_id(1),
+            np.asarray(curve_ids, dtype=np.int64),
         )
         protected_features = (
             ProtectedFeature(
@@ -814,12 +1004,20 @@ def _qualify_surface(profile: str, geometry: str, /) -> dict[str, object]:
         raise RuntimeError(
             f"Native surface source-fidelity certificate exceeds {requested_deviation} m."
         )
+    pole_evidence = _collapsed_pole_evidence(domain, result)
+    declared_entities = _domain_source_entities(domain)
+    collapsed_ids = {record["source_edge_id"] for record in pole_evidence}
+    if len(collapsed_ids) != len(pole_evidence) or not collapsed_ids <= declared_entities:
+        raise RuntimeError("Collapsed-pole evidence does not identify declared source edges.")
     association = _association_record(
         result,
         domain.source_id,
         domain.source_revision,
-        _domain_source_entities(domain),
+        declared_entities - collapsed_ids,
     )
+    association["declared_source_entity_count"] = len(declared_entities)
+    association["collapsed_pole_edge_count"] = len(pole_evidence)
+    association["collapsed_pole_edges"] = pole_evidence
     coordinates, cells = _triangle_data(result)
     edge_midpoints = np.concatenate(
         (
@@ -867,7 +1065,7 @@ def _qualify_surface(profile: str, geometry: str, /) -> dict[str, object]:
             f"Native surface area {measured_area} differs from analytic source area "
             f"{definition.area} beyond {area_tolerance}."
         )
-    pde = _solve_manufactured_surface(result, profile, geometry)
+    pde = _solve_manufactured_surface(result, profile, geometry, checkpoint=checkpoint)
     return {
         "profile": profile,
         "status": "passed",
@@ -877,7 +1075,7 @@ def _qualify_surface(profile: str, geometry: str, /) -> dict[str, object]:
         "source": {
             "kind": (
                 "native BRep converted to MeshingDomain"
-                if geometry in ("annulus", "capped_cylinder")
+                if geometry in ("annulus", "capped_cylinder", "sphere", "torus")
                 else "revision-bound analytic MeshingDomain"
             ),
             "source_id": domain.source_id,
@@ -1134,6 +1332,8 @@ def _solve_planar_field(
     result: phx.meshing.CellMeshingResult,
     profile: str,
     /,
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     field = FiniteElementFieldSpec("u", lagrange_element("triangle", 1))
     space = FiniteElementPlan(
@@ -1152,7 +1352,12 @@ def _solve_planar_field(
         dirichlet_values=lambda points: points[..., 0],
     )
     operator, rhs = problem.linear_system()
-    solved = phx.linalg.solve(operator, rhs)
+    solved = phx.linalg.solve(
+        operator, rhs,
+        policy=phx.linalg.LinearSolvePolicy(
+            tolerance=phx.linalg.TolerancePolicy(relative=1e-12, absolute=1e-14)
+        ),
+    )
     values = np.asarray(problem.expand(solved.value), dtype=np.float64)
     dof_coordinates = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
     expected = dof_coordinates[:, 0]
@@ -1160,6 +1365,21 @@ def _solve_planar_field(
     residual = float(jnp.linalg.norm(problem.residual(solved.value)))
     rhs_norm = float(jnp.linalg.norm(rhs))
     normalized_residual = residual / max(1.0, rhs_norm)
+    if checkpoint is not None:
+        checkpoint({
+            "profile_id": profile,
+            "event": "finite-element-measurement",
+            "value_shape": values.shape,
+            "expected_shape": expected.shape,
+            "values_finite": bool(np.all(np.isfinite(values))),
+            "successful": bool(jnp.all(solved.successful)),
+            "maximum_dof_solution_error": _checkpoint_number(error),
+            "residual_norm": _checkpoint_number(residual),
+            "rhs_norm": _checkpoint_number(rhs_norm),
+            "normalized_residual": _checkpoint_number(normalized_residual),
+            "normalized_residual_tolerance": _PDE_RESIDUAL_TOLERANCE,
+            "solution_error_tolerance": _PDE_RESIDUAL_TOLERANCE,
+        })
     if (
         not bool(jnp.all(solved.successful))
         or values.shape != expected.shape
@@ -1183,12 +1403,15 @@ def _solve_planar_field(
     }
 
 
-def _qualify_planar(profile: str, /) -> dict[str, object]:
+def _qualify_planar(
+    profile: str, /, *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
+) -> dict[str, object]:
     source, expected_area, physical_input = _planar_definition(profile)
     scope = MeshingScope.whole(source, 2)
     larger = profile.endswith(":larger")
     resolution = 8 if larger else 1
-    size = 0.8 / resolution
+    size = 0.02 if profile == "planar-thin-channel" else 0.8 / resolution
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(2, 2, CellFamilyPolicy(required=("triangle",))),
         scope,
@@ -1257,7 +1480,7 @@ def _qualify_planar(profile: str, /) -> dict[str, object]:
             f"Native planar region area {measured_area} disagrees with the exact "
             f"source oracle {expected_area} (source-loop measure {source_area})."
         )
-    pde = _solve_planar_field(result, profile)
+    pde = _solve_planar_field(result, profile, checkpoint=checkpoint)
     return {
         "profile": profile,
         "status": "passed",
@@ -1301,7 +1524,12 @@ def _qualify_junction_network() -> dict[str, object]:
         jnp.asarray(((0, 1), (0, 2), (0, 3)), dtype=jnp.int32),
         source_id="qualification:planar-junction-network",
     )
-    source = NativeCurveSource(curves, "revision:planar-junction-network-v1")
+    source = NativeCurveSource(
+        curves,
+        "revision:planar-junction-network-v1",
+        curve_entity_ids=np.arange(3, dtype=np.int64),
+        vertex_entity_ids=np.arange(4, dtype=np.int64),
+    )
     scope = MeshingScope.whole(source, 1)
     specification = CurveMeshingSpec(
         CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))),
@@ -1371,8 +1599,9 @@ def _qualify_junction_network() -> dict[str, object]:
             "Native curve vertices departed from their authored junction branches."
         )
     expected_ids = {
-        source.source_entity_key_for_scope(1, int(identifier))[0]
-        for identifier in source.scope_entity_ids(1).tolist()
+        source.source_entity_key_for_scope(dimension, int(identifier))[0]
+        for dimension in (0, 1)
+        for identifier in source.scope_entity_ids(dimension).tolist()
     }
     association = _association_record(
         result,
@@ -1398,7 +1627,9 @@ def _qualify_junction_network() -> dict[str, object]:
     }
 
 
-def native_planar_feature_matrix() -> dict[str, object]:
+def native_planar_feature_matrix(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     """Run every recovered planar-features profile and its native PDE consumer."""
     records: dict[str, dict[str, object]] = {}
     failures: list[dict[str, str]] = []
@@ -1439,11 +1670,11 @@ def native_planar_feature_matrix() -> dict[str, object]:
                 )
                 if geometry == "capped_cylinder_features":
                     geometry = "capped_cylinder"
-                records[profile] = _qualify_surface(profile, geometry)
+                records[profile] = _qualify_surface(profile, geometry, checkpoint=checkpoint)
             elif profile.startswith("sphere-feature-surface"):
-                records[profile] = _qualify_surface(profile, "sphere")
+                records[profile] = _qualify_surface(profile, "sphere", checkpoint=checkpoint)
             else:
-                records[profile] = _qualify_planar(profile)
+                records[profile] = _qualify_planar(profile, checkpoint=checkpoint)
         except Exception as error:
             failure = f"{type(error).__name__}: {error}"
             records[profile] = {
@@ -1452,6 +1683,12 @@ def native_planar_feature_matrix() -> dict[str, object]:
                 "failure": failure,
             }
             failures.append({"profile": profile, "failure": failure})
+        if checkpoint is not None:
+            checkpoint({
+                "profile_id": profile,
+                "event": "profile-complete",
+                "record": records[profile],
+            })
     try:
         junction_network = _qualify_junction_network()
     except Exception as error:
@@ -1460,6 +1697,12 @@ def native_planar_feature_matrix() -> dict[str, object]:
         failures.append(
             {"profile": "planar-feature-junction-network", "failure": failure}
         )
+    if checkpoint is not None:
+        checkpoint({
+            "profile_id": "planar-feature-junction-network",
+            "event": "profile-complete",
+            "record": junction_network,
+        })
     status = "passed" if not failures and len(records) == len(_PROFILE_IDS) else "failed"
     return {
         "status": status,

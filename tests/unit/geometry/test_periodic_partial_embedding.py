@@ -267,6 +267,22 @@ def test_doubly_wrapped_material_l_channel_is_refused() -> None:
     )
 
 
+def test_mapped_contact_filter_preserves_periodic_overlap_detection() -> None:
+    from phydrax.geometry._embedding_cells import prepare_embedding_cells
+    from phydrax.geometry._periodic_mapped_contacts import certify_periodic_mapped_contacts
+
+    for winding, expected in ((1, "certified"), (2, "violated")):
+        mesh, geometry = _material_l_channel(winding_multiplier=winding)
+        topology = mesh.periodic_topology
+        assert topology is not None
+        result = certify_periodic_mapped_contacts(
+            mesh, prepare_embedding_cells(mesh, geometry), topology
+        )
+        assert result.status == expected, result.findings
+        if winding == 2:
+            assert any(check == "periodic_cell_contact" for check, _, _ in result.findings)
+
+
 def test_folded_material_l_channel_is_invalid() -> None:
     mesh, _ = _material_l_channel()
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64).copy()
@@ -368,6 +384,23 @@ def test_doubly_wrapped_triangle_strip_is_refused() -> None:
         finding.check == "periodic_cell_contact" and finding.status == "violated"
         for finding in certificate.findings
     )
+
+
+def test_mapped_translation_route_refuses_nontranslation_group() -> None:
+    from phydrax.geometry._embedding_cells import prepare_embedding_cells
+    from phydrax.geometry._periodic_mapped_contacts import (
+        certify_periodic_mapped_contacts,
+    )
+
+    mesh, geometry = _rotational_wedge()
+    topology = mesh.periodic_topology
+    assert topology is not None
+    result = certify_periodic_mapped_contacts(
+        mesh, prepare_embedding_cells(mesh, geometry), topology
+    )
+    assert result.status == "unresolved"
+    assert result.findings[0][0] == "periodic_mapped_contact_unresolved"
+    assert "translational generators" in result.findings[0][2]
 
 
 def test_rotational_wedge_certifies_finite_group_quotient() -> None:

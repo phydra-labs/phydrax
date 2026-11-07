@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import NoReturn, SupportsIndex
+
 import numpy as np
 
 from .._identity import SemanticProvenance
@@ -27,16 +30,27 @@ from ..discretization._cell_geometry_validity import (
 )
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
-from ..geometry._global_embedding import GlobalEmbeddingCertificate
+from ..geometry._global_embedding import (
+    GlobalEmbeddingCertificate,
+    ValidatedGlobalEmbedding,
+)
 from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry._surface_source_support import SurfaceSourceCharts
-from ..geometry.implicit._chart_restriction import ImplicitChartPremise, ValidatedImplicitChartParent
+from ..geometry.implicit._chart_restriction import (
+    ImplicitChartPremise,
+    ValidatedImplicitChartParent,
+)
 from ..geometry.surface import SurfaceModel
 from ._association import GeometryAssociation
-from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshManifoldScope
-from ._certification import MeshCertificationReport
+from ._audit import (
+    audit_cell_mesh,
+    CellMeshAuditPolicy,
+    CellMeshAuditReport,
+    CellMeshManifoldScope,
+)
+from ._certification import _ComputedSurfaceAcceptance, MeshCertificationReport
 from ._certification_inputs import (
     MeshCertificationInputs,
     validate_fidelity_witnesses,
@@ -54,6 +68,9 @@ from ._contracts import (
     SurfaceMeshingSpec,
     VolumeMeshingSpec,
 )
+from ._layer_core_carrier_witness import NativeLayerCoreCarrierWitness
+from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
+from ._layer_core_subdivision import OverlapSourceStencils, RefinedColumnCertification
 from ._layer_curving_records import LayerCurvingSourceEvidence
 from ._native_construction import NativeMeshConstruction, NativeMeshOrganization
 from ._organization import (
@@ -63,6 +80,7 @@ from ._organization import (
     MeshZone,
     RegionBoundaryEvidence,
 )
+from ._quality import CellQualityReport
 from ._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from ._trace import (
     MeshingDiagnostic,
@@ -217,7 +235,40 @@ def canonicalize_cell_mesh(mesh: CellMesh, /) -> CellMesh:
     )
 
 
-def certify_cell_mesh(
+@dataclass(frozen=True, slots=True)
+class _CellMeshAcceptance:
+    """Operation-local canonical acceptance before result publication."""
+
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    coordinate_contract: SpatialCoordinateContract
+    audit: CellMeshAuditReport
+    certification: MeshCertificationReport | None
+    boundary: SurfaceModel | None
+    patches: tuple[MeshPatch, ...]
+    zones: tuple[MeshZone, ...]
+    labels: tuple[MeshLabel, ...]
+    attributes: tuple[MeshAttribute, ...]
+    associations: tuple[GeometryAssociation, ...]
+    surface_source: SurfaceSourceCharts | None
+    region_boundary_evidence: tuple[RegionBoundaryEvidence, ...]
+    planar_embedding: PlanarEmbedding | None
+    layer_curving_evidence: LayerCurvingSourceEvidence | None
+    layer_core_carrier_witness: NativeLayerCoreCarrierWitness | None
+    layer_core_overlap_stencils: OverlapSourceStencils | None
+    layer_core_column_certification: RefinedColumnCertification | None
+    layer_core_root_geometry: LayerCoreRootGeometry | None
+    validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...]
+
+    @property
+    def quality(self) -> CellQualityReport:
+        return self.audit.quality
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Computed cell acceptance cannot be serialized.")
+
+
+def _certify_cell_mesh_acceptance(
     mesh: CellMesh,
     coordinate_contract: SpatialCoordinateContract,
     /,
@@ -235,6 +286,13 @@ def certify_cell_mesh(
     region_boundary_evidence: tuple[RegionBoundaryEvidence, ...] = (),
     planar_embedding: PlanarEmbedding | None = None,
     layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
+    layer_core_carrier_witness: NativeLayerCoreCarrierWitness | None = None,
+    layer_core_overlap_stencils: OverlapSourceStencils | None = None,
+    layer_core_column_certification: RefinedColumnCertification | None = None,
+    layer_core_root_geometry: LayerCoreRootGeometry | None = None,
+    computed_root: ComputedLayerCoreRoot | None = None,
+    _validated_embedding: ValidatedGlobalEmbedding | None = None,
+    _validated_chart_parent_embedding: ValidatedGlobalEmbedding | None = None,
     embedding: GlobalEmbeddingCertificate | None = None,
     embedding_premise: NestedRestrictionPremise | None = None,
     fidelity_premise: ImplicitChartPremise | None = None,
@@ -245,27 +303,8 @@ def certify_cell_mesh(
     validity_parent: CellValidityCertificate | ValidatedCellValidityParent
     | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
     | None = None,
-) -> CellMeshingResult:
-    """Canonicalize and certify one existing CellMesh through native substrates.
-
-    ``embedding`` is a prepared global-embedding certificate of the canonical
-    mesh; acceptance with ``certification_inputs`` checks and reuses it.
-    ``embedding_premise`` offers acceptance a certified source embedding and
-    the exact nested transition to this mesh, from which the global embedding
-    follows when the nested-restriction theorem's premises hold.
-    ``fidelity_premise`` offers implicit-chart fidelity a certified parent
-    certificate: rows equal to the parent's are reused by identity, and a
-    nested restriction inherits the parent's bounds.
-    ``validated_witnesses`` are fidelity-witness validations the caller made
-    for exactly these mesh, coordinate map and source objects; acceptance with
-    ``certification_inputs`` does not repeat them.
-    ``validity`` (an in-hand proof of exactly these inputs) or
-    ``validity_parent`` (earlier proofs whose identical cell maps are reused)
-    serve acceptance with ``certification_inputs``; see
-    ``MeshCertificationReport``.
-    ``manifold_scope`` declares the vertex stars a resident patch of a
-    distributed mesh certifies; it applies to the direct audit only.
-    """
+) -> _CellMeshAcceptance:
+    """Compute canonical acceptance without publishing a meshing result."""
 
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
@@ -278,6 +317,22 @@ def certify_cell_mesh(
     geometry_ = CellGeometrySpec.affine(canonical) if geometry is None else geometry
     if not isinstance(geometry_, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec or None.")
+    if (
+        layer_core_root_geometry is not None
+        and certification_inputs is None
+    ) or (
+        certification_inputs is not None
+        and certification_inputs.layer_core_root_geometry is not layer_core_root_geometry
+    ):
+        raise ValueError("Layer root geometry must match its certified source authority.")
+    if computed_root is not None and (
+        certification_inputs is None or layer_core_root_geometry is None
+    ):
+        raise ValueError("A computed root requires its certified layer source authority.")
+    if (
+        _validated_embedding is not None or _validated_chart_parent_embedding is not None
+    ) and certification_inputs is None:
+        raise ValueError("Validated embeddings require certified acceptance.")
     if (
         embedding is not None
         or embedding_premise is not None
@@ -337,6 +392,9 @@ def certify_cell_mesh(
             validated=validated,
             validity=validity,
             validity_parent=validity_parent,
+            computed_root=computed_root,
+            validated_embedding=_validated_embedding,
+            _validated_chart_parent_embedding=_validated_chart_parent_embedding,
         )
         certification.require_passed()
         audit = certification.audit
@@ -357,6 +415,95 @@ def certify_cell_mesh(
                 else audit.quality.worst_cell_global_ids
             ),
         )
+    return _CellMeshAcceptance(
+        canonical, geometry_, coordinate_contract, audit, certification, boundary,
+        patches, zones, labels, attributes, associations, surface_source,
+        region_boundary_evidence, planar_embedding, layer_curving_evidence,
+        layer_core_carrier_witness, layer_core_overlap_stencils,
+        layer_core_column_certification, layer_core_root_geometry, validated,
+    )
+
+
+def certify_cell_mesh(
+    mesh: CellMesh,
+    coordinate_contract: SpatialCoordinateContract,
+    /,
+    *,
+    geometry: CellGeometrySpec | None = None,
+    audit_policy: CellMeshAuditPolicy | None = None,
+    boundary: SurfaceModel | None = None,
+    certification_inputs: MeshCertificationInputs | None = None,
+    patches: tuple[MeshPatch, ...] = (),
+    zones: tuple[MeshZone, ...] = (),
+    labels: tuple[MeshLabel, ...] = (),
+    attributes: tuple[MeshAttribute, ...] = (),
+    associations: tuple[GeometryAssociation, ...] = (),
+    surface_source: SurfaceSourceCharts | None = None,
+    region_boundary_evidence: tuple[RegionBoundaryEvidence, ...] = (),
+    planar_embedding: PlanarEmbedding | None = None,
+    layer_curving_evidence: LayerCurvingSourceEvidence | None = None,
+    layer_core_carrier_witness: NativeLayerCoreCarrierWitness | None = None,
+    layer_core_overlap_stencils: OverlapSourceStencils | None = None,
+    layer_core_column_certification: RefinedColumnCertification | None = None,
+    layer_core_root_geometry: LayerCoreRootGeometry | None = None,
+    computed_root: ComputedLayerCoreRoot | None = None,
+    _validated_embedding: ValidatedGlobalEmbedding | None = None,
+    _validated_chart_parent_embedding: ValidatedGlobalEmbedding | None = None,
+    embedding: GlobalEmbeddingCertificate | None = None,
+    embedding_premise: NestedRestrictionPremise | None = None,
+    fidelity_premise: ImplicitChartPremise | None = None,
+    validated_chart_parent: ValidatedImplicitChartParent | None = None,
+    manifold_scope: CellMeshManifoldScope | None = None,
+    validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
+    validity: CellValidityCertificate | None = None,
+    validity_parent: CellValidityCertificate | ValidatedCellValidityParent
+    | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+    | None = None,
+) -> CellMeshingResult:
+    """Canonicalize and certify one existing CellMesh through native substrates.
+
+    ``embedding`` is a prepared global-embedding certificate of the canonical
+    mesh; acceptance with ``certification_inputs`` checks and reuses it.
+    ``embedding_premise`` offers acceptance a certified source embedding and
+    the exact nested transition to this mesh, from which the global embedding
+    follows when the nested-restriction theorem's premises hold.
+    ``fidelity_premise`` offers implicit-chart fidelity a certified parent
+    certificate: rows equal to the parent's are reused by identity, and a
+    nested restriction inherits the parent's bounds.
+    ``validated_witnesses`` are fidelity-witness validations the caller made
+    for exactly these mesh, coordinate map and source objects; acceptance with
+    ``certification_inputs`` does not repeat them.
+    ``validity`` (an in-hand proof of exactly these inputs) or
+    ``validity_parent`` (earlier proofs whose identical cell maps are reused)
+    serve acceptance with ``certification_inputs``; see
+    ``MeshCertificationReport``.
+    ``computed_root`` is an operation-local proof bound to the exact original
+    layer source, request and root objects; it is never retained in the result.
+    ``manifold_scope`` declares the vertex stars a resident patch of a
+    distributed mesh certifies; it applies to the direct audit only.
+    """
+
+    accepted = _certify_cell_mesh_acceptance(
+        mesh, coordinate_contract, geometry=geometry, audit_policy=audit_policy,
+        boundary=boundary, certification_inputs=certification_inputs, patches=patches,
+        zones=zones, labels=labels, attributes=attributes, associations=associations,
+        surface_source=surface_source, region_boundary_evidence=region_boundary_evidence,
+        planar_embedding=planar_embedding, layer_curving_evidence=layer_curving_evidence,
+        layer_core_carrier_witness=layer_core_carrier_witness,
+        layer_core_overlap_stencils=layer_core_overlap_stencils,
+        layer_core_column_certification=layer_core_column_certification,
+        layer_core_root_geometry=layer_core_root_geometry, computed_root=computed_root,
+        _validated_embedding=_validated_embedding,
+        _validated_chart_parent_embedding=_validated_chart_parent_embedding,
+        embedding=embedding, embedding_premise=embedding_premise,
+        fidelity_premise=fidelity_premise, validated_chart_parent=validated_chart_parent,
+        manifold_scope=manifold_scope, validated_witnesses=validated_witnesses,
+        validity=validity, validity_parent=validity_parent,
+    )
+    canonical, geometry_, audit, certification, validated = (
+        accepted.mesh, accepted.geometry, accepted.audit,
+        accepted.certification, accepted.validated_witnesses,
+    )
     findings = audit.recorded
     audit_status = MeshingStageStatus.WARNING if findings else MeshingStageStatus.PASSED
     audit_diagnostics = (
@@ -443,6 +590,11 @@ def certify_cell_mesh(
         region_boundary_evidence=region_boundary_evidence,
         planar_embedding=planar_embedding,
         layer_curving_evidence=layer_curving_evidence,
+        layer_core_carrier_witness=layer_core_carrier_witness,
+        layer_core_overlap_stencils=layer_core_overlap_stencils,
+        layer_core_column_certification=layer_core_column_certification,
+        layer_core_root_geometry=layer_core_root_geometry,
+        computed_root=computed_root,
         validated_witnesses=validated,
     )
 
@@ -544,9 +696,80 @@ def _accept_native_construction(
     plan_id: str,
     route: str,
     /,
+    *,
+    computed_surface_out: list[_ComputedSurfaceAcceptance] | None = None,
 ) -> CellMeshingResult:
     """Publish only a candidate satisfying its actual source and target obligations."""
     _require_native_target(construction, specification)
+    event = construction.surface_quad_field_event
+    requested_field = (
+        specification.cross_field if isinstance(specification, SurfaceMeshingSpec) else None
+    )
+    if event is not None:
+        from ..geometry._mesh_certificates import _same_tree_content
+
+        if (
+            route != "planar_dual_quad"
+            or construction.source_mesh is None
+            or construction.source_geometry is None
+            or not _same_tree_content(event.source, construction.source_mesh)
+            or not _same_tree_content(event.source_geometry, construction.source_geometry)
+        ):
+            raise ValueError("Quad field event requires its actual supported source route.")
+        if requested_field is not None and (
+            event.field.field_id != requested_field.field_id
+            or not _same_tree_content(event.field, requested_field)
+        ):
+            raise ValueError("Quad field event differs from the requested source field.")
+    elif requested_field is not None:
+        raise ValueError("A requested cross field requires its realized quad field event.")
+    if (
+        construction.layer_core_carrier_witness is not None
+        and construction.layer_core_carrier_witness.specification_id
+        != specification.specification_id
+    ):
+        raise ValueError("Native carrier inventory does not bind the accepted request.")
+    if construction.layer_core_overlap_stencils is not None:
+        if (
+            construction.layer_core_carrier_witness is None
+            or construction.layer_core_overlap_stencils.source_binding_id
+            != construction.layer_core_carrier_witness.source_binding_id
+            or construction.layer_core_overlap_stencils.target_mesh_id
+            != construction.mesh.mesh_id
+        ):
+            raise ValueError("Overlap source stencils do not bind the accepted layer/core construction.")
+    if construction.layer_core_column_certification is not None and (
+        construction.layer_core_carrier_witness is None
+        or construction.layer_core_column_certification.source_binding_id
+        != construction.layer_core_carrier_witness.source_binding_id
+        or construction.layer_core_column_certification.specification_id
+        != specification.specification_id
+    ):
+        raise ValueError("Layer column certification does not bind the accepted source and request.")
+    if construction.layer_core_root_geometry is not None:
+        root = construction.layer_core_root_geometry
+        mapped = root.reference_mesh is not None
+        if (
+            construction.layer_core_carrier_witness is None
+            or root.source_binding_id != construction.layer_core_carrier_witness.source_binding_id
+            or root.specification_id != specification.specification_id
+            or root.mesh.mesh_id != construction.mesh.mesh_id
+            or root.geometry.geometry_layout_id != construction.geometry.geometry_layout_id
+        ):
+            raise ValueError("Layer root geometry does not bind the accepted construction.")
+        if mapped:
+            if (
+                construction.layer_core_overlap_stencils is not None
+                or construction.layer_core_column_certification is not None
+            ):
+                raise ValueError("Mapped physical results cannot relabel reference layer evidence.")
+        elif (
+            construction.layer_core_overlap_stencils is None
+            or construction.layer_core_column_certification is None
+            or root.overlap_stencils.witness_id != construction.layer_core_overlap_stencils.witness_id
+            or root.column_certification.certification_id != construction.layer_core_column_certification.certification_id
+        ):
+            raise ValueError("Layer root geometry does not bind the accepted construction.")
     mesh, geometry = construction.mesh, construction.geometry
     if canonicalize_cell_mesh(mesh) is not mesh:
         raise MeshingFailure(
@@ -563,6 +786,7 @@ def _accept_native_construction(
         request.fidelity_source,
         request.fidelity_witness,
         request.scoped_fidelity,
+        validated=construction.validated_fidelity,
     )
     inputs = MeshCertificationInputs(
         mesh,
@@ -578,6 +802,8 @@ def _accept_native_construction(
         junction_vertices=request.junction_vertices,
         protected_features=request.protected_features,
         feature_source=request.feature_source,
+        layer_core_root_geometry=construction.layer_core_root_geometry,
+        computed_root=construction.computed_layer_core_root,
         scoped_fidelity=request.scoped_fidelity,
         fidelity_witness=request.fidelity_witness,
         source_coverage_witness=request.source_coverage_witness,
@@ -587,14 +813,26 @@ def _accept_native_construction(
     validated = inputs.require_current(
         mesh, geometry, domain=inputs.domain, source=inputs.source, validated=validated
     )
-    certification = MeshCertificationReport(
-        inputs,
-        organization=organization,
-        embedding=request.global_embedding,
-        validity_parent=request.validity_parent,
-        validated=validated,
-    )
-    certification.require_passed()
+    computed_surface = None
+    if computed_surface_out is None:
+        certification = MeshCertificationReport(
+            inputs,
+            organization=organization,
+            embedding=request.global_embedding,
+            validity_parent=request.validity_parent,
+            computed_validity=construction.computed_validity,
+            validated_embedding=construction.validated_global_embedding,
+            computed_root=construction.computed_layer_core_root,
+            validated=validated,
+        )
+        certification.require_passed()
+    else:
+        computed_surface = _ComputedSurfaceAcceptance(
+            inputs, organization, embedding=request.global_embedding,
+            validity_parent=request.validity_parent, validated=validated,
+            computed_validity=construction.computed_validity,
+        )
+        certification = computed_surface.report
     runtime = MeshingRuntimeInfo(
         provider.provider_id,
         actual_version,
@@ -609,9 +847,10 @@ def _accept_native_construction(
             "source": (request.source_id, request.source_revision),
             "specification": specification.specification_id,
             "certification": certification.report_id,
+            "surface_quad_field_event": None if event is None else event.event_id,
         }
     )
-    return CellMeshingResult(
+    result = CellMeshingResult(
         mesh,
         geometry,
         construction.coordinate_contract,
@@ -632,10 +871,20 @@ def _accept_native_construction(
         surface_source=organization.surface_source,
         region_boundary_evidence=organization.region_boundary_evidence,
         planar_embedding=construction.planar_embedding,
+        surface_quad_field_event=event,
         certification=certification,
         layer_curving_evidence=construction.layer_curving_evidence,
+        layer_core_carrier_witness=construction.layer_core_carrier_witness,
+        layer_core_overlap_stencils=construction.layer_core_overlap_stencils,
+        layer_core_column_certification=construction.layer_core_column_certification,
+        layer_core_root_geometry=construction.layer_core_root_geometry,
+        computed_root=construction.computed_layer_core_root,
         validated_witnesses=validated,
     )
+    if computed_surface_out is not None:
+        assert computed_surface is not None
+        computed_surface_out.append(computed_surface)
+    return result
 
 
 __all__ = ["canonicalize_cell_mesh", "certify_cell_mesh"]

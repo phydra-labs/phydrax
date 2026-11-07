@@ -34,6 +34,7 @@ from ._mesh_certificates import (
 from ._source_boundary_records import (
     SourceBoundaryChartCover,
     SourceBoundaryChartWitness,
+    SourceBoundaryFaceImageWitness,
     SourceBoundaryDistanceWitness,
     SourceBoundaryPointWitness,
     SourceBoundaryQuery,
@@ -50,6 +51,7 @@ from .implicit._chart_restriction import (
 type SourceFidelityWitness = (
     SurfaceChartWitness
     | SourceBoundaryChartWitness
+    | SourceBoundaryFaceImageWitness
     | SourceBoundaryPointWitness
     | SourceBoundaryDistanceWitness
     | SurfaceEnvelopeDistanceWitness

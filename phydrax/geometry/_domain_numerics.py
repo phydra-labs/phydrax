@@ -17,6 +17,7 @@ from ..discretization._cell_geometry import (
     CellGeometrySpec,
     CellVertexGeometryElement,
     coordinate_effective_basis,
+    PerCellRestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
 from ..discretization._cell_mesh import CellMesh
@@ -27,6 +28,7 @@ from ..discretization._coordinate_enclosure import (
     Expression,
     linear_combinations,
     Polynomial,
+    RestrictedCoordinateMapPreparation,
 )
 from ..discretization._reference_cell import reference_cell_topology
 from ._mapped_coverage import integrate_jacobian, map_domain
@@ -56,19 +58,29 @@ def cell_coordinate_expressions(
                 "Exact domain maps require a supported scalar coordinate element."
             )
         routes_host = _coordinate_route_matrix(route_bank)
+        preparation = (
+            RestrictedCoordinateMapPreparation(
+                element, coefficients, routes_host, mode="source"
+            )
+            if routes_host.shape[0] and isinstance(element, PerCellRestrictedCellGeometryElement)
+            else None
+        )
         for row_index in range(routes_host.shape[0]):
             route = routes_host[row_index]
             local = tuple(coefficients[int(index)] for index in route)
-            basis = coordinate_effective_basis(element, cell_row=row_index)
-            if len(basis) != len(local):
-                raise ValueError(
-                    "Exact coordinate basis and local source bank widths differ."
+            expressions = None if preparation is None else preparation.expressions(row_index)
+            if expressions is None:
+                basis = coordinate_effective_basis(element, cell_row=row_index)
+                if len(basis) != len(local):
+                    raise ValueError(
+                        "Exact coordinate basis and local source bank widths differ."
+                    )
+                components = tuple(
+                    tuple(local[dof][axis] for dof in range(len(local)))
+                    for axis in range(len(local[0]))
                 )
-            components = tuple(
-                tuple(local[dof][axis] for dof in range(len(local)))
-                for axis in range(len(local[0]))
-            )
-            maps.append(linear_combinations(basis, components))
+                expressions = linear_combinations(basis, components)
+            maps.append(expressions)
     return tuple(maps)
 
 

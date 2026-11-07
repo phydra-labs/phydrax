@@ -759,6 +759,23 @@ def _owner_pair_channel_plan(
     )
 
 
+@functools.partial(jax.jit, static_argnums=(0, 1, 2))
+def _owner_message_channel(mesh: Any, sender: int, receiver: int, row: Array, /) -> Array:
+    """Route a bucketed byte message without compiling per call-site or row shape."""
+    from jax.sharding import PartitionSpec
+
+    def exchange(local: Array, /) -> Array:
+        return jax.lax.ppermute(local, _OWNER_METADATA_AXIS, ((sender, receiver),))
+
+    return jax.shard_map(
+        exchange,
+        mesh=mesh,
+        in_specs=PartitionSpec(_OWNER_METADATA_AXIS),
+        out_specs=PartitionSpec(_OWNER_METADATA_AXIS),
+        check_vma=False,
+    )(row)
+
+
 def _owner_exchange_message_banks(
     outgoing_by_owner: tuple[np.ndarray, ...],
     local_rank: int,
@@ -790,6 +807,8 @@ def _owner_exchange_message_banks(
         or banks[rank].shape[0] != 0
     ):
         raise ValueError("Per-owner message banks must share a typed row layout.")
+    from jax.sharding import Mesh, NamedSharding, PartitionSpec
+
     local_counts = np.asarray([value.shape[0] for value in banks], dtype=np.int64)
     count_matrix = _owner_group_allgather(local_counts, execution_group, axis_name)
     if count_matrix.shape != (parts, parts) or np.any(count_matrix < 0):
@@ -798,28 +817,34 @@ def _owner_exchange_message_banks(
         raise ValueError("Owner-local messages must not route through self channels.")
     if not np.array_equal(count_matrix[rank], local_counts):
         raise ValueError("Collective message counts disagree with this owner shard.")
+    mesh = Mesh(
+        np.asarray(execution_group.devices, dtype=object), (_OWNER_METADATA_AXIS,)
+    )
+    sharding = NamedSharding(mesh, PartitionSpec(_OWNER_METADATA_AXIS))
     incoming: dict[int, np.ndarray] = {}
     for sender_value, receiver_value in np.argwhere(count_matrix > 0):
         sender, receiver = int(sender_value), int(receiver_value)
         count = int(count_matrix[sender, receiver])
-        plan = _owner_pair_channel_plan(sender, receiver, parts)
-        local_ids = np.asarray(plan.local_global_ids, dtype=np.int64)[rank]
-        local_valid = np.asarray(plan.local_valid, dtype=np.bool_)[rank]
-        slots = {
-            int(identifier): row
-            for row, identifier in enumerate(local_ids)
-            if local_valid[row]
-        }
-        local_values = np.zeros((plan.local_capacity, count, width), dtype=dtype)
+        byte_count = count * width * dtype.itemsize
+        bucket = max(_OWNER_METADATA_MINIMUM_WIDTH, 1 << (byte_count - 1).bit_length())
+        row = np.zeros((1, bucket), dtype=np.uint8)
         if rank == sender:
             if banks[receiver].shape[0] != count:
                 raise ValueError("Owner message rows differ from the collective count.")
-            local_values[slots[0]] = banks[receiver]
-        exchanged = _owner_channel_exchange(
-            plan, local_values, execution_group, axis_name
+            row[0, :byte_count] = (
+                np.ascontiguousarray(banks[receiver]).view(np.uint8).reshape(-1)
+            )
+        distributed = jax.make_array_from_process_local_data(
+            sharding, row, global_shape=(parts, bucket)
         )
+        exchanged = _owner_message_channel(mesh, sender, receiver, distributed)
         if rank == receiver:
-            incoming[sender] = exchanged[slots[0]].copy()
+            if len(exchanged.addressable_shards) != 1:
+                raise ValueError("Owner messages require one addressable process shard.")
+            data = np.asarray(jax.device_get(exchanged.addressable_shards[0].data))
+            incoming[sender] = (
+                data[0, :byte_count].copy().view(dtype).reshape(count, width)
+            )
     return incoming
 
 

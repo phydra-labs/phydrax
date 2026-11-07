@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 import phydrax.discretization._cell_complex as cell_complex_owner
@@ -13,6 +16,7 @@ import phydrax.discretization._cell_geometry as cell_geometry_owner
 import phydrax.discretization._periodic_exact as periodic_exact_owner
 import phydrax.geometry._mapped_reference_domain as mapped_domain_owner
 import phydrax.geometry._source_identity as source_identity_owner
+import phydrax.linalg._exact as exact_linalg_owner
 import phydrax.meshing._canonical as canonical_owner
 import phydrax.meshing._contracts as contracts_owner
 import phydrax.meshing._layer_core_association as association_composition
@@ -20,6 +24,7 @@ import phydrax.meshing._layer_core_controls as controls_owner
 import phydrax.meshing._layer_core_mapped as mapped_core_owner
 import phydrax.meshing._layer_core_periodic as periodic_owner
 import phydrax.meshing._layer_core_regions as regions_owner
+import phydrax.meshing._layer_core_subdivision as subdivision_owner
 import phydrax.meshing._layer_core_topology as layer_topology
 import phydrax.meshing._organization as organization_owner
 import phydrax.meshing._plc_source as plc_source_owner
@@ -31,6 +36,68 @@ import phydrax.meshing.providers._native_sources as sources_owner
 from ..discretization import CellBlock, CellMesh
 from ..typing import checked
 from ._contracts import VolumeMeshingSpec
+
+
+if TYPE_CHECKING:
+    from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from ._layer_core_execution import LayerCoreExecution
+
+
+def _fixed_cap_edge_obstruction(
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    cap_polygon_ids: np.ndarray,
+    radius_edge_bound: float,
+    /,
+) -> tuple[int, int, tuple[int, int], Fraction] | None:
+    """Prove a fixed cap edge forces a bad adjacent fixed boundary triangle.
+
+    For a triangle on an unsplit edge of length L and altitude h, its
+    circumradius divided by its shortest edge is at least L/(4h). Every
+    tetrahedron incident to the triangle has at least that ratio. Arithmetic
+    uses the exact binary64 input coordinates and compares squared quantities.
+    """
+    polygons = np.asarray(complex_.polygon_vertices, dtype=np.int64).reshape(-1, 3)
+    cap = {int(row) for row in cap_polygon_ids}
+    edge_caps: dict[tuple[int, int], int] = {}
+    for row in sorted(cap):
+        polygon = polygons[row]
+        for index in range(3):
+            first, second = int(polygon[index]), int(polygon[(index + 1) % 3])
+            edge = (min(first, second), max(first, second))
+            edge_caps.setdefault(edge, row)
+    points = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in np.asarray(complex_.vertices, dtype=np.float64)
+    )
+    bound = Fraction(float(radius_edge_bound))
+    for row, polygon in enumerate(polygons):
+        if row in cap:
+            continue
+        for index in range(3):
+            first, second, third = (
+                int(polygon[(index + offset) % 3]) for offset in range(3)
+            )
+            edge = (min(first, second), max(first, second))
+            cap_row = edge_caps.get(edge)
+            if cap_row is None:
+                continue
+            direction = tuple(
+                b - a for a, b in zip(points[first], points[second], strict=True)
+            )
+            offset = tuple(
+                b - a for a, b in zip(points[first], points[third], strict=True)
+            )
+            gram = exact_linalg_owner.matmul_exact(
+                (direction, offset), tuple(zip(direction, offset, strict=True))
+            )
+            length_squared = gram[0][0]
+            cross_squared = length_squared * gram[1][1] - gram[0][1] * gram[1][0]
+            if cross_squared == 0:
+                continue
+            lower_squared = length_squared * length_squared / (16 * cross_squared)
+            if lower_squared > bound * bound:
+                return cap_row, row, edge, lower_squared
+    return None
 
 
 def _require_fixed(
@@ -170,6 +237,138 @@ def _require_fixed(
     return input_vertices
 
 
+def _require_selectively_conforming(
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    core: volume_generation_owner.VolumeConstruction,
+    protected_facets: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Prove protected execution facets and witnessed conforming source sides."""
+    protected = np.asarray(protected_facets)
+    if (
+        complex_.boundary != "conforming"
+        or protected.shape != (complex_.facet_count,)
+        or protected.dtype != np.dtype(np.bool_)
+    ):
+        raise ValueError("Selective core recovery needs a conforming PLC and facet mask.")
+    points = np.asarray(core.mesh.coordinates, dtype=np.float64)
+    ancestry = np.asarray(core.input_vertices, dtype=np.int64)
+    count = complex_.vertices.shape[0]
+    if (
+        ancestry.shape != (len(points),)
+        or np.any(ancestry < -1)
+        or np.any(ancestry >= count)
+    ):
+        raise ValueError("Selective recovery has invalid execution-vertex ancestry.")
+    retained = ancestry >= 0
+    if not np.array_equal(np.sort(ancestry[retained]), np.arange(count)):
+        raise ValueError(
+            "Selective recovery must retain every execution vertex exactly once."
+        )
+    if not layer_topology.bitwise_equal_points(
+        points[retained],
+        np.asarray(complex_.vertices, dtype=np.float64)[ancestry[retained]],
+    ):
+        raise ValueError("Selective recovery moved an execution input vertex.")
+    faces = np.asarray(core.boundary_faces, dtype=np.int64)
+    sources = np.asarray(core.face_source_facets, dtype=np.int64)
+    orientations = np.asarray(core.face_orientations, dtype=np.int8)
+    strata = np.asarray(core.witness_strata, dtype=np.int8)
+    if (
+        faces.ndim != 2
+        or faces.shape[1] != 3
+        or sources.shape != (len(faces),)
+        or orientations.shape != sources.shape
+        or strata.shape != ancestry.shape
+        or np.any(faces < 0)
+        or np.any(faces >= len(points))
+        or np.any(sources < 0)
+        or np.any(sources >= complex_.facet_count)
+        or np.any(~np.isin(orientations, (-1, 1)))
+    ):
+        raise ValueError(
+            "Selective recovery has invalid boundary or source witness extents."
+        )
+    if (
+        len(core.root_vertex_stencils) != len(points)
+        or len(core.root_exact_points) != len(points)
+        or core.candidate_quality_id is None
+    ):
+        raise ValueError(
+            "Selective recovery requires re-evaluated original-root candidate evidence."
+        )
+    for row in np.unique(faces):
+        if (
+            core.root_vertex_stencils[int(row)] is None
+            or core.root_exact_points[int(row)] is None
+        ):
+            raise ValueError(
+                "A conforming boundary vertex lacks its original-root witness."
+            )
+    regions = np.asarray(core.cell_regions, dtype=np.int64)
+    if (
+        regions.shape != np.sort(np.asarray(core.mesh.entity_set(3).entity_ids)).shape
+        or np.any(regions < 0)
+        or np.any(regions >= complex_.region_count)
+    ):
+        raise ValueError("Selective recovery changed declared core material regions.")
+    table = layer_topology.faces(core.mesh, regions)
+    keys: set[tuple[int, ...]] = set()
+    protected_rows: dict[int, list[int]] = {}
+    for row, face in enumerate(faces.tolist()):
+        key = tuple(sorted(int(vertex) for vertex in face))
+        if key in keys:
+            raise ValueError("Selective recovery repeated a boundary triangle.")
+        keys.add(key)
+        facet = int(sources[row])
+        if protected[facet]:
+            protected_rows.setdefault(facet, []).append(row)
+        expected = np.asarray(complex_.facet_regions[facet], dtype=np.int64)
+        incidents = table.get(key, ())
+        if len(incidents) != int(np.count_nonzero(expected >= 0)):
+            raise ValueError(
+                "Selective recovery changed a boundary facet's material incidence."
+            )
+        face_vertices = tuple(int(vertex) for vertex in face)
+        for side, region in enumerate(expected):
+            if region < 0:
+                continue
+            forward = (side == 1) == (int(orientations[row]) == 1)
+            desired = face_vertices if forward else tuple(reversed(face_vertices))
+            if not any(
+                incident.region == int(region)
+                and layer_topology.cycle(incident.vertices)
+                == layer_topology.cycle(desired)
+                for incident in incidents
+            ):
+                raise ValueError(
+                    "Selective recovery changed an oriented source region side."
+                )
+    polygons = np.asarray(complex_.polygon_vertices, dtype=np.int64).reshape(-1, 3)
+    polygon_facets = np.asarray(complex_.polygon_facets, dtype=np.int64)
+    for facet in np.flatnonzero(protected):
+        original = np.flatnonzero(polygon_facets == facet)
+        recovered = protected_rows.get(int(facet), [])
+        if len(original) != len(recovered):
+            raise ValueError(
+                "Native recovery split or dropped a protected execution facet."
+            )
+        expected = {
+            tuple(sorted(int(vertex) for vertex in polygons[row])) for row in original
+        }
+        actual = set()
+        for row in recovered:
+            inherited = ancestry[faces[row]]
+            if np.any(inherited < 0):
+                raise ValueError("A protected facet contains a generated vertex.")
+            actual.add(tuple(sorted(int(vertex) for vertex in inherited)))
+        if actual != expected:
+            raise ValueError("Native recovery changed a protected execution facet.")
+    if any(len(incidents) == 1 and key not in keys for key, incidents in table.items()):
+        raise ValueError("Selective recovery introduced an undeclared exterior boundary.")
+    return ancestry
+
+
 def core_request(
     specification: VolumeMeshingSpec,
     layer_controls: tuple[contracts_owner.BoundaryLayerControl, ...] = (),
@@ -238,6 +437,137 @@ def core_request(
         hole_seeds=specification.hole_seeds,
         layer_controls=specification.layer_controls,
         periodic_constraints=specification.periodic_constraints,
+        size_combination=specification.size_combination,
+        size_compliance=specification.size_compliance,
+        maximum_deviation=specification.maximum_deviation,
+        deterministic=specification.deterministic,
+    )
+
+
+def _execution_core_request(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: VolumeMeshingSpec,
+    execution: LayerCoreExecution,
+    /,
+) -> VolumeMeshingSpec:
+    """Lower authored controls to an internal execution carrier, without changing them."""
+    from ._controls import ProtectedFeature
+    from ._scope import MeshingScope
+
+    complex_ = execution.complex
+    original = source.complex
+    boundary = specification.boundary_scope
+    scope = MeshingScope(
+        boundary.source_id,
+        boundary.source_revision,
+        boundary.entity_kind,
+        2,
+        f"{complex_.complex_id}:facets",
+        np.asarray(complex_.facet_entity_ids, dtype=np.int64),
+    )
+    if len(specification.size_controls) != 1 or not isinstance(
+        specification.size_controls[0], sizing_owner.UniformSizeControl
+    ):
+        raise ValueError(
+            "Refined layer/core execution requires its original uniform size control."
+        )
+    control = specification.size_controls[0]
+    size = sizing_owner.UniformSizeControl(
+        scope,
+        control.target_size,
+        minimum_size=control.minimum_size,
+        maximum_size=control.maximum_size,
+        maximum_growth_rate=control.maximum_growth_rate,
+        strength=control.strength,
+        priority=control.priority,
+    )
+    original_facet_rows = np.asarray(original.polygon_facets, dtype=np.int64)
+    original_facet_ids = np.asarray(original.facet_entity_ids, dtype=np.int64)
+    features = []
+    for feature in specification.protected_features:
+        requested = {int(value) for value in np.asarray(feature.scope.entity_ids)}
+        dimension = feature.scope.entity_dimension
+        if dimension == 2:
+            selected = []
+            for row, candidates in enumerate(execution.source_polygon_candidates):
+                identities = {
+                    int(original_facet_ids[original_facet_rows[index]])
+                    for index in candidates
+                }
+                if identities & requested and not identities <= requested:
+                    raise ValueError(
+                        "A protected source facet is crossed by an execution facet."
+                    )
+                if identities and identities <= requested:
+                    selected.append(int(complex_.facet_entity_ids[row]))
+            set_id = f"{complex_.complex_id}:facets"
+        elif dimension == 1:
+            original_edges = {
+                int(identifier): tuple(edge)
+                for identifier, edge in zip(
+                    original.plc_edge_entity_ids, original.plc_edge_vertices, strict=True
+                )
+            }
+            if not requested <= set(original_edges):
+                raise ValueError("A protected curve is absent from the original PLC.")
+            selected = []
+            for row, edge in enumerate(complex_.plc_edge_vertices):
+                supports = {
+                    root
+                    for vertex in edge
+                    for root, weight in execution.vertex_stencils[vertex]
+                    if weight
+                }
+                if any(
+                    supports <= set(original_edges[identifier])
+                    for identifier in requested
+                ):
+                    selected.append(int(complex_.plc_edge_entity_ids[row]))
+            set_id = f"{complex_.complex_id}:segments"
+        elif dimension == 0:
+            original_ids = np.asarray(original.vertex_entity_ids, dtype=np.int64)
+            if not requested <= set(original_ids.tolist()):
+                raise ValueError("A protected vertex is absent from the original PLC.")
+            selected = [
+                int(complex_.vertex_entity_ids[row])
+                for row, terms in enumerate(execution.vertex_stencils)
+                if len(terms) == 1
+                and terms[0][1] == 1
+                and int(original_ids[terms[0][0]]) in requested
+            ]
+            set_id = f"{complex_.complex_id}:vertices"
+        else:
+            raise ValueError("Unsupported protected execution feature dimension.")
+        if not selected:
+            raise ValueError("Execution carrier omitted an original protected feature.")
+        translated = MeshingScope(
+            boundary.source_id,
+            boundary.source_revision,
+            boundary.entity_kind,
+            dimension,
+            set_id,
+            np.asarray(sorted(set(selected)), dtype=np.int64),
+        )
+        features.append(
+            ProtectedFeature(
+                translated,
+                feature.feature_kind,
+                maximum_deviation=feature.maximum_deviation,
+                hard=feature.hard,
+            )
+        )
+    return VolumeMeshingSpec(
+        specification.target,
+        scope,
+        specification.fill_strategy,
+        size_controls=(size,),
+        protected_features=tuple(features),
+        region_controls=specification.region_controls,
+        patch_controls=(),
+        region_seeds=specification.region_seeds,
+        hole_seeds=specification.hole_seeds,
+        layer_controls=(),
+        periodic_constraints=(),
         size_combination=specification.size_combination,
         size_compliance=specification.size_compliance,
         maximum_deviation=specification.maximum_deviation,
@@ -510,9 +840,13 @@ def _compose_layer_topology(
     input_vertices: np.ndarray,
     source_revision: str,
     /,
+    *,
+    layer_partition: subdivision_owner.NestedLayerPartition | None = None,
 ) -> tuple[CellMesh, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Keep accepted layer topology and PLC identities, appending only native interior nodes."""
     if isinstance(core, polyhedral_generation_owner.PolyhedralConstruction):
+        if layer_partition is not None:
+            raise ValueError("Nested layer subdivision requires a simplex core.")
         return _compose_polyhedral_layer_topology(
             layers,
             core,
@@ -531,6 +865,29 @@ def _compose_layer_topology(
     )
     points = np.concatenate((initial_points, core_points[generated]))
     layer_mesh = layers.layers.mesh
+    if layer_partition is not None:
+        layer_mesh = CellMesh(
+            layer_partition.coordinates,
+            (
+                CellBlock(
+                    "refined-prisms",
+                    "prism",
+                    layer_partition.prism_vertices,
+                    global_ids=layer_partition.prism_ids,
+                ),
+            ),
+            vertex_global_ids=layer_partition.vertex_ids,
+            numeric_version=source_revision,
+        )
+        if not layer_topology.bitwise_equal_points(
+            np.asarray(
+                initial_points[: layer_partition.coordinates.shape[0]], dtype=np.float64
+            ),
+            np.asarray(layer_partition.coordinates, dtype=np.float64),
+        ):
+            raise ValueError(
+                "The execution PLC changed an accepted refined layer vertex."
+            )
     layer_cells = np.sort(np.asarray(layer_mesh.entity_set(3).entity_ids, dtype=np.int64))
     core_cells = np.sort(np.asarray(core.mesh.entity_set(3).entity_ids, dtype=np.int64))
     core_start = int(layer_cells[-1]) + 1
@@ -586,6 +943,16 @@ def _compose_layer_topology(
         numeric_version=source_revision,
     )
     layer_regions = np.asarray(layers.layer_regions, dtype=np.int64)
+    if layer_partition is not None:
+        original_ids = np.sort(
+            np.asarray(layers.layers.mesh.entity_set(3).entity_ids, dtype=np.int64)
+        )
+        parent_rows = np.searchsorted(original_ids, layer_partition.parent_cell_ids)
+        if np.any(parent_rows >= original_ids.size) or not np.array_equal(
+            original_ids[parent_rows], layer_partition.parent_cell_ids
+        ):
+            raise ValueError("Refined layer cells lost their original material parents.")
+        layer_regions = layer_regions[parent_rows]
     core_map = np.asarray(layers.core_region_map, dtype=np.int64)
     combined_regions = np.concatenate(
         (layer_regions, core_map[np.asarray(core.cell_regions, dtype=np.int64)])
@@ -813,6 +1180,475 @@ def _compose_organization(
     return zones, tuple(patches), labels, attributes
 
 
+def _compose_refined_organization(
+    mesh: CellMesh,
+    regions: np.ndarray,
+    source: sources_owner.NativeLayerCoreSource,
+    partition: subdivision_owner.NestedLayerPartition,
+    columns: subdivision_owner.RefinedColumnCertification,
+    core_cell_ids: np.ndarray,
+    /,
+) -> tuple[
+    tuple[organization_owner.MeshZone, ...],
+    tuple[organization_owner.MeshPatch, ...],
+    tuple[organization_owner.MeshLabel, ...],
+    tuple[organization_owner.MeshAttribute, ...],
+]:
+    """Organize refined layer cells without relabeling execution facets as source."""
+    cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
+    layer_ids = np.asarray(partition.prism_ids, dtype=np.int64)
+    core_ids = np.asarray(core_cell_ids, dtype=np.int64)
+    if regions.shape != cells.shape or not np.array_equal(
+        cells, np.concatenate((layer_ids, core_ids))
+    ):
+        raise ValueError(
+            "Refined layer/core organization requires aligned canonical cells."
+        )
+    order = np.argsort(regions, kind="stable")
+    offsets = np.searchsorted(regions[order], np.arange(len(source.region_ids) + 1))
+    zones = tuple(
+        organization_owner.MeshZone(
+            name,
+            organization_owner.MeshZoneRole.REGION,
+            layer_topology.mesh_entity_scope(mesh, 3, cells[order[start:stop]]),
+        )
+        for name, start, stop in zip(
+            source.region_ids, offsets[:-1], offsets[1:], strict=True
+        )
+        if stop > start
+    )
+    source_ids = np.sort(
+        np.asarray(source.layers.mesh.entity_set(3).entity_ids, dtype=np.int64)
+    )
+    parent_rows = np.searchsorted(source_ids, partition.parent_cell_ids)
+    if np.any(parent_rows >= source_ids.size) or not np.array_equal(
+        source_ids[parent_rows], partition.parent_cell_ids
+    ):
+        raise ValueError("Refined layer organization lost original parent cells.")
+    intervals = np.asarray(source.layers.layer_index, dtype=np.int64)[parent_rows]
+    parent_columns = np.asarray(source.layers.column_index, dtype=np.int64)[parent_rows]
+    keys = tuple(
+        (int(column), triangle)
+        for column, triangle in zip(
+            parent_columns, partition.child_reference_triangles, strict=True
+        )
+    )
+    ranks = {key: index for index, key in enumerate(sorted(set(keys)))}
+    column_ids = np.asarray([ranks[key] for key in keys], dtype=np.int64)
+    scope = layer_topology.mesh_entity_scope(mesh, 3, cells)
+    attributes = (
+        organization_owner.MeshAttribute(
+            "layer_index",
+            organization_owner.MeshAttributeRole.MARKER,
+            scope,
+            np.concatenate((intervals, np.full(core_ids.size, -1, dtype=np.int64))),
+        ),
+        organization_owner.MeshAttribute(
+            "layer_column",
+            organization_owner.MeshAttributeRole.MARKER,
+            scope,
+            np.concatenate((column_ids, np.full(core_ids.size, -1, dtype=np.int64))),
+        ),
+    )
+    labels = (
+        organization_owner.MeshLabel(
+            "boundary-layer", layer_topology.mesh_entity_scope(mesh, 3, layer_ids)
+        ),
+        organization_owner.MeshLabel(
+            "core", layer_topology.mesh_entity_scope(mesh, 3, core_ids)
+        ),
+    )
+    face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+    face_keys = dict(
+        zip(canonical_owner._entity_vertex_keys(mesh, 2), face_ids.tolist(), strict=True)
+    )
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    wall_ids = {column.target_vertices[0] for column in columns.columns}
+    core_set, layer_set = set(core_ids.tolist()), set(layer_ids.tolist())
+    cap_faces, wall_faces, side_faces, material_faces = [], [], [], []
+    for key, incident in layer_topology.faces(mesh, regions).items():
+        global_vertices = tuple(sorted(int(vertex_ids[row]) for row in key))
+        identifier = int(face_keys[global_vertices])
+        owners = {int(cells[face.cell]) for face in incident}
+        if len(incident) == 2 and owners & core_set and owners & layer_set:
+            cap_faces.append(identifier)
+        elif len(incident) == 1 and owners <= layer_set:
+            (wall_faces if set(global_vertices) <= wall_ids else side_faces).append(
+                identifier
+            )
+        if len(incident) == 2 and incident[0].region != incident[1].region:
+            material_faces.append(identifier)
+    patches = tuple(
+        organization_owner.MeshPatch(
+            name,
+            layer_topology.mesh_entity_scope(
+                mesh, 2, np.asarray(sorted(rows), dtype=np.int64)
+            ),
+            connected=False,
+        )
+        for name, rows in (
+            ("layer-core-interface", cap_faces),
+            ("wall", wall_faces),
+            ("layer-side", side_faces),
+        )
+        if rows
+    )
+    if material_faces:
+        labels += (
+            organization_owner.MeshLabel(
+                "interface",
+                layer_topology.mesh_entity_scope(
+                    mesh, 2, np.asarray(sorted(material_faces), dtype=np.int64)
+                ),
+            ),
+        )
+    return zones, patches, labels, attributes
+
+
+def _overlap_geometry(
+    source: sources_owner.NativeLayerCoreSource,
+    partition: subdivision_owner.NestedLayerPartition,
+    execution: LayerCoreExecution,
+    core: volume_generation_owner.VolumeConstruction,
+    core_vertex_map: np.ndarray,
+    mesh: CellMesh,
+    /,
+) -> tuple[
+    ExactPlcCellGeometrySource,
+    tuple[tuple[int, tuple[tuple[str, int, Fraction], ...]], ...],
+]:
+    """Compose native source-point witnesses through exact original-root stencils."""
+    from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+
+    original_points = tuple(
+        (Fraction(float(point[0])), Fraction(float(point[1])), Fraction(float(point[2])))
+        for point in np.asarray(source.complex.vertices, dtype=np.float64)
+    )
+    original_ids = source.complex.vertex_entity_ids
+    target_points = np.asarray(mesh.coordinates, dtype=np.float64)
+    target_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    exact: list[tuple[Fraction, ...] | None] = [None] * len(target_ids)
+    stencils: dict[int, tuple[tuple[str, int, Fraction], ...]] = {}
+    for row, terms in enumerate(partition.stencils):
+        exact[row] = partition.exact_coordinates[row]
+        stencils[row] = tuple(
+            ("layer", int(identifier), weight) for identifier, weight in terms
+        )
+    ancestry = np.asarray(core.input_vertices, dtype=np.int64)
+    mapping = np.asarray(core_vertex_map, dtype=np.int64)
+    if len(core.root_vertex_stencils) != len(ancestry) or len(
+        core.root_exact_points
+    ) != len(ancestry):
+        raise ValueError("Core candidate lacks its original-root coordinate evidence.")
+    boundary = set(
+        int(value)
+        for value in np.asarray(core.boundary_faces, dtype=np.int64).reshape(-1)
+    )
+    for row, execution_row in enumerate(ancestry.tolist()):
+        target = int(mapping[row])
+        terms = core.root_vertex_stencils[row]
+        point = core.root_exact_points[row]
+        if terms is None or point is None:
+            if (
+                execution_row >= 0
+                or row in boundary
+                or terms is not None
+                or point is not None
+            ):
+                raise ValueError(
+                    "A core source vertex lacks its exact original-root witness."
+                )
+            exact[target] = tuple(
+                Fraction(float(value)) for value in target_points[target]
+            )
+            continue
+        recomposed, recomputed = volume_generation_owner.compose_plc_root_point(
+            original_points, (terms,), (0,), (Fraction(1),)
+        )
+        if recomposed != terms or recomputed != point:
+            raise ValueError(
+                "A core root witness does not reproduce its exact source point."
+            )
+        if execution_row >= 0 and terms != execution.vertex_stencils[execution_row]:
+            raise ValueError(
+                "A retained execution vertex changed its original-root stencil."
+            )
+        if exact[target] is not None and exact[target] != point:
+            raise ValueError(
+                "Execution PLC and accepted layer stencils disagree exactly."
+            )
+        exact[target] = point
+        stencils.setdefault(
+            target,
+            tuple(
+                sorted(("plc", int(original_ids[root]), weight) for root, weight in terms)
+            ),
+        )
+    if any(point is None for point in exact):
+        raise ValueError("Exact overlap geometry omitted a combined vertex.")
+    exact_rows = tuple(point for point in exact if point is not None)
+    rounded = np.asarray(
+        [[float(value) for value in point] for point in exact_rows], dtype=np.float64
+    )
+    if not layer_topology.bitwise_equal_points(rounded, target_points):
+        raise ValueError(
+            "Native carriers do not correctly round their composed original-source points."
+        )
+    carrier = ExactPlcCellGeometrySource(
+        source.source_id,
+        source.source_revision,
+        target_ids,
+        exact_rows,
+        vertex_source_entity_ids=(None,) * len(target_ids),
+        vertex_occurrence_paths=((),) * len(target_ids),
+    )
+    rows = tuple(sorted((int(target_ids[row]), terms) for row, terms in stencils.items()))
+    return carrier, rows
+
+
+def _generate_conforming_layer_core(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: VolumeMeshingSpec,
+    core_specification: VolumeMeshingSpec,
+    schedule: volume_generation_owner.NativeVolumeSchedule,
+    /,
+    *,
+    frame_id: str,
+    mapped_source: sources_owner.NativeLayerCoreSource | None = None,
+) -> layer_topology.LayerCoreConstruction:
+    """Fill an exact source-bound, conformingly subdivided layer/core carrier."""
+    from ._layer_core_execution import build_layer_core_execution
+
+    if source.mapped_domain is not None or source.reference_source is not None:
+        raise ValueError(
+            "Conforming layer/core execution requires an unmapped source authority."
+        )
+    if core_specification.fill_strategy is not contracts_owner.VolumeFillStrategy.SIMPLEX:
+        raise ValueError("Conforming layer/core execution requires a simplex core.")
+    if source.layer_control is None or source.layer_policy is None:
+        raise ValueError(
+            "Conforming layer/core execution requires its original layer control and policy."
+        )
+    source.validate_restored()
+    mapped_domain = None
+    if mapped_source is not None:
+        from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+        from .providers._native_sources import _mapped_layer_core_facet_relation
+
+        domain_owner = mapped_source.mapped_domain
+        query = mapped_source.fidelity_source
+        if (
+            mapped_source.reference_source is not source
+            or not isinstance(domain_owner, mapped_domain_owner.MappedReferenceDomain)
+            or not isinstance(query, MappedReferenceBoundarySource)
+            or not isinstance(
+                query.authority,
+                (sources_owner.NativePlcSource, sources_owner.NativeMappedHexSource),
+            )
+        ):
+            raise ValueError(
+                "Conforming mapped execution requires its original root authority."
+            )
+        _mapped_layer_core_facet_relation(mapped_source, query.authority)
+        mapped_domain = domain_owner
+        domain = domain_owner.reference_domain
+    elif source.source_boundary_charts is not None and source.cap_refinement == "fixed":
+        from ._layer_core_staged_domain import validate_brep_staged_layer_domain
+
+        domain = validate_brep_staged_layer_domain(source)
+    else:
+        domain = layer_topology.validate_staged_layer_domain(source)
+    divisions = (
+        subdivision_owner.source_derived_nested_divisions(source)
+        if source.cap_refinement == "conforming"
+        else 1
+    )
+    partition = subdivision_owner.subdivide_nested_prism_columns(
+        source.layers.mesh, divisions
+    )
+    column_certification = subdivision_owner.certify_nested_layer_columns(
+        source, partition, specification
+    )
+    layer_partition = subdivision_owner.nested_prism_reference_partition(partition)
+    execution = build_layer_core_execution(
+        source, partition, source_authority=mapped_source
+    )
+    if source.cap_refinement == "fixed":
+        original_polygons = np.asarray(
+            source.complex.polygon_vertices, dtype=np.int64
+        ).reshape(-1, 3)
+        execution_polygons = np.asarray(
+            execution.complex.polygon_vertices, dtype=np.int64
+        ).reshape(-1, 3)
+        execution_facets = np.asarray(execution.complex.polygon_facets, dtype=np.int64)
+        recovered_caps: dict[int, tuple[int, ...]] = {}
+        for polygon in execution.cap_polygon_ids:
+            row = int(polygon)
+            facet = int(execution_facets[row])
+            candidates = execution.source_polygon_candidates[facet]
+            if len(candidates) != 1 or not execution.protected_facets[facet]:
+                raise ValueError("A fixed cap lost its original protected source facet.")
+            roots = []
+            for vertex in execution_polygons[row]:
+                terms = execution.vertex_stencils[int(vertex)]
+                if len(terms) != 1 or terms[0][1] != 1:
+                    raise ValueError("A fixed cap contains a generated execution vertex.")
+                roots.append(int(terms[0][0]))
+            source_row = int(candidates[0])
+            if source_row in recovered_caps:
+                raise ValueError("A fixed cap source polygon was subdivided.")
+            recovered_caps[source_row] = tuple(sorted(roots))
+        expected_caps = {
+            int(row): tuple(sorted(int(vertex) for vertex in original_polygons[int(row)]))
+            for row in source.cap_polygon_ids
+        }
+        if recovered_caps != expected_caps:
+            raise ValueError("Execution changed the original fixed cap triangulation.")
+    execution_specification = _execution_core_request(
+        source, core_specification, execution
+    )
+    carrier = volume_generation_owner.generate_plc_volume(
+        execution.complex,
+        execution_specification,
+        schedule,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_map_id=(
+            ""
+            if mapped_domain is None
+            else (mapped_domain.source_geometry.source_map_id or "")
+        ),
+        frame_id=frame_id,
+        protected_facets=execution.protected_facets,
+        source_domain=mapped_domain,
+        boundary_collapse_quality=source.noncap_refinement == "conforming",
+        root_points=source.complex.vertices,
+        root_vertex_stencils=execution.vertex_stencils,
+    )
+    ancestry = _require_selectively_conforming(
+        execution.complex, carrier, execution.protected_facets
+    )
+    mapping = np.asarray(execution.vertex_layer_ids, dtype=np.int64).copy()
+    if mapping.shape != (execution.complex.vertices.shape[0],):
+        raise ValueError("Execution PLC vertex ancestry has incompatible extents.")
+    if np.any(mapping < -1) or np.any(mapping >= partition.coordinates.shape[0]):
+        raise ValueError("Execution PLC references an absent refined layer vertex.")
+    free = np.flatnonzero(mapping < 0)
+    mapping[free] = partition.coordinates.shape[0] + np.arange(free.size, dtype=np.int64)
+    initial_points = np.concatenate(
+        (
+            partition.coordinates,
+            np.asarray(execution.complex.vertices, dtype=np.float64)[free],
+        )
+    )
+    mesh, core_vertex_map, regions, layer_ids, core_ids = _compose_layer_topology(
+        source,
+        carrier,
+        mapping,
+        initial_points,
+        ancestry,
+        source.source_revision,
+        layer_partition=partition,
+    )
+    mesh = canonical_owner.canonicalize_cell_mesh(mesh)
+    exact_carrier, source_rows = _overlap_geometry(
+        source, partition, execution, carrier, core_vertex_map, mesh
+    )
+    periodic_topology = None
+    if source.layers.mesh.periodic_topology is not None:
+        periodic_topology = periodic_owner.bind_refined_core_periodic(
+            source,
+            partition,
+            execution.vertex_stencils,
+            ancestry,
+            core_vertex_map,
+            mesh,
+            exact_carrier,
+            execution.periodic_seams,
+        )
+        mesh = CellMesh(
+            mesh.coordinates,
+            mesh.blocks,
+            vertex_global_ids=mesh.vertex_global_ids,
+            entity_global_ids={
+                degree: np.asarray(mesh.entity_set(degree).entity_ids, dtype=np.int64)
+                for degree in range(1, mesh.topological_dimension)
+            },
+            numeric_version=mesh.numeric_version,
+            periodic_topology=periodic_topology,
+        )
+    faces = layer_topology.faces(mesh, regions)
+    core_set, layer_set = set(core_ids.tolist()), set(layer_ids.tolist())
+    sorted_cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
+    polygons = np.asarray(execution.complex.polygon_vertices, dtype=np.int64).reshape(
+        -1, 3
+    )
+    for row in execution.cap_polygon_ids:
+        key = tuple(sorted(int(value) for value in mapping[polygons[int(row)]]))
+        incident = faces.get(key, ())
+        owners = {int(sorted_cells[face.cell]) for face in incident}
+        if (
+            len(incident) != 2
+            or len(owners & core_set) != 1
+            or len(owners & layer_set) != 1
+        ):
+            raise ValueError(
+                "A refined cap triangle is not shared by one layer and one core cell."
+            )
+    stencils = subdivision_owner.OverlapSourceStencils(
+        source.binding_id, mesh.mesh_id, source_rows
+    )
+    geometry = cell_geometry_owner.CellGeometrySpec.power(mesh, exact_carrier)
+    subdivision_owner.require_refined_column_certification(
+        source, mesh, geometry, specification, column_certification
+    )
+    zones, patches, labels, attributes = _compose_refined_organization(
+        mesh, regions, source, partition, column_certification, core_ids
+    )
+    requested, achieved = periodic_owner.core_periodic_constraint_evidence(
+        source, specification
+    )
+
+    def construction(
+        current_zones: tuple, current_patches: tuple
+    ) -> layer_topology.LayerCoreConstruction:
+        return layer_topology.LayerCoreConstruction(
+            mesh,
+            domain,
+            regions,
+            current_zones,
+            current_patches,
+            labels,
+            attributes,
+            (),
+            geometry,
+            carrier,
+            core_vertex_map,
+            core_ids,
+            source.region_ids,
+            source.source_id,
+            source.source_revision,
+            periodic_topology,
+            requested,
+            achieved,
+            (),
+            None,
+            None,
+            overlap_exact_geometry=exact_carrier,
+            execution_carrier=execution,
+            overlap_source_stencils=stencils,
+            layer_core_column_certification=column_certification,
+            layer_root_partition=layer_partition,
+        )
+
+    preliminary = construction(zones, patches)
+    subdivision_owner.require_overlap_source_provenance(source, preliminary)
+    zones, patches = controls_owner.compose_layer_controls(
+        source, specification, preliminary
+    )
+    return construction(zones, patches)
+
+
 @checked
 def _generate_layer_core_unmapped(
     source: sources_owner.NativeLayerCoreSource,
@@ -823,12 +1659,30 @@ def _generate_layer_core_unmapped(
     *,
     frame_id: str,
     source_domain: mapped_domain_owner.MappedReferenceDomain | None = None,
+    mapped_source: sources_owner.NativeLayerCoreSource | None = None,
     polyhedral_schedule: polyhedral_generation_owner.NativePolyhedralSchedule
     | None = None,
 ) -> layer_topology.LayerCoreConstruction:
     """Fill the remaining fixed PLC and return the complete combined construction."""
     layers = source.layers
     complex_ = source.complex
+    if source.conforming_execution:
+        if (source_domain is None) != (mapped_source is None):
+            raise ValueError(
+                "Mapped conforming execution requires both source and root authority."
+            )
+        if mapped_source is not None and mapped_source.mapped_domain is not source_domain:
+            raise ValueError(
+                "Mapped conforming execution changed its original root domain."
+            )
+        return _generate_conforming_layer_core(
+            source,
+            specification,
+            core_specification,
+            schedule,
+            frame_id=frame_id,
+            mapped_source=mapped_source,
+        )
     layer_count = sum(block.cell_count for block in layers.mesh.blocks)
     layer_regions = np.asarray(source.layer_regions, dtype=np.int64)
     if layer_regions.shape != (layer_count,):
@@ -883,6 +1737,48 @@ def _generate_layer_core_unmapped(
     mapping, cap_ids, polygons, initial_points = layer_topology.prepare_identity(
         layers, complex_, source.vertex_layer_ids, source.cap_polygon_ids
     )
+    if (
+        power_request is None
+        and source_domain is None
+        and source.mapped_domain is None
+        and complex_.geometry is None
+        and complex_.boundary == "fixed"
+        and schedule.radius_edge_bound is not None
+    ):
+        obstruction = _fixed_cap_edge_obstruction(
+            complex_, cap_ids, schedule.radius_edge_bound
+        )
+        if obstruction is not None:
+            cap_row, face_row, edge, lower_squared = obstruction
+            facet = int(complex_.polygon_facets[face_row])
+            edge_row = complex_.plc_edge_vertices.index(edge)
+            finding = (
+                f"Fixed cap polygon {cap_row}, adjacent polygon {face_row}, "
+                f"source edge {complex_.plc_edge_ids[edge_row]!r} occurrence "
+                f"{complex_.plc_edge_occurrence_paths[edge_row]!r}, source facet "
+                f"{complex_.facet_ids[facet]!r} occurrence "
+                f"{complex_.facet_occurrence_paths[facet]!r}: exact squared "
+                f"radius-edge lower bound {lower_squared} exceeds "
+                f"{Fraction(float(schedule.radius_edge_bound)) ** 2}."
+            )
+            raise contracts_owner.MeshingFailure(
+                contracts_owner.MeshingFailureCategory.QUALITY_REJECTED,
+                "The fixed cap and adjacent fixed PLC facet make the requested "
+                "radius-edge quality mathematically infeasible.",
+                provider_code="native_layer_core",
+                stage="boundary_quality_preflight",
+                entity_ids=(
+                    int(complex_.plc_edge_entity_ids[edge_row]),
+                    int(complex_.facet_entity_ids[facet]),
+                ),
+                evidence=contracts_owner.MeshingFailureEvidence(
+                    requested_quantities={
+                        "radius_edge_bound": schedule.radius_edge_bound,
+                    },
+                    checkpoint="boundary_quality_preflight",
+                    logical_findings=(finding,),
+                ),
+            )
     if power_request is not None:
         unmapped_vertices = mapping < 0
         if np.any(unmapped_vertices):
@@ -980,6 +1876,7 @@ def _generate_layer_core_unmapped(
         source.source_id,
         region_ids,
         core_region_map,
+        source.region_occurrence_paths,
     )
     combined_faces = layer_topology.faces(mesh, combined_regions)
     layer_face_keys = set(layer_faces)
@@ -1084,6 +1981,29 @@ def _generate_layer_core_unmapped(
     )
 
 
+def _mapped_reference_specification(
+    specification: VolumeMeshingSpec, /
+) -> VolumeMeshingSpec:
+    """Reconstruct the reference fill request from the original physical request."""
+    return VolumeMeshingSpec(
+        specification.target,
+        specification.boundary_scope,
+        specification.fill_strategy,
+        size_controls=specification.size_controls,
+        protected_features=(),
+        region_controls=(),
+        patch_controls=(),
+        region_seeds=specification.region_seeds,
+        hole_seeds=specification.hole_seeds,
+        layer_controls=(),
+        periodic_constraints=specification.periodic_constraints,
+        size_combination=specification.size_combination,
+        size_compliance=specification.size_compliance,
+        maximum_deviation=specification.maximum_deviation,
+        deterministic=specification.deterministic,
+    )
+
+
 @checked
 def generate_layer_core(
     source: sources_owner.NativeLayerCoreSource,
@@ -1121,7 +2041,7 @@ def generate_layer_core(
         != (source.source_id, source.source_revision)
         or (domain.source_id, domain.source_revision)
         != (source.source_id, source.source_revision)
-        or domain.region_ids != reference.complex.region_ids
+        or domain.region_ids != source.region_ids
         or source.complex.region_ids != reference.complex.region_ids
         or source.complex.vertex_ids != reference.complex.vertex_ids
         or source.complex.vertex_occurrence_paths
@@ -1144,23 +2064,7 @@ def generate_layer_core(
         raise ValueError(
             "Mapped layer/core source and reference PLC must retain the same authored identities, occurrences, and regions."
         )
-    reference_specification = VolumeMeshingSpec(
-        specification.target,
-        specification.boundary_scope,
-        specification.fill_strategy,
-        size_controls=specification.size_controls,
-        protected_features=(),
-        region_controls=(),
-        patch_controls=(),
-        region_seeds=specification.region_seeds,
-        hole_seeds=specification.hole_seeds,
-        layer_controls=(),
-        periodic_constraints=specification.periodic_constraints,
-        size_combination=specification.size_combination,
-        size_compliance=specification.size_compliance,
-        maximum_deviation=specification.maximum_deviation,
-        deterministic=specification.deterministic,
-    )
+    reference_specification = _mapped_reference_specification(specification)
     physical_scale = mapped_core_owner.mapped_source_lipschitz_bound(domain)
     reference_core_specification = core_request(
         core_specification,
@@ -1173,6 +2077,7 @@ def generate_layer_core(
         reference_core_specification,
         schedule,
         source_domain=domain,
+        mapped_source=source,
         frame_id=frame_id,
         polyhedral_schedule=polyhedral_schedule,
     )
@@ -1203,6 +2108,11 @@ def generate_layer_core(
         reference_mesh=mapped.reference_mesh,
         reference_geometry=mapped.reference_geometry,
         polyhedral_core=reference_construction.polyhedral_core,
+        overlap_exact_geometry=mapped.overlap_exact_geometry,
+        overlap_source_stencils=mapped.overlap_source_stencils,
+        layer_core_column_certification=mapped.layer_core_column_certification,
+        layer_root_partition=mapped.layer_root_partition,
+        execution_carrier=mapped.execution_carrier,
     )
 
 

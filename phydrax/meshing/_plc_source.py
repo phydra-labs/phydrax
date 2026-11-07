@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from fractions import Fraction
-from typing import final, Literal, TYPE_CHECKING
+from typing import final, Literal, NoReturn, SupportsIndex, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import normalized_identifier
@@ -30,13 +31,18 @@ from ..typing import (
     parse,
     Scope,
 )
-
-if TYPE_CHECKING:
-    from ..geometry.brep._model import BRepGeometry
+from ._certification import _ComputedSurfaceAcceptance
 
 
 if TYPE_CHECKING:
     from ..geometry.brep._model import BRepGeometry
+
+
+# CAD complexes whose incidence and surface proofs this process's constructor
+# verified, bound to that exact live object and the content fingerprint recorded
+# then. An entry dies with its object, is never serialized, and binds only that
+# exact, unchanged object (see from_stored_fields).
+_VERIFIED_CAD_COMPLEXES: LiveProofLedger[bool] = LiveProofLedger()
 
 
 def _occurrence_path_bank(
@@ -268,10 +274,15 @@ def _certify_cad_surface(
     maximum_normal_deviation: float | None,
     junction_vertices: np.ndarray | None,
     /,
+    *,
+    computed_surface: _ComputedSurfaceAcceptance | None = None,
 ) -> tuple[GlobalEmbeddingCertificate, SourceFidelityCertificate]:
     """Compute the source's mathematical certificates without retaining a report."""
     from ._certification import MeshCertificationReport
-    from ._certification_inputs import MeshCertificationInputs
+    from ._certification_inputs import (
+        MeshCertificationInputs,
+        validate_fidelity_witnesses,
+    )
     from ._certification_schedule import MeshCertificationSchedule
     from ._native_construction import NativeMeshOrganization
 
@@ -287,19 +298,27 @@ def _certify_cad_surface(
         vertex_global_ids=surface.mesh.vertex_global_ids,
         cell_global_ids=cells,
     )
+    # The witness is validated once for these exact operands; the inputs and
+    # the report receive that validation instead of repeating it.
+    source = surface.boundary_source
+    witness = surface.chart_witness
+    validated = validate_fidelity_witnesses(
+        surface.mesh, surface.geometry, source, witness, ()
+    )
     inputs = MeshCertificationInputs(
         surface.mesh,
         surface.geometry,
         MeshCertificationSchedule("surface"),
         source_id=domain.source_id,
         source_revision=domain.source_revision,
-        source=surface.boundary_source,
+        source=source,
         fidelity_tolerance=fidelity_tolerance,
         maximum_normal_deviation=maximum_normal_deviation,
         junction_vertices=junction_vertices,
         protected_features=(),
-        fidelity_witness=surface.chart_witness,
+        fidelity_witness=witness,
         feature_source=domain,
+        validated=validated,
     )
     report = MeshCertificationReport(
         inputs,
@@ -307,11 +326,84 @@ def _certify_cad_surface(
             associations=surface.associations,
             multiregion_surface=topology,
         ),
+        validated=validated,
+        computed_surface=computed_surface,
     )
     report.require_passed()
     if report.fidelity is None:
         raise ValueError("CAD surface certification must retain source fidelity.")
     return report.embedding, report.fidelity
+
+
+class _ValidatedCadSurface:
+    """One operation's freshly computed surface proofs, not archive authority."""
+
+    __slots__ = (
+        "surface",
+        "mesh",
+        "geometry",
+        "domain",
+        "source",
+        "associations",
+        "tolerance",
+        "normal_deviation",
+        "junctions",
+        "proofs",
+    )
+
+    def __init__(
+        self,
+        surface: SurfaceSourceCharts,
+        tolerance: float,
+        normal_deviation: float | None,
+        junctions: np.ndarray | None,
+        /,
+    ) -> None:
+        self.surface = surface
+        self.mesh = surface.mesh
+        self.geometry = surface.geometry
+        self.domain = surface.domain
+        self.source = surface.boundary_source
+        self.associations = surface.associations
+        self.tolerance = tolerance
+        self.normal_deviation = normal_deviation
+        self.proofs = _certify_cad_surface(
+            surface, tolerance, normal_deviation, junctions
+        )
+        self.junctions = tuple(self.proofs[0].binding.junction_vertices)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if hasattr(self, name):
+            raise AttributeError("A validated CAD surface artifact is immutable.")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("A validated CAD surface artifact is immutable.")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Validated CAD surface proofs cannot be serialized.")
+
+    def require(
+        self,
+        surface: SurfaceSourceCharts,
+        tolerance: float,
+        normal_deviation: float | None,
+        junctions: np.ndarray,
+        /,
+    ) -> tuple[GlobalEmbeddingCertificate, SourceFidelityCertificate]:
+        if (
+            self.surface is not surface
+            or self.mesh is not surface.mesh
+            or self.geometry is not surface.geometry
+            or self.domain is not surface.domain
+            or self.source is not surface.boundary_source
+            or self.associations is not surface.associations
+            or self.tolerance != tolerance
+            or self.normal_deviation != normal_deviation
+            or self.junctions != tuple(int(x) for x in junctions)
+        ):
+            raise ValueError("Validated CAD surface binds different proof operands.")
+        return self.proofs
 
 
 def _cad_segment_incidence(
@@ -336,6 +428,8 @@ def _cad_segment_incidence(
     region_paths: tuple[tuple[str, ...], ...],
     segment_ids: tuple[str, ...],
     segment_paths: tuple[tuple[str, ...], ...],
+    validated_surface: _ValidatedCadSurface | None,
+    computed_surface: _ComputedSurfaceAcceptance | None,
     /,
 ) -> tuple[frozenset[int], GlobalEmbeddingCertificate, SourceFidelityCertificate]:
     """Replay exact CAD surface and source incidence before joining occurrences."""
@@ -383,12 +477,26 @@ def _cad_segment_incidence(
         raise ValueError(
             "CAD PLC surface embedding and source fidelity must be certified."
         )
-    fresh_embedding, fresh_fidelity = _certify_cad_surface(
-        surface,
-        fidelity_tolerance,
-        maximum_normal_deviation,
-        np.asarray(embedding.binding.junction_vertices, dtype=np.int64),
-    )
+    junctions = np.asarray(embedding.binding.junction_vertices, dtype=np.int64)
+    if validated_surface is None:
+        if computed_surface is None:
+            fresh_embedding, fresh_fidelity = _certify_cad_surface(
+                surface, fidelity_tolerance, maximum_normal_deviation, junctions
+            )
+        else:
+            fresh_embedding, fresh_fidelity = _certify_cad_surface(
+                surface,
+                fidelity_tolerance,
+                maximum_normal_deviation,
+                junctions,
+                computed_surface=computed_surface,
+            )
+    elif type(validated_surface) is _ValidatedCadSurface:
+        fresh_embedding, fresh_fidelity = validated_surface.require(
+            surface, fidelity_tolerance, maximum_normal_deviation, junctions
+        )
+    else:
+        raise TypeError("CAD surface proof handoff requires a validated artifact.")
     _register_model_archive_types()
     if not _same_model_content(fresh_embedding, embedding) or not _same_model_content(
         fresh_fidelity, fidelity
@@ -752,6 +860,8 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         cad_vertex_rows: ConvertibleToArray | None = None,
         cad_segment_edge_ids: ConvertibleToArray | None = None,
         cad_polygon_cell_ids: ConvertibleToArray | None = None,
+        _validated_cad_surface: _ValidatedCadSurface | None = None,
+        _computed_surface: _ComputedSurfaceAcceptance | None = None,
     ) -> None:
         if isinstance(polygons, np.ndarray) and polygons.ndim != 2:
             raise TypeError("polygons must be a sequence of one-dimensional index loops.")
@@ -944,6 +1054,8 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
                 region_paths,
                 segment_names,
                 segment_paths,
+                _validated_cad_surface,
+                _computed_surface,
             )
         (
             plc_edge_vertices,
@@ -1061,6 +1173,11 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
                 ),
             }
         )
+        if cad_source_charts is not None:
+            operands = (self,)
+            _VERIFIED_CAD_COMPLEXES.record(
+                operands, live_content_fingerprint(operands), True
+            )
 
     @classmethod
     @checked
@@ -1073,11 +1190,26 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         cad_embedding: GlobalEmbeddingCertificate | None = None,
         cad_fidelity: SourceFidelityCertificate | None = None,
     ) -> PiecewiseLinearComplex:
-        """Rebuild packed loops and verify their retained scientific identity."""
+        """Rebuild packed loops and verify their retained scientific identity.
+
+        A CAD complex that this process's constructor verified is returned as
+        is when no different restoration operand is supplied and its whole
+        content still reproduces the fingerprint recorded at verification; its
+        surface proofs are not recomputed. Any other value (a copy, a pytree
+        rebuild, an archive restore, a mutated object) is reconstructed and
+        verified in full.
+        """
         if type(value) is not cls:
             raise TypeError(
                 "Stored PLC fields must have the registered PiecewiseLinearComplex type."
             )
+        if (
+            (cad_source_charts is None or cad_source_charts is value.cad_source_charts)
+            and (cad_embedding is None or cad_embedding is value.cad_embedding)
+            and (cad_fidelity is None or cad_fidelity is value.cad_fidelity)
+            and _VERIFIED_CAD_COMPLEXES.find((value,)) is not None
+        ):
+            return value
         from .._model._structure import SurfaceSourceChartsArchiveRecipe
 
         stored_charts = value.cad_source_charts

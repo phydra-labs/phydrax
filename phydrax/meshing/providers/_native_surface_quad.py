@@ -56,6 +56,7 @@ from ...geometry._surface_source_support import (
     PreparedSurfaceSourceSupport,
     SurfaceNativeRestrictionBoundarySource,
     SurfaceSourceCharts,
+    SurfaceTrimRoot,
 )
 from ...geometry.brep._patches import BSplineSurfacePatch, LineCurve
 from .._association import GeometryAssociation, GeometryAssociationKind
@@ -685,6 +686,16 @@ def execute_tensor_quads(
         source_root_cell_ids=np.asarray(source_ids, dtype=np.int64),
         source_piece_ids=tuple(pieces),
         root_parameter_exact=tuple(charts),
+        trim_roots=(
+            ()
+            if domain.source_kinds == ("vertex", "edge", "face")
+            else tuple(
+                SurfaceTrimRoot(
+                    patch, 0, position, Fraction(0), Fraction(1), endpoints[0], endpoints[1]
+                )
+                for position, (_, endpoints) in enumerate(uses)
+            )
+        ),
         boundary_occurrences=_quad_boundary_occurrences(patch, charts, uses),
     )
     chart = source_charts.chart_witness
@@ -834,6 +845,7 @@ def _associations(
     )
     vertex_dimensions = np.full(len(point_uv), 2, dtype=np.int8)
     vertex_indices = np.full(len(point_uv), patch, dtype=np.int64)
+    vertex_parameters = np.asarray(point_uv, dtype=np.float64).copy()
     edge_records = []
     junctions = {}
     for use, (first, last) in uses:
@@ -860,8 +872,15 @@ def _associations(
                 if previous != corner:
                     raise owner._failure("source trim corners disagree")
                 vertex_dimensions[row], vertex_indices[row] = 0, corner
+                vertex_parameters[row] = (np.nan, np.nan)
             elif vertex_dimensions[row] != 0:
                 vertex_dimensions[row], vertex_indices[row] = 1, use.curve
+                vertex_parameters[row] = (
+                    float(domain.curve_native_parameter(use.curve, parameter))
+                    if kind is GeometryAssociationKind.BREP
+                    else float(parameter),
+                    np.nan,
+                )
         for (a, first_row), (b, last_row) in zip(rows, rows[1:]):
             edge_records.append((first_row, last_row, use.curve, a, b))
     canonical = _surface_edges(mesh)
@@ -924,7 +943,7 @@ def _associations(
         source_indices=vertex_indices_,
         source_occurrence_paths=vertex_paths,
         source_parameter_intervals=(None,) * vertex_ids.size,
-        parameters=np.asarray(point_uv, dtype=np.float64),
+        parameters=vertex_parameters,
     )
     return (faces, edges, vertices), vertex_ids[
         np.asarray(sorted(junctions), dtype=np.int64)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from fractions import Fraction
 from itertools import product
 from typing import Any, NamedTuple
 
@@ -15,6 +16,12 @@ import jax
 import numpy as np
 
 from .._execution_runtime import ExecutionGroup
+from ..discretization._cell_complex import (
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
+from ..discretization._cell_geometry_source_validity import _sign
 from ..discretization._cell_locator import CellInverseRefusal, CellLocationRefusalError
 from ..discretization._cell_mesh import CellBlock, CellMesh
 from ..discretization._mapped_locator import prepare_owner_local_mapped_cell_locator
@@ -26,6 +33,7 @@ from ..discretization._view_support import (
     OwnerLocalRemoteGhostCells,
 )
 from ..discretization.finite_volume._unstructured import (
+    _owner_local_periodic_vertex_frames,
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumePlan,
 )
@@ -152,43 +160,182 @@ def _unique_receptor_faces(
     geometry: UnstructuredFiniteVolumeDiscretization,
     route_receptor_cells: np.ndarray,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Assign each routed receptor cell one distinct physical face of its own."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Select one explicitly oriented, partition-independent face per receptor.
+
+    Full-dimensional cells use the exact sign of outward first-coordinate area.
+    Embedded triangles use their native directed edge incidence ordered by
+    quotient endpoint identities. In either case opposite incidences cannot
+    both select a face; the quotient face key resolves remaining choices.
+    """
     receptor_cells = np.asarray(route_receptor_cells, dtype=np.int32)
     neighbor_cells = np.asarray(geometry.neighbor_cells, dtype=np.int32)
     owner_cells = np.asarray(geometry.owner_cells, dtype=np.int32)
-    internal_faces = np.flatnonzero(neighbor_cells >= 0)
-    boundary_faces = np.flatnonzero(neighbor_cells < 0)
-    faces_by_cell: dict[int, list[int]] = {}
-    for face in np.concatenate((internal_faces, boundary_faces)):
-        faces_by_cell.setdefault(int(owner_cells[face]), []).append(int(face))
-        neighbor = int(neighbor_cells[face])
-        if neighbor >= 0:
-            faces_by_cell.setdefault(neighbor, []).append(int(face))
-    route_face_ids = np.full(receptor_cells.shape, -1, dtype=np.int32)
-    route_by_face: dict[int, int] = {}
-
-    def assign(route: int, visited: set[int], /) -> bool:
-        for face in faces_by_cell.get(int(receptor_cells[route]), ()):
-            if face in visited:
+    connectivity = geometry.connectivity
+    if isinstance(connectivity, PolygonalConnectivity):
+        vertices_by_face = np.asarray(connectivity.edges, dtype=np.int64)
+    elif isinstance(connectivity, TetrahedralConnectivity):
+        vertices_by_face = np.asarray(connectivity.faces, dtype=np.int64)
+    elif isinstance(connectivity, PolyhedralConnectivity):
+        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+        values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+        vertices_by_face = tuple(
+            values[offsets[i] : offsets[i + 1]] for i in range(offsets.size - 1)
+        )
+    else:
+        raise TypeError("Owner-local FV receptor faces require native face topology.")
+    vertex_ids = np.asarray(geometry.vertex_global_ids, dtype=np.int64)
+    points = np.asarray(geometry.vertices)
+    exact_points = [
+        tuple(Fraction.from_float(float(value)) for value in point) for point in points
+    ]
+    missing_periodic_rows: set[int] = set()
+    if geometry.owner_local_view is not None:
+        view = geometry.owner_local_view
+        parts = (
+            view.parts if isinstance(view, OwnerLocalCompositeCellGeometry) else (view,)
+        )
+        vertex_rows = {int(identifier): row for row, identifier in enumerate(vertex_ids)}
+        for part in parts:
+            if part.exact_vertex_coordinates is None:
+                if part.periodic_topology_id is not None:
+                    missing_periodic_rows.update(
+                        vertex_rows[int(identifier)]
+                        for identifier in np.asarray(part.vertex_ids, dtype=np.int64)
+                    )
                 continue
-            visited.add(face)
-            previous = route_by_face.get(face)
-            if previous is None or assign(previous, visited):
-                route_by_face[face] = route
-                route_face_ids[route] = face
-                return True
-        return False
+            for identifier, point in zip(
+                np.asarray(part.vertex_ids, dtype=np.int64),
+                part.exact_vertex_coordinates,
+                strict=True,
+            ):
+                exact_points[vertex_rows[int(identifier)]] = tuple(point)
+    frames = (
+        None
+        if geometry.owner_local_view is None
+        else _owner_local_periodic_vertex_frames(geometry.owner_local_view, vertex_ids)
+    )
+    topology_ids = (
+        np.arange(owner_cells.size, dtype=np.int64)
+        if geometry.face_topology_ids is None
+        else np.asarray(geometry.face_topology_ids, dtype=np.int64)
+    )
+    neighbor_topology_ids = (
+        topology_ids
+        if geometry.neighbor_face_topology_ids is None
+        else np.asarray(geometry.neighbor_face_topology_ids, dtype=np.int64)
+    )
+    owner_signs = np.asarray(geometry.owner_signs, dtype=np.int32)
 
-    for route in range(receptor_cells.size):
-        if not assign(route, set()):
-            raise ValueError(
-                "Owner-local FV routed receptor cells exceed their distinct faces."
+    def owner_area_sign(face: int, /) -> int:
+        rows = vertices_by_face[int(topology_ids[face])]
+        if isinstance(connectivity, PolygonalConnectivity) and points.shape[1] == 3:
+            # Embedded triangles use their oriented edge boundary, rather than
+            # a global ambient direction that may be normal to the surface.
+            # Quotient endpoint order is unchanged by a common lattice shift.
+            endpoints: list[tuple[int, tuple[int, ...]]]
+            if frames is None or np.all(frames.parts[rows] < 0):
+                endpoints = [(int(vertex_ids[row]), ()) for row in rows]
+            else:
+                if np.any(frames.parts[rows] != frames.parts[rows[0]]):
+                    raise ValueError("A receptor edge mixes periodic vertex frames.")
+                endpoints = []
+                for row in rows:
+                    winding = frames.windings[int(row)]
+                    if winding is None:
+                        raise ValueError(
+                            "A periodic receptor edge lacks vertex windings."
+                        )
+                    endpoints.append(
+                        (int(frames.roots[row]), tuple(int(value) for value in winding))
+                    )
+            direction = (endpoints[0] < endpoints[1]) - (endpoints[0] > endpoints[1])
+            if direction == 0:
+                raise ValueError(
+                    "A receptor edge has indistinguishable quotient endpoints."
+                )
+            return int(owner_signs[face]) * direction
+        if any(int(row) in missing_periodic_rows for row in rows):
+            raise ValueError("Periodic receptor faces require exact source vertices.")
+        vertices = [exact_points[int(row)] for row in rows]
+        if isinstance(connectivity, PolygonalConnectivity):
+            if len(vertices[0]) != 2:
+                raise ValueError(
+                    "Polygonal receptor faces require 2D or embedded 3D cells."
+                )
+            component = vertices[1][1] - vertices[0][1]
+        else:
+            component = sum(
+                (
+                    first[1] * second[2] - first[2] * second[1]
+                    for first, second in zip(
+                        vertices, vertices[1:] + vertices[:1], strict=True
+                    )
+                ),
+                Fraction(0),
             )
+        return int(owner_signs[face]) * _sign(component)
+
+    def face_key(face: int, is_owner: bool, /) -> tuple[Any, ...]:
+        topology = topology_ids[face] if is_owner else neighbor_topology_ids[face]
+        rows = np.asarray(vertices_by_face[int(topology)], dtype=np.int64)
+        if frames is None or np.all(frames.parts[rows] < 0):
+            return tuple(sorted(int(vertex_ids[row]) for row in rows))
+        if np.any(frames.parts[rows] != frames.parts[rows[0]]):
+            raise ValueError("A receptor face mixes periodic vertex frames.")
+        windings: list[np.ndarray] = []
+        for row in rows:
+            winding = frames.windings[int(row)]
+            if winding is None:
+                raise ValueError("A periodic receptor face lacks vertex windings.")
+            windings.append(winding)
+        return min(
+            tuple(
+                sorted(
+                    (
+                        int(frames.roots[row]),
+                        tuple(int(value) for value in winding - anchor),
+                    )
+                    for row, winding in zip(rows, windings, strict=True)
+                )
+            )
+            for anchor in windings
+        )
+
+    faces_by_cell: dict[int, list[tuple[int, bool]]] = {}
+    for face, (owner, neighbor) in enumerate(
+        zip(owner_cells, neighbor_cells, strict=True)
+    ):
+        faces_by_cell.setdefault(int(owner), []).append((face, True))
+        if neighbor >= 0:
+            faces_by_cell.setdefault(int(neighbor), []).append((face, False))
+    route_face_ids = np.full(receptor_cells.shape, -1, dtype=np.int32)
+    orientation = np.empty(receptor_cells.shape, dtype=np.int8)
+    sign_by_face: dict[int, int] = {}
+    for route, cell in enumerate(receptor_cells.tolist()):
+        candidates = []
+        for face, is_owner in faces_by_cell.get(cell, ()):
+            if face not in sign_by_face:
+                sign_by_face[face] = owner_area_sign(face)
+            side = 1 if is_owner else -1
+            if side * sign_by_face[face] > 0:
+                candidates.append((face_key(face, is_owner), face, side))
+        if not candidates:
+            raise ValueError(
+                "Owner-local FV receptor cell has no canonically positive "
+                "face incidence; a closed consistently oriented cell is required."
+            )
+        candidates.sort(key=lambda item: item[0])
+        if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
+            raise ValueError(
+                "Owner-local FV receptor face quotient identity is ambiguous."
+            )
+        _, route_face_ids[route], orientation[route] = candidates[0]
+    if np.unique(route_face_ids).size != route_face_ids.size:
+        raise ValueError("Owner-local FV receptor routes do not identify distinct faces.")
     face_points = np.asarray(geometry.face_quadrature_points)[route_face_ids]
     area_vectors = np.asarray(geometry.area_vectors)[route_face_ids]
     face_measures = np.asarray(geometry.face_quadrature_weights)[route_face_ids]
-    orientation = np.where(owner_cells[route_face_ids] == receptor_cells, 1.0, -1.0)
     if geometry.periodic_face_translations is not None:
         # A receptor on the neighbor side of a periodic seam sees the face at its
         # own lattice image.
@@ -204,7 +351,7 @@ def _unique_receptor_faces(
         ],
         face_points.shape,
     )
-    return route_face_ids, face_points, normals, face_measures
+    return route_face_ids, face_points, normals, face_measures, orientation
 
 
 def _periodic_lattice(view: OwnerLocalCellGeometry, /) -> PeriodicCell | None:
@@ -868,13 +1015,14 @@ def prepare_owner_local_finite_volume_overset(
             route_receptor_cells.append(receptor_row)
         offsets.append(len(donors))
     face_ids = face_points = face_normals = face_measures = face_cells = None
+    face_orientations = None
     route_faces = None
     if route_cells:
         # One distinct certified face per routed receptor cell; every overlap
         # route of that cell supplies its weighted donor trace to that face.
         face_cells = np.asarray(route_cells, dtype=np.int32)
-        face_ids, face_points, face_normals, face_measures = _unique_receptor_faces(
-            geometry, face_cells
+        face_ids, face_points, face_normals, face_measures, face_orientations = (
+            _unique_receptor_faces(geometry, face_cells)
         )
         face_of_cell = {int(cell): face for face, cell in enumerate(route_cells)}
         route_faces = np.asarray(
@@ -902,6 +1050,7 @@ def prepare_owner_local_finite_volume_overset(
         receptor_face_normals=face_normals,
         receptor_face_measures=face_measures,
         receptor_face_cells=face_cells,
+        receptor_face_orientations=face_orientations,
         receptor_route_faces=route_faces,
     )
     return OwnerLocalFiniteVolumeOverset(composite, geometry, overset)

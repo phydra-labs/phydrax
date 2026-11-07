@@ -30,9 +30,9 @@ def planar_region_domain(
         or np.any(offsets[1:] - offsets[:-1] < 3)
     ):
         raise ValueError("Planar source loop offsets must partition every oriented edge cycle.")
-    pairs = np.empty((edges.shape[0], 2), dtype=np.int64)
-    for loop, (start, stop) in enumerate(zip(offsets[:-1], offsets[1:], strict=True)):
-        pairs[start:stop] = (0, -1) if loop == 0 else (-1, 0)
+    # PlanarMeshRegion requires a CCW exterior and CW holes, so the fluid is
+    # on the same side of every directed edge.
+    pairs = np.tile(np.asarray((0, -1), dtype=np.int64), (edges.shape[0], 1))
     return PiecewiseLinearDomain(
         vertices,
         edges,

@@ -72,7 +72,7 @@ from ._organization import MeshLabel, MeshPatch, MeshZone, MeshZoneRole
 from ._result import MeshingComplianceReport
 from ._scope import MeshingEntityKind, MeshingScope
 from ._sizing import SizeControlStrength, UniformSizeControl
-from ._volume_generation import NativeVolumeSchedule
+from ._volume_generation import _shape_targets_gated, NativeVolumeSchedule
 
 
 _CLASS_INSIDE = 0
@@ -2182,18 +2182,24 @@ def _compliance(
     radius_edge, dihedral = _tetra_quality(coordinates, cells, centers)
     maximum_radius_edge = float(np.max(radius_edge, initial=0.0))
     minimum_dihedral = float(np.min(dihedral, initial=180.0))
-    requested: list[tuple[str, float]] = [
-        ("radius_edge_bound", schedule.radius_edge_bound),
+    requested: list[tuple[str, float]] = []
+    if schedule.radius_edge_bound is not None:
+        requested.append(("radius_edge_bound", schedule.radius_edge_bound))
+    requested.extend((
         ("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees),
         ("source_fidelity_tolerance", fidelity_tolerance),
-    ]
+    ))
     achieved: list[tuple[str, float]] = [
         ("maximum_radius_edge_ratio", maximum_radius_edge),
         ("minimum_dihedral_degrees", minimum_dihedral),
         ("source_fidelity_bound", fidelity_bound),
     ]
     issues: list[str] = []
-    if maximum_radius_edge > schedule.radius_edge_bound:
+    if schedule.radius_edge_bound is None and not np.isfinite(maximum_radius_edge):
+        issues.append("nonrepresentable_radius_edge")
+    if schedule.minimum_dihedral_degrees == 0.0 and not np.isfinite(minimum_dihedral):
+        issues.append("nonrepresentable_dihedral")
+    if schedule.radius_edge_bound is not None and maximum_radius_edge > schedule.radius_edge_bound:
         issues.append("radius_edge_bound")
     if minimum_dihedral < schedule.minimum_dihedral_degrees:
         issues.append("minimum_dihedral_degrees")
@@ -2758,6 +2764,9 @@ def prepare_restricted_implicit_volume(
 ) -> PreparedRestrictedImplicitVolume:
     """Prepare the real established-reach restricted-Delaunay profile route."""
     issues = _support_issues(profile, specification)
+    if not _shape_targets_gated(schedule):
+        # Its native quality pass refuses any unresolved cell before acceptance.
+        issues += ("hard NativeVolumeSchedule shape strength",)
     if issues:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,

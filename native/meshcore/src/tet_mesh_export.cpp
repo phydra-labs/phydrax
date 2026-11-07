@@ -85,6 +85,11 @@ bool zero_winding(const std::array<std::int64_t, 3>& winding) {
 }  // namespace
 
 TetEditStatus TetMesh::snapshot(TetMeshSnapshot& output) const {
+  return snapshot_internal(output, true);
+}
+
+TetEditStatus TetMesh::snapshot_internal(TetMeshSnapshot& output,
+                                        bool include_cell_ancestry) const {
   try {
     TetMeshSnapshot staged;
     staged.generation = generation_;
@@ -134,17 +139,19 @@ TetEditStatus TetMesh::snapshot(TetMeshSnapshot& output) const {
       TetSnapshotCell cell;
       cell.id = cell_ids_[slot];
       cell.region = complex_.region(local_slot);
-      const auto ancestry = cell_ancestry_.find(cell.id);
-      if (ancestry != cell_ancestry_.end()) {
-        cell.ancestor_cell_ids = ancestry->second.ancestor_cell_ids;
-        cell.edit_kind = ancestry->second.edit_kind;
+      if (include_cell_ancestry) {
+        const auto ancestry = cell_ancestry_.find(cell.id);
+        if (ancestry != cell_ancestry_.end()) {
+          cell.ancestor_cell_ids = *ancestry->second.ancestor_cell_ids;
+          cell.edit_kind = ancestry->second.edit_kind;
+        }
       }
       for (int corner = 0; corner < 4; ++corner) {
         const std::int32_t vertex = complex_.tets[slot].v[corner];
         if (!live_vertex(vertex)) return TetEditStatus::kInvalidGeometry;
         cell.vertices[corner] = vertex_id(vertex);
       }
-      staged.cells.push_back(cell);
+      staged.cells.push_back(std::move(cell));
     }
     using std::swap;
     swap(output, staged);
@@ -161,6 +168,9 @@ TetEditStatus TetMesh::set_periodic_state(
     std::span<const TetPeriodicQuotientCell> cells,
     std::span<const TetPeriodicEntityOrbitMap> entity_maps,
     bool advance_generation) {
+  if (implicit_source_ && (!orbits.empty() || !cells.empty() || !entity_maps.empty())) {
+    return TetEditStatus::kRejectedTopology;
+  }
   try {
     std::vector<TetPeriodicOrbit> staged_orbits(orbits.begin(), orbits.end());
     std::vector<TetPeriodicQuotientCell> staged_cells(cells.begin(), cells.end());

@@ -36,6 +36,7 @@ from .._archive_columns import (
     integer_column,
     integer_column_values,
     IntegerRowsArchiveRecipe,
+    StaticColumnArchiveRecipe,
     TextColumnArchiveRecipe,
     TextRowsArchiveRecipe,
 )
@@ -50,6 +51,7 @@ from .._frozendict import frozendict
 from .._strict import mark_strict_initialized, Strict
 from .._typing_plan import validate_tree
 from ._artifacts import artifact_value, artifact_value_id, register_artifact_value
+
 
 _PLC_TEXT_COLUMNS = frozenset(
     {"vertex_ids", "facet_ids", "segment_ids", "plc_edge_ids", "region_ids"}
@@ -228,6 +230,98 @@ class AdaptiveImplicitBoundarySourceArchiveRecipe(NamedTuple):
     frame_id: str
 
 
+class LabelVolumeArchiveRecipe(NamedTuple):
+    """Constructor inputs and identities for one categorical label asset."""
+
+    asset_fields: Mapping[str, object]
+    ontology: object
+    expected_asset_id: str
+    expected_label_volume_id: str
+
+
+class ImageIndexAffineArchiveRecipe(NamedTuple):
+    matrix: object
+    source_frame_id: str
+    coordinate_contract: object
+    axis_convention: object
+    voxel_reference: object
+    provenance: str
+    expected_affine_id: str
+
+
+class ImageFieldSpecArchiveRecipe(NamedTuple):
+    quantity: object
+    layout: object
+    temporal_kind: object
+    interval_bounds: object | None
+    interval_unit: object | None
+    temporal_origin: str | None
+    spatial_kind: object
+    footprint_id: str | None
+    normalization: str
+    expected_temporal_id: str
+    expected_sampling_id: str
+    expected_spec_id: str
+
+
+class ImageUncertaintyArchiveRecipe(NamedTuple):
+    values: object
+    unit: object
+    expected_uncertainty_id: str
+
+
+class ImageQualityFlagArchiveRecipe(NamedTuple):
+    name: str
+    mask: object
+    meaning: str
+    expected_flag_id: str
+
+
+class CompartmentMeshingSourceArchiveRecipe(NamedTuple):
+    """Categorical authority and independent outer surface, without derived caches."""
+
+    labels: object
+    compartments: tuple[object, ...]
+    interfaces: tuple[object, ...]
+    outer_surface: object
+    interpretation: str
+    outer_geometry: object | None
+    expected_source_id: str
+    expected_source_revision: str
+    expected_scope_ids: tuple[str, ...]
+
+
+class AffinePlcDomainArchiveRecipe(NamedTuple):
+    """Exact affine map and independently authored reference PLC."""
+
+    reference_domain: object
+    authority: object | None
+    matrix: object
+    offset: object
+    source_revision: str
+    expected_domain_id: str
+
+
+class AffinePlcGeometrySourceArchiveRecipe(NamedTuple):
+    """Exact affine PLC geometry from a reference mesh."""
+
+    domain: object
+    reference_mesh: object
+    witness: object | None
+    expected_source_id: str
+    expected_source_revision: str
+    expected_source_map_id: str
+
+
+class AffinePlcBoundarySourceArchiveRecipe(NamedTuple):
+    """Original PLC boundary authority and exact transformed facet ancestry."""
+
+    owner: object
+    domain: object
+    facet_rows: object
+    expected_source_query_id: str
+
+
 class ParametricCurveBoundarySourceArchiveRecipe(NamedTuple):
     curves: tuple[object, ...]
     parameter_ranges: tuple[tuple[float, float], ...]
@@ -236,6 +330,13 @@ class ParametricCurveBoundarySourceArchiveRecipe(NamedTuple):
     curve_entity_ids: tuple[str, ...]
     occurrence_paths: tuple[tuple[str, ...], ...]
     chart_ids: tuple[str, ...]
+    endpoint_source_keys: tuple[
+        tuple[tuple[str, tuple[str, ...]] | None, tuple[str, tuple[str, ...]] | None], ...
+    ]
+    endpoint_point_bounds: tuple[
+        tuple[tuple[tuple[float, ...], tuple[float, ...]] | None, ...], ...
+    ]
+    endpoint_parameter_bounds: tuple[tuple[tuple[float, float], tuple[float, float]], ...]
     expected_query_id: str
 
 
@@ -284,6 +385,7 @@ class SurfaceSourceChartsArchiveRecipe(NamedTuple):
     source_root_cell_ids: np.ndarray
     boundary_occurrences: np.ndarray
     source_piece_ids: IntegerRowsArchiveRecipe
+    trim_roots: ExactTensorArchiveRecipe
     expected_source_chart_id: str
 
 
@@ -382,6 +484,333 @@ class NativePlcSourceArchiveRecipe(NamedTuple):
     expected_binding_id: str
 
 
+class NativePlanarSourceArchiveRecipe(NamedTuple):
+    """Planar source strata and identifiers, excluding its prepared BVH."""
+
+    vertices: object
+    edges: object
+    loop_offsets: object
+    source_id: str
+    declared_source_revision: str
+    embedded_vertices: object | None
+    embedded_edges: object | None
+    embedded_source_id: str | None
+    region_scope_entity_ids: object
+    vertex_entity_ids: object
+    edge_entity_ids: object
+    embedded_vertex_entity_ids: object | None
+    embedded_edge_entity_ids: object | None
+    expected_binding_id: str
+
+
+class NativePlanarMotionSourceArchiveRecipe(NamedTuple):
+    """Authored predecessor and translation, without executable source caches."""
+
+    source: NativePlanarSourceArchiveRecipe
+    translation: object
+    expected_successor_binding_id: str
+    expected_transition_id: str
+
+
+class PlanarMotionAdvanceArchiveRecipe(NamedTuple):
+    """Authored motion proposal and accepted owner evidence, without callbacks."""
+
+    source_transition: object
+    monitor_policy: object
+    proposal_coordinates: object
+    boundary_residual: float
+    fixed_vertices: object | None
+    numeric_version: str
+    source_result_id: str
+    monitor_id: str
+    advance_id: str
+    target_result_id: str
+    geometry_transition_id: str
+    fidelity_witness: object
+
+
+class LayerCoreSourceReferenceArchiveRecipe(NamedTuple):
+    """Composition-bound reference to an independently restored layer source."""
+
+    source_id: str
+    source_revision: str
+    binding_id: str
+
+
+class SourceBoundaryFaceImageWitnessArchiveRecipe(NamedTuple):
+    mesh_id: str
+    geometry_id: str
+    topology_id: str
+    source_id: str
+    source_revision: str
+    source_query_id: str
+    cell_global_ids: np.ndarray
+    entity_global_ids: np.ndarray
+    local_entity_indices: np.ndarray
+    source_chart_ids: TextColumnArchiveRecipe
+    source_entity_ids: TextColumnArchiveRecipe
+    occurrence_paths: TextRowsArchiveRecipe
+    source_region_sides: StaticColumnArchiveRecipe
+    orientations: np.ndarray
+    image_triangles: ExactTensorArchiveRecipe
+    expected_witness_id: str
+
+    @classmethod
+    def from_witness(cls, value: Any, /) -> SourceBoundaryFaceImageWitnessArchiveRecipe:
+        from ..geometry._source_boundary_records import SourceBoundaryFaceImageWitness
+
+        if type(value) is not SourceBoundaryFaceImageWitness:
+            raise TypeError("Face image archive requires its canonical witness.")
+        triangles = tuple(
+            tuple(
+                tuple(
+                    Fraction(numerator, denominator) for numerator, denominator in point
+                )
+                for point in row
+            )
+            for row in value.image_triangle_rational_tokens
+        )
+        return cls(
+            value.mesh_id,
+            value.geometry_id,
+            value.topology_id,
+            value.source_id,
+            value.source_revision,
+            value.source_query_id,
+            value.cell_global_ids,
+            value.entity_global_ids,
+            value.local_entity_indices,
+            TextColumnArchiveRecipe.encode(value.source_chart_ids),
+            TextColumnArchiveRecipe.encode(value.source_entity_ids),
+            TextRowsArchiveRecipe.encode(value.occurrence_paths),
+            StaticColumnArchiveRecipe.encode(value.source_region_sides),
+            value.orientations,
+            ExactTensorArchiveRecipe.encode(triangles, rational=True),
+            value.witness_id,
+        )
+
+    def restore(self) -> Any:
+        from ..geometry._source_boundary_records import SourceBoundaryFaceImageWitness
+
+        if (
+            type(self.image_triangles) is not ExactTensorArchiveRecipe
+            or not self.image_triangles.rational
+        ):
+            raise TypeError(
+                "Face image witness requires canonical exact rational columns."
+            )
+        if (
+            type(self.source_chart_ids) is not TextColumnArchiveRecipe
+            or type(self.source_entity_ids) is not TextColumnArchiveRecipe
+            or type(self.occurrence_paths) is not TextRowsArchiveRecipe
+            or type(self.source_region_sides) is not StaticColumnArchiveRecipe
+        ):
+            raise TypeError(
+                "Face image witness requires its exact source identity columns."
+            )
+        if any(
+            np.asarray(getattr(self, name)).dtype != np.dtype(np.int64)
+            for name in (
+                "cell_global_ids",
+                "entity_global_ids",
+                "local_entity_indices",
+                "orientations",
+            )
+        ):
+            raise TypeError(
+                "Face image witness requires canonical int64 incidence columns."
+            )
+        shape = self.image_triangles.shape
+        if len(shape) != 3 or shape[0] < 1 or shape[1:] != (3, 3):
+            raise ValueError("Face image witness requires exact physical triangles.")
+        triangles = tuple(
+            tuple(tuple(value.as_integer_ratio() for value in point) for point in row)
+            for row in self.image_triangles.decode()
+        )
+        charts = self.source_chart_ids.decode()
+        entities = self.source_entity_ids.decode()
+        paths = self.occurrence_paths.decode()
+        sides = self.source_region_sides.decode()
+        witness = SourceBoundaryFaceImageWitness(
+            mesh_id=self.mesh_id,
+            geometry_id=self.geometry_id,
+            topology_id=self.topology_id,
+            source_id=self.source_id,
+            source_revision=self.source_revision,
+            source_query_id=self.source_query_id,
+            cell_global_ids=self.cell_global_ids,
+            entity_global_ids=self.entity_global_ids,
+            local_entity_indices=self.local_entity_indices,
+            source_chart_ids=charts,
+            source_entity_ids=entities,
+            occurrence_paths=paths,
+            source_region_sides=sides,
+            orientations=self.orientations,
+            image_triangle_rational_tokens=triangles,
+        )
+        if (
+            witness.witness_id != self.expected_witness_id
+            or witness.source_chart_ids != charts
+            or witness.source_entity_ids != entities
+            or witness.occurrence_paths != paths
+            or witness.source_region_sides != sides
+            or witness.image_triangle_rational_tokens != triangles
+            or any(
+                not np.array_equal(getattr(witness, name), getattr(self, name))
+                for name in (
+                    "cell_global_ids",
+                    "entity_global_ids",
+                    "local_entity_indices",
+                    "orientations",
+                )
+            )
+        ):
+            raise ValueError(
+                "Stored face image witness differs from its canonical owner."
+            )
+        return witness
+
+
+class SourceBoundaryImagePullbackArchiveRecipe(NamedTuple):
+    cell_global_id: int
+    local_entity_index: int
+    image: ExactTensorArchiveRecipe
+    source_chart_id: str
+
+    @classmethod
+    def from_pullback(cls, value: Any, /) -> SourceBoundaryImagePullbackArchiveRecipe:
+        from ..geometry._source_boundary_records import SourceBoundaryImagePullback
+
+        if type(value) is not SourceBoundaryImagePullback:
+            raise TypeError("Image pullback archive requires its canonical owner.")
+        image = tuple(
+            tuple(Fraction(numerator, denominator) for numerator, denominator in point)
+            for point in value.image_rational_tokens
+        )
+        return cls(
+            value.cell_global_id,
+            value.local_entity_index,
+            ExactTensorArchiveRecipe.encode(image, rational=True),
+            value.source_chart_id,
+        )
+
+    def restore(self) -> Any:
+        from ..geometry._source_boundary_records import SourceBoundaryImagePullback
+
+        if type(self.image) is not ExactTensorArchiveRecipe or not self.image.rational:
+            raise TypeError("Image pullback requires canonical exact rational columns.")
+        image = self.image.decode()
+        if (
+            len(self.image.shape) != 2
+            or self.image.shape[0] < 2
+            or self.image.shape[1] != 3
+        ):
+            raise ValueError("Image pullback must contain exact physical 3D points.")
+        tokens = tuple(
+            tuple(value.as_integer_ratio() for value in point) for point in image
+        )
+        return SourceBoundaryImagePullback(
+            self.cell_global_id, self.local_entity_index, tokens, self.source_chart_id
+        )
+
+
+class LayerCoreFidelitySourceReferenceArchiveRecipe(NamedTuple):
+    """Primary fidelity query owned by the independently restored layer source."""
+
+    source_id: str
+    source_revision: str
+    binding_id: str
+    query_id: str
+
+
+class NativeLayerMappedBoundaryArchiveRecipe(NamedTuple):
+    """Full original mapped PLC query relative to the parent layer root."""
+
+    complex: object
+    source_id: str
+    source_revision: str
+    maximum_deviation: float | None
+    plc_vertex_root_global_ids: object
+    authority_binding_id: str
+    face_scope_keys: tuple[tuple[str, tuple[str, ...]], ...]
+    edge_scope_keys: tuple[tuple[str, tuple[str, ...]], ...]
+    query_id: str
+
+
+class LayerCoreAcceptedResultArchiveRecipe(NamedTuple):
+    """The actual accepted result bound to independently restored authoring."""
+
+    result: object
+    source_binding_id: str
+    specification_id: str
+
+
+class LayerCoreAcceptedAdaptationArchiveRecipe(NamedTuple):
+    """The actual accepted adaptation, bound to separately restored endpoints."""
+
+    result: object
+    request: object
+    policy: object
+    source_result_id: str
+    target_result_id: str
+    expected_result_id: str
+
+
+class NativeLayerCoreAuthoringArchiveRecipe(NamedTuple):
+    """Actual retained advancing layers and their original source declarations."""
+
+    wall: object
+    layers: object
+    control: object
+    policy: object
+    source_controls_bound: bool
+    complex: object
+    source_domain: object
+    fidelity_source: object
+    mapped_domain: object | None
+    reference_binding_id: str | None
+    wall_association: object | None
+    source_boundary_scope: object | None
+    wall_charts: object | None
+    boundary_charts: object | None
+    boundary_schedule: object | None
+    wall_projection_policy: object | None
+    wall_projection_embedding: object | None
+    wall_projection_id: str | None
+    wall_association_policy: object | None
+    source_id: str
+    source_revision: str
+    cap_refinement: str
+    noncap_refinement: str
+    vertex_layer_ids: object
+    cap_polygon_ids: object
+    layer_regions: object
+    region_ids: tuple[str, ...]
+    region_entity_ids: object
+    region_occurrence_paths: tuple[tuple[str, ...], ...]
+    core_region_map: object
+    maximum_deviation: float | None
+    core_facet_source_ids: tuple[str | None, ...]
+    core_facet_source_occurrence_paths: tuple[tuple[str, ...] | None, ...]
+    core_vertex_representatives: object
+    core_vertex_shifts: object
+    core_seam_polygon_pairs: object
+    expected_layers_id: str
+    expected_binding_id: str
+
+
+class MixedAdaptationPolicyArchiveRecipe(NamedTuple):
+    """Mixed-route policy inputs, excluding the live association capability."""
+
+    protected_scopes: tuple[object, ...]
+    compatibility: str
+    predicate_mode: str
+    relocation: bool
+    audit_policy: object
+    association_transfer_id: str
+    expected_policy_id: str
+
+
 class NativeMappedHexSourceArchiveRecipe(NamedTuple):
     reference: object
     domain: object
@@ -392,8 +821,21 @@ class NativeMappedHexSourceArchiveRecipe(NamedTuple):
     expected_relation_id: str
 
 
+class MappedCoreFacetAuthorityArchiveRecipe(NamedTuple):
+    source_id: str
+    source_revision: str
+    source_binding_id: str
+    facet_rows: tuple[int, ...]
+    expected_binding_id: str
+    expected_relation_id: str
+
+
 class MappedReferenceBoundarySourceArchiveRecipe(NamedTuple):
-    authority: NativeMappedHexSourceArchiveRecipe
+    authority: (
+        NativeMappedHexSourceArchiveRecipe
+        | NativePlcSourceArchiveRecipe
+        | MappedCoreFacetAuthorityArchiveRecipe
+    )
     face_scope_keys: tuple[tuple[str, tuple[str, ...]], ...]
     edge_scope_keys: tuple[tuple[str, tuple[str, ...]], ...]
     expected_source_query_id: str
@@ -407,6 +849,7 @@ class SurfaceEnvelopeSourceArchiveRecipe(NamedTuple):
     spacing: float
     certificate_spacing: float
     maximum_deviation: float
+    envelope_mode: str
     expected_source_revision: str
     expected_envelope_id: str
 
@@ -420,10 +863,16 @@ class PiecewiseLinearBoundarySourceArchiveRecipe(NamedTuple):
     of storing per-entity ancestry text in the manifest.
     """
 
-    owner: SurfaceEnvelopeSourceArchiveRecipe
+    owner: object
     entity_dimension: int
     entity_ids: object
     expected_source_query_id: str
+
+
+class PlcCurveAuthorityArchiveRecipe(NamedTuple):
+    source: object
+    reference_domain: object
+    expected_domain_id: str
 
 
 class AnalyticImplicitProfileArchiveRecipe(NamedTuple):
@@ -451,6 +900,15 @@ class FiniteElementAcceptedStateArchiveRecipe(NamedTuple):
     schedule_cursor: int
     state_version: int
     expected_accepted_id: str
+
+
+class FiniteElementFieldBanksArchiveRecipe(NamedTuple):
+    """Typed coefficient banks bound to one prepared finite-element layout."""
+
+    field_layouts: tuple[object, ...]
+    fields: tuple[object, ...]
+    topology_id: str
+    prepared_id: str
 
 
 class FiniteVolumeRuntimeStateArchiveRecipe(NamedTuple):
@@ -503,6 +961,20 @@ class FiniteVolumeOversetPolicyArchiveRecipe(NamedTuple):
     fringe_layers: int
     donor_priority: str
     expected_policy_id: str
+
+
+class OversetRegistrationArchiveRecipe(NamedTuple):
+    """Serial overset inputs and source-bound partition, without search caches."""
+
+    part_bindings: tuple[tuple[str, str], ...]
+    specifications: tuple[object, ...]
+    policy: object
+    epoch: int
+    predecessor_id: str | None
+    connectivity_id: str
+    partition_priority: tuple[str, ...] | None
+    partition_sources: object
+    assembly_id: str
 
 
 class FiniteVolumeOwnerLocalRepartitionContextArchiveRecipe(NamedTuple):
@@ -864,10 +1336,14 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
         "phydrax.geometry.implicit._adaptive_discovery",
         "phydrax.geometry.reconstruction._boundary",
         "phydrax.geometry.reconstruction._core",
+        "phydrax.geometry.reconstruction._sheet",
         "phydrax.geometry.implicit._analytic_profile",
         "phydrax.meshing.providers._native_implicit",
         "phydrax.geometry._mapped_reference_boundary",
         "phydrax.meshing.providers._native_sources",
+        "phydrax.meshing.providers._native_plc_geometry",
+        "phydrax.meshing._layer_core_facet_authority",
+        "phydrax.meshing._motion_source",
         "phydrax.meshing._surface_envelope",
         "phydrax.meshing._surface_boundary_sources",
         "phydrax.geometry._sphere_material_atlas",
@@ -879,7 +1355,10 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
     from ..geometry._domain_boundary import MeshingDomainBoundarySource
     from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
     from ..geometry._meshing_domain import MeshingDomain
-    from ..geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+    from ..geometry._piecewise_linear_boundary import (
+        PiecewiseLinearBoundarySource,
+        PiecewiseLinearDomainBoundaryOwner,
+    )
     from ..geometry._source_boundary_records import SourceBoundaryQuery
     from ..geometry._sphere_material_atlas import SphereMaterialCellAtlas
     from ..geometry._surface_source_support import (
@@ -897,6 +1376,10 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
         ReconstructedGeometrySource,
         ReconstructedGeometrySourceArchiveRecipe,
     )
+    from ..geometry.reconstruction._sheet import (
+        AuthoredTriangleSheet,
+        AuthoredTriangleSheetArchiveRecipe,
+    )
     from ..meshing._plc_source import PiecewiseLinearComplex
     from ..meshing._surface_boundary_sources import (
         _boundary_occurrence_identity,
@@ -904,7 +1387,48 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
         SurfaceSubdivisionBoundarySource,
     )
     from ..meshing._surface_envelope import SurfaceEnvelopeSource
-    from ..meshing.providers._native_sources import NativeMappedHexSource, NativePlcSource
+    from ..meshing.providers._native_plc_geometry import _PlcCurveAuthority
+    from ..meshing.providers._native_sources import (
+        NativeMappedHexSource,
+        NativePlanarSource,
+        NativePlcSource,
+    )
+
+    if type(value).__module__ == "phydrax.meshing._motion_source":
+        from ..meshing._motion_source import NativePlanarMotionSource
+
+        if type(value) is NativePlanarMotionSource:
+            rebuilt = NativePlanarMotionSource.from_stored_fields(value)
+            source = _source_query_archive_recipe(rebuilt.source)
+            if type(source) is not NativePlanarSourceArchiveRecipe:
+                raise TypeError("Planar motion lost its independent source recipe.")
+            return NativePlanarMotionSourceArchiveRecipe(
+                source,
+                rebuilt.translation,
+                rebuilt.successor.binding_id,
+                rebuilt.transition_id,
+            )
+    if type(value) is NativePlanarSource:
+        from ..meshing._motion_source import _rebuild_planar_source
+
+        source = _rebuild_planar_source(value)
+        embedded = source.embedded
+        return NativePlanarSourceArchiveRecipe(
+            source.region.vertices,
+            source.region.edges,
+            source.region.loop_offsets,
+            source.source_id,
+            source.declared_source_revision,
+            None if embedded is None else embedded.vertices,
+            None if embedded is None else embedded.edges,
+            None if embedded is None else embedded.source_id,
+            source.region_scope_entity_ids,
+            source.vertex_entity_ids,
+            source.edge_entity_ids,
+            None if embedded is None else source.embedded_vertex_entity_ids,
+            None if embedded is None else source.embedded_edge_entity_ids,
+            source.binding_id,
+        )
 
     if type(value) is AnalyticImplicitProfile:
         return AnalyticImplicitProfileArchiveRecipe(
@@ -936,9 +1460,12 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.curve_entity_ids,
             value.occurrence_paths,
             value.chart_ids,
+            value.endpoint_source_keys,
+            value.endpoint_point_bounds,
+            value.endpoint_parameter_bounds,
             value.query_id,
         )
-    if type(value) is ReconstructedGeometrySource:
+    if type(value) in (ReconstructedGeometrySource, AuthoredTriangleSheet):
         return value.archive_recipe
     if type(value) is ReconstructedTriangleBoundarySource:
         return ReconstructedTriangleBoundarySourceArchiveRecipe(
@@ -1006,6 +1533,21 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.source_root_cell_ids,
             value.boundary_occurrences,
             IntegerRowsArchiveRecipe.encode(value.source_piece_ids),
+            ExactTensorArchiveRecipe.encode(
+                tuple(
+                    (
+                        Fraction(root.patch),
+                        Fraction(root.loop),
+                        Fraction(root.use),
+                        root.first,
+                        root.last,
+                        *root.first_uv,
+                        *root.last_uv,
+                    )
+                    for root in value.trim_roots
+                ),
+                rational=True,
+            ),
             value.source_chart_id,
         )
     if type(value) is PreparedSurfaceSourceSupport:
@@ -1045,9 +1587,12 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
     if type(value) is SurfaceEnvelopeSource:
         value.require_current()
         original_recipe = _source_query_archive_recipe(value.original)
-        if type(original_recipe) is not ReconstructedGeometrySourceArchiveRecipe:
+        if type(original_recipe) not in (
+            ReconstructedGeometrySourceArchiveRecipe,
+            AuthoredTriangleSheetArchiveRecipe,
+        ):
             raise TypeError(
-                "Surface envelope lost its exact reconstructed source recipe."
+                "Surface envelope lost its exact reconstructed or authored source recipe."
             )
         return SurfaceEnvelopeSourceArchiveRecipe(
             original_recipe,
@@ -1057,15 +1602,32 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.spacing,
             value.certificate_spacing,
             value.maximum_deviation,
+            value.envelope_mode,
             value.source_revision,
             value.envelope_id,
         )
+    if type(value) is _PlcCurveAuthority:
+        value.require_current()
+        source_recipe = _source_query_archive_recipe(value.source)
+        if type(source_recipe) is not NativePlcSourceArchiveRecipe:
+            raise TypeError("PLC curve authority lost its original source recipe.")
+        return PlcCurveAuthorityArchiveRecipe(
+            source_recipe, value.domain.reference_domain, value.domain.domain_id
+        )
     if type(value) is PiecewiseLinearBoundarySource:
         value.require_current()
-        owner_recipe = _source_query_archive_recipe(value.owner)
-        if type(owner_recipe) is not SurfaceEnvelopeSourceArchiveRecipe:
+        owner_recipe = (
+            value.owner
+            if type(value.owner) is PiecewiseLinearDomainBoundaryOwner
+            else _source_query_archive_recipe(value.owner)
+        )
+        if type(owner_recipe) not in (
+            SurfaceEnvelopeSourceArchiveRecipe,
+            PiecewiseLinearDomainBoundaryOwner,
+            PlcCurveAuthorityArchiveRecipe,
+        ):
             raise TypeError(
-                "Piecewise-linear boundary query lost its exact envelope owner."
+                "Piecewise-linear boundary query lost its exact source owner."
             )
         return PiecewiseLinearBoundarySourceArchiveRecipe(
             owner_recipe,
@@ -1153,6 +1715,19 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
         return PreparedSphereChartDeformationArchiveRecipe(
             source_recipe, target_recipe, value.deformation_id
         )
+    if type(value).__module__ == "phydrax.meshing._layer_core_facet_authority":
+        from ..meshing._layer_core_facet_authority import MappedCoreFacetAuthority
+
+        if type(value) is MappedCoreFacetAuthority:
+            value.validate_restored()
+            return MappedCoreFacetAuthorityArchiveRecipe(
+                value.source.source_id,
+                value.source.source_revision,
+                value.source.binding_id,
+                value.facet_rows,
+                value.binding_id,
+                value.root_relation.relation_id,
+            )
     if type(value) is NativeMappedHexSource:
         value.validate_restored()
         reference_recipe = _source_query_archive_recipe(value.reference)
@@ -1219,7 +1794,18 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
     if type(value) is MappedReferenceBoundarySource:
         value.require_current()
         authority_recipe = _source_query_archive_recipe(value.authority)
-        if type(authority_recipe) is not NativeMappedHexSourceArchiveRecipe:
+        if not isinstance(
+            authority_recipe,
+            (
+                NativeMappedHexSourceArchiveRecipe,
+                NativePlcSourceArchiveRecipe,
+                MappedCoreFacetAuthorityArchiveRecipe,
+            ),
+        ) or type(authority_recipe) not in (
+            NativeMappedHexSourceArchiveRecipe,
+            NativePlcSourceArchiveRecipe,
+            MappedCoreFacetAuthorityArchiveRecipe,
+        ):
             raise TypeError("Mapped boundary query lost its exact root authority recipe.")
         return MappedReferenceBoundarySourceArchiveRecipe(
             authority_recipe,
@@ -1636,6 +2222,16 @@ def _row_record_archive_recipe(value: Any, /) -> object | None:
     if layer_recipe is not None:
         return layer_recipe
     if (
+        module == "phydrax.geometry._source_boundary_records"
+        and name == "SourceBoundaryImagePullback"
+    ):
+        return SourceBoundaryImagePullbackArchiveRecipe.from_pullback(value)
+    if (
+        module == "phydrax.geometry._source_boundary_records"
+        and name == "SourceBoundaryFaceImageWitness"
+    ):
+        return SourceBoundaryFaceImageWitnessArchiveRecipe.from_witness(value)
+    if (
         module == "phydrax.geometry.design._continuation"
         and name == "SketchContinuationReference"
     ):
@@ -1695,7 +2291,10 @@ def _row_record_recipe_types() -> frozenset[type]:
     from ..geometry.design._continuation import SketchContinuationReferenceArchiveRecipe
     from ..geometry.surface._contracts import SurfaceMetadataArchiveRecipe
     from ..meshing._archive_layer_columns import LayerRecordArchiveRecipe
-    from ..meshing._association import GeometryAssociationArchiveRecipe
+    from ..meshing._association import (
+        GeometryAssociationArchiveRecipe,
+        GeometryAssociationBankArchiveRecipe,
+    )
 
     return frozenset(
         {
@@ -1703,10 +2302,13 @@ def _row_record_recipe_types() -> frozenset[type]:
             CADTransactionArchiveRecipe,
             CADGraphArchiveRecipe,
             GeometryAssociationArchiveRecipe,
+            GeometryAssociationBankArchiveRecipe,
             LayerRecordArchiveRecipe,
             MeshEmbeddingWitnessArchiveRecipe,
             SurfaceChartWitnessArchiveRecipe,
             SketchContinuationReferenceArchiveRecipe,
+            SourceBoundaryFaceImageWitnessArchiveRecipe,
+            SourceBoundaryImagePullbackArchiveRecipe,
             SurfaceMetadataArchiveRecipe,
         }
     )
@@ -1780,7 +2382,12 @@ def restore_row_record_recipes(value: Any, /) -> Any:
         memo[identity] = result
         return result
 
-    result = visit(value)
+    try:
+        result = visit(value)
+    finally:
+        # The recursive visitor closes over its memo; do not keep restored
+        # scientific owners alive until cyclic garbage collection.
+        memo.clear()
     if (
         type(value).__module__ == "phydrax.geometry._source_fidelity_certificate"
         and type(value).__name__ == "SourceFidelityCertificate"
@@ -1797,6 +2404,169 @@ def restore_row_record_recipes(value: Any, /) -> Any:
 
 def model_archive_projection(value: Any, /) -> Any:
     """Return a structural archive view with query caches replaced by owner inputs."""
+    if type(value).__module__ == "phydrax.meshing._certification_inputs":
+        from ..meshing._certification_inputs import MeshCertificationInputs
+        from ..meshing.providers._native_sources import NativeLayerCoreSource
+
+        if (
+            type(value) is MeshCertificationInputs
+            and type(value.feature_source) is NativeLayerCoreSource
+        ):
+            source = value.feature_source
+            from ..geometry._mapped_reference_boundary import (
+                MappedReferenceBoundarySource,
+            )
+
+            query = value.source
+            mapped_query = (
+                type(query) is MappedReferenceBoundarySource
+                and query is source.fidelity_source
+            )
+            fields = {
+                field.name: (
+                    LayerCoreSourceReferenceArchiveRecipe(
+                        source.source_id, source.source_revision, source.binding_id
+                    )
+                    if field.name == "feature_source"
+                    else LayerCoreFidelitySourceReferenceArchiveRecipe(
+                        source.source_id,
+                        source.source_revision,
+                        source.binding_id,
+                        query.source_query_id,
+                    )
+                    if field.name == "source" and mapped_query
+                    else model_archive_projection(
+                        object.__getattribute__(value, field.name)
+                    )
+                )
+                for field in dataclasses.fields(value)
+            }
+            return _restore_dataclass(type(value), fields)
+    if type(value).__module__ == "phydrax.imaging._core":
+        from ..imaging._core import ImageIndexAffine, LabelVolume
+
+        if type(value) is ImageIndexAffine:
+            return ImageIndexAffineArchiveRecipe(
+                value.matrix,
+                value.source_frame_id,
+                value.coordinate_contract,
+                value.axis_convention,
+                value.voxel_reference,
+                value.provenance,
+                value.affine_id,
+            )
+        if type(value) is LabelVolume:
+            return LabelVolumeArchiveRecipe(
+                {
+                    field.name: model_archive_projection(
+                        object.__getattribute__(value.asset, field.name)
+                    )
+                    for field in dataclasses.fields(value.asset)
+                    if field.init
+                },
+                model_archive_projection(value.ontology),
+                value.asset.content_id,
+                value.label_volume_id,
+            )
+    if type(value).__module__ == "phydrax.imaging._asset":
+        from ..imaging._asset import ImageFieldSpec
+
+        if type(value) is ImageFieldSpec:
+            sampling = value.sampling
+            temporal = sampling.temporal
+            return ImageFieldSpecArchiveRecipe(
+                value.quantity,
+                value.layout,
+                temporal.kind,
+                temporal.interval_bounds,
+                temporal.interval_unit,
+                temporal.origin,
+                sampling.spatial_kind,
+                sampling.footprint_id,
+                sampling.normalization,
+                temporal.temporal_sampling_id,
+                sampling.sampling_id,
+                value.spec_id,
+            )
+    if type(value).__module__ == "phydrax.measurement._field":
+        from ..measurement._field import IndependentStandardUncertainty, QualityFlag
+
+        if type(value) is IndependentStandardUncertainty:
+            return ImageUncertaintyArchiveRecipe(
+                value.values, value.unit, value.uncertainty_id
+            )
+        if type(value) is QualityFlag:
+            return ImageQualityFlagArchiveRecipe(
+                value.name, value.mask, value.meaning, value.flag_id
+            )
+    if type(value).__module__ == "phydrax.geometry._compartments":
+        from ..geometry._compartments import CompartmentMeshingSource
+
+        if type(value) is CompartmentMeshingSource:
+            return CompartmentMeshingSourceArchiveRecipe(
+                model_archive_projection(value.labels),
+                value.compartments.compartments,
+                value.compartments.interfaces,
+                model_archive_projection(value.outer_surface),
+                value.interpretation,
+                model_archive_projection(value.outer_geometry),
+                value.source_id,
+                value.source_revision,
+                value.scope_entity_set_ids,
+            )
+    if type(value).__module__ == "phydrax.geometry._affine_plc_domain":
+        from ..geometry._affine_plc_domain import AffinePlcDomain
+
+        if type(value) is AffinePlcDomain:
+            return AffinePlcDomainArchiveRecipe(
+                model_archive_projection(value.reference_domain),
+                model_archive_projection(value.authority),
+                value.matrix,
+                value.offset,
+                value.source_revision,
+                value.domain_id,
+            )
+    if type(value).__module__ == "phydrax.geometry._affine_plc_geometry":
+        from ..geometry._affine_plc_geometry import AffinePlcGeometrySource
+
+        if type(value) is AffinePlcGeometrySource:
+            return AffinePlcGeometrySourceArchiveRecipe(
+                model_archive_projection(value.domain),
+                value.reference_mesh,
+                value.witness,
+                value.source_id,
+                value.source_revision,
+                value.source_map_id,
+            )
+    if type(value).__module__ == "phydrax.geometry._affine_plc_boundary":
+        from ..geometry._affine_plc_boundary import AffinePlcBoundarySource
+
+        if type(value) is AffinePlcBoundarySource:
+            return AffinePlcBoundarySourceArchiveRecipe(
+                model_archive_projection(value.owner),
+                model_archive_projection(value.domain),
+                value.facet_rows,
+                value.source_query_id,
+            )
+    if (
+        type(value).__module__ == "phydrax.geometry._source_boundary_records"
+        and type(value).__name__ == "SurfaceEnvelopeDistanceWitness"
+    ):
+        from ..geometry._source_boundary_records import SurfaceEnvelopeDistanceWitness
+
+        if type(value) is not SurfaceEnvelopeDistanceWitness:
+            raise TypeError(
+                "Envelope witness archive projection requires its exact owner."
+            )
+        fields = {
+            field.name: (
+                None
+                if field.name == "reproduction"
+                else model_archive_projection(object.__getattribute__(value, field.name))
+            )
+            for field in dataclasses.fields(value)
+        }
+        return _restore_dataclass(type(value), fields)
     if (
         type(value).__module__ == "phydrax.meshing._plc_source"
         and type(value).__name__ == "PiecewiseLinearComplex"
@@ -1956,6 +2726,17 @@ def model_archive_projection(value: Any, /) -> Any:
             )
         }
 
+    if type(value).__module__ == "phydrax.meshing._dual_extraction":
+        from ..meshing._dual_extraction import SurfaceQuadFieldEvent
+
+        if type(value) is SurfaceQuadFieldEvent:
+            recipe = value.archive_recipe()
+            return recipe._replace(
+                source=model_archive_projection(recipe.source),
+                source_geometry=model_archive_projection(recipe.source_geometry),
+                field=model_archive_projection(recipe.field),
+            )
+
     state_recipe = _finite_element_accepted_state_archive_recipe(value)
     if state_recipe is not None:
         return model_archive_projection(state_recipe)
@@ -2058,6 +2839,21 @@ def model_archive_projection(value: Any, /) -> Any:
         ):
             return value
         return _restore_dataclass(type(value), fields)
+    if (
+        type(value) is tuple
+        and value
+        and type(value[0]).__module__ == "phydrax.meshing._association"
+        and type(value[0]).__name__ == "GeometryAssociation"
+    ):
+        from ..meshing._association import (
+            GeometryAssociation,
+            GeometryAssociationBankArchiveRecipe,
+        )
+
+        if all(type(item) is GeometryAssociation for item in value):
+            return model_archive_projection(
+                GeometryAssociationBankArchiveRecipe.from_associations(value)
+            )
     if isinstance(value, tuple) and "_fields" in vars(type(value)):
         values = tuple(model_archive_projection(item) for item in value)
         return (
@@ -2206,20 +3002,20 @@ def model_structure_recipe(
     if path == "model":
         value = model_archive_root_projection(value)
     if _is_prng_key(value):
-        data = np.asarray(jr.key_data(value))
+        data = jr.key_data(value)
         return {
             "kind": "prng_key",
             "shape": list(data.shape),
             "implementation": str(jr.key_impl(value)),
         }
     if isinstance(value, (jax.Array, np.ndarray)):
-        array = np.asarray(value)
-        if array.dtype.hasobject:
+        dtype = np.dtype(value.dtype)
+        if dtype.hasobject:
             raise TypeError(f"{path} contains an object-dtype array.")
         return {
             "kind": "array",
-            "shape": list(array.shape),
-            "dtype": str(array.dtype),
+            "shape": list(value.shape),
+            "dtype": str(dtype),
             "backend": "jax" if isinstance(value, jax.Array) else "numpy",
         }
     if isinstance(value, enum.Enum):
@@ -2486,6 +3282,52 @@ def _recipe_array_spec(
     return shape, dtype, elements, byte_count
 
 
+class _OccurrenceRecipeOwners:
+    """Charge each logical array occurrence, as required by expanded APIs."""
+
+    def charge(self, node: Mapping[str, Any], /) -> bool:
+        return True
+
+
+class _BoundRecipeOwners:
+    """Charge an actual immutable physical array owner once per operation."""
+
+    def __init__(self, bindings: Mapping[int, object], /) -> None:
+        self.bindings = bindings
+        self.seen: dict[int, object] = {}
+
+    def charge(self, node: Mapping[str, Any], /) -> bool:
+        try:
+            owner = self.bindings[id(node)]
+        except KeyError as error:
+            raise ValueError("A recipe array lacks its actual physical owner.") from error
+        identity = id(owner)
+        previous = self.seen.get(identity)
+        if previous is not None:
+            if previous is not owner:
+                raise RuntimeError("A recipe physical owner changed identity.")
+            return False
+        self.seen[identity] = owner
+        return True
+
+
+class _SharedRecipeOwners:
+    """Charge each authenticated shared array node once for immutable reads."""
+
+    def __init__(self) -> None:
+        self.seen: dict[int, Mapping[str, Any]] = {}
+
+    def charge(self, node: Mapping[str, Any], /) -> bool:
+        identity = id(node)
+        previous = self.seen.get(identity)
+        if previous is not None:
+            if previous is not node:
+                raise RuntimeError("A shared recipe node changed identity.")
+            return False
+        self.seen[identity] = node
+        return True
+
+
 def validate_model_structure_recipe(
     recipe: Mapping[str, Any],
     /,
@@ -2493,6 +3335,15 @@ def validate_model_structure_recipe(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> None:
     """Validate a complete recipe and every allocation bound without allocating."""
+    _validate_model_structure_recipe(recipe, limits, _OccurrenceRecipeOwners())
+
+
+def _validate_model_structure_recipe(
+    recipe: Mapping[str, Any],
+    limits: ArrayArchiveLimits | None,
+    owners: _OccurrenceRecipeOwners | _BoundRecipeOwners | _SharedRecipeOwners,
+    /,
+) -> None:
     if limits is not None and not isinstance(limits, ArrayArchiveLimits):
         raise TypeError("limits must be an ArrayArchiveLimits instance.")
     pending: list[tuple[Any, int, str]] = [(recipe, 1, "recipe")]
@@ -2501,6 +3352,7 @@ def validate_model_structure_recipe(
     total_elements = 0
     total_bytes = 0
     node_count = 0
+    maximum_addressable = int(np.iinfo(np.intp).max)
     while pending:
         node, depth, path = pending.pop()
         node_count += 1
@@ -2537,23 +3389,21 @@ def validate_model_structure_recipe(
         else:
             elements = 0
             byte_count = 0
-        if elements:
-            maximum_addressable = int(np.iinfo(np.intp).max)
+        if elements and owners.charge(node):
             if limits is None:
                 if total_elements > maximum_addressable - elements:
                     raise ValueError("Model recipe exceeds addressable total elements.")
+            elif total_elements > limits.max_total_array_elements - elements:
+                raise ValueError("Model artifact recipe exceeds its total element limit.")
+            total_elements += elements
+        # Even immutable shared payloads may be copied by scientific owner
+        # constructors. Bound the complete logical expansion before invoking them.
+        if byte_count:
+            if limits is None:
                 if total_bytes > maximum_addressable - byte_count:
                     raise ValueError("Model recipe exceeds addressable total bytes.")
-            else:
-                if total_elements > limits.max_total_array_elements - elements:
-                    raise ValueError(
-                        "Model artifact recipe exceeds its total element limit."
-                    )
-                if total_bytes > limits.max_aggregate_bytes - byte_count:
-                    raise ValueError(
-                        "Model artifact recipe exceeds its total array-byte limit."
-                    )
-            total_elements += elements
+            elif total_bytes > limits.max_aggregate_bytes - byte_count:
+                raise ValueError("Model artifact recipe exceeds its total array-byte limit.")
             total_bytes += byte_count
 
         if kind in ("array", "prng_key"):
@@ -3140,6 +3990,154 @@ def _pack_projected_model_array_tree(
     return arrays
 
 
+def _pack_owned_model_array_tree(
+    value: Any,
+    recipe: Mapping[str, Any],
+    /,
+    *,
+    prefix: str,
+    limits: ArrayArchiveLimits | None,
+) -> dict[str, np.ndarray]:
+    """Pack a generated recipe, sharing only proven immutable array owners."""
+    descriptor_tree = _restore_recipe(recipe, _array_descriptor)
+    descriptor_leaves, descriptor_definition = jax.tree_util.tree_flatten_with_path(
+        descriptor_tree
+    )
+    value_leaves, value_definition = jax.tree_util.tree_flatten_with_path(value)
+    if descriptor_definition != value_definition or len(descriptor_leaves) != len(
+        value_leaves
+    ):
+        raise TypeError("Value PyTree does not match its model structure recipe.")
+    inventory = _model_recipe_array_inventory_from_leaves(
+        recipe, descriptor_leaves, prefix
+    )
+    nodes = _recipe_array_nodes(recipe)
+    if len(nodes) != len(inventory):
+        raise TypeError("Model recipe arrays do not match their physical owners.")
+    bindings: dict[int, object] = {}
+    for entry, node in zip(inventory, nodes, strict=True):
+        expected_path, descriptor = descriptor_leaves[entry.tree_index]
+        actual_path, leaf = value_leaves[entry.tree_index]
+        if expected_path != actual_path or not isinstance(
+            descriptor, _RecipeArrayDescriptor
+        ):
+            raise TypeError("Value array paths do not match their model recipe.")
+        if descriptor.backend == "prng_key":
+            if (
+                not _is_prng_key(leaf)
+                or str(jr.key_impl(leaf)) != descriptor.implementation
+            ):
+                raise TypeError("Value PRNG leaf does not match its model recipe.")
+            shape, dtype = tuple(jr.key_data(leaf).shape), np.dtype(np.uint32).str
+        else:
+            if not isinstance(leaf, (jax.Array, np.ndarray)):
+                raise TypeError("Value array leaf does not match its model recipe.")
+            if descriptor.backend == "jax" and not isinstance(leaf, jax.Array):
+                raise TypeError("Value array backend changed from its model recipe.")
+            if descriptor.backend == "numpy" and not isinstance(leaf, np.ndarray):
+                raise TypeError("Value array backend changed from its model recipe.")
+            shape, dtype = tuple(leaf.shape), np.dtype(leaf.dtype).str
+        if shape != descriptor.shape or dtype != descriptor.dtype:
+            raise TypeError("Value array shape or dtype changed from its model recipe.")
+        backing: object = leaf
+        while isinstance(backing, np.ndarray) and not backing.flags.writeable:
+            backing = backing.base
+        owner = (
+            leaf if isinstance(leaf, jax.Array) or isinstance(backing, bytes) else node
+        )
+        previous = bindings.get(id(node))
+        if previous is not None and previous is not owner:
+            raise ValueError("A shared recipe array names different physical owners.")
+        bindings[id(node)] = owner
+    _validate_model_structure_recipe(recipe, limits, _BoundRecipeOwners(bindings))
+    payloads: dict[int, tuple[object, np.ndarray]] = {}
+    arrays: dict[str, np.ndarray] = {}
+    for entry in inventory:
+        _, descriptor = descriptor_leaves[entry.tree_index]
+        _, leaf = value_leaves[entry.tree_index]
+        backing: object = leaf
+        while isinstance(backing, np.ndarray) and not backing.flags.writeable:
+            backing = backing.base
+        immutable = isinstance(leaf, jax.Array) or isinstance(backing, bytes)
+        cached = payloads.get(id(leaf)) if immutable else None
+        if cached is None:
+            payload = (
+                np.asarray(jr.key_data(leaf))
+                if descriptor.backend == "prng_key"
+                else np.asarray(leaf)
+            )
+            if immutable:
+                payloads[id(leaf)] = (leaf, payload)
+        else:
+            original, payload = cached
+            if original is not leaf:
+                raise RuntimeError("Model array owner identity changed during packing.")
+        arrays[entry.name] = payload
+    return arrays
+
+
+def _require_model_array_content(
+    value: Any,
+    recipe: Mapping[str, Any],
+    arrays: Mapping[str, Any],
+    /,
+    *,
+    prefix: str,
+) -> None:
+    """Compare a rebuilt tree to an already-admitted recipe one array at a time."""
+    from .._array_archive import array_payload_digest
+
+    descriptor_tree = _restore_recipe(recipe, _array_descriptor)
+    descriptors, expected_definition = jax.tree_util.tree_flatten_with_path(
+        descriptor_tree
+    )
+    leaves, actual_definition = jax.tree_util.tree_flatten_with_path(value)
+    if expected_definition != actual_definition or len(descriptors) != len(leaves):
+        raise TypeError("Value PyTree does not match its model structure recipe.")
+    inventory = _model_recipe_array_inventory_from_leaves(recipe, descriptors, prefix)
+    if set(arrays) != {entry.name for entry in inventory}:
+        raise ValueError("Model recipe arrays do not match its exact leaf inventory.")
+    expected_digests: dict[int, tuple[object, str]] = {}
+    for entry in inventory:
+        expected_path, descriptor = descriptors[entry.tree_index]
+        actual_path, leaf = leaves[entry.tree_index]
+        if expected_path != actual_path or not isinstance(
+            descriptor, _RecipeArrayDescriptor
+        ):
+            raise TypeError("Value array paths do not match their model recipe.")
+        if descriptor.backend == "prng_key":
+            if (
+                not _is_prng_key(leaf)
+                or str(jr.key_impl(leaf)) != descriptor.implementation
+            ):
+                raise TypeError("Value PRNG leaf does not match its model recipe.")
+            payload = np.asarray(jr.key_data(leaf))
+        else:
+            if descriptor.backend == "jax" and not isinstance(leaf, jax.Array):
+                raise TypeError("Value array backend changed from its model recipe.")
+            if descriptor.backend == "numpy" and not isinstance(leaf, np.ndarray):
+                raise TypeError("Value array backend changed from its model recipe.")
+            payload = np.asarray(leaf)
+        if payload.shape != descriptor.shape or payload.dtype.str != descriptor.dtype:
+            raise TypeError("Value array shape or dtype changed from its model recipe.")
+        expected = arrays[entry.name]
+        backing: object = expected
+        while isinstance(backing, np.ndarray) and not backing.flags.writeable:
+            backing = backing.base
+        if not isinstance(backing, bytes):
+            raise ValueError("Admitted model payloads require immutable byte backing.")
+        retained = expected_digests.get(id(expected))
+        if retained is None:
+            digest = array_payload_digest(expected)
+            expected_digests[id(expected)] = (expected, digest)
+        else:
+            if retained[0] is not expected:
+                raise RuntimeError("Admitted array owner changed identity.")
+            digest = retained[1]
+        if array_payload_digest(payload) != digest:
+            raise ValueError("Owning constructors changed a serialized model array.")
+
+
 def model_from_array_recipe(
     recipe: Mapping[str, Any],
     arrays: Mapping[str, Any],
@@ -3149,10 +4147,64 @@ def model_from_array_recipe(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
     validate: bool = True,
     restore_rows: bool = True,
+    immutable_arrays: bool = False,
 ) -> Any:
     """Restore an exact array inventory, optionally deferring owner validation."""
 
     descriptor_tree = _descriptor_tree(recipe, limits)
+    return _model_from_descriptor_tree(
+        recipe, arrays, descriptor_tree, prefix, validate, restore_rows, immutable_arrays
+    )
+
+
+def _model_from_shared_immutable_array_recipe(
+    recipe: Mapping[str, Any],
+    arrays: Mapping[str, Any],
+    /,
+    *,
+    prefix: str,
+    limits: ArrayArchiveLimits | None,
+    validate: bool = True,
+    restore_rows: bool = True,
+) -> Any:
+    _validate_model_structure_recipe(recipe, limits, _SharedRecipeOwners())
+    seen: dict[int, tuple[Mapping[str, Any], np.ndarray]] = {}
+    nodes = _recipe_array_nodes(recipe)
+    if set(arrays) != {f"{prefix}/{index:06d}" for index in range(len(nodes))}:
+        raise ValueError("Model recipe arrays do not match its exact leaf inventory.")
+    for index, node in enumerate(nodes):
+        payload = arrays[f"{prefix}/{index:06d}"]
+        if not isinstance(payload, np.ndarray):
+            raise TypeError("Immutable model payloads must be NumPy arrays.")
+        backing: object = payload
+        while isinstance(backing, np.ndarray):
+            if backing.flags.writeable:
+                raise ValueError("Immutable model arrays must not be writable.")
+            backing = backing.base
+        if not isinstance(backing, bytes):
+            raise ValueError("Immutable model arrays require immutable byte backing.")
+        previous = seen.get(id(node))
+        if previous is not None and (
+            previous[0] is not node or previous[1] is not payload
+        ):
+            raise ValueError("A shared recipe array names different immutable payloads.")
+        seen[id(node)] = (node, payload)
+    descriptor_tree = _restore_recipe(recipe, _array_descriptor)
+    return _model_from_descriptor_tree(
+        recipe, arrays, descriptor_tree, prefix, validate, restore_rows, True
+    )
+
+
+def _model_from_descriptor_tree(
+    recipe: Mapping[str, Any],
+    arrays: Mapping[str, Any],
+    descriptor_tree: Any,
+    prefix: str,
+    validate: bool,
+    restore_rows: bool,
+    immutable_arrays: bool,
+    /,
+) -> Any:
     path_leaves, definition = jax.tree_util.tree_flatten_with_path(descriptor_tree)
     inventory = _model_recipe_array_inventory_from_leaves(recipe, path_leaves, prefix)
     if set(arrays) != {entry.name for entry in inventory}:
@@ -3165,11 +4217,26 @@ def model_from_array_recipe(
         admitted[entry.name] = payload
 
     restored = [leaf for _, leaf in path_leaves]
+    converted: dict[tuple[int, str, str | None], tuple[np.ndarray, Any]] = {}
     for entry in inventory:
         descriptor = restored[entry.tree_index]
         if not isinstance(descriptor, _RecipeArrayDescriptor):
             raise RuntimeError("Model recipe inventory lost its array descriptor.")
         payload = admitted[entry.name]
+        backing: object = payload
+        while isinstance(backing, np.ndarray) and not backing.flags.writeable:
+            backing = backing.base
+        cache_key = (id(payload), entry.backend, entry.implementation)
+        cached = (
+            converted.get(cache_key)
+            if immutable_arrays and isinstance(backing, bytes)
+            else None
+        )
+        if cached is not None:
+            if cached[0] is not payload:
+                raise RuntimeError("Immutable payload identity changed during restoration.")
+            restored[entry.tree_index] = cached[1]
+            continue
         if entry.backend == "prng_key":
             restored[entry.tree_index] = jr.wrap_key_data(
                 jnp.asarray(payload, dtype=jnp.uint32),
@@ -3178,7 +4245,21 @@ def model_from_array_recipe(
         elif entry.backend == "jax":
             restored[entry.tree_index] = jnp.asarray(payload)
         else:
-            restored[entry.tree_index] = np.array(payload, copy=True, order="C")
+            if immutable_arrays:
+                backing = payload
+                while isinstance(backing, np.ndarray):
+                    if backing.flags.writeable:
+                        raise ValueError("Immutable model arrays must not be writable.")
+                    backing = backing.base
+                if not isinstance(backing, bytes):
+                    raise ValueError(
+                        "Immutable model arrays require immutable byte backing."
+                    )
+                restored[entry.tree_index] = payload
+            else:
+                restored[entry.tree_index] = np.array(payload, copy=True, order="C")
+        if immutable_arrays and isinstance(backing, bytes):
+            converted[cache_key] = (payload, restored[entry.tree_index])
     model = jax.tree_util.tree_unflatten(definition, restored)
     if restore_rows:
         # Scientific authority is still delegated to the owning callback.
@@ -3387,6 +4468,42 @@ def expand_shared_model_archive_recipe(
     referrer. Equal subtrees written twice, unused members, or unresolved keys
     are refused as noncanonical. The validated recipe reuses one node per key.
     """
+    return _expand_shared_model_archive_recipe(
+        shared, members, prefix, limits, _OccurrenceRecipeOwners()
+    )
+
+
+def _expand_shared_immutable_model_archive_recipe(
+    shared: Mapping[str, Any],
+    members: Mapping[str, Any],
+    prefix: str,
+    limits: ArrayArchiveLimits | None,
+    /,
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    """Expand authenticated shared nodes for immutable physical-owner accounting."""
+    for member in members.values():
+        if not isinstance(member, np.ndarray):
+            raise TypeError("Immutable model members must be NumPy arrays.")
+        backing: object = member
+        while isinstance(backing, np.ndarray):
+            if backing.flags.writeable:
+                raise ValueError("Immutable model members must not be writable.")
+            backing = backing.base
+        if not isinstance(backing, bytes):
+            raise ValueError("Immutable model members require immutable byte backing.")
+    return _expand_shared_model_archive_recipe(
+        shared, members, prefix, limits, _SharedRecipeOwners()
+    )
+
+
+def _expand_shared_model_archive_recipe(
+    shared: Mapping[str, Any],
+    members: Mapping[str, Any],
+    prefix: str,
+    limits: ArrayArchiveLimits | None,
+    owners: _OccurrenceRecipeOwners | _SharedRecipeOwners,
+    /,
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     content = _RecipeContent({})
     definitions: dict[str, dict[str, Any]] = {}
     consumed = [0]
@@ -3438,7 +4555,7 @@ def expand_shared_model_archive_recipe(
         raise ValueError("Shared model recipe is malformed.") from error
     if consumed[0] != len(members):
         raise ValueError("Shared model archive has unused array members.")
-    validate_model_structure_recipe(recipe, limits=limits)
+    _validate_model_structure_recipe(recipe, limits, owners)
     arrays = {
         f"{prefix}/{index:06d}": content.payloads[id(node)]
         for index, node in enumerate(_recipe_array_nodes(recipe))

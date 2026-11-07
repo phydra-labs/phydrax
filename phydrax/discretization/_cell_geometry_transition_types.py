@@ -57,8 +57,10 @@ from ._nested_reference_types import (
     NestedReferenceWitnesses,
     reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
+    ReferenceCellPartition,
     validate_nested_reference_witnesses,
     validate_reference_cell_map_witnesses,
+    validate_reference_cell_partition,
 )
 from ._reference_cell import reference_cell_topology
 
@@ -641,31 +643,68 @@ def _structurally_equal_maps(
     equal_bases: dict[tuple[int, int], bool],
     /,
 ) -> bool:
-    """Whether ``input map`` and ``mapped map o arguments`` are one composition.
+    """Prove equality from full coefficients, basis and composed exact charts.
 
-    Both maps are ``sum_i c_i b_i(chart(x))``; equal coefficient rows, equal
-    bases and equal polynomial charts (the mapped chart being ``arguments``
-    itself) make them the same map. ``False`` decides nothing.
+    ``False`` is not a disproof: unsupported compositions fall through to the
+    independent unisolvent-lattice or symbolic equality proof.
     """
     input_chart, input_basis, input_coefficients = input_parts
     mapped_chart, mapped_basis, mapped_coefficients = mapped_parts
-    if mapped_chart is not None or input_coefficients != mapped_coefficients:
-        return False
-    if any(type(value) is not dict for value in arguments):
-        return False
-    if input_chart is None:
-        if tuple(arguments) != axes(len(arguments)):
-            return False
-    elif len(input_chart) != len(arguments) or any(
-        type(value) is not dict or value != argument
-        for value, argument in zip(input_chart, arguments, strict=True)
+    if (
+        len(input_coefficients) != len(mapped_coefficients)
+        or any(
+            len(first_row) != len(second_row)
+            or any(
+                type(first) is not type(second) or first != second
+                for first, second in zip(first_row, second_row, strict=True)
+            )
+            for first_row, second_row in zip(input_coefficients, mapped_coefficients, strict=True)
+        )
     ):
+        return False
+    def same_polynomial(
+        first: Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial,
+        second: Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial,
+    ) -> bool:
+        if not isinstance(first, Mapping) or not isinstance(second, Mapping):
+            return False
+        return first.keys() == second.keys() and all(
+            type(first[key]) is type(second[key]) and first[key] == second[key]
+            for key in first
+        )
+
+    try:
+        identity = axes(len(arguments))
+        if mapped_chart is None:
+            expected_chart = tuple(arguments)
+        elif len(arguments) == len(identity) and all(
+            same_polynomial(first, second)
+            for first, second in zip(arguments, identity, strict=True)
+        ):
+            expected_chart = tuple(mapped_chart)
+        else:
+            composed_arguments = tuple(arguments)
+            expected_chart = tuple(
+                compose_expression(value, composed_arguments) for value in mapped_chart
+            )
+        actual_chart = identity if input_chart is None else tuple(input_chart)
+        if len(actual_chart) != len(expected_chart) or not all(
+            same_polynomial(first, second)
+            for first, second in zip(actual_chart, expected_chart, strict=True)
+        ):
+            return False
+    except (ArithmeticError, TypeError, ValueError):
         return False
     key = (id(input_basis), id(mapped_basis))
     equal = equal_bases.get(key)
     if equal is None:
         equal = len(input_basis) == len(mapped_basis) and all(
-            type(first) is dict and type(second) is dict and first == second
+            type(first) is dict and type(second) is dict
+            and first.keys() == second.keys()
+            and all(
+                type(first[key]) is type(second[key]) and first[key] == second[key]
+                for key in first
+            )
             for first, second in zip(input_basis, mapped_basis, strict=True)
         )
         equal_bases[key] = equal
@@ -1392,9 +1431,11 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
     )
     refinement: NestedReferenceWitnesses | None
     coarsening: NestedReferenceWitnesses | None
+    coarsening_partition: ReferenceCellPartition | None
     reference_map_id: str | None = eqx.field(static=True)
     refinement_id: str | None = eqx.field(static=True)
     coarsening_id: str | None = eqx.field(static=True)
+    coarsening_partition_id: str | None = eqx.field(static=True)
     evidence: CellGeometryTransitionEvidence
     transition_id: str = eqx.field(static=True)
 
@@ -1412,6 +1453,7 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
         | None = None,
         refinement: NestedReferenceWitnesses | None = None,
         coarsening: NestedReferenceWitnesses | None = None,
+        coarsening_partition: ReferenceCellPartition | None = None,
     ) -> None:
         if not isinstance(source_mesh, CellMesh) or not isinstance(target_mesh, CellMesh):
             raise TypeError("Geometry transition endpoints must be CellMesh owners.")
@@ -1427,7 +1469,7 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             raise TypeError("evidence must be CellGeometryTransitionEvidence.")
         bounded_reconstruction = evidence.kind == "bounded_reconstruction"
         if bounded_reconstruction:
-            if refinement is not None or coarsening is not None:
+            if refinement is not None or coarsening is not None or coarsening_partition is not None:
                 raise ValueError(
                     "Bounded surface reconstruction does not accept nested ancestry witnesses."
                 )
@@ -1539,6 +1581,46 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                     exact_reference_cell_vertices(group),
                     reverse=True,
                 )
+        partition_count = 0
+        if coarsening_partition is not None:
+            validate_reference_cell_partition(coarsening_partition)
+            seen_fine: set[int] = set()
+            partition_coarse: set[int] = set()
+            for group in coarsening_partition.maps:
+                exact = exact_reference_cell_vertices(group)
+                fine_ids = np.asarray(group.target_cell_ids, dtype=np.int64)
+                coarse_ids = np.asarray(group.source_cell_ids, dtype=np.int64)
+                if (
+                    any(source_kinds.get(int(value)) != group.target_cell_kind for value in fine_ids)
+                    or any(target_kinds.get(int(value)) != group.source_cell_kind for value in coarse_ids)
+                    or seen_fine.intersection(int(value) for value in fine_ids)
+                ):
+                    raise ValueError(
+                        "Coarsening partition maps must bind unique source fine and target coarse cells."
+                    )
+                seen_fine.update(int(value) for value in fine_ids)
+                partition_coarse.update(int(value) for value in coarse_ids)
+                _require_exact_reference_group(
+                    source_maps, target_maps, group, exact, reverse=True
+                )
+                partition_count += fine_ids.size
+            if seen_target_ids & partition_coarse:
+                raise ValueError("A target cell cannot be both directly mapped and coarsened.")
+            if coarsening is not None:
+                raise ValueError("Use one complete coarsening partition witness.")
+            direct_sources = {
+                int(identifier)
+                for group in _reference_map_groups(reference_map)
+                for identifier in group.source_cell_ids
+            }
+            if (
+                direct_sources & seen_fine
+                or direct_sources | seen_fine != set(source_kinds)
+                or seen_target_ids | partition_coarse != set(target_kinds)
+            ):
+                raise ValueError(
+                    "Direct maps and coarsening partitions must cover both endpoint meshes."
+                )
         if bounded_reconstruction:
             if reference_map is None:
                 raise ValueError(
@@ -1563,12 +1645,16 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
         )
         refinement_id = _nested_map_identity(refinement)
         coarsening_id = _nested_map_identity(coarsening)
+        coarsening_partition_id = (
+            None if coarsening_partition is None
+            else _reference_map_identity(coarsening_partition.maps)
+        )
         if (
             evidence.reference_map_count != map_count
             or evidence.refinement_map_count
             != (0 if refinement is None else len(refinement.fine_cell_ids))
             or evidence.coarsening_map_count
-            != (0 if coarsening is None else len(coarsening.fine_cell_ids))
+            != (0 if coarsening is None else len(coarsening.fine_cell_ids)) + partition_count
         ):
             raise ValueError(
                 "Geometry transition evidence counts must match retained maps."
@@ -1588,9 +1674,11 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
         self.reference_map = reference_map
         self.refinement = refinement
         self.coarsening = coarsening
+        self.coarsening_partition = coarsening_partition
         self.reference_map_id = reference_map_id
         self.refinement_id = refinement_id
         self.coarsening_id = coarsening_id
+        self.coarsening_partition_id = coarsening_partition_id
         self.evidence = evidence
         self.transition_id = canonical_fingerprint(
             {
@@ -1604,6 +1692,10 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                 "reference_map": reference_map_id,
                 "refinement": refinement_id,
                 "coarsening": coarsening_id,
+                **(
+                    {} if coarsening_partition_id is None
+                    else {"coarsening_partition": coarsening_partition_id}
+                ),
                 "evidence": evidence.evidence_id,
             }
         )
@@ -1699,6 +1791,10 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             _reference_map_identity(self.reference_map) != self.reference_map_id
             or _nested_map_identity(self.refinement) != self.refinement_id
             or _nested_map_identity(self.coarsening) != self.coarsening_id
+            or (
+                None if self.coarsening_partition is None
+                else _reference_map_identity(self.coarsening_partition.maps)
+            ) != self.coarsening_partition_id
         ):
             raise ValueError("Retained exact reference-map witnesses have changed.")
         # Exact nested equality or bounded reconstruction evidence is established
@@ -1721,6 +1817,7 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             reference_map=value.reference_map,
             refinement=value.refinement,
             coarsening=value.coarsening,
+            coarsening_partition=value.coarsening_partition,
         )
         if reconstructed.transition_id != value.transition_id:
             raise ValueError("Stored geometry transition identity does not reproduce.")

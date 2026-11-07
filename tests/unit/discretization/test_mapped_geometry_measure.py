@@ -4,11 +4,47 @@ from fractions import Fraction
 
 import numpy as np
 
+import phydrax.discretization._mapped_geometry_measure as mapped_measure
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
-from phydrax.discretization._cell_geometry import RationalComposedCellGeometryElement
-from phydrax.discretization._coordinate_enclosure import RationalPolynomial
+from phydrax.discretization._cell_geometry import (
+    PerCellRestrictedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+)
+from phydrax.discretization._coordinate_enclosure import (
+    ExpressionInput,
+    RationalPolynomial,
+)
 from phydrax.discretization._mapped_geometry_measure import certified_cell_measures
 from phydrax.discretization.fem import lagrange_element
+
+
+def test_restricted_polynomial_measures_across_distinct_charts() -> None:
+    source = lagrange_element("interval", 2)
+    first: tuple[ExpressionInput, ...] = ({(0,): Fraction(0), (1,): Fraction(1, 2)},)
+    second: tuple[ExpressionInput, ...] = ({(0,): Fraction(1, 3), (1,): Fraction(1, 2)},)
+    element = PerCellRestrictedCellGeometryElement(
+        source, "interval", (1, 2, 3), (4, 4, 4), (first, first, second)
+    )
+    mesh = CellMesh(
+        np.asarray(((0.0,), (0.75,), (0.0,), (0.75,), (4 / 9,), (55 / 36,))),
+        (
+            CellBlock(
+                "cells",
+                "interval",
+                np.arange(6).reshape(3, 2),
+                global_ids=np.asarray((1, 2, 3)),
+            ),
+        ),
+    )
+    nodes = np.asarray(source.reference_nodes, dtype=np.float64).reshape(-1, 1)
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.tile(np.arange(3), (3, 1))},
+        nodes + nodes * nodes,
+    )
+    validity = mapped_measure.certify_cell_geometry_validity(geometry, mesh=mesh)
+    measures = certified_cell_measures(mesh, geometry, validity=validity)
+    np.testing.assert_allclose(measures.values, (0.75, 0.75, 13 / 12))
 
 
 def test_rational_mapped_cell_measure_matches_independent_gauss_quadrature() -> None:

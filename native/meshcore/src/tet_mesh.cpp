@@ -15,11 +15,52 @@ namespace phx::mc {
 
 TetMesh::TetMesh(BoundaryPolicy policy) : policy_(policy), edit_(complex_) {}
 
-void TetMesh::bind_source_identity(std::string_view source_id,
+bool TetMesh::protect_facet_sources(std::span<const std::int32_t> sources) {
+  if (generation_ == std::numeric_limits<std::uint64_t>::max()) return false;
+  std::unordered_set<std::int32_t> requested(sources.begin(), sources.end());
+  std::unordered_set<std::int32_t> found;
+  std::set<std::array<std::uint64_t, 2>> edges;
+  std::vector<std::size_t> facet_rows;
+  std::vector<std::int32_t> vertices;
+  for (std::size_t row = 0; row < facets_.size(); ++row) {
+    const TetSnapshotFacet& facet = facets_[row];
+    if (!requested.contains(facet.source)) continue;
+    found.insert(facet.source);
+    facet_rows.push_back(row);
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::int32_t slot = vertex_slot(facet.vertices[corner]);
+      if (!live_vertex(slot)) return false;
+      vertices.push_back(slot);
+      std::array<std::uint64_t, 2> edge{
+          facet.vertices[corner], facet.vertices[(corner + 1) % 3]};
+      std::sort(edge.begin(), edge.end());
+      edges.insert(edge);
+    }
+  }
+  if (found != requested) return false;
+  for (std::size_t row : facet_rows) facets_[row].protected_facet = true;
+  for (std::int32_t vertex : vertices) protected_vertices_[static_cast<std::size_t>(vertex)] = 1;
+  for (TetSnapshotSegment& segment : segments_) {
+    auto edge = segment.vertices;
+    std::sort(edge.begin(), edge.end());
+    if (edges.contains(edge)) segment.protected_segment = true;
+  }
+  ++generation_;
+  unmet_records_.clear();
+  return true;
+}
+
+bool TetMesh::bind_source_identity(std::string_view source_id,
                                    std::string_view source_revision,
                                    std::string_view source_map_id,
                                    std::string_view frame_id,
                                    bool identity_bound) {
+  const auto& implicit = implicit_source_ ? implicit_source_ : pending_implicit_source_;
+  if (implicit && (!identity_bound || source_id != implicit->source_id ||
+                   source_revision != implicit->source_revision ||
+                   source_map_id != implicit->binding_id || frame_id != implicit->frame_id)) {
+    return false;
+  }
   identity_bound_ = identity_bound;
   auto copy = [](std::string& destination, std::string_view source) {
     if (source.empty()) destination.clear();
@@ -30,22 +71,26 @@ void TetMesh::bind_source_identity(std::string_view source_id,
     copy(source_revision_, {});
     copy(source_map_id_, {});
     copy(frame_id_, {});
-    return;
+    return true;
   }
   copy(source_id_, source_id);
   copy(source_revision_, source_revision);
   copy(source_map_id_, source_map_id);
   copy(frame_id_, frame_id);
+  return true;
 }
-void TetMesh::bind_periodic_identity(const TetPeriodicIdentity& identity) {
+bool TetMesh::bind_periodic_identity(const TetPeriodicIdentity& identity) {
+  if (implicit_source_ && identity.bound) return false;
   periodic_identity_ = identity;
+  return true;
 }
 
 int32_t TetMesh::assign_initial_ids(
     std::span<const std::uint64_t> vertex_ids,
     std::span<const std::uint64_t> cell_ids,
     std::span<const std::uint64_t> facet_ids,
-    std::span<const std::uint64_t> segment_ids) {
+    std::span<const std::uint64_t> segment_ids,
+    std::span<const double> initial_vertex_sizes) {
   try {
     const std::size_t finite_cells = static_cast<std::size_t>(complex_.finite_count);
     if (generation_ != 0 ||
@@ -124,6 +169,18 @@ int32_t TetMesh::assign_initial_ids(
       }
       next_segment = std::max(next_segment, segment.id + 1);
     }
+    std::vector<double> retained_sizes;
+    if (initial_vertex_sizes.empty() && !vertex_sizes_.empty()) {
+      retained_sizes.resize(vertex_ids_.size(), 0.0);
+      for (std::size_t row = 0; row < vertex_ids_.size(); ++row) {
+        const auto found = vertex_sizes_.find(vertex_ids_[row]);
+        if (found != vertex_sizes_.end()) retained_sizes[row] = found->second;
+      }
+    }
+    const int32_t size_status = install_vertex_sizes(
+        staged_vertices, initial_vertex_sizes.empty() ? std::span<const double>(retained_sizes)
+                                                       : initial_vertex_sizes);
+    if (size_status != PHX_MC_OK) return size_status;
     vertex_ids_.swap(staged_vertices);
     cell_ids_.swap(staged_cells);
     facets_.swap(staged_facets);

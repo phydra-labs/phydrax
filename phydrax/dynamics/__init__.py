@@ -4,141 +4,269 @@
 
 """Dynamical-system, pathwise-evolution, analysis, and identification contracts."""
 
-from .._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
-from .._identity import (
-    callable_payload,
-    ExecutableSignature,
-    NumericRevision,
-    SemanticProvenance,
-    strict_module_payload,
-)
-from . import analysis, identification
-from ._affine import affine_exponential_step, AffineExponentialResult
-from ._affine_evolution import (
-    AffineLinearEvolutionResult,
-    PreparedAffineLinearEvolution,
-)
-from ._cell_enclosure import CellMapEnclosure
-from ._conley import (
-    compute_conley_homology_index,
-    compute_conley_index,
-    ConleyHomologyIndex,
-    ConleyIndexResult,
-)
-from ._dae_structural import (
-    AcausalDAESource,
-    analyze_dae_structure,
-    AutonomousDAEEquationResidual,
-    compile_acausal_dae,
-    DAEComponent,
-    DAEConnection,
-    DAEDerivativeIncidence,
-    DAEEquationBlock,
-    DAEEquationResidual,
-    DAEJet,
-    DAEPort,
-    DAEStructuralAnalysis,
-    DAEStructuralPolicy,
-    DAEVariableBlock,
-    InputDAEEquationResidual,
-    ReducedDAECompilation,
-)
-from ._differential_algebraic import (
-    AutonomousDifferentialAlgebraicResidual,
-    DAERole,
-    DAEStructure,
-    DifferentialAlgebraicResidual,
-    DifferentialAlgebraicSystem,
-    InputDifferentialAlgebraicResidual,
-)
-from ._evolution import (
-    AbstractDifferentiableEvolution,
-    AbstractEvolution,
-    DiscreteEvolution,
-    EVOLUTION_BACKEND_FAILED,
-    EVOLUTION_NONFINITE,
-    EVOLUTION_OUTSIDE_GEOMETRY,
-    EVOLUTION_SUCCESS,
-    EvolutionStep,
-    EvolutionTangentStep,
-    EvolutionTrajectory,
-    evolve,
-)
-from ._grid import EvolutionGrid, IterationGrid, TimeGrid
-from ._layout import InputLayout, InputRole, StateLayout
-from ._linear_descriptor import DescriptorSystemEvidence, LinearDescriptorSystem
-from ._linearization import EvolutionArgumentJacobianAction, EvolutionJacobianAction
-from ._model_system import (
-    continuous_model_system,
-    ContinuousModelVectorField,
-    discrete_model_system,
-    DiscreteModelTransition,
-)
-from ._plant import (
-    AbstractDiscretePlant,
-    ArrayDiscreteSystemPlant,
-    PlantCheckpoint,
-    PlantParameters,
-    PlantProposal,
-    PlantReplayResult,
-    PlantResetResult,
-    PlantRuntimeState,
-    PlantStepContext,
-    PlantStepResult,
-)
-from ._plant_codec import (
-    ControlVectorCodec,
-    EncodedControl,
-    EncodedPlantState,
-    EncodedPlantVector,
-    PlantPowerEvidence,
-    PlantStateVectorCodec,
-    PlantVectorRole,
-)
-from ._second_order import (
-    SecondOrderDifferentialProblem,
-    SecondOrderDifferentialSystem,
-    SecondOrderResidual,
-)
-from ._sensitivity import (
-    certify_evolution_sensitivity,
-    EvolutionSensitivityEvidence,
-    EvolutionSensitivityPolicy,
-    EvolutionSensitivityStatus,
-)
-from ._system import (
-    AbstractInputPolicy,
-    AutonomousContinuousVectorField,
-    AutonomousDiscreteTransition,
-    CallableInputPolicy,
-    ContinuousSystem,
-    DiscreteStepContext,
-    DiscreteSystem,
-    DiscreteTransitionEvidence,
-    DiscreteTransitionResult,
-    HeldInputPolicy,
-    InputContinuousVectorField,
-    InputDiscreteTransition,
-    SystemTransition,
-    SystemVectorField,
-)
-from ._trajectory import (
-    CaseAxisRole,
-    InputAlignment,
-    TrajectoryData,
-    TrajectoryTransitions,
-)
-from .identification import (
-    AbstractDiscreteModelRolloutTransition,
-    DirectDiscreteModelRolloutTransition,
-    DiscreteModelRolloutTransitionResult,
-    LearnedMarginalTransition,
-    LearnedPathwiseTransition,
-    ProgressiveLinearRefinementPolicy,
-    ProgressiveLinearRefinementRecord,
-    ProgressiveLinearRefinementState,
-    TargetDiscreteModelObjective,
-)
+from typing import TYPE_CHECKING
+
+from .._deferred_exports import deferred_exports
+
+
+_DEFERRED_EXPORTS = {
+    "ArrayLeafSchema": ".._array_tree",
+    "ArrayPyTreeSchema": ".._array_tree",
+    "callable_payload": ".._identity",
+    "ExecutableSignature": ".._identity",
+    "NumericRevision": ".._identity",
+    "SemanticProvenance": ".._identity",
+    "strict_module_payload": ".._identity",
+    "analysis": "module:.analysis",
+    "identification": "module:.identification",
+    "affine_exponential_step": "._affine",
+    "AffineExponentialResult": "._affine",
+    "AffineLinearEvolutionResult": "._affine_evolution",
+    "PreparedAffineLinearEvolution": "._affine_evolution",
+    "CellMapEnclosure": "._cell_enclosure",
+    "compute_conley_homology_index": "._conley",
+    "compute_conley_index": "._conley",
+    "ConleyHomologyIndex": "._conley",
+    "ConleyIndexResult": "._conley",
+    "AcausalDAESource": "._dae_structural",
+    "analyze_dae_structure": "._dae_structural",
+    "AutonomousDAEEquationResidual": "._dae_structural",
+    "compile_acausal_dae": "._dae_structural",
+    "DAEComponent": "._dae_structural",
+    "DAEConnection": "._dae_structural",
+    "DAEDerivativeIncidence": "._dae_structural",
+    "DAEEquationBlock": "._dae_structural",
+    "DAEEquationResidual": "._dae_structural",
+    "DAEJet": "._dae_structural",
+    "DAEPort": "._dae_structural",
+    "DAEStructuralAnalysis": "._dae_structural",
+    "DAEStructuralPolicy": "._dae_structural",
+    "DAEVariableBlock": "._dae_structural",
+    "InputDAEEquationResidual": "._dae_structural",
+    "ReducedDAECompilation": "._dae_structural",
+    "AutonomousDifferentialAlgebraicResidual": "._differential_algebraic",
+    "DAERole": "._differential_algebraic",
+    "DAEStructure": "._differential_algebraic",
+    "DifferentialAlgebraicResidual": "._differential_algebraic",
+    "DifferentialAlgebraicSystem": "._differential_algebraic",
+    "InputDifferentialAlgebraicResidual": "._differential_algebraic",
+    "AbstractDifferentiableEvolution": "._evolution",
+    "AbstractEvolution": "._evolution",
+    "DiscreteEvolution": "._evolution",
+    "EVOLUTION_BACKEND_FAILED": "._evolution",
+    "EVOLUTION_NONFINITE": "._evolution",
+    "EVOLUTION_OUTSIDE_GEOMETRY": "._evolution",
+    "EVOLUTION_SUCCESS": "._evolution",
+    "EvolutionStep": "._evolution",
+    "EvolutionTangentStep": "._evolution",
+    "EvolutionTrajectory": "._evolution",
+    "evolve": "._evolution",
+    "EvolutionGrid": "._grid",
+    "IterationGrid": "._grid",
+    "TimeGrid": "._grid",
+    "InputLayout": "._layout",
+    "InputRole": "._layout",
+    "StateLayout": "._layout",
+    "DescriptorSystemEvidence": "._linear_descriptor",
+    "LinearDescriptorSystem": "._linear_descriptor",
+    "EvolutionArgumentJacobianAction": "._linearization",
+    "EvolutionJacobianAction": "._linearization",
+    "continuous_model_system": "._model_system",
+    "ContinuousModelVectorField": "._model_system",
+    "discrete_model_system": "._model_system",
+    "DiscreteModelTransition": "._model_system",
+    "AbstractDiscretePlant": "._plant",
+    "ArrayDiscreteSystemPlant": "._plant",
+    "PlantCheckpoint": "._plant",
+    "PlantParameters": "._plant",
+    "PlantProposal": "._plant",
+    "PlantReplayResult": "._plant",
+    "PlantResetResult": "._plant",
+    "PlantRuntimeState": "._plant",
+    "PlantStepContext": "._plant",
+    "PlantStepResult": "._plant",
+    "ControlVectorCodec": "._plant_codec",
+    "EncodedControl": "._plant_codec",
+    "EncodedPlantState": "._plant_codec",
+    "EncodedPlantVector": "._plant_codec",
+    "PlantPowerEvidence": "._plant_codec",
+    "PlantStateVectorCodec": "._plant_codec",
+    "PlantVectorRole": "._plant_codec",
+    "SecondOrderDifferentialProblem": "._second_order",
+    "SecondOrderDifferentialSystem": "._second_order",
+    "SecondOrderResidual": "._second_order",
+    "certify_evolution_sensitivity": "._sensitivity",
+    "EvolutionSensitivityEvidence": "._sensitivity",
+    "EvolutionSensitivityPolicy": "._sensitivity",
+    "EvolutionSensitivityStatus": "._sensitivity",
+    "AbstractInputPolicy": "._system",
+    "AutonomousContinuousVectorField": "._system",
+    "AutonomousDiscreteTransition": "._system",
+    "CallableInputPolicy": "._system",
+    "ContinuousSystem": "._system",
+    "DiscreteStepContext": "._system",
+    "DiscreteSystem": "._system",
+    "DiscreteTransitionEvidence": "._system",
+    "DiscreteTransitionResult": "._system",
+    "HeldInputPolicy": "._system",
+    "InputContinuousVectorField": "._system",
+    "InputDiscreteTransition": "._system",
+    "SystemTransition": "._system",
+    "SystemVectorField": "._system",
+    "CaseAxisRole": "._trajectory",
+    "InputAlignment": "._trajectory",
+    "TrajectoryData": "._trajectory",
+    "TrajectoryTransitions": "._trajectory",
+    "AbstractDiscreteModelRolloutTransition": ".identification",
+    "DirectDiscreteModelRolloutTransition": ".identification",
+    "DiscreteModelRolloutTransitionResult": ".identification",
+    "LearnedMarginalTransition": ".identification",
+    "LearnedPathwiseTransition": ".identification",
+    "ProgressiveLinearRefinementPolicy": ".identification",
+    "ProgressiveLinearRefinementRecord": ".identification",
+    "ProgressiveLinearRefinementState": ".identification",
+    "TargetDiscreteModelObjective": ".identification",
+}
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
+
+
+if TYPE_CHECKING:
+    from .._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
+    from .._identity import (
+        callable_payload,
+        ExecutableSignature,
+        NumericRevision,
+        SemanticProvenance,
+        strict_module_payload,
+    )
+    from . import analysis, identification
+    from ._affine import affine_exponential_step, AffineExponentialResult
+    from ._affine_evolution import (
+        AffineLinearEvolutionResult,
+        PreparedAffineLinearEvolution,
+    )
+    from ._cell_enclosure import CellMapEnclosure
+    from ._conley import (
+        compute_conley_homology_index,
+        compute_conley_index,
+        ConleyHomologyIndex,
+        ConleyIndexResult,
+    )
+    from ._dae_structural import (
+        AcausalDAESource,
+        analyze_dae_structure,
+        AutonomousDAEEquationResidual,
+        compile_acausal_dae,
+        DAEComponent,
+        DAEConnection,
+        DAEDerivativeIncidence,
+        DAEEquationBlock,
+        DAEEquationResidual,
+        DAEJet,
+        DAEPort,
+        DAEStructuralAnalysis,
+        DAEStructuralPolicy,
+        DAEVariableBlock,
+        InputDAEEquationResidual,
+        ReducedDAECompilation,
+    )
+    from ._differential_algebraic import (
+        AutonomousDifferentialAlgebraicResidual,
+        DAERole,
+        DAEStructure,
+        DifferentialAlgebraicResidual,
+        DifferentialAlgebraicSystem,
+        InputDifferentialAlgebraicResidual,
+    )
+    from ._evolution import (
+        AbstractDifferentiableEvolution,
+        AbstractEvolution,
+        DiscreteEvolution,
+        EVOLUTION_BACKEND_FAILED,
+        EVOLUTION_NONFINITE,
+        EVOLUTION_OUTSIDE_GEOMETRY,
+        EVOLUTION_SUCCESS,
+        EvolutionStep,
+        EvolutionTangentStep,
+        EvolutionTrajectory,
+        evolve,
+    )
+    from ._grid import EvolutionGrid, IterationGrid, TimeGrid
+    from ._layout import InputLayout, InputRole, StateLayout
+    from ._linear_descriptor import DescriptorSystemEvidence, LinearDescriptorSystem
+    from ._linearization import EvolutionArgumentJacobianAction, EvolutionJacobianAction
+    from ._model_system import (
+        continuous_model_system,
+        ContinuousModelVectorField,
+        discrete_model_system,
+        DiscreteModelTransition,
+    )
+    from ._plant import (
+        AbstractDiscretePlant,
+        ArrayDiscreteSystemPlant,
+        PlantCheckpoint,
+        PlantParameters,
+        PlantProposal,
+        PlantReplayResult,
+        PlantResetResult,
+        PlantRuntimeState,
+        PlantStepContext,
+        PlantStepResult,
+    )
+    from ._plant_codec import (
+        ControlVectorCodec,
+        EncodedControl,
+        EncodedPlantState,
+        EncodedPlantVector,
+        PlantPowerEvidence,
+        PlantStateVectorCodec,
+        PlantVectorRole,
+    )
+    from ._second_order import (
+        SecondOrderDifferentialProblem,
+        SecondOrderDifferentialSystem,
+        SecondOrderResidual,
+    )
+    from ._sensitivity import (
+        certify_evolution_sensitivity,
+        EvolutionSensitivityEvidence,
+        EvolutionSensitivityPolicy,
+        EvolutionSensitivityStatus,
+    )
+    from ._system import (
+        AbstractInputPolicy,
+        AutonomousContinuousVectorField,
+        AutonomousDiscreteTransition,
+        CallableInputPolicy,
+        ContinuousSystem,
+        DiscreteStepContext,
+        DiscreteSystem,
+        DiscreteTransitionEvidence,
+        DiscreteTransitionResult,
+        HeldInputPolicy,
+        InputContinuousVectorField,
+        InputDiscreteTransition,
+        SystemTransition,
+        SystemVectorField,
+    )
+    from ._trajectory import (
+        CaseAxisRole,
+        InputAlignment,
+        TrajectoryData,
+        TrajectoryTransitions,
+    )
+    from .identification import (
+        AbstractDiscreteModelRolloutTransition,
+        DirectDiscreteModelRolloutTransition,
+        DiscreteModelRolloutTransitionResult,
+        LearnedMarginalTransition,
+        LearnedPathwiseTransition,
+        ProgressiveLinearRefinementPolicy,
+        ProgressiveLinearRefinementRecord,
+        ProgressiveLinearRefinementState,
+        TargetDiscreteModelObjective,
+    )
 
 
 __all__ = [

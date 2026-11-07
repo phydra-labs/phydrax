@@ -424,6 +424,19 @@ def _exact_line_junction_box(
         != geometry.edge_vertices[geometry.coedge_edges[second_coedge]][second_start]
     ):
         return None
+    from ._mesh_certificates import _same_tree_content
+    from .brep._boolean_core import pcurve_surface_period_shifts
+
+    identity = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
+    zero = (Fraction(0), Fraction(0))
+    endpoints = (
+        geometry.coedge_endpoint_roots[first_coedge][first_end],
+        geometry.coedge_endpoint_roots[second_coedge][second_start],
+    )
+    mixed_native = (
+        sum(isinstance(endpoint, NativePeriodEndpoint) for endpoint in endpoints) == 1
+        and sum(endpoint is None for endpoint in endpoints) == 1
+    )
     root = geometry.vertex_roots[vertex]
     values = []
     for coedge, use, endpoint_index, parameter in (
@@ -440,6 +453,17 @@ def _exact_line_junction_box(
             second_use.first if second_use.sense > 0 else second_use.last,
         ),
     ):
+        original = geometry.pcurves[coedge]
+        if not _same_tree_content(original, use.pcurve) and (
+            pcurve_surface_period_shifts(
+                original, use.pcurve, identity, zero, authority.patches[face]
+            )
+            is None
+        ):
+            return None
+        edge = geometry.coedge_edges[coedge]
+        if parameter != float(geometry.edge_ranges[edge, endpoint_index]):
+            return None
         coefficients = line_chart_coefficients(use.pcurve)
         if coefficients is None:
             return None
@@ -450,6 +474,9 @@ def _exact_line_junction_box(
                 or not _same_parameter_source(endpoint.patch, authority.patches[face])
                 or not _same_parameter_source(endpoint.curve, geometry.pcurves[coedge])
             ):
+                return None
+            lower, upper = endpoint.parameter_enclosure()
+            if not lower <= parameter <= upper:
                 return None
             exact_parameter = endpoint.exact_parameter
         elif isinstance(endpoint, ConicParameterEndpoint):
@@ -464,7 +491,7 @@ def _exact_line_junction_box(
         elif (
             endpoint is None
             and root is None
-            and geometry.vertex_exact_points[vertex] is not None
+            and (geometry.vertex_exact_points[vertex] is not None or mixed_native)
         ):
             exact_parameter = Fraction.from_float(parameter)
         else:
@@ -851,7 +878,7 @@ class _ChartedPatch(NamedTuple):
     surface: AbstractSurfacePatch
     exact_surface: tuple[Polynomial, ...] | None
     exact_spans: PreparedSourceSpans[RationalBSplineSurfaceSpan] | None
-    source_torus: bool
+    source_analytic: bool
     uv_points: tuple[_Point2, ...]
     exact_charts: tuple[_Triangle2, ...]
     uv_triangles: np.ndarray
@@ -1689,13 +1716,21 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         self.require_current()
         result: list[tuple[int, tuple[_Triangle2, ...]]] = []
         for patch in self.patches:
-            chart = _patch_chart_polygon(self.domain, patch)
-            if chart is None:
-                raise ValueError(
-                    "Source trim has no supported exact parameter triangulation."
-                )
-            result.append((patch, _exact_trim_triangles(*chart)))
+            result.append((patch, self._boundary_parameter_triangles_unchecked(patch)))
         return tuple(result)
+
+    def _boundary_parameter_triangles_unchecked(
+        self, patch: int, /
+    ) -> tuple[_Triangle2, ...]:
+        """Triangulate one selected patch after the caller checks source currency."""
+        if patch not in self.patches:
+            raise ValueError("Source trim patch is outside the selected boundary scope.")
+        chart = _patch_chart_polygon(self.domain, patch)
+        if chart is None:
+            raise ValueError(
+                "Source trim has no supported exact parameter triangulation."
+            )
+        return _exact_trim_triangles(*chart)
 
     def trim_partition_reference(
         self,
@@ -1992,7 +2027,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         from ._source_interpolation import (
             _exact_rational_span_interpolation_bounds,
             _exact_surface_interpolation_bound,
-            _has_torus_source_program,
+            _has_analytic_source_program,
             _has_unexpanded_exact_surface_carrier,
             exact_surface_coordinate_expressions,
         )
@@ -2011,11 +2046,11 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             else:
                 exact_surface_failed = False
 
-            source_torus = False
+            source_analytic = False
             if (
                 exact_surface is None
                 and not exact_surface_failed
-                and _has_torus_source_program(surface)
+                and _has_analytic_source_program(surface)
             ):
                 try:
                     preparation.derivative_program(surface, 0)
@@ -2029,7 +2064,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 ):
                     pass
                 else:
-                    source_torus = True
+                    source_analytic = True
 
             exact_spans = None
             if exact_surface is None and not exact_surface_failed:
@@ -2042,7 +2077,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 or (
                     exact_spans is None
                     and (
-                        not source_torus
+                        not source_analytic
                         and (
                             not _source_coefficients_are_binary(surface)
                             or _has_unexpanded_exact_surface_carrier(surface)
@@ -2097,7 +2132,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     surface,
                     exact_surface,
                     exact_spans,
-                    source_torus,
+                    source_analytic,
                     chart[0],
                     exact_charts,
                     uv_triangles,
@@ -2126,7 +2161,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             surface = entry.surface
             exact_surface = entry.exact_surface
             exact_spans = entry.exact_spans
-            source_torus = entry.source_torus
+            source_analytic = entry.source_analytic
             uv_points = entry.uv_points
             exact_charts = entry.exact_charts
             uv_triangles = entry.uv_triangles
@@ -2138,7 +2173,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                         interpolation = _exact_rational_span_interpolation_bounds(
                             exact_spans, exact_charts
                         )
-                    elif source_torus:
+                    elif source_analytic:
                         from ._meshing_domain import _outward_surface_parameter_box
 
                         cells = []
@@ -2163,7 +2198,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                             np.isfinite(interpolation)
                         ):
                             raise ValueError(
-                                "Exact torus Hessian bounds are unavailable."
+                                "Exact source Hessian bounds are unavailable."
                             )
                         for row, exact_chart in enumerate(exact_charts):
                             endpoint_error = Fraction(0)
@@ -2181,7 +2216,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                                     for axis in range(2)
                                 ):
                                     raise ValueError(
-                                        "Torus point lies outside its source chart."
+                                        "Point lies outside its source chart."
                                     )
                                 box = preparation.surface_box(surface, parameter_box)
                                 if (
@@ -2191,7 +2226,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                                     or not np.all(np.isfinite(physical[row, corner]))
                                 ):
                                     raise ValueError(
-                                        "Exact torus source point box is unavailable."
+                                        "Exact source point box is unavailable."
                                     )
                                 squared = sum(
                                     (
@@ -2413,7 +2448,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             patch: int,
             evaluator: PreparedIntervalFunction,
             parameter: _Point2,
-            source_torus: bool,
+            source_analytic: bool,
             /,
         ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Fraction]:
             chart = np.asarray([[float(value) for value in parameter]], dtype=np.float64)
@@ -2438,7 +2473,10 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 or not np.all(np.isfinite(low))
                 or not np.all(np.isfinite(high))
                 or np.any(low > high)
-                or (not source_torus and (np.any(low > sample) or np.any(sample > high)))
+                or (
+                    not source_analytic
+                    and (np.any(low > sample) or np.any(sample > high))
+                )
             ):
                 raise ArithmeticError(
                     "Source point has no finite enclosing representative."
@@ -2486,18 +2524,18 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 (middle_first_second, middle_second_third, middle_third_first),
             )
 
-        from ._source_interpolation import _has_torus_source_program
+        from ._source_interpolation import _has_analytic_source_program
         from .brep._root_bindings import _source_coefficients_are_binary
 
         for patch, source_triangles in parameter_patches:
             surface = self.domain.patches[patch].surface
-            source_torus = _has_torus_source_program(surface)
-            if not source_torus and not _source_coefficients_are_binary(surface):
+            source_analytic = _has_analytic_source_program(surface)
+            if not source_analytic and not _source_coefficients_are_binary(surface):
                 complete = False
                 continue
             try:
                 evaluator = preparation.derivative_program(surface, 0)
-                if source_torus:
+                if source_analytic:
                     preparation.derivative_program(surface, 2)
             except (ArithmeticError, NotImplementedError, TypeError, ValueError):
                 complete = False
@@ -2507,7 +2545,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 triangle = pending.pop()
                 try:
                     vertex_data = tuple(
-                        sample_point(patch, evaluator, parameter, source_torus)
+                        sample_point(patch, evaluator, parameter, source_analytic)
                         for parameter in triangle
                     )
                     center_parameter = (
@@ -2515,7 +2553,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                         sum((point[1] for point in triangle), Fraction(0)) / 3,
                     )
                     center, center_lower, center_upper, point_error = sample_point(
-                        patch, evaluator, center_parameter, source_torus
+                        patch, evaluator, center_parameter, source_analytic
                     )
                     chart_lower = tuple(
                         fraction_down(min(point[axis] for point in triangle))

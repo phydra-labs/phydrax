@@ -26,6 +26,7 @@ from phydrax.geometry.brep._constructors import (
     brep_cone,
     brep_planar_face,
     brep_sphere,
+    brep_torus,
     PlanarProfile,
     ProfileLoop,
     ProfilePlane,
@@ -632,6 +633,46 @@ def _assert_zero_phase_cylinder_trim_seam(model: BRepModel) -> None:
     assert count > 0
 
 
+def test_circular_revolution_seams_bind_exact_roots_and_sheet() -> None:
+    model = brep_torus(2.0, 0.6, coordinate_contract=SpatialCoordinateContract.si())
+    other = brep_torus(3.0, 0.6, coordinate_contract=SpatialCoordinateContract.si())
+    geometry = model.geometry
+    patch = model.patches[0]
+    loop = geometry.face_loops[0][0]
+    checked = 0
+    for position, coedge in enumerate(loop):
+        following = loop[(position + 1) % len(loop)]
+        end = 1 if geometry.coedge_senses[coedge] > 0 else 0
+        start = 0 if geometry.coedge_senses[following] > 0 else 1
+        vertex = geometry.edge_vertices[geometry.coedge_edges[coedge]][end]
+        assert vertex == geometry.edge_vertices[geometry.coedge_edges[following]][start]
+        root = geometry.vertex_roots[vertex]
+        first = geometry.coedge_endpoint_roots[coedge][end]
+        second = geometry.coedge_endpoint_roots[following][start]
+        curves = (geometry.pcurves[coedge], geometry.pcurves[following])
+        assert root is not None
+        first_uv = root._exact_source_endpoint_uv(patch, curves[0], first)
+        second_uv = root._exact_source_endpoint_uv(patch, curves[1], second)
+        assert first_uv is not None and first_uv[0] == "revolution-root"
+        assert second_uv is not None and second_uv[0] == "revolution-root"
+        assert root.same_uv_endpoint(patch, curves[0], first, curves[1], second)
+        assert root.source_endpoint_uv_box(patch, curves[0], first) is not None
+        assert root.source_endpoint_uv_box(patch, curves[1], second) is not None
+        if isinstance(first, NativePeriodEndpoint):
+            shifted_curve = PeriodicPCurve(curves[0], patch, (1, 0))
+            shifted = NativePeriodEndpoint(
+                shifted_curve, patch, 0, rational=first.rational, turns=first.turns
+            )
+            assert not root.same_uv_endpoint(
+                patch, shifted_curve, shifted, curves[1], second
+            )
+            assert not root.same_uv_endpoint(
+                other.patches[0], curves[0], first, curves[1], second
+            )
+            checked += 1
+    assert checked == 2
+
+
 def test_zero_phase_cylinder_trim_seam_survives_cold_restore(
     donor: BRepModel, repair_tolerance: float, tmp_path: Path
 ) -> None:
@@ -745,6 +786,10 @@ def test_revolution_pole_uv_requires_exact_rooted_carrier() -> None:
         pole_curve = AffinePCurve(rooted_line, ((0, 1), (1, 0)), (0, 0))
         native_zero = NativePeriodEndpoint(pole_curve, patch, 0, turns=0)
         native_full = NativePeriodEndpoint(pole_curve, patch, 0, turns=1)
+        meridian_uv = vertex._exact_source_endpoint_uv(patch, meridian, meridian_endpoint)
+        pole_uv = vertex._exact_source_endpoint_uv(patch, pole_curve, native_zero)
+        assert meridian_uv is not None and meridian_uv[0] == "revolution-pole"
+        assert pole_uv is not None and pole_uv[0] == "revolution-pole"
         assert vertex.same_uv_endpoint(
             patch, pole_curve, native_zero, meridian, meridian_endpoint
         )

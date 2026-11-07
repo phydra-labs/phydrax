@@ -26,7 +26,9 @@ from ..discretization import (
     TetrahedralConnectivity,
 )
 from ..discretization._cell_complex import polyhedral_connectivity
+from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import PolyhedralBlock, SimplicialConnectivity
+from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._nested_reference_types import (
     exact_reference_vertices,
@@ -118,6 +120,17 @@ class SharedFaceWitnesses(NamedTuple):
     permutations: np.ndarray
 
 
+
+class PeriodicTopologyEditWitness(NamedTuple):
+    """Source-bound exact geometry and mixed hierarchy for one periodic edit."""
+
+    source_mesh_id: str
+    target_lifted_topology_id: str
+    hierarchy: object
+    exact_coordinate_source: ExactPlcCellGeometrySource | None
+    target_geometry: CellGeometrySpec
+
+
 class CellTopologyEdit(NamedTuple):
     """General target cell complex of one topology edit, relative to its source.
 
@@ -143,6 +156,7 @@ class CellTopologyEdit(NamedTuple):
     vertex_windings: np.ndarray | None = None
     source_entity_degree: int | None = None
     stencil_exact_weights: tuple[tuple[Fraction, ...], ...] | None = None
+    periodic_witness: PeriodicTopologyEditWitness | None = None
 
 
 def _exact_stencil_rows(
@@ -1139,6 +1153,83 @@ def _entity_lineage(
     )
 
 
+def _reorder_periodic_coordinate_source(
+    source: ExactPeriodicCoordinateSource | None,
+    candidate_vertex_ids: np.ndarray,
+    target_vertex_ids: np.ndarray,
+    target_to_candidate: np.ndarray,
+    /,
+) -> ExactPeriodicCoordinateSource | None:
+    """Transport the actual exact vertex witness through a stable-ID reorder."""
+    if source is None:
+        return None
+    if (
+        candidate_vertex_ids.ndim != 1
+        or target_vertex_ids.shape != candidate_vertex_ids.shape
+        or target_to_candidate.shape != candidate_vertex_ids.shape
+        or np.any(target_to_candidate < 0)
+        or np.any(target_to_candidate >= candidate_vertex_ids.size)
+        or np.unique(target_to_candidate).size != candidate_vertex_ids.size
+        or not np.array_equal(candidate_vertex_ids[target_to_candidate], target_vertex_ids)
+    ):
+        raise ValueError("Periodic witness reorder must preserve all stable vertex identities.")
+    if isinstance(source, ExactPlcCellGeometrySource) and not np.array_equal(
+        np.asarray(source.vertex_global_ids, dtype=np.int64), candidate_vertex_ids
+    ):
+        raise ValueError("Exact periodic PLC witness has different source vertex rows.")
+    if np.array_equal(candidate_vertex_ids, target_vertex_ids):
+        return source
+    if isinstance(source, ExactPlcCellGeometrySource):
+        rows = tuple(int(value) for value in target_to_candidate)
+        return ExactPlcCellGeometrySource(
+            source.source_id,
+            source.source_revision,
+            target_vertex_ids,
+            tuple(source.exact_coordinates[row] for row in rows),
+            vertex_source_entity_ids=tuple(source.vertex_source_entity_ids[row] for row in rows),
+            vertex_occurrence_paths=tuple(source.vertex_occurrence_paths[row] for row in rows),
+        )
+    from types import SimpleNamespace
+    from ..discretization._exact_power_geometry import ExactPowerCellGeometrySource
+
+    if not isinstance(source, ExactPowerCellGeometrySource):
+        raise TypeError("Periodic coordinate witness is not a supported exact source.")
+    source = ExactPowerCellGeometrySource.from_stored_fields(
+        source,
+        target_periodic_cell=(
+            None if source.periodic_source_context is None
+            else source.periodic_source_context.periodic_source.cell
+        ),
+    )
+    rows = tuple(int(value) for value in target_to_candidate)
+    if len(source.exact_vertices) != len(candidate_vertex_ids):
+        raise ValueError("Exact periodic power witness has different source vertex rows.")
+    restricted = SimpleNamespace(
+        vertices=source.runtime_vertices,
+        vertex_site_offsets=source.vertex_site_offsets,
+        vertex_sites=source.vertex_sites,
+        vertex_carriers=source.vertex_carriers,
+        cell_sites=source.cell_sites,
+        cell_regions=source.cell_regions,
+    )
+    return ExactPowerCellGeometrySource(
+        source.site_points,
+        source.site_weights,
+        source.carrier_mesh,
+        restricted,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        periodic_source_context=source.periodic_source_context,
+        domain_source=source.domain_source,
+        exact_site_points=source.exact_site_points,
+        output_vertex_indices=np.asarray(source.output_vertex_indices, dtype=np.int64)[list(rows)],
+        precomputed_exact_vertices=tuple(source.exact_vertices[row] for row in rows),
+        precomputed_carrier_barycentrics=tuple(
+            source.carrier_barycentrics[row] for row in rows
+        ),
+    )
+
+
 def _rebind_periodic_topology(
     mesh: CellMesh,
     periodic_topology: PeriodicMeshTopology,
@@ -1146,11 +1237,15 @@ def _rebind_periodic_topology(
     *,
     exact_coordinate_source: ExactPeriodicCoordinateSource | None = None,
 ) -> CellMesh:
-    """Rebuild the quotient against this exact lifted mesh and vertex order.
+    """Rebuild the quotient against this exact lifted mesh and vertex order."""
+    retained = periodic_topology.exact_coordinate_source
+    if exact_coordinate_source is None:
+        exact_coordinate_source = retained
+    elif retained is not None:
+        from ..geometry._mesh_certificates import _same_tree_content
 
-    The descriptor stores only its exact coordinate witness identity, so a
-    witness not carried by its bound geometry is supplied again here.
-    """
+        if not _same_tree_content(exact_coordinate_source, retained):
+            raise ValueError("Periodic rebinding received another exact coordinate witness.")
     if (
         exact_coordinate_source is not None
         and exact_coordinate_source.source_map_id
@@ -1196,6 +1291,32 @@ def _rebind_periodic_topology(
             "Periodic quotient rebinding requires the same stable lifted vertex IDs."
         )
     candidate_rows = order[positions]
+    exact_coordinate_source = _reorder_periodic_coordinate_source(
+        exact_coordinate_source, candidate_vertex_ids, target_vertex_ids, candidate_rows
+    )
+    actual_geometry = periodic_topology._actual_geometry
+    if actual_geometry is not None and not np.array_equal(
+        candidate_vertex_ids, target_vertex_ids
+    ):
+        inverse_rows = np.empty_like(candidate_rows)
+        inverse_rows[candidate_rows] = np.arange(candidate_rows.size, dtype=np.int64)
+        source_map = (
+            None if actual_geometry.source_map is None else exact_coordinate_source
+        )
+        if actual_geometry.source_map is not None and source_map is None:
+            raise ValueError("Periodic geometry lost its actual exact coordinate witness.")
+        actual_geometry = CellGeometrySpec(
+            dict(zip(actual_geometry.block_names, actual_geometry.elements, strict=True)),
+            {
+                name: inverse_rows[np.asarray(route, dtype=np.int64)]
+                for name, route in zip(
+                    actual_geometry.block_names, actual_geometry.geometry_dofs, strict=True
+                )
+            },
+            np.asarray(actual_geometry.coordinates)[candidate_rows],
+            source_map=source_map,
+            source_mesh=None if source_map is None else lifted,
+        )
     target_row_by_id = {
         int(identifier): row for row, identifier in enumerate(target_vertex_ids.tolist())
     }
@@ -1226,7 +1347,7 @@ def _rebind_periodic_topology(
         target_shifts,
         entity_global_ids=quotient_ids,
         entity_allocator_next_ids=allocator or None,
-        actual_geometry=periodic_topology._actual_geometry,
+        actual_geometry=actual_geometry,
         exact_coordinate_source=exact_coordinate_source,
     )
     return CellMesh(
@@ -1300,6 +1421,8 @@ def assemble_topology_edit(
         raise TypeError("bind_periodic must be bool.")
     if not isinstance(edit, CellTopologyEdit):
         raise TypeError("edit must be CellTopologyEdit.")
+    if source.periodic_topology is None and edit.periodic_witness is not None:
+        raise ValueError("A periodic edit witness requires a periodic source mesh.")
     dimension = source.topological_dimension
     if tuple(value.dimension for value in edit.relations) != tuple(range(dimension + 1)):
         raise ValueError("A topology edit needs one relation record per dimension.")
@@ -1356,6 +1479,59 @@ def assemble_topology_edit(
     if source.periodic_topology is not None and bind_periodic:
         from ._periodic import periodic_topology_after_edit
 
+        witness = edit.periodic_witness
+        exact_source = None
+        history = None
+        if witness is not None:
+            from ._mixed_adaptation import (
+                _exact_target_vertex_coordinates,
+                MixedAdaptationHierarchy,
+            )
+
+            if not isinstance(witness, PeriodicTopologyEditWitness) or not isinstance(
+                witness.hierarchy, MixedAdaptationHierarchy
+            ):
+                raise TypeError("Periodic mixed edits require a bound hierarchy witness.")
+            history = witness.hierarchy.periodic_quotient_history
+            if (
+                witness.source_mesh_id != source.mesh_id
+                or witness.target_lifted_topology_id != target.lifted_topology_id
+                or witness.hierarchy.active_lifted_topology_id != target.lifted_topology_id
+                or history is None
+                or history.source_mesh_id != source.mesh_id
+            ):
+                raise ValueError("Periodic mixed edit witness has different endpoints.")
+            exact_source = witness.exact_coordinate_source
+            if exact_source is not None and (
+                not np.array_equal(
+                    np.asarray(exact_source.vertex_global_ids),
+                    np.asarray(target.vertex_global_ids),
+                )
+                or not np.array_equal(
+                    np.asarray(exact_source.rounded_vertices),
+                    np.asarray(target.coordinates),
+                )
+            ):
+                raise ValueError("Periodic exact witness does not match target vertices.")
+            geometry = witness.target_geometry
+            if not isinstance(geometry, CellGeometrySpec):
+                raise TypeError("Periodic mixed edits require exact target geometry.")
+            geometry = CellGeometrySpec(
+                dict(zip(geometry.block_names, geometry.elements, strict=True)),
+                dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+                geometry.coordinates,
+                source_map=geometry.source_map,
+                source_mesh=target if geometry.source_map is not None else None,
+                restriction_source=geometry.restriction_source,
+            )
+            exact_rows = _exact_target_vertex_coordinates(
+                geometry, target, np.asarray(target.vertex_global_ids, dtype=np.int64)
+            )
+            if exact_source is None:
+                if any(Fraction(float(value)) != value for row in exact_rows for value in row):
+                    raise ValueError("A nonbinary periodic target requires its exact vertex bank.")
+            elif exact_source.exact_coordinates != exact_rows:
+                raise ValueError("Periodic exact vertex bank differs from target geometry.")
         periodic_topology = periodic_topology_after_edit(
             source,
             target,
@@ -1363,14 +1539,33 @@ def assemble_topology_edit(
             vertex_orbit_keys=edit.vertex_orbit_keys,
             vertex_windings=edit.vertex_windings,
             source_entity_degree=edit.source_entity_degree,
+            exact_coordinate_source=exact_source,
+            quotient_history=history,
         )
         if periodic_topology is None:
             raise ValueError(
                 "Periodic topology edits must rebuild their quotient descriptor."
             )
-        return bind_periodic_topology_edit(
-            source, target, stencil, edit, periodic_topology
+        bound, lineage, stencil = bind_periodic_topology_edit(
+            source, target, stencil, edit, periodic_topology,
+            exact_coordinate_source=exact_source,
         )
+        if witness is not None:
+            from ._periodic import require_periodic_geometry_face_maps
+
+            geometry = witness.target_geometry
+            elements = dict(zip(geometry.block_names, geometry.elements, strict=True))
+            routes = dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True))
+            geometry = CellGeometrySpec(
+                elements,
+                routes,
+                geometry.coordinates,
+                source_map=geometry.source_map,
+                source_mesh=bound if geometry.source_map is not None else None,
+                restriction_source=geometry.restriction_source,
+            )
+            require_periodic_geometry_face_maps(bound, geometry)
+        return bound, lineage, stencil
     lineage = MeshLineage(
         source.topology_id,
         target.topology_id,

@@ -139,6 +139,8 @@ void exact_image_coordinates_keep_source_identity() {
       .result = &handle,
       .failed_image_coordinate = &failed_coordinate,
       .failed_component = &failed_component,
+      .selected_site_count = -1,
+      .selected_sites = nullptr,
   };
   PHX_CHECK(phx_mc_restricted_power_cells_exact(&request) == PHX_MC_OK);
   PHX_CHECK(handle != nullptr);
@@ -421,6 +423,8 @@ void exact_weighted_periodic_cube_images_match_owner_volumes() {
       .result = &handle,
       .failed_image_coordinate = &failed_coordinate,
       .failed_component = &failed_component,
+      .selected_site_count = -1,
+      .selected_sites = nullptr,
   };
   PHX_CHECK(phx_mc_restricted_power_cells_exact(&request) == PHX_MC_OK);
   PHX_CHECK(handle != nullptr);
@@ -568,9 +572,258 @@ void two_region_cells_close_orientably() {
   }
   phx_mc_power_cells_free(handle);
 }
+struct PowerSnapshot {
+  std::array<int64_t, 5> sizes{};
+  std::vector<double> vertices, volumes, moments, second, piece_volumes, piece_moments;
+  std::vector<int64_t> offsets;
+  std::vector<int32_t> face_vertices, face_cells, facets, sites, regions;
+  std::vector<int32_t> piece_sites, piece_tets, piece_cells, remote_sites, remote_tets;
+};
+
+PowerSnapshot snapshot_power_cells(phx_mc_power_cells* handle) {
+  PowerSnapshot s;
+  PHX_CHECK(phx_mc_power_cells_sizes(handle, s.sizes.data()) == PHX_MC_OK);
+  const auto [nv, nf, ne, nc, np] = s.sizes;
+  s.vertices.resize(3 * nv);
+  s.offsets.resize(nf + 1);
+  s.face_vertices.resize(ne);
+  s.face_cells.resize(2 * nf);
+  s.facets.resize(nf);
+  s.sites.resize(nc);
+  s.regions.resize(nc);
+  s.volumes.resize(nc);
+  s.moments.resize(3 * nc);
+  s.second.resize(nc);
+  s.piece_sites.resize(np);
+  s.piece_tets.resize(np);
+  s.piece_cells.resize(np);
+  s.piece_volumes.resize(np);
+  s.piece_moments.resize(3 * np);
+  s.remote_sites.resize(nf);
+  s.remote_tets.resize(nf);
+  PHX_CHECK(phx_mc_power_cells_export(
+      handle, nv, nf + 1, nf, ne, nc, np, s.vertices.data(), s.offsets.data(),
+      s.face_vertices.data(), s.face_cells.data(), s.facets.data(), s.sites.data(),
+      s.regions.data(), s.volumes.data(), s.moments.data(), s.second.data(),
+      s.piece_sites.data(), s.piece_tets.data(), s.piece_cells.data(),
+      s.piece_volumes.data(), s.piece_moments.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_power_cells_export_face_remotes(
+      handle, nf, s.remote_sites.data(), s.remote_tets.data()) == PHX_MC_OK);
+  return s;
+}
+
+using CoordinateLoop = std::vector<std::array<uint64_t, 3>>;
+
+std::vector<CoordinateLoop> canonical_cell_faces(const PowerSnapshot& snapshot, int32_t cell) {
+  std::vector<CoordinateLoop> faces;
+  for (int64_t face = 0; face < snapshot.sizes[1]; ++face) {
+    if (snapshot.face_cells[2 * face] != cell && snapshot.face_cells[2 * face + 1] != cell)
+      continue;
+    CoordinateLoop loop;
+    for (int64_t corner = snapshot.offsets[face]; corner < snapshot.offsets[face + 1];
+         ++corner) {
+      const int32_t vertex = snapshot.face_vertices[corner];
+      loop.push_back({std::bit_cast<uint64_t>(snapshot.vertices[3 * vertex]),
+                      std::bit_cast<uint64_t>(snapshot.vertices[3 * vertex + 1]),
+                      std::bit_cast<uint64_t>(snapshot.vertices[3 * vertex + 2])});
+    }
+    PHX_CHECK(!loop.empty());
+    if (loop.empty()) continue;
+    CoordinateLoop best = loop;
+    for (int orientation = 0; orientation < 2; ++orientation) {
+      for (std::size_t start = 0; start < loop.size(); ++start) {
+        CoordinateLoop candidate;
+        for (std::size_t i = 0; i < loop.size(); ++i)
+          candidate.push_back(loop[(start + i) % loop.size()]);
+        best = std::min(best, candidate);
+      }
+      std::reverse(loop.begin(), loop.end());
+    }
+    faces.push_back(std::move(best));
+  }
+  std::sort(faces.begin(), faces.end());
+  return faces;
+}
+
+void exact_selected_cells_and_remote_evidence() {
+  const Domain domain = unit_cube_box();
+  constexpr double sites[] = {0.25, 0.5, 0.5, 0.75, 0.5, 0.5};
+  constexpr double weights[] = {0.0, 0.0};
+  constexpr int32_t owners[] = {0, 1};
+  constexpr int64_t coordinates[] = {0, 1, 2, 3, 4, 5, 6};
+  constexpr int64_t neighbor_offsets[] = {0, 1, 2};
+  constexpr int32_t neighbors[] = {1, 0};
+  constexpr int8_t split_sites[] = {0, 0};
+  phx_mc_power_cells* handle = nullptr;
+  int64_t failed_coordinate = -1, failed_component = -1;
+  phx_mc_restricted_power_cells_exact_request request{
+      .original_site_count = 2, .original_sites = sites, .original_weights = weights,
+      .image_count = 2, .image_site_owners = owners, .image_coordinate_offsets = coordinates,
+      .component_count = 6, .image_coordinate_components = sites,
+      .neighbor_offsets = neighbor_offsets, .neighbors = neighbors, .split_sites = split_sites,
+      .point_count = 8, .points = domain.points.data(), .tet_count = 6,
+      .tets = domain.tets.data(), .tet_regions = domain.regions.data(),
+      .tet_face_facets = domain.facets.data(), .result = &handle,
+      .failed_image_coordinate = &failed_coordinate, .failed_component = &failed_component,
+      .selected_site_count = -1, .selected_sites = nullptr,
+  };
+  const auto run = [&]() {
+    handle = nullptr;
+    PHX_CHECK(phx_mc_restricted_power_cells_exact(&request) == PHX_MC_OK);
+    PHX_CHECK(handle != nullptr);
+    PowerSnapshot result = snapshot_power_cells(handle);
+    phx_mc_power_cells_free(handle);
+    handle = nullptr;
+    return result;
+  };
+  const PowerSnapshot full = run();
+  PHX_CHECK(full.sizes[3] == 2);
+  PHX_CHECK(std::all_of(full.remote_sites.begin(), full.remote_sites.end(),
+                        [](int32_t value) { return value == -1; }));
+  PHX_CHECK(std::all_of(full.remote_tets.begin(), full.remote_tets.end(),
+                        [](int32_t value) { return value == -1; }));
+
+  constexpr int32_t reversed[] = {1, 0};
+  request.selected_site_count = 2;
+  request.selected_sites = reversed;
+  const PowerSnapshot all = run();
+  PHX_CHECK(all.sizes == full.sizes);
+  PHX_CHECK(all.sites == full.sites && all.regions == full.regions);
+  PHX_CHECK(all.vertices == full.vertices && all.offsets == full.offsets);
+  PHX_CHECK(all.face_vertices == full.face_vertices && all.face_cells == full.face_cells);
+  PHX_CHECK(all.facets == full.facets && all.volumes == full.volumes);
+  PHX_CHECK(all.piece_sites == full.piece_sites && all.piece_tets == full.piece_tets);
+  PHX_CHECK(all.piece_cells == full.piece_cells && all.remote_sites == full.remote_sites);
+
+  for (int32_t selected = 0; selected < 2; ++selected) {
+    request.selected_site_count = 1;
+    request.selected_sites = &selected;
+    const PowerSnapshot local = run();
+    PHX_CHECK(local.sizes[3] == 1 && local.sites[0] == selected);
+    const auto found = std::find(full.sites.begin(), full.sites.end(), selected);
+    PHX_CHECK(found != full.sites.end());
+    const int32_t full_cell = static_cast<int32_t>(found - full.sites.begin());
+    PHX_CHECK(local.regions[0] == full.regions[full_cell]);
+    PHX_CHECK(local.volumes[0] == full.volumes[full_cell]);
+    PHX_CHECK(local.second[0] == full.second[full_cell]);
+    for (int axis = 0; axis < 3; ++axis)
+      PHX_CHECK(local.moments[axis] == full.moments[3 * full_cell + axis]);
+    PHX_CHECK(canonical_cell_faces(local, 0) == canonical_cell_faces(full, full_cell));
+    for (int64_t vertex = 0; vertex < local.sizes[0]; ++vertex) {
+      bool matched = false;
+      for (int64_t other = 0; other < full.sizes[0]; ++other)
+        matched = matched ||
+            (local.vertices[3 * vertex] == full.vertices[3 * other] &&
+             local.vertices[3 * vertex + 1] == full.vertices[3 * other + 1] &&
+             local.vertices[3 * vertex + 2] == full.vertices[3 * other + 2]);
+      PHX_CHECK(matched);
+    }
+    for (int64_t piece = 0; piece < local.sizes[4]; ++piece) {
+      PHX_CHECK(local.piece_sites[piece] == selected && local.piece_cells[piece] == 0);
+      bool matched = false;
+      for (int64_t other = 0; other < full.sizes[4]; ++other) {
+        if (full.piece_sites[other] != selected ||
+            full.piece_tets[other] != local.piece_tets[piece]) continue;
+        matched = true;
+        PHX_CHECK(local.piece_volumes[piece] == full.piece_volumes[other]);
+        for (int axis = 0; axis < 3; ++axis)
+          PHX_CHECK(local.piece_moments[3 * piece + axis] ==
+                    full.piece_moments[3 * other + axis]);
+      }
+      PHX_CHECK(matched);
+    }
+    bool saw_remote = false, saw_exterior = false;
+    for (int64_t face = 0; face < local.sizes[1]; ++face) {
+      PHX_CHECK((local.remote_sites[face] == -1) == (local.remote_tets[face] == -1));
+      if (local.remote_sites[face] >= 0) {
+        saw_remote = true;
+        PHX_CHECK(local.face_cells[2 * face + 1] == -1);
+        PHX_CHECK(local.remote_sites[face] == 1 - selected);
+        bool found_piece = false;
+        for (int64_t piece = 0; piece < full.sizes[4]; ++piece)
+          found_piece = found_piece ||
+              (full.piece_sites[piece] == local.remote_sites[face] &&
+               full.piece_tets[piece] == local.remote_tets[face]);
+        PHX_CHECK(found_piece);
+      } else if (local.face_cells[2 * face + 1] < 0) {
+        saw_exterior = true;
+        PHX_CHECK(local.facets[face] >= 0);
+      }
+    }
+    PHX_CHECK(saw_remote && saw_exterior);
+  }
+  request.selected_site_count = 0;
+  request.selected_sites = nullptr;
+  const PowerSnapshot empty = run();
+  PHX_CHECK((empty.sizes == std::array<int64_t, 5>{0, 0, 0, 0, 0}));
+  PHX_CHECK(empty.offsets.size() == 1 && empty.offsets[0] == 0);
+
+  constexpr int32_t duplicate[] = {0, 0};
+  constexpr int32_t negative[] = {-1};
+  constexpr int32_t too_large[] = {2};
+  const auto invalid = [&](int64_t count, const int32_t* selected, int32_t expected) {
+    request.selected_site_count = count;
+    request.selected_sites = selected;
+    handle = nullptr;
+    PHX_CHECK(phx_mc_restricted_power_cells_exact(&request) == expected);
+    PHX_CHECK(handle == nullptr);
+  };
+  invalid(-2, nullptr, PHX_MC_INVALID_ARGUMENT);
+  invalid(1, nullptr, PHX_MC_INVALID_ARGUMENT);
+  invalid(3, reversed, PHX_MC_INVALID_ARGUMENT);
+  invalid(2, duplicate, PHX_MC_INVALID_INPUT);
+  invalid(1, negative, PHX_MC_INVALID_INPUT);
+  invalid(1, too_large, PHX_MC_INVALID_INPUT);
+}
+
+void selected_bisector_on_constrained_carrier() {
+  const Domain domain = two_region_box();
+  constexpr double sites[] = {0.5, 0.5, 0.5, 1.5, 0.5, 0.5};
+  constexpr double weights[] = {0.0, 0.0};
+  constexpr int32_t owners[] = {0, 1};
+  constexpr int64_t coordinates[] = {0, 1, 2, 3, 4, 5, 6};
+  constexpr int64_t neighbor_offsets[] = {0, 1, 2};
+  constexpr int32_t neighbors[] = {1, 0};
+  constexpr int8_t split_sites[] = {0, 0};
+  phx_mc_power_cells* handle = nullptr;
+  int64_t failed_coordinate = -1, failed_component = -1;
+  phx_mc_restricted_power_cells_exact_request request{
+      .original_site_count = 2, .original_sites = sites, .original_weights = weights,
+      .image_count = 2, .image_site_owners = owners, .image_coordinate_offsets = coordinates,
+      .component_count = 6, .image_coordinate_components = sites,
+      .neighbor_offsets = neighbor_offsets, .neighbors = neighbors, .split_sites = split_sites,
+      .point_count = 12, .points = domain.points.data(), .tet_count = 12,
+      .tets = domain.tets.data(), .tet_regions = domain.regions.data(),
+      .tet_face_facets = domain.facets.data(), .result = &handle,
+      .failed_image_coordinate = &failed_coordinate, .failed_component = &failed_component,
+      .selected_site_count = 1, .selected_sites = nullptr,
+  };
+  for (int32_t selected = 0; selected < 2; ++selected) {
+    request.selected_sites = &selected;
+    handle = nullptr;
+    PHX_CHECK(phx_mc_restricted_power_cells_exact(&request) == PHX_MC_OK);
+    PHX_CHECK(handle != nullptr);
+    const PowerSnapshot local = snapshot_power_cells(handle);
+    bool found = false;
+    for (int64_t face = 0; face < local.sizes[1]; ++face) {
+      if (local.remote_sites[face] < 0) continue;
+      found = true;
+      PHX_CHECK(local.remote_sites[face] == 1 - selected);
+      PHX_CHECK(local.remote_tets[face] >= 0 && local.remote_tets[face] < 12);
+      PHX_CHECK(domain.regions[local.remote_tets[face]] == 1 - selected);
+      PHX_CHECK(local.facets[face] == 6);
+      PHX_CHECK(local.face_cells[2 * face + 1] == -1);
+    }
+    PHX_CHECK(found);
+    phx_mc_power_cells_free(handle);
+  }
+}
+
 }  // namespace
 int main() {
   single_site_tetrahedron();
+  exact_selected_cells_and_remote_evidence();
+  selected_bisector_on_constrained_carrier();
   exact_image_coordinates_keep_source_identity();
   two_region_cells_close_orientably();
   exact_clipper_classifies_constructed_vertices_against_base_faces();

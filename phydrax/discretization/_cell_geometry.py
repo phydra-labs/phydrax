@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
 from itertools import product
@@ -64,10 +66,32 @@ from .fem._reference import FiniteElementSpec
 class SweptCoordinateTabulator:
     """Polynomial profile basis tensored with a linear station coordinate."""
 
+    __slots__ = ("source",)
+
     source: FiniteElementSpec
 
     def __init__(self, source: FiniteElementSpec, /) -> None:
         self.source = source
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if hasattr(self, name):
+            raise AttributeError("A swept coordinate tabulator is immutable.")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("A swept coordinate tabulator is immutable.")
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not SweptCoordinateTabulator:
+            return False
+        from ..geometry._mesh_certificates import _same_tree_content
+
+        return _same_tree_content(self.source, other.source)
+
+    def __hash__(self) -> int:
+        # The identifier is only a hash bucket; __eq__ still compares every
+        # source field, including when two distinct sources share an ID.
+        return hash((SweptCoordinateTabulator, self.source.element_id))
 
     def __call__(self, points: ArrayLike, /) -> tuple[Array, Array]:
         reference = jnp.asarray(points, dtype=jnp.float64)
@@ -2521,8 +2545,34 @@ def _finite_element_source_basis(element: FiniteElementSpec, /) -> tuple[Express
 
 # Reference element source bases (finite-element and layer-column) keyed by the
 # element's content identity, a static table of family, degree and layout.
-# Spline roots carry per-mesh extraction operators and are formed per call.
 _SOURCE_BASES: dict[tuple[str, str], tuple[Any, ...]] = {}
+# Spline roots carry per-mesh extraction operators, so their bases are kept in a
+# least-recently-used table of at most _SPLINE_SOURCE_BASIS_LIMIT entries keyed
+# by the full exact content the basis is formed from: tensor degrees, every
+# extraction coefficient and every type-tagged exact weight.
+_SPLINE_SOURCE_BASIS_LIMIT = 128
+_SPLINE_SOURCE_BASES: OrderedDict[tuple[object, ...], tuple[Any, ...]] = OrderedDict()
+_SPLINE_SOURCE_BASES_LOCK = threading.Lock()
+
+
+def _spline_source_basis(element: SplineCellGeometryElement, /) -> tuple[Any, ...]:
+    key = (
+        element.degrees,
+        element.exact_extraction_operator,
+        tuple((type(weight).__name__, weight) for weight in element.exact_weights),
+    )
+    with _SPLINE_SOURCE_BASES_LOCK:
+        basis = _SPLINE_SOURCE_BASES.get(key)
+        if basis is not None:
+            _SPLINE_SOURCE_BASES.move_to_end(key)
+    if basis is None:
+        basis = _root_source_basis(element)
+        with _SPLINE_SOURCE_BASES_LOCK:
+            _SPLINE_SOURCE_BASES[key] = basis
+            _SPLINE_SOURCE_BASES.move_to_end(key)
+            while len(_SPLINE_SOURCE_BASES) > _SPLINE_SOURCE_BASIS_LIMIT:
+                _SPLINE_SOURCE_BASES.popitem(last=False)
+    return basis
 
 
 def coordinate_source_basis(
@@ -2530,8 +2580,8 @@ def coordinate_source_basis(
 ) -> tuple[Any, ...]:
     """Return exact root basis expressions without applying reference charts/actions.
 
-    Reference finite-element bases are formed once per reference element; every
-    caller receives its own polynomial dictionaries.
+    Reference finite-element and spline bases are formed once per exact content;
+    every caller receives its own polynomial dictionaries.
     """
     if isinstance(element, PerCellRestrictedCellGeometryElement):
         if cell_row is not None and not 0 <= int(cell_row) < len(element.target_cell_ids):
@@ -2545,13 +2595,16 @@ def coordinate_source_basis(
         | RationalComposedCellGeometryElement,
     ):
         return coordinate_source_basis(element.source_element)
-    if not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
+    if isinstance(element, SplineCellGeometryElement):
+        basis = _spline_source_basis(element)
+    elif not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_source_basis(element)
-    key = (type(element).__name__, element.element_id)
-    basis = _SOURCE_BASES.get(key)
-    if basis is None:
-        basis = _root_source_basis(element)
-        _SOURCE_BASES[key] = basis
+    else:
+        key = (type(element).__name__, element.element_id)
+        basis = _SOURCE_BASES.get(key)
+        if basis is None:
+            basis = _root_source_basis(element)
+            _SOURCE_BASES[key] = basis
     return tuple(dict(value) if isinstance(value, dict) else value for value in basis)
 
 

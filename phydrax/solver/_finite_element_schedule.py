@@ -41,7 +41,7 @@ from ..discretization.fem import (
     lagrange_element,
 )
 from ..equations import (
-    MaterialSiteId,
+    MaterialSiteOwnership,
     MaterialState,
     MaterialTransaction,
 )
@@ -53,7 +53,13 @@ from ..lifecycle import (
     open as open_lifecycle_archive,
 )
 from ..typing import checked, parse
-from ._finite_element_checkpoint import FiniteElementCheckpoint
+from ._finite_element_checkpoint import (
+    _material_placement_record,
+    _material_site_record,
+    _restore_material_placement,
+    _restore_material_site,
+    FiniteElementCheckpoint,
+)
 from ._schedule import TimeLaw
 
 
@@ -65,6 +71,7 @@ class FiniteElementFieldTransferSemantics(StrEnum):
     NESTED_FE = "nested_fe"
     NONCONSERVATIVE_INTERPOLATION = "nonconservative_interpolation"
     CONSERVATIVE_CELL_AVERAGE = "conservative_cell_average"
+    CONSERVATIVE_SURFACE_CONTENT = "conservative_surface_content"
 
 
 @final
@@ -83,6 +90,7 @@ class FiniteElementAcceptedElementRecipe(StrictModule, NonTrainableState):
     entity_dofs: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     tabulator_id: str | None = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
+    source_recipe: FiniteElementAcceptedElementRecipe | None
 
     def __init__(
         self,
@@ -98,9 +106,10 @@ class FiniteElementAcceptedElementRecipe(StrictModule, NonTrainableState):
         entity_dofs: tuple[tuple[tuple[int, ...], ...], ...],
         tabulator_id: str | None,
         element_id: str,
+        source_recipe: FiniteElementAcceptedElementRecipe | None,
         /,
     ) -> None:
-        if recipe_kind not in ("form", "lagrange", "discontinuous", "raw"):
+        if recipe_kind not in ("form", "lagrange", "discontinuous", "raw", "swept"):
             raise ValueError("Unsupported accepted FE element recipe kind.")
         self.recipe_kind = recipe_kind
         self.family = str(family)
@@ -117,10 +126,13 @@ class FiniteElementAcceptedElementRecipe(StrictModule, NonTrainableState):
         )
         self.tabulator_id = None if tabulator_id is None else str(tabulator_id)
         self.element_id = str(element_id)
+        self.source_recipe = source_recipe
         if not self.family or not self.cell_kind or not self.element_id:
             raise ValueError("Accepted FE element recipe identities must be non-empty.")
         if (recipe_kind == "form") != (form_identity is not None):
             raise ValueError("Only canonical form element recipes carry a form identity.")
+        if (recipe_kind == "swept") != (type(source_recipe) is FiniteElementAcceptedElementRecipe):
+            raise ValueError("Swept element recipes require exactly one source element recipe.")
 
     def rebuild(self, /) -> FiniteElementSpec:
         dimension, form_degree, twist, fiber_shape, ambient_dimension, proxy = (
@@ -152,6 +164,12 @@ class FiniteElementAcceptedElementRecipe(StrictModule, NonTrainableState):
             element = lagrange_element(self.cell_kind, self.degree)
         elif self.recipe_kind == "discontinuous":
             element = discontinuous_element(self.cell_kind, self.degree)
+        elif self.recipe_kind == "swept":
+            from ..discretization._cell_geometry import swept_coordinate_element
+
+            if self.source_recipe is None:
+                raise ValueError("Swept element recipe lost its source element.")
+            element = swept_coordinate_element(self.source_recipe.rebuild())
         else:
             element = FiniteElementSpec(
                 self.family,
@@ -170,6 +188,25 @@ class FiniteElementAcceptedElementRecipe(StrictModule, NonTrainableState):
             raise ValueError(
                 "Accepted FE element recipe changes its canonical element ID."
             )
+        if self.recipe_kind == "swept" and (
+            element.family != self.family
+            or element.cell_kind != self.cell_kind
+            or element.degree != self.degree
+            or str(element.continuity) != self.continuity
+            or (
+                int(element.value_spec.form_type.dimension),
+                int(element.value_spec.form_type.degree),
+                str(element.value_spec.form_type.twist),
+                tuple(int(value) for value in element.value_spec.form_type.fiber_shape),
+                int(element.value_spec.form_type.ambient_dimension),
+                str(element.value_spec.proxy),
+            ) != self.value_spec
+            or str(element.representation) != self.representation
+            or element.entity_dofs != self.entity_dofs
+            or element.tabulator_id != self.tabulator_id
+            or not np.array_equal(np.asarray(element.reference_nodes), np.asarray(self.reference_nodes))
+        ):
+            raise ValueError("Swept element recipe changes its stored mathematical fields.")
         return element
 
 
@@ -259,6 +296,9 @@ class FiniteElementAcceptedFieldLayoutRecipe(StrictModule, NonTrainableState):
 def _accepted_element_recipe(
     element: FiniteElementSpec, /
 ) -> FiniteElementAcceptedElementRecipe:
+    from ..discretization._cell_geometry import SweptCoordinateTabulator
+
+    source_recipe = None
     basis = element.form_basis
     if basis is not None:
         recipe_kind = "form"
@@ -269,6 +309,10 @@ def _accepted_element_recipe(
             str(basis.family),
             str(basis.twist),
         )
+    elif type(element.tabulator) is SweptCoordinateTabulator:
+        form_identity = None
+        recipe_kind = "swept"
+        source_recipe = _accepted_element_recipe(element.tabulator.source)
     else:
         form_identity = None
         recipe_kind = "raw"
@@ -311,6 +355,7 @@ def _accepted_element_recipe(
         element.entity_dofs,
         element.tabulator_id,
         element.element_id,
+        source_recipe,
     )
 
 
@@ -397,6 +442,22 @@ class FiniteElementAcceptedFieldLayout(StrictModule, NonTrainableState):
                 raise ValueError(
                     "conservative_cell_average requires one discontinuous degree-zero "
                     "DOF per cell."
+                )
+        if semantics is FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT:
+            from ..geometry._mesh_certificates import _same_tree_content
+
+            canonical = lagrange_element("triangle", 1)
+            if (
+                storage_kind != "canonical_dofs"
+                or field_spec.component_shape
+                or has_form_basis
+                or any(
+                    not _same_tree_content(element, canonical)
+                    for element in field_spec.elements
+                )
+            ):
+                raise ValueError(
+                    "conservative_surface_content requires the canonical scalar P1 triangle basis."
                 )
         quotient = bool(periodic_quotient) if periodic_quotient is not None else False
         if quotient and storage_kind != "canonical_dofs":
@@ -645,7 +706,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
             raise TypeError("Stored FE materials must be MaterialTransaction.")
         renewed_states = tuple(
             MaterialState(
-                MaterialSiteId(state.site_id.key),
+                _restore_material_site(_material_site_record(state.site_id)),
                 state.model_id,
                 state.committed,
                 trial=state.trial,
@@ -653,7 +714,25 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
             )
             for state in value.states
         )
-        rebuilt = MaterialTransaction(renewed_states)
+        ownership = value.ownership
+        if ownership is not None:
+            stored_ownership_id = ownership.ownership_id
+            ownership = MaterialSiteOwnership(
+                tuple(
+                    (_restore_material_site(_material_site_record(site)), rank)
+                    for site, rank in zip(
+                        ownership.site_ids, ownership.owners, strict=True
+                    )
+                ),
+                part_count=ownership.part_count,
+            )
+            if ownership.ownership_id != stored_ownership_id:
+                raise ValueError(
+                    "Stored material ownership changed its canonical identity."
+                )
+        rebuilt = MaterialTransaction(
+            renewed_states, ownership=ownership, owner_rank=value.owner_rank
+        )
         if (
             rebuilt.layout_id != value.layout_id
             or rebuilt.transaction_id != value.transaction_id
@@ -906,6 +985,24 @@ class FiniteElementAcceptedStepSchedule(StrictModule, NonTrainableState):
             ):
                 raise ValueError("Candidate fields must preserve accepted field shapes.")
             if bool(result.accepted):
+                if accepted.materials is not None:
+                    candidate_materials = result.materials
+                    if (
+                        candidate_materials is None
+                        or candidate_materials.layout_id != accepted.materials.layout_id
+                        or candidate_materials.transaction_id
+                        != accepted.materials.transaction_id
+                        or any(
+                            not bool(jnp.array_equal(old.committed, new.committed))
+                            for old, new in zip(
+                                accepted.materials.states, candidate_materials.states
+                            )
+                        )
+                    ):
+                        raise ValueError(
+                            "Accepted material candidates must preserve the committed "
+                            "material sites, models, versions, and values."
+                        )
                 materials = (
                     None if result.materials is None else result.materials.commit()
                 )
@@ -965,6 +1062,7 @@ class FiniteElementRestartStateAssociation(StrEnum):
     """Explicit placement semantics for a named FE history payload."""
 
     OWNED_ROWS = "owned_rows"
+    OWNED_SITES = "owned_sites"
     REPLICATED = "replicated"
 
 
@@ -1001,6 +1099,11 @@ class FiniteElementRestartStateLayout(StrictModule, NonTrainableState):
                 raise TypeError("Owned restart rows require explicit FE ownership.")
         elif ownership is not None:
             raise ValueError("Replicated restart state cannot carry row ownership.")
+        if (
+            association_ is FiniteElementRestartStateAssociation.OWNED_SITES
+            and role_ is not FiniteElementRestartStateRole.MODEL_STATE
+        ):
+            raise ValueError("Owned material sites require model-state role.")
         implementation = None if prng_impl is None else str(prng_impl).strip()
         if implementation is not None and (
             not implementation or role_ is not FiniteElementRestartStateRole.RNG
@@ -1158,6 +1261,13 @@ class FiniteElementRestartManifest(StrictModule, NonTrainableState):
 
         auxiliary_layouts_ = layouts(auxiliary_layouts, auxiliary, "Auxiliary")
         integrator_layouts_ = layouts(integrator_layouts, integrator, "Integrator")
+        if any(
+            layout.association is FiniteElementRestartStateAssociation.OWNED_SITES
+            for layout in (*(auxiliary_layouts_ or ()), *(integrator_layouts_ or ()))
+        ):
+            raise ValueError(
+                "Owned material-site layouts cannot describe FE history banks."
+            )
         material_states = () if state.materials is None else state.materials.states
         material_payload = tuple(
             (
@@ -1172,6 +1282,16 @@ class FiniteElementRestartManifest(StrictModule, NonTrainableState):
             for layout in material_layouts_
         ):
             raise ValueError("Material restart layouts require model-state role.")
+        if material_layouts_ is not None:
+            owned = state.materials is not None and state.materials.ownership is not None
+            if any(
+                (layout.association is FiniteElementRestartStateAssociation.OWNED_SITES)
+                != owned
+                for layout in material_layouts_
+            ):
+                raise ValueError(
+                    "Material layout association disagrees with site placement."
+                )
         typed_auxiliary = any(
             jax.dtypes.issubdtype(value.dtype, jax.dtypes.prng_key)
             for _, value in auxiliary
@@ -1479,9 +1599,10 @@ def write_finite_element_restart(
         "field_count": len(manifest.state.fields),
         "field_layout_ids": [layout.layout_id for layout in manifest.state.field_layouts],
         "materials": [
-            [value.site_id.key, value.model_id, value.state_version]
+            [_material_site_record(value.site_id), value.model_id, value.state_version]
             for value in material_states
         ],
+        "material_placement": _material_placement_record(manifest.state.materials),
         "auxiliary_names": [name for name, _ in manifest.auxiliary_state],
         "integrator_names": [name for name, _ in manifest.integrator_state],
     }
@@ -1593,18 +1714,14 @@ def read_finite_element_restart(
         )
     material_states_: list[MaterialState] = []
     for index, entry in enumerate(metadata["materials"]):
-        if len(entry) == 2:
-            material_id, version = entry
-            model_id = material_id
-        elif len(entry) == 3:
-            material_id, model_id, version = entry
-        else:
+        if not isinstance(entry, list) or len(entry) != 3:
             raise ValueError("Finite-element material restart metadata is invalid.")
+        site_record, model_id, version = entry
         committed = arrays[f"material_{index}"]
-        trial = arrays.get(f"material_trial_{index}", committed)
+        trial = arrays[f"material_trial_{index}"]
         material_states_.append(
             MaterialState(
-                MaterialSiteId(material_id),
+                _restore_material_site(site_record),
                 model_id,
                 committed,
                 trial=trial,
@@ -1612,7 +1729,16 @@ def read_finite_element_restart(
             )
         )
     material_states = tuple(material_states_)
-    materials = None if not material_states else MaterialTransaction(material_states)
+    ownership, owner_rank = _restore_material_placement(
+        metadata.get("material_placement")
+    )
+    materials = (
+        None
+        if not material_states and ownership is None
+        else MaterialTransaction(
+            material_states, ownership=ownership, owner_rank=owner_rank
+        )
+    )
     state = FiniteElementAcceptedState(
         fields,
         _restore_restart_array("time", arrays, typed_keys),

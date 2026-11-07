@@ -24,6 +24,7 @@ from phydrax.discretization import (
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
 from phydrax.geometry.brep._measure import brep_mass_properties
+from phydrax.meshing._association import GeometryAssociationArchiveRecipe
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
 
@@ -38,6 +39,18 @@ _VOLUME_RELATIVE_TOLERANCE = 1.0e-10
 _SOURCE_DEVIATION_TOLERANCE_M = 0.02
 _FE_RESIDUAL_TOLERANCE = 2.0e-8
 _FE_BOUNDARY_TOLERANCE = 1.0e-10
+# The donor CAD volume profiles ran the donor default NativeVolumeSchedule,
+# whose radius-edge and dihedral targets were aims: unmet cells were published
+# as evidence, never hidden (c56614 phydrax/meshing/_volume_generation.py
+# 453-455, publication 5117-5139), and donor cad.py 2146-2148 recorded
+# tetrahedral quality as evidence only. Soft shape strength keeps those
+# identical targets and publishes every unmet row; validity, fidelity,
+# coverage and the FE gates stay hard.
+_CAD_VOLUME_SCHEDULE_CITATIONS = (
+    f"{_SOURCE_COMMIT}:phydrax/meshing/_volume_generation.py:453-455",
+    f"{_SOURCE_COMMIT}:phydrax/meshing/_volume_generation.py:5117-5139",
+    f"{_SOURCE_COMMIT}:{_SOURCE_REVISION}:2146-2148",
+)
 
 # Byte-for-byte source data from the donor NIST FTC-11 STEP fixture. Keeping
 # this licensed, SHA-checked source here preserves the external-input case
@@ -297,9 +310,11 @@ def _topology_record(model: phx.geometry.brep.BRepModel) -> dict[str, object]:
             "edges": topology.num_edges,
             "vertices": topology.num_vertices,
         },
+        # A trimmed face with k boundary loops contributes 2-k, not one,
+        # to the boundary Euler characteristic.
         "boundary_euler_characteristic": topology.num_vertices
         - topology.num_edges
-        + topology.num_faces,
+        + sum(2 - len(face_loops) for face_loops in geometry.face_loops),
         "occurrences": [
             {"solid_index": solid, "path": list(path)} for solid, path in occurrences
         ],
@@ -602,8 +617,7 @@ def _external_case(
     boolean_record = None
     expected_volume = washer_volume_m3
     loops: tuple[tuple[float, float, float, float], ...] = ()
-    repair_record = None
-    if case == "external-combined":
+    if case in ("external-routine", "external-combined"):
         admitted_limit = source_losslessness["minimum_declared_tolerance"]
         if (
             not isinstance(admitted_limit, (int, float))
@@ -663,6 +677,7 @@ def _external_case(
             },
         }
         model = repair.model
+    if case == "external-combined":
         cutter = phx.geometry.brep.brep_cylinder(
             0.0004,
             0.08,
@@ -966,13 +981,17 @@ def _surface_case(model: phx.geometry.brep.BRepModel, size: float) -> dict[str, 
         raise RuntimeError(
             f"Top source face did not map to exactly one native CAD patch: {patches!r}."
         )
-    scope = MeshingScope(
-        domain.source_id,
-        domain.source_revision,
-        phx.meshing.MeshingEntityKind.GEOMETRY,
-        2,
-        domain.entity_set_id(2),
-        np.asarray(domain.scope_indices(2), dtype=np.int64)[list(patches)],
+    patch = patches[0]
+    patch_key = (domain.entity_id(2, patch), domain.source_occurrences[2][patch])
+    scope_ids = [
+        int(identifier)
+        for identifier in domain.scope_entity_ids(2)
+        if domain.source_entity_key_for_scope(2, int(identifier)) == patch_key
+    ]
+    if len(scope_ids) != 1:
+        raise RuntimeError("Top source face does not have one canonical scope identity.")
+    scope = MeshingScope.from_geometry(
+        domain, np.asarray(scope_ids, dtype=np.int64), dimension=2
     )
     source_tolerance = 1.0e-8
     specification = phx.meshing.SurfaceMeshingSpec(
@@ -1084,11 +1103,23 @@ def _surface_case(model: phx.geometry.brep.BRepModel, size: float) -> dict[str, 
             source_dimensions.shape == source_indices.shape
             and bool(np.all(source_dimensions == 2))
             and {int(index) for index in source_indices} == expected_face_indices
+            and set(face_association.source_occurrence_paths)
+            == {domain.source_occurrences[2][patch] for patch in patches}
+            and set(map(int, np.asarray(face_association.target_global_ids)))
+            == set(map(int, np.asarray(mesh.entity_set(2).entity_ids)))
         )
     if (
         not result.associations
         or any(
-            association.association_kind is not phx.meshing.GeometryAssociationKind.BREP
+            association.association_kind
+            not in (
+                phx.meshing.GeometryAssociationKind.BREP,
+                phx.meshing.GeometryAssociationKind.CURVE,
+            )
+            or (
+                association.association_kind is phx.meshing.GeometryAssociationKind.CURVE
+                and association.target_entity_set_id != mesh.entity_set(1).entity_set_id
+            )
             or association.source_id != model.source_id
             or association.source_revision != model.source_revision
             for association in result.associations
@@ -1220,18 +1251,19 @@ def _cad_manufactured_value(points: Any, length: float) -> Any:
 
 
 def _solve_curved_cad_p2_fe(
-    result: phx.meshing.CellMeshingResult, length: float
+    mesh: phx.discretization.CellMesh,
+    geometry: phx.discretization.CellGeometrySpec,
+    length: float,
 ) -> dict[str, object]:
+    """Check the original physical solve; the caller owns geometric acceptance."""
     if not math.isfinite(length) or length <= 0.0:
         raise ValueError(
             f"CAD manufactured length must be finite and positive; got {length!r}."
         )
     field = FiniteElementFieldSpec(
-        "u", lagrange_element(single_cell_kind(result.mesh, "tetrahedron"), 2)
+        "u", lagrange_element(single_cell_kind(mesh, "tetrahedron"), 2)
     )
-    space = FiniteElementPlan(
-        result.mesh, field, coordinate_spec=result.geometry
-    ).prepare()
+    space = FiniteElementPlan(mesh, field, coordinate_spec=geometry).prepare()
     constraint = phx.discretization.dirichlet_constraint(space, "u")
     if constraint.free_dofs.size == 0:
         raise RuntimeError(
@@ -1444,6 +1476,106 @@ def _curve_cad_result(
     return result, record, failures
 
 
+def _require_cad_source_associations(
+    model: phx.geometry.brep.BRepModel,
+    result: phx.meshing.CellMeshingResult,
+) -> None:
+    """Independently replay B-Rep strata and the CAD coedge lineage proof."""
+    from phydrax.geometry._approximate_source_coverage import _cad_chart_partition
+    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+
+    certification = result.certification
+    if certification is None or certification.fidelity is None:
+        raise ValueError(
+            "CAD source association proof requires certified source fidelity."
+        )
+    certification.require_passed()
+    inputs = certification.inputs
+    domain, query = inputs.domain, inputs.source
+    witness = certification.fidelity.witness
+    if (
+        not isinstance(domain, MeshingDomain)
+        or query is None
+        or not isinstance(witness, SourceBoundaryChartWitness)
+        or inputs.cell_regions is None
+        or (domain.source_id, domain.source_revision)
+        != (model.source_id, model.source_revision)
+    ):
+        raise ValueError("CAD source association proof lost its source-bound premises.")
+    inputs.require_current(result.mesh, result.geometry, domain=domain, source=query)
+    banks = [
+        set(zip(domain.source_indices[dim], domain.source_occurrences[dim], strict=True))
+        for dim in range(3)
+    ]
+    banks.append(
+        set(
+            zip(
+                domain.region_source_indices,
+                domain.region_source_occurrences,
+                strict=True,
+            )
+        )
+    )
+    covered: dict[int, set[int]] = {dim: set() for dim in range(4)}
+    curve_ids: list[str] = []
+    for stored in result.associations:
+        association = GeometryAssociationArchiveRecipe.from_association(stored).restore()
+        if association.association_id != stored.association_id or (
+            association.source_id,
+            association.source_revision,
+        ) != (model.source_id, model.source_revision):
+            raise ValueError("CAD association changed its source, revision, or identity.")
+        targets = [
+            dim
+            for dim in range(4)
+            if result.mesh.entity_set(dim).entity_set_id
+            == association.target_entity_set_id
+        ]
+        if len(targets) != 1:
+            raise ValueError("CAD association has no unique target stratum.")
+        target_dim = targets[0]
+        association.validate_target(result.mesh.entity_set(target_dim))
+        if association.source_boundary_witness_id is not None:
+            association.validate_source_boundary_support(
+                result.mesh, result.geometry, query, witness
+            )
+        if association.association_kind is phx.meshing.GeometryAssociationKind.CURVE:
+            if target_dim != 1:
+                raise ValueError("CAD curve ancestry must target mesh edges.")
+            curve_ids.append(association.association_id)
+            continue
+        if association.association_kind is not phx.meshing.GeometryAssociationKind.BREP:
+            raise ValueError("CAD result contains an unsupported association kind.")
+        if np.any(~np.asarray(association.resolved)) or np.any(
+            np.asarray(association.ambiguous)
+        ):
+            raise ValueError(
+                "CAD B-Rep stratum classifications are unresolved or ambiguous."
+            )
+        for dim, index, path in set(
+            zip(
+                map(int, np.asarray(association.source_dimensions)),
+                map(int, np.asarray(association.source_indices)),
+                association.source_occurrence_paths,
+                strict=True,
+            )
+        ):
+            if dim not in range(4) or (index, path) not in banks[dim]:
+                raise ValueError("CAD association names an undeclared source occurrence.")
+        covered[target_dim].update(map(int, np.asarray(association.target_global_ids)))
+    for dim, identifiers in covered.items():
+        if identifiers != set(
+            map(int, np.asarray(result.mesh.entity_set(dim).entity_ids))
+        ):
+            raise ValueError(f"CAD B-Rep association does not cover mesh stratum {dim}.")
+    lineage = witness.cad_curve_association
+    if curve_ids != ([] if lineage is None else [lineage.association_id]):
+        raise ValueError("CAD curve association differs from the exact coedge witness.")
+    _cad_chart_partition(
+        domain, query, witness, result.mesh, np.asarray(inputs.cell_regions)
+    )
+
+
 def _volume_run(
     model: phx.geometry.brep.BRepModel,
     size: float,
@@ -1475,9 +1607,12 @@ def _volume_run(
         ),
         maximum_deviation=maximum_deviation,
     )
-    plan = NativeMeshingProvider(NativeMeshingOptions("cad_tetrahedral")).plan(
-        model, specification, coordinate_contract=model.coordinate_contract
+    schedule = phx.meshing.NativeVolumeSchedule(
+        shape_strength=phx.meshing.SizeControlStrength.SOFT
     )
+    plan = NativeMeshingProvider(
+        NativeMeshingOptions("cad_tetrahedral", volume_schedule=schedule)
+    ).plan(model, specification, coordinate_contract=model.coordinate_contract)
     straight = plan.execute()
     acceptance_failures: list[dict[str, str]] = []
     try:
@@ -1513,17 +1648,14 @@ def _volume_run(
                 "detail": f"{case} native CAD source-fidelity bounds exceed {maximum_deviation:g} m: {fidelity!r}.",
             }
         )
-    if not straight.associations or any(
-        association.association_kind is not phx.meshing.GeometryAssociationKind.BREP
-        or association.source_id != model.source_id
-        or association.source_revision != model.source_revision
-        for association in straight.associations
-    ):
+    try:
+        _require_cad_source_associations(model, straight)
+    except Exception as error:
         acceptance_failures.append(
             {
                 "stage": "source_association",
-                "type": "RuntimeError",
-                "detail": "Native CAD tetrahedral result lost the exact source/revision associations.",
+                "type": type(error).__name__,
+                "detail": str(error),
             }
         )
     if straight.mesh.topological_dimension != 3 or straight.mesh.ambient_dimension != 3:
@@ -1559,7 +1691,9 @@ def _volume_run(
             }
         )
     try:
-        fe = _solve_curved_cad_p2_fe(curved_result, manufactured_length)
+        fe = _solve_curved_cad_p2_fe(
+            curved_result.mesh, curved_result.geometry, manufactured_length
+        )
     except Exception as error:
         fe = None
         acceptance_failures.append(
@@ -1583,6 +1717,13 @@ def _volume_run(
     return {
         "route": plan.route,
         "plan_id": plan.plan_id,
+        "volume_schedule": {
+            "schedule_id": schedule.schedule_id,
+            "radius_edge_bound": schedule.radius_edge_bound,
+            "minimum_dihedral_degrees": schedule.minimum_dihedral_degrees,
+            "shape_strength": schedule.shape_strength.value,
+            "donor_citations": list(_CAD_VOLUME_SCHEDULE_CITATIONS),
+        },
         "native_result": straight_accepted,
         "source_fidelity": fidelity_record,
         "source_volume_oracle_m3": expected_volume,

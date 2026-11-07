@@ -206,6 +206,7 @@ def _has_certified_receptor_face_routes(
         overset.receptor_face_normals,
         overset.receptor_face_measures,
         overset.receptor_face_cells,
+        overset.receptor_face_orientations,
     )
     return all(artifact is not None for artifact in artifacts)
 

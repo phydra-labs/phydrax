@@ -9,6 +9,7 @@ import dataclasses
 import enum
 import functools
 import hashlib
+import json
 import sys
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
@@ -1353,6 +1354,68 @@ class SemanticProvenance(StrictModule):
                 "content_id": content_id,
                 "resource_ids": [list(record) for record in resources],
             }
+        )
+
+    @classmethod
+    def from_stored_fields(
+        cls: type[SemanticProvenance], value: SemanticProvenance, /
+    ) -> SemanticProvenance:
+        """Validate encoded identity data without encoding its payload twice."""
+        if type(value) is not cls:
+            raise TypeError("Stored provenance must have the exact registered type.")
+        if any(
+            not isinstance(item, str)
+            for item in (value.content_json, value.content_id, value.semantic_id)
+        ):
+            raise TypeError("Stored provenance content and identities must be strings.")
+        payload = json.loads(value.content_json)
+        if canonical_json(payload) != value.content_json:
+            raise ValueError("Stored provenance content is not canonical JSON.")
+        resources = tuple(
+            (name, _identifier(identifier, f"resource_ids[{name!r}]"))
+            for name, identifier in _named_records(value.resource_ids, "resource_ids")
+        )
+        content_id = canonical_fingerprint(
+            {"kind": "semantic-content", "payload": payload}
+        )
+        semantic_id = canonical_fingerprint(
+            {
+                "kind": "semantic-provenance",
+                "content_id": content_id,
+                "resource_ids": [list(record) for record in resources],
+            }
+        )
+        if (
+            resources != value.resource_ids
+            or content_id != value.content_id
+            or semantic_id != value.semantic_id
+        ):
+            raise ValueError("Stored semantic provenance identities changed.")
+        return value
+
+    def matches_content_fields(self, fields: Mapping[str, Any], /) -> bool:
+        """Compare mapping premises using their canonical static-value encoding."""
+        if not isinstance(fields, Mapping):
+            raise TypeError("Semantic content fields must be a mapping.")
+        payload = json.loads(self.content_json)
+        if not isinstance(payload, dict) or payload.get("kind") != "mapping":
+            return False
+        if set(payload) != {"kind", "items"}:
+            raise ValueError("Stored semantic mapping has invalid fields.")
+        items = payload["items"]
+        if not isinstance(items, list) or any(
+            not isinstance(row, list) or len(row) != 2 or not isinstance(row[0], str)
+            for row in items
+        ):
+            raise ValueError("Stored semantic mapping has invalid entries.")
+        rows = tuple((row[0], row[1]) for row in items)
+        if _named_records(rows, "semantic_content") != rows:
+            raise ValueError("Stored semantic mapping entries are not canonical.")
+        actual = dict(rows)
+        expected = _static_payload(fields, "semantic_content")
+        return all(
+            name in actual and canonical_json(actual[name]) == canonical_json(item)
+            for name, item in expected["items"]
         )
 
 

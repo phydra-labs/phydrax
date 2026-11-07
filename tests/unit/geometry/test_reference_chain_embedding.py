@@ -501,3 +501,51 @@ def test_wrong_concrete_parent_certificate_is_rejected() -> None:
         finding.check == "parent_global_embedding_currentness"
         for finding in certificate.findings
     )
+
+
+def test_reference_chain_reuses_only_actual_validated_parent_embedding() -> None:
+    from copy import copy
+    import pickle
+
+    from phydrax.geometry._global_embedding import ValidatedGlobalEmbedding
+
+    parent_mesh, parent_geometry, _ = _two_adjacent_hexes()
+    target_mesh, target_geometry, maps = _target_partition(parent_mesh, parent_geometry)
+    validity = certify_cell_geometry_validity(parent_geometry, mesh=parent_mesh)
+    computed = ValidatedGlobalEmbedding(parent_mesh, parent_geometry, validity)
+    independent = certify_reference_chain_embedding(
+        parent_mesh, parent_geometry, target_mesh, target_geometry, maps, computed.certificate
+    )
+    reused = certify_reference_chain_embedding(
+        parent_mesh,
+        parent_geometry,
+        target_mesh,
+        target_geometry,
+        maps,
+        computed.certificate,
+        _validated_parent_embedding=computed,
+    )
+    assert reused == independent
+    assert reused.status == "certified", reused.findings
+    with pytest.raises(ValueError, match="actual validated embedding"):
+        certify_reference_chain_embedding(
+            parent_mesh,
+            parent_geometry,
+            target_mesh,
+            target_geometry,
+            maps,
+            copy(computed.certificate),
+            _validated_parent_embedding=computed,
+        )
+    with pytest.raises(ValueError, match="different exact mesh or geometry"):
+        certify_reference_chain_embedding(
+            copy(parent_mesh),
+            parent_geometry,
+            target_mesh,
+            target_geometry,
+            maps,
+            computed.certificate,
+            _validated_parent_embedding=computed,
+        )
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(computed)

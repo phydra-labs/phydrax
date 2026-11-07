@@ -1,10 +1,13 @@
 from collections.abc import Mapping
 from fractions import Fraction
+from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
 
 from phydrax._meshcore import meshcore_available
+from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization._coordinate_enclosure import evaluate_expression
 from phydrax.discretization._exact_algebraic_geometry import (
     ExactScalar,
@@ -20,11 +23,13 @@ from phydrax.discretization.fem import lagrange_element
 from phydrax.discretization.fem._reference import lagrange_reference_node_data
 from phydrax.geometry._global_embedding import certify_global_embedding
 from phydrax.geometry._source_identity import source_entity_id
+from phydrax.geometry._surface_source_support import SurfaceSourceCharts
 from phydrax.meshing._adaptation import (
     _identity_lineage,
     _identity_reference_maps_for_transition,
 )
 from phydrax.meshing._curving import _straight_geometry, HighOrderCurvingPolicy
+from phydrax.meshing._layer_core_brep import restrict_wall_charts
 from phydrax.meshing._layer_curving import (
     _compose_mapped_reference_maps,
     _implicit_source_faces,
@@ -40,6 +45,7 @@ from phydrax.meshing._layer_curving_records import (
     _fraction3,
     _prepare_barycentric_solver_3d,
     _reference_face_dofs,
+    _require_reoriented_wall_side,
 )
 from phydrax.meshing._mixed_adaptation import MixedCoarseningMap
 from tests._support.implicit_layer_curving_fixtures import (
@@ -56,6 +62,187 @@ from tests._support.layer_curving_fixtures import (
     make_restricted_layer_curving_archive_case,
 )
 from tests.unit.geometry.test_implicit_source_charts import _adaptive_source
+
+
+def test_computed_layer_replay_is_operand_bound_and_not_serializable() -> None:
+    import pickle
+
+    from phydrax.meshing._layer_source_association_replay import (
+        _ComputedLayerAssociationReplay,
+    )
+
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    _, _, _, _, _, layers, source, construction, _, _ = (
+        _mapped_layer_core_construction_for_fixture()
+    )
+    assert source.reference_source is not None
+    assert (
+        construction.reference_mesh is not None
+        and construction.reference_geometry is not None
+    )
+    source = source.reference_source
+    mesh = construction.reference_mesh
+    geometry = construction.reference_geometry
+    proof = _ComputedLayerAssociationReplay(
+        source, mesh, geometry, None, computed_root=None
+    )
+    assert proof.require(source, mesh, geometry, None) is proof.replay
+    with pytest.raises(ValueError, match="different exact operands"):
+        proof.require(source, layers.mesh, geometry, None)
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(proof)
+
+
+def test_nodal_elevation_preserves_nonbinary_exact_source_vertices() -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+
+    exact = (
+        (Fraction(1, 3), Fraction(0), Fraction(0)),
+        (Fraction(4, 3), Fraction(0), Fraction(0)),
+        (Fraction(1, 3), Fraction(1), Fraction(0)),
+        (Fraction(1, 3), Fraction(0), Fraction(1)),
+    )
+    coordinates = np.asarray([[float(value) for value in row] for row in exact])
+    mesh = CellMesh(
+        coordinates, (CellBlock("core", "simplex:3", np.asarray(((0, 1, 2, 3),))),)
+    )
+    carrier = ExactPlcCellGeometrySource(
+        "source",
+        "revision",
+        mesh.vertex_global_ids,
+        exact,
+        vertex_source_entity_ids=(None,) * 4,
+        vertex_occurrence_paths=((),) * 4,
+    )
+    geometry = CellGeometrySpec.power(mesh, carrier)
+    elevated = _straight_geometry(mesh, 2, source_geometry=geometry)
+    assert elevated.exact_coordinate_bank is not None
+    assert elevated.exact_coordinate_bank[:4] == exact
+    assert elevated.exact_coordinate_bank[0][0] != Fraction(float(Fraction(1, 3)))
+    expected_midpoint = (Fraction(5, 6), Fraction(0), Fraction(0))
+    assert expected_midpoint in elevated.exact_coordinate_bank
+
+
+def test_changed_reversed_wall_chart_requires_authored_region_side() -> None:
+    original = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    actual = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1, 2)),
+    )
+    domain = SimpleNamespace(
+        patches=(SimpleNamespace(orientation=-1),),
+        regions=(SimpleNamespace(boundary=((0, 1),)),),
+    )
+    charts = cast(
+        SurfaceSourceCharts,
+        SimpleNamespace(
+            root_patches=(0,),
+            root_parameter_exact=(original,),
+            domain=domain,
+        ),
+    )
+    _require_reoriented_wall_side(charts, 0, actual, Fraction(-1))
+    with pytest.raises(ValueError, match="authored region side"):
+        _require_reoriented_wall_side(charts, 0, actual, Fraction(1))
+    domain.regions = (SimpleNamespace(boundary=((0, -1),)),)
+    with pytest.raises(ValueError, match="authored region side"):
+        _require_reoriented_wall_side(charts, 0, actual, Fraction(-1))
+
+
+def test_parametric_consumer_refuses_forged_reoriented_wall_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    from phydrax.geometry import _source_fidelity
+
+    mapped_source, _, _, _, wall, layers, _, construction, _, _ = (
+        _mapped_layer_core_construction_for_fixture()
+    )
+    _, charts = _mapped_cube_surface_charts(
+        wall, mapped_source.source_id, mapped_source.source_revision
+    )
+    rows = list(charts.root_parameter_exact)
+    for index, row in enumerate(rows):
+        area = (row[1][0] - row[0][0]) * (row[2][1] - row[0][1]) - (
+            row[1][1] - row[0][1]
+        ) * (row[2][0] - row[0][0])
+        if area * charts.domain.patches[int(charts.root_patches[index])].orientation < 0:
+            rows[index] = ((row[0][0] + Fraction(1, 1 << 60), row[0][1]), row[1], row[2])
+            break
+    else:
+        raise AssertionError("Fixture lost its reversed wall chart.")
+    monkeypatch.setattr(
+        _source_fidelity, "reprove_actual_planar_chart_rows", lambda _: tuple(rows)
+    )
+    result = curve_layer_core_construction(
+        construction,
+        layers,
+        charts,
+        policy=HighOrderCurvingPolicy(degree=2, relaxation_rounds=0),
+        fidelity_tolerance=0.0,
+    )
+    assert result.status is LayerCurvingStatus.UNRESOLVED_SOURCE_MAP
+    assert (
+        result.failure == "Reoriented wall chart does not match the authored region side."
+    )
+
+
+def test_restricted_wall_charts_keep_exact_parent_and_reject_moved_vertices() -> None:
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    mapped_source, _, _, _, wall, _, _, _, _, _ = (
+        _mapped_layer_core_construction_for_fixture()
+    )
+    _, charts = _mapped_cube_surface_charts(
+        wall, mapped_source.source_id, mapped_source.source_revision
+    )
+    patch = int(charts.root_patches[0])
+    selected = np.flatnonzero(np.asarray(charts.root_patches) == patch)
+    parent_cells = {
+        int(identifier): np.asarray(vertices, dtype=np.int64)
+        for block in wall.blocks
+        for identifier, vertices in zip(
+            np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
+        )
+    }
+    identifiers = np.asarray(charts.cell_global_ids, dtype=np.int64)[selected]
+    original = np.stack([parent_cells[int(identifier)] for identifier in identifiers])
+    vertex_rows = np.unique(original)
+    restricted_rows = np.searchsorted(vertex_rows, original[:, ::-1])
+    points = np.asarray(wall.coordinates)[vertex_rows]
+    vertex_ids = np.asarray(wall.vertex_global_ids)[vertex_rows]
+    subset = CellMesh(
+        points,
+        (
+            CellBlock(
+                "restricted-wall", "triangle", restricted_rows, global_ids=identifiers
+            ),
+        ),
+        vertex_global_ids=vertex_ids,
+    )
+    retained = restrict_wall_charts(charts, subset)
+    assert retained.boundary_source.patches == (patch,)
+    for new_row, parent_row in enumerate(selected):
+        assert retained.root_parameter_exact[new_row] == tuple(
+            reversed(charts.root_parameter_exact[int(parent_row)])
+        )
+    moved = points.copy()
+    moved[0, 0] += 0.125
+    forged = CellMesh(
+        moved,
+        subset.blocks,
+        vertex_global_ids=vertex_ids,
+    )
+    with pytest.raises(ValueError, match="vertex|coordinate"):
+        restrict_wall_charts(charts, forged)
 
 
 def test_exact_layer_reference_map_uses_noncorner_local_coordinates() -> None:
@@ -341,24 +528,75 @@ def test_mapped_layer_transition_composes_exact_target_to_root_maps() -> None:
     )
 
 
+def test_parametric_curving_refuses_same_shadow_changed_exact_vertex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    import phydrax.meshing._layer_curving as layer_curving
+
+    mapped_source, _, _, _, wall, layers, _, construction, _, _ = (
+        _mapped_layer_core_construction_for_fixture()
+    )
+    _, charts = _mapped_cube_surface_charts(
+        wall, mapped_source.source_id, mapped_source.source_revision
+    )
+    original = layer_curving._source_parameter
+    changed = False
+
+    def changed_vertex(
+        point: tuple[
+            layer_curving.ExactScalar,
+            layer_curving.ExactScalar,
+            layer_curving.ExactScalar,
+        ],
+        face: layer_curving._SourceFace,
+        solver: layer_curving._BarycentricSolver3,
+    ) -> tuple[layer_curving.ExactScalar, layer_curving.ExactScalar]:
+        nonlocal changed
+        uv = original(point, face, solver)
+        if not changed and point in face.target_reference_corners and uv[0] == 1:
+            changed = True
+            shifted = uv[0] - Fraction(1, 2**55)
+            assert shifted != uv[0] and float(shifted) == float(uv[0])
+            return (shifted, uv[1])
+        return uv
+
+    monkeypatch.setattr(layer_curving, "_source_parameter", changed_vertex)
+    result = curve_layer_core_construction(
+        construction,
+        layers,
+        charts,
+        policy=HighOrderCurvingPolicy(degree=2, relaxation_rounds=0),
+        fidelity_tolerance=0.0,
+    )
+    assert changed
+    assert result.status is LayerCurvingStatus.UNRESOLVED_SOURCE_MAP
+    assert result.failure == (
+        "Exact source chart changes an immutable layer/core mesh vertex."
+    )
+
+
 @pytest.mark.parametrize("degree", (2, 3))
 def test_parametric_layer_core_certifies_mixed_prism_tet_source_maps(
     degree: int,
 ) -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
-    mapped_source, _, _, _, wall, layers, _, construction = (
+    mapped_source, _, _, _, wall, layers, _, construction, _, _ = (
         _mapped_layer_core_construction_for_fixture()
     )
     domain, charts = _mapped_cube_surface_charts(
         wall, mapped_source.source_id, mapped_source.source_revision
     )
+    embedding_proofs = []
     result = curve_layer_core_construction(
         construction,
         layers,
         charts,
         policy=HighOrderCurvingPolicy(degree=degree, relaxation_rounds=0),
         fidelity_tolerance=0.0,
+        _embedding_proofs=embedding_proofs,
     )
 
     assert result.status is LayerCurvingStatus.CURVED, result.failure
@@ -366,6 +604,13 @@ def test_parametric_layer_core_certifies_mixed_prism_tet_source_maps(
     assert result.candidate_geometry is not None
     assert result.validity is not None and result.validity.all_certified
     assert result.embedding is not None and result.embedding.status == "certified"
+    assert len(embedding_proofs) == 1
+    assert (
+        embedding_proofs[0].require(
+            result.construction.mesh, result.candidate_geometry, result.validity
+        )
+        is result.embedding
+    )
     recomputed_embedding = certify_global_embedding(
         result.construction.mesh, result.candidate_geometry, result.validity
     )
@@ -428,6 +673,13 @@ def test_parametric_layer_core_certifies_mixed_prism_tet_source_maps(
         np.asarray(construction.mesh.coordinates),
     )
     straight = _straight_geometry(construction.mesh, degree)
+    assert result.candidate_geometry.exact_coordinate_bank is not None
+    assert straight.exact_coordinate_bank is not None
+    vertex_count = construction.mesh.coordinates.shape[0]
+    assert (
+        result.candidate_geometry.exact_coordinate_bank[:vertex_count]
+        == straight.exact_coordinate_bank[:vertex_count]
+    )
     np.testing.assert_array_equal(
         np.asarray(result.candidate_geometry.coordinates),
         np.asarray(straight.coordinates),
@@ -440,7 +692,7 @@ def test_parametric_layer_core_certifies_mixed_prism_tet_source_maps(
 def test_adaptive_implicit_layer_builds_and_revalidates_source_evidence() -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
-    result = make_implicit_layer_curving_archive_case()
+    result, _, _, _ = make_implicit_layer_curving_archive_case()
     assert result.status is LayerCurvingStatus.CURVED
     assert require_layer_core_construction(result) is result.construction
     assert result.candidate_geometry is not None
@@ -471,7 +723,7 @@ def test_adaptive_implicit_layer_builds_and_revalidates_source_evidence() -> Non
 def test_mapped_root_layer_builds_and_revalidates_exact_source_evidence() -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
-    result = make_mapped_layer_curving_archive_case()
+    result, _, _, _ = make_mapped_layer_curving_archive_case()
     assert result.status is LayerCurvingStatus.CURVED
     assert require_layer_core_construction(result) is result.construction
     assert result.candidate_geometry is not None
@@ -496,7 +748,7 @@ def test_mapped_root_layer_builds_and_revalidates_exact_source_evidence() -> Non
 def test_layer_curving_source_revision_mismatch_rolls_back_unchanged() -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
-    mapped_source, _, _, _, wall, layers, _, construction = (
+    mapped_source, _, _, _, wall, layers, _, construction, _, _ = (
         _mapped_layer_core_construction_for_fixture()
     )
     _, other_charts = _mapped_cube_surface_charts(
@@ -600,7 +852,7 @@ def test_implicit_layer_root_chart_transfer_preserves_exact_cell_and_column_ance
 def test_fixed_topology_layer_evidence_renews_from_exact_identity_maps() -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
-    result = make_layer_curving_archive_case()
+    result, _, _, _ = make_layer_curving_archive_case()
     evidence = result.source_evidence
     assert evidence is not None
     mesh = result.construction.mesh
@@ -629,7 +881,7 @@ def test_fixed_topology_layer_evidence_renews_from_exact_identity_maps() -> None
 def test_mapped_layer_transition_rebuilds_root_maps_and_lift_evidence() -> None:
     if not meshcore_available():
         pytest.skip("native mapped layer/core generation requires meshcore")
-    result = make_mapped_layer_curving_archive_case()
+    result, _, _, _ = make_mapped_layer_curving_archive_case()
     evidence = result.source_evidence
     geometry = result.candidate_geometry
     assert evidence is not None and geometry is not None
@@ -657,7 +909,7 @@ def test_mapped_layer_transition_rebuilds_root_maps_and_lift_evidence() -> None:
 def test_restricted_layer_transition_replays_full_map_without_node_rows() -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
-    result = make_restricted_layer_curving_archive_case()
+    result, _, _, _ = make_restricted_layer_curving_archive_case()
     assert result.status is LayerCurvingStatus.CURVED
     evidence = result.source_evidence
     assert evidence is not None and evidence.source_surface_charts is not None

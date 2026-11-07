@@ -33,7 +33,9 @@ def _single_owner_periodic_plan(component_names: tuple[str, ...], /) -> Any:
     from phydrax._execution_resources import ExecutionGroupSpec
     from phydrax._execution_runtime import ExecutionGroup
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
-    from tests.unit.meshing.test_native_overset import _owner_local_periodic_assembly
+    from tools.meshing_qualification.scenarios.cold_owner_local_fv import (
+        _owner_local_periodic_assembly,
+    )
 
     if jax.process_count() != 1:
         pytest.skip("The tiled serial reference uses one periodic owner.")

@@ -333,6 +333,7 @@ def test_overset_face_artifact_is_complete_and_identity_bound() -> None:
         receptor_face_normals=normals,
         receptor_face_measures=measures,
         receptor_face_cells=cells,
+        receptor_face_orientations=np.ones(face_ids.size, dtype=np.int8),
     )
     assert overset.face_artifact_id
     # ty: ignore[no-matching-overload]

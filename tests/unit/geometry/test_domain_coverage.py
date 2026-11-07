@@ -10,6 +10,7 @@ from jax import Array
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._cell_geometry import (
+    CellGeometryCoordinateMap,
     CellGeometryRestrictionSource,
     CellGeometrySpec,
     PerCellRestrictedCellGeometryElement,
@@ -57,6 +58,34 @@ from phydrax.meshing._overset import (
     prepare_overset_connectivity,
 )
 from phydrax.units import MILLIMETER
+
+
+def test_exact_steep_boundary_uses_one_consistent_line_measure() -> None:
+    from phydrax.geometry._planar_coverage import (
+        OrientedFacet,
+        partition_overlaps,
+        source_facets,
+    )
+
+    domain = PiecewiseLinearDomain(
+        np.asarray(((0.0, 0.0), (1.0, 3.0), (-1.0, 3.0))),
+        np.asarray(((0, 1), (1, 2), (2, 0))),
+        np.asarray(((0, -1), (0, -1), (0, -1))),
+        ("region",),
+        source_id="steep-boundary",
+    )
+    targets = source_facets(domain)
+    overlaps, findings = partition_overlaps(domain, targets)
+    assert not findings
+    assert len(overlaps) == 3
+    assert any(overlap.measure == Fraction(1) for overlap in overlaps)
+    reversed_first = OrientedFacet(
+        targets[0].facet_id, targets[0].region_pair, tuple(reversed(targets[0].vertices))
+    )
+    _, bad = partition_overlaps(domain, (reversed_first, *targets[1:]))
+    assert any(issue[0] == "boundary_orientation" for issue in bad)
+    _, missing = partition_overlaps(domain, targets[1:])
+    assert any(issue[0] == "uncovered_boundary" for issue in missing)
 
 
 def _split_square() -> tuple[
@@ -309,6 +338,103 @@ def _mapped_cube(
         restriction_source=restriction,
     )
     return domain, target_mesh, target_geometry, np.zeros((child_count,), dtype=np.int64)
+
+
+def _two_level_mapped_cube() -> tuple[
+    MappedReferenceDomain,
+    CellMesh,
+    CellGeometrySpec,
+    CellMesh,
+    CellGeometrySpec,
+    np.ndarray,
+]:
+    """One real root, parent and descendant with complete identity chart banks."""
+    from phydrax.discretization._coordinate_enclosure import axes
+    from phydrax.discretization._nested_reference_types import (
+        freeze_reference_chart_arguments,
+        ReferenceCellMapWitnesses,
+    )
+    from phydrax.meshing._curving import _exact_coordinate_bank_source_map
+    from phydrax.meshing._mixed_adaptation import _RetainedCoordinateBank
+
+    domain, _, _, _ = _mapped_cube()
+    root, root_geometry = domain.reference_mesh, domain.source_geometry
+    reference = np.asarray(
+        reference_cell_topology("hexahedron").vertices, dtype=np.float64
+    )
+    exact_reference = tuple(tuple(Fraction(float(v)) for v in row) for row in reference)
+    arguments = freeze_reference_chart_arguments((tuple(axes(3)),))
+    coordinates = np.asarray(root_geometry.coordinates, dtype=np.float64)
+    bank = tuple(tuple(Fraction(float(v)) for v in row) for row in coordinates)
+
+    def endpoint(
+        name: str,
+        identifier: int,
+        parent: CellMesh,
+        parent_geometry: CellGeometrySpec,
+        source: CellGeometryCoordinateMap | None,
+    ) -> tuple[CellMesh, CellGeometrySpec]:
+        mesh = CellMesh(
+            root.coordinates,
+            (
+                CellBlock(
+                    name,
+                    "hexahedron",
+                    np.arange(8)[None, :],
+                    global_ids=np.asarray((identifier,)),
+                ),
+            ),
+            vertex_global_ids=root.vertex_global_ids,
+        )
+        parent_id = int(np.asarray(parent.blocks[0].global_ids)[0])
+        witness = ReferenceCellMapWitnesses(
+            np.asarray((0,), dtype=np.int64),
+            np.asarray((parent_id,), dtype=np.int64),
+            "hexahedron",
+            "hexahedron",
+            reference[None, :, :],
+            (exact_reference,),
+            arguments,
+        )
+        restriction = CellGeometryRestrictionSource(
+            cell_geometry_id(parent_geometry),
+            parent.topology_id,
+            {name: np.asarray((parent_id,), dtype=np.int64)},
+            {name: np.asarray(parent.vertex_global_ids, dtype=np.int64)[None, :]},
+            block_parent_reference_maps={name: witness},
+        )
+        if source is None:
+            source = _exact_coordinate_bank_source_map(
+                mesh, domain.source_id, domain.source_revision, (), bank, coordinates
+            )
+        geometry = CellGeometrySpec(
+            {name: root_geometry.elements[0]},
+            {name: root_geometry.geometry_dofs[0]},
+            coordinates,
+            source_map=source,
+            source_mesh=mesh,
+            restriction_source=restriction,
+        )
+        return mesh, geometry
+
+    parent, parent_geometry = endpoint("parent", 91, root, root_geometry, None)
+    origin = parent_geometry.source_map
+    assert origin is not None
+    retained = _RetainedCoordinateBank(
+        origin.source_id,
+        origin.source_revision,
+        origin.source_map_id,
+        parent_geometry.source_coordinates(),
+    )
+    target, target_geometry = endpoint("child", 101, parent, parent_geometry, retained)
+    return (
+        domain,
+        parent,
+        parent_geometry,
+        target,
+        target_geometry,
+        np.asarray((0,), dtype=np.int64),
+    )
 
 
 def test_source_partition_coverage_uses_oriented_interfaces_and_dense_regions() -> None:
@@ -794,6 +920,62 @@ def test_stored_status_cannot_override_recomputed_coverage() -> None:
         object.__setattr__(certificate, "status", original_status)
 
 
+def test_mapped_same_element_identity_candidate_rechecks_physical_map() -> None:
+    from phydrax.geometry._domain_chart_chain import certify_child_chart_partition
+
+    domain, _, _, _ = _mapped_cube()
+    root = domain.reference_mesh
+    source_geometry = domain.source_geometry
+    target = CellMesh(
+        np.asarray(root.coordinates),
+        (
+            CellBlock(
+                "children",
+                "hexahedron",
+                np.arange(8, dtype=np.int32)[None, :],
+                global_ids=np.asarray((19,), dtype=np.int64),
+            ),
+        ),
+        vertex_global_ids=np.asarray(root.vertex_global_ids),
+    )
+    restriction = CellGeometryRestrictionSource(
+        cell_geometry_id(source_geometry),
+        root.topology_id,
+        {"children": np.asarray((71,), dtype=np.int64)},
+        {"children": np.asarray(root.vertex_global_ids, dtype=np.int64)[None, :]},
+    )
+    coordinates = np.asarray(source_geometry.coordinates)
+    routes = np.asarray(source_geometry.geometry_dofs[0])
+    geometry = CellGeometrySpec(
+        {"children": source_geometry.elements[0]},
+        {"children": routes},
+        coordinates,
+        restriction_source=restriction,
+    )
+    proof = certify_child_chart_partition(
+        domain, target, geometry, np.asarray((0,), dtype=np.int64)
+    )
+    assert not any(
+        finding.status in ("violated", "unresolved") for finding in proof.findings
+    )
+
+    changed = coordinates.copy()
+    changed[0, 0] += 0.125
+    altered = CellGeometrySpec(
+        {"children": source_geometry.elements[0]},
+        {"children": routes},
+        changed,
+        restriction_source=restriction,
+    )
+    tampered = certify_child_chart_partition(
+        domain, target, altered, np.asarray((0,), dtype=np.int64)
+    )
+    assert any(
+        finding.check == "mapped_chart_physical_map_mismatch"
+        for finding in tampered.findings
+    )
+
+
 def test_mapped_child_charts_certify_containment_disjointness_and_completeness() -> None:
     domain, mesh, geometry, regions = _mapped_cube()
     certificate = certify_domain_coverage(
@@ -808,6 +990,123 @@ def test_mapped_child_charts_certify_containment_disjointness_and_completeness()
     assert certificate.requested_region_measures == (Fraction(1),)
     assert certificate.achieved_region_measures == (Fraction(1),)
     assert certificate.chart_certificate_id is not None
+
+
+def test_two_level_mapped_coverage_reproves_explicit_parent() -> None:
+    from copy import copy
+
+    from phydrax.geometry._domain_chart_chain import certify_child_chart_partition
+    from phydrax.geometry._global_embedding import ValidatedGlobalEmbedding
+
+    domain, parent, parent_geometry, target, geometry, regions = _two_level_mapped_cube()
+    missing = certify_child_chart_partition(domain, target, geometry, regions)
+    assert any(
+        f.check == "mapped_chart_parent_premise" and f.status == "unresolved"
+        for f in missing.findings
+    )
+    wrong_map = certify_child_chart_partition(
+        domain,
+        target,
+        geometry,
+        regions,
+        chart_parent=(parent, CellGeometrySpec.affine(parent)),
+    )
+    assert any(
+        f.check == "mapped_chart_source_identity" and f.status == "violated"
+        for f in wrong_map.findings
+    )
+    wrong_parent = CellMesh(
+        parent.coordinates,
+        (
+            CellBlock(
+                "parent",
+                "hexahedron",
+                np.arange(8)[None, :],
+                global_ids=np.asarray((92,)),
+            ),
+        ),
+        vertex_global_ids=parent.vertex_global_ids,
+    )
+    wrong_topology = certify_child_chart_partition(
+        domain, target, geometry, regions, chart_parent=(wrong_parent, parent_geometry)
+    )
+    assert any(
+        f.check == "mapped_chart_source_identity" and f.status == "violated"
+        for f in wrong_topology.findings
+    )
+    forged_parent = copy(parent)
+    forged_coordinates = np.asarray(parent.coordinates).copy()
+    forged_coordinates[0, 0] += 0.125
+    object.__setattr__(forged_parent, "coordinates", forged_coordinates)
+    stale = certify_child_chart_partition(
+        domain, target, geometry, regions, chart_parent=(forged_parent, parent_geometry)
+    )
+    assert any(
+        f.check == "mapped_chart_source_identity" and f.status == "violated"
+        for f in stale.findings
+    )
+    certificate = certify_domain_coverage(
+        target,
+        geometry,
+        domain,
+        regions,
+        embedding=_embedding(target, geometry),
+        chart_parent=(parent, parent_geometry),
+    )
+    assert certificate.status == "certified"
+    parent_validity = certify_cell_geometry_validity(parent_geometry, mesh=parent)
+    parent_embedding = ValidatedGlobalEmbedding(parent, parent_geometry, parent_validity)
+    reused = certify_domain_coverage(
+        target,
+        geometry,
+        domain,
+        regions,
+        embedding=_embedding(target, geometry),
+        chart_parent=(parent, parent_geometry),
+        _validated_parent_embedding=parent_embedding,
+    )
+    assert reused.certificate_id == certificate.certificate_id
+    assert reused.findings == certificate.findings
+    with pytest.raises(ValueError, match="different exact mesh or geometry"):
+        certify_child_chart_partition(
+            domain,
+            target,
+            geometry,
+            regions,
+            chart_parent=(copy(parent), parent_geometry),
+            _validated_parent_embedding=parent_embedding,
+        )
+    with pytest.raises(ValueError, match="actual parent mesh and geometry"):
+        certificate.require_current(target, geometry, domain, regions)
+    certificate.require_current(
+        target, geometry, domain, regions, chart_parent=(parent, parent_geometry)
+    )
+    with pytest.raises(ValueError, match="actual parent mesh and geometry"):
+        DomainCoverageCertificate.from_stored_fields(certificate, domain)
+    restored = DomainCoverageCertificate.from_stored_fields(
+        certificate, domain, chart_parent=(parent, parent_geometry)
+    )
+    assert restored.certificate_id == certificate.certificate_id
+
+
+def test_domain_cell_maps_match_direct_exact_restrictions() -> None:
+    from phydrax.discretization._coordinate_enclosure import (
+        coordinate_map_expressions,
+        expression_sequence_equal,
+    )
+    from phydrax.geometry._domain_numerics import cell_coordinate_expressions
+
+    _domain, mesh, geometry, _regions = _mapped_cube()
+    maps = cell_coordinate_expressions(mesh, geometry)
+    element = geometry.elements[0]
+    assert isinstance(element, PerCellRestrictedCellGeometryElement)
+    routes = np.asarray(geometry.geometry_dofs[0], dtype=np.int64)
+    coordinates = geometry.source_coordinates()
+    for row, actual in enumerate(maps):
+        local = tuple(coordinates[int(index)] for index in routes[row])
+        expected = coordinate_map_expressions(element, local, cell_row=row)
+        assert actual is not None
+        assert expression_sequence_equal(actual, expected)
 
 
 def test_mapped_child_chart_with_missing_half_is_not_complete() -> None:
@@ -841,6 +1140,49 @@ def test_mapped_child_chart_with_positive_volume_overlap_is_violated() -> None:
     assert any(
         finding.check == "mapped_chart_overlap" for finding in certificate.findings
     )
+
+
+def test_mapped_chart_broadphase_preserves_exact_overlap_and_order() -> None:
+    from itertools import combinations
+
+    from phydrax.geometry._domain_chart_chain import (
+        _chart_vertices,
+        _ChildCell,
+        _overlap_interior,
+        _overlapping_child_pairs,
+    )
+
+    def child(row: int, x: Fraction) -> _ChildCell:
+        offset = (x, Fraction(0))
+        matrix = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
+        return _ChildCell(
+            row,
+            row,
+            1,
+            "quadrilateral",
+            "quadrilateral",
+            0,
+            offset,
+            matrix,
+            _chart_vertices("quadrilateral", offset, matrix),
+            Fraction(1),
+            str(row),
+        )
+
+    epsilon = Fraction(1, 2**1100)
+    ordinary = [
+        child(i, x)
+        for i, x in enumerate(
+            (Fraction(0), Fraction(1), Fraction(1) - epsilon, Fraction(0))
+        )
+    ]
+    for children in (ordinary, [*ordinary, child(4, Fraction(10**400))]):
+        expected = tuple(
+            (i, j)
+            for i, j in combinations(range(len(children)), 2)
+            if _overlap_interior(children[i], children[j], 2)
+        )
+        assert _overlapping_child_pairs(children, 2) == expected
 
 
 def test_mapped_child_chart_outside_root_is_violated() -> None:

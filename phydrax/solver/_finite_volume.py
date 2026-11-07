@@ -822,8 +822,9 @@ def zero_unstructured_ssprk33_content_candidate(
         accepted_step=accepted_step,
     )
     dtype = initial.effective_cell_volumes.dtype
-    average = initial.cell_average()
+    average = dynamics.precision.reduction(initial.cell_average())
     zero = jnp.asarray(0.0, dtype=dtype)
+    blend_zero = jnp.asarray(0.0, dtype=initial.conservative_content.dtype)
     active_density = jnp.where(
         initial.active_cell_mask,
         average[..., 0],
@@ -832,7 +833,7 @@ def zero_unstructured_ssprk33_content_candidate(
     report = FiniteVolumeAdmissibilityReport(
         high_order_valid=jnp.asarray(False),
         fallback_valid=jnp.asarray(False),
-        blend_factor=zero,
+        blend_factor=blend_zero,
         activated=jnp.asarray(False),
         minimum_density=(
             jnp.asarray(jnp.inf, dtype=average.dtype)
@@ -841,7 +842,7 @@ def zero_unstructured_ssprk33_content_candidate(
         ),
         limited_state_valid=jnp.asarray(False),
         secondary_reduction_applied=jnp.asarray(False),
-        secondary_reduction_factor=zero,
+        secondary_reduction_factor=blend_zero,
     )
     return FiniteVolumeSSPRK3ContentCandidate(
         content_state=initial,

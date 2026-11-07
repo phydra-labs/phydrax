@@ -39,9 +39,6 @@ def test_planar_plc_domain_preserves_outer_and_hole_orientation() -> None:
     assert isinstance(domain, PiecewiseLinearDomain)
     np.testing.assert_array_equal(domain.vertices, vertices)
     np.testing.assert_array_equal(domain.facets, np.asarray(region.edges))
-    np.testing.assert_array_equal(
-        domain.facet_regions,
-        np.asarray(((0, -1),) * 4 + ((-1, 0),) * 4, dtype=np.int64),
-    )
+    assert domain.exact_region_measures() == (12,)
     assert domain.region_ids == (source.region_entity_id,)
     assert domain.source_id == source.source_id

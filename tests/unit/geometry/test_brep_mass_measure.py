@@ -463,6 +463,87 @@ def test_cylinder_green_strip_encloses_exact_primitive() -> None:
         assert lower[0, 0] <= expected <= upper[0, 0]
 
 
+@pytest.mark.parametrize("direction", (-1, 1))
+@pytest.mark.parametrize("oblique", (False, True))
+def test_torus_green_strip_encloses_source_flux(direction: int, oblique: bool) -> None:
+    import mpmath
+
+    from phydrax.geometry.brep._measure import _green_strip_program
+    from phydrax.geometry.brep._patches import LineCurve, TorusPatch
+
+    first, second, axis = (
+        ((2, 0, 0), (1, 1, 0), (0, 1, 1))
+        if oblique
+        else ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+    )
+    patch = TorusPatch((1, 2, 3), first, second, axis, 3, 1)
+    pcurve = LineCurve((0.5, 0.25), (0.5, direction))
+    program = _green_strip_program(patch, pcurve, -0.25)
+    parameter = 0.25
+    lower, upper = program.evaluate(np.asarray([[parameter]]), np.asarray([[parameter]]))
+    with mpmath.workdps(60):
+        t = mpmath.mpf(parameter)
+        longitude = mpmath.mpf("0.5") + t / 2
+        latitude = mpmath.mpf("0.25") + direction * t
+
+        def flux(u: object) -> object:
+            cu, su = mpmath.cos(u), mpmath.sin(u)
+            cv, sv = mpmath.cos(latitude), mpmath.sin(latitude)
+            ring = 3 + cv
+            point = tuple(
+                center + ring * (cu * a + su * b) + sv * n
+                for center, a, b, n in zip((1, 2, 3), first, second, axis, strict=True)
+            )
+            du = tuple(
+                ring * (-su * a + cu * b) for a, b in zip(first, second, strict=True)
+            )
+            dv = tuple(
+                -sv * (cu * a + su * b) + cv * n
+                for a, b, n in zip(first, second, axis, strict=True)
+            )
+            cross = (
+                du[1] * dv[2] - du[2] * dv[1],
+                du[2] * dv[0] - du[0] * dv[2],
+                du[0] * dv[1] - du[1] * dv[0],
+            )
+            return sum(a * b for a, b in zip(point, cross, strict=True)) / 3
+
+        expected = direction * mpmath.quad(flux, (mpmath.mpf("-0.25"), longitude))
+        assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
+
+
+@pytest.mark.parametrize("turns", (-1, 1))
+def test_torus_green_strip_binds_exact_period_and_radius(turns: int) -> None:
+    from fractions import Fraction
+
+    import mpmath
+
+    from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.geometry.brep._measure import _green_strip_program
+    from phydrax.geometry.brep._patches import LineCurve, TorusPatch
+
+    patch = TorusPatch(
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        3,
+        0.1,
+        minor_radius_exact=Fraction(1, 10),
+    )
+    pcurve = PeriodicPCurve(LineCurve((0, 0), (0, 1)), patch, (turns, 0))
+    program = _green_strip_program(patch, pcurve, 0.0)
+    lower, upper = program.evaluate(np.asarray([[0.25]]), np.asarray([[0.25]]))
+    with mpmath.workdps(60):
+        cosine = mpmath.cos(mpmath.mpf(1) / 4)
+        minor = mpmath.mpf(1) / 10
+        expected = (
+            turns * 2 * mpmath.pi * minor * (3 + minor * cosine)
+            * (minor + 3 * cosine) / 3
+        )
+        assert mpmath.mpf(lower[0, 0]) <= expected <= mpmath.mpf(upper[0, 0])
+
+
 def test_cylinder_green_uses_exact_section_and_radius_sources() -> None:
     from fractions import Fraction
 
@@ -671,4 +752,22 @@ def test_repaired_step_external_combined_source_volume_at_profile_accuracy(
 
     model, expected, _, _ = _external_case("external-combined", "step", tmp_path)
     result = _source_volume_oracle(model, expected, "external-combined")
+    assert result["passed"] is True
+
+
+def test_step_external_routine_source_volume_at_profile_accuracy(tmp_path: Path) -> None:
+    from tools.meshing_qualification.scenarios.native_cad_profiles import (
+        _external_case,
+        _source_volume_oracle,
+        _topology_oracle,
+    )
+
+    model, expected, source, _ = _external_case("external-routine", "step", tmp_path)
+    repair = source["explicit_source_repair"]
+    assert isinstance(repair, dict)
+    assert repair["source_revision"] != repair["target_revision"]
+    assert repair["target_revision"] == model.source_revision
+    assert repair["maximum_displacement_m"] <= repair["tolerance_m"]
+    assert _topology_oracle(model, "external-routine")["passed"] is True
+    result = _source_volume_oracle(model, expected, "external-routine")
     assert result["passed"] is True

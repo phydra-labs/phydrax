@@ -8,6 +8,7 @@ from __future__ import annotations
 import random
 import weakref
 from fractions import Fraction
+from inspect import signature
 from itertools import product
 from typing import Any
 
@@ -391,7 +392,7 @@ def test_bvh_pair_blocks_repeat_the_host_block_sequence(
     for left, right in ((first, second), (first, first)):
         reference = list(
             _bvh._host_pair_blocks(
-                _bvh._host_arrays(left), _bvh._host_arrays(right), test
+                _bvh._host_arrays(left), _bvh._host_arrays(right), test, item_block
             )
         )
         for parallelism in (1, 4):
@@ -425,7 +426,7 @@ def test_bvh_pair_blocks_reference_constants(monkeypatch: Any) -> None:
     tree = _bvh.prepare_bvh(lower, upper, dtype=np.float64)
     test = _bvh._validate_host_pair_arguments(tree, tree, True, 0.0, 0.0)
     reference = list(
-        _bvh._host_pair_blocks(_bvh._host_arrays(tree), _bvh._host_arrays(tree), test)
+        _bvh._host_pair_blocks(_bvh._host_arrays(tree), _bvh._host_arrays(tree), test, 64)
     )
     blocks = list(_bvh.bvh_overlap_pair_blocks(tree, tree, include_touching=True))
     assert len(blocks) == len(reference) > 1
@@ -438,6 +439,51 @@ def test_bvh_pair_blocks_reference_constants(monkeypatch: Any) -> None:
         if np.all(np.minimum(upper[i], upper[j]) - np.maximum(lower[i], lower[j]) >= 0.0)
     )
     assert list(zip(pairs[0].tolist(), pairs[1].tolist(), strict=True)) == brute
+
+
+@pytest.mark.parametrize("item_block", (1, 17, 256, 4096))
+def test_bvh_pair_schedule_preserves_native_host_sequence(
+    item_block: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lower = np.zeros((64, 3), dtype=np.float64)
+    upper = np.ones((64, 3), dtype=np.float64)
+    tree = _bvh.prepare_bvh(lower, upper, dtype=np.float64)
+    baseline = list(_bvh.bvh_overlap_pair_blocks(tree, tree, include_touching=True))
+    native = list(
+        _bvh.bvh_overlap_pair_blocks(
+            tree, tree, include_touching=True, item_block=item_block
+        )
+    )
+    monkeypatch.setattr(_bvh, "meshcore_available", lambda: False)
+    host = list(
+        _bvh.bvh_overlap_pair_blocks(
+            tree, tree, include_touching=True, item_block=item_block
+        )
+    )
+
+    def flatten(blocks: list[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, ...]:
+        return tuple(np.concatenate([block[axis] for block in blocks]) for axis in (0, 1))
+
+    assert all(
+        np.array_equal(a, b) for a, b in zip(flatten(native), flatten(host), strict=True)
+    )
+    assert all(
+        np.array_equal(a, b)
+        for a, b in zip(flatten(native), flatten(baseline), strict=True)
+    )
+
+
+@pytest.mark.parametrize("item_block", (0, -1, True, 1.5))
+def test_bvh_pair_schedule_rejects_invalid_execution_count(
+    item_block: int | float,
+) -> None:
+    points = np.zeros((1, 3), dtype=np.float64)
+    tree = _bvh.prepare_bvh(points, points, dtype=np.float64)
+    with pytest.raises((TypeError, ValueError)):
+        arguments = signature(_bvh.bvh_overlap_pair_blocks).bind(
+            tree, tree, include_touching=True, item_block=item_block
+        )
+        _bvh.bvh_overlap_pair_blocks(*arguments.args, **arguments.kwargs)
 
 
 def test_float64_interval_kernels_are_bit_identical_to_the_host_operations() -> None:

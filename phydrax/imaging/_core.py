@@ -16,6 +16,7 @@ import numpy as np
 import numpy.typing as npt
 from jax.typing import ArrayLike
 
+from .._differentiation import DerivativeContract, DerivativeRegularity, SurfaceDerivative
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
@@ -30,6 +31,7 @@ from ..measurement import (
     QualityFlag,
     QuantityField,
     QuantitySpec,
+    TemporalSampling,
     SampleTimeAxis,
     SamplingSemantics,
     ValueKind,
@@ -72,8 +74,11 @@ def _real(value: ArrayLike, name: str, /) -> np.ndarray:
 
 
 class ImageAxisConvention(StrEnum):
+    """Anatomical axis conventions or an unaligned generic Cartesian frame."""
+
     LPS = "LPS"
     RAS = "RAS"
+    XYZ = "XYZ"
 
 
 class VoxelReference(StrEnum):
@@ -107,7 +112,11 @@ class ImageIndexAffine:
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if not isinstance(self.axis_convention, ImageAxisConvention):
             raise TypeError("axis_convention must be ImageAxisConvention.")
-        expected_system = f"cartesian-{self.axis_convention.value.lower()}"
+        expected_system = (
+            "cartesian"
+            if self.axis_convention is ImageAxisConvention.XYZ
+            else f"cartesian-{self.axis_convention.value.lower()}"
+        )
         if self.coordinate_contract.coordinate_system != expected_system:
             raise ValueError(
                 "Image axis convention and spatial coordinate system disagree."
@@ -205,6 +214,10 @@ class ImageIndexAffine:
             raise TypeError("convention must be ImageAxisConvention.")
         if convention is self.axis_convention:
             return self
+        if ImageAxisConvention.XYZ in (self.axis_convention, convention):
+            raise ValueError(
+                "A generic Cartesian frame has no declared anatomical orientation."
+            )
         conversion = np.diag(np.asarray((-1.0, -1.0, 1.0, 1.0)))
         contract = SpatialCoordinateContract(
             self.coordinate_contract.length_unit,
@@ -614,6 +627,168 @@ class LabelVolume:
                 }
             ),
         )
+    @classmethod
+    def from_stored_fields(cls, value: LabelVolume, /) -> LabelVolume:
+        """Reconstruct a stored label volume through its scientific constructors.
+
+        Derived identities in the stored object are claims, not reconstruction
+        inputs. Every nested identity is checked against a freshly built owner.
+        """
+        if not isinstance(value, cls):
+            raise TypeError("Stored label volume must be a LabelVolume.")
+
+        def verify(old: Any, new: Any, *names: str) -> Any:
+            if any(getattr(old, name) != getattr(new, name) for name in names):
+                raise ValueError(f"Stored {type(old).__name__} identity mismatch.")
+            return new
+
+        def unit(old: UnitDefinition) -> UnitDefinition:
+            return verify(old, UnitDefinition.from_dict(old.to_dict()), "unit_id")
+
+        asset = value.asset
+        affine = asset.spatial_affine
+        spatial = affine.coordinate_contract
+        spatial_new = SpatialCoordinateContract(
+            unit(spatial.length_unit),
+            length_coordinate_kind=spatial.length_coordinate_kind,
+            coordinate_system=spatial.coordinate_system,
+            reference_frame=spatial.reference_frame,
+        )
+        verify(spatial, spatial_new, "spatial_id")
+        affine_new = verify(
+            affine,
+            ImageIndexAffine(
+                affine.matrix, affine.source_frame_id, spatial_new,
+                affine.axis_convention, affine.voxel_reference, affine.provenance,
+            ),
+            "affine_id",
+        )
+        spec = asset.spec
+        quantity = spec.quantity
+        quantity_new = verify(
+            quantity,
+            QuantitySpec(
+                quantity.namespace, quantity.name, quantity.quantity_kind,
+                unit(quantity.unit), quantity.compatibility_key, quantity.axes,
+                quantity.sign_convention, quantity.support_association,
+                quantity.reference_configuration,
+            ),
+            "quantity_id", "compatibility_id",
+        )
+        layout = spec.layout
+        layout_new = verify(
+            layout,
+            ValueLayout(layout.kind, layout.component_shape, layout.component_labels,
+                        layout.component_frame_id),
+            "layout_id",
+        )
+        sampling = spec.sampling
+        temporal = sampling.temporal
+        temporal_new = verify(
+            temporal,
+            TemporalSampling(
+                temporal.kind, temporal.interval_bounds,
+                None if temporal.interval_unit is None else unit(temporal.interval_unit),
+                temporal.origin,
+            ),
+            "temporal_sampling_id",
+        )
+        sampling_new = verify(
+            sampling,
+            SamplingSemantics(sampling.spatial_kind, temporal_new,
+                              sampling.footprint_id, sampling.normalization),
+            "sampling_id",
+        )
+        spec_new = verify(
+            spec, ImageFieldSpec(quantity_new, layout_new, sampling_new), "spec_id"
+        )
+        evidence = asset.deidentification
+        evidence_new = DeidentificationEvidence(
+            evidence.evidence_id, evidence.pseudonymous_subject_id, evidence.protocol_id,
+            evidence.direct_identifiers_removed, evidence.burned_in_annotations_removed,
+            evidence.facial_features_removed,
+        )
+        references = tuple(
+            ReferenceArtifactManifest.from_record(reference.to_record())
+            for reference in asset.references
+        )
+        derivation = asset.derivation
+        differentiation = derivation.differentiation
+        differentiation_new = None
+        if differentiation is not None:
+            regularity = differentiation.regularity
+            regularity_new = None if regularity is None else DerivativeRegularity(
+                continuity=regularity.continuity, pieces=regularity.pieces,
+                degree_bound=regularity.degree_bound, conditions=regularity.conditions,
+                support=regularity.support,
+            )
+            differentiation_new = verify(
+                differentiation,
+                DerivativeContract(
+                    tuple(SurfaceDerivative(entry.surface, entry.level,
+                                            conditions=entry.conditions)
+                          for entry in differentiation.surfaces),
+                    route=differentiation.route, regularity=regularity_new,
+                    conditions=differentiation.conditions,
+                    nondifferentiable_outputs=differentiation.nondifferentiable_outputs,
+                ),
+                "contract_id",
+            )
+        derivation_new = verify(
+            derivation,
+            DerivationRecord(
+                derivation.origin, derivation.stage, derivation.parent_ids,
+                derivation.transformation_id, derivation.adapter_report_ids,
+                derivation.calibration_ids, differentiation_new,
+            ),
+            "derivation_id",
+        )
+        acquisition = asset.acquisition
+        acquisition_new = None if acquisition is None else verify(
+            acquisition,
+            AcquisitionIdentity(
+                acquisition.acquisition_id, acquisition.series_id, acquisition.modality,
+                acquisition.protocol_id, acquisition.instrument_id,
+                acquisition.calibration_ids, acquisition.clock_id,
+            ),
+            "identity_id",
+        )
+        uncertainty = asset.uncertainty
+        uncertainty_new = None if uncertainty is None else verify(
+            uncertainty, IndependentStandardUncertainty(uncertainty.values, unit(uncertainty.unit)),
+            "uncertainty_id",
+        )
+        flags = tuple(
+            verify(flag, QualityFlag(flag.name, flag.mask, flag.meaning), "flag_id")
+            for flag in asset.quality_flags
+        )
+        if asset.time_axis is not None:
+            raise ValueError("Stored label volumes must be static.")
+        asset_new = verify(
+            asset,
+            MedicalImageAsset(
+                asset.asset_id, asset.modality, asset.values, affine_new, spec_new,
+                evidence_new, references, derivation_new, valid_mask=asset.valid_mask,
+                uncertainty=uncertainty_new, quality_flags=flags,
+                acquisition=acquisition_new, metadata=asset.metadata,
+                intended_use=asset.intended_use,
+            ),
+            "content_id",
+        )
+        verify(asset.support, asset_new.support, "support_id")
+        verify(asset.measurement, asset_new.measurement, "content_id")
+        ontology = value.ontology
+        definitions = tuple(
+            LabelDefinition(label.value, label.label_id, label.name, label.parent_id, label.roles)
+            for label in ontology.labels
+        )
+        ontology_new = verify(
+            ontology,
+            LabelOntology(ontology.ontology_id, ontology.source_system,
+                          ontology.source_version, definitions),
+            "ontology_content_id",
+        )
+        return verify(value, cls(asset_new, ontology_new), "label_volume_id")
 
 
 @dataclass(frozen=True, slots=True)

@@ -43,6 +43,7 @@ from phydrax.meshing._contracts import VolumeMeshingSpec
 from phydrax.meshing._controls import PeriodicConstraint
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
 from phydrax.meshing._volume_generation import (
+    _shape_targets_gated,
     generate_plc_volume,
     NativeVolumeSchedule,
     VolumeConstruction,
@@ -1083,7 +1084,7 @@ def _source_split_flags(
 
 def _mapped_face_ancestry(
     carrier: VolumeConstruction,
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     restricted: meshcore.RestrictedPowerCells,
     native_face_order: np.ndarray,
     /,
@@ -1220,7 +1221,7 @@ def _mapped_power_source(
 
 
 def _construct_polyhedral(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     carrier: VolumeConstruction,
     schedule: NativePolyhedralSchedule,
     sites: np.ndarray,
@@ -1632,13 +1633,15 @@ def _periodic_vertex_orbits(
 
 
 def _bind_periodic_polyhedral_quotient(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     construction: PolyhedralConstruction,
     /,
 ) -> PolyhedralConstruction:
     if not specification.periodic_constraints:
         return construction
+    if not isinstance(source, NativePolyhedralSource):
+        raise ValueError("Periodic restricted power requires explicitly authored sites.")
     identification, bindings = _periodic_identification(specification)
     relations = _periodic_vertex_relations(source, specification, construction, bindings)
     representatives, shifts = _periodic_vertex_orbits(
@@ -1681,6 +1684,41 @@ def _bind_periodic_polyhedral_quotient(
     )
 
 
+def _clipping_carrier_specification(
+    specification: VolumeMeshingSpec, /
+) -> VolumeMeshingSpec:
+    """Keep output-region sizing out of the facet-only tetrahedral carrier field."""
+    controls: list[UniformSizeControl] = []
+    for control in specification.size_controls:
+        if not isinstance(control, UniformSizeControl):
+            raise ValueError(
+                "Native PLC size fields require uniform facet-scoped controls."
+            )
+        if control.scope.entity_dimension != 3:
+            controls.append(control)
+    if len(controls) == len(specification.size_controls):
+        return specification
+    # Output power-site sizing stays on the original request and final
+    # compliance, rather than changing the facet-only carrier field.
+    return VolumeMeshingSpec(
+        specification.target,
+        specification.boundary_scope,
+        specification.fill_strategy,
+        size_controls=tuple(controls),
+        protected_features=specification.protected_features,
+        region_controls=specification.region_controls,
+        patch_controls=specification.patch_controls,
+        region_seeds=specification.region_seeds,
+        hole_seeds=specification.hole_seeds,
+        layer_controls=specification.layer_controls,
+        periodic_constraints=specification.periodic_constraints,
+        size_combination=specification.size_combination,
+        size_compliance=specification.size_compliance,
+        maximum_deviation=specification.maximum_deviation,
+        deterministic=specification.deterministic,
+    )
+
+
 def generate_polyhedral_volume(
     source: NativePlcSource | NativePolyhedralSource,
     specification: VolumeMeshingSpec,
@@ -1691,6 +1729,11 @@ def generate_polyhedral_volume(
     volume_schedule: NativeVolumeSchedule | None = None,
 ) -> PolyhedralConstruction:
     """Construct nonconvex PLC-restricted power polyhedra for canonical acceptance."""
+    if volume_schedule is not None and not _shape_targets_gated(volume_schedule):
+        # The clipping carrier is internal: its shape rows are never published.
+        raise ValueError(
+            "A restricted-power clipping carrier requires a hard-strength volume schedule."
+        )
     if specification.layer_controls:
         raise ValueError(
             "Layer controls must be composed by the layer/core owner before restricted-power core fill."
@@ -1705,7 +1748,7 @@ def generate_polyhedral_volume(
     )
     carrier = generate_plc_volume(
         source.complex,
-        specification,
+        _clipping_carrier_specification(specification),
         NativeVolumeSchedule() if volume_schedule is None else volume_schedule,
         source_id=source.source_id,
         source_revision=source.source_revision,
@@ -1714,22 +1757,34 @@ def generate_polyhedral_volume(
         source_domain=source.mapped_domain,
     )
     if volume_schedule is not None:
-        if carrier.improvement_status is not meshcore.MeshcoreStatus.OK:
-            raise meshcore.MeshcoreError(
-                carrier.improvement_status,
-                "The explicitly scheduled fixed-boundary PLC carrier did not satisfy its joint quality request.",
-            )
-        if carrier.improvement_unmet:
+        if carrier.final_quality_schedule_unmet:
             raise meshcore.MeshcoreError(
                 meshcore.MeshcoreStatus.UNRESOLVED,
-                "The explicitly scheduled fixed-boundary PLC carrier retains per-cell quality residuals.",
+                "The explicitly scheduled PLC carrier retains final quality residuals.",
             )
     tetrahedra, tet_face_facets, _ = _carrier_tetrahedralization(carrier)
     carrier_points = np.asarray(carrier.mesh.coordinates, dtype=np.float64)
     carrier_regions = np.asarray(carrier.cell_regions, dtype=np.int32)
-    if not isinstance(source, NativePolyhedralSource):
-        raise TypeError("Restricted-power generation requires authored power sites.")
-    sites, weights, site_parents, site_ids, site_parent_ids = _source_sites(source)
+    if isinstance(source, NativePolyhedralSource):
+        sites, weights, site_parents, site_ids, site_parent_ids = _source_sites(source)
+    else:
+        if not tetrahedra.shape[0]:
+            raise ValueError("Automatic power-site placement requires a recovered carrier cell.")
+        sites = np.mean(carrier_points[tetrahedra[0]], axis=0, dtype=np.float64)[None, :]
+        weights = np.zeros((1,), dtype=np.float64)
+        site_parents = np.zeros((1,), dtype=np.int64)
+        site_ids = (
+            canonical_fingerprint(
+                {
+                    "kind": "plc-first-carrier-tetrahedron-centroid-site",
+                    "source_binding": source.binding_id,
+                    "carrier_mesh": carrier.mesh.mesh_id,
+                    "carrier_cell_id": int(carrier.mesh.blocks[0].global_ids[0]),
+                    "coordinates": array_tree_fingerprint(sites),
+                }
+            ),
+        )
+        site_parent_ids = (None,)
     if set(schedule.protected_site_ids) - set(site_ids):
         raise ValueError(
             "protected_site_ids must identify an authored source power site."

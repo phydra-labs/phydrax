@@ -162,11 +162,20 @@ def _trace_equal_on_stratum(
     first: EmbeddingCell,
     second: EmbeddingCell,
     ordered_ids: tuple[int, ...],
+    cache: dict[tuple[int, tuple[int, ...]], tuple[Expression, ...] | None] | None,
     /,
 ) -> bool | None:
     try:
-        first_trace = _stratum_trace(first, ordered_ids)
-        second_trace = _stratum_trace(second, ordered_ids)
+        def trace(cell: EmbeddingCell) -> tuple[Expression, ...] | None:
+            if cache is None:
+                return _stratum_trace(cell, ordered_ids)
+            key = (id(cell), ordered_ids)
+            if key not in cache:
+                cache[key] = _stratum_trace(cell, ordered_ids)
+            return cache[key]
+
+        first_trace = trace(first)
+        second_trace = trace(second)
         if first_trace is None or second_trace is None:
             return None
         if len(first_trace) != len(second_trace):
@@ -273,6 +282,8 @@ def restriction_trace_equal(
     second: EmbeddingCell,
     shared_vertex_ids: tuple[int, ...],
     /,
+    *,
+    cache: dict[tuple[int, tuple[int, ...]], tuple[Expression, ...] | None] | None = None,
 ) -> bool | None:
     """Prove equality of exact polynomial/rational traces on a shared edge or face.
 
@@ -297,13 +308,13 @@ def restriction_trace_equal(
             for identifier in shared
         )
     if len(shared) == 2:
-        return _trace_equal_on_stratum(first, second, shared)
+        return _trace_equal_on_stratum(first, second, shared, cache)
     if len(shared) == 3 and first.dimension == second.dimension == 3:
         ordered = _triangle_vertex_order(first, shared)
-        return None if not ordered else _trace_equal_on_stratum(first, second, ordered)
+        return None if not ordered else _trace_equal_on_stratum(first, second, ordered, cache)
     if len(shared) == 4 and first.dimension == second.dimension == 3:
         ordered = _quadrilateral_vertex_order(first, shared)
-        return None if not ordered else _trace_equal_on_stratum(first, second, ordered)
+        return None if not ordered else _trace_equal_on_stratum(first, second, ordered, cache)
     return None
 
 

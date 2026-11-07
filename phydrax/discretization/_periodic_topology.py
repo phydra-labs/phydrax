@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from fractions import Fraction
 from itertools import permutations
 from typing import final
 
@@ -21,6 +22,7 @@ from ..sparse import EdgeRelation
 from ..typing import checked
 from ._cell_geometry import CellGeometrySpec
 from ._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
+from ._exact_algebraic_geometry import ExactPeriodicAlgebraicSource
 from ._exact_plc_geometry import ExactPlcCellGeometrySource
 from ._exact_power_geometry import ExactPowerCellGeometrySource
 from ._periodic_cell import PeriodicCell
@@ -37,7 +39,63 @@ from ._topology import CellComplexTopology, EntitySet, EntitySubset, OrientedInc
 
 _INT32_MAX = np.iinfo(np.int32).max
 # Exact vertex banks that can witness a quotient's deck action on lifted rows.
-ExactPeriodicCoordinateSource = ExactPowerCellGeometrySource | ExactPlcCellGeometrySource
+ExactPeriodicCoordinateSource = (
+    ExactPowerCellGeometrySource | ExactPlcCellGeometrySource | ExactPeriodicAlgebraicSource
+)
+
+
+def _require_acyclic_periodic_witness(source: ExactPeriodicCoordinateSource, /) -> None:
+    """Reject power-carrier witness cycles before traversing or archiving them."""
+    pending: list[tuple[ExactPeriodicCoordinateSource, bool]] = [(source, False)]
+    active: set[int] = set()
+    complete: set[int] = set()
+    while pending:
+        current, leaving = pending.pop()
+        identity = id(current)
+        if leaving:
+            active.remove(identity)
+            complete.add(identity)
+            continue
+        if identity in active:
+            raise ValueError(
+                "Exact periodic coordinate witnesses contain a carrier cycle."
+            )
+        if identity in complete:
+            continue
+        active.add(identity)
+        pending.append((current, True))
+        if not isinstance(current, ExactPowerCellGeometrySource):
+            continue
+        periodic = current.carrier_mesh.periodic_topology
+        if periodic is None:
+            continue
+        if not hasattr(periodic, "exact_coordinate_source"):
+            raise ValueError("A periodic power carrier lacks its exact witness field.")
+        child = periodic.exact_coordinate_source
+        if child is not None:
+            pending.append((child, False))
+        geometry = periodic._actual_geometry
+        if geometry is not None and isinstance(
+            geometry.source_map,
+            (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
+        ):
+            pending.append((geometry.source_map, False))
+
+
+def _rebuild_periodic_witness(
+    source: ExactPeriodicCoordinateSource, cell: PeriodicMeshIdentification, /
+) -> ExactPeriodicCoordinateSource:
+    """Reconstruct exact source leaves, not merely their retained identity."""
+    _require_acyclic_periodic_witness(source)
+    if isinstance(source, ExactPlcCellGeometrySource):
+        return ExactPlcCellGeometrySource.from_stored_fields(source)
+    if isinstance(source, ExactPeriodicAlgebraicSource):
+        return ExactPeriodicAlgebraicSource.from_stored_fields(source)
+    if not isinstance(cell, PeriodicCell):
+        raise TypeError("Exact periodic power witnesses require PeriodicCell.")
+    return ExactPowerCellGeometrySource.from_stored_fields(
+        source, target_periodic_cell=cell
+    )
 
 
 def _integer_rows(value: ArrayLike, shape: tuple[int, ...], name: str, /) -> np.ndarray:
@@ -100,7 +158,7 @@ def _entity_vertex_rows(mesh: CellMesh, /) -> tuple[tuple[np.ndarray, ...], ...]
         )
         return vertices, edges, faces, cells
     if isinstance(connectivity, PolyhedralConnectivity):
-        edge_rows = tuple(np.asarray(row, dtype=np.int64) for row in connectivity.edges)
+        edge_rows = tuple(np.asarray(connectivity.edges, dtype=np.int64))
         face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
         face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
         faces = tuple(
@@ -384,6 +442,37 @@ def _quotient_incidence(
         lower_orbits = orbit_by_degree[degree - 1]
         lower_orientation = orientation_by_degree[degree - 1]
         upper_orientation = orientation_by_degree[degree]
+        # Every lifted copy of an identified entity must induce the same
+        # oriented quotient boundary, not just the chosen representative.
+        # Sum repeated lower orbits because a quotient boundary may cancel.
+        upper_orbits = orbit_by_degree[degree]
+        multiplicity = np.bincount(upper_orbits, minlength=upper_representatives.size)
+        repeated = multiplicity[upper_orbits] > 1
+        if np.any(repeated):
+            boundaries: dict[int, dict[int, int]] = {}
+            valid_routes = np.flatnonzero(valid)
+            for route in valid_routes[repeated[raw_upper[valid_routes]]]:
+                upper = int(raw_upper[route])
+                lower = int(raw_lower[route])
+                boundary = boundaries.setdefault(upper, {})
+                target = int(lower_orbits[lower])
+                coefficient = int(
+                    signs[route] * lower_orientation[lower] * upper_orientation[upper]
+                )
+                boundary[target] = boundary.get(target, 0) + coefficient
+            canonical: dict[int, dict[int, int]] = {}
+            for upper in np.flatnonzero(repeated):
+                boundary = {
+                    lower: coefficient
+                    for lower, coefficient in boundaries.get(int(upper), {}).items()
+                    if coefficient
+                }
+                orbit = int(upper_orbits[upper])
+                if orbit in canonical and canonical[orbit] != boundary:
+                    raise ValueError(
+                        "Identified periodic entities have inconsistent oriented boundaries."
+                    )
+                canonical[orbit] = boundary
         # Each lifted upper entity represents at most one quotient entity; routes
         # follow quotient order, then ascending route row.
         routes = np.flatnonzero(valid)
@@ -543,9 +632,12 @@ def _validate_vertex_orbits(
                 "vertex_shifts do not reproduce the lifted coordinates from their representatives."
             )
     else:
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("Exact periodic coordinate witnesses require PeriodicCell.")
-        exact_coordinate_source.require_periodic_lift(points, cell, reps, exponents)
+        if isinstance(exact_coordinate_source, ExactPowerCellGeometrySource):
+            if not isinstance(cell, PeriodicCell):
+                raise TypeError("Exact periodic power witnesses require PeriodicCell.")
+            exact_coordinate_source.require_periodic_lift(points, cell, reps, exponents)
+        else:
+            exact_coordinate_source.require_periodic_lift(points, cell, reps, exponents)
     return reps.astype(np.int32), exponents.astype(np.int32)
 
 
@@ -629,6 +721,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
     cell: PeriodicMeshIdentification
     quotient: CellComplexTopology
     _actual_geometry: CellGeometrySpec | None
+    exact_coordinate_source: ExactPeriodicCoordinateSource | None
     coordinate_source_map_id: str | None = eqx.field(static=True)
     coordinate_shadow_fingerprint: str | None = eqx.field(static=True)
     vertex_fixed_generators: Array
@@ -665,16 +758,18 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         actual_geometry: CellGeometrySpec | None = None,
         exact_coordinate_source: ExactPeriodicCoordinateSource | None = None,
     ) -> None:
-        if lifted.topological_dimension != cell.ambient_dimension:
-            raise ValueError("Periodic quotient requires a full-dimensional lifted mesh.")
+        if lifted.ambient_dimension != cell.ambient_dimension:
+            raise ValueError(
+                "Periodic identification must match the lifted ambient space."
+            )
         if lifted.periodic_topology is not None:
             raise ValueError("lifted must be a nonperiodic fundamental-cover carrier.")
         if exact_coordinate_source is not None and not isinstance(
             exact_coordinate_source,
-            (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource),
+            (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
         ):
             raise TypeError(
-                "exact_coordinate_source must be an exact power or PLC coordinate bank."
+                "exact_coordinate_source must be an exact periodic coordinate bank."
             )
         if actual_geometry is not None:
             source_map = actual_geometry.source_map
@@ -683,7 +778,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             else:
                 if not isinstance(
                     source_map,
-                    (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource),
+                    (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
                 ):
                     raise ValueError(
                         "Periodic mapped geometry requires its exact coordinate witness."
@@ -696,7 +791,29 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                         "Periodic geometry and exact coordinate witnesses disagree."
                     )
                 exact_coordinate_source = source_map
-                routes = actual_geometry.geometry_dofs
+                # A source-bound geometry may name the final periodic mesh, not
+                # this lifted carrier, so resolve() cannot be called here.
+                # Still align its canonical block-name tables to lifted order.
+                route_by_name = dict(
+                    zip(
+                        actual_geometry.block_names,
+                        actual_geometry.geometry_dofs,
+                        strict=True,
+                    )
+                )
+                element_by_name = dict(
+                    zip(
+                        actual_geometry.block_names, actual_geometry.elements, strict=True
+                    )
+                )
+                if set(route_by_name) != {block.name for block in lifted.blocks} or any(
+                    element_by_name[block.name].cell_kind != block.cell_kind
+                    for block in lifted.blocks
+                ):
+                    raise ValueError(
+                        "Periodic geometry assignments differ from lifted blocks."
+                    )
+                routes = tuple(route_by_name[block.name] for block in lifted.blocks)
                 geometry_coordinates = actual_geometry.coordinates
             if (
                 actual_geometry.restriction_source is not None
@@ -711,14 +828,18 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 raise ValueError(
                     "actual_geometry must resolve to the lifted vertex-indexed carrier."
                 )
-        if isinstance(exact_coordinate_source, ExactPlcCellGeometrySource) and (
+        if exact_coordinate_source is not None:
+            exact_coordinate_source = _rebuild_periodic_witness(
+                exact_coordinate_source, cell
+            )
+        if isinstance(exact_coordinate_source, (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource)) and (
             not np.array_equal(
                 np.asarray(exact_coordinate_source.vertex_global_ids, dtype=np.int64),
                 np.asarray(lifted.vertex_global_ids, dtype=np.int64),
             )
         ):
             raise ValueError(
-                "Exact PLC coordinate rows must follow the lifted vertex order."
+                "Exact coordinate rows must follow the lifted vertex order."
             )
         representatives, shifts = _validate_vertex_orbits(
             lifted.coordinates,
@@ -945,6 +1066,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         self.cell = cell
         self.quotient = quotient
         self._actual_geometry = actual_geometry
+        self.exact_coordinate_source = exact_coordinate_source
         self.coordinate_source_map_id = (
             None
             if exact_coordinate_source is None
@@ -1025,12 +1147,30 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
     def validate_restored(self, /) -> None:
         """Re-validate a stored descriptor: its structural tables and identity."""
         self._validate_tables()
+        if isinstance(self.exact_coordinate_source, ExactPeriodicAlgebraicSource):
+            _rebuild_periodic_witness(self.exact_coordinate_source, self.cell)
         if self._content_id() != self.periodic_topology_id:
             raise ValueError(
                 "Stored periodic topology identity does not authenticate its structural tables."
             )
 
     def _validate_tables(self, /) -> None:
+        if (self.exact_coordinate_source is None) != (
+            self.coordinate_source_map_id is None
+        ):
+            raise ValueError(
+                "Stored periodic topology lacks its exact coordinate witness."
+            )
+        if self.exact_coordinate_source is not None and (
+            not isinstance(
+                self.exact_coordinate_source,
+                (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
+            )
+            or self.exact_coordinate_source.source_map_id != self.coordinate_source_map_id
+        ):
+            raise ValueError(
+                "Stored periodic topology names a different exact coordinate witness."
+            )
         if (self.coordinate_source_map_id is None) != (
             self.coordinate_shadow_fingerprint is None
         ) or (
@@ -1132,6 +1272,103 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         ):
             raise ValueError("Stored periodic corner/key tables are malformed.")
 
+    def require_exact_geometry(
+        self, mesh: CellMesh, geometry: CellGeometrySpec, /
+    ) -> None:
+        """Bind the retained vertex witness to every actual coordinate-map corner.
+
+        The retained vertex bank witnesses only the quotient's vertex deck
+        action. It never replaces a higher-order coordinate map or proves its
+        whole-facet traces; those remain independent mapped-geometry premises.
+        """
+        if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
+            raise TypeError(
+                "Periodic exact geometry reproof requires its actual mesh and map."
+            )
+        if mesh.periodic_topology is not self:
+            raise ValueError("Periodic exact geometry requires its actual mesh topology.")
+        self.validate_restored()
+        self.require_lifted(mesh.topology, mesh.lifted_topology_id, mesh.blocks)
+        self.require_coordinates(mesh.coordinates)
+        elements, routes, _ = geometry.resolve(mesh)
+        source = self.exact_coordinate_source
+        if source is None:
+            return
+        source = _rebuild_periodic_witness(source, self.cell)
+        if source.source_map_id != self.coordinate_source_map_id:
+            raise ValueError("Periodic exact coordinate witness identity changed.")
+        if isinstance(source, ExactPowerCellGeometrySource):
+            if not isinstance(self.cell, PeriodicCell):
+                raise TypeError("Exact periodic power witnesses require PeriodicCell.")
+            source.require_periodic_lift(
+                mesh.coordinates,
+                self.cell,
+                self.vertex_representatives,
+                self.vertex_shifts,
+            )
+        else:
+            source.require_periodic_lift(
+                mesh.coordinates,
+                self.cell,
+                self.vertex_representatives,
+                self.vertex_shifts,
+            )
+        expected = source.source_coordinates()
+        vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        if len(expected) != vertex_ids.size:
+            raise ValueError(
+                "Periodic exact witness does not cover the mesh vertex bank."
+            )
+        if isinstance(source, (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource)) and not np.array_equal(
+            np.asarray(source.vertex_global_ids, dtype=np.int64), vertex_ids
+        ):
+            raise ValueError("Periodic exact witness changed vertex identities or order.")
+
+        # Canonical vertex geometry also supports polygonal and polyhedral
+        # families, including isolated vertices. Prove its full basis/routes,
+        # not merely a matching number of corners.
+        from ..geometry._mesh_certificates import _same_tree_content
+
+        affine = CellGeometrySpec.affine(mesh)
+        affine_elements, affine_routes, _ = affine.resolve(mesh)
+        if (
+            geometry.restriction_source is None
+            and _same_tree_content(elements, affine_elements)
+            and all(
+                np.array_equal(np.asarray(left), np.asarray(right))
+                for left, right in zip(routes, affine_routes, strict=True)
+            )
+            and geometry.source_coordinates() == expected
+        ):
+            return
+
+        from ._reference_cell import reference_cell_topology
+
+        seen: set[int] = set()
+        for block in mesh.blocks:
+            if block.cell_kind in ("polygon", "polyhedron"):
+                raise ValueError(
+                    "A noncanonical periodic polygonal map cannot prove exact vertex binding."
+                )
+            reference_vertices = tuple(
+                tuple(Fraction(float(value)) for value in point)
+                for point in reference_cell_topology(block.cell_kind).vertices
+            )
+            identifiers = np.asarray(block.global_ids, dtype=np.int64)
+            values = geometry.evaluate_exact(
+                mesh, identifiers, (reference_vertices,) * len(identifiers)
+            )
+            for rows, actual in zip(block.vertices, values, strict=True):
+                for row, point in zip(rows, actual, strict=True):
+                    index = int(row)
+                    if tuple(point) != tuple(expected[index]):
+                        raise ValueError(
+                            "Actual periodic cell map disagrees with its exact vertex witness."
+                        )
+                    seen.add(index)
+        if seen != set(range(vertex_ids.size)):
+            raise ValueError("Exact periodic geometry did not prove every mesh vertex.")
+
     @classmethod
     @checked
     def from_stored_fields(
@@ -1141,6 +1378,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         /,
         *,
         actual_geometry: CellGeometrySpec | None = None,
+        actual_mesh: CellMesh | None = None,
     ) -> PeriodicMeshTopology:
         """Rebuild quotient topology from its current canonical lifted mesh."""
         if not isinstance(stored, cls):
@@ -1149,6 +1387,10 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             actual_geometry, CellGeometrySpec
         ):
             raise TypeError("actual_geometry must be CellGeometrySpec or None.")
+        if actual_mesh is not None and not isinstance(actual_mesh, CellMesh):
+            raise TypeError("actual_mesh must be CellMesh or None.")
+        if actual_mesh is not None and actual_geometry is None:
+            raise ValueError("An actual periodic mesh requires its coordinate geometry.")
         stored.validate_restored()
         dimension = stored.topological_dimension
         if (
@@ -1158,28 +1400,81 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             raise ValueError(
                 "Stored periodic topology has malformed quotient dimensions."
             )
-        exact_coordinate_source = None
-        if stored.coordinate_source_map_id is not None:
-            source_map = None if actual_geometry is None else actual_geometry.source_map
-            if not isinstance(
-                source_map, (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource)
+        exact_coordinate_source = stored.exact_coordinate_source
+        if exact_coordinate_source is not None:
+            exact_coordinate_source = _rebuild_periodic_witness(
+                exact_coordinate_source, stored.cell
+            )
+            if exact_coordinate_source.source_map_id != stored.coordinate_source_map_id:
+                raise ValueError("Stored periodic exact coordinate witness changed.")
+        if actual_mesh is not None:
+            from ..geometry._mesh_certificates import _same_tree_content
+
+            actual_periodic = actual_mesh.periodic_topology
+            if (
+                actual_periodic is None
+                or not _same_tree_content(actual_periodic, stored)
+                or actual_mesh.lifted_topology_id != lifted_mesh.topology_id
+                or actual_mesh.numeric_version != lifted_mesh.numeric_version
+                or actual_mesh.ambient_dimension != lifted_mesh.ambient_dimension
+                or actual_mesh.topological_dimension != lifted_mesh.topological_dimension
+                or not _same_tree_content(actual_mesh.topology, lifted_mesh.topology)
+                or not _same_tree_content(actual_mesh.blocks, lifted_mesh.blocks)
+                or not np.array_equal(
+                    np.asarray(actual_mesh.vertex_global_ids),
+                    np.asarray(lifted_mesh.vertex_global_ids),
+                )
+                or not np.array_equal(
+                    np.asarray(actual_mesh.coordinates, dtype=np.float64).view(np.uint64),
+                    np.asarray(lifted_mesh.coordinates, dtype=np.float64).view(np.uint64),
+                )
             ):
                 raise ValueError(
-                    "Exact-witness periodic topology restore requires its current exact source map."
+                    "Actual periodic mesh differs from its lifted source or quotient."
                 )
-            exact_coordinate_source = source_map
-            if exact_coordinate_source.source_map_id != stored.coordinate_source_map_id:
-                raise ValueError(
-                    "Exact-witness periodic topology restore has another exact coordinate source."
-                )
-        elif actual_geometry is not None and actual_geometry.source_map is not None:
+            assert actual_geometry is not None
+            actual_periodic.require_exact_geometry(actual_mesh, actual_geometry)
+        elif (
+            actual_geometry is not None
+            and exact_coordinate_source is not None
+            and stored._actual_geometry is None
+        ):
             raise ValueError(
-                "Stored periodic topology lacks its exact coordinate source binding."
+                "Exact-witness periodic geometry reproof requires its actual periodic mesh."
             )
         if stored._actual_geometry is not None and actual_geometry is None:
             raise ValueError(
                 "Periodic topology restore requires the current bound exact geometry."
             )
+        if stored._actual_geometry is not None:
+            from ..geometry._mesh_certificates import _same_tree_content
+
+            assert actual_geometry is not None
+            bound = stored._actual_geometry
+            if actual_mesh is None:
+                same_map = _same_tree_content(bound, actual_geometry)
+            else:
+                # The retained map can be bound to the lifted carrier while
+                # the actual map must remain bound to the periodic endpoint.
+                # Compare every mathematical/source field, not the epoch IDs.
+                same_map = all(
+                    _same_tree_content(
+                        getattr(bound, name), getattr(actual_geometry, name)
+                    )
+                    for name in (
+                        "block_names",
+                        "elements",
+                        "geometry_dofs",
+                        "coordinates",
+                        "exact_coordinate_bank",
+                        "source_map",
+                        "restriction_source",
+                    )
+                )
+            if not same_map:
+                raise ValueError(
+                    "Periodic topology changed its originally bound coordinate geometry."
+                )
         quotient_ids = {
             degree: np.asarray(entity.entity_ids, dtype=np.int64)
             for degree, entity in enumerate(stored.quotient.entity_sets)
@@ -1188,8 +1483,8 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             degree: int(next_id)
             for degree, next_id in enumerate(stored.allocator_next_ids)
         }
-        # A witness-only topology (exact coordinate bank, no bound mapped geometry)
-        # takes its bank from the current geometry but stays unbound to it.
+        # A witness-only topology remains independent of the mapped coordinate
+        # geometry; its retained exact vertex source is revalidated separately.
         renewed = cls(
             lifted_mesh,
             stored.cell,
@@ -1197,9 +1492,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             stored.vertex_shifts,
             entity_global_ids=quotient_ids,
             entity_allocator_next_ids=allocator,
-            actual_geometry=(
-                None if stored._actual_geometry is None else actual_geometry
-            ),
+            actual_geometry=stored._actual_geometry,
             exact_coordinate_source=exact_coordinate_source,
         )
         array_fields = (
@@ -1316,6 +1609,12 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 self.vertex_shifts,
             )
             return
+        if isinstance(self.exact_coordinate_source, ExactPeriodicAlgebraicSource):
+            if self.exact_coordinate_source.source_map_id != self.coordinate_source_map_id:
+                raise ValueError("Periodic exact coordinate witness identity changed.")
+            self.exact_coordinate_source.require_periodic_lift(
+                coordinates, self.cell, self.vertex_representatives, self.vertex_shifts
+            )
         if (
             canonical_fingerprint(
                 array_tree_fingerprint(np.asarray(coordinates, dtype=np.float64))

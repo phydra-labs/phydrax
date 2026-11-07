@@ -42,7 +42,9 @@ from phydrax.discretization._nested_reference_types import (
     reference_chart_arguments_contain_source_cell,
     reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
+    ReferenceCellPartition,
     validate_reference_cell_map_witnesses,
+    validate_reference_cell_partition,
 )
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem._reference import lagrange_element
@@ -929,6 +931,149 @@ def test_exact_reference_controls_cover_prism_and_hexahedron_targets(
     assert control.source_cell_id == 71
     assert len(control.source_reference_vertices) == len(topology.vertices)
     validate_reference_cell_map_witnesses(control.witness)
+
+
+@pytest.mark.parametrize("kind", ("prism", "hexahedron"))
+def test_reference_partition_proves_cover_and_rejects_holes_or_overlap(kind: str) -> None:
+    corners = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology(kind).vertices
+    )
+
+    def mapped(offset: Fraction) -> tuple[tuple[Fraction, ...], ...]:
+        return tuple((x, y, z / 2 + offset) for x, y, z in corners)
+
+    left, right = mapped(Fraction(0)), mapped(Fraction(1, 2))
+
+    def partition(
+        children: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    ) -> ReferenceCellPartition:
+        witness = ReferenceCellMapWitnesses(
+            np.arange(len(children), dtype=np.int64),
+            np.full(len(children), 41, dtype=np.int64),
+            kind,
+            kind,
+            np.asarray(children, dtype=np.float64),
+            tuple(children),
+        )
+        return ReferenceCellPartition((witness,))
+
+    validate_reference_cell_partition(partition((left, right)))
+    with pytest.raises(ValueError, match="cover"):
+        validate_reference_cell_partition(partition((left,)))
+    with pytest.raises(ValueError, match="overlapping"):
+        validate_reference_cell_partition(partition((left, left)))
+
+
+def test_reference_partition_accepts_touching_prism_grid_and_rejects_duplicate() -> None:
+    n = 32
+    children: list[tuple[tuple[Fraction, ...], ...]] = []
+    for i in range(n):
+        for j in range(n - i):
+            triangles = [((i, j), (i + 1, j), (i, j + 1))]
+            if i + j < n - 1:
+                triangles.append(((i + 1, j), (i + 1, j + 1), (i, j + 1)))
+            for triangle in triangles:
+                children.append(
+                    tuple(
+                        (Fraction(x, n), Fraction(y, n), Fraction(z))
+                        for z in (0, 1)
+                        for x, y in triangle
+                    )
+                )
+    assert len(children) == n * n
+
+    def partition(
+        cells: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    ) -> ReferenceCellPartition:
+        return ReferenceCellPartition(
+            (
+                ReferenceCellMapWitnesses(
+                    np.arange(len(cells), dtype=np.int64),
+                    np.full(len(cells), 41, dtype=np.int64),
+                    "prism",
+                    "prism",
+                    np.asarray(cells, dtype=np.float64),
+                    cells,
+                ),
+            )
+        )
+
+    validate_reference_cell_partition(partition(tuple(children)))
+    # Equal total volume and inclusion are insufficient: replacing one cell
+    # duplicates another and leaves a hole elsewhere.
+    duplicate = tuple(children[:-1] + [children[0]])
+    with pytest.raises(ValueError, match="overlapping"):
+        validate_reference_cell_partition(partition(duplicate))
+
+
+def test_reference_partition_rejects_nonaffine_corner_map() -> None:
+    corners = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology("hexahedron").vertices
+    )
+    distorted = corners[:6] + ((Fraction(3, 4), Fraction(1), Fraction(1)),) + corners[7:]
+    witness = ReferenceCellMapWitnesses(
+        np.asarray((0,), dtype=np.int64),
+        np.asarray((41,), dtype=np.int64),
+        "hexahedron",
+        "hexahedron",
+        np.asarray((distorted,), dtype=np.float64),
+        (distorted,),
+    )
+    with pytest.raises(ValueError, match="affine"):
+        validate_reference_cell_partition(ReferenceCellPartition((witness,)))
+
+
+def test_pyramid_partition_retains_exact_affine_charts() -> None:
+    corners = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology("pyramid").vertices
+    )
+    charts: list[tuple[ExactReferenceChartExpression, ...]] = []
+    children = []
+    for i in range(2):
+        for j in range(2):
+            dx, dy = Fraction(i, 2), Fraction(j, 2)
+            zx, zy = Fraction(1 - 2 * i, 4), Fraction(1 - 2 * j, 4)
+            children.append(
+                tuple(
+                    (dx + x / 2 + zx * z, dy + y / 2 + zy * z, z) for x, y, z in corners
+                )
+            )
+            charts.append(
+                (
+                    {
+                        key: value
+                        for key, value in (
+                            ((0, 0, 0), dx),
+                            ((1, 0, 0), Fraction(1, 2)),
+                            ((0, 0, 1), zx),
+                        )
+                        if value
+                    },
+                    {
+                        key: value
+                        for key, value in (
+                            ((0, 0, 0), dy),
+                            ((0, 1, 0), Fraction(1, 2)),
+                            ((0, 0, 1), zy),
+                        )
+                        if value
+                    },
+                    {(0, 0, 1): Fraction(1)},
+                )
+            )
+    witness = ReferenceCellMapWitnesses(
+        np.arange(4, dtype=np.int64),
+        np.full(4, 41, dtype=np.int64),
+        "pyramid",
+        "pyramid",
+        np.asarray(children, dtype=np.float64),
+        tuple(children),
+        freeze_reference_chart_arguments(charts),
+    )
+    validate_reference_cell_partition(ReferenceCellPartition((witness,)))
 
 
 def test_shared_boundary_has_ambiguous_boundary_owner_but_unique_cell_interior() -> None:

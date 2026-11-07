@@ -39,6 +39,7 @@ import numpy as np
 
 from ._config_environment import LIBRARY_ENVIRONMENT
 from ._config_state import library_input
+from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._validation import canonical_identifier, finite_real_scalar
 
 
@@ -69,6 +70,8 @@ class MeshcoreStatus(IntEnum):
     INTERNAL_ERROR = 9
     ALLOCATION_FAILURE = 10
     INDEX_RANGE_ERROR = 11
+    STALE_GENERATION = 12
+    IO_FAILURE = 13
 
 
 class QuadraticValidityDecision(IntEnum):
@@ -265,6 +268,8 @@ class _RestrictedPowerCellsExactRequest(ctypes.Structure):
         ("result", _P),
         ("failed_image_coordinate", _P),
         ("failed_component", _P),
+        ("selected_site_count", _I64),
+        ("selected_sites", _P),
     )
 
 
@@ -417,6 +422,27 @@ class _IntervalBoxProgram(ctypes.Structure):
     )
 
 
+class _TetImplicitSource(ctypes.Structure):
+    _fields_ = (
+        ("value", _IntervalBoxProgram),
+        ("gradient", _IntervalBoxProgram),
+        ("groups", _P),
+        ("group_count", _I64),
+        ("tolerance", _F64),
+        ("orientation", _I32),
+        ("source_id", _P),
+        ("source_id_length", _I64),
+        ("source_revision", _P),
+        ("source_revision_length", _I64),
+        ("binding_id", _P),
+        ("binding_id_length", _I64),
+        ("frame_id", _P),
+        ("frame_id_length", _I64),
+        ("transversality_refusals", _I64),
+        ("distance_refusals", _I64),
+    )
+
+
 class _ZeroSetRemeshRequest(ctypes.Structure):
     _fields_ = (
         ("vertices", _P),
@@ -432,6 +458,7 @@ class _ZeroSetRemeshRequest(ctypes.Structure):
         ("result", _P),
         ("counters", _P),
         ("distance", _P),
+        ("admission_limited_coarsening", _I32),
     )
 
 
@@ -628,6 +655,7 @@ class _TetMeshCreateRequest(ctypes.Structure):
         ("segment_ids", _P),
         ("protection_radii", _P),
         ("protected_vertices", _P),
+        ("initial_vertex_sizes", _P),
         ("source_point_count", _I64),
         ("source_points", _P),
         ("source_face_count", _I64),
@@ -685,6 +713,7 @@ class _TetMeshSnapshotRequest(ctypes.Structure):
         ("cell_ancestor_capacity", _I64),
         ("vertex_ids", _P),
         ("points", _P),
+        ("vertex_size_targets", _P),
         ("witness_strata", _P),
         ("witness_entities", _P),
         ("witness_parameters", _P),
@@ -717,6 +746,7 @@ class _TetMeshSnapshotRequest(ctypes.Structure):
         ("cell_ids", _P),
         ("cell_vertices", _P),
         ("cell_regions", _P),
+        ("cell_size_targets", _P),
         ("facet_ids", _P),
         ("facet_vertices", _P),
         ("facet_sources", _P),
@@ -933,6 +963,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _I64, _I64, _P, _P),
     ),
     "phx_mc_power_cells_export_vertex_carriers": (_I32, (_P, _I64, _P)),
+    "phx_mc_power_cells_export_face_remotes": (_I32, (_P, _I64, _P, _P)),
     "phx_mc_power_cells_failure": (_I32, (_P, _P, _P, _P, _P)),
     "phx_mc_power_cells_free": (None, (_P,)),
     "phx_mc_triangle_intersections": (
@@ -1042,10 +1073,18 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_surface_envelope_free": (None, (_P,)),
     "phx_mc_surface_envelope_remesh": (_I32, (_P, _P, _P)),
     "phx_mc_zero_set_remesh": (_I32, (ctypes.POINTER(_ZeroSetRemeshRequest),)),
+    "phx_mc_zero_set_remesh_i32": (
+        _I32,
+        (ctypes.POINTER(_ZeroSetRemeshRequest), _P, _I64, _P, _I64),
+    ),
     "phx_mc_zero_set_remesh_sizes": (_I32, (_P, _P)),
     "phx_mc_zero_set_remesh_arrays": (_I32, (_P, _I64, _I64, _P, _P)),
     "phx_mc_zero_set_remesh_free": (None, (_P,)),
     "phx_mc_level_set_split_3d": (_I32, (ctypes.POINTER(_LevelSetSplit3DRequest),)),
+    "phx_mc_implicit_contours": (
+        _I32,
+        (_I64, _I64, *(_P,) * 7, _F64, *(_P,) * 4),
+    ),
     "phx_mc_mixed_template_counts": (_I32, (_I32, _I32, _I32, _P)),
     "phx_mc_mixed_template": (_I32, (_I32, _I32, _I32, _I64, _P)),
     "phx_mc_plc3d_prepare_source": (
@@ -1055,6 +1094,14 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_plc3d_recover": (
         _I32,
         (ctypes.POINTER(_Plc3DPrepareSourceRequest),),
+    ),
+    "phx_mc_plc3d_recover_with_affine_metric": (
+        _I32,
+        (ctypes.POINTER(_Plc3DPrepareSourceRequest), _P),
+    ),
+    "phx_mc_plc3d_recover_protected": (
+        _I32,
+        (ctypes.POINTER(_Plc3DPrepareSourceRequest), _P, _P),
     ),
     "phx_mc_plc3d_sizes": (_I32, (_P, _P)),
     "phx_mc_plc3d_export": (
@@ -1072,6 +1119,17 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (ctypes.POINTER(_TetMeshCreateRequest),),
     ),
+    "phx_mc_tet_mesh_create_with_affine_metric": (
+        _I32,
+        (ctypes.POINTER(_TetMeshCreateRequest), _P),
+    ),
+    "phx_mc_tet_mesh_create_with_implicit": (
+        _I32,
+        (ctypes.POINTER(_TetMeshCreateRequest), ctypes.POINTER(_TetImplicitSource)),
+    ),
+    "phx_mc_tet_mesh_bind_implicit": (_I32, (_P, ctypes.POINTER(_TetImplicitSource))),
+    "phx_mc_tet_mesh_implicit_source": (_I32, (_P, ctypes.POINTER(_TetImplicitSource))),
+    "phx_mc_tet_mesh_protect_facet_sources": (_I32, (_P, _I64, _P)),
     "phx_mc_tet_mesh_snapshot_sizes": (_I32, (_P, _P)),
     "phx_mc_tet_mesh_identity_sizes": (_I32, (_P, _P, _P, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_periodic_identity_sizes": (_I32, (_P, _P, _P, _P, _P, _P, _P, _P)),
@@ -1085,6 +1143,14 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_tet_mesh_unmet_count": (_I32, (_P, _P)),
     "phx_mc_tet_mesh_unmet": (_I32, (_P, _I64, _P, _P, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_tet_mesh_evaluate_quality": (
+        _I32,
+        (_P, _U64, _F64, _F64, _F64, _I64, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_tet_mesh_evaluate_candidate_quality": (
+        _I32,
+        (_P, _U64, _I64, _P, _F64, _F64, _F64, _I64, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_tet_mesh_plane_record_count": (_I32, (_P, _P)),
     "phx_mc_tet_mesh_plane_records": (_I32, (_P, _I64, _P, _P, _P, _P)),
     "phx_mc_tet_mesh_snapshot": (
@@ -1135,6 +1201,9 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _F64,
             _F64,
             _F64,
+            _I32,
+            _I64,
+            _P,
             _I64,
             _P,
             _P,
@@ -1479,6 +1548,10 @@ def _raise_for_call(
             raise OverflowError(
                 f"{operation}: native index representation is insufficient."
             )
+        case MeshcoreStatus.STALE_GENERATION:
+            raise MeshcoreError(code, f"{operation}: mesh generation is stale")
+        case MeshcoreStatus.IO_FAILURE:
+            raise MeshcoreError(code, f"{operation}: native scratch storage failed")
         case (
             MeshcoreStatus.UNRESOLVED
             | MeshcoreStatus.ALLOCATION_FAILURE
@@ -2502,6 +2575,8 @@ class RestrictedPowerCells(NamedTuple):
     vertex_carriers: np.ndarray
     vertex_site_offsets: np.ndarray
     vertex_sites: np.ndarray
+    face_remote_sites: np.ndarray
+    face_remote_tets: np.ndarray
 
 
 class ContactIntersections(NamedTuple):
@@ -2771,8 +2846,10 @@ class TetMeshPeriodicSnapshot(NamedTuple):
 
 class TetMeshArrays(NamedTuple):
     points: np.ndarray
+    vertex_size_targets: np.ndarray
     tetrahedra: np.ndarray
     tetrahedron_regions: np.ndarray
+    cell_size_targets: np.ndarray
     faces: np.ndarray
     face_sources: np.ndarray
     segments: np.ndarray
@@ -2819,6 +2896,7 @@ class TetMeshArrays(NamedTuple):
     cell_ancestor_ids: np.ndarray
     cell_ancestry_edit_kinds: np.ndarray
     periodic: TetMeshPeriodicSnapshot | None
+    implicit_source: TetMeshImplicitSnapshot | None
 
 
 class TetMeshSourceEvidence(NamedTuple):
@@ -2911,6 +2989,27 @@ class TetMeshUnmet(NamedTuple):
     # TET_MESH_UNMET_NO_FACET and NaN otherwise.
     facet_ids: np.ndarray
     facet_ratios: np.ndarray
+
+
+class TetMeshQuality(NamedTuple):
+    """Read-only final quality residuals bound to a mesh source and generation."""
+
+    identity: TetMeshIdentity
+    cell_ids: np.ndarray
+    criteria: np.ndarray
+    reasons: np.ndarray
+    values: np.ndarray
+
+
+class TetMeshCandidateQuality(NamedTuple):
+    """Quality of a separate candidate, bound to its payload and native history."""
+
+    historical_identity: TetMeshIdentity
+    candidate_id: str
+    cell_ids: np.ndarray
+    criteria: np.ndarray
+    reasons: np.ndarray
+    values: np.ndarray
 
 
 class TetMeshRun(NamedTuple):
@@ -3430,6 +3529,26 @@ class IntervalBoxProgram(NamedTuple):
     """Workspace entries (real-power bases) whose lower bound must be >= 0."""
 
 
+class TetMeshImplicitSource(NamedTuple):
+    """Source-bound native interval programs and exterior facet group rows."""
+
+    value: IntervalBoxProgram
+    gradient: IntervalBoxProgram
+    group_rows: np.ndarray
+    tolerance: float
+    orientation: int
+    source_id: str
+    source_revision: str
+    binding_id: str
+    frame_id: str
+
+
+class TetMeshImplicitSnapshot(NamedTuple):
+    source: TetMeshImplicitSource
+    transversality_refusals: int
+    distance_refusals: int
+
+
 class ZeroSetRemeshResult(NamedTuple):
     vertices: np.ndarray
     triangles: np.ndarray
@@ -3488,6 +3607,124 @@ def _interval_box_program(
     return view, (instructions, indices, locations, guards, parameters, lower, upper)
 
 
+def _tet_implicit_source_payload(
+    source: TetMeshImplicitSource, /
+) -> tuple[_TetImplicitSource, tuple[object, ...]]:
+    if not isinstance(source, TetMeshImplicitSource):
+        raise TypeError("implicit_source must be TetMeshImplicitSource.")
+    value, value_banks = _interval_box_program(source.value, 1, "implicit_source.value")
+    gradient, gradient_banks = _interval_box_program(
+        source.gradient, 3, "implicit_source.gradient"
+    )
+    groups = _native_integer_array(
+        source.group_rows, "implicit_source.group_rows", np.dtype(np.int32)
+    )
+    if (
+        groups.ndim != 1
+        or groups.size == 0
+        or np.any(groups < 0)
+        or np.unique(groups).size != groups.size
+    ):
+        raise ValueError(
+            "Implicit source group rows must be distinct nonnegative integers."
+        )
+    tolerance = float(source.tolerance)
+    orientation = _int32_argument(source.orientation, "implicit_source.orientation")
+    if not np.isfinite(tolerance) or tolerance <= 0 or orientation not in (-1, 0, 1):
+        raise ValueError("Implicit source tolerance or orientation is invalid.")
+    bound, encoded, buffers = _tet_mesh_identity_payload(
+        source.source_id, source.source_revision, source.binding_id, source.frame_id
+    )
+    if not bound or any(not item for item in encoded):
+        raise ValueError("Implicit source identity and frame must be nonempty.")
+    view = _TetImplicitSource(
+        value,
+        gradient,
+        _tet_mesh_pointer(groups),
+        groups.size,
+        tolerance,
+        orientation,
+        _tet_mesh_identity_pointer(bound, buffers[0]),
+        len(encoded[0]),
+        _tet_mesh_identity_pointer(bound, buffers[1]),
+        len(encoded[1]),
+        _tet_mesh_identity_pointer(bound, buffers[2]),
+        len(encoded[2]),
+        _tet_mesh_identity_pointer(bound, buffers[3]),
+        len(encoded[3]),
+        0,
+        0,
+    )
+    return view, (*value_banks, *gradient_banks, groups, *buffers)
+
+
+def _tet_implicit_source_snapshot(
+    library: MeshcoreLibrary, handle: ctypes.c_void_p, /
+) -> TetMeshImplicitSnapshot | None:
+    view = _TetImplicitSource()
+    _raise_for_call(
+        library["phx_mc_tet_mesh_implicit_source"](handle, ctypes.byref(view)),
+        "tet_mesh_implicit_source",
+    )
+    if view.group_count == 0:
+        return None
+
+    def copy_bank(pointer: int | None, length: int, dtype: np.dtype[Any]) -> np.ndarray:
+        if length < 0:
+            raise MeshcoreError(
+                MeshcoreStatus.INTERNAL_ERROR, "invalid implicit source bank"
+            )
+        if length:
+            if not pointer:
+                raise MeshcoreError(
+                    MeshcoreStatus.INTERNAL_ERROR, "invalid implicit source bank"
+                )
+            ctype = np.ctypeslib.as_ctypes_type(dtype)
+            result = np.ctypeslib.as_array(
+                ctypes.cast(pointer, ctypes.POINTER(ctype)), shape=(length,)
+            ).copy()
+        else:
+            result = np.empty(0, dtype=dtype)
+        result.setflags(write=False)
+        return result
+
+    def copy_program(program: _IntervalBoxProgram) -> IntervalBoxProgram:
+        integer, real = np.dtype(np.int64), np.dtype(np.float64)
+        return IntervalBoxProgram(
+            copy_bank(
+                program.instructions, 8 * program.instruction_count, integer
+            ).reshape(-1, 8),
+            copy_bank(program.indices, program.index_count, integer),
+            copy_bank(program.parameters, program.parameter_count, real),
+            copy_bank(program.workspace_lower, program.workspace_size, real),
+            copy_bank(program.workspace_upper, program.workspace_size, real),
+            copy_bank(program.outputs, program.output_count, integer),
+            copy_bank(program.guards, program.guard_count, integer),
+        )
+
+    def text(pointer: int | None, length: int) -> str:
+        if not pointer or length <= 0:
+            raise MeshcoreError(
+                MeshcoreStatus.INTERNAL_ERROR, "invalid implicit source identity"
+            )
+        return ctypes.string_at(pointer, length).decode("utf-8", "strict")
+
+    source = TetMeshImplicitSource(
+        copy_program(view.value),
+        copy_program(view.gradient),
+        copy_bank(view.groups, view.group_count, np.dtype(np.int32)),
+        float(view.tolerance),
+        int(view.orientation),
+        text(view.source_id, view.source_id_length),
+        text(view.source_revision, view.source_revision_length),
+        text(view.binding_id, view.binding_id_length),
+        text(view.frame_id, view.frame_id_length),
+    )
+    return TetMeshImplicitSnapshot(
+        source, int(view.transversality_refusals), int(view.distance_refusals)
+    )
+
+
 def zero_set_remesh(
     vertices: object,
     triangles: object,
@@ -3498,6 +3735,9 @@ def zero_set_remesh(
     edge_length: float,
     minimum_angle_degrees: float,
     /,
+    *,
+    incidence: tuple[object, object] | None = None,
+    admission_limited_coarsening: bool,
 ) -> ZeroSetRemeshResult:
     """Remesh a closed oriented carrier of ``{f = 0}`` under the zero-set band admission.
 
@@ -3505,15 +3745,44 @@ def zero_set_remesh(
     ``tolerance`` and a normal certified transversal to ``grad f`` with the
     carrier's orientation. ``carrier_distance`` is the input carrier's declared
     distance bound, retained by untouched input triangles; ``distance`` is the
-    maximum certified bound over the result.
+    maximum certified bound over the result. ``admission_limited_coarsening``
+    additionally centers vertices in the band (off the zero set) and collapses
+    edges below 4/5 of ``edge_length`` until the admission refuses them.
     """
+    if not isinstance(admission_limited_coarsening, bool):
+        raise TypeError("admission_limited_coarsening must be a bool.")
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
-    faces = np.ascontiguousarray(
-        _native_integer_array(triangles, "triangles", np.dtype(np.int64)),
-        dtype=np.int64,
+    input_faces = _index_array(triangles, "triangles")
+    compact_faces = input_faces.dtype == np.dtype(np.int32)
+    faces = (
+        np.ascontiguousarray(input_faces)
+        if compact_faces
+        else _native_integer_array(input_faces, "triangles", np.dtype(np.int64))
     )
     if faces.ndim != 2 or faces.shape[1] != 3 or faces.shape[0] == 0:
         raise ValueError("triangles must be a nonempty (N, 3) integer array.")
+    incidence_arrays: tuple[np.ndarray, np.ndarray] | None = None
+    if incidence is not None:
+        if not compact_faces:
+            raise ValueError("Borrowed incidence requires int32 triangles.")
+        if not isinstance(incidence, tuple) or len(incidence) != 2:
+            raise TypeError("incidence must be an (offsets, face_rows) tuple.")
+        offsets = _index_array(incidence[0], "incidence offsets")
+        face_rows = _index_array(incidence[1], "incidence face rows")
+        if offsets.dtype != np.dtype(np.int32) or face_rows.dtype != np.dtype(np.int32):
+            raise TypeError("Borrowed incidence arrays must be int32.")
+        if offsets.ndim != 1 or offsets.size != points.shape[0] + 1:
+            raise ValueError(
+                "incidence offsets must contain one entry per vertex plus one."
+            )
+        if face_rows.ndim != 1 or face_rows.size != 3 * faces.shape[0]:
+            raise ValueError(
+                "incidence face rows must contain three entries per triangle."
+            )
+        incidence_arrays = (
+            np.ascontiguousarray(offsets),
+            np.ascontiguousarray(face_rows),
+        )
     controls = (tolerance, carrier_distance, edge_length, minimum_angle_degrees)
     if any(not np.isfinite(value_) for value_ in controls) or not (
         tolerance > 0.0
@@ -3544,9 +3813,25 @@ def zero_set_remesh(
         ctypes.addressof(handle),
         counters.ctypes.data,
         distance.ctypes.data,
+        int(admission_limited_coarsening),
     )
     library = load_meshcore()
-    status = library["phx_mc_zero_set_remesh"](ctypes.byref(request))
+    if compact_faces:
+        if incidence_arrays is None:
+            status = library["phx_mc_zero_set_remesh_i32"](
+                ctypes.byref(request), 0, 0, 0, 0
+            )
+        else:
+            offsets, face_rows = incidence_arrays
+            status = library["phx_mc_zero_set_remesh_i32"](
+                ctypes.byref(request),
+                offsets.ctypes.data,
+                offsets.size,
+                face_rows.ctypes.data,
+                face_rows.size,
+            )
+    else:
+        status = library["phx_mc_zero_set_remesh"](ctypes.byref(request))
     del value_arrays, gradient_arrays  # kept alive through the native call
     _raise_for_call(status, "zero_set_remesh")
     if not handle.value:
@@ -4244,6 +4529,8 @@ def _copy_restricted_power_cells(
         np.empty((vertices_count, 4), dtype=np.int32),
         np.empty((vertices_count + 1,), dtype=np.int64),
         np.empty((witness_count,), dtype=np.int32),
+        np.empty((faces_count,), dtype=np.int32),
+        np.empty((faces_count,), dtype=np.int32),
     )
     _raise_for_call(
         library["phx_mc_power_cells_export"](
@@ -4288,6 +4575,15 @@ def _copy_restricted_power_cells(
             result.vertex_sites.ctypes.data,
         ),
         "power_cells_export_vertex_sites",
+    )
+    _raise_for_call(
+        library["phx_mc_power_cells_export_face_remotes"](
+            handle,
+            faces_count,
+            result.face_remote_sites.ctypes.data,
+            result.face_remote_tets.ctypes.data,
+        ),
+        "power_cells_export_face_remotes",
     )
     return result
 
@@ -4411,6 +4707,8 @@ def restricted_power_cells_exact(
     tet_regions: object,
     tet_face_facets: object,
     /,
+    *,
+    selected_sites: object | None = None,
 ) -> RestrictedPowerCells:
     """Restrict exact prepared power images without publishing rounded images."""
 
@@ -4447,6 +4745,19 @@ def restricted_power_cells_exact(
     domain, tetrahedra, regions, facets = _power_domain_arrays(
         points, tets, tet_regions, tet_face_facets
     )
+    selection = None
+    if selected_sites is not None:
+        selection = _native_integer_array(
+            selected_sites, "selected_sites", np.dtype(np.int32)
+        )
+        if (
+            selection.ndim != 1
+            or np.any(selection < 0)
+            or np.any(selection >= owners.size)
+            or np.unique(selection).size != selection.size
+        ):
+            raise ValueError("selected_sites must contain distinct valid image IDs.")
+        selection = np.ascontiguousarray(np.sort(selection))
     failed_coordinate = np.full((1,), -1, dtype=np.int64)
     failed_component = np.full((1,), -1, dtype=np.int64)
     library = load_meshcore()
@@ -4472,6 +4783,8 @@ def restricted_power_cells_exact(
         result=ctypes.addressof(handle),
         failed_image_coordinate=failed_coordinate.ctypes.data,
         failed_component=failed_component.ctypes.data,
+        selected_site_count=-1 if selection is None else selection.size,
+        selected_sites=None if selection is None else selection.ctypes.data,
     )
     status = library["phx_mc_restricted_power_cells_exact"](ctypes.byref(request))
     return _finish_restricted_power_cells(
@@ -5111,6 +5424,8 @@ def _plc3d_build(
     segment_tolerances: object | None = None,
     facet_planes: object | None = None,
     facet_plane_tolerances: object | None = None,
+    affine_metric: object | None = None,
+    protected_facets: object | None = None,
 ) -> PlcSourceData:
     """Run native PLC source preparation or full protected tetrahedral recovery."""
 
@@ -5205,6 +5520,18 @@ def _plc3d_build(
         facet_count,
     ):
         raise ValueError("facet_plane_tolerances must have shape (facet_count,).")
+    protected_array = None
+    if protected_facets is not None:
+        if operation != "phx_mc_plc3d_recover":
+            raise ValueError("Facet protection applies only to PLC recovery.")
+        flags = np.asarray(protected_facets)
+        if (
+            flags.shape != (facet_count,)
+            or flags.dtype.kind not in "biu"
+            or np.any(~np.isin(flags, (0, 1)))
+        ):
+            raise ValueError("protected_facets must contain one boolean flag per facet.")
+        protected_array = np.ascontiguousarray(flags, dtype=np.uint8)
 
     library = load_meshcore()
     handle = ctypes.c_void_p()
@@ -5230,7 +5557,27 @@ def _plc3d_build(
         None if plane_tolerance_array is None else plane_tolerance_array.ctypes.data,
         ctypes.addressof(handle),
     )
-    code = MeshcoreStatus(library[operation](ctypes.byref(request)))
+    metric = (
+        None
+        if affine_metric is None
+        else _periodic_float_bank(affine_metric, "affine_metric", (3, 3))
+    )
+    if protected_array is not None:
+        code = MeshcoreStatus(
+            library["phx_mc_plc3d_recover_protected"](
+                ctypes.byref(request),
+                protected_array.ctypes.data,
+                None if metric is None else metric.ctypes.data,
+            )
+        )
+    elif metric is None:
+        code = MeshcoreStatus(library[operation](ctypes.byref(request)))
+    else:
+        code = MeshcoreStatus(
+            library["phx_mc_plc3d_recover_with_affine_metric"](
+                ctypes.byref(request), metric.ctypes.data
+            )
+        )
     if not handle.value:
         _raise_for_call(code, operation_label)
         raise MeshcoreError(
@@ -5416,13 +5763,19 @@ def recover_plc(
     segment_tolerances: object | None = None,
     facet_planes: object | None = None,
     facet_plane_tolerances: object | None = None,
+    affine_metric: object | None = None,
+    protected_facets: object | None = None,
 ) -> PlcSourceData:
     """Recover a PLC with witnesses indexed by exported raw carrier banks.
 
     Stratum 1 entities index ``plc_edges`` and stratum 2 entities index
     ``input_triangles``. Python consumers must resolve these rows through exact
     source identity before constructing a persistent source bank. Declared
-    facet planes are as for ``prepare_plc_source``.
+    facet planes are as for ``prepare_plc_source``. ``affine_metric`` is an
+    optional nonsingular (3, 3) index-to-physical linear map. Coordinates,
+    topology and witnesses remain in index space; distances are physical.
+    ``protected_facets`` fixes the selected facets and all their incident edges
+    while other facets may be conformingly subdivided.
     """
 
     return _plc3d_build(
@@ -5440,6 +5793,8 @@ def recover_plc(
         segment_tolerances=segment_tolerances,
         facet_planes=facet_planes,
         facet_plane_tolerances=facet_plane_tolerances,
+        affine_metric=affine_metric,
+        protected_facets=protected_facets,
     )
 
 
@@ -5459,12 +5814,15 @@ def recover_plc_3d(
     segment_tolerances: object | None = None,
     facet_planes: object | None = None,
     facet_plane_tolerances: object | None = None,
+    affine_metric: object | None = None,
+    protected_facets: object | None = None,
 ) -> PlcRecovery3D:
     """Recover a PLC with raw carrier-row witnesses and region labels.
 
     Stratum 1 entities index ``plc_edges``; stratum 2 entities index
     ``input_triangles``. These are not persistent canonical source-bank rows.
-    Declared facet planes are as for ``prepare_plc_source``.
+    Declared facet planes are as for ``prepare_plc_source``. ``affine_metric``
+    is an optional nonsingular (3, 3) index-to-physical linear map.
     """
 
     segment_bank = np.empty((0, 2), dtype=np.int32) if segments is None else segments
@@ -5482,6 +5840,8 @@ def recover_plc_3d(
         segment_tolerances=segment_tolerances,
         facet_planes=facet_planes,
         facet_plane_tolerances=facet_plane_tolerances,
+        affine_metric=affine_metric,
+        protected_facets=protected_facets,
     )
     return PlcRecovery3D(
         recovered.status,
@@ -6648,9 +7008,26 @@ def _tet_mesh_pointer(array: np.ndarray | None, /) -> int | None:
     return int(array.ctypes.data)
 
 
+def _tet_radius_target(value: float | None, /) -> float | None:
+    """Validate the optional target before its native zero encoding."""
+    if value is None:
+        return None
+    radius = finite_real_scalar(value, "radius_edge_bound")
+    if radius <= 0.0:
+        raise ValueError("radius_edge_bound must be positive or None.")
+    return radius
+
+
 @final
 class TetMesh3D:
-    """Owned native tetrahedral mesh with atomic edits and checked snapshots."""
+    """Owned native tetrahedral mesh with atomic edits and checked snapshots.
+
+    ``affine_metric``, when supplied, is the finite nonsingular 3×3
+    index-to-world linear map. It is bound before source validation; points
+    and source witnesses stay in index coordinates, while size targets,
+    tolerances and quality are measured in world units. Translation does
+    not affect the metric. Reflections are accepted.
+    """
 
     def __init__(
         self,
@@ -6666,18 +7043,26 @@ class TetMesh3D:
         boundary_policy: PlcBoundaryPolicy | int = PlcBoundaryPolicy.FIXED,
         protection_radii: object | None = None,
         protected_vertices: object | None = None,
+        initial_vertex_sizes: object | None = None,
         vertex_ids: object | None = None,
         cell_ids: object | None = None,
         facet_ids: object | None = None,
         face_orientations: object | None = None,
         segment_ids: object | None = None,
         source: TetMeshSourceComplex | None = None,
+        implicit_source: TetMeshImplicitSource | None = None,
         source_id: str | None = None,
         source_revision: str | None = None,
         source_map_id: str | None = None,
         frame_id: str | None = None,
         periodic_state: TetMeshPeriodicState | None = None,
+        affine_metric: object | None = None,
     ) -> None:
+        metric_array = (
+            None
+            if affine_metric is None
+            else _periodic_float_bank(affine_metric, "affine_metric", (3, 3))
+        )
         point_array = _points(points, "points", 3)
         tet_array = _tet_mesh_rows(tetrahedra, "tetrahedra", 4, np.dtype(np.int32))
         face_array = _tet_mesh_rows(faces, "faces", 3, np.dtype(np.int32))
@@ -6874,6 +7259,19 @@ class TetMesh3D:
                 raise ValueError(
                     "protection_radii must be finite, nonnegative, and match points."
                 )
+        initial_sizes = (
+            None
+            if initial_vertex_sizes is None
+            else _real_array(initial_vertex_sizes, "initial_vertex_sizes")
+        )
+        if initial_sizes is not None and (
+            initial_sizes.shape != (point_array.shape[0],)
+            or np.any(~np.isfinite(initial_sizes))
+            or np.any(initial_sizes < 0.0)
+        ):
+            raise ValueError(
+                "initial_vertex_sizes must be finite, nonnegative, and match points."
+            )
         policy = _int32_argument(boundary_policy, "boundary_policy")
         if policy not in (
             int(PlcBoundaryPolicy.FIXED),
@@ -6888,6 +7286,20 @@ class TetMesh3D:
             if periodic_state is None
             else _tet_mesh_periodic_state_payload(periodic_state)
         )
+        implicit_payload = None
+        if implicit_source is not None:
+            if metric_array is not None or periodic_state is not None:
+                raise ValueError(
+                    "Implicit tetra sources do not support affine or periodic state."
+                )
+            implicit_payload = _tet_implicit_source_payload(implicit_source)
+            if not identity_bound or (
+                implicit_source.source_id,
+                implicit_source.source_revision,
+                implicit_source.binding_id,
+                implicit_source.frame_id,
+            ) != (source_id, source_revision, source_map_id, frame_id):
+                raise ValueError("Implicit tetra source must match the bound source identity and frame.")
         library = load_meshcore()
         handle = ctypes.c_void_p()
         request = _TetMeshCreateRequest()
@@ -6909,6 +7321,7 @@ class TetMesh3D:
         request.segment_ids = _tet_mesh_pointer(segment_id_bank)
         request.protection_radii = _tet_mesh_pointer(protection)
         request.protected_vertices = _tet_mesh_pointer(protected_mask)
+        request.initial_vertex_sizes = _tet_mesh_pointer(initial_sizes)
         request.source_point_count = (
             0 if source_banks["points"] is None else source_banks["points"].shape[0]
         )
@@ -6963,7 +7376,16 @@ class TetMesh3D:
         refusal = _TetPlaneRefusal()
         request.plane_refusal = ctypes.addressof(refusal)
         request.result = ctypes.addressof(handle)
-        status = library["phx_mc_tet_mesh_create"](ctypes.byref(request))
+        if implicit_payload is None:
+            status = library["phx_mc_tet_mesh_create_with_affine_metric"](
+                ctypes.byref(request),
+                None if metric_array is None else _tet_mesh_pointer(metric_array),
+            )
+        else:
+            implicit_view, _implicit_banks = implicit_payload
+            status = library["phx_mc_tet_mesh_create_with_implicit"](
+                ctypes.byref(request), ctypes.byref(implicit_view)
+            )
         if refusal.refused:
             raise TetMeshPlaneRefusal(
                 MeshcoreStatus(status),
@@ -6982,6 +7404,34 @@ class TetMesh3D:
         self._handle = handle
         self._lock = threading.RLock()
         self._closed = False
+
+    def bind_implicit_source(self, source: TetMeshImplicitSource, /) -> None:
+        """Bind validated interval authority to existing exterior source groups."""
+        view, _banks = _tet_implicit_source_payload(source)
+        with self._lock:
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_bind_implicit"](
+                    self._live(), ctypes.byref(view)
+                ),
+                "tet_mesh_bind_implicit",
+            )
+
+    def protect_facet_group_rows(self, sources: object, /) -> None:
+        """Fix native source group rows and their incident edges.
+
+        With a source complex, rows index its sorted ``face_ids`` bank, not
+        the source entity IDs themselves.
+        """
+        values = _tet_mesh_vector(sources, "sources", np.dtype(np.int32))
+        if np.any(values < 0):
+            raise ValueError("Protected facet source groups must be nonnegative.")
+        with self._lock:
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_protect_facet_sources"](
+                    self._live(), values.size, _tet_mesh_pointer(values)
+                ),
+                "tet_mesh_protect_facet_sources",
+            )
 
     def _live(self, /) -> ctypes.c_void_p:
         if self._closed or not self._handle.value:
@@ -7138,6 +7588,27 @@ class TetMesh3D:
     def frame_id(self) -> str:
         return self.identity.frame_id
 
+    @property
+    def implicit_source(self) -> TetMeshImplicitSnapshot | None:
+        """Return the owned implicit programs, source binding, and refusal counts."""
+        with self._lock:
+            return _tet_implicit_source_snapshot(self._library, self._live())
+
+    @property
+    def implicit_refusals(self) -> tuple[int, int] | None:
+        """Return transversality and distance refusals without copying programs."""
+        with self._lock:
+            view = _TetImplicitSource()
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_implicit_source"](
+                    self._live(), ctypes.byref(view)
+                ),
+                "tet_mesh_implicit_source",
+            )
+            if view.group_count == 0:
+                return None
+            return int(view.transversality_refusals), int(view.distance_refusals)
+
     def arrays(self) -> TetMeshArrays:
         """Copy the complete live mesh and its owned source banks."""
 
@@ -7176,6 +7647,7 @@ class TetMesh3D:
             ) = map(int, sizes.tolist())
             vertex_ids = np.empty((vertex_count,), dtype=np.uint64)
             points = np.empty((vertex_count, 3), dtype=np.float64)
+            vertex_size_targets = np.empty((vertex_count,), dtype=np.float64)
             witness_strata = np.empty((vertex_count,), dtype=np.int8)
             witness_entities = np.empty((vertex_count,), dtype=np.int32)
             witness_parameters = np.empty((vertex_count, 2), dtype=np.float64)
@@ -7196,6 +7668,7 @@ class TetMesh3D:
             cell_ids = np.empty((cell_count,), dtype=np.uint64)
             cell_vertices = np.empty((cell_count, 4), dtype=np.uint64)
             regions = np.empty((cell_count,), dtype=np.int32)
+            cell_size_targets = np.empty((cell_count,), dtype=np.float64)
             facet_ids = np.empty((facet_count,), dtype=np.uint64)
             facet_vertices = np.empty((facet_count, 3), dtype=np.uint64)
             facet_sources = np.empty((facet_count,), dtype=np.int32)
@@ -7282,6 +7755,7 @@ class TetMesh3D:
             for name, array in (
                 ("vertex_ids", vertex_ids),
                 ("points", points),
+                ("vertex_size_targets", vertex_size_targets),
                 ("witness_strata", witness_strata),
                 ("witness_entities", witness_entities),
                 ("witness_parameters", witness_parameters),
@@ -7302,6 +7776,7 @@ class TetMesh3D:
                 ("cell_ancestry_edit_kinds", cell_ancestry_edit_kinds),
                 ("cell_vertices", cell_vertices),
                 ("cell_regions", regions),
+                ("cell_size_targets", cell_size_targets),
                 ("facet_ids", facet_ids),
                 ("facet_vertices", facet_vertices),
                 ("facet_sources", facet_sources),
@@ -7392,6 +7867,16 @@ class TetMesh3D:
                 periodic_entity_corner_permutations,
                 periodic_entity_representative_rows,
             )
+            if np.any(~np.isfinite(vertex_size_targets)) or np.any(
+                vertex_size_targets < 0.0
+            ):
+                raise MeshcoreError(
+                    MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh vertex size targets"
+                )
+            if np.any(~np.isfinite(cell_size_targets)) or np.any(cell_size_targets < 0.0):
+                raise MeshcoreError(
+                    MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh cell size targets"
+                )
             if (
                 vertex_ancestry_offsets.shape != (vertex_count + 1,)
                 or vertex_ancestry_offsets[0] != 0
@@ -7491,10 +7976,15 @@ class TetMesh3D:
                 ancestor_cursor += count
                 cell_ancestry_offsets_sorted[output_row + 1] = ancestor_cursor
             cell_ancestry_edit_kinds_sorted = cell_ancestry_edit_kinds[cell_order]
+            vertex_size_targets.setflags(write=False)
+            cell_size_targets = cell_size_targets[cell_order]
+            cell_size_targets.setflags(write=False)
             return TetMeshArrays(
                 points,
+                vertex_size_targets,
                 remap(cell_vertices[cell_order], 4),
                 regions[cell_order],
+                cell_size_targets,
                 remap(facet_vertices[facet_order], 3),
                 output_face_sources[facet_order],
                 remap(segment_vertices[segment_order], 2),
@@ -7541,6 +8031,7 @@ class TetMesh3D:
                 cell_ancestor_ids_sorted,
                 cell_ancestry_edit_kinds_sorted,
                 periodic_snapshot,
+                _tet_implicit_source_snapshot(self._library, self._live()),
             )
 
     def source_evidence(self) -> TetMeshSourceEvidence:
@@ -7562,6 +8053,153 @@ class TetMesh3D:
             arrays.witness_parameters,
             arrays.witness_deviations,
         )
+
+    def evaluate_quality(
+        self,
+        *,
+        radius_edge_bound: float | None,
+        min_dihedral_degrees: float,
+        minimum_relative_determinant: float = 0.0,
+    ) -> TetMeshQuality:
+        """Evaluate current cells; ``None`` omits only the radius-edge target."""
+        radius_edge = _tet_radius_target(radius_edge_bound)
+        angle = finite_real_scalar(min_dihedral_degrees, "min_dihedral_degrees")
+        determinant = finite_real_scalar(
+            minimum_relative_determinant, "minimum_relative_determinant"
+        )
+        with self._lock:
+            identity = self._identity()
+            count = _I64()
+            evaluate = self._library["phx_mc_tet_mesh_evaluate_quality"]
+            arguments = (
+                self._live(),
+                identity.generation,
+                0.0 if radius_edge is None else radius_edge,
+                angle,
+                determinant,
+            )
+            _raise_for_call(
+                evaluate(*arguments, 0, ctypes.addressof(count), None, None, None, None),
+                "tet_mesh_evaluate_quality",
+            )
+            if count.value < 0:
+                raise MeshcoreError(
+                    MeshcoreStatus.INTERNAL_ERROR, "negative tetrahedral quality count"
+                )
+            row_count = int(count.value)
+            cells = np.empty((row_count,), dtype=np.uint64)
+            criteria = np.empty((row_count,), dtype=np.int32)
+            reasons = np.empty((row_count,), dtype=np.int32)
+            values = np.empty((row_count,), dtype=np.float64)
+            if row_count:
+                _raise_for_call(
+                    evaluate(
+                        *arguments,
+                        row_count,
+                        ctypes.addressof(count),
+                        _tet_mesh_pointer(cells),
+                        _tet_mesh_pointer(criteria),
+                        _tet_mesh_pointer(reasons),
+                        _tet_mesh_pointer(values),
+                    ),
+                    "tet_mesh_evaluate_quality",
+                )
+                if count.value != row_count:
+                    raise MeshcoreError(
+                        MeshcoreStatus.INTERNAL_ERROR,
+                        "tetrahedral quality count changed during evaluation",
+                    )
+            return TetMeshQuality(identity, cells, criteria, reasons, values)
+
+    def evaluate_candidate_quality(
+        self,
+        points: object,
+        /,
+        *,
+        vertex_ids: object,
+        radius_edge_bound: float | None,
+        min_dihedral_degrees: float,
+        minimum_relative_determinant: float = 0.0,
+    ) -> TetMeshCandidateQuality:
+        """Assess a candidate; ``None`` omits only the radius-edge target."""
+        candidate = _points(points, "points", 3).copy()
+        if not np.all(np.isfinite(candidate)):
+            raise ValueError("Candidate points must be finite.")
+        candidate_ids = _tet_mesh_vector(
+            vertex_ids, "vertex_ids", np.dtype(np.uint64)
+        ).copy()
+        radius_edge = _tet_radius_target(radius_edge_bound)
+        angle = finite_real_scalar(min_dihedral_degrees, "min_dihedral_degrees")
+        determinant = finite_real_scalar(
+            minimum_relative_determinant, "minimum_relative_determinant"
+        )
+        with self._lock:
+            identity = self._identity()
+            snapshot = self.arrays()
+            if candidate.shape != snapshot.points.shape:
+                raise ValueError(
+                    "Candidate points must align with the live snapshot vertices."
+                )
+            if not np.array_equal(candidate_ids, snapshot.vertex_ids):
+                raise ValueError(
+                    "Candidate vertex IDs must match the live snapshot order exactly."
+                )
+            candidate_id = canonical_fingerprint(
+                {
+                    "kind": "native-tet-quality-candidate",
+                    "history": tuple(identity),
+                    "vertices": array_tree_fingerprint(snapshot.vertex_ids),
+                    "points": array_tree_fingerprint(candidate),
+                    "radius_edge_bound": radius_edge,
+                    "minimum_dihedral_degrees": angle,
+                    "minimum_relative_determinant": determinant,
+                }
+            )
+            count = _I64()
+            evaluate = self._library["phx_mc_tet_mesh_evaluate_candidate_quality"]
+            arguments = (
+                self._live(),
+                identity.generation,
+                candidate.shape[0],
+                _tet_mesh_pointer(candidate),
+                0.0 if radius_edge is None else radius_edge,
+                angle,
+                determinant,
+            )
+            _raise_for_call(
+                evaluate(*arguments, 0, ctypes.addressof(count), None, None, None, None),
+                "tet_mesh_evaluate_candidate_quality",
+            )
+            if count.value < 0:
+                raise MeshcoreError(
+                    MeshcoreStatus.INTERNAL_ERROR, "negative candidate quality count"
+                )
+            row_count = int(count.value)
+            cells = np.empty((row_count,), dtype=np.uint64)
+            criteria = np.empty((row_count,), dtype=np.int32)
+            reasons = np.empty((row_count,), dtype=np.int32)
+            values = np.empty((row_count,), dtype=np.float64)
+            if row_count:
+                _raise_for_call(
+                    evaluate(
+                        *arguments,
+                        row_count,
+                        ctypes.addressof(count),
+                        _tet_mesh_pointer(cells),
+                        _tet_mesh_pointer(criteria),
+                        _tet_mesh_pointer(reasons),
+                        _tet_mesh_pointer(values),
+                    ),
+                    "tet_mesh_evaluate_candidate_quality",
+                )
+                if count.value != row_count:
+                    raise MeshcoreError(
+                        MeshcoreStatus.INTERNAL_ERROR,
+                        "candidate quality count changed during evaluation",
+                    )
+            return TetMeshCandidateQuality(
+                identity, candidate_id, cells, criteria, reasons, values
+            )
 
     def unmet(self) -> TetMeshUnmet:
         """Copy the live mesh's numerical criteria that remain unmet."""
@@ -8191,14 +8829,16 @@ class TetMesh3D:
         return size_array
 
     def refine(
-        self, *, radius_edge_bound: float, sizes: object | None = None
+        self, *, radius_edge_bound: float | None, sizes: object | None = None
     ) -> TetMeshRun:
         """Circumcenter refinement to the radius-edge bound and size targets.
+
+        ``radius_edge_bound=None`` requests no radius-edge target.
 
         ``sizes`` (one circumradius target per current vertex, 0 for none) becomes
         the mesh's retained size field; ``None`` keeps the retained field.
         """
-        radius_edge = finite_real_scalar(radius_edge_bound, "radius_edge_bound")
+        radius_edge = _tet_radius_target(radius_edge_bound)
         with self._lock:
             identity = self._identity()
             identity_bound, identity_bytes, identity_buffers = _tet_mesh_identity_payload(
@@ -8218,7 +8858,7 @@ class TetMesh3D:
                     *_tet_mesh_identity_arguments(
                         identity_bound, identity_bytes, identity_buffers
                     ),
-                    radius_edge,
+                    0.0 if radius_edge is None else radius_edge,
                     size_array.size,
                     _tet_mesh_pointer(size_array),
                     ctypes.addressof(edit_status),
@@ -8240,10 +8880,12 @@ class TetMesh3D:
     def improve(
         self,
         *,
-        radius_edge_bound: float,
+        radius_edge_bound: float | None,
         min_dihedral_degrees: float,
         minimum_relative_determinant: float = 0.0,
         sizes: object | None = None,
+        boundary_collapse_quality: bool = False,
+        original_vertex_ids: object | None = None,
     ) -> TetMeshRun:
         """Quality improvement gated by the determinant floor and the size field.
 
@@ -8255,13 +8897,26 @@ class TetMesh3D:
         among the cells it removes (none where they were within target), except
         one removing a degenerate cell. ``sizes`` follows :meth:`refine`
         (``None`` keeps the retained field, e.g. refinement's). The run reports
-        its score quantum.
+        its score quantum. ``radius_edge_bound=None`` requests no radius-edge target.
         """
-        radius_edge = finite_real_scalar(radius_edge_bound, "radius_edge_bound")
+        radius_edge = _tet_radius_target(radius_edge_bound)
         minimum_angle = finite_real_scalar(min_dihedral_degrees, "min_dihedral_degrees")
         determinant_floor = finite_real_scalar(
             minimum_relative_determinant, "minimum_relative_determinant"
         )
+        if not isinstance(boundary_collapse_quality, bool):
+            raise TypeError("boundary_collapse_quality must be bool.")
+        anchors = _tet_mesh_vector(
+            np.empty((0,), dtype=np.uint64)
+            if original_vertex_ids is None
+            else original_vertex_ids,
+            "original_vertex_ids",
+            np.dtype(np.uint64),
+        )
+        if boundary_collapse_quality != bool(anchors.size):
+            raise ValueError(
+                "Boundary collapse quality requires exactly one nonempty original vertex bank."
+            )
         with self._lock:
             identity = self._identity()
             identity_bound, identity_bytes, identity_buffers = _tet_mesh_identity_payload(
@@ -8282,9 +8937,12 @@ class TetMesh3D:
                     *_tet_mesh_identity_arguments(
                         identity_bound, identity_bytes, identity_buffers
                     ),
-                    radius_edge,
+                    0.0 if radius_edge is None else radius_edge,
                     minimum_angle,
                     determinant_floor,
+                    int(boundary_collapse_quality),
+                    anchors.size,
+                    _tet_mesh_pointer(anchors),
                     size_array.size,
                     _tet_mesh_pointer(size_array),
                     ctypes.addressof(edit_status),
@@ -8366,6 +9024,8 @@ __all__ = [
     "TetMeshEdit",
     "TetMeshEditKind",
     "TetMeshEditStatus",
+    "TetMeshImplicitSource",
+    "TetMeshImplicitSnapshot",
     "TetMeshPeriodicEdit",
     "TetMeshPeriodicEntityOrbitMap",
     "TetMeshPeriodicIdentityMap",
@@ -8376,6 +9036,7 @@ __all__ = [
     "TetMeshPeriodicState",
     "TetMeshPlaneRecords",
     "TetMeshPlaneRefusal",
+    "TetMeshQuality",
     "TetMeshRun",
     "TetMeshSourceComplex",
     "TetMeshSourceEvidence",

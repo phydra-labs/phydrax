@@ -1392,7 +1392,7 @@ def test_metric_exact_stencil_keeps_nonrepresentable_boundary_point() -> None:
         vertex_global_ids=np.arange(3),
     )
     source = certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-    exact_source = _metric_exact_source_vertices(source)
+    exact_source = _metric_exact_source_vertices(source.mesh, source.geometry)
     midpoint = tuple(
         (first + second) / 2
         for first, second in zip(exact_source[1], exact_source[2], strict=True)
@@ -1439,7 +1439,7 @@ def test_metric_exact_stencil_keeps_nonrepresentable_boundary_point() -> None:
     accepted = certify_cell_mesh(
         target, phx.SpatialCoordinateContract.si(), geometry=geometry
     )
-    assert _metric_exact_source_vertices(accepted)[-1] == midpoint
+    assert _metric_exact_source_vertices(accepted.mesh, accepted.geometry)[-1] == midpoint
     changed = edit._replace(coordinates=np.array(target_points, copy=True))
     changed.coordinates[-1, 0] = np.nextafter(changed.coordinates[-1, 0], np.inf)
     changed_target = CellMesh(

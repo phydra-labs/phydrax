@@ -21,7 +21,10 @@ if TYPE_CHECKING:
 
     from .._physical import SpatialCoordinateContract
     from ..discretization import CellGeometrySpec, CellMesh
-    from ..discretization._cell_geometry_validity import CellValidityCertificate
+    from ..discretization._cell_geometry_validity import (
+        CellValidityCertificate,
+        ComputedCellValidity,
+    )
     from ..discretization._nested_reference_types import ReferenceCellMapWitnesses
     from ..geometry._domain_certification import CoverageDomain, SourceCoverageWitness
     from ..geometry._global_embedding import (
@@ -30,6 +33,7 @@ if TYPE_CHECKING:
     )
     from ..geometry._planar_embedding import PlanarEmbedding
     from ..geometry._source_boundary_records import SourceBoundaryQuery
+    from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
     from ..geometry._source_fidelity_certificate import SourceFidelityWitness
     from ..geometry._surface_source_support import SurfaceSourceCharts
     from ..geometry.multiregion_surface import MultiRegionSurfaceTopology
@@ -38,6 +42,10 @@ if TYPE_CHECKING:
     from ._certification_inputs import ScopedFidelityInput
     from ._certification_schedule import MeshCertificationSchedule
     from ._controls import ProtectedFeature
+    from ._dual_extraction import SurfaceQuadFieldEvent
+    from ._layer_core_carrier_witness import NativeLayerCoreCarrierWitness
+    from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
+    from ._layer_core_subdivision import OverlapSourceStencils, RefinedColumnCertification
     from ._layer_curving_records import LayerCurvingSourceEvidence
     from ._organization import (
         MeshAttribute,
@@ -109,12 +117,36 @@ class NativeMeshConstruction:
     validated_global_embedding: ValidatedGlobalEmbedding | None = field(
         default=None, kw_only=True, repr=False, compare=False
     )
+    computed_validity: ComputedCellValidity | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
+    validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...] = field(
+        default=(), kw_only=True, repr=False, compare=False
+    )
     reference_maps: tuple[ReferenceCellMapWitnesses, ...] = field(
         default=(), kw_only=True
     )
     source_mesh: CellMesh | None = field(default=None, kw_only=True)
     source_geometry: CellGeometrySpec | None = field(default=None, kw_only=True)
+    surface_quad_field_event: SurfaceQuadFieldEvent | None = field(
+        default=None, kw_only=True
+    )
     planar_embedding: PlanarEmbedding | None = field(default=None, kw_only=True)
     layer_curving_evidence: LayerCurvingSourceEvidence | None = field(
         default=None, kw_only=True
+    )
+    layer_core_carrier_witness: NativeLayerCoreCarrierWitness | None = field(
+        default=None, kw_only=True
+    )
+    layer_core_overlap_stencils: OverlapSourceStencils | None = field(
+        default=None, kw_only=True
+    )
+    layer_core_column_certification: RefinedColumnCertification | None = field(
+        default=None, kw_only=True
+    )
+    layer_core_root_geometry: LayerCoreRootGeometry | None = field(
+        default=None, kw_only=True
+    )
+    computed_layer_core_root: ComputedLayerCoreRoot | None = field(
+        default=None, kw_only=True, repr=False, compare=False
     )

@@ -413,10 +413,52 @@ works as follows:
 - A route lives on its fringe receptor's owner. When its donor row there is a
   ghost, every SSPRK stage returns that donor debit to the donor's owner, so the
   global ledger balance equals the owned content change.
+- Every certified receptor face artifact includes `receptor_face_orientations`:
+  `+1` identifies the physical face's owner incidence and `-1` its neighbor
+  incidence. This is required even when both incidences have the same periodic
+  cell ID. Quadrature points and normals use the selected receptor image and
+  outward orientation; orientation is part of the artifact identity.
+- Owner-local preparation selects a face with positive outward first-coordinate
+  area using exact source-vertex coordinates and a stable quotient face key.
+  Opposite incidences cannot both select that face, so selection is independent
+  of the rank-local routed-receptor subset. This requires closed,
+  full-dimensional receptor cells with exact periodic source vertices.
 
 `commit_owner_local_repartition(..., owner_local_part_name=...)` migrates one named
 part of a composite runtime through the native graph migration. The owned cells of
 the other parts stay on their owners and keep their exact content.
+Explicitly declared cell-state banks may include typed JAX PRNG keys with the
+`rng` role. Their implementation and key words follow each stable cell ID; the
+repartition does not itself draw random values or advance the key.
+
+Owner-local archive replay rebuilds its source and target contexts through
+`phydrax.solver._finite_volume_archive_context`. A recipe naming a source must be
+replayed with an explicit `sources` mapping from that exact `source_id` to the
+current callable; unknown identifiers are rejected. The callable is bound to both
+source and target dynamics, and its state-dependent inputs remain the caller's
+responsibility. The archive does not serialize Python callables.
+Receptor boundary and wall scopes follow lifted global facet-vertex identities
+across repartition; excluded cells follow global cell IDs. The rebinding keeps
+the declared priority, owner rank, solid index and image transform, and refuses
+scoped source entities missing from the target. Cold archives reject non-None
+solid queries. Live rebinding retains a query on its original owner, but rejects
+the result collectively if that owner has no resident wall: the current part
+specification cannot represent a query without a wall or an empty wall scope.
+
+`DrivenEulerSource` is a cellwise acceleration and decaying heat source with
+explicit `DrivenEulerSourceArgs`: material coefficients, driving history, typed
+cell keys, committed clocks and an active-row mask. Construct keys with
+`driven_euler_cell_keys` from both 32-bit words of each persistent global ID.
+Keep the banks in full dynamics-cell-row order and pass
+`banks.select_rows(runtime.dynamics.source_cell_indices)` as the source
+arguments. This gathers every field, including typed keys, in the order used
+by the native unstructured evaluator. Staged evaluations are pure; accepted
+updates receive and retain the full bank layout.
+`PreparedFiniteVolumeRuntime.advance_with_auxiliary` composes the ordinary FV
+advance with an accepted-only update, such as `advance_driven_euler_banks`.
+On rejection it returns the original banks with the native failure evidence.
+Partitioned callers must migrate the banks by stable cell ID and rebuild the
+row-aligned arguments for the successor runtime.
 
 `commit_moving_overset_update(..., owner_local_part_name=...)` likewise moves one
 named part of a composite runtime. The rebuilt successor coupling binds the moved

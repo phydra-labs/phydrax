@@ -703,8 +703,10 @@ candidate are committed or rolled back together.
 
 `HybridMimeticDiffusion` is a separate three-dimensional unstructured cell/face
 operator for full SPD tensors. It retains shared face potentials and verifies its
-star-shaped geometric reconstruction. It is not an extension of the structured
-`ConservativeDiffusionPlan` and is not a TPFA shortcut. See
+star-shaped geometric reconstruction. Its default solve uses GMRES; the
+matrix-free operator does not claim a certified positive-definite linalg
+property. It is not an extension of the structured `ConservativeDiffusionPlan`
+and is not a TPFA shortcut. See
 [Porous-media flow, heat, and chemistry](guides_porous_media.md).
 
 ## Differentiability contract

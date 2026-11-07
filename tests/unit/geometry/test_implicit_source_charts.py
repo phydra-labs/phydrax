@@ -2,9 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from fractions import Fraction
-from typing import final, NoReturn
+from typing import cast, final, NoReturn
 
 import equinox as eqx
 import jax
@@ -443,6 +443,165 @@ def _affine_root_map(
     return root_map
 
 
+@pytest.mark.parametrize(
+    ("signed", "minimum", "maximum"),
+    (
+        ((-4.0, -1.0), 1.0, 4.0),
+        ((1.0, 4.0), 1.0, 4.0),
+        ((-4.0, 1.0), 0.0, 4.0),
+        ((0.0, 0.0), 0.0, 0.0),
+    ),
+)
+def test_signed_field_residual_magnitude_is_outward_enclosed(
+    signed: tuple[float, float], minimum: float, maximum: float
+) -> None:
+    lower, upper = source_charts._absolute_residual_interval(signed)
+    assert 0.0 <= lower <= minimum
+    assert upper >= maximum
+
+
+@pytest.mark.parametrize("signed", ((float("nan"), 1.0), (-1.0, float("nan"))))
+def test_signed_field_residual_preserves_nan(signed: tuple[float, float]) -> None:
+    lower, upper = source_charts._absolute_residual_interval(signed)
+    assert np.isnan(lower) and np.isnan(upper)
+
+
+def test_unbounded_field_residual_remains_unbounded() -> None:
+    _, upper = source_charts._absolute_residual_interval((-float("inf"), 1.0))
+    assert np.isinf(upper)
+
+
+def test_off_surface_face_certifies_absolute_field_residual() -> None:
+    surface, source, contract, mesh, _affine, witness = _adaptive_source()
+    block = mesh.blocks[0]
+    if not isinstance(block, CellBlock):
+        raise TypeError("Implicit chart tests require standard triangular target blocks.")
+    target = CellMesh.from_triangles(
+        0.8 * np.asarray(mesh.coordinates, dtype=np.float64),
+        np.asarray(block.vertices, dtype=np.int32),
+        vertex_global_ids=mesh.vertex_global_ids,
+        cell_global_ids=block.global_ids,
+    )
+    interior = CellGeometrySpec.affine(target)
+    selected = _retarget_implicit_witness(
+        witness, target, interior, np.asarray(block.global_ids, dtype=np.int64), rows=(0,)
+    )
+    root_map = prepare_adaptive_implicit_root_charts(
+        target, interior, source, selected, frame_id=contract.spatial_id, tolerance=0.5
+    )
+    face = root_map._faces[0]
+    barycentre = (Fraction(1, 3), Fraction(1, 3))
+    point = jnp.asarray(
+        [
+            float(source_charts.evaluate_expression(expression, barycentre))
+            for expression in face.face_expressions
+        ]
+    )
+    field = float(surface.geometry.kernel.boundary_field(surface.geometry.state, point))
+    assert field < 0.0
+    assert face.evidence.status == "certified"
+    assert any(piece.field_residual[0] > 0.0 for piece in face.pieces)
+    assert face.evidence.field_residual_bound >= abs(field)
+
+
+@pytest.mark.parametrize("nan_first", (False, True))
+def test_nonfinite_piece_residual_never_creates_reusable_face(
+    monkeypatch: pytest.MonkeyPatch, nan_first: bool
+) -> None:
+    from dataclasses import replace
+
+    _, source, contract, mesh, _, witness = _adaptive_source()
+    block = mesh.blocks[0]
+    if not isinstance(block, CellBlock):
+        raise TypeError("Implicit chart tests require standard triangular target blocks.")
+    target = CellMesh.from_triangles(
+        0.8 * np.asarray(mesh.coordinates, dtype=np.float64),
+        np.asarray(block.vertices, dtype=np.int32),
+        vertex_global_ids=mesh.vertex_global_ids,
+        cell_global_ids=block.global_ids,
+    )
+    geometry = CellGeometrySpec.affine(target)
+    selected = _retarget_implicit_witness(
+        witness, target, geometry, np.asarray(block.global_ids, dtype=np.int64), rows=(0,)
+    )
+    certify = source_charts._certify_face_injectivity
+
+    def inject_nonfinite(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        pieces, margin, detail = yield from certify(*args, **kwargs)
+        assert pieces and not detail
+        finite = pieces[0]
+        nonfinite = replace(finite, field_residual=(float("nan"), float("nan")))
+        return ((nonfinite, finite) if nan_first else (finite, nonfinite)), margin, detail
+
+    monkeypatch.setattr(source_charts, "_certify_face_injectivity", inject_nonfinite)
+    with pytest.raises(ValueError, match="residual enclosure is not finite"):
+        prepare_adaptive_implicit_root_charts(
+            target,
+            geometry,
+            source,
+            selected,
+            frame_id=contract.spatial_id,
+            tolerance=0.5,
+        )
+    certificate = certify_adaptive_implicit_charts(
+        target, geometry, source, selected, tolerance=0.5, maximum_normal_deviation=None
+    )
+    assert certificate.status == "unresolved"
+    assert any(
+        "residual enclosure is not finite" in finding.detail
+        for finding in certificate.findings
+    )
+
+
+def test_reissued_tetra_boundary_chart_proves_actual_oriented_face() -> None:
+    from phydrax.meshing.providers._native_implicit import (
+        _implicit_remeshed_volume_chart_witness,
+    )
+    from phydrax.meshing.providers._native_sources import NativeImplicitSource
+
+    surface, source, contract, _, _, _ = _adaptive_source()
+    assert surface.mesh is not None
+    scaffold_points = np.asarray(surface.mesh.vertices, dtype=np.float64)
+    scaffold_faces = np.asarray(surface.mesh.faces, dtype=np.int64)
+    triangle = scaffold_points[scaffold_faces[0]] * 0.999
+    points = np.concatenate((np.zeros((1, 3)), triangle))
+    cell = np.asarray([[0, 1, 2, 3]], dtype=np.int32)
+    if np.linalg.det(points[cell[0, 1:]] - points[cell[0, 0]]) < 0:
+        cell[0, [2, 3]] = cell[0, [3, 2]]
+    mesh = CellMesh(points, (CellBlock("one", "simplex:3", cell),))
+    geometry = CellGeometrySpec.affine(mesh)
+    authority = NativeImplicitSource(
+        surface.geometry, source.source_id, source.source_revision, discovery=surface
+    )
+    witness = _implicit_remeshed_volume_chart_witness(authority, surface, mesh, geometry)
+    root_edges = np.asarray(surface.scaffold.root_edge_ids)[
+        np.asarray(surface.scaffold.triangle_root_edge_rows)[0]
+    ]
+    rows = np.flatnonzero(
+        np.all(np.asarray(witness.implicit_root_edge_keys) == root_edges, axis=(1, 2, 3))
+    )
+    assert len(rows) == 1
+    face = _retarget_implicit_witness(
+        witness,
+        mesh,
+        geometry,
+        witness.cell_global_ids,
+        rows=(int(rows[0]),),
+        entity_ids=witness.entity_global_ids,
+    )
+    root_map = prepare_adaptive_implicit_root_charts(
+        mesh,
+        geometry,
+        source,
+        face,
+        frame_id=contract.spatial_id,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+    assert root_map.status == "certified"
+    assert root_map.chart_evidence[0].chart_jacobian_lower > 0.0
+
+
 def _curved_geometry(
     mesh: CellMesh,
     source: _BoundAdaptiveSourceQuery,
@@ -805,7 +964,172 @@ def test_implicit_root_bracket_widens_until_a_far_normal_root_is_signed() -> Non
     assert 2.0**4 * bracket_ends[0] < root
 
 
-def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces() -> None:
+_NEAR_BAND_RADIUS = 0.371
+_NEAR_BAND_OFFSET = 0.0093
+
+
+def _near_band_sphere_face(
+    inward: float = 0.0, /
+) -> tuple[
+    source_charts._FieldEnclosures,
+    source_charts.PreparedIntervalFunction,
+    AdaptiveImplicitSurface,
+    source_charts._FaceEnclosure,
+    float,
+]:
+    """A flat face tangent-offset .0093 off a sphere along its diagonal normal.
+
+    This is the shape of a centred remeshed carrier vertex: its plain
+    target-to-root bound converges to about .01004, above a .01 tolerance.
+    ``inward`` tilts the far vertices toward the sphere, so the face's largest
+    deviation is attained only at its corner vertex.
+    """
+    from types import SimpleNamespace
+
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), _NEAR_BAND_RADIUS).compile()
+    normal = np.ones(3) / np.sqrt(3.0)
+    corner = (_NEAR_BAND_RADIUS + _NEAR_BAND_OFFSET) * normal
+    first = np.asarray((1.0, -1.0, 0.0)) / np.sqrt(2.0)
+    second = np.cross(normal, first)
+    points = [
+        tuple(Fraction(float(value)) for value in point)
+        for point in (
+            corner,
+            corner + 0.1 * first - inward * normal,
+            corner + 0.1 * second - inward * normal,
+        )
+    ]
+
+    def coordinate(axis: int, /) -> source_charts.Polynomial:
+        terms = {
+            (0, 0): points[0][axis],
+            (1, 0): points[1][axis] - points[0][axis],
+            (0, 1): points[2][axis] - points[0][axis],
+        }
+        return {key: value for key, value in terms.items() if value}
+
+    expressions: source_charts.Polynomial3 = (
+        coordinate(0),
+        coordinate(1),
+        coordinate(2),
+    )
+    surface = cast(
+        AdaptiveImplicitSurface,
+        SimpleNamespace(
+            volume=SimpleNamespace(domain=np.asarray(((-1.0,) * 3, (1.0,) * 3)))
+        ),
+    )
+    deviation = (
+        float(np.sqrt(float(sum(value * value for value in points[0]))))
+        - _NEAR_BAND_RADIUS
+    )
+    return (
+        adaptive_discovery._FieldEnclosures(geometry, "interval"),
+        source_charts._prepare_hessian(geometry),
+        surface,
+        source_charts._enclose_face(expressions),
+        deviation,
+    )
+
+
+def _corner_triangle(level: int, /) -> source_charts.TriangleReference:
+    size = Fraction(1, 2**level)
+    return ((Fraction(0), Fraction(0)), (size, Fraction(0)), (Fraction(0), size))
+
+
+def _near_band_face_proof(
+    tolerance: float, monkeypatch: pytest.MonkeyPatch, /, inward: float = 0.0
+) -> tuple[tuple[source_charts._PieceProof, ...], str, list[int]]:
+    bounds, hessian, surface, face, _ = _near_band_sphere_face(inward)
+    rounds: list[int] = []
+    run_piece_steps = source_charts._run_piece_steps
+
+    def counted_rounds(
+        bounds: source_charts._FieldEnclosures,
+        hessian_program: source_charts.PreparedIntervalFunction,
+        steps: Sequence[source_charts._PieceSteps],
+        queries: Sequence[source_charts._BoxRequests] = (),
+        /,
+    ) -> tuple[list[source_charts._PieceOutcome], list[source_charts._BoxResults]]:
+        rounds.append(len(steps))
+        return run_piece_steps(bounds, hessian_program, steps, queries)
+
+    monkeypatch.setattr(source_charts, "_run_piece_steps", counted_rounds)
+
+    def prove(
+        triangles: Sequence[source_charts.TriangleReference],
+    ) -> tuple[source_charts._PieceSteps, ...]:
+        return source_charts._face_piece_proofs(
+            surface,
+            face,
+            triangles,
+            source_orientation=1,
+            projected_axes=(0, 1, 2),
+            tolerance=tolerance,
+            maximum_normal_deviation=None,
+        )
+
+    ((pieces, detail),) = source_charts._run_faces(
+        bounds,
+        hessian,
+        [source_charts._prove_face_triangles(prove, (_corner_triangle(4),))],
+    )
+    return pieces, detail, rounds
+
+
+def test_near_band_root_chart_plain_bound_does_not_converge_below_tolerance() -> None:
+    bounds, hessian, surface, face, deviation = _near_band_sphere_face()
+    (steps,) = source_charts._face_piece_proofs(
+        surface,
+        face,
+        (_corner_triangle(15),),
+        source_orientation=1,
+        projected_axes=(0, 1, 2),
+        tolerance=None,
+        maximum_normal_deviation=None,
+    )
+    ((proof, detail, _),), _ = source_charts._run_piece_steps(bounds, hessian, (steps,))
+    assert proof is not None, detail
+    # The plain step about t = 0 keeps a slope enclosure over the whole normal
+    # tube, so even a 2^-15 piece stays above the .01 tolerance.
+    assert proof.target_to_source[0] <= deviation < 0.01 < proof.target_to_source[1]
+
+
+def test_near_band_root_chart_certifies_by_newton_narrowing_in_bounded_rounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pieces, detail, rounds = _near_band_face_proof(0.01, monkeypatch)
+    assert detail == ""
+    assert pieces and len(rounds) <= 8
+    _, _, _, _, deviation = _near_band_sphere_face()
+    assert max(piece.target_to_source[1] for piece in pieces) <= 0.01
+    assert max(piece.target_to_source[0] for piece in pieces) <= deviation + 1.0e-4
+
+
+def test_near_band_root_chart_beyond_tolerance_refuses_as_violated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, detail, rounds = _near_band_face_proof(0.0092, monkeypatch)
+    assert detail.startswith("certified lower target-to-root deviation")
+    assert len(rounds) <= 10
+
+
+def test_near_band_root_chart_tie_refuses_at_binary64_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The tolerance is the corner's own distance up to rounding: no finite
+    # subdivision decides it, so refinement narrows to binary64 neighbours
+    # around the corner and refuses there, keeping a bounded frontier.
+    _, _, _, _, deviation = _near_band_sphere_face(0.05)
+    _, detail, rounds = _near_band_face_proof(deviation, monkeypatch, 0.05)
+    assert "straddles tolerance" in detail and "binary64 resolution" in detail
+    assert len(rounds) <= 60
+    assert max(rounds) <= 64
+
+
+def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     surface, source, _contract, mesh, geometry, witness = _adaptive_source()
     charts = prepare_adaptive_implicit_root_charts(
         mesh, geometry, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
@@ -813,9 +1137,72 @@ def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces() 
     faces = charts._faces
     tolerance = 0.05
 
-    lower, upper = source_charts._source_to_mesh_bounds(
-        surface, source_charts._face_maps(faces), tolerance
-    )
+    maps = source_charts._face_maps(faces)
+
+    def original_blocks(
+        face_maps: source_charts._FaceMaps,
+        low: np.ndarray,
+        high: np.ndarray,
+        reach: float,
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        if not len(low):
+            return
+        reached = source_charts.prepare_bvh(
+            np.nextafter(low - reach, -np.inf),
+            np.nextafter(high + reach, np.inf),
+            dtype=np.float64,
+        )
+        for face_rows, box_rows in source_charts.bvh_overlap_pair_blocks(
+            face_maps.bvh, reached, include_touching=True
+        ):
+            yield (
+                np.asarray(box_rows, dtype=np.int64),
+                np.asarray(face_rows, dtype=np.int64),
+            )
+
+    # Compare real native/host BVH streams and enclosed face controls across
+    # a small query and a query requiring full plus final-partial pair blocks.
+    point = np.asarray(surface.boundary_witnesses, dtype=np.float64)[:1]
+    for count in (3, source_charts._REVERSE_COVER_ROUND + 1):
+        points = np.repeat(point, count, axis=0)
+        old = list(original_blocks(maps, points, points, tolerance))
+        new = list(source_charts._box_face_pair_blocks(maps, points, points, tolerance))
+        assert old and new
+        for column in (0, 1):
+            assert np.array_equal(
+                np.concatenate([block[column] for block in old]),
+                np.concatenate([block[column] for block in new]),
+            )
+        if count > 3:
+            assert any(
+                len(boxes) == source_charts._REVERSE_COVER_ROUND for boxes, _ in new
+            )
+            assert 0 < len(new[-1][0]) < source_charts._REVERSE_COVER_ROUND
+
+        def controls(
+            blocks: list[tuple[np.ndarray, np.ndarray]],
+        ) -> tuple[np.ndarray, ...]:
+            rows = []
+            for box_rows, face_rows in blocks:
+                first, second = source_charts._nearest_face_parameters(
+                    maps, face_rows, points[box_rows]
+                )
+                low, high = source_charts._face_point_enclosures(
+                    maps, face_rows, first, second
+                )
+                rows.append((first, second, low, high))
+            return tuple(np.concatenate([row[i] for row in rows]) for i in range(4))
+
+        for previous, current in zip(controls(old), controls(new), strict=True):
+            assert np.array_equal(previous.view(np.uint64), current.view(np.uint64))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(source_charts, "_box_face_pair_blocks", original_blocks)
+        old_lower, old_upper = source_charts._source_to_mesh_bounds(
+            surface, maps, tolerance
+        )
+    lower, upper = source_charts._source_to_mesh_bounds(surface, maps, tolerance)
+    assert (lower, upper) == (old_lower, old_upper)
     assert 0.0 <= lower <= upper <= tolerance
 
     # Without the faces on the x > 0 side, the zero set there lies about one
@@ -906,6 +1293,79 @@ def _counting_build_face(monkeypatch: pytest.MonkeyPatch, /) -> list[int]:
 
     monkeypatch.setattr(source_charts, "_build_face", counting)
     return proved
+
+
+@pytest.mark.parametrize("movement", ("none", "one", "all"))
+def test_scoped_fidelity_reuses_only_full_identity_row_proof(
+    monkeypatch: pytest.MonkeyPatch, movement: str
+) -> None:
+    from phydrax.geometry.implicit._chart_restriction import ValidatedImplicitChartParent
+    from phydrax.meshing import _certification as certification_owner
+    from phydrax.meshing._certification_inputs import MeshCertificationInputs
+    from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+
+    _, source, _, mesh, geometry, witness = _adaptive_source()
+    parent = certify_source_fidelity(
+        mesh, geometry, source, witness=witness, tolerance=0.5
+    )
+    assert parent.status == "certified" and parent.chart_rows is not None
+    validated_parent = ValidatedImplicitChartParent(mesh, geometry, source, parent)
+    premise = ImplicitChartPremise(mesh, geometry, parent, None)
+    target, target_geometry, target_witness = mesh, geometry, witness
+    if movement != "none":
+        points = np.array(mesh.coordinates, dtype=np.float64, copy=True)
+        if movement == "one":
+            points[0] *= 1.0 + 2.0**-12
+        else:
+            points *= 1.0 + 2.0**-12
+        block = mesh.blocks[0]
+        assert isinstance(block, CellBlock)
+        target = CellMesh.from_triangles(
+            points, np.asarray(block.vertices, dtype=np.int32)
+        )
+        target_geometry = CellGeometrySpec.affine(target)
+        target_witness = _retarget_implicit_witness(
+            witness, target, target_geometry, np.asarray(witness.cell_global_ids)
+        )
+    inputs = MeshCertificationInputs(
+        target,
+        target_geometry,
+        MeshCertificationSchedule("surface"),
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source=source,
+        fidelity_tolerance=0.5,
+        fidelity_witness=target_witness,
+        scoped_fidelity=((source, target_witness, 0.5),),
+        protected_features=(),
+    )
+    direct = certification_owner.MeshCertificationReport(inputs)
+    calls = []
+    certify = certification_owner.certify_source_fidelity
+    proved = _counting_build_face(monkeypatch)
+
+    def counted(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        calls.append(1)
+        return certify(*args, **kwargs)
+
+    monkeypatch.setattr(certification_owner, "certify_source_fidelity", counted)
+    reused = certification_owner.MeshCertificationReport(
+        inputs, fidelity_premise=premise, validated_chart_parent=validated_parent
+    )
+    assert len(calls) == 1
+    if movement == "none":
+        assert not proved
+    elif movement == "one":
+        assert 0 < len(proved) < len(target_witness.source_chart_ids)
+    else:
+        assert len(proved) == len(target_witness.source_chart_ids)
+    assert reused.fidelity is reused.scoped_fidelity[0]
+    assert reused.fidelity is not None and direct.fidelity is not None
+    assert reused.fidelity.chart_rows is not None
+    assert reused.fidelity.chart_restriction is None
+    assert reused.fidelity.chart_premise is None
+    assert reused.fidelity.certificate_id == direct.fidelity.certificate_id
+    assert reused.report_id == direct.report_id
 
 
 def test_parent_chart_rows_are_reused_by_identity_and_reproduce_the_full_proof(
@@ -1141,6 +1601,41 @@ def test_adaptive_implicit_incomplete_root_ancestry_is_rejected() -> None:
         prepare_adaptive_implicit_root_charts(mesh, geometry, source, broken)
 
 
+def test_implicit_witness_refuses_late_duplicate_source_triangle() -> None:
+    surface, source, _contract, mesh, geometry, witness = _adaptive_source()
+    scaffold = surface.scaffold
+    cells = np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
+    edges = np.asarray(scaffold.triangle_root_edge_rows, dtype=np.int64)
+    keys = np.asarray(scaffold.cell_indices, dtype=np.int64)[cells]
+    roots = np.asarray(scaffold.root_edge_ids, dtype=np.int64)[edges]
+    matching = np.flatnonzero(
+        np.all(keys == np.asarray(witness.implicit_cell_keys)[0], axis=1)
+        & np.all(roots == np.asarray(witness.implicit_root_edge_keys)[0], axis=(1, 2, 3))
+    )
+    assert matching.size == 1
+    row = int(matching[0])
+    filler = (row + 1) % cells.size
+    forged_cells = np.concatenate(
+        (cells, np.full(8193, cells[filler], dtype=np.int64), cells[row : row + 1])
+    )
+    forged_edges = np.concatenate(
+        (edges, np.repeat(edges[filler : filler + 1], 8193, axis=0), edges[row : row + 1])
+    )
+    forged = eqx.tree_at(
+        lambda value: (
+            value.query.surface.scaffold.triangle_cell_rows,
+            value.query.surface.scaffold.triangle_root_edge_rows,
+        ),
+        source,
+        (forged_cells, forged_edges),
+    )
+    selected = _retarget_implicit_witness(
+        witness, mesh, geometry, witness.cell_global_ids, rows=(0,)
+    )
+    with pytest.raises(ValueError, match="duplicates an exact scaffold triangle"):
+        validate_source_fidelity_witness(mesh, geometry, forged, selected)
+
+
 def test_singular_implicit_target_map_retains_unresolved_fidelity_evidence() -> None:
     _surface, source, _contract, mesh, affine, _witness = _adaptive_source()
     elements, routes, coordinates = affine.resolve(mesh)
@@ -1337,7 +1832,9 @@ def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof(
         np.asarray(full.deviation_bounds)[:, 0]
         <= np.asarray(inherited.deviation_bounds)[:, 1]
     )
-    validated = ValidatedImplicitChartParent(target.mesh, target.geometry, query, inherited)
+    validated = ValidatedImplicitChartParent(
+        target.mesh, target.geometry, query, inherited
+    )
     ancestor = validated.ancestor
     assert ancestor is not None and ancestor.certificate is parent
     assert ancestor.certificate.chart_rows is not None
@@ -1354,6 +1851,41 @@ def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof(
     )
     assert not proved
     assert restored.certificate_id == parent.certificate_id
+
+    # A nested restriction is not the direct proof and cannot stand in for
+    # an otherwise identical scoped request.
+    from phydrax.meshing._certification import MeshCertificationReport
+    from phydrax.meshing._certification_inputs import MeshCertificationInputs
+    from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+
+    unrestricted_parent = certify_source_fidelity(
+        mesh, geometry, query, witness=witness, tolerance=0.5
+    )
+    scoped_inputs = MeshCertificationInputs(
+        target.mesh,
+        target.geometry,
+        MeshCertificationSchedule("surface"),
+        source_id=query.source_id,
+        source_revision=query.source_revision,
+        source=query,
+        fidelity_tolerance=0.5,
+        fidelity_witness=target_witness,
+        scoped_fidelity=((query, target_witness, 0.5),),
+        protected_features=(),
+    )
+    report = MeshCertificationReport(
+        scoped_inputs,
+        fidelity_premise=ImplicitChartPremise(
+            mesh, geometry, unrestricted_parent, transition
+        ),
+    )
+    assert report.fidelity is not None
+    assert report.fidelity.chart_restriction is not None
+    assert report.scoped_fidelity[0] is not report.fidelity
+    independent = certify_source_fidelity(
+        target.mesh, target.geometry, query, witness=target_witness, tolerance=0.5
+    )
+    assert report.scoped_fidelity[0].certificate_id == independent.certificate_id
 
 
 @pytest.mark.parametrize("case", ("affine", "quadratic", "cubic", "radical"))
@@ -1425,3 +1957,481 @@ def test_face_enclosure_reuses_derivatives_without_changing_exact_bounds(
                 ) == source_charts._enclosed_interval(
                     expected, source_charts._STANDARD_TRIANGLE
                 )
+
+
+def test_implicit_leaf_and_lattice_replay_refuse_changed_evidence() -> None:
+    from phydrax.geometry._approximate_source_coverage import SourceCoverageUnavailable
+    from phydrax.geometry._implicit_source_coverage import (
+        _check_leaf_replay,
+        _check_scaffold_lattice,
+    )
+    from phydrax.geometry.implicit._adaptive_polygon_replay import replay_polygon
+
+    surface, _, _, _, _, _ = _adaptive_source()
+    assert surface.cover is not None
+    bounds = surface.volume.bounds
+    _check_leaf_replay(surface, bounds)
+    _check_scaffold_lattice(surface, bounds)
+    assert replay_polygon(surface, bounds)
+
+    changed = np.array(surface.cover.value_lower, copy=True)
+    changed[0] = np.nextafter(changed[0], np.inf)
+    forged = eqx.tree_at(lambda value: value.cover.value_lower, surface, changed)
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        _check_leaf_replay(forged, bounds)
+    assert error.value.status == "violated"
+
+    changed = np.array(surface.scaffold.corner_coordinates, copy=True)
+    changed[0, 0] = np.nextafter(changed[0, 0], np.inf)
+    forged = eqx.tree_at(
+        lambda value: value.scaffold.corner_coordinates, surface, changed
+    )
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        _check_scaffold_lattice(forged, bounds)
+    assert error.value.status == "violated"
+
+    changed = np.array(surface.scaffold.tetrahedra, copy=True)
+    changed[0, 0] = changed[0, 1]
+    forged = eqx.tree_at(lambda value: value.scaffold.tetrahedra, surface, changed)
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        _check_scaffold_lattice(forged, bounds)
+    assert error.value.status == "violated"
+
+    changed = np.array(surface.scaffold.root_brackets, copy=True)
+    changed[0, 0, 0] = np.nextafter(changed[0, 0, 0], np.inf)
+    forged = eqx.tree_at(lambda value: value.scaffold.root_brackets, surface, changed)
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        _check_scaffold_lattice(forged, bounds)
+    assert error.value.status == "violated"
+
+    changed = np.array(surface.scaffold.triangle_root_edge_rows, copy=True)
+    changed[0, [0, 1]] = changed[0, [1, 0]]
+    forged = eqx.tree_at(
+        lambda value: value.scaffold.triangle_root_edge_rows, surface, changed
+    )
+    assert not replay_polygon(forged, bounds)
+
+    changed = np.array(surface.boundary_witnesses, copy=True)
+    changed[0, 0] = np.nextafter(changed[0, 0], np.inf)
+    forged = eqx.tree_at(lambda value: value.boundary_witnesses, surface, changed)
+    assert not replay_polygon(forged, bounds)
+
+
+def test_replayed_implicit_cover_partition_is_exact() -> None:
+    from phydrax.geometry._approximate_source_coverage import SourceCoverageUnavailable
+    from phydrax.geometry._implicit_source_coverage import _DyadicPartition
+    from phydrax.geometry.implicit._adaptive_discovery import _cell_box
+
+    domain = np.asarray(((0.1, 0.1, 0.1), (0.7, 0.7, 0.7)))
+    indices = np.asarray(
+        [(x, y, z) for x in (0, 1) for y in (0, 1) for z in (0, 1)],
+        dtype=np.int64,
+    )
+    levels = np.ones(len(indices), dtype=np.int64)
+    boxes = np.asarray(
+        [
+            _cell_box((int(index[0]), int(index[1]), int(index[2])), 1, domain)
+            for index in indices
+        ]
+    )
+    assert boxes[0, 1, 0] > boxes[4, 0, 0]
+    partition = _DyadicPartition(domain, 1, len(indices))
+    partition.add(levels, indices, boxes)
+    partition.finish()
+
+    mixed_indices = cast(np.ndarray, np.concatenate((indices[1:], indices), axis=0))
+    mixed_levels = np.concatenate((np.ones(7, dtype=np.int64), np.full(8, 2)))
+    mixed_boxes = np.asarray(
+        [
+            _cell_box((int(index[0]), int(index[1]), int(index[2])), int(level), domain)
+            for index, level in zip(mixed_indices, mixed_levels, strict=True)
+        ]
+    )
+    mixed = _DyadicPartition(domain, 2, len(mixed_indices))
+    mixed.add(mixed_levels, mixed_indices, mixed_boxes)
+    mixed.finish()
+
+    missing = _DyadicPartition(domain, 1, len(indices) - 1)
+    missing.add(levels[:-1], indices[:-1], boxes[:-1])
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        missing.finish()
+    assert error.value.status == "violated"
+
+    duplicate_indices = indices.copy()
+    duplicate_boxes = boxes.copy()
+    duplicate_indices[-1] = indices[0]
+    duplicate_boxes[-1] = boxes[0]
+    duplicate = _DyadicPartition(domain, 1, len(indices))
+    duplicate.add(levels, duplicate_indices, duplicate_boxes)
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        duplicate.finish()
+    assert error.value.status == "violated"
+
+    narrowed = boxes.copy()
+    narrowed[0, 1, 0] = np.nextafter(narrowed[0, 1, 0], -np.inf)
+    invalid = _DyadicPartition(domain, 1, len(indices))
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        invalid.add(levels, indices, narrowed)
+    assert error.value.status == "violated"
+
+
+def test_compact_implicit_topology_and_exact_triangle_lookup() -> None:
+    from phydrax.geometry._approximate_source_coverage import SourceCoverageUnavailable
+    from phydrax.geometry._implicit_source_coverage import (
+        _SourceTriangles,
+        _validate_oriented_implicit_triangles,
+    )
+
+    vertices = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    faces = np.asarray(((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)), dtype=np.int64)
+    _validate_oriented_implicit_triangles(faces)
+    index = _SourceTriangles(vertices, faces)
+    for row, face in enumerate(faces):
+        triangle = tuple(
+            tuple(Fraction(float(coordinate)) for coordinate in vertices[vertex])
+            for vertex in face[::-1]
+        )
+        assert index.get(triangle) == row
+    perturbed = (
+        (Fraction(1, 3), Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(0), Fraction(0)),
+    )
+    assert index.get(perturbed) is None
+    reversed_face = faces.copy()
+    reversed_face[0] = reversed_face[0, ::-1]
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        _validate_oriented_implicit_triangles(reversed_face)
+    assert error.value.status == "violated"
+    with pytest.raises(SourceCoverageUnavailable):
+        _SourceTriangles(vertices, np.concatenate((faces, faces[:1])))
+
+
+def test_compact_triangles_match_coordinate_identity_and_duplicates() -> None:
+    from phydrax.geometry._approximate_source_coverage import SourceCoverageUnavailable
+    from phydrax.geometry._implicit_source_coverage import _SourceTriangles
+
+    vertices = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [-0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+        ]
+    )
+    faces = np.asarray([[0, 1, 2], [3, 1, 4], [1, 2, 5]])
+    reference = {
+        tuple(
+            sorted(tuple(Fraction(float(v)) for v in vertices[index]) for index in face)
+        ): row
+        for row, face in enumerate(faces)
+    }
+    index = _SourceTriangles(vertices, faces)
+    for key, row in reference.items():
+        assert index.get(key) == row
+        assert index.get(key[::-1]) == row
+    assert index.get(((Fraction(0),) * 3,) * 3) is None
+    with pytest.raises(SourceCoverageUnavailable) as error:
+        _SourceTriangles(vertices, np.concatenate((faces, np.asarray([[3, 1, 2]]))))
+    assert error.value.status == "violated"
+
+    # Equal coordinates straddling a rank-building chunk remain one identity.
+    vertices = np.zeros((65538, 3))
+    vertices[:, 0] = np.arange(len(vertices))
+    vertices[65536] = vertices[65535]
+    faces = np.asarray([[0, 65534, 65535], [0, 65534, 65537]])
+    index = _SourceTriangles(vertices, faces)
+    triangle = tuple(tuple(Fraction(float(v)) for v in vertices[i]) for i in faces[1])
+    assert index.get(triangle) == 1
+    with pytest.raises(SourceCoverageUnavailable):
+        _SourceTriangles(vertices, np.asarray([[0, 65534, 65535], [0, 65534, 65536]]))
+
+
+def test_bounded_implicit_indices_match_real_source_rows() -> None:
+    surface, _, _, _, _, _ = _adaptive_source()
+    scaffold = surface.scaffold
+    roots = source_charts._source_root_rows(surface)
+    points = source_charts._root_rows_by_point(roots)
+    cells = source_charts._source_cell_rows(surface)
+    old_roots = {
+        source_charts._grid_edge(np.asarray(edge)): (
+            np.array(point, copy=True),
+            float(error),
+        )
+        for edge, point, error in zip(
+            scaffold.root_edge_ids,
+            scaffold.root_points,
+            scaffold.root_errors,
+            strict=True,
+        )
+    }
+    old_points: dict[bytes, GridEdge] = {}
+    for edge in sorted(old_roots):
+        old_points.setdefault(old_roots[edge][0].tobytes(), edge)
+    old_cells = {
+        _source_cell_key(np.asarray(key)): row
+        for row, key in enumerate(scaffold.cell_indices)
+    }
+    roots.prepare(tuple(old_roots))
+    points.prepare(tuple(old_points))
+    cells.prepare(tuple(old_cells))
+    for edge, (point, error) in old_roots.items():
+        actual, actual_error = roots[edge]
+        assert actual.tobytes() == point.tobytes()
+        assert actual_error == error
+    for point, edge in old_points.items():
+        assert points.get(point) == edge
+    for key, row in old_cells.items():
+        assert cells.get(key) == row
+    assert cells.get((-1, -1, -1, -1)) is None
+    assert points.get(np.asarray((np.inf, np.inf, np.inf)).tobytes()) is None
+
+
+def test_bounded_implicit_indices_duplicate_and_signed_zero() -> None:
+    from types import SimpleNamespace
+
+    edges = np.asarray(
+        [
+            [[0, 0, 0], [1, 0, 0]],
+            [[2, 0, 0], [3, 0, 0]],
+            [[1, 0, 0], [0, 0, 0]],
+            [[4, 0, 0], [5, 0, 0]],
+        ],
+        dtype=np.int64,
+    )
+    coords = np.asarray(
+        [[0.0, 1.0, 2.0], [0.0, 1.0, 2.0], [-0.0, 1.0, 2.0], [0.0, 1.0, 2.0]]
+    )
+    scaffold = SimpleNamespace(
+        root_edge_ids=edges,
+        root_points=coords,
+        root_errors=np.arange(4.0),
+        cell_indices=np.asarray([[1, 0, 0, 0], [2, 0, 0, 0], [1, 0, 0, 0]]),
+    )
+    surface = cast(AdaptiveImplicitSurface, SimpleNamespace(scaffold=scaffold))
+    roots = source_charts._source_root_rows(surface)
+    by_point = source_charts._root_rows_by_point(roots)
+    cells = source_charts._source_cell_rows(surface)
+    first = source_charts._grid_edge(edges[0])
+    second = source_charts._grid_edge(edges[1])
+    assert roots[first][0].tobytes() == coords[2].tobytes()
+    assert roots[first][1] == 2.0
+    assert by_point.get(coords[0].tobytes()) == second
+    assert by_point.get(coords[2].tobytes()) == first
+    assert cells.get((1, 0, 0, 0)) == 2
+    assert cells.get((9, 0, 0, 0)) is None
+    assert ((9, 0, 0), (10, 0, 0)) not in roots
+
+
+def test_bounded_reverse_cover_preserves_all_rows_and_exact_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import math
+    from types import SimpleNamespace
+
+    from phydrax.geometry.implicit._adaptive_discovery import AdaptiveImplicitCover
+
+    size = source_charts._REVERSE_COVER_ROUND
+    count = 2 * size + 123
+    boxes = np.arange(count * 6, dtype=np.float64).reshape(count, 2, 3)
+    lower = np.where(np.arange(count) % 3, -1.0, 1.0)
+    upper = np.where(np.arange(count) % 5, 1.0, -1.0)
+    cover = cast(
+        AdaptiveImplicitCover,
+        SimpleNamespace(
+            boxes=boxes,
+            value_lower=lower,
+            value_upper=upper,
+        ),
+    )
+    actual = list(source_charts._possible_zero_box_blocks(cover))
+    expected = boxes[(lower <= 0.0) & (upper >= 0.0)]
+    assert all(len(block) == size for block in actual[:-1])
+    assert np.array_equal(np.concatenate(actual), expected)
+
+    points = np.zeros((count, 3), dtype=np.float64)
+    points[:, 0] = np.linspace(0.0, 1.1, count)
+    errors = np.linspace(0.0, 0.02, count)
+    largest_batch = 0
+
+    def distance(
+        _maps: object, first: np.ndarray, second: np.ndarray, reach: float
+    ) -> np.ndarray:
+        nonlocal largest_batch
+        assert np.array_equal(first, second)
+        largest_batch = max(largest_batch, len(first))
+        return np.where(first[:, 0] < reach, first[:, 0], np.inf)
+
+    monkeypatch.setattr(source_charts, "_box_face_distance_lower", distance)
+    pending = np.arange(count)
+    nearest = np.empty(count)
+    reach = 2.0**-6
+    while pending.size:
+        found = distance(None, points[pending], points[pending], reach)
+        settled = (found < reach) | (reach > 1.0)
+        nearest[pending[settled]] = np.minimum(found[settled], reach)
+        pending = pending[~settled]
+        reach = math.nextafter(2.0 * reach, math.inf)
+    expected_lower = float(
+        np.max(np.maximum(np.nextafter(nearest - errors, -np.inf), 0.0), initial=0.0)
+    )
+    largest_batch = 0
+    maps = cast(source_charts._FaceMaps, None)
+    assert (
+        source_charts._witness_distance_lower(maps, points, errors, 1.0) == expected_lower
+    )
+    assert largest_batch <= size
+
+
+def test_implicit_complete_ancestry_predicate_exactness() -> None:
+    from types import SimpleNamespace
+
+    from phydrax.geometry._approximate_source_coverage import (
+        _names_each_scaffold_triangle_once,
+    )
+
+    cells = np.asarray([[1, 0, 0, 0], [1, 1, 0, 0]], dtype=np.int64)
+    edges = np.asarray([[[i, 0, 0], [i + 1, 0, 0]] for i in range(6)], dtype=np.int64)
+    triangle_cells = np.asarray([0, 1], dtype=np.int64)
+    triangle_edges = np.asarray([[0, 1, 2], [3, 4, 5]], dtype=np.int64)
+    scaffold = SimpleNamespace(
+        cell_indices=cells,
+        root_edge_ids=edges,
+        triangle_cell_rows=triangle_cells,
+        triangle_root_edge_rows=triangle_edges,
+    )
+    domain = cast(AdaptiveImplicitSurface, SimpleNamespace(scaffold=scaffold))
+    witness = cast(
+        SourceBoundaryChartWitness,
+        SimpleNamespace(
+            implicit_cell_keys=cells[::-1].copy(),
+            implicit_root_edge_keys=edges[triangle_edges[::-1, ::-1]][:, :, ::-1].copy(),
+        ),
+    )
+    assert _names_each_scaffold_triangle_once(domain, witness)
+    witness.implicit_cell_keys[1] = witness.implicit_cell_keys[0]
+    witness.implicit_root_edge_keys[1] = witness.implicit_root_edge_keys[0]
+    assert not _names_each_scaffold_triangle_once(domain, witness)
+    witness.implicit_cell_keys = witness.implicit_cell_keys[:1]
+    witness.implicit_root_edge_keys = witness.implicit_root_edge_keys[:1]
+    assert not _names_each_scaffold_triangle_once(domain, witness)
+    scaffold.triangle_root_edge_rows = triangle_edges.copy()
+    scaffold.triangle_root_edge_rows[1, 0] = len(edges)
+    with pytest.raises(IndexError):
+        _names_each_scaffold_triangle_once(domain, witness)
+    scaffold.triangle_root_edge_rows = triangle_edges
+    witness.implicit_cell_keys = cells.copy()
+    witness.implicit_root_edge_keys = edges[triangle_edges].copy()
+    scaffold.triangle_cell_rows = np.asarray([0, 0], dtype=np.int64)
+    scaffold.triangle_root_edge_rows = np.asarray([[0, 1, 2], [0, 1, 2]], dtype=np.int64)
+    assert not _names_each_scaffold_triangle_once(domain, witness)
+    scaffold.triangle_cell_rows = triangle_cells
+    scaffold.triangle_root_edge_rows = triangle_edges[:1]
+    with pytest.raises(ValueError, match="zip\\(\\) argument 2 is shorter"):
+        _names_each_scaffold_triangle_once(domain, witness)
+    scaffold.triangle_root_edge_rows = triangle_edges.copy()
+    scaffold.triangle_root_edge_rows[1, 0] = len(edges)
+    with pytest.raises(IndexError):
+        _names_each_scaffold_triangle_once(domain, witness)
+
+    count = 8193
+    many_cells = np.zeros((count, 4), dtype=np.int64)
+    many_cells[:, 1] = np.arange(count)
+    many_edges = np.tile(np.asarray([[0, 1, 2]], dtype=np.int64), (count, 1))
+    scaffold.cell_indices = many_cells
+    scaffold.triangle_cell_rows = np.arange(count, dtype=np.int64)
+    scaffold.triangle_root_edge_rows = many_edges
+    witness.implicit_cell_keys = many_cells.copy()
+    witness.implicit_root_edge_keys = edges[many_edges].copy()
+    assert _names_each_scaffold_triangle_once(domain, witness)
+    witness.implicit_cell_keys[-1] = witness.implicit_cell_keys[0]
+    assert not _names_each_scaffold_triangle_once(domain, witness)
+
+
+def test_reverse_cover_searches_past_near_noncertifying_face() -> None:
+    from types import SimpleNamespace
+
+    # Exact face-map and source-box operands from the original adaptive sphere
+    # capture: the first face box overlaps, but only the second face certifies.
+    coefficients = np.asarray(
+        [
+            [
+                [-0.3410944973107536, -0.028708359281904627, -0.008355139944754009],
+                [-0.04452625236781594, 0.014747762099195635, 0.16304613827678627],
+                [-0.13897106445012897, 0.13867311607951216, 0.10051345576057563],
+            ],
+            [
+                [-0.29229791765256563, -0.048796579658187955, -0.057151719602941964],
+                [0.11373552232394626, -0.1582617746917622, 0.004784363585024071],
+                [-0.19815942646685542, 0.05918836201672645, 0.15970181777730208],
+            ],
+        ]
+    )
+    lower = np.zeros((2, 3, 10))
+    upper = np.zeros_like(lower)
+    middle = np.zeros_like(lower)
+    middle[:, :, :3] = coefficients
+    lower[:, :, :3] = coefficients
+    upper[:, :, :3] = coefficients
+    lower[0, 2, 1] = 0.13867311607951213
+    lower[0, 2, 2] = 0.10051345576057562
+    lower[1, 1, 1] = -0.15826177469176222
+    lower[1, 2, 2] = 0.15970181777730205
+    upper[0, 1, 2] = 0.1630461382767863
+    box_lower = np.asarray(
+        [
+            [-0.3698028565926582, -0.04452625236781594, -0.13897106445012897],
+            [-0.3494496372555076, -0.04452625236781594, -0.19815942646685542],
+        ]
+    )
+    box_upper = np.asarray(
+        [
+            [-0.3410944973107536, 0.11851988590897033, -0.00029794837061681423],
+            [-0.29229791765256563, 0.11851988590897033, -0.03845760868955334],
+        ]
+    )
+    maps = source_charts._FaceMaps(
+        middle,
+        lower,
+        upper,
+        np.zeros((2, 3)),
+        box_lower,
+        box_upper,
+        source_charts.prepare_bvh(box_lower, box_upper, dtype=np.float64),
+    )
+    box = np.asarray(
+        [
+            [
+                [-0.35052978515625005, 0.02807861328125, -0.11956054687500002],
+                [-0.3496240234375, 0.028984375000000003, -0.11865478515625001],
+            ]
+        ]
+    )
+    cover = SimpleNamespace(
+        boxes=box,
+        value_lower=np.asarray([-0.000723988990780966]),
+        value_upper=np.asarray([0.0004915189407109777]),
+    )
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 0.371).compile()
+    bounds = adaptive_discovery._FieldEnclosures(geometry, "interval")
+    surface = cast(
+        AdaptiveImplicitSurface,
+        SimpleNamespace(
+            cover=cover,
+            volume=SimpleNamespace(bounds=bounds),
+            boundary_witnesses=np.empty((0, 3)),
+            boundary_errors=np.empty(0),
+        ),
+    )
+    center = np.mean(box, axis=1)
+    first = list(
+        source_charts._box_face_pair_blocks(maps, center, center, 0.02 * 2.0**-6)
+    )
+    assert np.array_equal(np.concatenate([faces for _, faces in first]), np.asarray([0]))
+    lower_bound, upper_bound = source_charts._source_to_mesh_bounds(surface, maps, 0.02)
+    assert lower_bound == 0.0
+    assert upper_bound == 0.013992911797843887

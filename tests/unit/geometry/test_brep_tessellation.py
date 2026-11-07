@@ -746,6 +746,14 @@ def test_offset_curve_ruled_surface_carrier_tessellates_with_bounds() -> None:
     ]
     assert edge_parameters.size >= 3
     assert np.all((edge_parameters > 0.0) & (edge_parameters < 2.0))
+    rows = np.flatnonzero((dimensions == 1) & (source_indices == 2))
+    curve = source.geometry.curves[source.geometry.edge_curves[2]]
+    # Compare in the original curve gauge, not merely against its range.
+    actual = np.asarray(tessellation.vertices)[rows]
+    parameters = np.asarray(tessellation.vertex_parameters)[rows, 0]
+    np.testing.assert_allclose(
+        actual, np.asarray(curve.evaluate(jnp.asarray(parameters))), atol=1e-12
+    )
 
 
 def test_custom_curve_without_c1_claim_has_no_tessellatable_source_model() -> None:

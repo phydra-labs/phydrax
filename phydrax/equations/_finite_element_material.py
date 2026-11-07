@@ -56,13 +56,131 @@ class MaterialSiteId(StrictModule, NonTrainableState):
 
     key: str = eqx.field(static=True)
     site_id: str = eqx.field(static=True)
+    domain_id: str | None = eqx.field(static=True)
+    cell_id: int | None = eqx.field(static=True)
+    quadrature_rule_id: str | None = eqx.field(static=True)
+    reference_site_id: str | None = eqx.field(static=True)
 
-    def __init__(self, key: str, /) -> None:
+    def __init__(
+        self,
+        key: str,
+        /,
+        *,
+        domain_id: str | None = None,
+        cell_id: int | None = None,
+        quadrature_rule_id: str | None = None,
+        reference_site_id: str | None = None,
+    ) -> None:
         key_ = str(key).strip()
         if not key_:
             raise ValueError("Material site key must be non-empty.")
+        metadata = (domain_id, cell_id, quadrature_rule_id, reference_site_id)
+        if any(value is not None for value in metadata):
+            expected = _cell_quadrature_site_key(
+                cell_id, reference_site_id, domain_id, quadrature_rule_id
+            )
+            if key_ != expected:
+                raise ValueError(
+                    "Material site key does not match cell quadrature identity."
+                )
+        elif key_.startswith("cell-quadrature:"):
+            raise ValueError("Cell quadrature site requires its complete identity.")
         self.key = key_
         self.site_id = canonical_fingerprint({"kind": "material-site", "key": key_})
+        self.domain_id = domain_id
+        self.cell_id = None if cell_id is None else int(cell_id)
+        self.quadrature_rule_id = quadrature_rule_id
+        self.reference_site_id = reference_site_id
+
+    @classmethod
+    def for_cell_quadrature(
+        cls,
+        cell_id: int,
+        reference_site_id: str,
+        /,
+        *,
+        domain_id: str,
+        quadrature_rule_id: str,
+    ) -> MaterialSiteId:
+        """Identify a global-cell/reference-site pair independently of its owner.
+
+        ``reference_site_id`` is the rule's stable reference-site identity, not
+        its position in a provider's current quadrature ordering.
+        """
+        key = _cell_quadrature_site_key(
+            cell_id, reference_site_id, domain_id, quadrature_rule_id
+        )
+        return cls(
+            key,
+            cell_id=cell_id,
+            reference_site_id=reference_site_id,
+            domain_id=domain_id,
+            quadrature_rule_id=quadrature_rule_id,
+        )
+
+
+class MaterialSiteOwnership(StrictModule, NonTrainableState):
+    """Complete site-to-rank authority, independent of local material storage.
+
+    The same stable site can have different owners in source and target
+    authorities. A rank with no entries is a valid owner-local placement.
+    """
+
+    site_ids: tuple[MaterialSiteId, ...]
+    owners: tuple[int, ...] = eqx.field(static=True)
+    part_count: int = eqx.field(static=True)
+    ownership_id: str = eqx.field(static=True)
+
+    def __init__(
+        self, entries: Sequence[tuple[MaterialSiteId, int]], /, *, part_count: int
+    ) -> None:
+        parts = _owner_rank(part_count)
+        if parts == 0:
+            raise ValueError("Material ownership part_count must be positive.")
+        entries_ = tuple(entries)
+        if not entries_:
+            raise ValueError(
+                "Material site ownership requires a non-empty global site table."
+            )
+        if not all(isinstance(site, MaterialSiteId) for site, _ in entries_):
+            raise TypeError("Material ownership sites must be MaterialSiteId values.")
+        ordered = tuple(sorted(entries_, key=lambda entry: entry[0].key))
+        sites = tuple(site for site, _ in ordered)
+        if len({site.key for site in sites}) != len(sites):
+            raise ValueError("Material ownership site IDs must be unique.")
+        owners = tuple(_owner_rank(owner) for _, owner in ordered)
+        if any(owner >= parts for owner in owners):
+            raise ValueError("Material owner rank must be within part_count.")
+        self.site_ids = sites
+        self.owners = owners
+        self.part_count = parts
+        self.ownership_id = canonical_fingerprint(
+            {
+                "kind": "material-site-ownership-with-part-count",
+                "part_count": parts,
+                "sites": [
+                    {"site_id": site.site_id, "owner": owner}
+                    for site, owner in zip(sites, owners, strict=True)
+                ],
+            }
+        )
+
+    def for_owner(self, rank: int, /) -> tuple[MaterialSiteId, ...]:
+        rank_ = _owner_rank(rank)
+        if rank_ >= self.part_count:
+            raise ValueError("Material owner rank must be within part_count.")
+        return tuple(
+            site
+            for site, owner in zip(self.site_ids, self.owners, strict=True)
+            if owner == rank_
+        )
+
+    def owner(self, site_id: MaterialSiteId | str, /) -> int:
+        key = _site_key(site_id)
+        for site, owner in zip(self.site_ids, self.owners, strict=True):
+            if site.key == key:
+                return owner
+        raise KeyError(f"Unknown material site {key!r}.")
 
 
 class ConstitutiveResponse(StrictModule):
@@ -671,24 +789,42 @@ class MaterialTransaction(StrictModule, NonTrainableState):
     """Atomic committed/trial state across a deterministic heterogeneous site table."""
 
     states: tuple[MaterialState, ...]
+    ownership: MaterialSiteOwnership | None
+    owner_rank: int | None = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
     transaction_id: str = eqx.field(static=True)
 
-    def __init__(self, states: Sequence[MaterialState], /) -> None:
+    def __init__(
+        self,
+        states: Sequence[MaterialState],
+        /,
+        *,
+        ownership: MaterialSiteOwnership | None = None,
+        owner_rank: int | None = None,
+    ) -> None:
         states_ = tuple(states)
-        if not states_ or not all(isinstance(state, MaterialState) for state in states_):
+        if not all(isinstance(state, MaterialState) for state in states_):
+            raise TypeError("states must contain MaterialState values.")
+        rank = _validate_placement(
+            tuple(state.site_id for state in states_), ownership, owner_rank
+        )
+        if not states_ and ownership is None:
             raise TypeError("states must contain one or more MaterialState values.")
         ordered = tuple(sorted(states_, key=lambda state: state.site_id.key))
         identifiers = tuple(state.site_id.key for state in ordered)
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Material transaction site IDs must be unique.")
         self.states = ordered
-        self.layout_id = canonical_fingerprint(
-            {
-                "kind": "material-transaction-layout",
-                "states": [state.layout_id for state in ordered],
-            }
-        )
+        self.ownership = ownership
+        self.owner_rank = rank
+        layout = {
+            "kind": "material-transaction-layout",
+            "states": [state.layout_id for state in ordered],
+        }
+        if ownership is not None:
+            layout["ownership_id"] = ownership.ownership_id
+            layout["owner_rank"] = rank
+        self.layout_id = canonical_fingerprint(layout)
         self.transaction_id = canonical_fingerprint(
             {
                 "kind": "material-transaction-revision",
@@ -720,14 +856,24 @@ class MaterialTransaction(StrictModule, NonTrainableState):
                 if state.site_id.key in normalized
                 else state
                 for state in self.states
-            )
+            ),
+            ownership=self.ownership,
+            owner_rank=self.owner_rank,
         )
 
     def commit(self, /) -> MaterialTransaction:
-        return MaterialTransaction(tuple(state.commit() for state in self.states))
+        return MaterialTransaction(
+            tuple(state.commit() for state in self.states),
+            ownership=self.ownership,
+            owner_rank=self.owner_rank,
+        )
 
     def rollback(self, /) -> MaterialTransaction:
-        return MaterialTransaction(tuple(state.rollback() for state in self.states))
+        return MaterialTransaction(
+            tuple(state.rollback() for state in self.states),
+            ownership=self.ownership,
+            owner_rank=self.owner_rank,
+        )
 
     def checkpoint_payload(
         self, /, *, plan_id: str | None = None
@@ -736,7 +882,7 @@ class MaterialTransaction(StrictModule, NonTrainableState):
 
 
 class MaterialCheckpointPayload(StrictModule, NonTrainableState):
-    """Content-bound committed material payload for portable checkpoints."""
+    """Content-bound committed and trial material payload for portable checkpoints."""
 
     state: MaterialTransaction
     plan_id: str | None = eqx.field(static=True)
@@ -754,16 +900,19 @@ class MaterialCheckpointPayload(StrictModule, NonTrainableState):
         plan = None if plan_id is None else str(plan_id).strip()
         if plan_id is not None and not plan:
             raise ValueError("plan_id must be non-empty or None.")
-        accepted = state.rollback()
-        self.state = accepted
+        state_ = _validated_material_transaction(state)
+        self.state = state_
         self.plan_id = plan
-        self.layout_id = accepted.layout_id
-        self.payload_id = _material_payload_id(accepted, plan)
+        self.layout_id = state_.layout_id
+        self.payload_id = _material_payload_id(state_, plan)
 
     def restore(self, /) -> MaterialTransaction:
-        if _material_payload_id(self.state, self.plan_id) != self.payload_id:
+        if (
+            _material_payload_id(self.state, self.plan_id) != self.payload_id
+            or self.layout_id != self.state.layout_id
+        ):
             raise ValueError("Material checkpoint payload content identity mismatch.")
-        return self.state.rollback()
+        return _validated_material_transaction(self.state)
 
 
 class MaterialIntegrationPlan(StrictModule):
@@ -776,6 +925,8 @@ class MaterialIntegrationPlan(StrictModule):
 
     site_ids: tuple[MaterialSiteId, ...]
     models: tuple[AbstractConstitutiveModel, ...]
+    ownership: MaterialSiteOwnership | None
+    owner_rank: int | None = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -785,9 +936,11 @@ class MaterialIntegrationPlan(StrictModule):
         /,
         *,
         plan_id: str | None = None,
+        ownership: MaterialSiteOwnership | None = None,
+        owner_rank: int | None = None,
     ) -> None:
         entries = tuple(sites)
-        if not entries:
+        if not entries and ownership is None:
             raise ValueError("Material integration plan requires one or more sites.")
         if not all(
             isinstance(site, MaterialSiteId)
@@ -802,26 +955,31 @@ class MaterialIntegrationPlan(StrictModule):
         site_ids = tuple(site for site, _ in ordered)
         if len({site.key for site in site_ids}) != len(site_ids):
             raise ValueError("Material integration site IDs must be unique.")
+        rank = _validate_placement(site_ids, ownership, owner_rank)
         models = tuple(model for _, model in ordered)
-        layout = canonical_fingerprint(
-            {
-                "kind": "material-integration-layout",
-                "sites": [
-                    {
-                        "site_id": site.site_id,
-                        "model_id": model.model_id,
-                        "state_shape": list(model.state_shape),
-                        "response_shape": list(model.response_shape),
-                    }
-                    for site, model in ordered
-                ],
-            }
-        )
+        layout_data = {
+            "kind": "material-integration-layout",
+            "sites": [
+                {
+                    "site_id": site.site_id,
+                    "model_id": model.model_id,
+                    "state_shape": list(model.state_shape),
+                    "response_shape": list(model.response_shape),
+                }
+                for site, model in ordered
+            ],
+        }
+        if ownership is not None:
+            layout_data["ownership_id"] = ownership.ownership_id
+            layout_data["owner_rank"] = rank
+        layout = canonical_fingerprint(layout_data)
         identifier = layout if plan_id is None else str(plan_id).strip()
         if not identifier:
             raise ValueError("plan_id must be non-empty or None.")
         self.site_ids = site_ids
         self.models = models
+        self.ownership = ownership
+        self.owner_rank = rank
         self.layout_id = layout
         self.plan_id = identifier
 
@@ -858,12 +1016,22 @@ class MaterialIntegrationPlan(StrictModule):
             MaterialState(site, model.model_id, value)
             for site, model, value in zip(self.site_ids, self.models, values, strict=True)
         )
-        transaction = MaterialTransaction(states)
+        transaction = MaterialTransaction(
+            states, ownership=self.ownership, owner_rank=self.owner_rank
+        )
         self.validate(transaction)
         return transaction
 
     @checked
     def validate(self, state: MaterialTransaction, /) -> None:
+        expected_ownership = (
+            None if self.ownership is None else self.ownership.ownership_id
+        )
+        actual_ownership = (
+            None if state.ownership is None else state.ownership.ownership_id
+        )
+        if expected_ownership != actual_ownership or self.owner_rank != state.owner_rank:
+            raise ValueError("Material state ownership does not match integration plan.")
         if len(state.states) != len(self.site_ids):
             raise ValueError("Material state does not match integration site count.")
         for material_state, site, model in zip(
@@ -1018,17 +1186,178 @@ def _site_key(site_id: MaterialSiteId | str, /) -> str:
     return key
 
 
+def _cell_quadrature_site_key(
+    cell_id: int | None,
+    reference_site_id: str | None,
+    domain_id: str | None,
+    quadrature_rule_id: str | None,
+    /,
+) -> str:
+    if (
+        isinstance(cell_id, (bool, np.bool_))
+        or not isinstance(cell_id, (int, np.integer))
+        or not isinstance(reference_site_id, str)
+        or not isinstance(domain_id, str)
+        or not isinstance(quadrature_rule_id, str)
+    ):
+        raise TypeError("Cell quadrature material site identity has invalid types.")
+    if (
+        int(cell_id) < 0
+        or not reference_site_id.strip()
+        or not domain_id.strip()
+        or not quadrature_rule_id.strip()
+    ):
+        raise ValueError("Cell quadrature material site identity is malformed.")
+    key = canonical_fingerprint(
+        {
+            "kind": "material-cell-quadrature-site",
+            "domain": domain_id,
+            "cell": int(cell_id),
+            "quadrature_rule": quadrature_rule_id,
+            "reference_site": reference_site_id,
+        }
+    )
+    return f"cell-quadrature:{key}"
+
+
+def _owner_rank(rank: int, /) -> int:
+    if (
+        isinstance(rank, (bool, np.bool_))
+        or not isinstance(rank, (int, np.integer))
+        or int(rank) < 0
+    ):
+        raise ValueError("Material owner rank must be a non-negative integer.")
+    return int(rank)
+
+
+def _validate_placement(
+    sites: Sequence[MaterialSiteId],
+    ownership: MaterialSiteOwnership | None,
+    owner_rank: int | None,
+    /,
+) -> int | None:
+    if ownership is None:
+        if owner_rank is not None:
+            raise ValueError("Material owner rank requires an ownership authority.")
+        return None
+    if not isinstance(ownership, MaterialSiteOwnership):
+        raise TypeError("ownership must be a MaterialSiteOwnership.")
+    if owner_rank is None:
+        raise ValueError("Material ownership requires an owner rank.")
+    rank = _owner_rank(owner_rank)
+    if {site.site_id for site in sites} != {
+        site.site_id for site in ownership.for_owner(rank)
+    }:
+        raise ValueError(
+            "Material placement must exactly cover the sites owned by its rank."
+        )
+    return rank
+
+
+def _validated_material_transaction(state: MaterialTransaction, /) -> MaterialTransaction:
+    """Reconstruct and verify every identity and placement at the checkpoint boundary."""
+    if type(state) is not MaterialTransaction:
+        raise TypeError("Material checkpoint state must be a MaterialTransaction.")
+
+    def site(value: MaterialSiteId) -> MaterialSiteId:
+        if type(value) is not MaterialSiteId:
+            raise TypeError("Material checkpoint sites must be MaterialSiteId values.")
+        rebuilt = MaterialSiteId(
+            value.key,
+            domain_id=value.domain_id,
+            cell_id=value.cell_id,
+            quadrature_rule_id=value.quadrature_rule_id,
+            reference_site_id=value.reference_site_id,
+        )
+        if rebuilt.site_id != value.site_id:
+            raise ValueError("Material checkpoint site identity mismatch.")
+        return rebuilt
+
+    ownership = state.ownership
+    if ownership is not None:
+        if type(ownership) is not MaterialSiteOwnership:
+            raise TypeError("Material checkpoint ownership has an invalid type.")
+        if len(ownership.site_ids) != len(ownership.owners):
+            raise ValueError("Material checkpoint ownership rows differ in length.")
+        rebuilt_ownership = MaterialSiteOwnership(
+            tuple(
+                (site(item), owner)
+                for item, owner in zip(ownership.site_ids, ownership.owners, strict=True)
+            ),
+            part_count=ownership.part_count,
+        )
+        if (
+            rebuilt_ownership.ownership_id != ownership.ownership_id
+            or tuple(item.key for item in rebuilt_ownership.site_ids)
+            != tuple(item.key for item in ownership.site_ids)
+            or rebuilt_ownership.owners != ownership.owners
+        ):
+            raise ValueError("Material checkpoint ownership identity mismatch.")
+        ownership = rebuilt_ownership
+    states = []
+    for value in state.states:
+        if type(value) is not MaterialState:
+            raise TypeError("Material checkpoint rows must be MaterialState values.")
+        rebuilt = MaterialState(
+            site(value.site_id),
+            value.model_id,
+            value.committed,
+            trial=value.trial,
+            state_version=value.state_version,
+        )
+        if rebuilt.layout_id != value.layout_id or rebuilt.state_id != value.state_id:
+            raise ValueError("Material checkpoint state identity mismatch.")
+        states.append(rebuilt)
+    result = MaterialTransaction(states, ownership=ownership, owner_rank=state.owner_rank)
+    if (
+        result.layout_id != state.layout_id
+        or result.transaction_id != state.transaction_id
+        or tuple(item.site_id.key for item in result.states)
+        != tuple(item.site_id.key for item in state.states)
+    ):
+        raise ValueError("Material checkpoint transaction identity mismatch.")
+    return result
+
+
+def _material_site_content_record(site: MaterialSiteId, /) -> dict[str, object]:
+    return {
+        "key": site.key,
+        "site_id": site.site_id,
+        "domain_id": site.domain_id,
+        "cell_id": site.cell_id,
+        "quadrature_rule_id": site.quadrature_rule_id,
+        "reference_site_id": site.reference_site_id,
+    }
+
+
 def _material_payload_id(state: MaterialTransaction, plan_id: str | None, /) -> str:
     return canonical_fingerprint(
         {
-            "kind": "material-checkpoint-payload",
+            "kind": "material-checkpoint-payload-bound-placement",
             "plan_id": plan_id,
             "layout_id": state.layout_id,
+            "transaction_id": state.transaction_id,
+            "owner_rank": state.owner_rank,
+            "ownership": (
+                None
+                if state.ownership is None
+                else {
+                    "ownership_id": state.ownership.ownership_id,
+                    "part_count": state.ownership.part_count,
+                    "sites": [
+                        _material_site_content_record(site)
+                        for site in state.ownership.site_ids
+                    ],
+                    "owners": state.ownership.owners,
+                }
+            ),
             "states": [
                 {
-                    "site_id": material_state.site_id.site_id,
+                    "site": _material_site_content_record(material_state.site_id),
                     "model_id": material_state.model_id,
                     "state_version": material_state.state_version,
+                    "layout_id": material_state.layout_id,
+                    "state_id": material_state.state_id,
                 }
                 for material_state in state.states
             ],
@@ -1037,6 +1366,9 @@ def _material_payload_id(state: MaterialTransaction, plan_id: str | None, /) -> 
                     np.asarray(material_state.committed)
                     for material_state in state.states
                 )
+            ),
+            "trial": array_tree_fingerprint(
+                tuple(np.asarray(material_state.trial) for material_state in state.states)
             ),
         }
     )
@@ -1050,6 +1382,7 @@ __all__ = [
     "MaterialCheckpointPayload",
     "MaterialIntegrationPlan",
     "MaterialSiteId",
+    "MaterialSiteOwnership",
     "MaterialState",
     "MaterialTransaction",
 ]

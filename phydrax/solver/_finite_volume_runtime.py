@@ -5968,6 +5968,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         invalidated_ids: tuple[str, ...] = ()
         prepared_entries: tuple[CompositionEntry, ...] = ()
         bank_inputs: list[tuple[str, CompositionEntry, np.ndarray, Any, Any]] = []
+        bank_key_implementations: dict[str, Any] = {}
         source_plan_ids = source_owned_ids = target_plan_ids = target_owned_ids = None
         target_owned_mask: np.ndarray | None = None
         source_owned_rows = target_owned_rows = None
@@ -6551,7 +6552,13 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     )
                 axis = spec.cell_axis
                 source_array = jnp.asarray(source_entry.value)
+                if jax.dtypes.issubdtype(source_array.dtype, jax.dtypes.prng_key):
+                    if source_entry.role != "rng":
+                        raise ValueError("Typed PRNG cell banks must have the rng role.")
+                    bank_key_implementations[entry_id] = jax.random.key_impl(source_array)
                 values = jnp.moveaxis(source_array, axis, 0)
+                if entry_id in bank_key_implementations:
+                    values = jax.random.key_data(values)
                 id_to_row = {
                     int(identifier): row for row, identifier in enumerate(row_ids)
                 }
@@ -6576,6 +6583,11 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                             "semantics": source_entry.semantics_id,
                             "cell_axis": axis,
                             "tail_shape": tuple(int(value) for value in values.shape[1:]),
+                            "prng_implementation": (
+                                str(bank_key_implementations[entry_id])
+                                if entry_id in bank_key_implementations
+                                else None
+                            ),
                             "dtype": str(values.dtype),
                         }
                     ),
@@ -6952,6 +6964,17 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     content_values / safe_volumes.reshape((-1,) + trailing),
                     0.0,
                 )
+            except Exception as error:
+                content_error = error
+            error_text = collective_error(
+                content_error,
+                f"{self.owner_local_axis_name}_repartition_content_preparation",
+            )
+            if error_text is not None:
+                return failed_transfer(error_text)
+
+            content_error = None
+            try:
                 refreshed_average = target_runtime._provide_stage_state(
                     source_content.time, jnp.asarray(owned_average)
                 )
@@ -6992,6 +7015,17 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                         True,
                     )
                 )
+            except Exception as error:
+                content_error = error
+            error_text = collective_error(
+                content_error,
+                f"{self.owner_local_axis_name}_repartition_content_construction",
+            )
+            if error_text is not None:
+                return failed_transfer(error_text)
+
+            content_error = None
+            try:
                 valid = target_runtime.owner_local_decision_provider(valid)
                 if not bool(np.asarray(valid)):
                     raise ValueError("Migrated target FV state is inadmissible.")
@@ -7157,7 +7191,12 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     source_entry = external_by_id[entry_id]
                     bank_transfer = transfers[f"entry:{entry_id}"]
                     axis = spec.cell_axis
-                    values = jnp.moveaxis(bank_transfer.target_values, 0, axis)
+                    values = bank_transfer.target_values
+                    if entry_id in bank_key_implementations:
+                        values = jax.random.wrap_key_data(
+                            values, impl=bank_key_implementations[entry_id]
+                        )
+                    values = jnp.moveaxis(values, 0, axis)
                     revision_id = canonical_fingerprint(
                         {
                             "kind": "finite-volume-owner-local-cell-state",
@@ -7370,6 +7409,33 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             successor_runtime=target_runtime,
             repartition_receipt=receipt,
         )
+
+    def advance_with_auxiliary(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        banks: _TreeT,
+        update: Callable[
+            [FiniteVolumeRuntimeState, FiniteVolumeAdvanceResult, _TreeT], _TreeT
+        ],
+        /,
+        args: Any = None,
+    ) -> tuple[FiniteVolumeAdvanceResult, _TreeT]:
+        """Advance the runtime and commit auxiliary banks only on acceptance.
+
+        ``args`` is passed unchanged to the existing finite-volume integrator.
+        The pure ``update`` receives the prior runtime state, the accepted
+        advance result, and the prior banks; it must return a pytree with the
+        same structure, shapes, and dtypes as the banks. Rejected attempts
+        retain the original banks, including any random keys.
+        """
+        result = self.advance(runtime_state, args)
+        next_banks = jax.lax.cond(
+            result.accepted,
+            lambda bank: update(runtime_state, result, bank),
+            lambda bank: bank,
+            banks,
+        )
+        return result, next_banks
 
     @checked
     def advance(
@@ -7848,7 +7914,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 take, candidate.stage_rate_ledgers, accepted_stage_ledgers
             )
             accepted_dt = jnp.where(take, current_dt, accepted_dt)
-            retries = jnp.where(take, retry, retries)
+            retries = jnp.where(~accepted, retry, retries)
             accepted = accepted | take
             current_dt = self.precision.decision(
                 current_dt * self.policy.reduction_factor
@@ -7929,11 +7995,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     (-1,) + (1,) * (refreshed_average.ndim - 1)
                 )
             )
-            next_content = next_content.with_content(refreshed_content)
+            next_content = jax.lax.cond(
+                accepted,
+                lambda _: next_content.with_content(refreshed_content),
+                lambda _: original_content,
+                operand=None,
+            )
         next_state = FiniteVolumeRuntimeState(
             next_content,
             runtime_state.topology_journal,
-            self.precision.decision(jnp.where(accepted, accepted_dt, attempted)),
+            self.precision.decision(
+                jnp.where(accepted, accepted_dt, runtime_state.step_size)
+            ),
             accepted_step=runtime_state.accepted_step + accepted.astype(jnp.int32),
             last_status=status,
             controller_state=runtime_state.controller_state,
@@ -8229,7 +8302,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 accepted_stage_ledgers,
             )
             accepted_dt = jnp.where(take, current_dt, accepted_dt)
-            retries = jnp.where(take, retry, retries)
+            retries = jnp.where(~accepted, retry, retries)
             accepted = accepted | take
             current_dt = self.precision.decision(
                 current_dt * self.policy.reduction_factor
@@ -8553,7 +8626,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 accepted_stage_ledgers,
             )
             accepted_dt = jnp.where(take, current_dt, accepted_dt)
-            retries = jnp.where(take, retry, retries)
+            retries = jnp.where(~accepted, retry, retries)
             accepted = accepted | take
             retry_factor = jnp.where(
                 geometry_success,
@@ -8785,7 +8858,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 self.precision.decision(current_dt),
                 accepted_dt,
             )
-            retries = jnp.where(take, retry, retries)
+            retries = jnp.where(~accepted, retry, retries)
             last_report = jax.tree.map(
                 lambda new, old: jnp.where(take, new, old),
                 candidate.report,

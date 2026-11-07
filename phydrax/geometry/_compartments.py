@@ -635,6 +635,121 @@ class CompartmentMeshingSource:
         object.__setattr__(self, "scope_entity_key_banks", scope_key_banks)
         object.__setattr__(self, "scope_entity_set_ids", scope_set_ids)
 
+    @classmethod
+    def from_archive_inputs(
+        cls,
+        labels: LabelVolume,
+        compartments: tuple[CompartmentDefinition, ...],
+        interfaces: tuple[CompartmentInterfaceDefinition, ...],
+        outer_surface: SurfaceModel,
+        interpretation: CompartmentImageInterpretation,
+        outer_geometry: CellGeometrySpec | None,
+        /,
+        *,
+        expected_source_id: str,
+        expected_source_revision: str,
+        expected_scope_ids: tuple[str, ...],
+    ) -> CompartmentMeshingSource:
+        """Rebuild image-derived authority and compare its stored namespace."""
+        from .._physical import SpatialCoordinateContract
+        from ..discretization._cell_geometry import CellGeometrySpec
+        from ..discretization._cell_mesh import CellMesh
+        from ..imaging._core import LabelVolume
+        from ..imaging._segmentation import build_compartment_complex, extract_compartment_surfaces
+        from .surface._contracts import (
+            SurfaceInterface, SurfaceMetadata, SurfaceOrientationRepair, SurfaceSelection,
+        )
+        from .surface._model import SurfaceModel
+
+        labels = LabelVolume.from_stored_fields(labels)
+        mesh = CellMesh.from_stored_fields(outer_surface.mesh)
+        stored_metadata = outer_surface.metadata
+        contract = SpatialCoordinateContract.from_dict(stored_metadata.coordinate_contract.to_dict())
+        metadata = SurfaceMetadata(
+            source_id=stored_metadata.source_id,
+            source_revision=stored_metadata.source_revision,
+            coordinate_contract=contract,
+            provenance=stored_metadata.provenance,
+            cell_tags=stored_metadata.cell_tags,
+        )
+        if metadata.metadata_id != stored_metadata.metadata_id:
+            raise ValueError("Stored outer surface metadata identity changed.")
+
+        def selection(value: SurfaceSelection) -> SurfaceSelection:
+            rebuilt = SurfaceSelection(
+                value.name, value.cell_global_ids,
+                cell_entity_set_id=value.cell_entity_set_id, role=value.role,
+            )
+            if rebuilt.selection_id != value.selection_id:
+                raise ValueError("Stored surface selection identity changed.")
+            return rebuilt
+
+        selections = tuple(selection(value) for value in outer_surface.selections)
+        restored_interfaces = []
+        for value in outer_surface.interfaces:
+            item = SurfaceInterface(
+                value.name, selection(value.support),
+                minus_region=value.minus_region, plus_region=value.plus_region,
+            )
+            if item.interface_id != value.interface_id:
+                raise ValueError("Stored surface interface identity changed.")
+            restored_interfaces.append(item)
+        repair = outer_surface.orientation_repair
+        if repair is not None:
+            rebuilt_repair = SurfaceOrientationRepair(
+                source_face_indices=repair.source_face_indices,
+                orientation_signs=repair.orientation_signs,
+                component_ids=repair.component_ids,
+                source_topology_id=repair.source_topology_id,
+                repaired_topology_id=repair.repaired_topology_id,
+            )
+            if rebuilt_repair.repair_id != repair.repair_id:
+                raise ValueError("Stored surface orientation repair identity changed.")
+            repair = rebuilt_repair
+        rebuilt_surface = SurfaceModel(
+            mesh, metadata, selections=selections,
+            interfaces=tuple(restored_interfaces), orientation_repair=repair,
+        )
+        if rebuilt_surface.model_id != outer_surface.model_id:
+            raise ValueError("Stored outer surface identity changed.")
+        if outer_geometry is not None:
+            outer_geometry = CellGeometrySpec.from_stored_fields(
+                outer_geometry,
+                source_mesh=mesh,
+                source_map=outer_geometry.source_map,
+                restriction_source=outer_geometry.restriction_source,
+                elements=dict(zip(outer_geometry.block_names, outer_geometry.elements, strict=True)),
+            )
+        restored_compartments = tuple(
+            CompartmentDefinition(
+                value.compartment_id, value.label_ids, value.material_role,
+                value.containment_parent_id, value.allowed_neighbor_ids,
+            )
+            for value in compartments
+        )
+        restored_definitions = tuple(
+            CompartmentInterfaceDefinition(
+                value.interface_id, value.first_compartment_id,
+                value.second_compartment_id, value.interface_role, value.required,
+            )
+            for value in interfaces
+        )
+        if restored_compartments != compartments or restored_definitions != interfaces:
+            raise ValueError("Stored compartment declarations are not canonical.")
+        complex_ = build_compartment_complex(labels, restored_compartments, restored_definitions)
+        extracted = extract_compartment_surfaces(labels, complex_)
+        source = cls(
+            labels, complex_, rebuilt_surface, extracted, interpretation,
+            outer_geometry=outer_geometry,
+        )
+        if (
+            source.source_id != expected_source_id
+            or source.source_revision != expected_source_revision
+            or source.scope_entity_set_ids != expected_scope_ids
+        ):
+            raise ValueError("Stored compartment source identity or namespace changed.")
+        return source
+
     def _scope_index(self, dimension: int, /) -> int:
         if isinstance(dimension, bool) or not isinstance(dimension, (int, np.integer)):
             raise TypeError("dimension must be an integer.")
@@ -682,6 +797,16 @@ class CompartmentMeshingSource:
             or expected.coordinate_contract.spatial_id
             != self.coordinate_contract.spatial_id
             or expected.interface_definitions != self.interface_definitions
+            or expected.scope_entity_set_ids != self.scope_entity_set_ids
+            or expected.scope_entity_key_banks != self.scope_entity_key_banks
+            or any(
+                not np.array_equal(left, right)
+                for left, right in zip(
+                    expected.scope_entity_id_banks,
+                    self.scope_entity_id_banks,
+                    strict=True,
+                )
+            )
         ):
             raise ValueError(
                 "CompartmentMeshingSource identity must match its retained source content."

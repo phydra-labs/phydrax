@@ -15,6 +15,7 @@
 
 #include "check.hpp"
 #include "floating_point_mode.hpp"
+#include "interval_program.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -156,11 +157,28 @@ struct Program {
 };
 
 std::int32_t execute(Program& program) {
-  return phx_mc_interval_program_execute(
+  std::vector<double> prepared_lower = program.lower, prepared_upper = program.upper;
+  phx::mc::PreparedIntervalProgram prepared;
+  const auto bound = prepared.bind(
+      program.rows.data(), program.count(), program.indices.data(),
+      static_cast<std::int64_t>(program.indices.size()), program.parameters.data(),
+      static_cast<std::int64_t>(program.parameters.size()), static_cast<std::int64_t>(program.lower.size()));
+  const auto status = phx_mc_interval_program_execute(
       program.rows.data(), program.count(), program.indices.data(),
       static_cast<std::int64_t>(program.indices.size()), program.parameters.data(),
       static_cast<std::int64_t>(program.parameters.size()), program.lower.data(),
       program.upper.data(), static_cast<std::int64_t>(program.lower.size()));
+  if (bound == PHX_MC_OK) {
+    PHX_CHECK(prepared.execute(prepared_lower.data(), prepared_upper.data(),
+                              static_cast<std::int64_t>(prepared_lower.size())) == status);
+    for (size_t i = 0; i < prepared_lower.size(); ++i) {
+      PHX_CHECK(same(prepared_lower[i], program.lower[i]));
+      PHX_CHECK(same(prepared_upper[i], program.upper[i]));
+    }
+  } else {
+    PHX_CHECK(bound == status);
+  }
+  return status;
 }
 
 void reference(const Program& program, std::vector<double>& lower, std::vector<double>& upper) {
@@ -623,6 +641,46 @@ void validation_and_empty_programs() {
   PHX_CHECK(unchanged(args, original));
 }
 
+void prepared_ownership_and_refusal() {
+  Program source;
+  const auto values = source.values({{1.0, 2.0}, {3.0, 4.0}});
+  const auto indices = source.index({1, 0});
+  const auto gamma = source.parameter(0.25);
+  const auto gathered = source.slots(2);
+  source.row(kGather, gathered, 2, values, indices, -1, -1, 0);
+  const auto reduced = source.slots(1);
+  source.row(kReduceSum, reduced, 1, gathered, -1, -1, gamma, 2);
+  Program reference_program = source;
+  phx::mc::PreparedIntervalProgram prepared;
+  const auto extent = static_cast<int64_t>(source.lower.size());
+  PHX_CHECK(prepared.execute(source.lower.data(), source.upper.data(), extent) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(prepared.bind(source.rows.data(), source.count(), source.indices.data(),
+                          source.indices.size(), source.parameters.data(), source.parameters.size(),
+                          extent) == PHX_MC_OK);
+  PHX_CHECK(prepared.execute(source.lower.data(), source.upper.data(), extent - 1) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(prepared.execute(nullptr, source.upper.data(), extent) == PHX_MC_INVALID_ARGUMENT);
+  source.rows[0] = 999;
+  source.indices[0] = 999;
+  source.parameters[0] = -1.0;
+  PHX_CHECK(execute(reference_program) == PHX_MC_OK);
+  PHX_CHECK(prepared.execute(source.lower.data(), source.upper.data(), extent) == PHX_MC_OK);
+  PHX_CHECK(identical(source.lower, reference_program.lower));
+  PHX_CHECK(identical(source.upper, reference_program.upper));
+  const Program before = source;
+  PHX_CHECK(phx_mc_interval_program_execute(
+                source.rows.data(), source.count(), source.indices.data(), source.indices.size(),
+                source.parameters.data(), source.parameters.size(), source.lower.data(),
+                source.upper.data(), extent) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(prepared.bind(source.rows.data(), source.count(), source.indices.data(),
+                          source.indices.size(), source.parameters.data(), source.parameters.size(),
+                          extent) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(prepared.execute(source.lower.data(), source.upper.data(), extent) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(unchanged(source, before));
+}
+
 void floating_point_modes() {
   Program subnormal;
   const std::int64_t source = subnormal.values({{kSmallest, 0x1p-1060}, {0x1p-1023, 0x1p-1022}});
@@ -671,6 +729,7 @@ int main() {
   exponential_and_logarithm();
   deterministic_random_programs();
   validation_and_empty_programs();
+  prepared_ownership_and_refusal();
   floating_point_modes();
   return phx::mc::test::finish("test_interval_program");
 }

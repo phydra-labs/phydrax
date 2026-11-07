@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <set>
 #include <span>
@@ -23,6 +24,7 @@
 #include "cavity.hpp"
 #include "plc3d.hpp"
 #include "source_construction.hpp"
+#include "zero_set_admission.hpp"
 
 namespace phx::mc {
 namespace detail {
@@ -140,6 +142,24 @@ struct TetPeriodicEntityOrbitMap {
   std::vector<std::int32_t> representative_lifted_rows;
 };
 
+// The interval programs own their instruction/constant banks and one-box
+// scratch. Staged copies share this single-threaded owner within one edit.
+struct TetImplicitSource {
+  remesh::IntervalBoxProgram value;
+  remesh::IntervalBoxProgram gradient;
+  std::vector<std::int32_t> groups;
+  std::vector<std::int8_t> group_orientations;
+  double tolerance = 0.0;
+  std::int32_t orientation = 0;
+  std::string source_id;
+  std::string source_revision;
+  std::string binding_id;
+  std::string frame_id;
+  mutable std::int64_t transversality_refusals = 0;
+  mutable std::int64_t distance_refusals = 0;
+  mutable bool last_inconclusive = false;
+};
+
 struct TetMeshSnapshot {
   std::uint64_t generation = 0;
   bool identity_bound = false;
@@ -198,7 +218,9 @@ struct TetEditCell {
 
 struct TetCellAncestryRecord {
   std::int32_t edit_kind = -1;
-  std::vector<std::uint64_t> ancestor_cell_ids;
+  // Immutable immediate ancestors; siblings produced by one cavity share
+  // their identical ordered bank without discarding any historical record.
+  std::shared_ptr<const std::vector<std::uint64_t>> ancestor_cell_ids;
 };
 
 struct TetEditFacet {
@@ -355,9 +377,43 @@ class TetMesh {
   int32_t assign_initial_ids(std::span<const std::uint64_t> vertex_ids,
                              std::span<const std::uint64_t> cell_ids,
                              std::span<const std::uint64_t> facet_ids,
-                             std::span<const std::uint64_t> segment_ids);
+                             std::span<const std::uint64_t> segment_ids,
+                             std::span<const double> initial_vertex_sizes = {});
   std::uint64_t generation() const noexcept { return generation_; }
-  void bind_source_identity(std::string_view source_id,
+  int32_t bind_implicit_source(std::shared_ptr<TetImplicitSource> source);
+  int32_t prepare_implicit_source(std::shared_ptr<TetImplicitSource> source);
+  const std::shared_ptr<TetImplicitSource>& implicit_source() const noexcept {
+    return implicit_source_;
+  }
+  // Linear index-to-physical map; translation does not affect the metric.
+  int32_t set_affine_metric(std::span<const double> linear);
+  bool metric_active() const noexcept { return metric_active_; }
+  const std::array<double, 9>& metric_matrix() const noexcept { return metric_; }
+  double metric_source_deviation(const double* const* corners, SourceStratum stratum,
+                                 const double* parameters, const double* position) const;
+  double metric_declared_plane_deviation(const double* plane, const double* parameters,
+                                         const double* position) const;
+  bool source_carrier_metric(const double* const* corners, SourceStratum stratum,
+                             const double* parameters, double* position,
+                             double& deviation) const;
+  int metric_orientation() const noexcept { return metric_orientation_; }
+  int metric_insphere(const double* a, const double* b, const double* c,
+                      const double* d, const double* e) const;
+  std::array<double, 3> metric_transform(const std::array<double, 3>& v) const noexcept {
+    return {metric_[0]*v[0] + metric_[1]*v[1] + metric_[2]*v[2],
+            metric_[3]*v[0] + metric_[4]*v[1] + metric_[5]*v[2],
+            metric_[6]*v[0] + metric_[7]*v[1] + metric_[8]*v[2]};
+  }
+  std::array<double, 3> metric_inverse_transform(const std::array<double, 3>& v) const noexcept {
+    return {metric_inverse_[0]*v[0] + metric_inverse_[1]*v[1] + metric_inverse_[2]*v[2],
+            metric_inverse_[3]*v[0] + metric_inverse_[4]*v[1] + metric_inverse_[5]*v[2],
+            metric_inverse_[6]*v[0] + metric_inverse_[7]*v[1] + metric_inverse_[8]*v[2]};
+  }
+  double metric_dot(const std::array<double, 3>& a, const std::array<double, 3>& b) const noexcept {
+    const auto x = metric_transform(a), y = metric_transform(b);
+    return x[0]*y[0] + x[1]*y[1] + x[2]*y[2];
+  }
+  bool bind_source_identity(std::string_view source_id,
                             std::string_view source_revision,
                             std::string_view source_map_id,
                             std::string_view frame_id,
@@ -370,6 +426,9 @@ class TetMesh {
   BoundaryPolicy policy() const noexcept { return policy_; }
   const TetrahedralComplex& complex() const noexcept { return complex_; }
 
+  // Protect all current facets in the named source groups and their edges and
+  // vertices. Returns false without mutation if a group is absent.
+  bool protect_facet_sources(std::span<const std::int32_t> sources);
   TetEditStatus snapshot(TetMeshSnapshot& output) const;
   TetEditStatus apply_edit_batch(const TetEditBatch& batch,
                                  std::vector<TetEditResult>& results);
@@ -391,7 +450,7 @@ class TetMesh {
       std::span<const TetPeriodicQuotientCell> cells,
       std::span<const TetPeriodicEntityOrbitMap> entity_maps = {},
       bool advance_generation = true);
-  void bind_periodic_identity(const TetPeriodicIdentity& identity);
+  bool bind_periodic_identity(const TetPeriodicIdentity& identity);
   const TetPeriodicIdentity& periodic_identity() const noexcept { return periodic_identity_; }
 
   bool live_vertex(std::int32_t slot) const noexcept;
@@ -471,7 +530,15 @@ class TetMesh {
   friend std::int32_t improve_mesh(TetMesh&, const TetQualityRequest&,
                                    std::span<const double>, std::int64_t&,
                                    std::int64_t&, std::int64_t&, std::int64_t&);
+  friend std::int32_t repair_boundary_quality(
+      TetMesh&, const TetQualityRequest&, std::span<const double>,
+      std::span<const std::uint64_t>, std::int64_t&, std::int64_t&,
+      std::int64_t&, std::int64_t&, bool&);
   friend class detail::LocalIncidence;
+  // Internal quality passes do not consume ancestry; public snapshot always
+  // retains the complete ordered lineage.
+  TetEditStatus snapshot_internal(TetMeshSnapshot& output,
+                                  bool include_cell_ancestry) const;
 
   // Proposed carrier/witness records for read-only relocation validation.
   struct RelocationOverlay {
@@ -509,7 +576,9 @@ class TetMesh {
   // constrained faces inside it (one disk per facet), which the fans of the
   // vertex over the disk boundaries replace: the fans overwrite those rows in
   // order and are appended beyond them; the segment row is overwritten by its
-  // first half and the second appended. Created finite cell IDs are returned.
+  // first half and the second appended. An embedded segment (on no
+  // constrained face) is split with no facet rows. Created finite cell IDs
+  // are returned.
   TetEditStatus insert_local_boundary_point(const TetEditVertex& vertex,
                                             std::span<const std::int32_t> cavity,
                                             std::span<const std::size_t> facet_rows,
@@ -519,10 +588,13 @@ class TetMesh {
   // `vertex` (carrier and source witness) whose disk faces are `disk_sides`
   // (finite cell, face slot), cells on both sides of their facets, splitting
   // the segment `split_segment` (vertex slots; {-1, -1} for a facet point);
+  // an embedded split segment has no disk faces and its finite edge star
+  // `segment_star` (cell slots) seeds the cavity instead;
   // kFound or kRefused (see insert_local_boundary_point).
   TetCavityStatus boundary_insertion_cavity(
       const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
-      std::array<std::int32_t, 2> split_segment, std::vector<std::int32_t>& cells) const;
+      std::array<std::int32_t, 2> split_segment, std::span<const std::int32_t> segment_star,
+      std::vector<std::int32_t>& cells) const;
   // Called by refinement and improvement: the star-shaped cavity of `point`
   // reached by walking from cell slot `start`.
   TetCavityStatus insertion_cavity(std::int32_t start, const double* point,
@@ -531,6 +603,8 @@ class TetMesh {
   // `current`, in snapshot order; 0 leaves a vertex unconstrained) unless
   // `sizes` is empty, which keeps the retained field.
   int32_t install_vertex_sizes(const TetMeshSnapshot& current, std::span<const double> sizes);
+  int32_t install_vertex_sizes(std::span<const std::uint64_t> vertex_ids,
+                               std::span<const double> sizes);
   // True if an edge of `removed_slots` absent from `kept_edges` (local edge
   // keys) is a constrained segment.
   bool removes_constrained_segment(std::span<const std::int32_t> removed_slots,
@@ -574,6 +648,15 @@ class TetMesh {
   bool source_carrier_valid(const TetEditVertex& vertex) const;
   bool source_face_valid(const TetEditFacet& facet,
                          const RelocationOverlay* overlay = nullptr) const;
+  TetEditStatus source_face_refusal_status() const noexcept {
+    return implicit_source_ && implicit_source_->last_inconclusive
+               ? TetEditStatus::kUncertainPredicate : TetEditStatus::kInvalidGeometry;
+  }
+  bool implicit_facets_embedded(
+      std::span<const TetSnapshotFacet> facets, std::span<const std::int32_t> groups,
+      const std::unordered_set<std::uint64_t>* changed_facets = nullptr,
+      const std::unordered_set<std::uint64_t>* changed_vertices = nullptr,
+      const RelocationOverlay* overlay = nullptr) const;
   bool source_segment_valid(const TetEditSegment& segment,
                             const RelocationOverlay* overlay = nullptr) const;
   template <bool WithRelocation>
@@ -600,6 +683,10 @@ class TetMesh {
   bool audit_state() const;
 
   BoundaryPolicy policy_;
+  std::array<double, 9> metric_{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  std::array<double, 9> metric_inverse_{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  bool metric_active_ = false;
+  int metric_orientation_ = 1;
   TetrahedralComplex complex_;
   CavityEdit edit_;
   std::vector<double> points_;
@@ -632,6 +719,8 @@ class TetMesh {
   std::vector<double> source_face_plane_tolerances_;
   // Face group -> its declared plane data, derived from the immutable banks.
   std::unordered_map<std::int32_t, DeclaredGroup> declared_groups_;
+  std::shared_ptr<TetImplicitSource> implicit_source_;
+  std::shared_ptr<TetImplicitSource> pending_implicit_source_;
   std::optional<TetPlaneRefusal> plane_refusal_;
   std::vector<TetPeriodicOrbit> periodic_orbits_;
   std::vector<TetPeriodicQuotientCell> quotient_cells_;

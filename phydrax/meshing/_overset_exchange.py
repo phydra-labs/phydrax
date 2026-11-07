@@ -265,6 +265,10 @@ def _owner_local_halo_exchange(
     axis_name: str,
     /,
 ) -> np.ndarray:
+    # The axis is internal to this standalone shard_map. A call-site-specific
+    # name needlessly specializes otherwise identical collective executables.
+    del axis_name
+    axis_name = "owner_local_halo"
     mesh = Mesh(np.asarray(devices, dtype=object), (axis_name,))
     spec = PartitionSpec(axis_name)
     distributed = jax.make_array_from_process_local_data(

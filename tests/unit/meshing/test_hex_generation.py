@@ -35,6 +35,52 @@ def _unit_tetrahedron() -> CellMesh:
     )
 
 
+def test_mapped_hex_quality_polynomial_and_rational_chart_agree() -> None:
+    from phydrax.discretization._coordinate_enclosure import RationalPolynomial
+    from phydrax.meshing._hex_generation import _mapped_root_quality
+
+    topology = reference_cell_topology("hexahedron")
+    points = np.asarray(topology.vertices, dtype=np.float64)
+    mesh = CellMesh(
+        points,
+        (
+            CellBlock(
+                "cells",
+                "hexahedron",
+                np.arange(8)[None, :],
+                global_ids=np.asarray((7,), dtype=np.int64),
+            ),
+        ),
+    )
+    root = lagrange_element("hexahedron", 1)
+    coefficients = np.asarray(root.reference_nodes, dtype=np.float64).copy()
+    coefficients[:, 2] += 0.125 * coefficients[:, 0]
+    chart = axes(3)
+    denominator: dict[tuple[int, ...], Fraction] = {(0, 0, 0): Fraction(1)}
+    rational_chart = tuple(RationalPolynomial(value, denominator) for value in chart)
+    polynomial_element = PerCellRestrictedCellGeometryElement(
+        root, "hexahedron", (7,), (3,), (chart,)
+    )
+    rational_element = PerCellRestrictedCellGeometryElement(
+        root, "hexahedron", (7,), (3,), (rational_chart,)
+    )
+    route = np.arange(coefficients.shape[0], dtype=np.int64)[None, :]
+    polynomial = CellGeometrySpec(
+        {"cells": polynomial_element}, {"cells": route}, coefficients
+    )
+    rational = CellGeometrySpec(
+        {"cells": rational_element}, {"cells": route}, coefficients
+    )
+    polynomial_quality = _mapped_root_quality(mesh, polynomial)
+    rational_quality = _mapped_root_quality(mesh, rational)
+    for actual, reference in zip(polynomial_quality, rational_quality, strict=True):
+        np.testing.assert_array_equal(actual, reference)
+    assert all(
+        np.all(np.isfinite(values)) and np.all(values > 0)
+        for values in polynomial_quality
+    )
+
+
 def test_tetrahedral_dual_is_an_explicit_positive_hex_conversion() -> None:
     source = _unit_tetrahedron()
     result = extract_volume_hexes(source)

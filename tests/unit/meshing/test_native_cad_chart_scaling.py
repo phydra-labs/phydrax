@@ -1,7 +1,6 @@
 import math
 from fractions import Fraction
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -10,16 +9,18 @@ from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.meshing.providers._native_surface import (
     _accepted_source_splits,
     _chart_cdt_scale,
+    _ChartMesh,
     _folded_chart_edge,
     _local_edge_identity,
     _source_curve_parameters,
-    _ChartMesh,
     _SourceSplitProposal,
 )
 from tools.meshing_qualification.scenarios.native_cad_profiles import _external_case
 
 
-def test_repaired_cylinder_chart_uses_exact_dyadic_physical_scaling(tmp_path: Path) -> None:
+def test_repaired_cylinder_chart_uses_exact_dyadic_physical_scaling(
+    tmp_path: Path,
+) -> None:
     model, _, _, _ = _external_case("external-combined", "step", tmp_path)
     domain = MeshingDomain.from_brep(model)
     patch = int(np.flatnonzero(np.asarray(domain.source_indices[2]) == 0)[0])
@@ -67,39 +68,63 @@ def test_source_split_events_share_only_exact_parent_intervals() -> None:
     first = Fraction(1, 32)
     competing = first - Fraction(1, 2**58)
     charts = [
-        SimpleNamespace(split_proposals=(
-            _SourceSplitProposal(18, lower, upper, competing, (3, 0, 1), 8),
-            _SourceSplitProposal(2, lower, upper, competing, (3, 0, 2), 9),
-        )),
-        SimpleNamespace(split_proposals=(
-            _SourceSplitProposal(18, lower, upper, first, (1, 0, 0), 11),
-            _SourceSplitProposal(18, upper, 2 * upper, upper + first, (1, 0, 1), 12),
-        )),
+        _ChartMesh(
+            0,
+            [],
+            [],
+            {},
+            {},
+            {},
+            split_proposals=(
+                _SourceSplitProposal(18, lower, upper, competing, (3, 0, 1), 8),
+                _SourceSplitProposal(2, lower, upper, competing, (3, 0, 2), 9),
+            ),
+        ),
+        _ChartMesh(
+            1,
+            [],
+            [],
+            {},
+            {},
+            {},
+            split_proposals=(
+                _SourceSplitProposal(18, lower, upper, first, (1, 0, 0), 11),
+                _SourceSplitProposal(18, upper, 2 * upper, upper + first, (1, 0, 1), 12),
+            ),
+        ),
     ]
     accepted = _accepted_source_splits(charts)
     assert accepted == {18: {first, upper + first}, 2: {competing}}
 
 
 def test_reversed_source_ancestry_preserves_authored_endpoints_and_descendants() -> None:
-    triangulation = SimpleNamespace(
-        points=np.zeros((4, 2)),
-        input_point_count=2,
-        constraint_sources=np.asarray((-1, -1, 0, 0)),
-        constraint_parents=np.asarray(((-1, -1), (-1, -1), (0, 1), (2, 1))),
-        constraint_ratios=np.asarray((0.0, 0.0, 0.25, 0.5)),
+    points = np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype=np.float64)
+    segments = np.asarray(((0, 1), (1, 2), (2, 3), (3, 0)), dtype=np.int32)
+    triangulation = ConstrainedDelaunayTriangulation(
+        points, segments, min_angle=20.0, max_area=0.01
     )
-    initial = {(0, 7): Fraction(1, 16), (1, 7): Fraction(0)}
+    pairs = tuple((Fraction(1, 16), Fraction(0)) for _ in segments)
+    initial = {
+        (int(vertex), curve): pairs[curve][end]
+        for curve, segment in enumerate(segments)
+        for end, vertex in enumerate(segment)
+    }
     result = _source_curve_parameters(
-        triangulation,
-        initial,
-        np.asarray(((0, 1),)),
-        (7,),
-        ((Fraction(1, 16), Fraction(0)),),
+        triangulation, initial, segments, tuple(range(len(segments))), pairs
     )
-    assert result[(0, 7)] == Fraction(1, 16)
-    assert result[(1, 7)] == Fraction(0)
-    assert result[(2, 7)] == Fraction(3, 64)
-    assert result[(3, 7)] == Fraction(3, 128)
+    assert all(result[key] == value for key, value in initial.items())
+    descendants = 0
+    for vertex in range(triangulation.input_point_count, len(triangulation.points)):
+        curve = int(triangulation.constraint_sources[vertex])
+        if curve < 0:
+            continue
+        first, last = (int(value) for value in triangulation.constraint_parents[vertex])
+        ratio = Fraction.from_float(float(triangulation.constraint_ratios[vertex]))
+        assert result[(vertex, curve)] == result[(first, curve)] + ratio * (
+            result[(last, curve)] - result[(first, curve)]
+        )
+        descendants += 1
+    assert descendants
 
 
 def test_full_turn_polar_annulus_fold_splits_unwrapped_chart_edge() -> None:

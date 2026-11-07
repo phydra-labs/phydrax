@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 import numpy as np
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 
 from ...discretization import (
     _cell_geometry as cell_geometry_owner,
@@ -31,7 +33,11 @@ from ...discretization._nested_reference_types import (
     ReferenceCellMapWitnesses,
 )
 from ...discretization._reference_cell import reference_cell_topology
+from ...geometry._affine_plc_domain import AffinePlcDomain
+from ...geometry._domain_coverage import PiecewiseLinearDomain
+from ...geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+from ...geometry._planar_primitives import intersection as planar_intersection
 from ...geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -40,6 +46,66 @@ from ...geometry._source_boundary_records import (
 from ...typing import checked
 from .._volume_generation import VolumeConstruction
 from ._native_sources import NativePlcSource
+
+
+class _PlcCurveAuthority(StrictModule, NonTrainableState):
+    """Exact source-edge scope backed by the original PLC and its domain."""
+
+    source: NativePlcSource
+    domain: AffinePlcDomain
+
+    def __init__(self, source: NativePlcSource, domain: PiecewiseLinearDomain, /):
+        self.source = source
+        self.domain = AffinePlcDomain(
+            domain, np.eye(3), np.zeros(3), source_revision=source.source_revision
+        )
+        self.require_current()
+
+    @property
+    def source_id(self) -> str:
+        return self.source.source_id
+
+    @property
+    def source_revision(self) -> str:
+        return self.source.source_revision
+
+    @property
+    def envelope_id(self) -> str:
+        return self.source.binding_id
+
+    @property
+    def edges(self) -> np.ndarray:
+        return self.source.complex.plc_edge_vertices
+
+    @property
+    def scope_entity_ids_by_mesh_row(self) -> tuple[np.ndarray, ...]:
+        return (
+            self.source.complex.vertex_entity_ids,
+            self.source.complex.plc_edge_entity_ids,
+        )
+
+    def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
+        return self.source.scope_entity_ids(dimension)
+
+    def scope_entity_set_id(self, dimension: int, /) -> str:
+        return self.source.scope_entity_set_id(dimension)
+
+    def source_entity_key_for_scope(
+        self, dimension: int, entity_id: int, /
+    ) -> tuple[str, tuple[str, ...]]:
+        return self.source.source_entity_key_for_scope(dimension, entity_id)
+
+    def require_current(self, /) -> None:
+        self.source.validate_restored()
+        self.domain.require_current()
+        if (
+            self.domain.source_id != self.source.source_id
+            or self.domain.source_revision != self.source.source_revision
+            or not np.array_equal(
+                self.domain.reference_domain.vertices, self.source.complex.vertices
+            )
+        ):
+            raise ValueError("PLC curve authority changed its original source vertices.")
 
 
 def simplex_volume_entities(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
@@ -493,62 +559,8 @@ def mapped_plc_boundary_chart_witness(
             raise ValueError("Mapped root-face triangle chart is singular.")
         return cross2(delta, second) / determinant, cross2(first, delta) / determinant
 
-    def clip_triangle(
-        subject: tuple[tuple[Fraction, Fraction], ...],
-        triangle: tuple[tuple[Fraction, Fraction], ...],
-        /,
-    ) -> tuple[tuple[Fraction, Fraction], ...]:
-        clip = triangle if signed_double_area(triangle) > 0 else tuple(reversed(triangle))
-        polygon = list(subject)
-        for edge_row in range(3):
-            edge_start = clip[edge_row]
-            edge_end = clip[(edge_row + 1) % 3]
-            direction = (edge_end[0] - edge_start[0], edge_end[1] - edge_start[1])
-            result: list[tuple[Fraction, Fraction]] = []
-            if not polygon:
-                break
-            start = polygon[-1]
-            start_gap = cross2(
-                direction,
-                (start[0] - edge_start[0], start[1] - edge_start[1]),
-            )
-            for end in polygon:
-                end_gap = cross2(
-                    direction,
-                    (end[0] - edge_start[0], end[1] - edge_start[1]),
-                )
-                if (start_gap >= 0) != (end_gap >= 0):
-                    fraction = start_gap / (start_gap - end_gap)
-                    intersection = (
-                        start[0] + fraction * (end[0] - start[0]),
-                        start[1] + fraction * (end[1] - start[1]),
-                    )
-                    if not result or result[-1] != intersection:
-                        result.append(intersection)
-                if end_gap >= 0 and (not result or result[-1] != end):
-                    result.append(end)
-                start, start_gap = end, end_gap
-            if len(result) > 1 and result[0] == result[-1]:
-                result.pop()
-            polygon = result
-        changed = True
-        while changed and len(polygon) >= 3:
-            changed = False
-            for row in range(len(polygon)):
-                previous = polygon[row - 1]
-                current = polygon[row]
-                following = polygon[(row + 1) % len(polygon)]
-                if (
-                    cross2(
-                        (current[0] - previous[0], current[1] - previous[1]),
-                        (following[0] - current[0], following[1] - current[1]),
-                    )
-                    == 0
-                ):
-                    polygon.pop(row)
-                    changed = True
-                    break
-        return tuple(polygon)
+    # Use the same exact convex restriction as the global-affine PLC charts.
+    clip_triangle = planar_intersection
 
     target_topology = reference_cell_topology(block.cell_kind)
     target_local_faces = tuple(
@@ -1066,7 +1078,7 @@ def mapped_plc_edge_chart_witness(
         result = []
         for point in points:
             parameter = (point[axis] - first[axis]) / delta[axis]
-            if not 0 <= parameter <= 1 or any(
+            if any(
                 first[other] + parameter * delta[other] != point[other]
                 for other in range(len(delta))
             ):
@@ -1117,7 +1129,12 @@ def mapped_plc_edge_chart_witness(
             )
         candidates: list[
             tuple[
-                int, int, str, tuple[Fraction, Fraction], tuple[tuple[Fraction, ...], ...]
+                int,
+                int,
+                str,
+                tuple[Fraction, Fraction],
+                tuple[tuple[Fraction, ...], ...],
+                tuple[Fraction, Fraction],
             ]
         ] = []
         for target_cell_id, target_local_edge in owners:
@@ -1146,10 +1163,8 @@ def mapped_plc_edge_chart_witness(
                 ):
                     continue
                 source_reference_points = tuple(
-                    tuple(Fraction.from_float(float(value)) for value in point)
-                    for point in np.asarray(
-                        query.segment_root_reference_vertices[chart_row], dtype=np.float64
-                    )
+                    tuple(Fraction(*value) for value in point)
+                    for point in query.segment_root_reference_rational_tokens[chart_row]
                 )
                 source_global_points = root_global_points(
                     root_cell_id, source_reference_points
@@ -1159,42 +1174,81 @@ def mapped_plc_edge_chart_witness(
                     source_global_points[0],
                     source_global_points[1],
                 )
-                if parameters is not None:
+                if parameters is not None and parameters[0] != parameters[1]:
+                    first = max(Fraction(0), min(parameters))
+                    last = min(Fraction(1), max(parameters))
+                    if first >= last:
+                        continue
+                    source_parameters = (
+                        (first, last) if parameters[1] > parameters[0] else (last, first)
+                    )
+                    target_interval = tuple(
+                        (value - parameters[0]) / (parameters[1] - parameters[0])
+                        for value in source_parameters
+                    )
+                    references = tuple(
+                        tuple(
+                            target_reference_points[0][axis]
+                            + t
+                            * (
+                                target_reference_points[1][axis]
+                                - target_reference_points[0][axis]
+                            )
+                            for axis in range(3)
+                        )
+                        for t in target_interval
+                    )
                     candidates.append(
                         (
                             target_cell_id,
                             target_local_edge,
                             chart_id,
-                            (parameters[0], parameters[1]),
-                            tuple(target_reference_points),
+                            source_parameters,
+                            references,
+                            target_interval,
                         )
                     )
         if not candidates:
             raise ValueError(
                 "Mapped PLC output edge has no exact authored root-curve chart."
             )
-        chart_ids_for_edge = {candidate[2] for candidate in candidates}
-        if len(chart_ids_for_edge) != 1:
+        owner = min(candidate[0] for candidate in candidates)
+        selected = sorted(
+            (candidate for candidate in candidates if candidate[0] == owner),
+            key=lambda candidate: min(candidate[5]),
+        )
+        intervals = tuple(
+            (min(candidate[5]), max(candidate[5])) for candidate in selected
+        )
+        if (
+            intervals[0][0] != 0
+            or intervals[-1][1] != 1
+            or any(left[1] != right[0] for left, right in zip(intervals, intervals[1:]))
+        ):
             raise ValueError(
-                "Mapped PLC output edge is ambiguous across source curve charts."
+                "Mapped source curve pieces do not partition the target edge."
             )
-        selected = min(candidates, key=lambda value: value[0])
-        target_cell_id, target_local_edge, chart_id, parameters, target_references = (
-            selected
-        )
-        source_key = query.chart_source_key(1, chart_id)
-        target_reference_rows.append(target_references)
-        source_parameter_rows.append(((parameters[0],), (parameters[1],)))
-        chart_cell_ids.append(target_cell_id)
-        chart_edge_ids.append(int(target_edge_ids[target_edge_row]))
-        chart_local_edges.append(target_local_edge)
-        chart_ids.append(chart_id)
-        source_entity_ids.append(source_key[0])
-        occurrence_paths.append(source_key[1])
-        orientations.append(1 if parameters[1] > parameters[0] else -1)
-        intervals_by_chart.setdefault(chart_id, []).append(
-            (min(parameters), max(parameters))
-        )
+        for (
+            target_cell_id,
+            target_local_edge,
+            chart_id,
+            parameters,
+            target_references,
+            _,
+        ) in selected:
+            source_key = query.chart_source_key(1, chart_id)
+            target_reference_rows.append(target_references)
+            source_parameter_rows.append(((parameters[0],), (parameters[1],)))
+            chart_cell_ids.append(target_cell_id)
+            chart_edge_ids.append(int(target_edge_ids[target_edge_row]))
+            chart_local_edges.append(target_local_edge)
+            chart_ids.append(chart_id)
+            source_entity_ids.append(source_key[0])
+            occurrence_paths.append(source_key[1])
+            orientations.append(1 if parameters[1] > parameters[0] else -1)
+            intervals_by_chart.setdefault(chart_id, []).append(
+                (min(parameters), max(parameters))
+            )
     for chart_id in query.edge_chart_ids:
         if query.chart_source_key(1, chart_id) not in selected_keys:
             continue
@@ -1203,10 +1257,7 @@ def mapped_plc_edge_chart_witness(
             not ordered
             or ordered[0][0] != 0
             or ordered[-1][1] != 1
-            or any(
-                left[1] != right[0]
-                for left, right in zip(ordered, ordered[1:], strict=True)
-            )
+            or any(left[1] != right[0] for left, right in zip(ordered, ordered[1:]))
         ):
             raise ValueError(
                 f"Mapped output edges do not exhaust source curve chart {chart_id}."
@@ -1248,6 +1299,134 @@ def mapped_plc_edge_chart_witness(
         source_parameter_rational_tokens=rational_chart_tokens(source_parameter_rows),
         orientations=np.asarray(orientations, dtype=np.int8),
     )
+
+
+def plc_curve_chart_witness(
+    source: NativePlcSource,
+    construction: VolumeConstruction,
+    geometry: CellGeometrySpec,
+    entity_ids: np.ndarray,
+    /,
+) -> tuple[PiecewiseLinearBoundarySource, SourceBoundaryChartWitness]:
+    """Bind exact recovered edge chains to their complete authored PLC intervals."""
+    if not isinstance(construction.domain, PiecewiseLinearDomain):
+        raise TypeError("Ordinary PLC curve charts require the original PWL domain.")
+    query = PiecewiseLinearBoundarySource(
+        _PlcCurveAuthority(source, construction.domain), 1, entity_ids=entity_ids
+    )
+    mesh = construction.mesh
+    edges, _ = simplex_volume_entities(mesh)
+    edge_row = {tuple(sorted(map(int, edge))): row for row, edge in enumerate(edges)}
+    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
+    cell_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
+    cell_edges, _ = volume_cell_entity_rows(mesh, cell_ids)
+    cells_by_id = {int(identifier): row for row, identifier in enumerate(cell_ids)}
+    owners: dict[int, tuple[int, int, tuple[int, int], np.ndarray]] = {}
+    for block in mesh.blocks:
+        topology = reference_cell_topology(block.cell_kind)
+        vertices = np.asarray(block.vertices, dtype=np.int64)
+        for block_row, raw_cell_id in enumerate(np.asarray(block.global_ids)):
+            cell_id = int(raw_cell_id)
+            for local_edge, local_vertices in enumerate(topology.entities[1]):
+                row = int(cell_edges[cells_by_id[cell_id], local_edge])
+                pair = tuple(int(vertices[block_row, index]) for index in local_vertices)
+                candidate = (
+                    cell_id,
+                    local_edge,
+                    pair,
+                    np.asarray(topology.vertices, dtype=np.float64)[list(local_vertices)],
+                )
+                if row not in owners or candidate[:2] < owners[row][:2]:
+                    owners[row] = candidate
+    selected = {int(value) for value in query.entity_ids}
+    intervals: dict[int, list[tuple[Fraction, Fraction]]] = {
+        identifier: [] for identifier in selected
+    }
+    target_cells, target_edges, local_indices = [], [], []
+    target_references, parameters = [], []
+    chart_ids, entity_keys, occurrences, orientations = [], [], [], []
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    source_points = np.asarray(source.complex.vertices, dtype=np.float64)
+    for segment, source_row in zip(
+        construction.segments, construction.segment_source_edges, strict=True
+    ):
+        source_row = int(source_row)
+        complex_row = int(construction.source_segment_complex_rows[source_row])
+        identifier = int(source.complex.plc_edge_entity_ids[complex_row])
+        if identifier not in selected:
+            continue
+        row = edge_row.get(tuple(sorted(map(int, segment))))
+        if row is None or row not in owners:
+            raise ValueError("A recovered PLC curve segment has no target cell edge.")
+        cell_id, local_index, pair, reference = owners[row]
+        endpoints = np.asarray(source.complex.plc_edge_vertices[complex_row], dtype=np.int64)
+        first, last = (
+            tuple(Fraction.from_float(float(value)) for value in source_points[index])
+            for index in endpoints
+        )
+        direction = tuple(b - a for a, b in zip(first, last, strict=True))
+        axis = next((axis for axis, value in enumerate(direction) if value), None)
+        if axis is None:
+            raise ValueError("A protected PLC curve has coincident endpoints.")
+        source_parameters = []
+        for vertex in pair:
+            point = tuple(Fraction.from_float(float(value)) for value in points[vertex])
+            parameter = (point[axis] - first[axis]) / direction[axis]
+            if not 0 <= parameter <= 1 or any(
+                point[i] != first[i] + parameter * direction[i] for i in range(3)
+            ):
+                raise ValueError("A recovered PLC curve vertex is not exactly on its source.")
+            source_parameters.append(parameter)
+        a, b = source_parameters
+        if a == b:
+            raise ValueError("A recovered PLC curve edge has zero source interval.")
+        intervals[identifier].append((min(a, b), max(a, b)))
+        chart = query.chart_id_for_entity_id(identifier)
+        key, path = query.chart_source_key(1, chart)
+        target_cells.append(cell_id)
+        target_edges.append(int(edge_ids[row]))
+        local_indices.append(local_index)
+        target_references.append(
+            tuple(tuple(Fraction.from_float(float(value)) for value in point) for point in reference)
+        )
+        parameters.append(((a,), (b,)))
+        chart_ids.append(chart)
+        entity_keys.append(key)
+        occurrences.append(path)
+        orientations.append(1 if b > a else -1)
+    for identifier, pieces in intervals.items():
+        ordered = sorted(pieces)
+        if (
+            not ordered
+            or ordered[0][0] != 0
+            or ordered[-1][1] != 1
+            or any(left[1] != right[0] for left, right in zip(ordered, ordered[1:]))
+        ):
+            raise ValueError(f"Recovered PLC curve {identifier} has a gap or overlap.")
+    target_values = np.asarray(target_references, dtype=np.float64)
+    parameter_values = np.asarray(parameters, dtype=np.float64)
+    witness = SourceBoundaryChartWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=mesh.topology_id,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_query_id=query.source_query_id,
+        chart_dimension=1,
+        reference_dimension=3,
+        cell_global_ids=np.asarray(target_cells, dtype=np.int64),
+        entity_global_ids=np.asarray(target_edges, dtype=np.int64),
+        local_entity_indices=np.asarray(local_indices, dtype=np.int32),
+        target_reference_vertices=target_values,
+        target_reference_rational_tokens=rational_chart_tokens(tuple(target_references)),
+        source_chart_ids=tuple(chart_ids),
+        source_entity_ids=tuple(entity_keys),
+        occurrence_paths=tuple(occurrences),
+        source_parameters=parameter_values,
+        source_parameter_rational_tokens=rational_chart_tokens(tuple(parameters)),
+        orientations=np.asarray(orientations, dtype=np.int8),
+    )
+    return query, witness
 
 
 @checked

@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from fractions import Fraction
+from functools import cache
+from heapq import heappop, heappush
+from itertools import combinations
 from typing import final, NamedTuple
 
 import equinox as eqx
@@ -21,13 +24,14 @@ from .._meshcore import mixed_template, mixed_template_counts, MixedElementKind
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import (
-    CellGeometryCoordinateMap,
+    CellGeometryRestrictionSource,
     CellGeometrySpec,
     coordinate_reference_chain,
     PerCellRestrictedCellGeometryElement,
     restriction_chart_arguments,
     ScalarCoordinateElement,
 )
+from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock, CellMesh
 from ..discretization._coordinate_enclosure import (
     axes,
@@ -40,23 +44,58 @@ from ..discretization._coordinate_enclosure import (
     scale,
     sum_polynomials,
 )
-from ..discretization._nested_reference import nested_cell_reference_maps
+from ..discretization._exact_algebraic_geometry import RadicalElement
+from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+from ..discretization._nested_reference import (
+    _reference_shape_weights,
+    coarsen_reference_cell_maps,
+    compose_reference_cell_maps,
+    nested_cell_reference_maps,
+)
 from ..discretization._nested_reference_types import (
+    evaluate_reference_chart_arguments,
+    exact_reference_cell_vertices,
+    ExactReferenceChartExpression,
+    freeze_reference_chart_arguments,
+    NestedReferenceWitnesses,
+    reference_chart_arguments_identity,
     ReferenceCellMapWitnesses,
+    ReferenceCellPartition,
     validate_reference_cell_map_witnesses,
+    validate_reference_cell_partition,
+)
+from ..discretization._periodic_exact import identification_id, identification_orders
+from ..discretization._periodic_topology import (
+    _entity_vertex_rows,
+    _interleaved_keys,
+    _orientation_orders,
 )
 from ..discretization._reference_cell import (
     facet_orientation_between,
     reference_cell_topology,
 )
-from ..linalg._exact import solve_exact
+from ..linalg._exact import (
+    ExactInconsistentSystemError,
+    ExactRankDeficientSystemError,
+    solve_exact,
+    solve_exact_sparse,
+)
 from ._lineage import EntityLineageKind
+from ._periodic import (
+    periodic_entity_orbit_map,
+    periodic_next_entity_ids,
+    periodic_orbit_closure,
+    PeriodicQuotientHistory,
+    PeriodicRefinementEdgeLock,
+    update_periodic_quotient_history,
+)
 from ._topology_edit import (
     assemble_topology_edit,
     CellTopologyEdit,
     entity_keys,
     EntityRelations,
     key_rows,
+    PeriodicTopologyEditWitness,
     PrescribedEntityIds,
     SharedFaceWitnesses,
     TopologyEditBlock,
@@ -65,6 +104,7 @@ from ._topology_edit import (
 
 _PointKey = tuple[tuple[int, Fraction], ...]
 _FaceSignature = tuple[tuple[_PointKey, ...], ...]
+_LocalPointCache = dict[tuple[str, tuple[float, ...], int], _PointKey]
 
 
 class MixedSibling(NamedTuple):
@@ -99,7 +139,7 @@ type _MixedReferenceAffineMap = tuple[
 
 @final
 class _RetainedCoordinateBank(StrictModule, NonTrainableState):
-    """Retain exact coefficient values and source identity under a cell restriction."""
+    """Exact coefficient data and observational source provenance, not authority."""
 
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
@@ -108,19 +148,93 @@ class _RetainedCoordinateBank(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        source_map: CellGeometryCoordinateMap,
+        source_id: str,
+        source_revision: str,
+        source_map_id: str,
         exact_coordinates: CoordinateSourceBank | None,
         /,
     ) -> None:
-        if not isinstance(source_map, CellGeometryCoordinateMap):
-            raise TypeError("source_map must satisfy CellGeometryCoordinateMap.")
-        self.source_id = source_map.source_id
-        self.source_revision = source_map.source_revision
-        self.source_map_id = source_map.source_map_id
+        if not all(
+            isinstance(value, str) and value
+            for value in (source_id, source_revision, source_map_id)
+        ):
+            raise ValueError(
+                "Retained coordinate provenance requires full source identities."
+            )
+        if exact_coordinates is not None:
+            exact_coordinates = tuple(tuple(row) for row in exact_coordinates)
+            if (
+                not exact_coordinates
+                or not exact_coordinates[0]
+                or any(len(row) != len(exact_coordinates[0]) for row in exact_coordinates)
+                or any(
+                    not isinstance(value, (Fraction, RadicalElement))
+                    for row in exact_coordinates
+                    for value in row
+                )
+            ):
+                raise ValueError(
+                    "Retained coordinate coefficients must form an exact scalar bank."
+                )
+            try:
+                rounded = np.asarray(exact_coordinates, dtype=np.float64)
+            except (OverflowError, TypeError, ValueError) as error:
+                raise ValueError(
+                    "Retained coordinate coefficients must have finite shadows."
+                ) from error
+            if not np.all(np.isfinite(rounded)):
+                raise ValueError(
+                    "Retained coordinate coefficients must have finite shadows."
+                )
+        self.source_id = source_id
+        self.source_revision = source_revision
+        self.source_map_id = source_map_id
         self.exact_coordinates = exact_coordinates
+
+    @classmethod
+    def from_stored_fields(
+        cls, value: _RetainedCoordinateBank, /, *, coordinates: ArrayLike
+    ) -> _RetainedCoordinateBank:
+        """Revalidate retained data and its coefficient shadows, not source authority."""
+        if type(value) is not cls:
+            raise TypeError("value must be a retained coordinate bank.")
+        rebuilt = cls(
+            value.source_id,
+            value.source_revision,
+            value.source_map_id,
+            value.exact_coordinates,
+        )
+        if rebuilt.exact_coordinates is not None and not np.array_equal(
+            np.asarray(rebuilt.exact_coordinates, dtype=np.float64),
+            np.asarray(coordinates, dtype=np.float64),
+        ):
+            raise ValueError(
+                "Retained coordinate coefficients change their execution shadows."
+            )
+        return rebuilt
 
     def source_coordinates(self) -> CoordinateSourceBank | None:
         return self.exact_coordinates
+
+
+def _require_retained_bank_origin(
+    source_geometry: CellGeometrySpec, target_geometry: CellGeometrySpec, /
+) -> None:
+    """Compare retained provenance against its actual preceding coordinate owner."""
+    retained = target_geometry.source_map
+    if type(retained) is not _RetainedCoordinateBank:
+        return
+    origin = source_geometry.source_map
+    if (
+        origin is None
+        or retained.source_id != origin.source_id
+        or retained.source_revision != origin.source_revision
+        or retained.source_map_id != origin.source_map_id
+        or retained.exact_coordinates != source_geometry.source_coordinates()
+    ):
+        raise ValueError(
+            "Retained coordinate bank differs from its actual source geometry."
+        )
 
 
 class MixedActiveCell(NamedTuple):
@@ -133,6 +247,23 @@ class MixedActiveCell(NamedTuple):
     cell_class: int
     column_id: int | None
     interval_index: int | None
+
+
+class MixedForestRoot(NamedTuple):
+    """One initial cell and its exact chart into the independently bound root."""
+
+    cell_id: int
+    block_name: str
+    cell_kind: str
+    vertices: tuple[int, ...]
+    cell_class: int
+    column_id: int | None
+    interval_index: int | None
+    root_cell_id: int
+    root_cell_kind: str
+    root_vertices: tuple[int, ...]
+    root_reference_vertices: tuple[tuple[Fraction, ...], ...]
+    root_reference_chart_arguments: tuple[ExactReferenceChartExpression, ...]
 
 
 @final
@@ -216,10 +347,13 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
 
     siblings: tuple[MixedSibling, ...] = eqx.field(static=True)
     active_cells: tuple[MixedActiveCell, ...] = eqx.field(static=True)
+    forest_roots: tuple[MixedForestRoot, ...] = eqx.field(static=True)
     vertex_points: tuple[tuple[int, _PointKey], ...] = eqx.field(static=True)
     retired_entities: tuple[tuple[int, tuple[int, ...], int], ...] = eqx.field(
         static=True
     )
+    periodic_quotient_history: PeriodicQuotientHistory | None
+    active_lifted_topology_id: str = eqx.field(static=True)
     layer_policy: tuple[bool, bool, bool] | None = eqx.field(static=True)
     next_cell_id: int = eqx.field(static=True)
     next_vertex_id: int = eqx.field(static=True)
@@ -229,19 +363,36 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
         self,
         siblings: tuple[MixedSibling, ...],
         active_cells: tuple[MixedActiveCell, ...],
+        forest_roots: tuple[MixedForestRoot, ...],
         vertex_points: tuple[tuple[int, _PointKey], ...],
         retired_entities: tuple[tuple[int, tuple[int, ...], int], ...],
         layer_policy: tuple[bool, bool, bool] | None,
         next_cell_id: int,
         next_vertex_id: int,
+        periodic_quotient_history: PeriodicQuotientHistory | None,
+        active_lifted_topology_id: str,
         /,
     ) -> None:
         ordered_cells = tuple(sorted(active_cells, key=lambda value: value.cell_id))
+        ordered_forest = tuple(
+            sorted(
+                (
+                    value._replace(
+                        root_reference_chart_arguments=freeze_reference_chart_arguments(
+                            (value.root_reference_chart_arguments,)
+                        )[0]
+                    )
+                    for value in forest_roots
+                ),
+                key=lambda value: value.cell_id,
+            )
+        )
         ordered_siblings = tuple(sorted(siblings, key=lambda value: value.parent_id))
         ordered_points = tuple(sorted(vertex_points, key=lambda value: value[0]))
         ordered_retired = tuple(sorted(retired_entities))
         if (
             len({value.cell_id for value in ordered_cells}) != len(ordered_cells)
+            or len({value.cell_id for value in ordered_forest}) != len(ordered_forest)
             or len({value.parent_id for value in ordered_siblings})
             != len(ordered_siblings)
             or len({value[0] for value in ordered_points}) != len(ordered_points)
@@ -249,14 +400,47 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
             != len(ordered_retired)
             or next_cell_id < 0
             or next_vertex_id < 0
+            or not isinstance(active_lifted_topology_id, str)
+            or not active_lifted_topology_id
+            or (
+                periodic_quotient_history is not None
+                and not isinstance(periodic_quotient_history, PeriodicQuotientHistory)
+            )
         ):
             raise ValueError("Mixed-adaptation hierarchy identities are malformed.")
+        for root in ordered_forest:
+            if (
+                root.cell_id < 0
+                or root.root_cell_id < 0
+                or not root.block_name
+                or root.cell_class < 0
+                or len(root.vertices)
+                != len(reference_cell_topology(root.cell_kind).vertices)
+                or len(root.root_vertices)
+                != len(reference_cell_topology(root.root_cell_kind).vertices)
+                or any(value < 0 for value in (*root.vertices, *root.root_vertices))
+                or len(set(root.vertices)) != len(root.vertices)
+                or len(set(root.root_vertices)) != len(root.root_vertices)
+            ):
+                raise ValueError("Mixed hierarchy forest root identities are malformed.")
+            validate_reference_cell_map_witnesses(
+                ReferenceCellMapWitnesses(
+                    np.asarray((0,), dtype=np.int64),
+                    np.asarray((root.root_cell_id,), dtype=np.int64),
+                    root.cell_kind,
+                    root.root_cell_kind,
+                    np.asarray((root.root_reference_vertices,), dtype=np.float64),
+                    (root.root_reference_vertices,),
+                    (root.root_reference_chart_arguments,),
+                )
+            )
         high_cell = max(
             (value.cell_id for value in ordered_cells),
             default=-1,
         )
         high_cell = max(
             high_cell,
+            max((value.cell_id for value in ordered_forest), default=-1),
             max((value.parent_id for value in ordered_siblings), default=-1),
             max(
                 (child for value in ordered_siblings for child in value.child_ids),
@@ -276,6 +460,10 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
                 ),
                 default=-1,
             ),
+            max(
+                (vertex for value in ordered_forest for vertex in value.vertices),
+                default=-1,
+            ),
             max((value[0] for value in ordered_points), default=-1),
         )
         if next_cell_id <= high_cell or next_vertex_id <= high_vertex:
@@ -291,8 +479,11 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
             )
         self.siblings = ordered_siblings
         self.active_cells = ordered_cells
+        self.forest_roots = ordered_forest
         self.vertex_points = ordered_points
         self.retired_entities = ordered_retired
+        self.periodic_quotient_history = periodic_quotient_history
+        self.active_lifted_topology_id = active_lifted_topology_id
         self.layer_policy = layer_policy
         self.next_cell_id = next_cell_id
         self.next_vertex_id = next_vertex_id
@@ -301,8 +492,15 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
                 "kind": "mixed-adaptation-hierarchy",
                 "siblings": _sibling_payload(ordered_siblings),
                 "active_cells": ordered_cells,
+                "forest_roots": _forest_payload(ordered_forest),
                 "vertex_points": _point_bank_payload(ordered_points),
                 "retired_entities": ordered_retired,
+                "periodic_quotient_history": (
+                    None
+                    if periodic_quotient_history is None
+                    else periodic_quotient_history.history_id
+                ),
+                "active_lifted_topology": active_lifted_topology_id,
                 "layer_policy": layer_policy,
                 "next_cell_id": next_cell_id,
                 "next_vertex_id": next_vertex_id,
@@ -374,6 +572,8 @@ class MixedAdaptationOutcome(NamedTuple):
     coarsening_maps: tuple[MixedCoarseningMap, ...]
     reference_maps: tuple[ReferenceCellMapWitnesses, ...]
     target_geometry: CellGeometrySpec | None
+    exact_vertex_coordinates: CoordinateSourceBank | None
+    coarsening_partition: ReferenceCellPartition | None
 
 
 class MixedTemplateClosureError(RuntimeError):
@@ -473,12 +673,37 @@ def _sibling_payload(
     )
 
 
+def _forest_payload(
+    roots: tuple[MixedForestRoot, ...], /
+) -> tuple[tuple[object, ...], ...]:
+    return tuple(
+        (
+            root.cell_id,
+            root.block_name,
+            root.cell_kind,
+            root.vertices,
+            root.cell_class,
+            root.column_id,
+            root.interval_index,
+            root.root_cell_id,
+            root.root_cell_kind,
+            root.root_vertices,
+            tuple(
+                tuple(_fraction_payload(value) for value in point)
+                for point in root.root_reference_vertices
+            ),
+            reference_chart_arguments_identity((root.root_reference_chart_arguments,)),
+        )
+        for root in roots
+    )
+
+
 def _point_key(
     kind: str, vertices: NDArray[np.int64], point: NDArray[np.float64], /
 ) -> _PointKey:
     coordinates = tuple(Fraction(float(value)) for value in point)
     x, y = coordinates[:2]
-    if kind == "tetrahedron":
+    if kind in ("tetrahedron", "simplex:3"):
         z = coordinates[2]
         weights = (1 - x - y - z, x, y, z)
     elif kind == "prism":
@@ -524,11 +749,27 @@ def _point_key(
     )
 
 
-def _template_facts(cell: _Cell, template: _Template, /) -> _TemplateFacts:
+def _template_facts(
+    cell: _Cell, template: _Template, /, *, point_cache: _LocalPointCache | None = None
+) -> _TemplateFacts:
     topology = reference_cell_topology(cell.kind)
+
+    def point_key(point: NDArray[np.float64], /) -> _PointKey:
+        if point_cache is None:
+            return _point_key(cell.kind, cell.vertices, point)
+        key = (cell.kind, tuple(float(value) for value in point), cell.vertices.size)
+        local = point_cache.get(key)
+        if local is None:
+            local = _point_key(
+                cell.kind, np.arange(cell.vertices.size, dtype=np.int64), point
+            )
+            point_cache[key] = local
+        return tuple(
+            sorted((int(cell.vertices[index]), weight) for index, weight in local)
+        )
+
     child_points = tuple(
-        tuple(_point_key(cell.kind, cell.vertices, point) for point in child)
-        for child in template.children
+        tuple(point_key(point) for point in child) for child in template.children
     )
     parent_facets = tuple(
         frozenset(int(cell.vertices[index]) for index in facet)
@@ -563,7 +804,7 @@ def _template_facts(cell: _Cell, template: _Template, /) -> _TemplateFacts:
 
 def _native_kind(kind: str, /) -> MixedElementKind:
     match kind:
-        case "tetrahedron":
+        case "tetrahedron" | "simplex:3":
             return MixedElementKind.TETRAHEDRON
         case "hexahedron":
             return MixedElementKind.HEXAHEDRON
@@ -586,7 +827,7 @@ def _templates(kind: str, axial: bool, /) -> tuple[_Template, ...]:
         for index in range(count)
     )
     order = list(range(count))
-    if kind == "tetrahedron":
+    if kind in ("tetrahedron", "simplex:3"):
         order = [0, 8, 9, 10, 7, 1, 2, 3, 4, 5, 6]
     elif axial and kind in ("prism", "hexahedron"):
         order = [
@@ -614,6 +855,7 @@ def _source_cells(
     for block in mesh.blocks:
         if not isinstance(block, CellBlock) or block.cell_kind not in (
             "tetrahedron",
+            "simplex:3",
             "prism",
             "pyramid",
             "hexahedron",
@@ -663,120 +905,661 @@ def _mesh_facet_owners(
     return owners
 
 
+def _periodic_seam_faces(
+    mesh: CellMesh, cells: list[_Cell], /
+) -> tuple[tuple[tuple[int, int], tuple[int, int]], ...]:
+    """Return actual paired exterior faces from the source quotient authority."""
+    if mesh.periodic_topology is None:
+        return ()
+    owners = _mesh_facet_owners(cells)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    face_rows = _entity_vertex_rows(mesh)[2]
+    orbit_map = periodic_entity_orbit_map(mesh, 2)
+    orbits = np.asarray(orbit_map.lifted_to_quotient, dtype=np.int64)
+    groups: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for row, vertices in enumerate(face_rows):
+        key = tuple(sorted(int(value) for value in vertex_ids[vertices]))
+        face_owners = owners[key]
+        if len(face_owners) == 1:
+            cell, facet, _ = face_owners[0]
+            groups[int(orbits[row])].append((cells[cell].identifier, facet))
+    result = []
+    for group in groups.values():
+        if len(group) == 1:
+            continue
+        if len(group) != 2:
+            raise MixedTemplateClosureError(
+                "A periodic facet orbit must contain exactly two exterior faces."
+            )
+        ordered = sorted(group)
+        result.append((ordered[0], ordered[1]))
+    return tuple(sorted(result))
+
+
+def _periodic_face_correspondence(
+    mesh: CellMesh, left: tuple[int, ...], right: tuple[int, ...], /
+) -> dict[int, int]:
+    """Map right corners to left using only the source quotient and winding."""
+    topology = mesh.periodic_topology
+    if topology is None or len(left) != len(right):
+        raise MixedTemplateClosureError(
+            "Periodic faces have incompatible corner anatomy."
+        )
+    ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    rows = {int(identifier): row for row, identifier in enumerate(ids)}
+    representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
+    roots = ids[representatives]
+    shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
+    fixed = np.asarray(topology.vertex_fixed_generators, dtype=np.bool_)
+    orders = identification_orders(topology.cell)
+
+    def canonical(loop: tuple[int, ...]) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        indices = np.asarray([rows[vertex] for vertex in loop], dtype=np.int64)
+        variants = []
+        for order, _ in _orientation_orders(len(loop), simplex=False):
+            key, _ = _interleaved_keys(
+                roots[indices][None, :],
+                shifts[indices][None, :, :],
+                fixed[indices][None, :, :],
+                order,
+                orders,
+            )
+            variants.append((tuple(int(value) for value in key[0]), order))
+        key, permutation = min(variants)
+        if sum(candidate == key for candidate, _ in variants) != 1:
+            raise MixedTemplateClosureError(
+                "Periodic seam corners do not determine a unique quotient permutation."
+            )
+        return key, permutation
+
+    left_key, left_order = canonical(left)
+    right_key, right_order = canonical(right)
+    if left_key != right_key:
+        raise MixedTemplateClosureError(
+            "Restored seam faces do not share one exact quotient face."
+        )
+    return {
+        right[right_index]: left[left_index]
+        for left_index, right_index in zip(left_order, right_order, strict=True)
+    }
+
+
 def _face_signature(
     cell: _Cell,
     template: _Template,
     facet: int,
-    cache: dict[tuple[int, int], _TemplateFacts],
+    cache: dict[tuple[int, int], tuple[_FaceSignature, ...]],
     index: int,
+    point_cache: _LocalPointCache | None = None,
     /,
 ) -> _FaceSignature:
+    if template.index == 0:
+        vertices = reference_cell_topology(cell.kind).entities[2][facet]
+        return (
+            tuple(
+                sorted(((int(cell.vertices[index]), Fraction(1)),) for index in vertices)
+            ),
+        )
     key = (index, template.index)
-    facts = cache.get(key)
-    if facts is None:
-        facts = _template_facts(cell, template)
-        cache[key] = facts
-    return facts.facets[facet]
+    facets = cache.get(key)
+    if facets is None:
+        facets = _template_facts(cell, template, point_cache=point_cache).facets
+        cache[key] = facets
+    return facets[facet]
 
 
 def _close_templates(
     cells: list[_Cell],
     domains: list[list[_Template]],
-    interfaces: list[tuple[int, int, int, int]],
+    interfaces: list[tuple[int, int, int, int, dict[int, int] | None]],
 ) -> tuple[list[_Template], int]:
-    cache: dict[tuple[int, int], _TemplateFacts] = {}
-    pending: list[list[list[_Template]]] = [[values.copy() for values in domains]]
+    cache: dict[tuple[int, int], tuple[_FaceSignature, ...]] = {}
+    point_cache: _LocalPointCache = {}
+    incident: list[list[int]] = [[] for _ in cells]
+    for index, (left, _, right, _, _) in enumerate(interfaces):
+        incident[left].append(index)
+        if right != left:
+            incident[right].append(index)
+    choices = [values.copy() for values in domains]
+    # Keep the original branch priority while avoiding a full-domain scan on
+    # every decision. Versions invalidate entries after narrowing or rollback.
+    initially_has_identity = tuple(
+        any(value.index == 0 for value in values) for values in domains
+    )
+    versions = [0] * len(choices)
+    pending: list[tuple[bool, int, int, int, int]] = []
+    # An identity completion is impossible while any unresolved domain lacks it.
+    without_identity: set[int] = set()
+
+    def install(index: int, values: list[_Template], /) -> None:
+        choices[index] = values
+        versions[index] += 1
+        if len(values) > 1:
+            heappush(
+                pending,
+                (
+                    initially_has_identity[index],
+                    len(values),
+                    cells[index].identifier,
+                    index,
+                    versions[index],
+                ),
+            )
+            if not any(value.index == 0 for value in values):
+                without_identity.add(index)
+            else:
+                without_identity.discard(index)
+        else:
+            without_identity.discard(index)
+
+    for index, values in enumerate(choices):
+        install(index, values)
+    trail: list[tuple[int, list[_Template]]] = []
+    decisions: list[tuple[int, tuple[_Template, ...], int, int]] = []
+    dirty = tuple(range(len(interfaces)))
+
+    def next_branch() -> tuple[int, ...] | None:
+        while decisions:
+            selected, candidates, candidate_index, mark = decisions[-1]
+            while len(trail) > mark:
+                cell, previous = trail.pop()
+                install(cell, previous)
+            if candidate_index < len(candidates):
+                decisions[-1] = (selected, candidates, candidate_index + 1, mark)
+                trail.append((selected, choices[selected]))
+                install(selected, [candidates[candidate_index]])
+                return tuple(incident[selected])
+            decisions.pop()
+        return None
+
     steps = 0
-    while pending:
-        choices = pending.pop()
+    while True:
         steps += 1
         feasible = True
-        changed = True
-        while changed and feasible:
-            changed = False
-            for left, left_facet, right, right_facet in interfaces:
-                right_signatures = {
-                    _face_signature(cells[right], value, right_facet, cache, right)
-                    for value in choices[right]
-                }
+        queue = deque(dirty)
+        queued = set(dirty)
+        while queue and feasible:
+            interface_index = queue.popleft()
+            queued.remove(interface_index)
+            changed_cells: list[int] = []
+            left, left_facet, right, right_facet, vertex_map = interfaces[interface_index]
+
+            def right_signature(value: _Template) -> _FaceSignature:
+                signature = _face_signature(
+                    cells[right], value, right_facet, cache, right, point_cache
+                )
+                if vertex_map is None:
+                    return signature
+                return tuple(
+                    sorted(
+                        tuple(
+                            sorted(
+                                tuple(
+                                    sorted(
+                                        (vertex_map[vertex], weight)
+                                        for vertex, weight in point
+                                    )
+                                )
+                                for point in face
+                            )
+                        )
+                        for face in signature
+                    )
+                )
+
+            if left == right:
+                retained = [
+                    value
+                    for value in choices[left]
+                    if _face_signature(
+                        cells[left], value, left_facet, cache, left, point_cache
+                    )
+                    == right_signature(value)
+                ]
+                if not retained:
+                    feasible = False
+                    break
+                if len(retained) != len(choices[left]):
+                    trail.append((left, choices[left]))
+                    install(left, retained)
+                    changed_cells.append(left)
+            else:
+                right_signatures = {right_signature(value) for value in choices[right]}
                 retained_left = [
                     value
                     for value in choices[left]
-                    if _face_signature(cells[left], value, left_facet, cache, left)
+                    if _face_signature(
+                        cells[left], value, left_facet, cache, left, point_cache
+                    )
                     in right_signatures
                 ]
                 if not retained_left:
                     feasible = False
                     break
                 if len(retained_left) != len(choices[left]):
-                    choices[left] = retained_left
-                    changed = True
+                    trail.append((left, choices[left]))
+                    install(left, retained_left)
+                    changed_cells.append(left)
                 left_signatures = {
-                    _face_signature(cells[left], value, left_facet, cache, left)
+                    _face_signature(
+                        cells[left], value, left_facet, cache, left, point_cache
+                    )
                     for value in choices[left]
                 }
                 retained_right = [
                     value
                     for value in choices[right]
-                    if _face_signature(cells[right], value, right_facet, cache, right)
-                    in left_signatures
+                    if right_signature(value) in left_signatures
                 ]
                 if not retained_right:
                     feasible = False
                     break
                 if len(retained_right) != len(choices[right]):
-                    choices[right] = retained_right
-                    changed = True
+                    trail.append((right, choices[right]))
+                    install(right, retained_right)
+                    changed_cells.append(right)
+            for changed_cell in changed_cells:
+                for item in incident[changed_cell]:
+                    if item not in queued:
+                        queue.append(item)
+                        queued.add(item)
         if not feasible:
+            next_dirty = next_branch()
+            if next_dirty is None:
+                break
+            dirty = next_dirty
             continue
-        unresolved = [index for index, values in enumerate(choices) if len(values) > 1]
-        if not unresolved:
+        while pending and pending[0][4] != versions[pending[0][3]]:
+            heappop(pending)
+        if not pending:
             return [values[0] for values in choices], steps
+        # Prove all remaining first-choice identities simultaneously against
+        # every ordinary and periodic interface. This yields the same first
+        # solution without one whole-mesh branch per untouched cell.
+        identity_choice = (
+            [
+                values[0]
+                if len(values) == 1
+                else next((value for value in values if value.index == 0), None)
+                for values in choices
+            ]
+            if not without_identity
+            else []
+        )
+        if identity_choice and all(value is not None for value in identity_choice):
+            identity_complete = True
+            for left, left_facet, right, right_facet, vertex_map in interfaces:
+                left_value = identity_choice[left]
+                right_value = identity_choice[right]
+                assert left_value is not None and right_value is not None
+                left_trace = _face_signature(
+                    cells[left], left_value, left_facet, cache, left, point_cache
+                )
+                right_trace = _face_signature(
+                    cells[right], right_value, right_facet, cache, right, point_cache
+                )
+                if vertex_map is not None:
+                    right_trace = tuple(
+                        sorted(
+                            tuple(
+                                sorted(
+                                    tuple(
+                                        sorted(
+                                            (vertex_map[vertex], weight)
+                                            for vertex, weight in point
+                                        )
+                                    )
+                                    for point in face
+                                )
+                            )
+                            for face in right_trace
+                        )
+                    )
+                if left_trace != right_trace:
+                    identity_complete = False
+                    break
+            if identity_complete:
+                return [value for value in identity_choice if value is not None], steps
         # Marked cells (identity excluded) are decided first in their preferred
         # template order; closure cells then follow their constrained faces.
-        selected = min(
-            unresolved,
-            key=lambda index: (
-                any(value.index == 0 for value in domains[index]),
-                len(choices[index]),
-                cells[index].identifier,
-            ),
-        )
-        for candidate in reversed(choices[selected]):
-            branch = [values.copy() for values in choices]
-            branch[selected] = [candidate]
-            pending.append(branch)
+        selected = pending[0][3]
+        candidates = tuple(choices[selected])
+        decisions.append((selected, candidates, 1, len(trail)))
+        trail.append((selected, choices[selected]))
+        install(selected, [candidates[0]])
+        dirty = tuple(incident[selected])
     raise MixedTemplateClosureError(
         "No family-preserving reference templates close the marked shared-face signatures."
     )
 
 
-def _mapping_points(
-    hierarchy: MixedAdaptationHierarchy | None, mesh: CellMesh, /
-) -> dict[int, _PointKey]:
-    if hierarchy is None:
-        return {
-            int(identifier): ((int(identifier), Fraction(1)),)
-            for identifier in np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-        }
-    points = dict(hierarchy.vertex_points)
-    current = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    missing = [int(value) for value in current if int(value) not in points]
-    if missing:
-        raise ValueError(
-            "Mixed hierarchy does not retain ancestry for every source vertex."
+class _RootCellChart(NamedTuple):
+    root_cell_id: int
+    root_cell_kind: str
+    root_vertices: tuple[int, ...]
+    arguments: tuple[ExactReferenceChartExpression, ...]
+
+
+def _root_point_from_chart(
+    chart: _RootCellChart, target_kind: str, point: tuple[Fraction, ...], /
+) -> _PointKey:
+    coordinates = evaluate_reference_chart_arguments(target_kind, chart.arguments, point)
+    if any(not isinstance(value, Fraction) for value in coordinates):
+        raise ValueError("Mixed root reference coordinates must be exact rationals.")
+    reference = tuple(value for value in coordinates if isinstance(value, Fraction))
+    weights = _reference_shape_weights(chart.root_cell_kind, reference)
+    if len(weights) != len(chart.root_vertices):
+        raise ValueError("Mixed root chart and root-cell corners do not align.")
+    return tuple(
+        sorted(
+            (int(identifier), weight)
+            for identifier, weight in zip(chart.root_vertices, weights, strict=True)
+            if weight
         )
+    )
+
+
+def _source_root_charts(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec | None,
+    hierarchy: MixedAdaptationHierarchy | None,
+    root_mesh: CellMesh | None,
+    /,
+) -> dict[int, _RootCellChart]:
+    ancestry = (
+        None
+        if geometry is None
+        or (
+            hierarchy is None
+            and isinstance(root_mesh, CellMesh)
+            and root_mesh.mesh_id == mesh.mesh_id
+        )
+        else geometry.restriction_source
+    )
+    if ancestry is not None and hierarchy is None and root_mesh is None:
+        raise ValueError(
+            "Starting mixed adaptation of a restricted source requires its exact root mesh."
+        )
+    if root_mesh is not None:
+        if not isinstance(root_mesh, CellMesh):
+            raise TypeError("Mixed root_mesh must be CellMesh or None.")
+        expected = (
+            mesh.topology_id
+            if ancestry is None and hierarchy is None
+            else (None if ancestry is None else ancestry.source_topology_id)
+        )
+        if expected is not None and root_mesh.topology_id != expected:
+            raise ValueError("Mixed root mesh does not match the retained root topology.")
+    source_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    if ancestry is None and hierarchy is None:
+        return {
+            int(identifier): _RootCellChart(
+                int(identifier),
+                block.cell_kind,
+                tuple(
+                    int(source_vertex_ids[index])
+                    for index in np.asarray(block.vertices, dtype=np.int64)[row, :]
+                ),
+                freeze_reference_chart_arguments(
+                    (axes(reference_cell_topology(block.cell_kind).dimension),)
+                )[0],
+            )
+            for block in mesh.blocks
+            for row, (identifier, _) in enumerate(
+                zip(
+                    np.asarray(block.global_ids, dtype=np.int64),
+                    np.asarray(block.vertices, dtype=np.int64),
+                    strict=True,
+                )
+            )
+        }
+    if ancestry is None:
+        if geometry is not None:
+            raise ValueError("Mixed geometry lost its retained root restriction.")
+        if hierarchy is None:
+            raise RuntimeError("Mixed root chart hierarchy was not initialized.")
+        charts = {
+            root.cell_id: _RootCellChart(
+                root.root_cell_id,
+                root.root_cell_kind,
+                root.root_vertices,
+                root.root_reference_chart_arguments,
+            )
+            for root in hierarchy.forest_roots
+        }
+        pending = list(hierarchy.siblings)
+        while pending:
+            remaining = []
+            for sibling in pending:
+                parent = charts.get(sibling.parent_id)
+                if parent is None:
+                    remaining.append(sibling)
+                    continue
+                for child, corners in zip(
+                    sibling.child_ids, sibling.child_reference_vertices, strict=True
+                ):
+                    child_chart = _affine_chart(
+                        *_exact_child_to_parent_affine_map(sibling.cell_kind, corners)
+                    )
+                    arguments = freeze_reference_chart_arguments(
+                        (
+                            tuple(
+                                compose_expression(value, child_chart)
+                                for value in parent.arguments
+                            ),
+                        )
+                    )[0]
+                    charts[child] = _RootCellChart(
+                        parent.root_cell_id,
+                        parent.root_cell_kind,
+                        parent.root_vertices,
+                        arguments,
+                    )
+            if len(remaining) == len(pending):
+                raise ValueError("Mixed hierarchy forest has unresolved parent ancestry.")
+            pending = remaining
+        return charts
+    if set(ancestry.block_names) != {block.name for block in mesh.blocks}:
+        raise ValueError("Mixed root ancestry must cover every source block.")
+    root_cells: dict[int, tuple[str, tuple[int, ...]]] = {}
+    if root_mesh is not None:
+        root_ids = np.asarray(root_mesh.vertex_global_ids, dtype=np.int64)
+        for block in root_mesh.blocks:
+            for row, (identifier, _) in enumerate(
+                zip(
+                    np.asarray(block.global_ids, dtype=np.int64),
+                    np.asarray(block.vertices, dtype=np.int64),
+                    strict=True,
+                )
+            ):
+                root_cells[int(identifier)] = (
+                    block.cell_kind,
+                    tuple(
+                        int(root_ids[index])
+                        for index in np.asarray(block.vertices, dtype=np.int64)[row, :]
+                    ),
+                )
+    elif hierarchy is not None:
+        for root in hierarchy.forest_roots:
+            value = (root.root_cell_kind, root.root_vertices)
+            previous = root_cells.setdefault(root.root_cell_id, value)
+            if previous != value:
+                raise ValueError("Mixed forest has conflicting root-cell corners.")
+    maps = dict(zip(ancestry.block_names, ancestry.parent_reference_maps, strict=True))
+    supports = dict(zip(ancestry.block_names, ancestry.parent_vertex_ids, strict=True))
+    result: dict[int, _RootCellChart] = {}
+    for block in mesh.blocks:
+        witness = maps[block.name]
+        if witness is None:
+            raise ValueError("Mixed root ancestry requires exact reference maps.")
+        rows = nested_cell_reference_maps(witness)
+        if len(rows) != block.cell_count:
+            raise ValueError("Mixed root chart rows do not cover the source block.")
+        parent_vertices = np.asarray(supports[block.name], dtype=np.int64)
+        for index, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64)):
+            reference_map = rows[index]
+            if reference_map.arguments is None or reference_map.target_cell_id != index:
+                raise ValueError("Mixed root chart rows do not align with source cells.")
+            declared = tuple(
+                int(value) for value in parent_vertices[index, :] if value >= 0
+            )
+            actual = root_cells.get(reference_map.source_cell_id)
+            if actual is not None:
+                if actual[0] != reference_map.source_cell_kind:
+                    raise ValueError("Mixed root chart names a mismatched root cell.")
+                root_vertices = actual[1]
+                if declared and not set(declared).issubset(root_vertices):
+                    raise ValueError("Mixed root support disagrees with the root mesh.")
+            else:
+                if root_mesh is not None:
+                    raise ValueError("Mixed root chart names an absent root cell.")
+                root_vertices = declared
+                if len(root_vertices) != len(
+                    reference_cell_topology(reference_map.source_cell_kind).vertices
+                ):
+                    raise ValueError(
+                        "Mixed root mesh is required when root corners are not retained."
+                    )
+            result[int(identifier)] = _RootCellChart(
+                reference_map.source_cell_id,
+                reference_map.source_cell_kind,
+                root_vertices,
+                reference_map.arguments,
+            )
+    return result
+
+
+def _chart_vertex_points(
+    mesh: CellMesh, charts: dict[int, _RootCellChart], /
+) -> dict[int, _PointKey]:
+    points: dict[int, _PointKey] = {}
+    ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    for block in mesh.blocks:
+        corners = tuple(
+            tuple(Fraction(value) for value in point)
+            for point in reference_cell_topology(block.cell_kind).vertices
+        )
+        for row, (identifier, _) in enumerate(
+            zip(
+                np.asarray(block.global_ids, dtype=np.int64),
+                np.asarray(block.vertices, dtype=np.int64),
+                strict=True,
+            )
+        ):
+            vertices = np.asarray(block.vertices, dtype=np.int64)[row, :]
+            chart = charts.get(int(identifier))
+            if chart is None:
+                raise ValueError("Mixed root charts omit a source cell.")
+            for vertex, corner in zip(vertices, corners, strict=True):
+                vertex_id = int(ids[vertex])
+                point = _root_point_from_chart(chart, block.cell_kind, corner)
+                previous = points.get(vertex_id)
+                if previous is not None and previous != point:
+                    raise ValueError(
+                        "Mixed incident root charts disagree at a source vertex."
+                    )
+                points[vertex_id] = point
+    if set(points) != set(int(value) for value in ids):
+        raise ValueError("Mixed root charts do not cover every source vertex.")
     return points
 
 
-def _root_key(point: _PointKey, root_points: dict[int, _PointKey], /) -> _PointKey:
-    accumulated: dict[int, Fraction] = defaultdict(Fraction)
-    for identifier, coefficient in point:
-        for root, weight in root_points[identifier]:
-            accumulated[root] += coefficient * weight
-    return tuple(
-        sorted((identifier, value) for identifier, value in accumulated.items() if value)
-    )
+def _mapping_points(
+    hierarchy: MixedAdaptationHierarchy | None,
+    mesh: CellMesh,
+    charts: dict[int, _RootCellChart],
+    root_mesh: CellMesh | None,
+    /,
+) -> dict[int, _PointKey]:
+    current = _chart_vertex_points(mesh, charts)
+    points = {} if hierarchy is None else dict(hierarchy.vertex_points)
+    root_vertices = {
+        vertex for chart in charts.values() for vertex in chart.root_vertices
+    }
+    if root_mesh is not None:
+        root_vertices.update(
+            int(value) for value in np.asarray(root_mesh.vertex_global_ids)
+        )
+    for vertex in root_vertices:
+        identity = ((vertex, Fraction(1)),)
+        previous = points.setdefault(vertex, identity)
+        if previous != identity:
+            raise ValueError("A root vertex ID has conflicting mixed ancestry.")
+    for identifier, point in current.items():
+        previous = points.setdefault(identifier, point)
+        if previous != point:
+            raise ValueError(
+                "Mixed hierarchy vertex roots disagree with exact source charts."
+            )
+    return points
+
+
+def _forest_roots(
+    cells: list[_Cell], charts: dict[int, _RootCellChart], /
+) -> tuple[MixedForestRoot, ...]:
+    result = []
+    for cell in cells:
+        chart = charts[cell.identifier]
+        corners = tuple(
+            tuple(Fraction(value) for value in point)
+            for point in reference_cell_topology(cell.kind).vertices
+        )
+        exact = tuple(
+            evaluate_reference_chart_arguments(cell.kind, chart.arguments, point)
+            for point in corners
+        )
+        if any(not isinstance(value, Fraction) for point in exact for value in point):
+            raise ValueError("Mixed forest corners must be exact rationals.")
+        result.append(
+            MixedForestRoot(
+                cell.identifier,
+                cell.name,
+                cell.kind,
+                tuple(int(value) for value in cell.vertices),
+                cell.cell_class,
+                cell.column_id,
+                cell.interval_index,
+                chart.root_cell_id,
+                chart.root_cell_kind,
+                chart.root_vertices,
+                tuple(
+                    tuple(value for value in point if isinstance(value, Fraction))
+                    for point in exact
+                ),
+                chart.arguments,
+            )
+        )
+    return tuple(result)
+
+
+def _target_root_points(
+    targets: list[_TargetCell],
+    charts: dict[int, _RootCellChart],
+    coarsened_parent_ids: set[int],
+    source_points: dict[int, _PointKey],
+    /,
+) -> dict[int, _PointKey]:
+    result: dict[int, _PointKey] = {}
+    for target in targets:
+        if target.identifier in coarsened_parent_ids:
+            values = tuple(source_points[vertex] for vertex in target.vertices)
+        else:
+            if len(target.source_ids) != 1 or len(target.vertices) != len(
+                target.reference_vertices
+            ):
+                raise ValueError("Mixed target has incomplete exact reference ancestry.")
+            chart = charts[target.source_ids[0]]
+            values = tuple(
+                _root_point_from_chart(chart, target.kind, point)
+                for point in target.reference_vertices
+            )
+        for vertex, point in zip(target.vertices, values, strict=True):
+            previous = result.setdefault(vertex, point)
+            if previous != point:
+                raise ValueError(
+                    "Mixed incident root charts disagree at a target vertex."
+                )
+    return result
 
 
 def _coarsening_candidates(
@@ -870,17 +1653,212 @@ def _coarsening_candidates(
     return list(accepted.values()), rejected, accepted_children
 
 
+def _periodic_coarsening_candidates(
+    cells: list[_Cell],
+    marks: set[int],
+    hierarchy: MixedAdaptationHierarchy | None,
+    protected_vertices: set[int],
+    protected_cells: set[int],
+    root_points: dict[int, _PointKey],
+    seams: tuple[tuple[tuple[int, int], tuple[int, int]], ...],
+    /,
+) -> tuple[list[MixedSibling], set[int], set[int]]:
+    if not marks or hierarchy is None:
+        return _coarsening_candidates(
+            cells, marks, hierarchy, protected_vertices, protected_cells, root_points
+        )
+    active = {cell.identifier for cell in cells}
+    sibling_by_child = {
+        child: record for record in hierarchy.siblings for child in record.child_ids
+    }
+    closed = set(marks)
+    while True:
+        before = len(closed)
+        for child in tuple(closed):
+            record = sibling_by_child.get(child)
+            if record is not None and set(record.child_ids).issubset(active):
+                closed.update(record.child_ids)
+        for (first, _), (second, _) in seams:
+            if first in closed or second in closed:
+                closed.update((first, second))
+        if len(closed) == before:
+            break
+    permitted = set(closed)
+    rejected: set[int] = set()
+    while True:
+        candidates, local_rejected, removed = _coarsening_candidates(
+            cells,
+            permitted,
+            hierarchy,
+            protected_vertices,
+            protected_cells,
+            root_points,
+        )
+        rejected.update(local_rejected)
+        by_child = {child: record for record in candidates for child in record.child_ids}
+        reject_parents = {
+            by_child[side].parent_id
+            for (first, _), (second, _) in seams
+            if (first in removed) != (second in removed)
+            for side in (first, second)
+            if side in by_child
+        }
+        if not reject_parents:
+            return candidates, rejected, removed
+        discarded = {
+            child
+            for record in candidates
+            if record.parent_id in reject_parents
+            for child in record.child_ids
+        }
+        permitted.difference_update(discarded)
+        rejected.update(discarded & closed)
+
+
+def _periodic_working_interfaces(
+    mesh: CellMesh,
+    source_cells: list[_Cell],
+    working: list[_Cell],
+    candidates: list[MixedSibling],
+    seams: tuple[tuple[tuple[int, int], tuple[int, int]], ...],
+    /,
+) -> list[tuple[int, int, int, int, dict[int, int] | None]]:
+    source_by_id = {cell.identifier: cell for cell in source_cells}
+    working_rows = {cell.identifier: row for row, cell in enumerate(working)}
+    children = {
+        child: (record, index)
+        for record in candidates
+        for index, child in enumerate(record.child_ids)
+    }
+
+    def working_face(face: tuple[int, int]) -> tuple[int, int]:
+        cell_id, facet = face
+        child = children.get(cell_id)
+        if child is None:
+            return working_rows[cell_id], facet
+        record, child_index = child
+        source = source_by_id[cell_id]
+        local_face = reference_cell_topology(source.kind).entities[2][facet]
+        parent_vertices = np.asarray(record.parent_vertices, dtype=np.int64)
+        reference = record.child_reference_vertices[child_index]
+        support = {
+            vertex
+            for local in local_face
+            for vertex, _ in _point_key(
+                record.cell_kind,
+                parent_vertices,
+                np.asarray(reference[local], dtype=np.float64),
+            )
+        }
+        parent_faces = reference_cell_topology(record.cell_kind).entities[2]
+        matches = [
+            index
+            for index, local in enumerate(parent_faces)
+            if support.issubset({int(parent_vertices[value]) for value in local})
+        ]
+        if len(matches) != 1:
+            raise MixedTemplateClosureError(
+                "A periodic child seam does not descend from one parent face."
+            )
+        return working_rows[record.parent_id], matches[0]
+
+    interfaces: dict[
+        tuple[tuple[int, int], tuple[int, int]],
+        tuple[int, int, int, int, dict[int, int] | None],
+    ] = {}
+    partners: dict[tuple[int, int], tuple[int, int]] = {}
+    for first, second in seams:
+        left = working_face(first)
+        right = working_face(second)
+        if left == right:
+            raise MixedTemplateClosureError(
+                "A periodic seam cannot identify one face to itself."
+            )
+        for face, partner in ((left, right), (right, left)):
+            if face in partners and partners[face] != partner:
+                raise MixedTemplateClosureError(
+                    "Periodic coarsening must restore complete matching seam faces."
+                )
+            partners[face] = partner
+        if right < left:
+            left, right = right, left
+        pair = (left, right)
+        if pair in interfaces:
+            continue
+        left_cell, right_cell = working[left[0]], working[right[0]]
+        left_loop = tuple(
+            int(left_cell.vertices[index])
+            for index in reference_cell_topology(left_cell.kind).entities[2][left[1]]
+        )
+        right_loop = tuple(
+            int(right_cell.vertices[index])
+            for index in reference_cell_topology(right_cell.kind).entities[2][right[1]]
+        )
+        correspondence = _periodic_face_correspondence(mesh, left_loop, right_loop)
+        interfaces[pair] = (left[0], left[1], right[0], right[1], correspondence)
+    return [interfaces[key] for key in sorted(interfaces)]
+
+
+def _point_in_root_hull(point: _PointKey, vertices: tuple[_PointKey, ...], /) -> bool:
+    """Decide exact convex containment in retained root-barycentric coordinates."""
+    if point in vertices:
+        return True
+    point_values = dict(point)
+    roots = sorted({key for vertex in (*vertices, point) for key, _ in vertex})
+    vertex_values = tuple(dict(vertex) for vertex in vertices)
+    for count in range(1, len(vertices) + 1):
+        for selected in combinations(range(len(vertices)), count):
+            matrix = [
+                {
+                    column: vertex_values[index][root]
+                    for column, index in enumerate(selected)
+                    if root in vertex_values[index]
+                }
+                for root in roots
+            ]
+            matrix.append({column: Fraction(1) for column in range(count)})
+            right = [[point_values.get(root, Fraction(0))] for root in roots]
+            right.append([Fraction(1)])
+            try:
+                coefficients, _ = solve_exact_sparse(matrix, right, count)
+            except (ExactInconsistentSystemError, ExactRankDeficientSystemError):
+                continue
+            if all(row[0] >= 0 for row in coefficients):
+                return True
+    return False
+
+
 def _entity_relations(
     source: CellMesh,
     probe: CellMesh,
     targets: list[_TargetCell],
-    vertex_stencils: dict[int, _PointKey],
-    root_points: dict[int, _PointKey],
     coarsen_sources: dict[int, tuple[int, ...]],
+    coarsening_maps: tuple[MixedCoarseningMap, ...],
     /,
 ) -> tuple[EntityRelations, ...]:
     dimension = source.topological_dimension
     relations: list[EntityRelations] = []
+    contained = cache(_point_in_root_hull)
+    source_vertices_by_id = {}
+    source_vertex_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
+    for block in source.blocks:
+        for row, (identifier, _) in enumerate(
+            zip(
+                np.asarray(block.global_ids, dtype=np.int64),
+                np.asarray(block.vertices, dtype=np.int64),
+                strict=True,
+            )
+        ):
+            vertices = np.asarray(block.vertices, dtype=np.int64)[row, :]
+            source_vertices_by_id[int(identifier)] = (
+                block.cell_kind,
+                tuple(int(source_vertex_ids[index]) for index in vertices),
+            )
+    coarsening_by_parent = {record.parent_cell_id: record for record in coarsening_maps}
+
+    def coordinate_key(point: tuple[Fraction, ...], /) -> _PointKey:
+        return tuple((axis, value) for axis, value in enumerate(point) if value)
+
     for degree in range(dimension + 1):
         if degree == 0:
             relations.append(
@@ -921,66 +1899,109 @@ def _entity_relations(
             continue
         source_keys = entity_keys(source, degree)
         target_keys = entity_keys(probe, degree)
-        source_vertices = [
-            tuple(int(value) for value in row if value >= 0) for row in source_keys
-        ]
-        target_vertices = [
-            tuple(int(value) for value in row if value >= 0) for row in target_keys
-        ]
-        source_root_supports = [
-            frozenset(root for vertex in row for root, _ in root_points[vertex])
-            for row in source_vertices
-        ]
-        target_root_supports = [
-            frozenset(
-                root
-                for vertex in row
-                for root, _ in _root_key(vertex_stencils[vertex], root_points)
+        entries_set: set[tuple[tuple[int, ...], tuple[int, ...], int]] = set()
+        for target in targets:
+            target_topology = reference_cell_topology(target.kind)
+            target_entities = target_topology.entities[degree]
+            target_corners = tuple(
+                tuple(Fraction(value) for value in point)
+                for point in target_topology.vertices
             )
-            for row in target_vertices
-        ]
-        refined: list[tuple[tuple[int, ...], tuple[int, ...], int]] = []
-        coarsened: list[tuple[tuple[int, ...], tuple[int, ...], int]] = []
-        source_containing: dict[int, list[int]] = defaultdict(list)
-        source_supported: dict[int, list[int]] = defaultdict(list)
-        for row, (vertices, support) in enumerate(
-            zip(source_vertices, source_root_supports, strict=True)
-        ):
-            for vertex in support:
-                source_containing[vertex].append(row)
-                source_supported[vertex].append(row)
-        for target_key, target_support in zip(
-            target_vertices, target_root_supports, strict=True
-        ):
-            candidate_rows = (
-                source_containing.get(min(target_support), ()) if target_support else ()
+            target_keys_by_local = tuple(
+                tuple(sorted(target.vertices[index] for index in entity))
+                for entity in target_entities
             )
-            for row in candidate_rows:
-                if (
-                    target_support.issubset(source_root_supports[row])
-                    and tuple(target_key) != source_vertices[row]
-                ):
-                    refined.append(
-                        (
-                            source_keys[row],
-                            target_key,
-                            int(EntityLineageKind.REFINED_FROM),
-                        )
-                    )
-            coarsen_rows = sorted(
-                {
-                    row
-                    for root in target_support
-                    for row in source_supported.get(root, ())
-                    if source_root_supports[row].issubset(target_support)
-                    and source_vertices[row] != tuple(target_key)
-                }
-            )
-            for row in coarsen_rows:
-                coarsened.append(
-                    (source_keys[row], target_key, int(EntityLineageKind.COARSENED_INTO))
+            record = coarsening_by_parent.get(target.identifier)
+            if record is None:
+                if len(target.source_ids) != 1:
+                    raise ValueError("Mixed target facet lacks one source parent.")
+                source_record = source_vertices_by_id.get(target.source_ids[0])
+                if source_record is None or source_record[0] != target.kind:
+                    raise ValueError("Mixed target facet has a mismatched source family.")
+                source_topology = reference_cell_topology(source_record[0])
+                source_corners = tuple(
+                    tuple(Fraction(value) for value in point)
+                    for point in source_topology.vertices
                 )
-        entries = refined + coarsened
+                if len(target.reference_vertices) != len(target.vertices):
+                    raise ValueError(
+                        "Mixed target facet has incomplete reference corners."
+                    )
+                # An unchanged cell with the identity reference map has the
+                # same entity keys. Distinct equal-dimensional reference
+                # entities cannot contain one another, so it contributes no
+                # refined relation rows.
+                if (
+                    target.source_ids == (target.identifier,)
+                    and target.vertices == source_record[1]
+                    and target.reference_vertices == source_corners
+                ):
+                    continue
+                for local_target, target_key in zip(
+                    target_entities, target_keys_by_local, strict=True
+                ):
+                    mapped = tuple(
+                        coordinate_key(target.reference_vertices[index])
+                        for index in local_target
+                    )
+                    for local_source in source_topology.entities[degree]:
+                        source_key = tuple(
+                            sorted(source_record[1][index] for index in local_source)
+                        )
+                        hull = tuple(
+                            coordinate_key(source_corners[index])
+                            for index in local_source
+                        )
+                        if source_key != target_key and all(
+                            contained(point, hull) for point in mapped
+                        ):
+                            entries_set.add(
+                                (
+                                    source_key,
+                                    target_key,
+                                    int(EntityLineageKind.REFINED_FROM),
+                                )
+                            )
+            else:
+                children = tuple(int(value) for value in record.child_cell_ids)
+                if (
+                    record.parent_cell_kind != target.kind
+                    or children != coarsen_sources.get(target.identifier)
+                    or len(children) != len(record.child_reference_vertices)
+                ):
+                    raise ValueError("Mixed coarsening facet partition is inconsistent.")
+                for child_id, child_corners in zip(
+                    children, record.child_reference_vertices, strict=True
+                ):
+                    source_record = source_vertices_by_id.get(child_id)
+                    if source_record is None or source_record[0] != target.kind:
+                        raise ValueError("Mixed coarsening facet has a mismatched child.")
+                    source_topology = reference_cell_topology(source_record[0])
+                    for local_source in source_topology.entities[degree]:
+                        source_key = tuple(
+                            sorted(source_record[1][index] for index in local_source)
+                        )
+                        mapped = tuple(
+                            coordinate_key(child_corners[index]) for index in local_source
+                        )
+                        for local_target, target_key in zip(
+                            target_entities, target_keys_by_local, strict=True
+                        ):
+                            hull = tuple(
+                                coordinate_key(target_corners[index])
+                                for index in local_target
+                            )
+                            if source_key != target_key and all(
+                                contained(point, hull) for point in mapped
+                            ):
+                                entries_set.add(
+                                    (
+                                        source_key,
+                                        target_key,
+                                        int(EntityLineageKind.COARSENED_INTO),
+                                    )
+                                )
+        entries = sorted(entries_set)
         width = max(source_keys.shape[1], target_keys.shape[1], degree + 1)
         source_rows = np.full((len(entries), width), -1, dtype=np.int64)
         target_rows = np.full((len(entries), width), -1, dtype=np.int64)
@@ -1054,10 +2075,22 @@ def _protected_id_set(values: ArrayLike | None, name: str, /) -> set[int]:
 
 def _validate_hierarchy(
     hierarchy: MixedAdaptationHierarchy,
+    mesh: CellMesh,
     cells: list[_Cell],
     vertex_points: dict[int, _PointKey],
     /,
 ) -> None:
+    if mesh.lifted_topology_id != hierarchy.active_lifted_topology_id:
+        raise ValueError("Mixed-adaptation hierarchy belongs to another lifted topology.")
+    history = hierarchy.periodic_quotient_history
+    if (history is not None) != (mesh.periodic_topology is not None):
+        raise ValueError("Mixed-adaptation hierarchy periodic ancestry is inconsistent.")
+    if (
+        mesh.periodic_topology is not None
+        and history is not None
+        and history.identification_id != identification_id(mesh.periodic_topology.cell)
+    ):
+        raise ValueError("Mixed-adaptation history uses another periodic identification.")
     active = tuple(
         MixedActiveCell(
             cell.identifier,
@@ -1234,13 +2267,41 @@ def _retired_entity_records(
     )
 
 
+def _initial_root_retired_entities(
+    source: CellMesh, root: CellMesh | None, /
+) -> tuple[tuple[int, tuple[int, ...], int], ...]:
+    if root is None:
+        return ()
+    result = []
+    for degree in (1, 2):
+        source_keys = entity_keys(source, degree)
+        source_ids = np.asarray(source.entity_set(degree).entity_ids, dtype=np.int64)
+        current = {
+            tuple(int(value) for value in key if value >= 0): int(identifier)
+            for key, identifier in zip(source_keys, source_ids, strict=True)
+        }
+        current_by_id = {identifier: key for key, identifier in current.items()}
+        root_keys = entity_keys(root, degree)
+        root_ids = np.asarray(root.entity_set(degree).entity_ids, dtype=np.int64)
+        for key_row, raw_identifier in zip(root_keys, root_ids, strict=True):
+            key = tuple(int(value) for value in key_row if value >= 0)
+            identifier = int(raw_identifier)
+            existing = current.get(key)
+            if existing is not None:
+                if existing != identifier:
+                    raise ValueError("Mixed source and root disagree on an entity ID.")
+            elif identifier in current_by_id:
+                raise ValueError("Mixed source reuses an original root entity ID.")
+            else:
+                result.append((degree, key, identifier))
+    return tuple(sorted(result))
+
+
 def _prescribed_entities(
     source: CellMesh,
-    hierarchy: MixedAdaptationHierarchy | None,
+    retired_entities: tuple[tuple[int, tuple[int, ...], int], ...],
     /,
 ) -> tuple[PrescribedEntityIds, ...]:
-    if hierarchy is None:
-        return ()
     records = []
     for degree in (1, 2):
         current = {
@@ -1249,7 +2310,7 @@ def _prescribed_entities(
         }
         values = [
             (key, identifier)
-            for item_degree, key, identifier in hierarchy.retired_entities
+            for item_degree, key, identifier in retired_entities
             if item_degree == degree and key not in current
         ]
         if values:
@@ -1321,6 +2382,13 @@ def _mixed_reference_maps(
                 )
             grouped[target.kind].append(target)
     witnesses = []
+
+    @cache
+    def local_affine_chart(
+        kind: str, vertices: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[Expression, ...]:
+        return _affine_chart(*_exact_child_to_parent_affine_map(kind, vertices))
+
     for kind, values in sorted(grouped.items()):
         values.sort(key=lambda value: value.identifier)
         exact = tuple(value.reference_vertices for value in values)
@@ -1338,10 +2406,59 @@ def _mixed_reference_maps(
             kind,
             points,
             exact,
+            freeze_reference_chart_arguments(
+                tuple(local_affine_chart(kind, vertices) for vertices in exact)
+            ),
         )
         validate_reference_cell_map_witnesses(witness)
         witnesses.append(witness)
     return tuple(witnesses)
+
+
+def _mixed_coarsening_partition(
+    records: tuple[MixedCoarseningMap, ...], /
+) -> ReferenceCellPartition | None:
+    if not records:
+        return None
+    grouped: dict[str, list[tuple[int, int, tuple[tuple[Fraction, ...], ...]]]] = (
+        defaultdict(list)
+    )
+    for record in records:
+        for child, vertices in zip(
+            record.child_cell_ids, record.child_reference_vertices, strict=True
+        ):
+            grouped[record.parent_cell_kind].append(
+                (int(child), record.parent_cell_id, vertices)
+            )
+    groups = []
+    for kind, rows in sorted(grouped.items()):
+        rows.sort(key=lambda row: row[0])
+        exact = tuple(row[2] for row in rows)
+        groups.append(
+            ReferenceCellMapWitnesses(
+                np.asarray([row[0] for row in rows], dtype=np.int64),
+                np.asarray([row[1] for row in rows], dtype=np.int64),
+                kind,
+                kind,
+                np.asarray(
+                    [
+                        [[float(value) for value in point] for point in cell]
+                        for cell in exact
+                    ],
+                    dtype=np.float64,
+                ),
+                exact,
+                freeze_reference_chart_arguments(
+                    tuple(
+                        _affine_chart(*_exact_child_to_parent_affine_map(kind, vertices))
+                        for vertices in exact
+                    )
+                ),
+            )
+        )
+    partition = ReferenceCellPartition(tuple(groups))
+    validate_reference_cell_partition(partition)
+    return partition
 
 
 def _reference_map_sources(
@@ -1366,7 +2483,7 @@ def _exact_child_to_parent_affine_map(
     local = tuple(
         tuple(Fraction(float(value)) for value in point) for point in topology.vertices
     )
-    if cell_kind in ("tetrahedron", "prism"):
+    if cell_kind in ("tetrahedron", "simplex:3", "prism"):
         basis = (0, 1, 2, 3)
     elif cell_kind in ("hexahedron", "pyramid"):
         basis = (0, 1, 3, 4)
@@ -1497,6 +2614,267 @@ def _parent_to_child_chart(
     )
 
 
+def _mixed_restriction_source(
+    source_mesh: CellMesh,
+    source_geometry: CellGeometrySpec,
+    target_mesh: CellMesh,
+    targets: list[_TargetCell],
+    coarsening_maps: tuple[MixedCoarseningMap, ...],
+    coarsening_partition: ReferenceCellPartition | None,
+    bind_current_as_root: bool,
+    /,
+) -> CellGeometryRestrictionSource:
+    """Compose current cells into one retained root, proving complete restorations."""
+    ancestry = None if bind_current_as_root else source_geometry.restriction_source
+    source_blocks = {block.name: block for block in source_mesh.blocks}
+    if ancestry is None:
+        vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
+        parent_cells = {
+            block.name: np.asarray(block.global_ids, dtype=np.int64)
+            for block in source_mesh.blocks
+        }
+        parent_vertices = {
+            block.name: vertex_ids[np.asarray(block.vertices, dtype=np.int64)]
+            for block in source_mesh.blocks
+        }
+        root_maps: dict[str, ReferenceCellMapWitnesses | None] = {}
+        for block in source_mesh.blocks:
+            topology = reference_cell_topology(block.cell_kind)
+            corners = tuple(
+                tuple(Fraction(value) for value in point) for point in topology.vertices
+            )
+            exact = tuple(corners for _ in range(block.cell_count))
+            root_maps[block.name] = ReferenceCellMapWitnesses(
+                np.arange(block.cell_count, dtype=np.int64),
+                parent_cells[block.name],
+                block.cell_kind,
+                block.cell_kind,
+                np.asarray(exact, dtype=np.float64),
+                exact,
+                freeze_reference_chart_arguments(
+                    tuple(axes(topology.dimension) for _ in range(block.cell_count))
+                ),
+            )
+        ancestry = CellGeometryRestrictionSource(
+            cell_geometry_id(source_geometry),
+            source_mesh.topology_id,
+            parent_cells,
+            parent_vertices,
+            block_source_blocks={block.name: block.name for block in source_mesh.blocks},
+            block_parent_reference_maps=root_maps,
+        )
+    if set(ancestry.block_names) != set(source_blocks):
+        raise ValueError("Mixed root ancestry must cover every source block.")
+    root_maps = dict(
+        zip(ancestry.block_names, ancestry.parent_reference_maps, strict=True)
+    )
+    root_vertices = dict(
+        zip(ancestry.block_names, ancestry.parent_vertex_ids, strict=True)
+    )
+    root_blocks = (
+        None
+        if ancestry.source_block_names is None
+        else dict(zip(ancestry.block_names, ancestry.source_block_names, strict=True))
+    )
+    if coarsening_maps:
+        if coarsening_partition is None:
+            raise ValueError(
+                "Mixed root restoration requires a complete child partition."
+            )
+        validate_reference_cell_partition(coarsening_partition)
+    elif coarsening_partition is not None:
+        raise ValueError("Mixed root restoration has an unexpected child partition.")
+    target_by_id = {value.identifier: value for value in targets}
+    coarsened = {value.parent_cell_id: value for value in coarsening_maps}
+    simplex_records = tuple(
+        record
+        for record in coarsening_maps
+        if record.parent_cell_kind in ("tetrahedron", "simplex:3")
+    )
+    simplex_restored = {}
+    if simplex_records:
+        available_maps = {
+            name: witness for name, witness in root_maps.items() if witness is not None
+        }
+        if set(available_maps) != set(source_blocks):
+            raise ValueError("Mixed root coarsening requires all source reference maps.")
+        child_ids = tuple(
+            int(child)
+            for record in simplex_records
+            for child in np.asarray(record.child_cell_ids, dtype=np.int64)
+        )
+        parent_ids = tuple(
+            record.parent_cell_id
+            for record in simplex_records
+            for _ in record.child_reference_vertices
+        )
+        corners = tuple(
+            vertices
+            for record in simplex_records
+            for vertices in record.child_reference_vertices
+        )
+        restored_maps = coarsen_reference_cell_maps(
+            NestedReferenceWitnesses(
+                np.asarray(child_ids, dtype=np.int64),
+                np.asarray(parent_ids, dtype=np.int64),
+                np.asarray(corners, dtype=np.float64),
+                fine_reference_exact_vertices=corners,
+            ),
+            available_maps,
+            source_mesh,
+            target_mesh,
+        )
+        target_blocks = {block.name: block for block in target_mesh.blocks}
+        for name, witness in restored_maps.items():
+            ids = np.asarray(target_blocks[name].global_ids, dtype=np.int64)
+            for row in nested_cell_reference_maps(witness):
+                simplex_restored[int(ids[row.target_cell_id])] = row
+    output_cells: dict[str, NDArray[np.int64]] = {}
+    output_vertices: dict[str, NDArray[np.int64]] = {}
+    output_maps: dict[str, ReferenceCellMapWitnesses] = {}
+    for block in target_mesh.blocks:
+        source_block = source_blocks[block.name]
+        root_map = root_maps[block.name]
+        if root_map is None:
+            raise ValueError("Mixed root ancestry requires exact reference maps.")
+        root_rows = nested_cell_reference_maps(root_map)
+        if len(root_rows) != source_block.cell_count:
+            raise ValueError("Mixed root reference rows do not cover the source block.")
+        source_ids = np.asarray(source_block.global_ids, dtype=np.int64)
+        source_rows = {int(identifier): row for row, identifier in enumerate(source_ids)}
+        parent_vertex_rows = np.asarray(root_vertices[block.name], dtype=np.int64)
+        target_ids = np.asarray(block.global_ids, dtype=np.int64)
+        selected = [target_by_id[int(identifier)] for identifier in target_ids]
+        direct = _mixed_reference_maps(selected, set(coarsened))
+        by_target = {}
+        if direct:
+            if len(direct) != 1:
+                raise ValueError("Mixed block reference maps have inconsistent families.")
+            composed = compose_reference_cell_maps(
+                direct[0], root_map, intermediate_cell_global_ids=source_ids
+            )
+            composed_exact = exact_reference_cell_vertices(composed)
+            arguments = composed.source_reference_chart_arguments
+            if arguments is None:
+                raise ValueError("Mixed root composition lost exact chart arguments.")
+            for index, identifier in enumerate(
+                np.asarray(composed.target_cell_ids, dtype=np.int64)
+            ):
+                by_target[int(identifier)] = (
+                    int(composed.source_cell_ids[index]),
+                    composed_exact[index],
+                    arguments[index],
+                )
+        source_supports = []
+        for target in selected:
+            record = coarsened.get(target.identifier)
+            if record is None:
+                source_row = source_rows[target.source_ids[0]]
+                source_supports.append(parent_vertex_rows[source_row])
+                continue
+            restored = simplex_restored.get(target.identifier)
+            if restored is not None:
+                supports = tuple(
+                    parent_vertex_rows[source_rows[int(child)]]
+                    for child in np.asarray(record.child_cell_ids, dtype=np.int64)
+                )
+                if (
+                    not supports
+                    or restored.arguments is None
+                    or any(not np.array_equal(supports[0], row) for row in supports[1:])
+                ):
+                    raise ValueError(
+                        "Mixed simplex siblings have inconsistent root support."
+                    )
+                by_target[target.identifier] = (
+                    restored.source_cell_id,
+                    restored.source_reference_vertices,
+                    restored.arguments,
+                )
+                source_supports.append(supports[0])
+                continue
+            candidates = []
+            supports = []
+            for child_id, vertices in zip(
+                np.asarray(record.child_cell_ids, dtype=np.int64),
+                record.child_reference_vertices,
+                strict=True,
+            ):
+                source_row = source_rows[int(child_id)]
+                root = root_rows[source_row]
+                if root.arguments is None:
+                    raise ValueError("Mixed root child lacks an exact reference chart.")
+                inverse = _parent_to_child_chart(
+                    *_exact_child_to_parent_affine_map(record.parent_cell_kind, vertices)
+                )
+                chart = tuple(
+                    compose_expression(value, inverse) for value in root.arguments
+                )
+                candidates.append((root.source_cell_id, chart))
+                supports.append(parent_vertex_rows[source_row])
+            if not candidates:
+                raise ValueError("Mixed root restoration requires all sibling charts.")
+            root_id, chart = candidates[0]
+            if any(
+                other_id != root_id
+                or len(other_chart) != len(chart)
+                or any(
+                    not expression_equal(first, second)
+                    for first, second in zip(chart, other_chart, strict=True)
+                )
+                for other_id, other_chart in candidates[1:]
+            ) or any(not np.array_equal(supports[0], row) for row in supports[1:]):
+                raise ValueError("Mixed siblings do not restore one exact root chart.")
+            frozen_chart = freeze_reference_chart_arguments((chart,))[0]
+            corners = tuple(
+                tuple(Fraction(value) for value in point)
+                for point in reference_cell_topology(block.cell_kind).vertices
+            )
+            evaluated = tuple(
+                evaluate_reference_chart_arguments(block.cell_kind, frozen_chart, point)
+                for point in corners
+            )
+            if any(
+                not isinstance(value, Fraction) for point in evaluated for value in point
+            ):
+                raise ValueError("Mixed restored root corners must be exact rationals.")
+            exact = tuple(
+                tuple(value for value in point if isinstance(value, Fraction))
+                for point in evaluated
+            )
+            by_target[target.identifier] = (root_id, exact, frozen_chart)
+            source_supports.append(supports[0])
+        if set(by_target) != set(int(value) for value in target_ids):
+            raise ValueError("Mixed root charts do not cover every target cell.")
+        ordered = tuple(by_target[int(identifier)] for identifier in target_ids)
+        exact = tuple(row[1] for row in ordered)
+        output_cells[block.name] = np.asarray([row[0] for row in ordered], dtype=np.int64)
+        output_vertices[block.name] = np.stack(source_supports)
+        output_maps[block.name] = ReferenceCellMapWitnesses(
+            np.arange(block.cell_count, dtype=np.int64),
+            output_cells[block.name],
+            block.cell_kind,
+            root_map.source_cell_kind,
+            np.asarray(exact, dtype=np.float64),
+            exact,
+            freeze_reference_chart_arguments(tuple(row[2] for row in ordered)),
+        )
+    return CellGeometryRestrictionSource(
+        ancestry.source_geometry_id,
+        ancestry.source_topology_id,
+        output_cells,
+        output_vertices,
+        block_source_blocks=(
+            None
+            if root_blocks is None
+            else {block.name: root_blocks[block.name] for block in target_mesh.blocks}
+        ),
+        block_parent_reference_maps=output_maps,
+        carrier_publication=ancestry.carrier_publication,
+        carrier_geometry=ancestry.carrier_geometry,
+    )
+
+
 def _mixed_target_geometry(
     source_mesh: CellMesh,
     source_geometry: CellGeometrySpec,
@@ -1504,6 +2882,8 @@ def _mixed_target_geometry(
     targets: list[_TargetCell],
     reference_maps: tuple[ReferenceCellMapWitnesses, ...],
     coarsening_maps: tuple[MixedCoarseningMap, ...],
+    coarsening_partition: ReferenceCellPartition | None,
+    bind_current_as_root: bool,
     /,
 ) -> CellGeometrySpec:
     source_elements, source_routes, _ = source_geometry.resolve(source_mesh)
@@ -1634,7 +3014,18 @@ def _mixed_target_geometry(
             chart_rows,
         )
         routes[block.name] = np.stack(route_rows).astype(np.int32, copy=False)
-    return CellGeometrySpec(elements, routes, source_geometry.coordinates)
+    restriction = _mixed_restriction_source(
+        source_mesh,
+        source_geometry,
+        target_mesh,
+        targets,
+        coarsening_maps,
+        coarsening_partition,
+        bind_current_as_root,
+    )
+    return CellGeometrySpec(
+        elements, routes, source_geometry.coordinates, restriction_source=restriction
+    )
 
 
 def _exact_target_vertex_coordinates(
@@ -1642,7 +3033,7 @@ def _exact_target_vertex_coordinates(
     mesh: CellMesh,
     edit_vertex_ids: NDArray[np.int64],
     /,
-) -> NDArray[np.float64]:
+) -> CoordinateSourceBank:
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     exact_coordinates: dict[int, tuple[ExactScalar, ...]] = {}
     for block in mesh.blocks:
@@ -1668,13 +3059,7 @@ def _exact_target_vertex_coordinates(
                 exact_coordinates[key] = value
     if set(exact_coordinates) != set(int(value) for value in edit_vertex_ids):
         raise ValueError("Exact mixed geometry does not cover the target vertex bank.")
-    return np.asarray(
-        [
-            [float(value) for value in exact_coordinates[int(identifier)]]
-            for identifier in edit_vertex_ids
-        ],
-        dtype=np.float64,
-    )
+    return tuple(exact_coordinates[int(identifier)] for identifier in edit_vertex_ids)
 
 
 def adapt_mixed_mesh(
@@ -1690,22 +3075,23 @@ def adapt_mixed_mesh(
     protected_edge_keys: ArrayLike | None = None,
     protected_face_keys: ArrayLike | None = None,
     layer_columns: MixedLayerColumns | None = None,
+    periodic_edge_lock: PeriodicRefinementEdgeLock | None = None,
     source_geometry: CellGeometrySpec | None = None,
+    root_mesh: CellMesh | None = None,
 ) -> MixedAdaptationOutcome:
     """Build a face-conforming family-preserving refinement/coarsening edit.
 
     ``cell_classes`` is aligned with source block order and separates material,
     region, layer, and other organization classes without freezing the interface.
     Coarsening marks identify all active children of each restored sibling family.
+    Starting from an already restricted geometry requires ``root_mesh`` bound
+    to its retained source topology. Exact charts and root vertex identities
+    seed the bounded forest and vertex ancestry, including inactive root IDs.
     """
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
     if mesh.topological_dimension != 3 or mesh.ambient_dimension != 3:
         raise ValueError("Mixed volume adaptation requires a 3D mesh in 3D coordinates.")
-    if mesh.periodic_topology is not None:
-        raise ValueError(
-            "Mixed-family edits require an explicit periodic-orbit closure route."
-        )
     if hierarchy is not None and not isinstance(hierarchy, MixedAdaptationHierarchy):
         raise TypeError("hierarchy must be MixedAdaptationHierarchy or None.")
     if layer_columns is not None and not isinstance(layer_columns, MixedLayerColumns):
@@ -1714,6 +3100,8 @@ def adapt_mixed_mesh(
         if not isinstance(source_geometry, CellGeometrySpec):
             raise TypeError("source_geometry must be CellGeometrySpec or None.")
         source_geometry.resolve(mesh)
+    elif mesh.periodic_topology is not None:
+        raise ValueError("Periodic mixed adaptation requires exact source geometry.")
     block_count = sum(block.cell_count for block in mesh.blocks)
     classes = (
         np.zeros((block_count,), dtype=np.int64)
@@ -1766,9 +3154,15 @@ def adapt_mixed_mesh(
     active_ids = set(source_ids.tolist())
     if not set(layer_values).issubset(active_ids):
         raise ValueError("Layer columns name cells absent from the source mesh.")
-    root_points = _mapping_points(hierarchy, mesh)
+    source_charts = _source_root_charts(mesh, source_geometry, hierarchy, root_mesh)
+    root_points = _mapping_points(hierarchy, mesh, source_charts, root_mesh)
+    forest = (
+        _forest_roots(cells, source_charts)
+        if hierarchy is None
+        else hierarchy.forest_roots
+    )
     if hierarchy is not None:
-        _validate_hierarchy(hierarchy, cells, root_points)
+        _validate_hierarchy(hierarchy, mesh, cells, root_points)
         if layer_columns is not None:
             old_layers = {
                 value.cell_id: (value.column_id, value.interval_index)
@@ -1795,6 +3189,39 @@ def adapt_mixed_mesh(
         )
     if not refine.issubset(active_ids) or not coarsen_marks.issubset(active_ids):
         raise ValueError("Mixed adaptation marks must name current source cell IDs.")
+    requested_refine = set(refine)
+    locked_edges: dict[int, tuple[int, int]] = {}
+    if periodic_edge_lock is not None:
+        if not isinstance(periodic_edge_lock, PeriodicRefinementEdgeLock):
+            raise TypeError("periodic_edge_lock must be PeriodicRefinementEdgeLock.")
+        locked_cells, edge_ids = periodic_edge_lock.require_source(mesh)
+        if set(locked_cells.tolist()) != requested_refine:
+            raise ValueError(
+                "Periodic edge-lock cells must equal the requested refinement marks."
+            )
+        edge_keys_by_id = {
+            int(identifier): (int(key[0]), int(key[1]))
+            for identifier, key in zip(
+                np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64),
+                entity_keys(mesh, 1),
+                strict=True,
+            )
+        }
+        locked_edges = {
+            int(cell): edge_keys_by_id[int(edge)]
+            for cell, edge in zip(locked_cells, edge_ids, strict=True)
+        }
+    seams = _periodic_seam_faces(mesh, cells)
+    if mesh.periodic_topology is not None and refine:
+        refine = set(
+            periodic_orbit_closure(mesh, 3, np.asarray(sorted(refine), dtype=np.int64))
+            .require_source(mesh, 3)
+            .tolist()
+        )
+        if refine & coarsen_marks:
+            raise ValueError(
+                "Periodic refinement closure conflicts with coarsening marks."
+            )
     protected_vertices = _protected_id_set(protected_vertex_ids, "protected_vertex_ids")
     known_vertices = set(np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist())
     if not protected_vertices.issubset(known_vertices):
@@ -1807,14 +3234,27 @@ def adapt_mixed_mesh(
     if refine & protected_cells:
         raise MixedTemplateClosureError("A protected cell cannot be refined.")
 
-    candidates, rejected, removed = _coarsening_candidates(
-        cells,
-        coarsen_marks,
-        hierarchy,
-        protected_vertices,
-        protected_cells,
-        root_points,
-    )
+    if mesh.periodic_topology is None:
+        candidates, rejected, removed = _coarsening_candidates(
+            cells,
+            coarsen_marks,
+            hierarchy,
+            protected_vertices,
+            protected_cells,
+            root_points,
+        )
+    else:
+        candidates, rejected, removed = _periodic_coarsening_candidates(
+            cells,
+            coarsen_marks,
+            hierarchy,
+            protected_vertices,
+            protected_cells,
+            root_points,
+            seams,
+        )
+    if refine & removed:
+        raise ValueError("Periodic coarsening closure conflicts with refinement marks.")
     coordinate_rows = {
         int(identifier): np.asarray(point, dtype=np.float64)
         for identifier, point in zip(
@@ -1843,18 +3283,24 @@ def adapt_mixed_mesh(
         raise MixedTemplateClosureError(
             "Mixed adaptation cannot remove every source cell."
         )
-    if any(not set(cell.vertices.tolist()).issubset(coordinate_rows) for cell in working):
+    if any(
+        any(int(vertex) not in coordinate_rows for vertex in cell.vertices)
+        for cell in working
+    ):
         raise ValueError(
             "Restored mixed parent corners are absent from source coordinates."
         )
 
     owners = _mesh_facet_owners(working)
-    interfaces = [
-        (left[0], left[1], right[0], right[1])
+    interfaces: list[tuple[int, int, int, int, dict[int, int] | None]] = [
+        (left[0], left[1], right[0], right[1], None)
         for values in owners.values()
         if len(values) == 2
         for left, right in (values,)
     ]
+    interfaces.extend(
+        _periodic_working_interfaces(mesh, cells, working, candidates, seams)
+    )
     policy = (
         hierarchy.layer_policy
         if hierarchy is not None and layer_columns is None
@@ -1887,6 +3333,13 @@ def adapt_mixed_mesh(
             protected_edges=protected_edges,
             protected_faces=protected_faces,
         )
+        locked_edge = locked_edges.get(cell.identifier)
+        if locked_edge is not None:
+            domain = [
+                value
+                for value in domain
+                if locked_edge in _template_facts(cell, value).split_edges
+            ]
         if not domain:
             raise MixedTemplateClosureError(
                 f"No permitted family template refines cell {cell.identifier}."
@@ -1904,6 +3357,22 @@ def adapt_mixed_mesh(
         if hierarchy is None
         else hierarchy.next_vertex_id
     )
+    next_cell_id = max(
+        next_cell_id,
+        max((chart.root_cell_id for chart in source_charts.values()), default=-1) + 1,
+    )
+    next_vertex_id = max(next_vertex_id, max(root_points, default=-1) + 1)
+    if root_mesh is not None:
+        root_cell_ids = (
+            int(value)
+            for block in root_mesh.blocks
+            for value in np.asarray(block.global_ids, dtype=np.int64)
+        )
+        next_cell_id = max(next_cell_id, max(root_cell_ids, default=-1) + 1)
+    if mesh.periodic_topology is not None:
+        next_ids = periodic_next_entity_ids(mesh)
+        next_cell_id = max(next_cell_id, next_ids[3])
+        next_vertex_id = max(next_vertex_id, next_ids[0])
     point_to_vertex: dict[_PointKey, int] = {}
     target_stencils: dict[int, _PointKey] = {
         int(identifier): ((int(identifier), Fraction(1)),)
@@ -2015,7 +3484,12 @@ def adapt_mixed_mesh(
     target_coordinates = {
         identifier: coordinate_rows[identifier] for identifier in target_used
     }
-    prescribed = _prescribed_entities(mesh, hierarchy)
+    prior_retired = (
+        _initial_root_retired_entities(mesh, root_mesh)
+        if hierarchy is None
+        else hierarchy.retired_entities
+    )
+    prescribed = _prescribed_entities(mesh, prior_retired)
     provisional = _target_edit(
         mesh,
         output,
@@ -2024,32 +3498,25 @@ def adapt_mixed_mesh(
         prescribed,
     )
     probe, _, _ = assemble_topology_edit(
-        mesh, provisional, numeric_version="mixed-adaptation-probe"
+        mesh, provisional, numeric_version="mixed-adaptation-probe", bind_periodic=False
     )
     retired = _retired_entity_records(
         mesh,
         probe,
-        () if hierarchy is None else hierarchy.retired_entities,
+        prior_retired,
     )
-    final_prescribed: list[PrescribedEntityIds] = []
-    for degree in (1, 2):
-        current = {
-            tuple(int(value) for value in row if value >= 0)
-            for row in entity_keys(mesh, degree)
-        }
-        values = [
-            (key, identifier)
-            for record_degree, key, identifier in retired
-            if record_degree == degree and key not in current
-        ]
-        if values:
-            width = max(len(key) for key, _ in values)
-            keys = np.full((len(values), width), -1, dtype=np.int64)
-            ids = np.empty((len(values),), dtype=np.int64)
-            for row, (key, identifier) in enumerate(values):
-                keys[row, : len(key)] = key
-                ids[row] = identifier
-            final_prescribed.append(PrescribedEntityIds(degree, keys, ids))
+    all_prescribed: dict[tuple[int, tuple[int, ...]], int] = {}
+    for degree, key, identifier in (*prior_retired, *retired):
+        previous = all_prescribed.setdefault((degree, key), identifier)
+        if previous != identifier:
+            raise ValueError("Mixed retired entity has conflicting source identities.")
+    final_prescribed = _prescribed_entities(
+        mesh,
+        tuple(
+            (degree, key, identifier)
+            for (degree, key), identifier in sorted(all_prescribed.items())
+        ),
+    )
     provisional = _target_edit(
         mesh,
         output,
@@ -2058,22 +3525,11 @@ def adapt_mixed_mesh(
         tuple(final_prescribed),
     )
     probe, _, _ = assemble_topology_edit(
-        mesh, provisional, numeric_version="mixed-adaptation-final-probe"
-    )
-    relations = _entity_relations(
         mesh,
-        probe,
-        output,
-        target_stencils,
-        root_points,
-        coarsen_sources,
+        provisional,
+        numeric_version="mixed-adaptation-final-probe",
+        bind_periodic=False,
     )
-    edit = provisional._replace(relations=relations)
-    target_mesh, _, _ = assemble_topology_edit(
-        mesh, edit, numeric_version="mixed-adaptation-identity-check"
-    )
-    if target_mesh.topology_id != probe.topology_id:
-        raise RuntimeError("Mixed topology edit changed while binding lineage relations.")
     coarsening_maps = tuple(
         MixedCoarseningMap(
             record.parent_id,
@@ -2084,10 +3540,28 @@ def adapt_mixed_mesh(
         )
         for record in sorted(candidates, key=lambda value: value.parent_id)
     )
+    coarsening_partition = _mixed_coarsening_partition(coarsening_maps)
+    exact_target_points = _target_root_points(
+        output, source_charts, {record.parent_id for record in candidates}, root_points
+    )
+    relations = _entity_relations(
+        mesh,
+        probe,
+        output,
+        coarsen_sources,
+        coarsening_maps,
+    )
+    edit = provisional._replace(relations=relations)
+    target_mesh, _, _ = assemble_topology_edit(
+        mesh, edit, numeric_version="mixed-adaptation-identity-check", bind_periodic=False
+    )
+    if target_mesh.topology_id != probe.topology_id:
+        raise RuntimeError("Mixed topology edit changed while binding lineage relations.")
     reference_maps = _mixed_reference_maps(
         output, {value.parent_cell_id for value in coarsening_maps}
     )
     target_geometry = None
+    exact_vertex_coordinates = None
     if source_geometry is not None:
         target_geometry = _mixed_target_geometry(
             mesh,
@@ -2096,12 +3570,18 @@ def adapt_mixed_mesh(
             output,
             reference_maps,
             coarsening_maps,
+            coarsening_partition,
+            hierarchy is None
+            and root_mesh is not None
+            and root_mesh.mesh_id == mesh.mesh_id,
         )
         retained_map = (
             None
             if source_geometry.source_map is None
             else _RetainedCoordinateBank(
-                source_geometry.source_map,
+                source_geometry.source_map.source_id,
+                source_geometry.source_map.source_revision,
+                source_geometry.source_map.source_map_id,
                 source_geometry.source_coordinates(),
             )
         )
@@ -2120,17 +3600,26 @@ def adapt_mixed_mesh(
                     )
                 ),
                 target_geometry.coordinates,
+                restriction_source=target_geometry.restriction_source,
                 source_map=retained_map,
                 source_mesh=target_mesh,
             )
-        exact_coordinates = _exact_target_vertex_coordinates(
+        exact_vertex_coordinates = _exact_target_vertex_coordinates(
             target_geometry,
             target_mesh,
             np.asarray(edit.vertex_global_ids, dtype=np.int64),
         )
-        edit = edit._replace(coordinates=exact_coordinates)
+        edit = edit._replace(
+            coordinates=np.asarray(
+                [[float(value) for value in row] for row in exact_vertex_coordinates],
+                dtype=np.float64,
+            )
+        )
         target_mesh, _, _ = assemble_topology_edit(
-            mesh, edit, numeric_version="mixed-adaptation-mapped-geometry"
+            mesh,
+            edit,
+            numeric_version="mixed-adaptation-mapped-geometry",
+            bind_periodic=False,
         )
         if retained_map is not None:
             target_geometry = CellGeometrySpec(
@@ -2147,14 +3636,19 @@ def adapt_mixed_mesh(
                     )
                 ),
                 target_geometry.coordinates,
+                restriction_source=target_geometry.restriction_source,
                 source_map=retained_map,
                 source_mesh=target_mesh,
             )
 
-    vertex_points = tuple(
-        (identifier, _root_key(target_stencils[identifier], root_points))
-        for identifier in sorted(target_used)
-    )
+    all_vertex_points = dict(root_points)
+    for identifier in sorted(target_used):
+        point = exact_target_points[identifier]
+        previous = all_vertex_points.get(identifier)
+        if previous is not None and previous != point:
+            raise ValueError("A mixed vertex identity has conflicting root ancestry.")
+        all_vertex_points[identifier] = point
+    vertex_points = tuple(sorted(all_vertex_points.items()))
     removed_parent_ids = {record.parent_id for record in candidates}
     old_siblings = tuple(
         record
@@ -2185,16 +3679,58 @@ def adapt_mixed_mesh(
     successor = MixedAdaptationHierarchy(
         successor_siblings,
         active_cells,
+        forest,
         vertex_points,
         retired,
         layer_policy,
         next_cell_id,
         next_vertex_id,
+        (
+            None
+            if mesh.periodic_topology is None
+            else update_periodic_quotient_history(
+                mesh,
+                None if hierarchy is None else hierarchy.periodic_quotient_history,
+                root=(
+                    root_mesh
+                    if root_mesh is not None and root_mesh.periodic_topology is not None
+                    else None
+                ),
+            )
+        ),
+        target_mesh.lifted_topology_id,
     )
+    if mesh.periodic_topology is not None:
+        if exact_vertex_coordinates is None or target_geometry is None:
+            raise ValueError("Periodic mixed adaptation requires exact source geometry.")
+        exact_source = None
+        if any(
+            Fraction(float(value)) != value
+            for row in exact_vertex_coordinates
+            for value in row
+        ):
+            identifiers = np.asarray(edit.vertex_global_ids, dtype=np.int64)
+            exact_source = ExactPlcCellGeometrySource(
+                "periodic-quotient-chart",
+                mesh.mesh_id,
+                identifiers,
+                exact_vertex_coordinates,
+                vertex_source_entity_ids=(None,) * identifiers.size,
+                vertex_occurrence_paths=((),) * identifiers.size,
+            )
+        edit = edit._replace(
+            periodic_witness=PeriodicTopologyEditWitness(
+                mesh.mesh_id,
+                target_mesh.lifted_topology_id,
+                successor,
+                exact_source,
+                target_geometry,
+            )
+        )
     transfer = _cell_transfer(source_ids, output)
     all_refined = {record.parent_id for record in new_siblings}
-    requested_done = np.asarray(sorted(refine & all_refined), dtype=np.int64)
-    closure_ids = np.asarray(sorted(all_refined - refine), dtype=np.int64)
+    requested_done = np.asarray(sorted(requested_refine & all_refined), dtype=np.int64)
+    closure_ids = np.asarray(sorted(all_refined - requested_refine), dtype=np.int64)
     coarsened_ids = np.asarray(sorted(removed), dtype=np.int64)
     rejected_ids = np.asarray(sorted(rejected), dtype=np.int64)
     changed_ids = np.asarray(sorted(schedule_changed), dtype=np.int64)
@@ -2206,7 +3742,7 @@ def adapt_mixed_mesh(
     evidence_id = canonical_fingerprint(
         {
             "kind": "mixed-adaptation-evidence",
-            "requested_refine": np.asarray(sorted(refine), dtype=np.int64),
+            "requested_refine": np.asarray(sorted(requested_refine), dtype=np.int64),
             "refined": requested_done,
             "coarsened": coarsened_ids,
             "rejected_coarsening": rejected_ids,
@@ -2219,7 +3755,7 @@ def adapt_mixed_mesh(
         }
     )
     evidence = MixedAdaptationEvidence(
-        _immutable(np.asarray(sorted(refine), dtype=np.int64)),
+        _immutable(np.asarray(sorted(requested_refine), dtype=np.int64)),
         _immutable(requested_done),
         _immutable(coarsened_ids),
         _immutable(rejected_ids),
@@ -2239,6 +3775,8 @@ def adapt_mixed_mesh(
         coarsening_maps,
         reference_maps,
         target_geometry,
+        exact_vertex_coordinates,
+        coarsening_partition,
     )
 
 
@@ -2247,6 +3785,7 @@ __all__ = [
     "MixedAdaptationHierarchy",
     "MixedAdaptationOutcome",
     "MixedCoarseningMap",
+    "MixedForestRoot",
     "MixedLayerColumns",
     "MixedSibling",
     "adapt_mixed_mesh",

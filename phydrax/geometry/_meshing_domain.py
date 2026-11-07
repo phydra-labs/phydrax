@@ -117,6 +117,34 @@ def _pcurve_points(pcurve: AbstractCurve, parameters: np.ndarray, /) -> np.ndarr
     )
 
 
+_PERIOD_SHADOW = Fraction.from_float(math.tau)
+
+
+def _native_turn_reduced_chart(
+    surface: AbstractSurfacePatch, chart: np.ndarray, /
+) -> np.ndarray:
+    """``chart`` with every whole native ``2 pi`` turn coordinate replaced by zero.
+
+    On a declared ``two_pi`` axis a binary64 chart coordinate that is an exact
+    integer multiple of the period's binary shadow names that many exact turns,
+    the gauge `_lift_native_period_loop` uses. The source map is exactly
+    periodic on that axis, so the exact source point is the image at zero;
+    evaluating the rounded turn instead would move it by the shadow's error.
+    """
+    turn_axes = tuple(
+        axis
+        for axis, symbol in enumerate(surface.native_period_symbols())
+        if symbol == "two_pi"
+        and chart[axis] != 0.0
+        and (Fraction.from_float(float(chart[axis])) / _PERIOD_SHADOW).denominator == 1
+    )
+    if not turn_axes:
+        return chart
+    reduced = np.array(chart, dtype=np.float64, copy=True)
+    reduced[list(turn_axes)] = 0.0
+    return reduced
+
+
 def _surface_endpoint_images(
     patches: Sequence[MeshingSurfacePatch],
     rows: Sequence[int],
@@ -834,6 +862,7 @@ class SourcePreparation:
     """
 
     __slots__ = (
+        "_box_programs",
         "_curve_spans",
         "_mapped_hessians",
         "_programs",
@@ -843,6 +872,9 @@ class SourcePreparation:
 
     def __init__(self, domain: MeshingDomain, /) -> None:
         self.domain = domain
+        self._box_programs: dict[
+            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction]
+        ] = {}
         self._surface_spans: dict[
             int,
             tuple[
@@ -983,7 +1015,7 @@ class SourcePreparation:
                 surface.placement, self.surface_box(surface.source, parameter_box)
             )
         from .brep._patches import TorusPatch
-        from .brep._root_bindings import _exact_span_surface_box
+        from .brep._root_bindings import _exact_span_surface_box, _patch_box
         from .brep._tspline import TSplineSurfacePatch
 
         if isinstance(surface, (BSplineSurfacePatch, TSplineSurfacePatch)):
@@ -999,6 +1031,13 @@ class SourcePreparation:
                 surface.validate_parameter_box(parameter_box), dtype=np.float64
             )
             return _exact_torus_patch_box(surface, box[0], box[1])
+        if type(surface).bounding_box is AbstractSurfacePatch.bounding_box:
+            box = np.asarray(
+                surface.validate_parameter_box(parameter_box), dtype=np.float64
+            )
+            return _patch_box(
+                surface, box[0], box[1], interval_program=self._surface_box_program
+            )
         return np.asarray(surface.bounding_box(parameter_box), dtype=np.float64)
 
     def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
@@ -1006,6 +1045,16 @@ class SourcePreparation:
         if isinstance(curve, BSplineCurve):
             return bspline_curve_bounds(curve, self.curve_spans(curve), first, last)
         return np.asarray(curve.bounding_box(first, last), dtype=np.float64)
+
+    def _surface_box_program(
+        self, surface: AbstractSurfacePatch, /
+    ) -> PreparedIntervalFunction:
+        entry = self._box_programs.get(id(surface))
+        if entry is not None and entry[0] is surface:
+            return entry[1]
+        program = prepare_interval_function(surface.evaluate, 2)
+        self._box_programs[id(surface)] = (surface, program)
+        return program
 
     def curve_derivative_bounds(
         self, curve: AbstractCurve, first: float, last: float, /
@@ -1025,12 +1074,12 @@ class SourcePreparation:
         entry = self._programs.get(key)
         if entry is not None:
             return entry[1]
-        from ._source_interpolation import _prepare_torus_source_program
+        from ._source_interpolation import _prepare_analytic_source_program
 
-        torus_program = _prepare_torus_source_program(surface, order)
-        if torus_program is not None:
-            self._programs[key] = (surface, torus_program)
-            return torus_program
+        analytic_program = _prepare_analytic_source_program(surface, order)
+        if analytic_program is not None:
+            self._programs[key] = (surface, analytic_program)
+            return analytic_program
         derivative: Callable[[Array], Array] = surface.evaluate
         for _ in range(order):
             derivative = jax.jacfwd(derivative)
@@ -2273,7 +2322,10 @@ class MeshingDomain(StrictModule, NonTrainableState):
                             else (source_curve.end, source_curve.start)
                         )
                     image_patches.extend((patch_index, patch_index))
-                    image_charts.extend((uv_endpoints[0], uv_endpoints[1]))
+                    image_charts.extend(
+                        _native_turn_reduced_chart(patch.surface, endpoint)
+                        for endpoint in uv_endpoints
+                    )
         for corner, patch_index, point in zip(
             image_corners,
             image_patches,
@@ -3051,6 +3103,57 @@ class MeshingDomain(StrictModule, NonTrainableState):
             if isinstance(use, PatchCurveUse) and use.curve == curve
         )
 
+    def curve_native_parameter(self, curve: int, parameter: Fraction, /) -> Fraction:
+        """Map an exact normalized source-curve coordinate to its owner gauge."""
+        if isinstance(curve, bool) or not isinstance(curve, (int, np.integer)):
+            raise TypeError("curve must be an integer source curve row.")
+        if not 0 <= int(curve) < len(self.curves):
+            raise ValueError("curve must identify a declared source curve.")
+        if not isinstance(parameter, Fraction) or not 0 <= parameter <= 1:
+            raise ValueError(
+                "A normalized source-curve parameter must be an exact Fraction in [0, 1]."
+            )
+        patch, loop, position = (int(value) for value in self.curve_owners[int(curve)])
+        if min(patch, loop, position) < 0:
+            raise ValueError("The source curve has no authored owner gauge.")
+        use = self.patches[patch].loops[loop][position]
+        if not isinstance(use, PatchCurveUse) or use.curve != int(curve):
+            raise ValueError("The source curve owner does not bind its declared curve.")
+        first = Fraction.from_float(float(use.first))
+        last = Fraction.from_float(float(use.last))
+        if first == last:
+            raise ValueError("The source curve owner gauge must be nondegenerate.")
+        return first + parameter * (last - first)
+
+    def source_curve_endpoint_parameter_bounds(
+        self, patch_row: int, loop_row: int, use_row: int, /
+    ) -> tuple[tuple[float, float], tuple[float, float]]:
+        """Return root brackets in the authored coedge's native parameter gauge."""
+        use = self.patches[patch_row].loops[loop_row][use_row]
+        if not isinstance(use, PatchCurveUse):
+            raise ValueError("A curve parameter bracket requires a curve coedge.")
+        shadows = (float(use.first), float(use.last))
+        if self.brep_authority is None:
+            return ((shadows[0], shadows[0]), (shadows[1], shadows[1]))
+        geometry = self.brep_authority.geometry
+        face = self.source_indices[2][patch_row]
+        coedge = geometry.face_loops[face][loop_row][use_row]
+        # BRepGeometry admission binds each coedge root to its pcurve carrier
+        # and validates that the edge range is in that same native gauge.
+        roots = geometry.coedge_endpoint_roots[coedge]
+        bounds = tuple(
+            (shadow, shadow) if root is None else tuple(root.parameter_enclosure())
+            for shadow, root in zip(shadows, roots, strict=True)
+        )
+        if any(
+            not np.isfinite(lower)
+            or not np.isfinite(upper)
+            or not lower <= shadow <= upper
+            for shadow, (lower, upper) in zip(shadows, bounds, strict=True)
+        ):
+            raise ValueError("A coedge endpoint root does not enclose its native shadow.")
+        return bounds[0], bounds[1]
+
     def source_curve_chart_uses(
         self, entity_id: int, /
     ) -> tuple[tuple[str, int, int, int, PatchCurveUse], ...]:
@@ -3195,7 +3298,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         ] = {}
         corner_keys = self.stratum_entity_ids(0)
         for query_row, chart_id in enumerate(query.chart_ids):
-            _, _, (first, last), patch_row, _, _, use = expected[chart_id]
+            _, _, (first, last), patch_row, loop_row, use_row, use = expected[chart_id]
             curve = query.curves[query_row]
             patch = self.patches[patch_row]
             if (
@@ -3220,6 +3323,14 @@ class MeshingDomain(StrictModule, NonTrainableState):
             if query.parameter_ranges[query_row] != (first, last):
                 raise ValueError(
                     "MeshingDomain curve query changed its trim parameter range."
+                )
+            if query.endpoint_parameter_bounds[
+                query_row
+            ] != self.source_curve_endpoint_parameter_bounds(
+                patch_row, loop_row, use_row
+            ):
+                raise ValueError(
+                    "MeshingDomain curve query changed its native endpoint root brackets."
                 )
             supplied_bounds = query.endpoint_point_bounds[query_row]
             for side, (key, corner, parameter, supplied) in enumerate(

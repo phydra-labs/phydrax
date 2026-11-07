@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
 from phydrax import SpatialCoordinateContract
+from phydrax.geometry import prepare_brep_projection
 from phydrax.geometry.brep import (
     brep_extrusion,
     BRepModel,
@@ -12,6 +15,7 @@ from phydrax.geometry.brep import (
     ProfileLoop,
     ProfilePlane,
 )
+from phydrax.interchange import CadImportPolicy, read_step, write_step
 from phydrax.meshing import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -75,6 +79,27 @@ def prepare_workflow(
 def run_workflow() -> dict[str, object]:
     """Construct a source-defined profile extrusion, mesh it, and audit the solid."""
     model, _specification, plan = prepare_workflow()
+    if model.geometry is None:
+        raise RuntimeError("The constructed BRep has no native topology.")
+    projection = prepare_brep_projection(model)
+    vertex = np.asarray(model.geometry.vertex_points, dtype=np.float64)[0]
+    query = projection.project(
+        vertex[None, :],
+        np.asarray((0,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+    )
+    if int(query.status[0]) != 0 or float(query.residuals[0]) > 1.0e-12:
+        raise RuntimeError("Native BRep vertex query did not resolve exactly.")
+    with TemporaryDirectory(prefix="phydrax-native-brep-") as directory:
+        path = Path(directory) / "profile.step"
+        exported = write_step(model, path)
+        imported = read_step(
+            path, CadImportPolicy(SpatialCoordinateContract.si()), trusted_root=directory
+        )
+        if not exported.report.valid or not imported.report.valid:
+            raise RuntimeError("Native STEP exchange did not validate.")
+        if imported.model.topology.num_solids != model.topology.num_solids:
+            raise RuntimeError("Native STEP exchange lost the source solid.")
     result = plan.execute()
     result.audit.require_passed()
     certification = result.certification
@@ -102,6 +127,10 @@ def run_workflow() -> dict[str, object]:
         "source_revision": model.source_revision,
         "source_geometry_id": model.geometry.geometry_id,
         "source_solids": model.topology.num_solids,
+        "query_status": int(query.status[0]),
+        "query_residual": float(query.residuals[0]),
+        "step_export_valid": exported.report.valid,
+        "step_import_valid": imported.report.valid,
         "source_faces": model.topology.num_faces,
         "plan_id": plan.plan_id,
         "result_id": result.result_id,

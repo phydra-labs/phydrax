@@ -194,6 +194,125 @@ def test_curved_p2_dirichlet_laplace_reproduces_x_through_the_sparse_route() -> 
         )
 
 
+def _distorted_hex_pyramid_tet_mesh(count: int) -> CellMesh:
+    """Conforming hex/pyramid/tet unit-cube mesh with non-affine hexes and pyramids.
+
+    Even cubes are hexahedra; odd cubes split into six pyramids on their faces
+    with apex at the cube center, except the faces on ``x = 0``, which split
+    into two tetrahedra each. Interior grid vertices and cube centers move by a
+    fixed pseudo-random offset, so hexahedra and pyramid bases are non-planar.
+    """
+    spacing = 1.0 / count
+    keys: dict[tuple[int, ...], int] = {}
+    points: list[np.ndarray] = []
+    rng = np.random.default_rng(7)
+
+    def vertex(doubled: tuple[int, int, int]) -> int:
+        if doubled not in keys:
+            keys[doubled] = len(points)
+            point = np.asarray(doubled, dtype=np.float64) * 0.5 * spacing
+            if all(0 < value < 2 * count for value in doubled):
+                point = point + rng.uniform(-0.15, 0.15, 3) * spacing
+            points.append(point)
+        return keys[doubled]
+
+    corners = (
+        (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+        (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1),
+    )  # fmt: skip
+    hexes, pyramids, tetrahedra = [], [], []
+    for i in range(count):
+        for j in range(count):
+            for k in range(count):
+                a, b, c, d, e, f, g, h = (
+                    vertex((2 * (i + di), 2 * (j + dj), 2 * (k + dk)))
+                    for di, dj, dk in corners
+                )
+                if (i + j + k) % 2 == 0:
+                    hexes.append((a, b, c, d, e, f, g, h))
+                    continue
+                center = vertex((2 * i + 1, 2 * j + 1, 2 * k + 1))
+                faces = (
+                    (a, b, c, d), (e, h, g, f), (a, e, f, b),
+                    (b, f, g, c), (d, c, g, h), (a, d, h, e),
+                )  # fmt: skip
+                for index, (q0, q1, q2, q3) in enumerate(faces):
+                    if index == 5 and i == 0:
+                        tetrahedra.extend(((q0, q1, q2, center), (q0, q2, q3, center)))
+                    else:
+                        pyramids.append((q0, q1, q2, q3, center))
+    blocks = []
+    offset = 0
+    for name, kind, cells in (
+        ("hex", "hexahedron", hexes),
+        ("pyramid", "pyramid", pyramids),
+        ("tet", "tetrahedron", tetrahedra),
+    ):
+        blocks.append(
+            CellBlock(
+                name,
+                kind,
+                np.asarray(cells, dtype=np.int32),
+                global_ids=tuple(range(offset, offset + len(cells))),
+            )
+        )
+        offset += len(cells)
+    return CellMesh(np.asarray(points), tuple(blocks))
+
+
+def test_mixed_kind_sparse_system_matches_action_and_reproduces_x() -> None:
+    """Mixed hex/pyramid/tet blocks: one discrete operator for both storages.
+
+    Each block integrates with its own prepared reference rule in the sparse
+    structural assembly and in the matrix-free action alike, so the eliminated
+    sparse block equals the action exactly and both pass the affine patch test.
+    """
+    mesh = _distorted_hex_pyramid_tet_mesh(3)
+    space = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u",
+            {
+                block.name: phx.discretization.lagrange_element(block.cell_kind, 1)
+                for block in mesh.blocks
+            },
+        ),
+    ).prepare()
+    problem = _dirichlet_laplace(space, lambda value: value[..., 0])
+    system, rhs = problem.linear_system(storage="sparse")
+    action_system, action_rhs = problem.linear_system()
+    free = int(problem.state_space.size)
+    assert free > 0
+
+    identity = np.eye(free)
+    sparse_columns = np.stack(
+        [np.asarray(system.operator.mv(column)) for column in identity]
+    )
+    action_columns = np.stack(
+        [np.asarray(action_system.operator.mv(column)) for column in identity]
+    )
+    np.testing.assert_allclose(sparse_columns, action_columns, rtol=0.0, atol=1.0e-14)
+    np.testing.assert_array_equal(np.asarray(rhs), np.asarray(action_rhs))
+
+    # Affine patch test on both storages: u = x restricted to the free DOFs.
+    constraint = phx.discretization.dirichlet_constraint(space, "u")
+    selected = constraint.constraint_map.coordinate_selection()
+    assert selected is not None
+    exact = np.asarray(space.dof_maps[0].dof_coordinates)[:, 0]
+    for operator in (system.operator, action_system.operator):
+        np.testing.assert_allclose(
+            np.asarray(operator.mv(jnp.asarray(exact[selected]))),
+            np.asarray(rhs),
+            rtol=0.0,
+            atol=1.0e-14,
+        )
+    result = la.solve(la.prepare(system, _NATIVE_CHOLESKY), rhs)
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        np.asarray(problem.expand(result.value)), exact, rtol=0.0, atol=1.0e-13
+    )
+
+
 def test_sparse_route_without_definiteness_claims_uses_native_lu() -> None:
     space = _curved_p2_space("simplex:2")
     problem = _dirichlet_laplace(

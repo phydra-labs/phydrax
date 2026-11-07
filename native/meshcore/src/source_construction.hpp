@@ -60,6 +60,10 @@ bool source_point(const double* const* corners, SourceStratum stratum,
 double nearest_double(const Expansion& value);
 double outward_magnitude(const Expansion& value);
 double outward_distance(const double* position, const Expansion* point);
+// Outward physical norm of the difference between an index-coordinate carrier
+// and exact index witness under the row-major linear map.
+double outward_affine_distance(const double* matrix, const double* position,
+                               const Expansion* point);
 bool on_source_entity(const double* const* corners, SourceStratum stratum,
                       const double* position);
 double source_deviation(const double* const* corners, SourceStratum stratum,
@@ -154,6 +158,13 @@ int orient3d_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPoin
 int insphere_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
                  const ExactPointRef& d, const ExactPointRef& e, int64_t ia, int64_t ib,
                  int64_t ic, int64_t id, int64_t ie);
+// Affine physical insphere, retaining the index-space orientation convention.
+// orientation is the exact sign of the linear map's determinant.
+int affine_insphere_sos(const double* linear, int orientation,
+                        const ExactPointRef& a, const ExactPointRef& b,
+                        const ExactPointRef& c, const ExactPointRef& d,
+                        const ExactPointRef& e, int64_t ia, int64_t ib,
+                        int64_t ic, int64_t id, int64_t ie);
 // orient2d of the projections that drop coordinate `axis`, in the cyclic
 // coordinate order (axis + 1, axis + 2).
 int orient2d_projected(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,

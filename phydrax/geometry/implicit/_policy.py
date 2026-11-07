@@ -83,8 +83,6 @@ class ImplicitSurfacePolicy:
                 raise ValueError(f"{name} must be finite and positive.")
 
 
-
-
 ImplicitDiscoveryEnclosure: TypeAlias = Literal["interval", "lipschitz", "sampled"]
 """Bound source of adaptive discovery.
 
@@ -119,7 +117,11 @@ class AdaptiveImplicitSurfaceStatus(IntFlag):
 
 
 class AdaptiveImplicitBoxIssue(IntFlag):
-    """Why a final possible-zero box could not be resolved."""
+    """Why a final possible-zero box could not be resolved.
+
+    ``FACE`` marks a contour triangle whose nondegenerate orientation is not
+    certified by the error bounds of its roots; no absolute area floor applies.
+    """
 
     NONE = 0
     SINGULAR = 1
@@ -145,7 +147,6 @@ class AdaptiveImplicitSurfacePolicy:
     enclosure: ImplicitDiscoveryEnclosure = "interval"
     relative_cell_diameter: float = 1.0e-3
     root_tolerance: float = 1.0e-10
-    minimum_face_area: float = 1.0e-14
     allow_approximate_zero_set: bool = False
     allow_nonsmooth_field: bool = False
 
@@ -158,7 +159,6 @@ class AdaptiveImplicitSurfacePolicy:
         for name, value in (
             ("relative_cell_diameter", self.relative_cell_diameter),
             ("root_tolerance", self.root_tolerance),
-            ("minimum_face_area", self.minimum_face_area),
         ):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"{name} must be a real scalar.")
@@ -176,7 +176,6 @@ __all__ = [
     "AdaptiveImplicitSurfaceStatus",
     "ImplicitDiscoveryAccuracy",
     "ImplicitDiscoveryEnclosure",
-
     "ImplicitProjectionPolicy",
     "ImplicitProjectionStatus",
     "ImplicitSurfacePolicy",

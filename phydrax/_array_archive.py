@@ -442,7 +442,7 @@ def _write_prepared_array_archive(
         manifest_payload = json.dumps(
             complete_manifest,
             allow_nan=False,
-            indent=2,
+            separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
     except (TypeError, ValueError) as error:
@@ -960,7 +960,10 @@ def _read_array_archive(
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
     expected_inventory: Mapping[str, tuple[tuple[int, ...], Any | None]] | None = None,
     map_arrays: bool = False,
+    immutable_arrays: bool = False,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    if map_arrays and immutable_arrays:
+        raise ValueError("Archive arrays cannot be both mapped and immutable snapshots.")
     source = Path(os.fspath(path))
     policy = _resolved_archive_limits(limits)
     expected: dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]] | None = None
@@ -1138,6 +1141,35 @@ def _read_array_archive(
                                 if math.prod(shape)
                                 else np.empty(shape, dtype=dtype)
                             )
+                        elif immutable_arrays:
+                            payload_dtype, payload_shape, elements = _read_npy_metadata(
+                                stream, member.file_size, policy
+                            )
+                            if payload_dtype != dtype or payload_shape != shape:
+                                raise ArrayArchiveCorruptionError(
+                                    f"Archive array {logical_name!r} metadata changed while loading."
+                                )
+                            header_size = stream.tell()
+                            container.seek(member.header_offset)
+                            local_header = container.read(30)
+                            name_size, extra_size = struct.unpack_from("<HH", local_header, 26)
+                            member_start = member.header_offset + 30 + name_size + extra_size
+                            container.seek(member_start)
+                            header = container.read(header_size)
+                            byte_count = elements * dtype.itemsize
+                            payload = container.read(byte_count)
+                            if len(payload) != byte_count:
+                                raise ArrayArchiveCorruptionError(
+                                    f"Archive array {logical_name!r} payload is truncated."
+                                )
+                            digest = hashlib.sha256()
+                            digest.update(header)
+                            digest.update(payload)
+                            if len(header) != header_size or digest.hexdigest() != record["sha256"]:
+                                raise ArrayArchiveCorruptionError(
+                                    f"Archive array {logical_name!r} changed while loading."
+                                )
+                            value = np.ndarray(shape, dtype=dtype, buffer=payload, order="C")
                         else:
                             value = np.load(
                                 stream,

@@ -1,6 +1,7 @@
 import math
 from dataclasses import replace
 from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -169,6 +170,51 @@ def test_mapped_quality_reports_certified_physical_area() -> None:
 def test_original_exact_quarter_quad_family_gate() -> None:
     record = _run_profile("native-family-lifecycle:curved-quarter-extrusion-quad")
     assert record["status"] == "passed", record.get("failure")
+
+
+def test_exact_quarter_source_recipe_replays_and_rejects_forgery(
+    tmp_path: Path,
+) -> None:
+    from phydrax._model._structure import model_archive_projection
+    from phydrax.geometry._surface_source_support import (
+        SurfaceNativeRestrictionBoundarySource,
+    )
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._result import CellMeshingResult
+
+    case = _quarter_surface_case(4)
+    result = (
+        NativeMeshingProvider(case.options)
+        .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
+    assert result.certification is not None
+    source = result.certification.inputs.source
+    assert isinstance(source, SurfaceNativeRestrictionBoundarySource)
+    recipe = model_archive_projection(source)
+    restored = restore_model_archive_value(recipe)
+    assert isinstance(restored, SurfaceNativeRestrictionBoundarySource)
+    restored.require_current()
+    assert restored.source_scope_id == source.source_scope_id
+    with pytest.raises(ValueError):
+        restore_model_archive_value(
+            recipe._replace(support=recipe.support._replace(expected_support_id="forged"))
+        )
+    with pytest.raises(ValueError):
+        restore_model_archive_value(recipe._replace(source_revision="forged"))
+    path = tmp_path / "quarter-result.phx"
+    write_model_artifact(path, result, limits=None)
+    replayed = read_model_artifact(
+        path,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert replayed.result_id == result.result_id
 
 
 def test_tensor_quad_refuses_partial_rectangle_trim() -> None:

@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+import mmap
+
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
@@ -22,17 +25,85 @@ from ...sparse import EdgeRelation
 from ...typing import ConvertibleToArray
 
 
+def _transfer_private_array(
+    values: np.ndarray, *, device: jax.Device | None = None
+) -> Array:
+    """Transfer a sealed internal buffer; CPU backends may safely retain it."""
+    values.setflags(write=False)
+    return jax.device_put(values, device=device, may_alias=True)
+
+
+def _has_duplicate_faces(faces: np.ndarray) -> bool:
+    """Detect unoriented duplicates using one in-place sortable face buffer."""
+    with mmap.mmap(-1, faces.size * np.dtype(np.int32).itemsize) as scratch:
+        canonical = np.ndarray(faces.shape, dtype=np.int32, buffer=scratch)
+        records = canonical.view(
+            np.dtype([("a", np.int32), ("b", np.int32), ("c", np.int32)])
+        ).reshape((-1,))
+        try:
+            canonical[:] = faces
+            canonical.sort(axis=1)
+            records.sort(kind="quicksort")
+            # Bound the comparison scratch independently of the number of faces.
+            for start in range(1, faces.shape[0], 65536):
+                stop = min(start + 65536, faces.shape[0])
+                if np.any(
+                    np.all(
+                        canonical[start:stop] == canonical[start - 1 : stop - 1], axis=1
+                    )
+                ):
+                    return True
+            return False
+        finally:
+            del records, canonical
+
+
 def _csr(
-    owners: np.ndarray, values: np.ndarray, count: int
+    owners: np.ndarray, values: np.ndarray | None, count: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    order = np.argsort(owners, kind="stable")
-    owners_sorted = owners[order]
-    values_sorted = values[order]
-    counts = np.bincount(owners_sorted, minlength=count)
-    offsets = np.concatenate(
-        (np.asarray([0], dtype=np.int32), np.cumsum(counts, dtype=np.int32))
-    )
-    return offsets.astype(np.int32), values_sorted.astype(np.int32)
+    if (
+        len(owners) <= 65536
+        or len(owners) > np.iinfo(np.int32).max
+        or count * len(owners) > np.iinfo(np.int64).max
+    ):
+        order = np.argsort(owners, kind="stable")
+        values_sorted = order.astype(np.int32) if values is None else values[order]
+        counts = np.bincount(owners, minlength=count)
+        offsets = np.empty((count + 1,), dtype=np.int32)
+        offsets[0] = 0
+        np.cumsum(counts, dtype=np.int32, out=offsets[1:])
+        return offsets, values_sorted.astype(np.int32, copy=False)
+
+    # A mixed-radix integer key orders each owner by original position. Numeric
+    # sorting avoids structured-record comparison and preserves stable incidence.
+    size = len(owners)
+    with mmap.mmap(-1, size * np.dtype(np.int64).itemsize) as scratch:
+        records = np.ndarray((size,), dtype=np.int64, buffer=scratch)
+        block = None
+        try:
+            for start in range(0, size, 65536):
+                stop = min(start + 65536, size)
+                records[start:stop] = owners[start:stop].astype(
+                    np.int64
+                ) * size + np.arange(start, stop, dtype=np.int64)
+            records.sort(kind="quicksort")
+            offsets = np.full((count + 1,), len(owners), dtype=np.int32)
+            values_sorted = np.empty(len(owners), dtype=np.int32)
+            for start in range(0, len(owners), 65536):
+                stop = min(start + 65536, len(owners))
+                block = records[start:stop]
+                block_owners = block // size
+                starts = np.empty(stop - start, dtype=np.bool_)
+                starts[0] = start == 0 or block_owners[0] != records[start - 1] // size
+                starts[1:] = block_owners[1:] != block_owners[:-1]
+                rows = np.flatnonzero(starts)
+                offsets[block_owners[rows]] = rows + start
+                indices = block % size
+                values_sorted[start:stop] = indices if values is None else values[indices]
+            np.minimum.accumulate(offsets[::-1], out=offsets[::-1])
+            return offsets, values_sorted
+        finally:
+            del block, records
 
 
 def _boundary_loops(
@@ -45,6 +116,8 @@ def _boundary_loops(
     """
 
     count = starts.size
+    if count == 0:
+        return np.empty(0, dtype=np.int32), np.zeros(1, dtype=np.int32)
     outgoing = np.bincount(starts, minlength=vertex_count)
     incoming = np.bincount(ends, minlength=vertex_count)
     if np.any(outgoing > 1) or np.any(incoming > 1):
@@ -88,6 +161,9 @@ def _face_components(
         shape=(face_count, face_count),
     )
     component_count, labels = connected_components(adjacency, directed=False)
+    if component_count == 1:
+        # A connected graph already has canonical label zero at every face.
+        return labels.astype(np.int32, copy=False), component_count
     _, smallest = np.unique(labels, return_index=True)
     relabel = np.empty((component_count,), dtype=np.int32)
     relabel[np.argsort(smallest)] = np.arange(component_count, dtype=np.int32)
@@ -102,7 +178,9 @@ class SegmentTopology(StrictModule):
     vertex_edges: Array
     num_vertices: int = eqx.field(static=True)
 
-    def __init__(self, edges: ConvertibleToArray, *, num_vertices: int | None = None) -> None:
+    def __init__(
+        self, edges: ConvertibleToArray, *, num_vertices: int | None = None
+    ) -> None:
         edges_host = np.asarray(edges, dtype=np.int32)
         if edges_host.ndim != 2 or edges_host.shape[1] != 2 or edges_host.shape[0] == 0:
             raise ValueError("edges must have shape (num_edges > 0, 2).")
@@ -192,7 +270,9 @@ class TriangleTopology(StrictModule):
     num_vertices: int = eqx.field(static=True)
     watertight: bool = eqx.field(static=True)
 
-    def __init__(self, faces: Array, *, num_vertices: int | None = None) -> None:
+    def __init__(
+        self, faces: Array | np.ndarray, *, num_vertices: int | None = None
+    ) -> None:
         faces_host = np.asarray(faces, dtype=np.int32)
         if faces_host.ndim != 2 or faces_host.shape[1] != 3 or faces_host.shape[0] == 0:
             raise ValueError("faces must have shape (num_faces > 0, 3).")
@@ -208,7 +288,7 @@ class TriangleTopology(StrictModule):
         vertex_count = inferred if num_vertices is None else int(num_vertices)
         if vertex_count < inferred:
             raise ValueError("num_vertices does not cover every face index.")
-        if np.unique(np.sort(faces_host, axis=1), axis=0).shape[0] != faces_host.shape[0]:
+        if _has_duplicate_faces(faces_host):
             raise ValueError("TriangleTopology contains duplicate faces.")
 
         face_count = faces_host.shape[0]
@@ -216,41 +296,92 @@ class TriangleTopology(StrictModule):
         origin = faces_host.reshape((-1,))
         destination = faces_host[:, [1, 2, 0]].reshape((-1,))
         halfedge_face = np.repeat(np.arange(face_count, dtype=np.int32), 3)
-        local = np.arange(halfedge_count, dtype=np.int32).reshape((-1, 3))
-        halfedge_next = local[:, [1, 2, 0]].reshape((-1,))
-        halfedge_previous = local[:, [2, 0, 1]].reshape((-1,))
 
-        # Stable sort by undirected key: edges are lexicographic and each pair
-        # keeps its half-edges in increasing order.
-        low = np.minimum(origin, destination).astype(np.int64)
-        high = np.maximum(origin, destination).astype(np.int64)
-        order = np.argsort(low * vertex_count + high, kind="stable")
+        # Sort (undirected key, half-edge ID), preserving the stable ordering.
+        # Anonymous mapped scratch is released as soon as incidence is built,
+        # rather than remaining in the host allocator during source replay.
+        index_dtype = np.int32 if halfedge_count <= np.iinfo(np.int32).max else np.int64
+        record_dtype = np.dtype([("key", np.int64), ("halfedge", index_dtype)])
+        scratch = mmap.mmap(-1, halfedge_count * record_dtype.itemsize)
+        records = np.ndarray((halfedge_count,), dtype=record_dtype, buffer=scratch)
+        for start in range(0, halfedge_count, 65536):
+            stop = min(start + 65536, halfedge_count)
+            a, b = origin[start:stop], destination[start:stop]
+            records["key"][start:stop] = np.minimum(a, b).astype(
+                np.int64
+            ) * vertex_count + np.maximum(a, b)
+            records["halfedge"][start:stop] = np.arange(start, stop, dtype=index_dtype)
+        records.sort(order=("key", "halfedge"), kind="quicksort")
+        keys = records["key"]
+        order = records["halfedge"]
         starts = np.ones((halfedge_count,), dtype=np.bool_)
-        starts[1:] = (low[order[1:]] != low[order[:-1]]) | (
-            high[order[1:]] != high[order[:-1]]
-        )
-        first = np.flatnonzero(starts)
-        group_sizes = np.diff(np.append(first, halfedge_count))
-        if np.any(group_sizes > 2):
-            raise ValueError(
-                "TriangleTopology is non-manifold: an edge has more than two incident faces."
-            )
-        edges = np.stack((low[order[first]], high[order[first]]), axis=1).astype(np.int32)
+        for start in range(1, halfedge_count, 65536):
+            stop = min(start + 65536, halfedge_count)
+            current = order[start:stop]
+            previous_order = order[start - 1 : stop - 1]
+            current_a, current_b = origin[current], destination[current]
+            previous_a, previous_b = origin[previous_order], destination[previous_order]
+            starts[start:stop] = (
+                np.minimum(current_a, current_b) != np.minimum(previous_a, previous_b)
+            ) | (np.maximum(current_a, current_b) != np.maximum(previous_a, previous_b))
+        del current, previous_order, current_a, current_b, previous_a, previous_b
+        first = np.empty(np.count_nonzero(starts), dtype=order.dtype)
+        position = 0
+        for start in range(0, halfedge_count, 65536):
+            stop = min(start + 65536, halfedge_count)
+            rows = np.flatnonzero(starts[start:stop])
+            first[position : position + len(rows)] = rows + start
+            position += len(rows)
+        paired = np.empty(len(first), dtype=np.bool_)
+        for start in range(0, len(first), 65536):
+            stop = min(start + 65536, len(first))
+            next_rows = np.empty(stop - start, dtype=first.dtype)
+            if stop < len(first):
+                next_rows[:] = first[start + 1 : stop + 1]
+            else:
+                next_rows[:-1] = first[start + 1 : stop]
+                next_rows[-1] = halfedge_count
+            sizes = next_rows - first[start:stop]
+            if np.any(sizes > 2):
+                raise ValueError(
+                    "TriangleTopology is non-manifold: an edge has more than two incident faces."
+                )
+            paired[start:stop] = sizes == 2
+        edges = np.empty((first.size, 2), dtype=np.int32)
+        for start in range(0, len(first), 65536):
+            stop = min(start + 65536, len(first))
+            selected = order[first[start:stop]]
+            first_vertices = origin[selected]
+            second_vertices = destination[selected]
+            edges[start:stop, 0] = np.minimum(first_vertices, second_vertices)
+            edges[start:stop, 1] = np.maximum(first_vertices, second_vertices)
+        del keys
         halfedge_edge = np.empty((halfedge_count,), dtype=np.int32)
-        halfedge_edge[order] = np.cumsum(starts) - 1
-        paired = group_sizes == 2
+        previous = 0
+        for start in range(0, halfedge_count, 65536):
+            stop = min(start + 65536, halfedge_count)
+            cumulative = np.cumsum(starts[start:stop], dtype=np.int32)
+            cumulative += previous
+            previous = int(cumulative[-1])
+            halfedge_edge[order[start:stop]] = cumulative - 1
+        del starts
+        del cumulative, next_rows, sizes, rows, selected, first_vertices, second_vertices
         first_halfedges = order[first[paired]]
         second_halfedges = order[first[paired] + 1]
-        if np.any(
-            (origin[first_halfedges] == origin[second_halfedges])
-            | (destination[first_halfedges] == destination[second_halfedges])
-        ):
-            raise ValueError(
-                "Adjacent faces have inconsistent orientation across an edge."
-            )
+        for start in range(0, len(first_halfedges), 65536):
+            stop = min(start + 65536, len(first_halfedges))
+            a, b = first_halfedges[start:stop], second_halfedges[start:stop]
+            if np.any((origin[a] == origin[b]) | (destination[a] == destination[b])):
+                raise ValueError(
+                    "Adjacent faces have inconsistent orientation across an edge."
+                )
         edge_halfedges = np.full((first.size, 2), -1, dtype=np.int32)
-        edge_halfedges[:, 0] = order[first]
+        for start in range(0, len(first), 65536):
+            stop = min(start + 65536, len(first))
+            edge_halfedges[start:stop, 0] = order[first[start:stop]]
         edge_halfedges[paired, 1] = second_halfedges
+        del order, records, first, paired
+        scratch.close()
         halfedge_twin = np.full((halfedge_count,), -1, dtype=np.int32)
         halfedge_twin[first_halfedges] = second_halfedges
         halfedge_twin[second_halfedges] = first_halfedges
@@ -259,36 +390,76 @@ class TriangleTopology(StrictModule):
         loop_vertices, loop_offsets = _boundary_loops(
             origin[boundary_halfedges], destination[boundary_halfedges], vertex_count
         )
-        vertex_halfedge_offsets, vertex_halfedges = _csr(
-            origin, np.arange(halfedge_count, dtype=np.int32), vertex_count
+        # Twin construction consumed these private half-edge IDs. Reuse their
+        # storage for face IDs rather than gathering two more incidence banks.
+        first_faces, second_faces = first_halfedges, second_halfedges
+        del first_halfedges, second_halfedges
+        np.floor_divide(first_faces, 3, out=first_faces)
+        np.floor_divide(second_faces, 3, out=second_faces)
+        face_component_ids, face_component_count = _face_components(
+            first_faces, second_faces, face_count
         )
+        del first_faces, second_faces
+        vertex_halfedge_offsets, vertex_halfedges = _csr(origin, None, vertex_count)
         # Vertex-face incidence is the face of each vertex-origin half-edge.
         vertex_face_offsets = vertex_halfedge_offsets
         vertex_faces = halfedge_face[vertex_halfedges]
-        face_component_ids, face_component_count = _face_components(
-            halfedge_face[first_halfedges], halfedge_face[second_halfedges], face_count
-        )
+        halfedge_next = np.empty(halfedge_count, dtype=np.int32).reshape(-1, 3)
+        halfedge_previous = np.empty_like(halfedge_next)
+        for start in range(0, face_count, 65536):
+            stop = min(start + 65536, face_count)
+            base = np.arange(start, stop, dtype=np.int32) * 3
+            halfedge_next[start:stop, 0] = base + 1
+            halfedge_next[start:stop, 1] = base + 2
+            halfedge_next[start:stop, 2] = base
+            halfedge_previous[start:stop, 0] = base + 2
+            halfedge_previous[start:stop, 1] = base
+            halfedge_previous[start:stop, 2] = base + 1
+        halfedge_next = halfedge_next.reshape(-1)
+        halfedge_previous = halfedge_previous.reshape(-1)
 
-        self.faces = jnp.asarray(faces_host, dtype=jnp.int32)
-        self.edges = jnp.asarray(edges, dtype=jnp.int32)
-        self.halfedge_origin = jnp.asarray(origin, dtype=jnp.int32)
-        self.halfedge_destination = jnp.asarray(destination, dtype=jnp.int32)
-        self.halfedge_face = jnp.asarray(halfedge_face, dtype=jnp.int32)
-        self.halfedge_next = jnp.asarray(halfedge_next, dtype=jnp.int32)
-        self.halfedge_previous = jnp.asarray(halfedge_previous, dtype=jnp.int32)
-        self.halfedge_twin = jnp.asarray(halfedge_twin, dtype=jnp.int32)
-        self.halfedge_edge = jnp.asarray(halfedge_edge, dtype=jnp.int32)
-        self.edge_halfedges = jnp.asarray(edge_halfedges, dtype=jnp.int32)
-        self.boundary_halfedges = jnp.asarray(boundary_halfedges, dtype=jnp.int32)
-        self.boundary_loop_vertices = jnp.asarray(loop_vertices, dtype=jnp.int32)
-        self.boundary_loop_offsets = jnp.asarray(loop_offsets, dtype=jnp.int32)
-        self.vertex_face_offsets = jnp.asarray(vertex_face_offsets, dtype=jnp.int32)
-        self.vertex_faces = jnp.asarray(vertex_faces, dtype=jnp.int32)
-        self.vertex_halfedge_offsets = jnp.asarray(
-            vertex_halfedge_offsets, dtype=jnp.int32
+        self.faces = jnp.asarray(faces, dtype=jnp.int32)
+        self.edges = _transfer_private_array(edges)
+        del edges
+        device = (
+            next(iter(self.faces.sharding.device_set))
+            if isinstance(self.faces.sharding, jax.sharding.SingleDeviceSharding)
+            else None
         )
-        self.vertex_halfedges = jnp.asarray(vertex_halfedges, dtype=jnp.int32)
-        self.face_component_ids = jnp.asarray(face_component_ids, dtype=jnp.int32)
+        if device is not None and device.platform == "cpu":
+            # Borrow the immutable JAX-owned buffer, never a mutable caller array.
+            self.halfedge_origin = _transfer_private_array(
+                np.asarray(self.faces).reshape(-1),
+                device=device if self.faces.committed else None,
+            )
+        else:
+            self.halfedge_origin = self.faces.reshape(-1)
+        del origin
+        self.halfedge_destination = _transfer_private_array(destination)
+        del destination
+        self.halfedge_face = _transfer_private_array(halfedge_face)
+        del halfedge_face
+        self.halfedge_next = _transfer_private_array(halfedge_next)
+        del halfedge_next
+        self.halfedge_previous = _transfer_private_array(halfedge_previous)
+        del halfedge_previous
+        self.halfedge_twin = _transfer_private_array(halfedge_twin)
+        del halfedge_twin
+        self.halfedge_edge = _transfer_private_array(halfedge_edge)
+        del halfedge_edge
+        self.edge_halfedges = _transfer_private_array(edge_halfedges)
+        del edge_halfedges
+        self.boundary_halfedges = _transfer_private_array(boundary_halfedges)
+        self.boundary_loop_vertices = _transfer_private_array(loop_vertices)
+        self.boundary_loop_offsets = _transfer_private_array(loop_offsets)
+        self.vertex_halfedge_offsets = _transfer_private_array(vertex_halfedge_offsets)
+        self.vertex_face_offsets = self.vertex_halfedge_offsets
+        del vertex_face_offsets, vertex_halfedge_offsets
+        self.vertex_faces = _transfer_private_array(vertex_faces)
+        del vertex_faces
+        self.vertex_halfedges = _transfer_private_array(vertex_halfedges)
+        del vertex_halfedges
+        self.face_component_ids = _transfer_private_array(face_component_ids)
         self.num_face_components = face_component_count
         self.num_vertices = vertex_count
         self.watertight = boundary_halfedges.size == 0

@@ -31,6 +31,7 @@ from ...geometry.surface._model import SurfaceModel
 from ...graph import GraphPartitionPlan
 from ...typing import checked
 from .._canonical import _accept_native_construction, _NATIVE_PROVIDER
+from .._certification import _ComputedSurfaceAcceptance
 from .._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -195,6 +196,30 @@ def _source_identity(source: NativeMeshingSource, /) -> tuple[object, ...]:
 def _source_coordinate_contract(
     source: NativeMeshingSource, /
 ) -> SpatialCoordinateContract | None:
+    if isinstance(source, NativeLayerCoreSource):
+        from ...geometry._mesh_certificates import _same_tree_content
+
+        owners = tuple(
+            value.coordinate_contract
+            for value in (
+                source.source_wall_charts,
+                source.source_boundary_charts,
+                source.mapped_domain,
+            )
+            if value is not None
+        )
+        if not owners:
+            return None
+        for owner in owners:
+            rebuilt = SpatialCoordinateContract.from_dict(owner.to_dict())
+            if not _same_tree_content(owner, rebuilt) or not _same_tree_content(
+                owner, owners[0]
+            ):
+                raise _failure(
+                    MeshingFailureCategory.INVALID_SOURCE,
+                    "Layer/core source coordinate owners disagree or are stale.",
+                )
+        return owners[0]
     if isinstance(source, BRepModel):
         return source.coordinate_contract
     if isinstance(source, MeshingDomain):
@@ -227,7 +252,16 @@ def _resolve_coordinate_contract(
                 "not carry its coordinate frame and units.",
             )
         return owned
-    if owned is not None and owned.spatial_id != supplied.spatial_id:
+    if owned is not None:
+        from ...geometry._mesh_certificates import _same_tree_content
+
+        rebuilt = SpatialCoordinateContract.from_dict(supplied.to_dict())
+        mismatch = not _same_tree_content(supplied, rebuilt) or not _same_tree_content(
+            owned, supplied
+        )
+    else:
+        mismatch = False
+    if mismatch:
         raise _failure(
             MeshingFailureCategory.INVALID_SOURCE,
             "coordinate_contract must match the source's bound units, coordinate "
@@ -552,6 +586,7 @@ def _cad_boundary_specification(
     domain: MeshingDomain,
     specification: VolumeMeshingSpec,
     radius_edge_bound: float | None,
+    hard_quality: bool,
     /,
 ) -> SurfaceMeshingSpec:
     from ._native_volume import _target_support
@@ -641,7 +676,10 @@ def _cad_boundary_specification(
             None
             if radius_edge_bound is None
             else MeshQualityTarget(
-                minimum_angle=_boundary_angle_for_radius_edge(radius_edge_bound)
+                minimum_angle=_boundary_angle_for_radius_edge(radius_edge_bound),
+                # A soft volume schedule aims at, but does not gate, the
+                # boundary angle that its radius-edge bound implies.
+                hard=hard_quality,
             )
         ),
         deterministic=specification.deterministic,
@@ -698,6 +736,7 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
 
     def execute(self, /) -> NativeMeshConstruction:
         boundary_construction = self.boundary_preparation.execute()
+        surface_proofs: list[_ComputedSurfaceAcceptance] = []
         boundary_result = _accept_native_construction(
             boundary_construction,
             self.boundary_specification,
@@ -705,14 +744,18 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
             meshcore_identity(),
             self.boundary_plan_id,
             "parametric_surface",
+            computed_surface_out=None if self.specification.layer_controls else surface_proofs,
         )
         if self.specification.layer_controls:
             from .._layer_core_brep import brep_layer_core_source
             from ._native_layer import prepare_native_layer
 
             try:
+                surface_schedule = self.boundary_options.surface_schedule
+                if surface_schedule is None:
+                    raise ValueError("The original boundary surface schedule is absent.")
                 layer_source = brep_layer_core_source(
-                    self.domain, boundary_result, self.specification
+                    self.domain, boundary_result, self.specification, surface_schedule
                 )
             except ValueError as error:
                 raise _failure(
@@ -732,7 +775,9 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
             boundary_result,
             maximum_deviation=None,
             boundary="fixed",
+            _computed_surface=surface_proofs[0],
         )
+        surface_proofs.clear()
         prepared_volume = prepare_native_cad_volume(
             cad_source,
             self.specification,
@@ -763,10 +808,13 @@ def _prepare_brep_volume(
         raise ValueError(
             "Native CAD volume route requires its numerical volume schedule."
         )
+    from .._volume_generation import _shape_targets_gated
+
     boundary_specification = _cad_boundary_specification(
         domain,
         specification,
         None if specification.layer_controls else schedule.radius_edge_bound,
+        _shape_targets_gated(schedule),
     )
     boundary_options = _options_for_route(
         requested_options, "parametric_surface", force=True
@@ -1232,6 +1280,10 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         execution_group: ExecutionGroup | None = None,
         graph_partition_plan: GraphPartitionPlan | None = None,
     ) -> CellMeshingResult | MeshAssembly:
+        from ._native_implicit import _PreparedFixedImplicitRoute
+
+        if isinstance(self.prepared, _PreparedFixedImplicitRoute):
+            _require_fixed_plan_current(self, check_prepared=False)
         if graph_partition_plan is not None:
             if not isinstance(graph_partition_plan, GraphPartitionPlan):
                 raise TypeError(
@@ -1271,6 +1323,43 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         )
 
 
+def _require_fixed_plan_current(
+    plan: NativeMeshingPlan, /, *, check_prepared: bool = True
+) -> None:
+    from ...geometry._mesh_certificates import _same_tree_content
+    from ._native_implicit import _PreparedFixedImplicitRoute
+
+    prepared = plan.prepared
+    if (
+        plan.route != "implicit_surface"
+        or not isinstance(plan.source, NativeImplicitSource)
+        or not isinstance(plan.specification, SurfaceMeshingSpec)
+        or not isinstance(prepared, _PreparedFixedImplicitRoute)
+        or not _same_tree_content(plan.source, prepared.source)
+        or not _same_tree_content(plan.specification, prepared.specification)
+        or not _same_tree_content(plan.coordinate_contract, prepared.coordinate_contract)
+        or not _same_tree_content(plan.route_options, _options_for_route(plan.options, plan.route))
+    ):
+        raise ValueError("The fixed plan no longer matches its source or request binding.")
+    _validate_scope_binding(plan.source, plan.specification)
+    if check_prepared:
+        prepared.require_current()
+    expected = canonical_fingerprint(
+        {
+            "kind": "native-meshing-plan",
+            "source": _source_identity(plan.source),
+            "specification": plan.specification.specification_id,
+            "options": plan.options.options_id,
+            "resolved_options": plan.route_options.options_id,
+            "route": plan.route,
+            "coordinate_contract": plan.coordinate_contract.spatial_id,
+            "preparation": prepared.preparation_id,
+        }
+    )
+    if plan.plan_id != expected:
+        raise ValueError("The fixed plan identity is no longer current.")
+
+
 class NativeMeshingProvider:
     """Source- and request-driven dispatcher for native initial meshing."""
 
@@ -1287,6 +1376,7 @@ class NativeMeshingProvider:
         /,
         *,
         coordinate_contract: SpatialCoordinateContract | None = None,
+        fixed_plan: NativeMeshingPlan | None = None,
     ) -> NativeMeshingPlan:
         if not isinstance(source, NativeMeshingSource):
             raise TypeError("source must be a NativeMeshingSource.")
@@ -1300,20 +1390,61 @@ class NativeMeshingProvider:
         contract = _resolve_coordinate_contract(source, coordinate_contract)
         _validate_scope_binding(source, specification)
         route = _resolve_route(source, specification, self.options)
+        if (
+            isinstance(specification, SurfaceMeshingSpec)
+            and specification.cross_field is not None
+            and route != "planar_dual_quad"
+        ):
+            _unsupported(
+                route,
+                source,
+                specification,
+                "source-bound cross fields require the planar_dual_quad route",
+            )
         route_options = _options_for_route(self.options, route)
-        prepared = _prepare_route(
-            route,
-            source,
-            specification,
-            route_options,
-            self.options,
-            contract,
-        )
-        preparation_id = (
-            prepared.preparation_id
-            if isinstance(prepared, _PreparedDirectBRepCadVolume)
-            else None
-        )
+        if fixed_plan is None:
+            prepared = _prepare_route(
+                route,
+                source,
+                specification,
+                route_options,
+                self.options,
+                contract,
+            )
+            preparation_id = (
+                prepared.preparation_id
+                if isinstance(prepared, _PreparedDirectBRepCadVolume)
+                else None
+            )
+            if route == "implicit_surface":
+                from ._native_implicit import _PreparedFixedImplicitRoute
+
+                if isinstance(prepared, _PreparedFixedImplicitRoute):
+                    preparation_id = prepared.preparation_id
+        else:
+            from ...geometry._mesh_certificates import _same_tree_content
+            from ._native_implicit import (
+                _PreparedFixedImplicitRoute,
+                prepare_native_fixed_rebind,
+            )
+
+            if (
+                not isinstance(fixed_plan, NativeMeshingPlan)
+                or not isinstance(source, NativeImplicitSource)
+                or not isinstance(specification, SurfaceMeshingSpec)
+                or route != "implicit_surface"
+                or fixed_plan.route != route
+                or not isinstance(fixed_plan.prepared, _PreparedFixedImplicitRoute)
+                or fixed_plan.coordinate_contract.spatial_id != contract.spatial_id
+            ):
+                raise ValueError("A fixed plan requires the same fixed implicit route and coordinate frame.")
+            if not _same_tree_content(fixed_plan.options, self.options):
+                raise ValueError("The fixed rebind cannot change its authored policy or options.")
+            _require_fixed_plan_current(fixed_plan)
+            prepared = prepare_native_fixed_rebind(
+                source, specification, route_options, contract, fixed_plan.prepared
+            )
+            preparation_id = prepared.preparation_id
         plan_id = canonical_fingerprint(
             {
                 "kind": "native-meshing-plan",

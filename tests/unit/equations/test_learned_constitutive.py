@@ -365,3 +365,309 @@ class _PortedCubic(phx.AbstractArrayModel):
 
     def model_ports(self) -> Any:
         return self.ports
+
+
+def test_material_site_identity_uses_cell_rule_and_reference_site() -> None:
+    site_id = phx.equations.MaterialSiteId.for_cell_quadrature
+    site = site_id(42, "left", domain_id="body", quadrature_rule_id="gauss-2")
+    assert (
+        site.site_id
+        == site_id(42, "left", domain_id="body", quadrature_rule_id="gauss-2").site_id
+    )
+    alternatives = (
+        site_id(43, "left", domain_id="body", quadrature_rule_id="gauss-2"),
+        site_id(42, "right", domain_id="body", quadrature_rule_id="gauss-2"),
+        site_id(42, "left", domain_id="other", quadrature_rule_id="gauss-2"),
+        site_id(42, "left", domain_id="body", quadrature_rule_id="gauss-3"),
+    )
+    assert all(other.site_id != site.site_id for other in alternatives)
+    with pytest.raises(TypeError, match="identity"):
+        site_id(True, "left", domain_id="body", quadrature_rule_id="gauss-2")
+    with pytest.raises(TypeError, match="identity"):
+        site_id(42, 0, domain_id="body", quadrature_rule_id="gauss-2")  # ty: ignore[invalid-argument-type]
+
+
+def test_material_owner_placement_coverage_and_transactions() -> None:
+    MaterialSiteOwnership = phx.equations.MaterialSiteOwnership
+
+    make_site = phx.equations.MaterialSiteId.for_cell_quadrature
+    a = make_site(7, "center", domain_id="body", quadrature_rule_id="g2")
+    b = make_site(8, "center", domain_id="body", quadrature_rule_id="g2")
+    source = MaterialSiteOwnership(((a, 0), (b, 1)), part_count=3)
+    target = MaterialSiteOwnership(((b, 0), (a, 1)), part_count=3)
+    assert source.owner(a) == 0
+    assert target.owner(a) == 1
+    assert source.ownership_id != target.ownership_id
+    assert (
+        source.ownership_id
+        == MaterialSiteOwnership(((b, 1), (a, 0)), part_count=3).ownership_id
+    )
+    assert (
+        source.ownership_id
+        != MaterialSiteOwnership(((a, 0), (b, 1)), part_count=4).ownership_id
+    )
+    assert source.for_owner(2) == ()
+    with pytest.raises(KeyError):
+        source.owner("missing")
+    with pytest.raises(ValueError, match="unique"):
+        MaterialSiteOwnership(((a, 0), (a, 1)), part_count=3)
+    with pytest.raises(ValueError, match="non-negative"):
+        MaterialSiteOwnership(((a, True),), part_count=3)
+    with pytest.raises(ValueError, match="non-empty"):
+        MaterialSiteOwnership((), part_count=3)
+    with pytest.raises(ValueError, match="part_count"):
+        MaterialSiteOwnership(((a, 3),), part_count=3)
+    with pytest.raises(ValueError, match="part_count"):
+        source.for_owner(3)
+    with pytest.raises(ValueError, match="part_count"):
+        phx.equations.MaterialIntegrationPlan((), ownership=source, owner_rank=999)
+    with pytest.raises(ValueError, match="part_count"):
+        MaterialSiteOwnership(((a, 0),), part_count=0)
+
+    law = phx.equations.ConstitutiveModel(
+        lambda strain, state, parameters, time, dt: phx.equations.ConstitutiveResponse(
+            state, state
+        ),
+        state_shape=(1,),
+        response_shape=(1,),
+        model_id="law",
+    )
+    plan = phx.equations.MaterialIntegrationPlan(
+        ((a, law),), ownership=source, owner_rank=0
+    )
+    state = plan.initialize((jnp.asarray([1.0]),))
+    trial = state.with_trials({a.key: jnp.asarray([2.0])})
+    np.testing.assert_array_equal(trial.state(a).committed, [1.0])
+    np.testing.assert_array_equal(trial.rollback().state(a).trial, [1.0])
+    response = plan.evaluate(a, jnp.asarray([0.0]), trial, None, 0.0, 1.0)
+    np.testing.assert_array_equal(response.response, [1.0])
+    np.testing.assert_array_equal(response.trial_state, [1.0])
+    committed = trial.commit()
+    assert committed.state(a).state_version == 1
+    np.testing.assert_array_equal(committed.state(a).committed, [2.0])
+    restored = plan.restore_payload(plan.checkpoint_payload(trial))
+    np.testing.assert_array_equal(restored.state(a).committed, [1.0])
+    np.testing.assert_array_equal(restored.state(a).trial, [2.0])
+    assert restored.state(a).state_version == 0
+
+    migrated = phx.equations.MaterialTransaction(
+        committed.states, ownership=target, owner_rank=1
+    )
+    destination = phx.equations.MaterialIntegrationPlan(
+        ((a, law),), ownership=target, owner_rank=1
+    )
+    destination.validate(migrated)
+    assert migrated.state(a).state_version == 1
+    migrated_trial = phx.equations.MaterialTransaction(
+        trial.states, ownership=target, owner_rank=1
+    )
+    destination.validate(migrated_trial)
+    np.testing.assert_array_equal(migrated_trial.state(a).committed, [1.0])
+    np.testing.assert_array_equal(migrated_trial.state(a).trial, [2.0])
+    assert migrated_trial.state(a).state_version == 0
+    with pytest.raises(ValueError, match="ownership"):
+        destination.validate(committed)
+    with pytest.raises(ValueError, match="cover"):
+        phx.equations.MaterialIntegrationPlan((), ownership=source, owner_rank=0)
+    with pytest.raises(ValueError, match="cover"):
+        phx.equations.MaterialIntegrationPlan(((a, law),), ownership=source, owner_rank=1)
+    with pytest.raises(ValueError, match="cover"):
+        phx.equations.MaterialTransaction(
+            (state.state(a),), ownership=source, owner_rank=1
+        )
+    with pytest.raises(ValueError, match="one or more"):
+        phx.equations.MaterialIntegrationPlan(())
+    with pytest.raises(TypeError, match="one or more"):
+        phx.equations.MaterialTransaction(())
+
+    empty = phx.equations.MaterialIntegrationPlan((), ownership=source, owner_rank=2)
+    empty_state = empty.initialize()
+    assert empty.evaluate_all((), empty_state, (), 0.0, 1.0) == ()
+    assert empty.with_responses(empty_state, ()).states == ()
+    assert empty_state.commit().rollback().states == ()
+    assert empty.restore_payload(empty.checkpoint_payload(empty_state)).states == ()
+    with pytest.raises(ValueError, match="ownership"):
+        empty.validate(
+            phx.equations.MaterialTransaction((), ownership=target, owner_rank=2)
+        )
+
+
+def test_material_owner_archive_roundtrip_and_rejects_forgery(tmp_path: Any) -> None:
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    site = phx.equations.MaterialSiteId.for_cell_quadrature(
+        17, "xi=-sqrt(1/3)", domain_id="body", quadrature_rule_id="gauss-2"
+    )
+    authority = phx.equations.MaterialSiteOwnership(((site, 0),), part_count=2)
+    material = phx.equations.MaterialState(
+        site, "law", jnp.asarray([3.0]), trial=jnp.asarray([4.0]), state_version=5
+    )
+    for rank, states in ((0, (material,)), (1, ())):
+        transaction = phx.equations.MaterialTransaction(
+            states, ownership=authority, owner_rank=rank
+        )
+        path = write_model_artifact(
+            tmp_path / f"material-{rank}.phx", transaction, limits=None
+        )
+        restored = read_model_artifact(
+            path,
+            expected_type=phx.equations.MaterialTransaction,
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+        assert restored.layout_id == transaction.layout_id
+        assert restored.owner_rank == rank
+        restored_site = restored.ownership.site_ids[0]
+        assert (
+            restored_site.domain_id,
+            restored_site.cell_id,
+            restored_site.quadrature_rule_id,
+            restored_site.reference_site_id,
+        ) == ("body", 17, "gauss-2", "xi=-sqrt(1/3)")
+        if states:
+            assert restored.state(site).state_version == 5
+            np.testing.assert_array_equal(restored.state(site).committed, [3.0])
+            np.testing.assert_array_equal(restored.state(site).trial, [4.0])
+        else:
+            assert restored.states == ()
+        payload = transaction.checkpoint_payload(plan_id="material-plan")
+        payload_path = write_model_artifact(
+            tmp_path / f"material-payload-{rank}.phx", payload, limits=None
+        )
+        restored_payload = read_model_artifact(
+            payload_path,
+            expected_type=phx.equations.MaterialCheckpointPayload,
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+        assert restored_payload.payload_id == payload.payload_id
+        restored_state = restored_payload.restore()
+        assert restored_state.owner_rank == rank
+        assert restored_state.ownership.ownership_id == authority.ownership_id
+        if states:
+            assert restored_state.state(site).state_version == 5
+            np.testing.assert_array_equal(restored_state.state(site).committed, [3.0])
+            np.testing.assert_array_equal(restored_state.state(site).trial, [4.0])
+        else:
+            assert restored_state.states == ()
+
+    forged = phx.equations.MaterialSiteId.for_cell_quadrature(
+        17, "xi=-sqrt(1/3)", domain_id="body", quadrature_rule_id="gauss-2"
+    )
+    object.__setattr__(forged, "cell_id", 18)
+    with pytest.raises(ValueError, match="does not match"):
+        restore_model_archive_value(forged)
+    forged_authority = phx.equations.MaterialSiteOwnership(((site, 0),), part_count=2)
+    object.__setattr__(forged_authority, "owners", (1,))
+    with pytest.raises(ValueError, match="ownership"):
+        restore_model_archive_value(forged_authority)
+    payload = phx.equations.MaterialTransaction(
+        (material,), ownership=authority, owner_rank=0
+    ).checkpoint_payload()
+    object.__setattr__(payload.state.states[0], "trial", jnp.asarray([9.0]))
+    with pytest.raises(ValueError, match="content identity"):
+        payload.restore()
+
+
+@pytest.mark.parametrize("empty", (False, True))
+@pytest.mark.parametrize("field", ("owner_rank", "owners", "part_count", "site_cell"))
+@pytest.mark.parametrize("rehash", (False, True))
+def test_material_checkpoint_refuses_forged_placement(
+    empty: bool, field: str, rehash: bool
+) -> None:
+    from phydrax.equations._finite_element_material import _material_payload_id
+
+    site = phx.equations.MaterialSiteId.for_cell_quadrature(
+        17, "center", domain_id="body", quadrature_rule_id="gauss"
+    )
+    authority = phx.equations.MaterialSiteOwnership(((site, 0),), part_count=3)
+    states = (
+        ()
+        if empty
+        else (
+            phx.equations.MaterialState(
+                site, "law", jnp.asarray([3.0]), trial=jnp.asarray([4.0]), state_version=5
+            ),
+        )
+    )
+    source = phx.equations.MaterialTransaction(
+        states, ownership=authority, owner_rank=1 if empty else 0
+    )
+    payload = source.checkpoint_payload()
+    assert payload.state is not source
+    assert payload.state.ownership is not None
+    assert payload.state.ownership is not source.ownership
+    assert payload.state.ownership.site_ids[0] is not site
+    if field == "owner_rank":
+        object.__setattr__(payload.state, "owner_rank", 0 if empty else 1)
+    elif field == "owners":
+        object.__setattr__(payload.state.ownership, "owners", (1,))
+    elif field == "part_count":
+        object.__setattr__(payload.state.ownership, "part_count", 4)
+    else:
+        object.__setattr__(payload.state.ownership.site_ids[0], "cell_id", 18)
+    if rehash:
+        object.__setattr__(
+            payload, "payload_id", _material_payload_id(payload.state, payload.plan_id)
+        )
+    with pytest.raises(ValueError):
+        payload.restore()
+
+
+@pytest.mark.parametrize("field", ("site_cell", "model", "version"))
+@pytest.mark.parametrize("rehash", (False, True))
+def test_material_checkpoint_refuses_forged_state_identity(
+    field: str, rehash: bool
+) -> None:
+    from phydrax.equations._finite_element_material import _material_payload_id
+
+    site = phx.equations.MaterialSiteId.for_cell_quadrature(
+        17, "center", domain_id="body", quadrature_rule_id="gauss"
+    )
+    state = phx.equations.MaterialState(
+        site, "law", jnp.asarray([3.0]), trial=jnp.asarray([4.0]), state_version=5
+    )
+    payload = phx.equations.MaterialTransaction((state,)).checkpoint_payload()
+    stored = payload.state.states[0]
+    if field == "site_cell":
+        object.__setattr__(stored.site_id, "cell_id", 18)
+    elif field == "model":
+        object.__setattr__(stored, "model_id", "other")
+    else:
+        object.__setattr__(stored, "state_version", 6)
+    if rehash:
+        object.__setattr__(
+            payload, "payload_id", _material_payload_id(payload.state, payload.plan_id)
+        )
+    with pytest.raises(ValueError):
+        payload.restore()
+
+
+def test_material_checkpoint_does_not_alias_source_placement() -> None:
+    site = phx.equations.MaterialSiteId.for_cell_quadrature(
+        17, "center", domain_id="body", quadrature_rule_id="gauss"
+    )
+    authority = phx.equations.MaterialSiteOwnership(((site, 0),), part_count=2)
+    state = phx.equations.MaterialState(
+        site, "law", jnp.asarray([3.0]), trial=jnp.asarray([4.0]), state_version=5
+    )
+    source = phx.equations.MaterialTransaction(
+        (state,), ownership=authority, owner_rank=0
+    )
+    payload = source.checkpoint_payload()
+    object.__setattr__(site, "cell_id", 18)
+    object.__setattr__(authority, "owners", (1,))
+    object.__setattr__(state, "state_version", 42)
+    restored = payload.restore()
+    assert restored.owner_rank == 0
+    assert restored.ownership is not None
+    assert restored.ownership.part_count == 2
+    assert restored.ownership.owners == (0,)
+    assert restored.states[0].site_id.cell_id == 17
+    assert restored.states[0].state_version == 5
+    np.testing.assert_array_equal(restored.states[0].committed, [3.0])
+    np.testing.assert_array_equal(restored.states[0].trial, [4.0])

@@ -96,3 +96,18 @@ def test_nonfinite_values_and_input_capacity_are_not_rank_zero_successes() -> No
     finite = _operator([0, 0], [0, 1], [1.0, 1.0], (1, 2))
     with pytest.raises(SparseRowRankRefusal, match="input nonzeros"):
         prepare_sparse_row_rank(finite, SparseRowRankPolicy(maximum_input_nonzeros=1))
+
+
+def test_sparse_support_rank_excludes_execution_zeros_and_cancellation() -> None:
+    from phydrax.linalg._sparse_rank import sparse_support_rank
+
+    operator = _operator([0, 1, 1, 2], [0, 1, 1, 2], [2.0, 1.0, -1.0, 0.0], (3, 3))
+    evidence = sparse_support_rank(operator.sparse_storage())
+    np.testing.assert_array_equal(evidence.source_supported, (True, False, False))
+    np.testing.assert_array_equal(evidence.target_supported, (True, False, False))
+    assert (
+        evidence.rank_lower_bound == evidence.rank_upper_bound == evidence.exact_rank == 1
+    )
+    invalid = _operator([0], [0], [np.nan], (1, 1))
+    with pytest.raises(ValueError, match="finite execution coefficients"):
+        sparse_support_rank(invalid.sparse_storage())

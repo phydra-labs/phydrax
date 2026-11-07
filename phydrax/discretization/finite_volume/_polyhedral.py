@@ -49,7 +49,8 @@ def _face_triangles(
     fans from its first vertex. A warped face is decomposed about its vertex
     centroid and its area vector is the sum of those triangle area vectors.
     """
-    newell = 0.5 * np.sum(np.cross(polygon, np.roll(polygon, -1, axis=0)), axis=0)
+    relative = polygon - polygon[0]
+    newell = 0.5 * np.sum(np.cross(relative, np.roll(relative, -1, axis=0)), axis=0)
     measure = float(np.linalg.norm(newell))
     if not np.isfinite(measure) or measure <= 0:
         raise ValueError("Polyhedral faces require positive finite measure.")
@@ -140,8 +141,9 @@ def prepare_polyhedral_finite_volume_geometry(
         triangles, area_vector, measure = _face_triangles(polygon, planarity)
         if not triangles:
             raise ValueError("Polyhedral faces require positive finite measure.")
-        face_centers[face] = np.average(
-            np.asarray([np.mean(triangle, axis=0) for _, triangle, _ in triangles]),
+        anchor = polygon[0]
+        face_centers[face] = anchor + np.average(
+            np.asarray([np.mean(triangle - anchor, axis=0) for _, triangle, _ in triangles]),
             axis=0,
             weights=np.asarray([weight for _, _, weight in triangles]),
         )
@@ -162,7 +164,7 @@ def prepare_polyhedral_finite_volume_geometry(
     face_q_valid = np.zeros((face_count, face_capacity), dtype=np.bool_)
     for face, triangles in enumerate(face_triangles):
         for slot, triangle, weight in triangles:
-            face_q_points[face, slot] = np.mean(triangle, axis=0)
+            face_q_points[face, slot] = triangle[0] + np.mean(triangle - triangle[0], axis=0)
             face_q_weights[face, slot] = weight
             face_q_valid[face, slot] = True
     cell_faces = np.asarray(worksets.cell_faces, dtype=np.int32)
@@ -205,9 +207,10 @@ def prepare_polyhedral_finite_volume_geometry(
                     raise ValueError(
                         "Polyhedral cell is not star-shaped about its certified center."
                     )
-                centroid = (star + np.sum(triangle, axis=0)) / 4.0
+                centroid_offset = np.sum(triangle - star, axis=0) / 4.0
+                centroid = star + centroid_offset
                 volume_sum += volume
-                first_moment += volume * centroid
+                first_moment += volume * centroid_offset
                 cell_q_points[cell, slot] = centroid
                 cell_q_weights[cell, slot] = volume
                 cell_q_valid[cell, slot] = True
@@ -215,7 +218,7 @@ def prepare_polyhedral_finite_volume_geometry(
         if not np.isfinite(volume_sum) or volume_sum <= 0:
             raise ValueError("Polyhedral cells require positive oriented volume.")
         cell_volumes[cell] = volume_sum
-        cell_centers[cell] = first_moment / volume_sum
+        cell_centers[cell] = star + first_moment / volume_sum
         closure_residual[cell] = np.linalg.norm(closure_vector) / max(
             np.sum(face_measures[cell_faces[cell, cell_face_valid[cell]]]), 1.0
         )

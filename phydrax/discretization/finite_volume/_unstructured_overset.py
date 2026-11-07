@@ -99,6 +99,7 @@ class _OversetFaceArtifact:
     face_normals: np.ndarray | None
     face_measures: np.ndarray | None
     face_cells: np.ndarray | None
+    face_orientations: np.ndarray | None
     route_faces: np.ndarray | None
     route_face_fractions: np.ndarray | None
     artifact_id: str | None
@@ -529,6 +530,7 @@ def _prepare_overset_face_artifact(
     receptor_face_normals: ArrayLike | None,
     receptor_face_measures: ArrayLike | None,
     receptor_face_cells: ArrayLike | None,
+    receptor_face_orientations: ArrayLike | None,
     receptor_route_faces: ArrayLike | None,
     face_artifact_id: str | None,
 ) -> _OversetFaceArtifact:
@@ -542,11 +544,12 @@ def _prepare_overset_face_artifact(
         receptor_face_normals,
         receptor_face_measures,
         receptor_face_cells,
+        receptor_face_orientations,
     )
     if any(value is not None for value in face_values):
         if any(value is None for value in face_values):
             raise ValueError(
-                "Overset receptor face artifacts require IDs, points, normals, measures, and cells together."
+                "Overset receptor face artifacts require IDs, points, normals, measures, cells, and orientations together."
             )
         face_ids_raw = np.asarray(receptor_face_ids)
         face_points = np.asarray(receptor_face_points, dtype=np.float64)
@@ -606,18 +609,28 @@ def _prepare_overset_face_artifact(
             )
         physical_owners = np.asarray(receptor.owner_cells, dtype=np.int32)[face_ids]
         physical_neighbors = np.asarray(receptor.neighbor_cells, dtype=np.int32)[face_ids]
-        owner_or_neighbor = (physical_owners == face_cells) | (
-            physical_neighbors == face_cells
-        )
-        if not np.all(owner_or_neighbor):
+        orientation = np.asarray(receptor_face_orientations)
+        if (
+            orientation.shape != (face_count,)
+            or orientation.dtype.kind not in "iu"
+            or np.any((orientation != 1) & (orientation != -1))
+        ):
+            raise ValueError("Overset receptor face orientations must be +1 or -1.")
+        orientation = orientation.astype(np.int8)
+        if not np.all(
+            np.where(
+                orientation > 0,
+                physical_owners == face_cells,
+                physical_neighbors == face_cells,
+            )
+        ):
             raise ValueError(
-                "Overset receptor face IDs are not incident to their routed cells."
+                "Overset receptor face IDs and orientations are not incident to their routed cells."
             )
         reference_points = np.asarray(receptor.face_quadrature_points)[face_ids]
         reference_measures = np.asarray(receptor.face_quadrature_weights)[face_ids]
         reference_vectors = np.asarray(receptor.area_vectors)[face_ids]
         reference_face_measures = np.asarray(receptor.face_measures)[face_ids]
-        orientation = np.where(physical_owners == face_cells, 1.0, -1.0)
         seam_translations = getattr(receptor, "periodic_face_translations", None)
         if seam_translations is not None:
             # A receptor on the neighbor side of a periodic seam sees the face
@@ -668,30 +681,28 @@ def _prepare_overset_face_artifact(
         route_faces, route_face_fractions = _prepare_overset_route_faces(
             routes_data, face_cells, receptor_route_faces
         )
-        face_artifact_id_ = (
-            canonical_fingerprint(
-                {
-                    "kind": "unstructured-overset-face-artifact",
-                    "donor_geometry": donor.geometry_id,
-                    "receptor_geometry": receptor.geometry_id,
-                    "epoch_id": epoch_,
-                    "face_ids": array_tree_fingerprint(face_ids),
-                    "points": array_tree_fingerprint(face_points),
-                    "normals": array_tree_fingerprint(face_normals),
-                    "measures": array_tree_fingerprint(face_measures),
-                    "cells": array_tree_fingerprint(face_cells),
-                    "route_faces": (
-                        None
-                        if route_faces is None
-                        else array_tree_fingerprint(route_faces)
-                    ),
-                }
-            )
-            if face_artifact_id is None
-            else str(face_artifact_id)
-        )
-        if not face_artifact_id_:
+        if face_artifact_id is not None and not str(face_artifact_id):
             raise ValueError("face_artifact_id must be non-empty.")
+        face_artifact_id_ = canonical_fingerprint(
+            {
+                "kind": "unstructured-overset-oriented-face-artifact",
+                "authored_id": None
+                if face_artifact_id is None
+                else str(face_artifact_id),
+                "donor_geometry": donor.geometry_id,
+                "receptor_geometry": receptor.geometry_id,
+                "epoch_id": epoch_,
+                "face_ids": array_tree_fingerprint(face_ids),
+                "points": array_tree_fingerprint(face_points),
+                "normals": array_tree_fingerprint(face_normals),
+                "measures": array_tree_fingerprint(face_measures),
+                "cells": array_tree_fingerprint(face_cells),
+                "orientations": array_tree_fingerprint(orientation),
+                "route_faces": (
+                    None if route_faces is None else array_tree_fingerprint(route_faces)
+                ),
+            }
+        )
     else:
         if face_artifact_id is not None or receptor_route_faces is not None:
             raise ValueError(
@@ -699,6 +710,7 @@ def _prepare_overset_face_artifact(
                 "receptor face artifact."
             )
         face_ids = face_points = face_normals = face_measures = face_cells = None
+        orientation = None
         route_faces = route_face_fractions = None
         face_artifact_id_ = None
     return _OversetFaceArtifact(
@@ -707,6 +719,7 @@ def _prepare_overset_face_artifact(
         face_normals,
         face_measures,
         face_cells,
+        orientation,
         route_faces,
         route_face_fractions,
         face_artifact_id_,
@@ -773,8 +786,9 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
     prepared discretizations. The corresponding global IDs are retained in
     the artifact so that a route map remains auditable when a mesh's local
     ordering changes. Certified interface geometry additionally carries
-    explicit physical ``receptor_face_ids`` and, for the non-sliding
-    correction, a static ``receptor_route_faces`` map assigning every overlap
+    physical ``receptor_face_ids`` and ``receptor_face_orientations`` (+1 for
+    owner incidence, -1 for neighbor incidence, including periodic self-faces).
+    For the non-sliding correction, a static ``receptor_route_faces`` map assigns every overlap
     route to one face of its receptor cell; several routes may share a face,
     whose donor trace is then their overlap-weighted mean. All route endpoints
     must be active, non-hole cells; receptor routes must additionally be fringe
@@ -816,6 +830,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
     receptor_face_normals: Array | None
     receptor_face_measures: Array | None
     receptor_face_cells: Array | None
+    receptor_face_orientations: Array | None
     receptor_route_faces: Array | None
     receptor_route_face_fractions: Array | None
     report: UnstructuredOversetReport
@@ -866,6 +881,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         receptor_face_normals: ArrayLike | None = None,
         receptor_face_measures: ArrayLike | None = None,
         receptor_face_cells: ArrayLike | None = None,
+        receptor_face_orientations: ArrayLike | None = None,
         receptor_route_faces: ArrayLike | None = None,
         face_artifact_id: str | None = None,
         receptor_cells_are_global_ids: bool = False,
@@ -967,6 +983,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             receptor_face_normals=receptor_face_normals,
             receptor_face_measures=receptor_face_measures,
             receptor_face_cells=receptor_face_cells,
+            receptor_face_orientations=receptor_face_orientations,
             receptor_route_faces=receptor_route_faces,
             face_artifact_id=face_artifact_id,
         )
@@ -1020,6 +1037,11 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             None if face_measures is None else jnp.asarray(face_measures)
         )
         self.receptor_face_cells = None if face_cells is None else jnp.asarray(face_cells)
+        self.receptor_face_orientations = (
+            None
+            if faces.face_orientations is None
+            else jnp.asarray(faces.face_orientations)
+        )
         self.face_artifact_id = face_artifact_id_
         self.receptor_route_faces = (
             None
@@ -1101,6 +1123,11 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 ),
                 "face_cells": (
                     None if face_cells is None else array_tree_fingerprint(face_cells)
+                ),
+                "face_orientations": (
+                    None
+                    if faces.face_orientations is None
+                    else array_tree_fingerprint(faces.face_orientations)
                 ),
                 "route_faces": (
                     None

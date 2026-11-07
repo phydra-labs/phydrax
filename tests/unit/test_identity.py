@@ -246,6 +246,27 @@ def test_identity_scenario_2() -> None:
     assert first.semantic_id != second.semantic_id
 
 
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        ({"source": ("body", "revision"), "offset": -0.0}, True),
+        ({"source": ["body", "revision"]}, False),
+        ({"offset": 0.0}, False),
+        ({"missing": "value"}, False),
+    ],
+    ids=("matching-premises", "list-is-not-tuple", "signed-zero", "missing-premise"),
+)
+def test_semantic_provenance_mapping_premises_preserve_identity(
+    fields: dict[str, str | float | tuple[str, str] | list[str]], expected: bool
+) -> None:
+    provenance = SemanticProvenance(
+        {"source": ("body", "revision"), "offset": -0.0},
+        resource_ids={"mesh": "mesh-content"},
+    )
+    restored = SemanticProvenance.from_stored_fields(provenance)
+    assert restored.matches_content_fields(fields) is expected
+
+
 def test_identity_scenario_3() -> None:
     with pytest.raises(TypeError, match="integer sequences"):
         ExecutableSignature(shapes={"state": jnp.asarray([2])})

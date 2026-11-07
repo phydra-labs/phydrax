@@ -2,7 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Callable, Sequence
+import json
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field as dataclass_field
 from fractions import Fraction
 from pathlib import Path
@@ -21,7 +22,11 @@ from .._numerics._compensated import compensated_sum_chunks
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
-from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+from ..discretization._cell_geometry import PerCellRestrictedCellGeometryElement
+from ..discretization._cell_geometry_transition_types import (
+    cell_geometry_id,
+    CellGeometryTransition,
+)
 from ..discretization._nested_reference_types import (
     NestedReferenceWitnesses,
     ReferenceCellMapWitnesses,
@@ -35,6 +40,7 @@ from ..discretization.fem import (
     FiniteElementHPTransaction,
     FiniteElementPlan,
     FiniteElementTransferResult,
+    lagrange_element,
     prepare_finite_element_hp_epoch,
 )
 from ..discretization.fem._de_rham import PeriodicFiniteElementTransfer
@@ -46,6 +52,7 @@ from ..discretization.fem._distributed import (
 from ..discretization.fem._generic import (
     FiniteElementDiscretization,
     FiniteElementDofMap,
+    FiniteElementRuntimeData,
 )
 from ..discretization.fem._topology_transfer import (
     _measure_defect_bound,
@@ -61,6 +68,7 @@ from ..discretization.finite_volume._unstructured import (
 from ..equations import (
     CompiledFiniteElementProblem,
     MaterialIntegrationPlan,
+    MaterialState,
     MaterialTransaction,
 )
 from ..geometry._common_root_volume_overlap import CurvedOverlapIntegrationPolicy
@@ -74,7 +82,12 @@ from ..lifecycle import (
     CompositionRebindReceipt,
     CompositionTransport,
 )
-from ..linalg import AbstractLinearOperator
+from ..linalg import (
+    AbstractLinearOperator,
+    LinearSolveCheckEvidence,
+    LinearSolveCheckPolicy,
+    LinearSolveResult,
+)
 from ..meshing import MeshAdaptationResult
 from ..meshing._distribution import (
     _owner_group_allgather,
@@ -699,6 +712,285 @@ def _conservative_cell_average_transfer(
     return target_values, evidence
 
 
+class FiniteElementConservativeSurfaceEvidence(StrictModule, NonTrainableState):
+    """Whole-operator conservation on an exact represented-surface partition."""
+
+    transfer: FiniteElementTopologyTransfer
+    source_measures: Array
+    target_measures: Array
+    source_integral: Array
+    target_integral: Array
+    conservation_defect: Array
+    conservation_bound: float = eqx.field(static=True)
+    layout_id: str = eqx.field(static=True)
+    geometry_transition_id: str = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        layout_id: str,
+        geometry_transition_id: str,
+        transfer: FiniteElementTopologyTransfer,
+        source_measures: np.ndarray,
+        target_measures: np.ndarray,
+        source_integral: Array,
+        target_integral: Array,
+        conservation_bound: float,
+        /,
+    ) -> None:
+        if not isinstance(transfer, FiniteElementTopologyTransfer) or not (
+            transfer.conservative and transfer.preserves_constants and transfer.positivity_preserving
+        ):
+            raise ValueError("Surface content requires a conservative positive constant-preserving transfer.")
+        source_measures = np.asarray(source_measures, dtype=np.float64)
+        target_measures = np.asarray(target_measures, dtype=np.float64)
+        if (
+            not layout_id or not geometry_transition_id
+            or source_measures.shape != (transfer.source_size,)
+            or target_measures.shape != (transfer.target_size,)
+            or np.any(~np.isfinite(source_measures))
+            or np.any(~np.isfinite(target_measures))
+            or np.any(source_measures <= 0.0)
+            or np.any(target_measures <= 0.0)
+            or not np.isfinite(conservation_bound)
+            or conservation_bound < 0.0
+        ):
+            raise ValueError("Surface content evidence bindings or measures are malformed.")
+        action_defect = np.asarray(transfer.pullback(target_measures)) - source_measures
+        action_bound = _measure_defect_bound(
+            np.dtype(np.float64), transfer.action_condition, source_measures, target_measures
+        )
+        if np.any(np.abs(action_defect) > action_bound):
+            raise ValueError("Surface content transfer does not conserve its bound measures.")
+        defect = jnp.asarray(target_integral) - jnp.asarray(source_integral)
+        if not np.all(np.isfinite(np.asarray(defect))) or np.any(
+            np.abs(np.asarray(defect)) > conservation_bound
+        ):
+            raise ValueError("Surface content exceeds its proved conservation bound.")
+        self.transfer = transfer
+        self.source_measures = jnp.asarray(source_measures)
+        self.target_measures = jnp.asarray(target_measures)
+        self.source_integral = jnp.asarray(source_integral)
+        self.target_integral = jnp.asarray(target_integral)
+        self.conservation_defect = defect
+        self.conservation_bound = conservation_bound
+        self.layout_id = layout_id
+        self.geometry_transition_id = geometry_transition_id
+        self.evidence_id = canonical_fingerprint({
+            "kind": "finite-element-conservative-surface-content",
+            "layout": layout_id,
+            "geometry_transition": geometry_transition_id,
+            "transfer": transfer.transfer_id,
+            "source_measures": array_tree_fingerprint(source_measures),
+            "target_measures": array_tree_fingerprint(target_measures),
+            "source_integral": array_tree_fingerprint(np.asarray(source_integral)),
+            "target_integral": array_tree_fingerprint(np.asarray(target_integral)),
+        })
+
+
+def _surface_p1_corners(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> Iterator[np.ndarray]:
+    from ..geometry._mesh_certificates import _same_tree_content
+
+    if mesh.topological_dimension != 2 or mesh.ambient_dimension != 3:
+        raise ValueError("Conservative surface content requires an embedded surface.")
+    elements, _, _ = geometry.resolve(mesh)
+    canonical = lagrange_element("triangle", 1)
+    for block, element in zip(mesh.blocks, elements, strict=True):
+        if block.cell_kind != "triangle":
+            raise ValueError("Conservative surface content requires triangle cells.")
+        if _same_tree_content(element, canonical):
+            continue
+        if not isinstance(element, PerCellRestrictedCellGeometryElement):
+            raise ValueError("Conservative surface content requires affine triangle maps.")
+        if not _same_tree_content(element.source_element, canonical) or any(
+            any(sum(exponent) > 1 for exponent, _ in numerator)
+            or any(sum(exponent) != 0 for exponent, _ in denominator)
+            for row in element.chart_coefficients
+            for numerator, denominator in row
+        ):
+            raise ValueError("Conservative surface content refuses nonlinear or rational charts.")
+    reference = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+    for block in mesh.blocks:
+        ids = np.asarray(block.global_ids, dtype=np.int64)
+        yield geometry.evaluate(mesh, ids, np.broadcast_to(reference, (ids.size, 3, 2)))
+
+
+def _surface_p1_measures(mesh: CellMesh, geometry: CellGeometrySpec, /) -> np.ndarray:
+    measures = np.zeros(mesh.coordinates.shape[0], dtype=np.float64)
+    for block, corners in zip(mesh.blocks, _surface_p1_corners(mesh, geometry), strict=True):
+        area = 0.5 * np.linalg.norm(
+            np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]),
+            axis=1,
+        )
+        if np.any(~np.isfinite(area)) or np.any(area <= 0.0):
+            raise ValueError("Conservative surface content requires positive finite cell measures.")
+        vertices = np.asarray(block.vertices, dtype=np.int64)
+        for local in range(3):
+            np.add.at(measures, vertices[:, local], area / 3.0)
+    if np.any(measures <= 0.0):
+        raise ValueError("Every surface field vertex requires positive incident measure.")
+    return measures
+
+
+def _conservative_surface_content_transfer(
+    layout: FiniteElementAcceptedFieldLayout,
+    values: Array,
+    adaptation: MeshAdaptationResult,
+    /,
+) -> tuple[Array, FiniteElementConservativeSurfaceEvidence]:
+    from ..geometry._mesh_certificates import _same_tree_content
+
+    source, target = adaptation.source, adaptation.target
+    if np.asarray(values).dtype.kind != "f":
+        raise ValueError("Conservative surface content requires real floating-point values.")
+    transition = adaptation.transition
+    if (
+        transition is None
+        or transition.geometry_transition is None
+        or transition.geometry_transition.evidence.kind != "nested_restriction"
+        or _reference_maps_for_adaptation(adaptation) is None
+        or not _has_complete_vertex_ancestry(adaptation, source.mesh, target.mesh)
+        or _has_unparented_target_cells(adaptation, target.mesh)
+        or not _vertex_p1_field_layout(layout, source.mesh)
+        or not _vertex_p1_field_layout(layout, target.mesh)
+        or adaptation.transfer is None
+    ):
+        raise ValueError("Surface content requires a fully bound exact nested P1 transition.")
+    canonical = lagrange_element("triangle", 1)
+    if any(
+        not _same_tree_content(element, canonical)
+        for mesh in (source.mesh, target.mesh)
+        for element in layout.field_spec.resolve(mesh)
+    ):
+        raise ValueError("Surface content requires the canonical P1 field basis.")
+    geometry_transition = transition.geometry_transition
+    if (
+        geometry_transition.source_geometry_id != cell_geometry_id(source.geometry)
+        or geometry_transition.target_geometry_id != cell_geometry_id(target.geometry)
+        or geometry_transition.source_mesh.mesh_id != source.mesh.mesh_id
+        or geometry_transition.target_mesh.mesh_id != target.mesh.mesh_id
+    ):
+        raise ValueError("Surface content geometry endpoints do not match the transition.")
+    source_measures = _surface_p1_measures(source.mesh, source.geometry)
+    target_measures = _surface_p1_measures(target.mesh, target.geometry)
+    transfer = FiniteElementTopologyTransfer(
+        adaptation.transfer.primal,
+        source.mesh.topology_id,
+        target.mesh.topology_id,
+        preserves_constants=True,
+        conservative=True,
+        positivity_preserving=True,
+        source_measures=source_measures,
+        target_measures=target_measures,
+    )
+    target_values = transfer.apply(values)
+    source_content = np.asarray(values, dtype=np.float64) * source_measures
+    target_content = np.asarray(target_values, dtype=np.float64) * target_measures
+    bound = _measure_defect_bound(
+        np.dtype(np.float64), transfer.action_condition, source_content, target_content
+    )
+    source_integral = compensated_sum_chunks((source_content,), output_ndim=0)
+    target_integral = compensated_sum_chunks((target_content,), output_ndim=0)
+    evidence = FiniteElementConservativeSurfaceEvidence(
+        layout.layout_id, geometry_transition.transition_id, transfer,
+        source_measures, target_measures, source_integral, target_integral, bound,
+    )
+    return target_values, evidence
+
+
+class FiniteElementReanalysisResult(StrictModule):
+    """A checked solve of one named candidate FE field before atomic promotion."""
+
+    problem: CompiledFiniteElementProblem
+    state_problem: CompiledFiniteElementProblem | None
+    solution: LinearSolveResult
+    solve_check: LinearSolveCheckEvidence
+    check_policy: LinearSolveCheckPolicy
+    field_name: str = eqx.field(static=True)
+    rhs_id: str | None = eqx.field(static=True)
+    operator_numeric_id: str | None = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        problem: CompiledFiniteElementProblem,
+        solution: LinearSolveResult,
+        solve_check: LinearSolveCheckEvidence,
+        field_name: str,
+        /,
+        *,
+        check_policy: LinearSolveCheckPolicy,
+        state_problem: CompiledFiniteElementProblem | None = None,
+        rhs_id: str | None = None,
+        operator_numeric_id: str | None = None,
+    ) -> None:
+        if not isinstance(problem, CompiledFiniteElementProblem):
+            raise TypeError("problem must be a compiled finite-element problem.")
+        if not isinstance(solution, LinearSolveResult):
+            raise TypeError("solution must be a linear solve result.")
+        if not isinstance(solve_check, LinearSolveCheckEvidence):
+            raise TypeError("solve_check must be linear solve check evidence.")
+        if not isinstance(field_name, str) or not field_name:
+            raise ValueError("field_name must be a nonempty field identity.")
+        if not isinstance(problem.discretization, FiniteElementDiscretization):
+            raise TypeError("Reanalysis requires a finite-element discretization.")
+        if state_problem is not None and not isinstance(
+            state_problem, CompiledFiniteElementProblem
+        ):
+            raise TypeError("state_problem must be a compiled finite-element problem or None.")
+        if any(
+            identifier is not None and (not isinstance(identifier, str) or not identifier)
+            for identifier in (rhs_id, operator_numeric_id)
+        ):
+            raise ValueError("Reanalysis numerical identity values must be nonempty strings.")
+        if not isinstance(check_policy, LinearSolveCheckPolicy):
+            raise TypeError("check_policy must be LinearSolveCheckPolicy.")
+        checks = check_policy
+        self.problem = problem
+        self.state_problem = state_problem
+        self.solution = solution
+        self.solve_check = solve_check
+        self.check_policy = checks
+        self.field_name = field_name
+        self.rhs_id = rhs_id
+        self.operator_numeric_id = operator_numeric_id
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-reanalysis",
+                "field": field_name,
+                "compilation": problem.compilation_id,
+                "state_compilation": (
+                    None if state_problem is None else state_problem.compilation_id
+                ),
+                "rhs": rhs_id,
+                "operator_numeric": operator_numeric_id,
+                "check_policy": {
+                    "relative_tolerance": checks.relative_tolerance,
+                    "absolute_tolerance": checks.absolute_tolerance,
+                    "nullspace_tolerance": checks.nullspace_tolerance,
+                    "require_nullspace": checks.require_nullspace,
+                    "stability_certificate": (
+                        None if checks.stability_lower_bound is None
+                        else checks.stability_lower_bound.certificate_id
+                    ),
+                },
+                "prepared": problem.discretization.prepared_id,
+                "topology": problem.discretization.mesh.topology_id,
+                "geometry": array_tree_fingerprint(
+                    problem.discretization.default_runtime.coordinates
+                ),
+                "operator": solve_check.operator_id,
+                "solution": array_tree_fingerprint(solution.value),
+                "check": array_tree_fingerprint(
+                    (solve_check.status, solve_check.true_residual_norm, solve_check.rhs_norm,
+                     solve_check.residual_threshold, solve_check.valid)
+                ),
+            }
+        )
+
+
 class FiniteElementTopologyResult(StrictModule, NonTrainableState):
     """Promoted state and certified mesh, form, and conservative transfers."""
 
@@ -710,6 +1002,8 @@ class FiniteElementTopologyResult(StrictModule, NonTrainableState):
     periodic_transfers: tuple[PeriodicFiniteElementTransfer, ...] = ()
     field_transfers: tuple[FiniteElementTransferResult, ...] = ()
     conservative_transfers: tuple[FiniteElementConservativeContentEvidence, ...] = ()
+    surface_conservative_transfers: tuple[FiniteElementConservativeSurfaceEvidence, ...] = ()
+    reanalysis: FiniteElementReanalysisResult | None = None
 
 
 class FiniteElementHPTopologyResult(StrictModule, NonTrainableState):
@@ -1235,6 +1529,7 @@ class _FiniteElementRepartitionContext:
     schema_id: str = ""
     global_geometry_id: str = ""
     material_root: str | None = None
+    target_material_root: str | None = None
     target_materials: MaterialTransaction | None = None
     auxiliary_values: tuple[tuple[str, Array], ...] = ()
     integrator_values: tuple[tuple[str, Array], ...] = ()
@@ -1771,16 +2066,20 @@ def _transfer_finite_element_owner_local_adaptive_field(
     action: FiniteElementFieldTransferAction | None,
     field_index: int,
     axis_name: str,
+    explicit_action: bool = False,
 ) -> tuple[FiniteElementOwnerLocalFieldTransferEvidence, Array]:
     source_mesh = context.source_mesh
     target_mesh = context.target_mesh
     source_map = context.source_discretization.dof_maps[field_index]
     target_map = context.target_discretization.dof_maps[field_index]
-    vertex_transfer = _vertex_p1_field_layout(
-        layout, source_mesh
-    ) and _vertex_p1_field_layout(layout, target_mesh)
+    vertex_transfer = (
+        not explicit_action
+        and _vertex_p1_field_layout(layout, source_mesh)
+        and _vertex_p1_field_layout(layout, target_mesh)
+    )
     conservative_cell_average = (
-        layout.transfer_semantics
+        not explicit_action
+        and layout.transfer_semantics
         is FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE
     )
     local_error = None
@@ -3643,9 +3942,65 @@ def _validate_finite_element_material_contract(
                 raise ValueError("FE material plans differ across repartition.")
         return
     if source_layouts is None or target_layouts is None:
-        raise ValueError(
-            "Replicated material state requires explicit source/target layouts."
-        )
+        raise ValueError("Material state requires explicit source/target layouts.")
+    if materials.ownership is not None:
+        source_plan = context.source_material_plan
+        target_plan = context.target_material_plan
+        if (
+            not isinstance(source_plan, MaterialIntegrationPlan)
+            or not isinstance(target_plan, MaterialIntegrationPlan)
+            or source_plan.ownership is None
+            or target_plan.ownership is None
+            or source_plan.owner_rank != context.rank
+            or target_plan.owner_rank != context.rank
+        ):
+            raise ValueError(
+                "Owned material state requires explicit local source/target plans."
+            )
+        source_plan.validate(materials)
+        for plan, ownership, layouts, view in (
+            (
+                source_plan,
+                source_plan.ownership,
+                source_layouts,
+                context.source_geometry_view,
+            ),
+            (
+                target_plan,
+                target_plan.ownership,
+                target_layouts,
+                context.target_geometry_view,
+            ),
+        ):
+            if (
+                tuple(layout.name for layout in layouts)
+                != tuple(site.key for site in plan.site_ids)
+                or any(
+                    layout.role is not FiniteElementRestartStateRole.MODEL_STATE
+                    or layout.association
+                    is not FiniteElementRestartStateAssociation.OWNED_SITES
+                    or layout.ownership is not None
+                    for layout in layouts
+                )
+                or ownership.part_count != context.parts
+            ):
+                raise ValueError(
+                    "Material layouts do not cover the declared owned sites."
+                )
+            owned_cells = set(np.asarray(view.owned_cell_ids, dtype=np.int64).tolist())
+            if any(
+                site.cell_id is None or site.cell_id not in owned_cells
+                for site in plan.site_ids
+            ):
+                raise ValueError(
+                    "Material site placement does not match FE cell ownership."
+                )
+        if not context.topology_change and (
+            tuple(site.key for site in source_plan.ownership.site_ids)
+            != tuple(site.key for site in target_plan.ownership.site_ids)
+        ):
+            raise ValueError("Repartition changed the global material site coverage.")
+        return
     site_names = tuple(state.site_id.key for state in materials.states)
     if (
         tuple(layout.name for layout in source_layouts) != site_names
@@ -3707,6 +4062,19 @@ def _validate_finite_element_material_entry(
     context.material_entry = entry
 
 
+def _finite_element_material_schema(
+    plan: MaterialIntegrationPlan | None,
+    layouts: tuple[FiniteElementRestartStateLayout, ...] | None,
+    /,
+) -> tuple[object, object]:
+    if plan is not None and plan.ownership is not None:
+        return plan.ownership.ownership_id, "owned-sites"
+    return (
+        None if plan is None else plan.layout_id,
+        _finite_element_restart_layout_schema(layouts),
+    )
+
+
 def _finite_element_repartition_schema_id(
     context: _FiniteElementRepartitionContext, /
 ) -> str:
@@ -3743,21 +4111,11 @@ def _finite_element_repartition_schema_id(
             "target_integrator": _finite_element_restart_layout_schema(
                 context.target_integrator_layouts
             ),
-            "material_plan": (
-                None
-                if context.source_material_plan is None
-                else context.source_material_plan.layout_id
+            "source_material": _finite_element_material_schema(
+                context.source_material_plan, context.source_manifest.material_layouts
             ),
-            "target_material_plan": (
-                None
-                if context.target_material_plan is None
-                else context.target_material_plan.layout_id
-            ),
-            "source_material_layouts": _finite_element_restart_layout_schema(
-                context.source_manifest.material_layouts
-            ),
-            "target_material_layouts": _finite_element_restart_layout_schema(
-                context.target_material_layouts
+            "target_material": _finite_element_material_schema(
+                context.target_material_plan, context.target_material_layouts
             ),
         }
     )
@@ -3890,21 +4248,11 @@ def _finite_element_owner_local_topology_schema(
         "target_integrator": _finite_element_restart_layout_schema(
             context.target_integrator_layouts
         ),
-        "source_material_plan": (
-            None
-            if context.source_material_plan is None
-            else context.source_material_plan.layout_id
+        "source_material": _finite_element_material_schema(
+            context.source_material_plan, context.source_manifest.material_layouts
         ),
-        "target_material_plan": (
-            None
-            if context.target_material_plan is None
-            else context.target_material_plan.layout_id
-        ),
-        "source_material_layouts": _finite_element_restart_layout_schema(
-            context.source_manifest.material_layouts
-        ),
-        "target_material_layouts": _finite_element_restart_layout_schema(
-            context.target_material_layouts
+        "target_material": _finite_element_material_schema(
+            context.target_material_plan, context.target_material_layouts
         ),
     }
 
@@ -4029,6 +4377,10 @@ def _migrate_finite_element_owner_local_adaptive_fields(
         target_ownership: FiniteElementDofOwnership | None = None
         target_structure_id = ""
         try:
+            if layout.transfer_semantics is FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT:
+                raise ValueError(
+                    "Owner-local conservative surface content transfer is not supported."
+                )
             action = transaction._field_transfer_action(layout.transfer_semantics)
             target_ownership = target_plan.ownership()
             target_structure_id = _owner_local_target_field_structure(
@@ -4449,9 +4801,13 @@ def _transfer_finite_element_payload_bank(
                         context.adaptive_result
                     ),
                     target_structure_id=target_layout.layout_id,
-                    action=transaction._field_transfer_action(
-                        field_layout.transfer_semantics
+                    action=dict(transaction.payload_transfers).get(
+                        (label, name),
+                        transaction._field_transfer_action(
+                            field_layout.transfer_semantics
+                        ),
                     ),
+                    explicit_action=(label, name) in dict(transaction.payload_transfers),
                     field_index=field_index,
                     axis_name=f"{context.axis_name}_{label}_{name}",
                 )
@@ -4607,9 +4963,214 @@ def _migrate_finite_element_restart_banks(
     )
 
 
-def _qualify_finite_element_material_state(
+def _migrate_owned_finite_element_materials(
     context: _FiniteElementRepartitionContext, /
+) -> None:
+    source = context.source_materials
+    source_plan = context.source_material_plan
+    target_plan = context.target_material_plan
+    entry = context.material_entry
+    if (
+        source is None
+        or source.ownership is None
+        or entry is None
+        or source_plan is None
+        or target_plan is None
+        or target_plan.ownership is None
+    ):
+        raise ValueError("Owned material migration lacks its placement authority.")
+    by_key = {state.site_id.key: state for state in source.states}
+    target_states = []
+    roots = []
+    for index, site in enumerate(source.ownership.site_ids):
+        source_owner = source.ownership.owner(site)
+        target_owner = target_plan.ownership.owner(site)
+        local_state = by_key.get(site.key)
+        descriptor = np.zeros((4096,), dtype=np.uint8)
+        local_error = None
+        if context.rank == source_owner:
+            try:
+                if local_state is None:
+                    raise ValueError("Owning rank is missing a material site.")
+                encoded = json.dumps(
+                    {
+                        "model": local_state.model_id,
+                        "version": local_state.state_version,
+                        "shape": local_state.committed.shape,
+                        "dtype": np.asarray(local_state.committed).dtype.str,
+                    },
+                    sort_keys=True,
+                ).encode("utf-8")
+                if len(encoded) > descriptor.size - 4:
+                    raise ValueError("Material state descriptor is too large.")
+                descriptor[:4] = np.frombuffer(
+                    len(encoded).to_bytes(4, "little"), dtype=np.uint8
+                )
+                descriptor[4 : 4 + len(encoded)] = np.frombuffer(encoded, dtype=np.uint8)
+            except Exception as error:
+                local_error = f"{type(error).__name__}: {error}"
+        error = _finite_element_repartition_collective_error(
+            context, local_error, f"material_{index}_descriptor"
+        )
+        if error is not None:
+            raise ValueError(error)
+        rows = _owner_group_allgather(
+            descriptor,
+            context.execution_group,
+            f"{context.axis_name}_material_{index}_metadata",
+        )
+        row = np.asarray(rows[source_owner], dtype=np.uint8)
+        length = int.from_bytes(row[:4].tobytes(), "little")
+        if not 0 < length <= descriptor.size - 4:
+            raise ValueError("Material owner supplied an invalid state descriptor.")
+        metadata = json.loads(row[4 : 4 + length].tobytes().decode("utf-8"))
+        shape = tuple(metadata["shape"])
+        dtype = np.dtype(metadata["dtype"])
+        state_size = int(np.prod(shape, dtype=np.int64))
+        wire_size = max(1, 2 * state_size)
+        if local_state is None:
+            values = jnp.empty((0, wire_size), dtype=dtype)
+            source_keys = np.empty((0, 3), dtype=np.int64)
+        else:
+            flat = jnp.concatenate(
+                (local_state.committed.reshape(-1), local_state.trial.reshape(-1))
+            )
+            values = jnp.pad(flat, (0, wire_size - 2 * state_size))[None, :]
+            source_keys = np.asarray([[0, index, 0]], dtype=np.int64)
+        target_keys = (
+            np.asarray([[0, index, 0]], dtype=np.int64)
+            if context.rank == target_owner
+            else np.empty((0, 3), dtype=np.int64)
+        )
+        row_entry = CompositionEntry(
+            values,
+            entry_id=entry.entry_id,
+            role=entry.role,
+            owner_id=entry.owner_id,
+            structure_id=entry.structure_id,
+            revision_id=entry.revision_id,
+            semantics_id=entry.semantics_id,
+        )
+        transfer = context.migration.transfer_keyed_values(
+            _owner_local_keyed_declaration(context, row_entry),
+            source_keys,
+            np.full((source_keys.shape[0],), source_owner, dtype=np.int32),
+            values,
+            target_keys,
+            np.full((target_keys.shape[0],), target_owner, dtype=np.int32),
+            context.execution_group,
+            target_structure_id=canonical_fingerprint(
+                {"kind": "finite-element-material-site-target", "site": site.site_id}
+            ),
+            key_identity_id=site.site_id,
+            axis_name=f"{context.axis_name}_material_{index}",
+            value_fiber_shape=(wire_size,),
+        )
+        roots.append((site.site_id, metadata, transfer.source_content_root))
+        if context.rank == target_owner:
+            target_site = target_plan.ownership.for_owner(context.rank)
+            target_site = next(item for item in target_site if item.key == site.key)
+            row_values = transfer.target_values[0]
+            target_states.append(
+                MaterialState(
+                    target_site,
+                    metadata["model"],
+                    row_values[:state_size].reshape(shape),
+                    trial=row_values[state_size : 2 * state_size].reshape(shape),
+                    state_version=metadata["version"],
+                )
+            )
+    result = MaterialTransaction(
+        target_states, ownership=target_plan.ownership, owner_rank=context.rank
+    )
+    target_plan.validate(result)
+    context.target_materials = result
+    context.material_root = canonical_fingerprint(
+        {"kind": "finite-element-owned-material-content", "sites": roots}
+    )
+    context.target_material_root = context.material_root
+
+
+def _qualify_finite_element_material_state(
+    context: _FiniteElementRepartitionContext,
+    /,
+    *,
+    transaction: "FiniteElementTopologyTransaction | None" = None,
 ) -> str | None:
+    materials = context.source_materials
+    if materials is not None and materials.ownership is not None:
+        local_error = None
+        try:
+            if context.topology_change:
+                if transaction is None or transaction.material_transfer is None:
+                    raise ValueError(
+                        "Owner-local topology change requires a material transfer policy."
+                    )
+                metadata = _finite_element_owner_local_adaptive_metadata(
+                    context.adaptive_result
+                )
+                candidate = transaction.material_transfer(
+                    materials, metadata.lineage, context
+                )
+                if (
+                    not isinstance(candidate, MaterialTransaction)
+                    or context.target_material_plan is None
+                ):
+                    raise ValueError(
+                        "Material transfer did not produce an owned transaction."
+                    )
+                context.target_material_plan.validate(candidate)
+                context.target_materials = candidate
+            else:
+                _migrate_owned_finite_element_materials(context)
+        except Exception as error:
+            local_error = f"{type(error).__name__}: {error}"
+        error = _finite_element_repartition_collective_error(
+            context, local_error, "owned_material_state"
+        )
+        if error is not None:
+            return error
+        if context.topology_change:
+            for label, state in (
+                ("source", materials),
+                ("target", context.target_materials),
+            ):
+                if state is None:
+                    raise ValueError("Material topology transfer lost its target state.")
+                local_root = canonical_fingerprint(
+                    {
+                        "kind": "finite-element-owned-material-shard",
+                        "states": [
+                            (
+                                item.site_id.site_id,
+                                item.model_id,
+                                item.state_version,
+                                array_tree_fingerprint(item.committed),
+                                array_tree_fingerprint(item.trial),
+                            )
+                            for item in state.states
+                        ],
+                    }
+                )
+                rows = _owner_group_allgather(
+                    np.frombuffer(bytes.fromhex(local_root), dtype=np.uint8),
+                    context.execution_group,
+                    f"{context.axis_name}_{label}_material_root",
+                )
+                root = canonical_fingerprint(
+                    {
+                        "kind": "finite-element-owned-material-shards",
+                        "roots": [
+                            np.asarray(row, dtype=np.uint8).tobytes().hex()
+                            for row in rows
+                        ],
+                    }
+                )
+                if label == "source":
+                    context.material_root = root
+                else:
+                    context.target_material_root = root
+        return None
     try:
         materials = context.source_materials
         if materials is not None:
@@ -4897,7 +5458,7 @@ def _stage_finite_element_aggregate_transport(
                     state.field_layouts, field_transfers, strict=True
                 )
             ),
-            "materials": context.material_root,
+            "materials": context.target_material_root or context.material_root,
             "payloads": tuple(
                 (name, target_root) for name, _, target_root in context.payload_roots
             ),
@@ -4982,25 +5543,40 @@ def _stage_finite_element_material_transport(
         if context.source_material_plan is None
         else context.source_material_plan.layout_id
     )
-    context.transports.append(
-        CompositionTransport(
+    route_id = canonical_fingerprint(
+        {
+            "kind": "finite-element-material-state-rebind",
+            "migration": context.migration.evidence_id,
+            "material_plan": plan_id,
+            "source_root": context.material_root,
+            "target_root": context.target_material_root,
+        }
+    )
+    if (
+        context.topology_change
+        and context.source_materials is not None
+        and context.source_materials.ownership is not None
+    ):
+        transport = CompositionTransport(
+            "physical-remap",
+            (source.entry_id,),
+            (target,),
+            source_structure_ids=(source.structure_id,),
+            route_id=route_id,
+            successful=jnp.asarray(True),
+        )
+    else:
+        transport = CompositionTransport(
             "ownership-migration",
             (source.entry_id,),
             (target,),
             source_structure_ids=(source.structure_id,),
-            route_id=canonical_fingerprint(
-                {
-                    "kind": "finite-element-material-state-rebind",
-                    "migration": context.migration.evidence_id,
-                    "material_plan": plan_id,
-                    "material_root": context.material_root,
-                }
-            ),
+            route_id=route_id,
             successful=jnp.asarray(True),
             source_content_root=context.material_root,
-            target_content_root=context.material_root,
+            target_content_root=context.target_material_root or context.material_root,
         )
-    )
+    context.transports.append(transport)
     context.staged_entries[source.entry_id] = target
 
 
@@ -5108,6 +5684,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
     nested_field_transfer: FiniteElementFieldTransferAction | None
     nonconservative_field_transfer: FiniteElementFieldTransferAction | None
     history_transfer: Callable | None
+    payload_transfers: tuple[
+        tuple[tuple[str, str], FiniteElementFieldTransferAction], ...
+    ]
     integration_policy: CurvedOverlapIntegrationPolicy | None
     transaction_id: str = eqx.field(static=True)
 
@@ -5122,6 +5701,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         nested_field_transfer: FiniteElementFieldTransferAction | None = None,
         nonconservative_field_transfer: FiniteElementFieldTransferAction | None = None,
         history_transfer: Callable | None = None,
+        payload_transfers: Sequence[
+            tuple[tuple[str, str], FiniteElementFieldTransferAction]
+        ] = (),
         integration_policy: CurvedOverlapIntegrationPolicy | None = None,
         transaction_id: str = "finite-element-topology-transaction",
     ) -> None:
@@ -5139,6 +5721,17 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 raise TypeError(f"{name} must be callable or None.")
         if history_transfer is not None and not callable(history_transfer):
             raise TypeError("history_transfer must be callable or None.")
+        payload_actions = tuple(payload_transfers)
+        if any(
+            len(key) != 2
+            or key[0] not in ("auxiliary", "integrator")
+            or not key[1]
+            or not callable(action)
+            for key, action in payload_actions
+        ) or len({key for key, _ in payload_actions}) != len(payload_actions):
+            raise ValueError(
+                "Payload transfer actions require unique named bank entries."
+            )
         if integration_policy is not None and not isinstance(
             integration_policy, CurvedOverlapIntegrationPolicy
         ):
@@ -5155,6 +5748,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         self.nested_field_transfer = nested_field_transfer
         self.nonconservative_field_transfer = nonconservative_field_transfer
         self.history_transfer = history_transfer
+        self.payload_transfers = payload_actions
         self.integration_policy = integration_policy
         self.transaction_id = canonical_fingerprint(
             {
@@ -5168,6 +5762,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     nonconservative_field_transfer is not None,
                 ),
                 "has_history_transfer": history_transfer is not None,
+                "payload_transfers": tuple(key for key, _ in payload_actions),
                 "integration_policy": (
                     None if integration_policy is None else integration_policy.policy_id
                 ),
@@ -5186,7 +5781,10 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 return self.nested_field_transfer
             case FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION:
                 return self.nonconservative_field_transfer
-            case FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE:
+            case (
+                FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE
+                | FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT
+            ):
                 return None
             case other:
                 assert_never(other)
@@ -5201,6 +5799,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         periodic_transfers: Sequence[PeriodicFiniteElementTransfer] = (),
         field_transfers: Sequence[FiniteElementTransferResult] = (),
         conservative_transfers: Sequence[FiniteElementConservativeContentEvidence] = (),
+        surface_conservative_transfers: Sequence[FiniteElementConservativeSurfaceEvidence] = (),
+        reanalysis: FiniteElementReanalysisResult | None = None,
     ) -> FiniteElementTopologyResult:
         return FiniteElementTopologyResult(
             state=accepted,
@@ -5211,6 +5811,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             periodic_transfers=tuple(periodic_transfers),
             field_transfers=tuple(field_transfers),
             conservative_transfers=tuple(conservative_transfers),
+            surface_conservative_transfers=tuple(surface_conservative_transfers),
+            reanalysis=reanalysis,
         )
 
     @checked
@@ -5545,7 +6147,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         error = _migrate_finite_element_restart_banks(context, transaction=self)
         if error is not None:
             return refused(error)
-        error = _qualify_finite_element_material_state(context)
+        error = _qualify_finite_element_material_state(context, transaction=self)
         if error is not None:
             return refused(error)
         metadata = _finite_element_owner_local_adaptive_metadata(context.adaptive_result)
@@ -5607,7 +6209,11 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         adaptation: MeshAdaptationResult,
         args: object = None,
         /,
+        *,
+        reanalysis_action: Callable | None = None,
     ) -> FiniteElementTopologyResult:
+        if reanalysis_action is not None and not callable(reanalysis_action):
+            raise TypeError("reanalysis_action must be callable or None.")
         if (
             mesh.topology_id != accepted.topology_id
             or adaptation.source.mesh.mesh_id != mesh.mesh_id
@@ -5635,6 +6241,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         periodic_transfers: list[PeriodicFiniteElementTransfer] = []
         field_transfers: list[FiniteElementTransferResult] = []
         conservative_transfers: list[FiniteElementConservativeContentEvidence] = []
+        surface_conservative_transfers: list[FiniteElementConservativeSurfaceEvidence] = []
         transfer_cache: dict[
             tuple[int, int, int, str, str, bool],
             tuple[FiniteElementTransferResult, PeriodicFiniteElementTransfer | None],
@@ -5695,6 +6302,22 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                         )
                     candidate_fields[index] = transferred
                     conservative_transfers.append(evidence)
+                    continue
+                case FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT:
+                    try:
+                        transferred, evidence = _conservative_surface_content_transfer(
+                            layout, field, adaptation
+                        )
+                    except (TypeError, ValueError, NotImplementedError) as error:
+                        return self._retained(
+                            accepted, mesh, f"conservative-surface-transfer-refused: {error}",
+                            periodic_transfers=periodic_transfers,
+                            field_transfers=field_transfers,
+                            conservative_transfers=conservative_transfers,
+                            surface_conservative_transfers=surface_conservative_transfers,
+                        )
+                    candidate_fields[index] = transferred
+                    surface_conservative_transfers.append(evidence)
                     continue
                 case FiniteElementFieldTransferSemantics.NESTED_FE:
                     if form_identity is None:
@@ -5938,6 +6561,177 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     field_transfers=field_transfers,
                 )
             candidate_materials = transferred
+        reanalysis = None
+        prepared_id = f"{accepted.prepared_id}:transition:{transition.transition_id}"
+        compilation_id = f"{accepted.compilation_id}:transition:{transition.transition_id}"
+        if reanalysis_action is not None:
+            try:
+                reanalysis = reanalysis_action(
+                    candidate_mesh, completed_fields, candidate_materials, adaptation, args
+                )
+                if not isinstance(reanalysis, FiniteElementReanalysisResult):
+                    raise TypeError("Reanalysis must return FiniteElementReanalysisResult.")
+                problem = reanalysis.problem
+                discretization = problem.discretization
+                if not isinstance(discretization, FiniteElementDiscretization):
+                    raise TypeError("Reanalysis requires a finite-element discretization.")
+                matching = [
+                    index for index, layout in enumerate(accepted.field_layouts)
+                    if layout.name == reanalysis.field_name
+                ]
+                if len(matching) != 1 or len(discretization.field_spaces) != 1:
+                    raise ValueError("Reanalysis must bind one declared scalar field.")
+                index = matching[0]
+                layout = accepted.field_layouts[index]
+                if layout.transfer_semantics in (
+                    FiniteElementFieldTransferSemantics.CONSERVATIVE_CELL_AVERAGE,
+                    FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT,
+                    FiniteElementFieldTransferSemantics.MATERIAL_FOLLOWING_CONTENT,
+                ):
+                    raise ValueError(
+                        "Reanalysis cannot replace a conservative field after its transfer proof."
+                    )
+                from ..geometry._mesh_certificates import _same_tree_content
+
+                declared = layout.field_spec.resolve(candidate_mesh)
+                actual = discretization.elements[0]
+                if (
+                    discretization.mesh.mesh_id != candidate_mesh.mesh_id
+                    or discretization.default_runtime.geometry_layout_id
+                    != adaptation.target.geometry.geometry_layout_id
+                    or not np.array_equal(
+                        np.asarray(discretization.default_runtime.coordinates),
+                        np.asarray(adaptation.target.geometry.coordinates),
+                    )
+                    or discretization.field_spaces[0].name != layout.name
+                    or not all(
+                        _same_tree_content(left, right)
+                        for left, right in zip(declared, actual, strict=True)
+                    )
+                ):
+                    raise ValueError("Reanalysis problem does not bind the candidate field and geometry.")
+                context = problem._execution_context(args)
+                runtime = context.runtime
+                if (
+                    not isinstance(runtime, FiniteElementRuntimeData)
+                    or runtime.topology_id != candidate_mesh.topology_id
+                    or runtime.geometry_layout_id != adaptation.target.geometry.geometry_layout_id
+                    or not np.array_equal(
+                        np.asarray(runtime.coordinates),
+                        np.asarray(adaptation.target.geometry.coordinates),
+                    )
+                ):
+                    raise ValueError("Reanalysis runtime does not bind the candidate geometry.")
+                system, rhs = problem.linear_system(context)
+                original_check = reanalysis.solve_check
+                if original_check.kind != "primal" or not bool(
+                    np.all(np.asarray(original_check.valid))
+                ):
+                    raise ValueError("Reanalysis supplied an invalid primal solve.")
+                from .._model._structure import model_structure_recipe
+                from ..linalg._runtime import _assess_linear_system_result
+
+                current_check = _assess_linear_system_result(
+                    system, rhs, reanalysis.solution, reanalysis.check_policy,
+                    kind="primal", stability_operator=system.operator, primal_valid=True,
+                )
+                context_values = (
+                    context.user_args, context.time, context.lift, context.lift_rate,
+                    context.lift_acceleration, context.metric_data,
+                )
+                operator_numeric_id = canonical_fingerprint(
+                    {
+                        "kind": "finite-element-reanalysis-current-operator",
+                        "compilation": problem.compilation_id,
+                        "operator": system.operator.operator_id,
+                        "operator_arrays": array_tree_fingerprint(system.operator),
+                        "context_structure": model_structure_recipe(
+                            context_values, path="finite_element_reanalysis.context"
+                        ),
+                        "context_arrays": array_tree_fingerprint(context_values),
+                    }
+                )
+                reanalysis = FiniteElementReanalysisResult(
+                    problem, reanalysis.solution, current_check, reanalysis.field_name,
+                    state_problem=reanalysis.state_problem,
+                    check_policy=reanalysis.check_policy,
+                    rhs_id=canonical_fingerprint(array_tree_fingerprint(rhs)),
+                    operator_numeric_id=operator_numeric_id,
+                )
+                if not bool(np.all(np.asarray(current_check.valid))):
+                    raise ValueError("Reanalysis state fails the current system's solve check.")
+                residual = np.asarray(problem.residual(reanalysis.solution.value, context))
+                if residual.ndim != 1 or not np.all(np.isfinite(residual)):
+                    raise ValueError("Reanalysis state has an invalid current physical residual.")
+                state_problem = reanalysis.state_problem
+                if state_problem is None:
+                    if len(accepted.field_layouts) != 1:
+                        raise ValueError("Multi-field reanalysis requires the complete candidate state program.")
+                    state_problem = problem
+                state_space = state_problem.discretization
+                if not isinstance(state_space, FiniteElementDiscretization):
+                    raise TypeError("State program requires a finite-element discretization.")
+                if (
+                    state_space.mesh.mesh_id != candidate_mesh.mesh_id
+                    or state_space.default_runtime.geometry_layout_id
+                    != adaptation.target.geometry.geometry_layout_id
+                    or not np.array_equal(
+                        np.asarray(state_space.default_runtime.coordinates),
+                        np.asarray(adaptation.target.geometry.coordinates),
+                    )
+                    or tuple(field.name for field in state_space.field_spaces)
+                    != tuple(item.name for item in accepted.field_layouts)
+                    or state_problem.form.field_names
+                    != tuple(item.name for item in accepted.field_layouts)
+                ):
+                    raise ValueError("Complete state program does not bind all candidate fields and geometry.")
+                from ..equations._finite_element_variational import _action_output_fields
+
+                reanalyzed_actions = tuple(
+                    action for action in state_problem.form.actions
+                    if reanalysis.field_name in _action_output_fields(action)
+                )
+                if not _same_tree_content(reanalyzed_actions, problem.form.actions):
+                    raise ValueError("Complete state program does not bind the actual reanalysis actions.")
+                for field_layout, actual_elements, dof_map, field_value in zip(
+                    accepted.field_layouts, state_space.elements, state_space.dof_maps,
+                    completed_fields, strict=True,
+                ):
+                    if (
+                        dof_map.component_shape != field_layout.field_spec.component_shape
+                        or tuple(field_value.shape)
+                        != (dof_map.global_dof_count, *dof_map.component_shape)
+                        or np.dtype(field_value.dtype) != state_space.coefficient_dtype
+                    ):
+                        raise ValueError("Complete state program changed a declared field DOF layout.")
+                    declared_elements = field_layout.field_spec.resolve(candidate_mesh)
+                    if not all(
+                        _same_tree_content(left, right)
+                        for left, right in zip(declared_elements, actual_elements, strict=True)
+                    ):
+                        raise ValueError("Complete state program changed a declared field basis.")
+                refreshed = jnp.asarray(problem.expand(reanalysis.solution.value, context))
+                if (
+                    refreshed.shape != completed_fields[index].shape
+                    or np.dtype(refreshed.dtype) != state_space.coefficient_dtype
+                    or np.dtype(refreshed.dtype) != discretization.coefficient_dtype
+                    or not bool(np.all(np.isfinite(np.asarray(refreshed))))
+                ):
+                    raise ValueError("Reanalysis changed the declared field layout or is nonfinite.")
+                fields = list(completed_fields)
+                fields[index] = refreshed
+                completed_fields = tuple(fields)
+                prepared_id = state_space.prepared_id
+                compilation_id = state_problem.compilation_id
+            except (TypeError, ValueError, RuntimeError, NotImplementedError) as error:
+                return self._retained(
+                    accepted, mesh, f"candidate-reanalysis-refused: {error}",
+                    periodic_transfers=periodic_transfers,
+                    field_transfers=field_transfers,
+                    conservative_transfers=conservative_transfers,
+                    surface_conservative_transfers=surface_conservative_transfers,
+                    reanalysis=reanalysis if isinstance(reanalysis, FiniteElementReanalysisResult) else None,
+                )
         certified = self.certify(
             candidate_mesh,
             completed_fields,
@@ -5953,14 +6747,16 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 periodic_transfers=periodic_transfers,
                 field_transfers=field_transfers,
                 conservative_transfers=conservative_transfers,
+                surface_conservative_transfers=surface_conservative_transfers,
+                reanalysis=reanalysis,
             )
         promoted = FiniteElementAcceptedState(
             completed_fields,
             accepted.time,
             accepted.step,
             candidate_mesh.topology_id,
-            f"{accepted.prepared_id}:transition:{transition.transition_id}",
-            f"{accepted.compilation_id}:transition:{transition.transition_id}",
+            prepared_id,
+            compilation_id,
             field_layouts=accepted.field_layouts,
             materials=candidate_materials,
             schedule_cursor=accepted.schedule_cursor,
@@ -5975,6 +6771,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             periodic_transfers=tuple(periodic_transfers),
             field_transfers=tuple(field_transfers),
             conservative_transfers=tuple(conservative_transfers),
+            surface_conservative_transfers=tuple(surface_conservative_transfers),
+            reanalysis=reanalysis,
         )
 
     @checked
@@ -6036,6 +6834,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     return retained(
                         "conservative-cell-average-hp-storage-is-not-supported"
                     )
+                case FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT:
+                    return retained("conservative-surface-content-hp-storage-is-not-supported")
                 case other:
                     assert_never(other)
         all_nested_hp = all(
@@ -6303,6 +7103,8 @@ def read_finite_element_hp_epoch(path: str | Path, /) -> FiniteElementHPEpoch:
 
 __all__ = [
     "FiniteElementConservativeContentEvidence",
+    "FiniteElementConservativeSurfaceEvidence",
+    "FiniteElementReanalysisResult",
     "FiniteElementHPTopologyResult",
     "FiniteElementOwnerLocalFieldTransferEvidence",
     "FiniteElementOwnerLocalTopologyResult",

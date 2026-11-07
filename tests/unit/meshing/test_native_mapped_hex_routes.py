@@ -68,7 +68,7 @@ _TRANSLATION = np.asarray((1.0, -2.0, 0.5), dtype=np.float64)
 
 
 def _mapped_cube_source(
-    *, curved: bool = False
+    *, curved: bool = False, shared_facets: bool = False
 ) -> tuple[NativeMappedHexSource, MappedReferenceDomain]:
     vertices = np.asarray(
         reference_cell_topology("hexahedron").vertices, dtype=np.float64
@@ -97,17 +97,20 @@ def _mapped_cube_source(
         ),
         dtype=np.int64,
     )
+    facet_count = len(triangles) // 2 if shared_facets else len(triangles)
     complex_ = PiecewiseLinearComplex(
         vertices,
         triangles,
-        np.arange(len(triangles), dtype=np.int64),
-        np.tile(np.asarray((-1, 0), dtype=np.int64), (len(triangles), 1)),
+        np.repeat(np.arange(facet_count, dtype=np.int64), 2)
+        if shared_facets
+        else np.arange(facet_count, dtype=np.int64),
+        np.tile(np.asarray((-1, 0), dtype=np.int64), (facet_count, 1)),
         ("solid",),
         segments=segments,
         vertex_ids=tuple(f"cube-vertex-{row}" for row in range(vertices.shape[0])),
         vertex_occurrence_paths=((),) * vertices.shape[0],
-        facet_ids=tuple(f"cube-facet-{row}" for row in range(len(triangles))),
-        facet_occurrence_paths=((),) * len(triangles),
+        facet_ids=tuple(f"cube-facet-{row}" for row in range(facet_count)),
+        facet_occurrence_paths=((),) * facet_count,
         segment_ids=tuple(f"cube-edge-{row}" for row in range(segments.shape[0])),
         segment_occurrence_paths=((),) * len(segments),
         region_occurrence_paths=((),),
@@ -404,6 +407,7 @@ def _request(
     seed_point: np.ndarray | None = None,
     geometry_order: int = 1,
     target_size: float = 2.0,
+    fill_strategy: VolumeFillStrategy = VolumeFillStrategy.SIMPLEX,
 ) -> VolumeMeshingSpec:
     boundary = MeshingScope(
         source.source_id,
@@ -426,7 +430,7 @@ def _request(
             geometry_order=geometry_order,
         ),
         boundary,
-        VolumeFillStrategy.SIMPLEX,
+        fill_strategy,
         size_controls=(
             UniformSizeControl(
                 boundary,
@@ -468,6 +472,9 @@ def test_mapped_grid_hex_rejects_a_different_physical_frame() -> None:
 
 
 @pytest.mark.parametrize(
+    "fill_strategy", (VolumeFillStrategy.SIMPLEX, VolumeFillStrategy.MULTIZONE)
+)
+@pytest.mark.parametrize(
     ("route", "prepare"),
     (
         ("mapped_balanced_grid_hex", prepare_native_mapped_balanced_grid_hex),
@@ -476,6 +483,7 @@ def test_mapped_grid_hex_rejects_a_different_physical_frame() -> None:
 )
 def test_mapped_grid_hex_routes_execute_with_root_map_and_source_evidence(
     route: Literal["mapped_balanced_grid_hex", "mapped_frame_grid_hex"],
+    fill_strategy: VolumeFillStrategy,
     prepare: Callable[..., Any],
 ) -> None:
     source, domain = _mapped_cube_source()
@@ -506,7 +514,7 @@ def test_mapped_grid_hex_routes_execute_with_root_map_and_source_evidence(
     )
     construction = prepare(
         source,
-        _request(source),
+        _request(source, fill_strategy=fill_strategy),
         NativeMeshingOptions(route),
         SpatialCoordinateContract.si(),
     ).execute()
@@ -674,6 +682,25 @@ def test_mapped_grid_hex_certifies_exact_restriction_without_requested_deviation
     assert fidelity.source_to_mesh_upper == 0.0
 
 
+def test_mapped_grid_hex_preserves_multiple_charts_per_source_face() -> None:
+    source, _ = _mapped_cube_source(shared_facets=True)
+    query = source.boundary_query()
+    assert len(query.face_chart_ids) == 12
+    assert len(set(query.face_chart_ids)) == 12
+    assert len(set(query.face_scope_keys)) == 6
+    result = (
+        NativeMeshingProvider(NativeMeshingOptions("mapped_balanced_grid_hex"))
+        .plan(
+            source, _request(source), coordinate_contract=SpatialCoordinateContract.si()
+        )
+        .execute()
+    )
+    assert result.certification is not None
+    assert result.certification.passed
+    assert result.certification.fidelity is not None
+    assert result.certification.fidelity.status == "certified"
+
+
 def test_mapped_grid_hex_retains_root_region_and_patch_controls() -> None:
     source, _domain = _mapped_cube_source()
     complex_ = source.reference.complex
@@ -751,8 +778,14 @@ def _mapped_surface_chart_witness(
     chart_ids = tuple(query.face_chart_ids)
     rows = tuple(query.chart_row(2, chart_id) for chart_id in chart_ids)
     source_keys = tuple(query.chart_source_key(2, chart_id) for chart_id in chart_ids)
+    reference_tokens = tuple(
+        query.polygon_root_reference_rational_tokens[row] for row in rows
+    )
     references = np.asarray(
-        [query.polygon_root_reference_vertices[row] for row in rows],
+        [
+            [[float(Fraction(*value)) for value in point] for point in row]
+            for row in reference_tokens
+        ],
         dtype=np.float64,
     )
     parameters = np.broadcast_to(
@@ -783,6 +816,7 @@ def _mapped_surface_chart_witness(
             entity_global_ids=face_ids,
             local_entity_indices=local_faces,
             target_reference_vertices=references,
+            target_reference_rational_tokens=reference_tokens,
             source_chart_ids=chart_ids,
             source_entity_ids=tuple(key for key, _ in source_keys),
             occurrence_paths=tuple(path for _, path in source_keys),
@@ -804,6 +838,49 @@ def _mapped_surface_chart_witness(
         [orientation_by_chart[chart_id] for chart_id in chart_ids], dtype=np.int8
     )
     return query, make(orientations)
+
+
+def test_mapped_fidelity_target_map_reuse_preserves_exact_maps_and_refusal() -> None:
+    from collections import OrderedDict
+
+    from phydrax.geometry._mapped_reference_interpolation import (
+        _coordinate_expression,
+        _mapped_chart_maps,
+        _source_coordinate_bank,
+    )
+
+    source, domain = _mapped_cube_source(curved=True)
+    mesh, geometry = domain.reference_mesh, domain.source_geometry
+    query, witness = _mapped_surface_chart_witness(source, domain, geometry)
+    elements, routes, _ = geometry.resolve(mesh)
+    coordinates = _source_coordinate_bank(geometry.source_coordinates())
+    cache = OrderedDict()
+    preparations = {}
+    for row in (0, 1):
+        source_base = tuple(
+            _coordinate_expression(value)
+            for value in query.chart_coordinate_expressions(
+                2, witness.source_chart_ids[row]
+            )
+        )
+        args = (
+            mesh,
+            witness,
+            row,
+            (0, 0),
+            source_base,
+            elements,
+            routes,
+            coordinates,
+            None,
+        )
+        expected = _mapped_chart_maps(*args, OrderedDict(), {})
+        assert _mapped_chart_maps(*args, cache, preparations) == expected
+    malformed = source_base[:2]
+    args = (mesh, witness, 0, (0, 0), malformed, elements, routes, coordinates, None)
+    for window in (cache, OrderedDict()):
+        with pytest.raises(ValueError, match="three physical dimensions"):
+            _mapped_chart_maps(*args, window, {})
 
 
 def test_mapped_root_source_query_certifies_exact_affine_boundary_and_normals() -> None:
@@ -1031,6 +1108,93 @@ def _slice_mapped_chart_witness(
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "path"),
+    (
+        ("polygon_root_reference_rational_tokens", (0, 0, 0, 0)),
+        ("segment_root_reference_rational_tokens", (0, 0, 0)),
+        ("segment_source_parameter_rational_tokens", (0, 0)),
+    ),
+)
+def test_mapped_source_rejects_relation_token_tamper_with_original_ids(
+    field: str,
+    path: tuple[int, ...],
+) -> None:
+    from dataclasses import replace
+
+    import equinox as eqx
+
+    source, _ = _mapped_cube_source()
+    relation = source.root_relation
+
+    def alter(value: tuple, indices: tuple[int, ...]) -> tuple:
+        if not indices:
+            numerator, denominator = value
+            return (numerator + denominator, denominator)
+        rows = list(value)
+        rows[indices[0]] = alter(rows[indices[0]], indices[1:])
+        return tuple(rows)
+
+    forged_relation = replace(relation, **{field: alter(getattr(relation, field), path)})
+    forged = eqx.tree_at(lambda value: value.root_relation, source, forged_relation)
+    assert forged.root_relation.relation_id == relation.relation_id
+    assert forged.binding_id == source.binding_id
+    with pytest.raises(ValueError, match="relation"):
+        forged.validate_restored()
+
+
+def test_mapped_root_face_partition_accepts_nonvertex_corners_and_rejects_tamper() -> (
+    None
+):
+    source, domain = _mapped_cube_source()
+    query = source.boundary_query()
+    triangles = np.asarray(
+        [
+            [[Fraction(*value) for value in point] for point in row]
+            for row in query.polygon_root_reference_rational_tokens
+        ],
+        dtype=object,
+    )
+    triangle = triangles[0]
+    midpoint = (triangle[0] + triangle[1]) / 2
+    pieces = np.stack(
+        (
+            np.stack((triangle[0], midpoint, triangle[2])),
+            np.stack((midpoint, triangle[1], triangle[2])),
+        )
+    )
+    refs = np.concatenate((pieces, triangles[1:]))
+
+    def repeat_first(values: np.ndarray) -> np.ndarray:
+        return np.concatenate((values[:1], values))
+
+    def validate(points: np.ndarray) -> None:
+        MappedReferenceBoundarySource._validate_root_relation(
+            domain,
+            repeat_first(query.polygon_root_face_global_ids),
+            repeat_first(query.polygon_root_cell_global_ids),
+            repeat_first(query.polygon_root_local_face_indices),
+            points,
+            repeat_first(query.polygon_orientation_signs),
+            query.segment_root_dimensions,
+            query.segment_root_entity_global_ids,
+            query.segment_root_cell_global_ids,
+            query.segment_root_local_entity_indices,
+            tuple(
+                tuple(tuple(Fraction(*value) for value in point) for point in row)
+                for row in query.segment_root_reference_rational_tokens
+            ),
+            query.segment_orientations,
+            False,
+        )
+
+    validate(refs)
+    changed = refs.copy()
+    changed[1] = changed[0]
+    with pytest.raises(ValueError):
+        validate(changed)
+
+
 def test_mapped_root_chart_validator_rejects_omission_and_occurrence_change() -> None:
     source, domain = _mapped_cube_source()
     query, witness = _mapped_surface_chart_witness(source, domain, domain.source_geometry)
@@ -1096,8 +1260,14 @@ def _mapped_curve_chart_witness(
     )
     rows = tuple(query.chart_row(1, chart_id) for chart_id in chart_ids)
     source_keys = tuple(query.chart_source_key(1, chart_id) for chart_id in chart_ids)
+    reference_tokens = tuple(
+        query.segment_root_reference_rational_tokens[row] for row in rows
+    )
     references = np.asarray(
-        [query.segment_root_reference_vertices[row] for row in rows],
+        [
+            [[float(Fraction(*value)) for value in point] for point in row]
+            for row in reference_tokens
+        ],
         dtype=np.float64,
     )
     source_parameters = np.broadcast_to(
@@ -1122,6 +1292,7 @@ def _mapped_curve_chart_witness(
             [query.segment_root_local_entity_indices[row] for row in rows], dtype=np.int64
         ),
         target_reference_vertices=references,
+        target_reference_rational_tokens=reference_tokens,
         source_chart_ids=chart_ids,
         source_entity_ids=tuple(key for key, _ in source_keys),
         occurrence_paths=tuple(path for _, path in source_keys),
@@ -1164,6 +1335,97 @@ def test_mapped_curve_witness_refuses_facet_carrier_as_target_edge() -> None:
             tolerance=0.0,
             witness=witness,
         )
+
+
+def test_mapped_physical_improvement_keeps_unmet_quality_for_native_noop() -> None:
+    from phydrax._meshcore import MeshcoreStatus, TetMesh3D, TetMeshEditStatus
+    from phydrax.meshing._layer_core_mapped import _propose_mapped_physical_improvement
+    from phydrax.meshing._volume_generation import _unmet_rows
+
+    _, base = _mapped_plc_tetra_source()
+    reference = base.reference_mesh
+    geometry = base.source_geometry
+    physical_points = np.asarray(geometry.coordinates) * np.asarray((1.0, 1.0, 0.05))
+    stretched_geometry = CellGeometrySpec(
+        dict(zip(geometry.block_names, geometry.elements, strict=True)),
+        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+        physical_points,
+    )
+    assert base.reference_domain_vertex_root_ids is not None
+    domain = MappedReferenceDomain(
+        base.reference_domain,
+        reference,
+        stretched_geometry,
+        base.cell_regions,
+        source_id=base.source_id,
+        source_revision=base.source_revision,
+        reference_domain_vertex_root_ids=np.asarray(
+            base.reference_domain_vertex_root_ids
+        ),
+        coordinate_contract=base.coordinate_contract,
+    )
+    points = np.asarray(reference.coordinates)
+    tetrahedra = np.asarray(reference.blocks[0].vertices)
+    faces = np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int32)
+    segments = np.empty((0, 2), dtype=np.int32)
+    segment_sources = np.empty((0,), dtype=np.int32)
+    vertex_ids = np.asarray((31, 37, 41, 43), dtype=np.int64)
+    cell_ids = np.asarray((901,), dtype=np.int64)
+    schedule = NativeVolumeSchedule(minimum_dihedral_degrees=60.0)
+
+    def make_state(coordinates: np.ndarray) -> TetMesh3D:
+        return TetMesh3D(
+            coordinates,
+            tetrahedra,
+            np.asarray((0,), dtype=np.int32),
+            faces,
+            np.arange(4, dtype=np.int32),
+            segments,
+            segment_sources,
+            protected_vertices=np.ones(4, dtype=np.bool_),
+            vertex_ids=vertex_ids,
+            cell_ids=cell_ids,
+        )
+
+    quality_args = {
+        "radius_edge_bound": schedule.radius_edge_bound,
+        "min_dihedral_degrees": schedule.minimum_dihedral_degrees,
+        "minimum_relative_determinant": schedule.minimum_relative_determinant,
+    }
+    with make_state(physical_points) as physical:
+        original_identity = physical.identity
+        original_unmet = _unmet_rows(physical.evaluate_quality(**quality_args))
+        assert original_unmet
+        run = physical.improve(
+            radius_edge_bound=schedule.radius_edge_bound,
+            min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+            minimum_relative_determinant=schedule.minimum_relative_determinant,
+        )
+        assert run.edit_status is TetMeshEditStatus.APPLIED
+        assert run.status in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED)
+        assert physical.identity == original_identity
+        assert _unmet_rows(physical.evaluate_quality(**quality_args)) == original_unmet
+
+    with make_state(points) as source:
+        original_identity = source.identity
+        arrays = source.arrays()
+        candidate_quality = source.evaluate_candidate_quality(
+            arrays.points, vertex_ids=arrays.vertex_ids, **quality_args
+        )
+        consumer_unmet = _unmet_rows(candidate_quality)
+        assert consumer_unmet
+        proposal = _propose_mapped_physical_improvement(
+            domain,
+            arrays,
+            np.asarray((0,), dtype=np.int64),
+            vertex_ids,
+            schedule,
+        )
+        # The consumer retains its original unmet evidence when no proposal exists.
+        assert proposal is None
+        assert _unmet_rows(candidate_quality) == consumer_unmet
+        assert source.identity == original_identity
+        np.testing.assert_array_equal(source.arrays().points, points)
 
 
 @pytest.mark.parametrize("curved", (False, True))
@@ -1238,3 +1500,251 @@ def test_mapped_plc_tetra_volume_publishes_exact_reference_maps(
     assert construction.certification.domain is domain
     assert construction.certification.fidelity_witness is not None
     assert construction.certification.fidelity_tolerance == source.maximum_deviation
+
+
+def _mapped_rectangular_split_source() -> NativeMappedHexSource:
+    """A 1-by-3/4 source face whose diagonal crosses a quarter-grid line at 1/3."""
+    template, _ = _mapped_cube_source()
+    complex_ = template.complex
+    corners = np.asarray(complex_.vertices, dtype=np.float64).copy()
+    corners[:, 1] *= 0.75
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    polygons = tuple(
+        np.asarray(
+            complex_.polygon_vertices[offsets[row] : offsets[row + 1]], dtype=np.int64
+        )
+        for row in range(len(offsets) - 1)
+    )
+    reference = PiecewiseLinearDomain(
+        corners,
+        np.asarray(polygons, dtype=np.int64),
+        np.tile(np.asarray((0, -1), dtype=np.int64), (len(polygons), 1)),
+        ("solid",),
+        source_id="mapped-rectangular-split",
+    )
+    source_complex = PiecewiseLinearComplex(
+        corners,
+        polygons,
+        np.asarray(complex_.polygon_facets, dtype=np.int64),
+        np.asarray(complex_.facet_regions, dtype=np.int64),
+        ("solid",),
+        segments=np.asarray(complex_.segments, dtype=np.int64),
+        vertex_ids=complex_.vertex_ids,
+        vertex_occurrence_paths=complex_.vertex_occurrence_paths,
+        facet_ids=complex_.facet_ids,
+        facet_occurrence_paths=complex_.facet_occurrence_paths,
+        segment_ids=complex_.segment_ids,
+        segment_occurrence_paths=complex_.segment_occurrence_paths,
+        region_occurrence_paths=complex_.region_occurrence_paths,
+    )
+    xs = (0.0, 0.25, 0.5, 0.75, 1.0)
+    ys = (0.0, 0.25, 0.5, 0.75)
+    points = np.asarray([(x, y, z) for z in (0.0, 1.0) for y in ys for x in xs])
+    point_rows = {tuple(point): row for row, point in enumerate(points)}
+    topology = reference_cell_topology("hexahedron")
+    cells = np.asarray(
+        [
+            tuple(
+                point_rows[(xs[i + int(u)], ys[j + int(v)], float(w))]
+                for u, v, w in topology.vertices
+            )
+            for j in range(len(ys) - 1)
+            for i in range(len(xs) - 1)
+        ],
+        dtype=np.int32,
+    )
+    mesh = CellMesh(points, (CellBlock("root", "hexahedron", cells),))
+    corner_ids = np.asarray(
+        [mesh.vertex_global_ids[point_rows[tuple(point)]] for point in corners],
+        dtype=np.int64,
+    )
+    domain = MappedReferenceDomain(
+        reference,
+        mesh,
+        CellGeometrySpec.affine(mesh),
+        np.zeros(len(cells), dtype=np.int64),
+        source_id="mapped-rectangular-split",
+        source_revision="r1",
+        reference_domain_vertex_root_ids=corner_ids,
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+    source = NativePlcSource(source_complex, domain.source_id, domain.source_revision)
+    return NativeMappedHexSource(source, domain, plc_vertex_root_global_ids=corner_ids)
+
+
+def test_original_frame_query_restricts_whole_facets_to_root_pieces() -> None:
+    from phydrax.discretization._coordinate_enclosure import evaluate_expression
+    from tools.meshing_qualification.scenarios.native_family_matrix import (
+        _frame_sweep_source,
+    )
+
+    case = _frame_sweep_source(4)
+    query = case.source.fidelity_source
+    assert isinstance(query, MappedReferenceBoundarySource)
+    assert len(query.authority.complex.polygon_facets) == 12
+    assert len(query.face_chart_ids) > 12
+    assert set(query.polygon_source_facet_rows.tolist()) == set(range(12))
+    assert query.boundary_chart_cover() is not None
+    for row, chart_id in enumerate(query.face_chart_ids):
+        refs = tuple(
+            tuple(Fraction(*value) for value in point)
+            for point in query.polygon_root_reference_rational_tokens[row]
+        )
+        cell = int(query.polygon_root_cell_global_ids[row])
+        expected = query.domain.source_geometry.evaluate_exact(
+            query.domain.reference_mesh, np.asarray((cell,), dtype=np.int64), (refs,)
+        )[0]
+        expressions = query.chart_coordinate_expressions(2, chart_id)
+        actual = tuple(
+            tuple(evaluate_expression(expression, uv) for expression in expressions)
+            for uv in (
+                (Fraction(0), Fraction(0)),
+                (Fraction(1), Fraction(0)),
+                (Fraction(0), Fraction(1)),
+            )
+        )
+        assert actual == tuple(tuple(point) for point in expected)
+        facet = int(query.polygon_source_facet_rows[row])
+        assert query.chart_source_key(
+            2, chart_id
+        ) == query.authority.source_entity_key_for_scope(
+            2, int(query.authority.complex.facet_entity_ids[facet])
+        )
+
+
+def test_mapped_split_atlas_retains_nonbinary_vertices_and_rejects_invalid_cover() -> (
+    None
+):
+    source = _mapped_rectangular_split_source()
+    query = source.boundary_query()
+    assert len(source.complex.polygon_facets) == 12
+    assert query.boundary_chart_cover() is not None
+    assert any(
+        denominator == 3
+        for row in query.polygon_root_reference_rational_tokens
+        for point in row
+        for _, denominator in point
+    )
+    refs = tuple(
+        tuple(tuple(Fraction(*value) for value in point) for point in row)
+        for row in query.polygon_root_reference_rational_tokens
+    )
+    segment_refs = tuple(
+        tuple(tuple(Fraction(*value) for value in point) for point in row)
+        for row in query.segment_root_reference_rational_tokens
+    )
+    faces = query.polygon_root_face_global_ids
+    cells = query.polygon_root_cell_global_ids
+    locals_ = query.polygon_root_local_face_indices
+    signs = query.polygon_orientation_signs
+
+    def validate(
+        face_rows: np.ndarray,
+        cell_rows: np.ndarray,
+        local_rows: np.ndarray,
+        charts: tuple[tuple[tuple[Fraction, ...], ...], ...],
+        orientations: np.ndarray,
+    ) -> None:
+        MappedReferenceBoundarySource._validate_root_relation(
+            query.domain,
+            face_rows,
+            cell_rows,
+            local_rows,
+            charts,
+            orientations,
+            query.segment_root_dimensions,
+            query.segment_root_entity_global_ids,
+            query.segment_root_cell_global_ids,
+            query.segment_root_local_entity_indices,
+            segment_refs,
+            query.segment_orientations,
+            False,
+        )
+
+    wrong_signs = np.asarray(signs).copy()
+    wrong_signs[0] *= -1
+    with pytest.raises(ValueError):
+        validate(faces, cells, locals_, refs, wrong_signs)
+    wrong_cells = np.asarray(cells).copy()
+    wrong_cells[0] = next(
+        int(cell) for cell in query.domain.root_cell_ids if int(cell) != int(cells[0])
+    )
+    with pytest.raises(ValueError):
+        validate(faces, wrong_cells, locals_, refs, signs)
+    with pytest.raises(ValueError):
+        validate(faces[:-1], cells[:-1], locals_[:-1], refs[:-1], signs[:-1])
+    with pytest.raises(ValueError):
+        validate(
+            np.concatenate((faces, faces[:1])),
+            np.concatenate((cells, cells[:1])),
+            np.concatenate((locals_, locals_[:1])),
+            (*refs, refs[0]),
+            np.concatenate((signs, signs[:1])),
+        )
+
+    complex_ = source.complex
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    polygons = tuple(
+        np.asarray(
+            complex_.polygon_vertices[offsets[row] : offsets[row + 1]], dtype=np.int64
+        )
+        for row in range(len(offsets) - 1)
+    )
+    wrong_regions = np.asarray(complex_.facet_regions).copy()
+    wrong_regions[0, 1] = 1
+    wrong_complex = PiecewiseLinearComplex(
+        complex_.vertices,
+        polygons,
+        complex_.polygon_facets,
+        wrong_regions,
+        ("solid", "wrong-material"),
+        segments=complex_.segments,
+        vertex_ids=complex_.vertex_ids,
+        vertex_occurrence_paths=complex_.vertex_occurrence_paths,
+        facet_ids=complex_.facet_ids,
+        facet_occurrence_paths=complex_.facet_occurrence_paths,
+        segment_ids=complex_.segment_ids,
+        segment_occurrence_paths=complex_.segment_occurrence_paths,
+        region_occurrence_paths=((), ()),
+    )
+    wrong_source = NativePlcSource(
+        wrong_complex, source.source_id, source.source_revision
+    )
+    with pytest.raises(ValueError):
+        NativeMappedHexSource(
+            wrong_source,
+            source.domain,
+            plc_vertex_root_global_ids=source.root_relation.vertex_root_global_ids,
+        )
+
+
+def test_mapped_domain_codec_rebuilds_coordinate_elements_and_refuses_tampering() -> None:
+    from copy import copy
+
+    from phydrax._model._structure import model_archive_projection
+    from phydrax.geometry._mesh_certificates import _same_tree_content
+    from phydrax.meshing._archive_layer_columns import LayerRecordArchiveRecipe
+    from phydrax.meshing._model_codec import restore_model_archive_value
+
+    _, original = _mapped_cube_source()
+    projected = model_archive_projection(original)
+    restored = restore_model_archive_value(projected)
+    assert restored.domain_id == original.domain_id
+    assert _same_tree_content(restored.reference_mesh, original.reference_mesh)
+    assert _same_tree_content(restored.source_geometry, original.source_geometry)
+    elements, routes, coordinates = restored.source_geometry.resolve(restored.reference_mesh)
+    assert elements[0].cell_kind == "hexahedron"
+    assert len(routes) == 1
+    np.testing.assert_array_equal(coordinates, original.source_geometry.coordinates)
+
+    stored_geometry = projected.source_geometry
+    assert type(stored_geometry) is LayerRecordArchiveRecipe
+    fields = dict(stored_geometry.fields)
+    changed = np.asarray(fields["coordinates"], dtype=np.float64).copy()
+    changed[0, 0] += 0.125
+    fields["coordinates"] = changed
+    changed_geometry = stored_geometry._replace(fields=fields)
+    changed_domain = copy(projected)
+    object.__setattr__(changed_domain, "source_geometry", changed_geometry)
+    with pytest.raises(ValueError):
+        restore_model_archive_value(changed_domain)

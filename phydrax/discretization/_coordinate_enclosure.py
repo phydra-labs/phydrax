@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
 from functools import cache
@@ -36,7 +37,10 @@ type BernsteinDomain = Literal["simplex", "prism", "box"]
 type AffineMap = tuple[tuple[ExactScalar, ...], tuple[tuple[ExactScalar, ...], ...]]
 
 if TYPE_CHECKING:
-    from ._cell_geometry import ScalarCoordinateElement
+    from ._cell_geometry import (
+        PerCellRestrictedCellGeometryElement,
+        ScalarCoordinateElement,
+    )
 
 
 class _CellGeometrySourceOwner(Protocol):
@@ -519,6 +523,31 @@ def linear_combinations(
     if any(len(row) != len(basis) for row in coefficients):
         raise ValueError("linear-combination rows must align with the basis width.")
     dimension = _expression_dimension(basis[0]) if basis else 0
+    # A rational basis commonly shares one exact denominator. Accumulate its
+    # numerators directly rather than repeatedly rebuilding the same rational
+    # expression; retaining the denominator also retains the original pole set.
+    if basis and isinstance(basis[0], RationalPolynomial):
+        denominator = basis[0].denominator
+        if all(
+            isinstance(function, RationalPolynomial)
+            and function.denominator == denominator
+            for function in basis
+        ):
+            results = []
+            for row in coefficients:
+                numerator: Polynomial = {}
+                for function, coefficient in zip(basis, row, strict=True):
+                    scalar = _scalar(coefficient)
+                    if scalar:
+                        assert isinstance(function, RationalPolynomial)
+                        for exponent, value in function.numerator.items():
+                            total = numerator.get(exponent, Fraction(0)) + scalar * value
+                            if total:
+                                numerator[exponent] = total
+                            else:
+                                numerator.pop(exponent, None)
+                results.append(RationalPolynomial(numerator, denominator))
+            return tuple(results)
     return tuple(
         sum_polynomials(
             tuple(
@@ -689,7 +718,7 @@ def _compose_over_common_denominator(
     return RationalPolynomial(numerator, denominator)
 
 
-def expression_equal(first: Expression, second: Expression, /) -> bool:
+def expression_equal(first: ExpressionInput, second: ExpressionInput, /) -> bool:
     if isinstance(first, RationalPolynomial) and isinstance(second, RationalPolynomial):
         return multiply(first.numerator, second.denominator) == multiply(
             second.numerator, first.denominator
@@ -1483,6 +1512,95 @@ def coordinate_execution_map_expressions(
         tuple(bank[dof][axis] for dof in range(len(bank))) for axis in range(len(bank[0]))
     )
     return linear_combinations(basis, components)
+
+
+class RestrictedCoordinateMapPreparation:
+    """Operation-local exact root maps bound to one element and coefficient bank.
+
+    The source and binary64 execution bases are separate operands. Polynomial
+    charts may compose a precombined polynomial root, or a common-denominator
+    rational root when explicitly admitted. Other domains use the caller's
+    ordinary exact composition. Eviction repeats work, never changes evidence.
+    """
+
+    __slots__ = ("element", "coordinates", "routes", "mode", "basis", "admitted", "roots")
+
+    def __init__(
+        self,
+        element: PerCellRestrictedCellGeometryElement,
+        coordinates: CoordinateSourceBank,
+        routes: np.ndarray,
+        /,
+        *,
+        mode: Literal["source", "execution"],
+        allow_shared_rational: bool = False,
+    ) -> None:
+        from ._cell_geometry import PerCellRestrictedCellGeometryElement
+
+        if not isinstance(element, PerCellRestrictedCellGeometryElement):
+            raise TypeError(
+                "Restricted coordinate preparation requires a per-cell element."
+            )
+        if mode not in ("source", "execution"):
+            raise ValueError(
+                "Restricted coordinate preparation requires source or execution mode."
+            )
+        self.element = element
+        self.coordinates = coordinates
+        self.routes = routes
+        self.mode = mode
+        self.basis = (
+            coordinate_execution_basis(element.source_element)
+            if mode == "execution"
+            else coordinate_source_basis(element.source_element)
+        )
+        first = self.basis[0] if self.basis else None
+        self.admitted = bool(self.basis) and (
+            all(not isinstance(value, RationalPolynomial) for value in self.basis)
+            or (
+                allow_shared_rational
+                and isinstance(first, RationalPolynomial)
+                and all(
+                    isinstance(value, RationalPolynomial)
+                    and value.denominator == first.denominator
+                    for value in self.basis
+                )
+            )
+        )
+        self.roots: OrderedDict[tuple[int, ...], tuple[Expression, ...]] = OrderedDict()
+
+    def expressions(self, row: int, /) -> tuple[Expression, ...] | None:
+        from ._cell_geometry import (
+            _execution_reference_arguments,
+            coordinate_reference_arguments,
+        )
+
+        if not self.admitted:
+            return None
+        chart = (
+            _execution_reference_arguments(self.element, cell_row=row)
+            if self.mode == "execution"
+            else coordinate_reference_arguments(self.element, cell_row=row)
+        )
+        if chart is None or any(isinstance(value, RationalPolynomial) for value in chart):
+            return None
+        route = tuple(int(index) for index in self.routes[row])
+        root = self.roots.get(route)
+        if root is None:
+            local = tuple(self.coordinates[index] for index in route)
+            if not local or len(self.basis) != len(local):
+                raise ValueError("Coordinate basis and local source bank widths differ.")
+            components = tuple(
+                tuple(local[dof][axis] for dof in range(len(local)))
+                for axis in range(len(local[0]))
+            )
+            root = linear_combinations(self.basis, components)
+            self.roots[route] = root
+            if len(self.roots) > 64:
+                self.roots.popitem(last=False)
+        else:
+            self.roots.move_to_end(route)
+        return tuple(compose_expression(value, chart) for value in root)
 
 
 def coordinate_corner_images(

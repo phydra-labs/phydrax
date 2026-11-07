@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from typing import assert_never, final
+import json
+from typing import assert_never, final, NoReturn, SupportsIndex
 
 import equinox as eqx
 import numpy as np
@@ -32,6 +33,7 @@ from ..geometry._global_embedding import (
     _junction_ids,
     certify_global_embedding,
     GlobalEmbeddingCertificate,
+    ValidatedGlobalEmbedding,
 )
 from ..geometry._mesh_certificates import (
     _same_tree_content,
@@ -43,6 +45,7 @@ from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistanceWitness,
+    SourceBoundaryFaceImageWitness,
     SourceBoundaryPointWitness,
     SourceBoundaryQuery,
     SurfaceEnvelopeDistanceWitness,
@@ -76,6 +79,7 @@ from ._audit import (
 )
 from ._certification_inputs import MeshCertificationInputs, validated_fidelity_witness
 from ._contracts import MeshingFailure, MeshingFailureCategory
+from ._layer_core_root_geometry import ComputedLayerCoreRoot
 from ._native_construction import NativeMeshOrganization
 from ._organization import MeshAttribute, MeshLabel, MeshPatch, MeshZone
 
@@ -261,8 +265,50 @@ def _audit_findings(
         if count and name in required and name not in excused
     )
     for name in dict.fromkeys((*rejected, *counted)):
-        status = "unresolved" if name.startswith("unresolved_") else "violated"
-        findings.append(MeshCertificateFinding(name, status, "mesh"))
+        prefix = "association_source_witness_detail:"
+        if name.startswith(prefix):
+            try:
+                evidence = json.loads(name[len(prefix) :])
+                scopes = evidence["target_scopes"]
+                if not isinstance(scopes, list) or any(
+                    not isinstance(scope, list)
+                    or len(scope) != 2
+                    or not isinstance(scope[0], str)
+                    or not isinstance(scope[1], list)
+                    or any(
+                        type(identifier) is not int or identifier < 0
+                        for identifier in scope[1]
+                    )
+                    for scope in scopes
+                ):
+                    raise ValueError("Malformed target entity scopes.")
+                identifiers = tuple(
+                    sorted(
+                        {
+                            identifier
+                            for _entity_set, values in scopes
+                            for identifier in values
+                        }
+                    )
+                )
+                detail = (
+                    f"{evidence['stage']}: {evidence['reason']}; "
+                    f"witness={evidence['witness_id']!r}; target_scopes={scopes!r}"
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("Malformed source-witness audit evidence.") from error
+            findings.append(
+                MeshCertificateFinding(
+                    "association_source_witness",
+                    "violated",
+                    "mesh",
+                    identifiers,
+                    detail=detail,
+                )
+            )
+        else:
+            status = "unresolved" if name.startswith("unresolved_") else "violated"
+            findings.append(MeshCertificateFinding(name, status, "mesh"))
     for name in audit.unresolved:
         findings.append(MeshCertificateFinding(name, "unresolved", "mesh"))
     return tuple(findings)
@@ -294,6 +340,9 @@ def _feature_witness_scope(
     match witness:
         case SourceBoundaryChartWitness():
             dimension = witness.chart_dimension
+            identifiers = witness.source_entity_ids
+        case SourceBoundaryFaceImageWitness():
+            dimension = 2
             identifiers = witness.source_entity_ids
         case SourceBoundaryPointWitness():
             dimension = 0
@@ -383,12 +432,29 @@ def _acceptance_validity(
     | ValidatedCellValidityParent
     | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
     | None,
+    computed: ComputedCellValidity | None,
     /,
 ) -> tuple[
     CellValidityCertificate, ComputedCellValidity | ValidatedCellValidityParent | None
 ]:
     """Reuse an in-hand proof of exactly these inputs or prove with parent records."""
     validity_policy = policy.validity_policy
+    if computed is not None:
+        if type(computed) is not ComputedCellValidity:
+            raise TypeError("computed_validity must be ComputedCellValidity or None.")
+        if validity is not None or (
+            parent is not None and not (type(parent) is tuple and not parent)
+        ):
+            raise ValueError(
+                "Computed validity cannot be combined with another validity proof."
+            )
+        certificate = computed.certificate
+        if certificate.policy_id != validity_policy.policy_id:
+            raise ValueError(
+                "Computed validity does not use the acceptance validity policy."
+            )
+        computed.require(inputs.geometry, inputs.mesh, certificate)
+        return certificate, computed
     if validity is not None:
         if type(validity) is not CellValidityCertificate:
             raise TypeError("validity must be CellValidityCertificate or None.")
@@ -438,6 +504,82 @@ def _acceptance_validity(
     return computed.certificate, computed
 
 
+def _same_fidelity_control(first: float | None, second: float | None, /) -> bool:
+    """Compare canonical control values without merging signed-zero identities."""
+    if first is None or second is None:
+        return first is second
+    return float(first).hex() == float(second).hex()
+
+
+class _ComputedSurfaceAcceptance:
+    """Operation-local acceptance whose proofs were actually computed here."""
+
+    __slots__ = ("inputs", "report", "reusable")
+
+    def __init__(
+        self,
+        inputs: MeshCertificationInputs,
+        organization: NativeMeshOrganization,
+        /,
+        *,
+        embedding: GlobalEmbeddingCertificate | None,
+        validity_parent: CellValidityCertificate
+        | ValidatedCellValidityParent
+        | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
+        | None,
+        validated: tuple[ValidatedSourceFidelityWitness, ...],
+        computed_validity: ComputedCellValidity | None = None,
+    ) -> None:
+        self.inputs = inputs
+        self.reusable = embedding is None and (
+            validity_parent is None
+            or (type(validity_parent) is tuple and len(validity_parent) == 0)
+        )
+        self.report = MeshCertificationReport(
+            inputs,
+            organization=organization,
+            embedding=embedding,
+            validity_parent=validity_parent,
+            computed_validity=computed_validity,
+            validated=validated,
+        )
+        self.report.require_passed()
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if hasattr(self, name):
+            raise AttributeError("A computed surface acceptance is immutable.")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("A computed surface acceptance is immutable.")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
+        raise TypeError("Computed surface acceptance cannot be serialized.")
+
+    def matches(self, inputs: MeshCertificationInputs, /) -> bool:
+        original = self.inputs
+        return (
+            self.reusable
+            and original.mesh is inputs.mesh
+            and original.geometry is inputs.geometry
+            and original.source is inputs.source
+            and original.feature_source is inputs.feature_source
+            and original.source_id == inputs.source_id
+            and original.source_revision == inputs.source_revision
+            and original.schedule.route == inputs.schedule.route == "surface"
+            and _same_fidelity_control(
+                original.fidelity_tolerance, inputs.fidelity_tolerance
+            )
+            and _same_fidelity_control(
+                original.maximum_normal_deviation, inputs.maximum_normal_deviation
+            )
+            and _junction_ids(original.mesh, original.junction_vertices)
+            == _junction_ids(inputs.mesh, inputs.junction_vertices)
+            and _same_tree_content(original.fidelity_witness, inputs.fidelity_witness)
+            and self.report.fidelity is not None
+        )
+
+
 @final
 class MeshCertificationReport(StrictModule, NonTrainableState):
     """Computed acceptance, retaining its source premises for independent renewal.
@@ -484,6 +626,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         | ValidatedCellValidityParent
         | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
         | None = None,
+        computed_validity: ComputedCellValidity | None = None,
+        computed_surface: _ComputedSurfaceAcceptance | None = None,
+        validated_embedding: ValidatedGlobalEmbedding | None = None,
+        computed_root: ComputedLayerCoreRoot | None = None,
+        _validated_chart_parent_embedding: ValidatedGlobalEmbedding | None = None,
     ) -> None:
         """Compute acceptance from ``inputs``.
 
@@ -515,6 +662,34 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             raise TypeError("embedding must be GlobalEmbeddingCertificate or None.")
         if validity is not None and validity_parent is not None:
             raise ValueError("Pass either an in-hand validity proof or its parents.")
+        if computed_root is not None:
+            from .providers._native_sources import NativeLayerCoreSource
+
+            root = inputs.layer_core_root_geometry
+            if (
+                type(computed_root) is not ComputedLayerCoreRoot
+                or type(inputs.feature_source) is not NativeLayerCoreSource
+                or root is None
+            ):
+                raise ValueError(
+                    "Computed root requires its exact layer/core source and root."
+                )
+            computed_root.require(
+                inputs.feature_source, root.specification, root.mesh, root.geometry, root
+            )
+        if _validated_chart_parent_embedding is not None:
+            from ..geometry._mapped_reference_domain import MappedReferenceDomain
+
+            root = inputs.layer_core_root_geometry
+            if (
+                type(_validated_chart_parent_embedding) is not ValidatedGlobalEmbedding
+                or not isinstance(inputs.domain, MappedReferenceDomain)
+                or root is None
+            ):
+                raise ValueError("Validated chart parent requires its mapped root.")
+            _validated_chart_parent_embedding.require(
+                root.mesh, root.geometry, _validated_chart_parent_embedding.validity
+            )
         _require_route_geometry(inputs)
         organization_ = NativeMeshOrganization() if organization is None else organization
         multiregion = _multiregion_proof(inputs, organization_)
@@ -530,9 +705,54 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             source=inputs.source,
             validated=validated,
         )
-        validity, validated_validity = _acceptance_validity(
-            inputs, policy, validity, validity_parent
+        validated_validity = None
+        reused_embedding = False
+        if validated_embedding is not None:
+            if type(validated_embedding) is not ValidatedGlobalEmbedding:
+                raise TypeError(
+                    "validated_embedding must be ValidatedGlobalEmbedding or None."
+                )
+            if (
+                embedding is not None
+                or embedding_premise is not None
+                or validity is not None
+            ):
+                raise ValueError(
+                    "A validated embedding cannot be combined with another in-hand proof."
+                )
+            if computed_validity is not None and (
+                computed_validity.certificate is not validated_embedding.validity
+            ):
+                raise ValueError("Computed validity and embedding bind different proofs.")
+            if validated_embedding.validity.policy_id == policy.validity_policy.policy_id:
+                embedding = validated_embedding.require(
+                    inputs.mesh, inputs.geometry, validated_embedding.validity
+                )
+                if embedding.binding.junction_vertices != _junction_ids(
+                    inputs.mesh, inputs.junction_vertices
+                ):
+                    raise ValueError(
+                        "Validated embedding binds another declared junction set."
+                    )
+                validity = validated_embedding.validity
+                reused_embedding = True
+        if not reused_embedding:
+            validity, validated_validity = _acceptance_validity(
+                inputs, policy, validity, validity_parent, computed_validity
+            )
+        assert validity is not None
+        reuse_surface = (
+            type(computed_surface) is _ComputedSurfaceAcceptance
+            and computed_surface.matches(inputs)
+            and embedding is None
+            and embedding_premise is None
+            and fidelity_premise is None
+            and validated_chart_parent is None
+            and _same_tree_content(validity, computed_surface.report.embedding.validity)
         )
+        if reuse_surface:
+            assert computed_surface is not None
+            embedding = computed_surface.report.embedding
         if embedding is None:
             embedding = certify_global_embedding(
                 inputs.mesh,
@@ -561,6 +781,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             associations=organization_.associations,
             validity=validity,
             global_embedding=embedding,
+            validated_fidelity=validated_,
+            association_source=inputs.feature_source,
+            layer_core_root_geometry=inputs.layer_core_root_geometry,
+            certification_inputs=inputs,
+            computed_root=computed_root,
         )
         findings = list(_audit_findings(inputs, audit, multiregion))
         findings.extend(embedding.findings)
@@ -568,37 +793,74 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         if inputs.source is not None:
             if inputs.fidelity_tolerance is None:
                 raise ValueError("Fidelity source requires its physical tolerance.")
-            fidelity = certify_source_fidelity(
-                inputs.mesh,
-                inputs.geometry,
-                inputs.source,
-                tolerance=inputs.fidelity_tolerance,
-                maximum_normal_deviation=inputs.maximum_normal_deviation,
-                witness=None
-                if inputs.fidelity_witness is None
-                else validated_fidelity_witness(
-                    validated_,
+            if reuse_surface:
+                assert computed_surface is not None
+                fidelity = computed_surface.report.fidelity
+                assert fidelity is not None
+                fidelity.require_inputs(
                     inputs.mesh,
                     inputs.geometry,
                     inputs.source,
-                    inputs.fidelity_witness,
-                ),
-                chart_parent=fidelity_premise,
-                validated_chart_parent=validated_chart_parent,
-            )
+                    tolerance=inputs.fidelity_tolerance,
+                    maximum_normal_deviation=inputs.maximum_normal_deviation,
+                    witness=inputs.fidelity_witness,
+                )
+            else:
+                fidelity = certify_source_fidelity(
+                    inputs.mesh,
+                    inputs.geometry,
+                    inputs.source,
+                    tolerance=inputs.fidelity_tolerance,
+                    maximum_normal_deviation=inputs.maximum_normal_deviation,
+                    witness=None
+                    if inputs.fidelity_witness is None
+                    else validated_fidelity_witness(
+                        validated_,
+                        inputs.mesh,
+                        inputs.geometry,
+                        inputs.source,
+                        inputs.fidelity_witness,
+                    ),
+                    chart_parent=fidelity_premise,
+                    validated_chart_parent=validated_chart_parent,
+                )
             findings.extend(fidelity.findings)
-        scoped = tuple(
-            certify_source_fidelity(
-                inputs.mesh,
-                inputs.geometry,
-                query,
-                tolerance=tolerance,
-                witness=validated_fidelity_witness(
-                    validated_, inputs.mesh, inputs.geometry, query, witness
-                ),
+        scoped_certificates: list[SourceFidelityCertificate] = []
+        for query, witness, tolerance in inputs.scoped_fidelity:
+            scoped_witness = validated_fidelity_witness(
+                validated_, inputs.mesh, inputs.geometry, query, witness
             )
-            for query, witness, tolerance in inputs.scoped_fidelity
-        )
+            # Reuse only this operation's identical proof, not a matching claimed ID.
+            if (
+                fidelity is not None
+                and query is inputs.source
+                and witness is inputs.fidelity_witness
+                and _same_fidelity_control(tolerance, inputs.fidelity_tolerance)
+                and inputs.maximum_normal_deviation is None
+                and (
+                    (fidelity_premise is None and validated_chart_parent is None)
+                    or (
+                        # Identity-reused implicit rows are the full direct proof;
+                        # nested restrictions retain different proof evidence.
+                        fidelity.status == "certified"
+                        and fidelity.chart_rows is not None
+                        and fidelity.chart_restriction is None
+                        and fidelity.chart_premise is None
+                    )
+                )
+            ):
+                scoped_certificates.append(fidelity)
+            else:
+                scoped_certificates.append(
+                    certify_source_fidelity(
+                        inputs.mesh,
+                        inputs.geometry,
+                        query,
+                        tolerance=tolerance,
+                        witness=scoped_witness,
+                    )
+                )
+        scoped = tuple(scoped_certificates)
         for certificate in scoped:
             findings.extend(certificate.findings)
         coverage = None
@@ -606,6 +868,20 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             if inputs.cell_regions is None:
                 raise ValueError("Domain coverage requires its material assignments.")
             if embedding.status == "certified":
+                from ..geometry._mapped_reference_domain import MappedReferenceDomain
+
+                chart_parent = None
+                root = inputs.layer_core_root_geometry
+                if isinstance(inputs.domain, MappedReferenceDomain) and root is not None:
+                    from .providers._native_sources import NativeLayerCoreSource
+
+                    if type(inputs.feature_source) is not NativeLayerCoreSource:
+                        raise ValueError(
+                            "Mapped chart parent requires its actual layer/core source."
+                        )
+                    if computed_root is None:
+                        root.require_current(inputs.feature_source, root.specification)
+                    chart_parent = (root.mesh, root.geometry)
                 coverage_source, coverage_fidelity = _coverage_operands(inputs, fidelity)
                 coverage = certify_domain_coverage(
                     inputs.mesh,
@@ -616,6 +892,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                     source=coverage_source,
                     fidelity=coverage_fidelity,
                     source_coverage_witness=inputs.source_coverage_witness,
+                    chart_parent=chart_parent,
+                    _validated_parent_embedding=_validated_chart_parent_embedding,
                 )
                 findings.extend(coverage.findings)
             else:
@@ -847,6 +1125,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         mesh: CellMesh,
         geometry: CellGeometrySpec,
         /,
+        *,
+        validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
     ) -> tuple[ValidatedSourceFidelityWitness, ...]:
         """Require this computed acceptance to answer ``mesh`` and ``geometry``.
 
@@ -855,10 +1135,16 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         returned for reuse on the same operands), the report must have passed,
         and its status, identity and every identity-bound claim must match its
         retained premises (:meth:`require_premises`). :meth:`revalidate`
-        recomputes the proofs instead.
+        recomputes the proofs instead. ``validated`` reuses only witness
+        validations bound to the identical current operands; all report
+        premise and passed checks still run.
         """
-        validated = self.inputs.require_current(
-            mesh, geometry, domain=self.inputs.domain, source=self.inputs.source
+        validated_ = self.inputs.require_current(
+            mesh,
+            geometry,
+            domain=self.inputs.domain,
+            source=self.inputs.source,
+            validated=validated,
         )
         self.require_premises(
             self.inputs,
@@ -874,7 +1160,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             ),
         )
         self.require_passed()
-        return validated
+        return validated_
 
     def revalidate(
         self,

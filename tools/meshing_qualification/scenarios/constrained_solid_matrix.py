@@ -48,6 +48,7 @@ _CONTRACT = SpatialCoordinateContract.si()
 _REGION_RELATIVE_TOLERANCE = 1.0e-10
 _FACET_AREA_RELATIVE_TOLERANCE = 1.0e-10
 _FE_TOLERANCE = 2.0e-9
+_FE_DEGREE = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +76,18 @@ class _SolidInput:
     cavity: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None
     small_angle_wedge: bool = False
 
+
+# Donor semantics of the native shape targets of every original constrained-
+# solid profile: the donor plan built them with the default native PLC
+# options (plc-sliver-rich: an explicit 25-degree schedule), whose
+# NativeVolumeSchedule documents both targets as aims whose unmet rows are
+# published as evidence.
+_DONOR_SHAPE_AIM_CITATION = {
+    "commit": "c56614a9f",
+    "schedule": "phydrax/meshing/_volume_generation.py:453-455",
+    "aim_publication": "phydrax/meshing/_volume_generation.py:5117-5139",
+    "profile_options": "tools/_meshing_cases.py:793-802",
+}
 
 _PROFILES = (
     _SolidProfile(
@@ -250,9 +263,9 @@ def _box_union_input(profile: _SolidProfile) -> _SolidInput:
                 faces[key] = (previous[0], previous[1], region)
     polygons: list[tuple[int, ...]] = []
     incidences: list[tuple[int, int]] = []
-    for polygon, positive_region, negative_region in faces.values():
+    for polygon, inside_region, outside_region in faces.values():
         polygons.append(polygon)
-        incidences.append((positive_region, negative_region))
+        incidences.append((outside_region, inside_region))
     return _SolidInput(
         np.asarray(vertices, dtype=np.float64),
         tuple(polygons),
@@ -594,9 +607,12 @@ def _request(
         ),
     )
     minimum_dihedral = 25.0 if "dihedral-25" in profile.controls else 10.0
+    # The donor authored both shape targets of these profiles as aims
+    # (_DONOR_SHAPE_AIM_CITATION): unmet rows are published, not refused.
     volume_schedule = NativeVolumeSchedule(
         radius_edge_bound=2.0,
         minimum_dihedral_degrees=minimum_dihedral,
+        shape_strength=SizeControlStrength.SOFT,
     )
     options = NativeMeshingOptions(
         "plc_tetrahedral",
@@ -644,6 +660,8 @@ def _request(
         "native_volume_schedule": {
             "radius_edge_bound": volume_schedule.radius_edge_bound,
             "minimum_dihedral_degrees": minimum_dihedral,
+            "shape_strength": volume_schedule.shape_strength.value,
+            "shape_strength_donor_citation": _DONOR_SHAPE_AIM_CITATION,
         },
         "interface_facet_rows": interface_facets,
         "fill_strategy": VolumeFillStrategy.SIMPLEX.value,
@@ -915,6 +933,17 @@ def _boundary_facet_oracle(
         raise RuntimeError(
             "Native PLC facet association duplicates a target face identity."
         )
+    facet_rows = [
+        row for row, role in enumerate(roles) if role is GeometrySourceEntityRole.FACET
+    ]
+    if any(
+        role not in (GeometrySourceEntityRole.FACET, GeometrySourceEntityRole.REGION)
+        for role in roles
+    ):
+        raise RuntimeError("A PLC face association contains an unexpected source role.")
+    target_ids = target_ids[facet_rows]
+    source_ids = tuple(source_ids[row] for row in facet_rows)
+    region_sides = tuple(region_sides[row] for row in facet_rows)
     target_rows_by_id = {
         int(identifier): row
         for row, identifier in enumerate(
@@ -949,8 +978,6 @@ def _boundary_facet_oracle(
         int(np.asarray(face_set.entity_ids, dtype=np.int64)[row]) for row in expected_rows
     }
     facet_rows_by_name = {name: row for row, name in enumerate(source.complex.facet_ids)}
-    if any(role is not GeometrySourceEntityRole.FACET for role in roles):
-        raise RuntimeError("A PLC facet association contains a non-facet source role.")
     if set(target_ids.tolist()) != expected_ids:
         missing = sorted(expected_ids - set(target_ids.tolist()))
         extra = sorted(set(target_ids.tolist()) - expected_ids)
@@ -986,11 +1013,11 @@ def _boundary_facet_oracle(
         region_pair = np.asarray(source_input.facet_regions[facet_row], dtype=np.int64)
         expected_sides = (
             None
-            if int(region_pair[1]) < 0
-            else source_input.region_ids[int(region_pair[1])],
-            None
             if int(region_pair[0]) < 0
             else source_input.region_ids[int(region_pair[0])],
+            None
+            if int(region_pair[1]) < 0
+            else source_input.region_ids[int(region_pair[1])],
         )
         if sides != expected_sides:
             raise RuntimeError(
@@ -1173,9 +1200,9 @@ def _material_control_oracle(
         )
     for control in specification.patch_controls:
         patch = patches[control.name]
-        if patch.source_adjacent_region_ids is None or set(
-            patch.source_adjacent_region_ids
-        ) != set(control.adjacent_region_names):
+        if set(patch.adjacent_zone_ids) != {
+            zones[name].zone_id for name in control.adjacent_region_names
+        }:
             raise RuntimeError(
                 f"Material-interface patch {control.name!r} changed its declared region sides."
             )
@@ -1201,7 +1228,11 @@ def _material_control_oracle(
         "interface_patches": [
             {
                 "name": patch.name,
-                "adjacent_regions": list(patch.source_adjacent_region_ids or ()),
+                "adjacent_regions": [
+                    name
+                    for name, zone in zones.items()
+                    if zone.zone_id in patch.adjacent_zone_ids
+                ],
                 "patch_id": patch.patch_id,
             }
             for patch in result.patches
@@ -1216,7 +1247,10 @@ def _solve_fe(result: phx.meshing.CellMeshingResult, /) -> dict[str, object]:
     kinds = {block.cell_kind for block in mesh.blocks}
     if len(kinds) != 1:
         raise RuntimeError(f"Native constrained solid mixed tetrahedral kinds {kinds}.")
-    field = FiniteElementFieldSpec("u", lagrange_element(kinds.pop(), 1))
+    # Quadratic Lagrange reproduces the affine solution exactly and keeps free
+    # interior-edge DOFs on coarse soft-size meshes whose vertices all lie on
+    # the Dirichlet boundary.
+    field = FiniteElementFieldSpec("u", lagrange_element(kinds.pop(), _FE_DEGREE))
     space = FiniteElementPlan(mesh, field, coordinate_spec=result.geometry).prepare()
     constraint = phx.discretization.dirichlet_constraint(space, "u")
     form = phx.equations.FiniteElementForm(
@@ -1233,10 +1267,17 @@ def _solve_fe(result: phx.meshing.CellMeshingResult, /) -> dict[str, object]:
         ),
     )
     operator, rhs = problem.linear_system()
-    solved = phx.linalg.solve(operator, rhs)
+    solved = phx.linalg.solve(
+        operator,
+        rhs,
+        control=phx.linalg.LinearSolveControl(
+            relative_tolerance=1.0e-12, absolute_tolerance=0.0
+        ),
+    )
     values = np.asarray(problem.expand(solved.value), dtype=np.float64)
-    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    coordinates = np.asarray(constraint.dof_coordinates, dtype=np.float64)
     exact = 1.0 + 2.0 * coordinates[:, 0] - coordinates[:, 1] + 0.5 * coordinates[:, 2]
+    free_dofs = int(np.asarray(constraint.free_dofs).size)
     error = float(np.max(np.abs(values - exact), initial=0.0))
     residual = float(jnp.linalg.norm(problem.residual(solved.value)))
     rhs_norm = float(jnp.linalg.norm(rhs))
@@ -1256,8 +1297,12 @@ def _solve_fe(result: phx.meshing.CellMeshingResult, /) -> dict[str, object]:
         "pde": "steady homogeneous diffusion with exact affine Dirichlet data",
         "form_id": form.form_id,
         "field_name": field.name,
+        "lagrange_degree": _FE_DEGREE,
         "dofs": int(values.size),
+        "free_dofs": free_dofs,
         "successful": bool(jnp.all(solved.successful)),
+        "solver_relative_tolerance_requested": 1.0e-12,
+        "solver_absolute_tolerance_requested": 0.0,
         "maximum_affine_error": error,
         "residual_norm": residual,
         "normalized_residual": normalized_residual,

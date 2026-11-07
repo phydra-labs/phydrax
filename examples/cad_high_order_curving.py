@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Curve Gmsh tetrahedra of OCCT solids onto their exact B-Rep and certify them.
+"""Optional Gmsh/OCCT comparison: curve and certify tetrahedra on exact B-Rep.
 
 For an OCCT cylinder and sphere: persist the solid as native BREP text and import
 the published revision through the native codec, mesh it with Gmsh into coarse

@@ -29,6 +29,7 @@ from ._patches import (
     ExactLineCurve,
     LineCurve,
     OffsetCurve,
+    PlaneCylinderSectionPCurve,
     PlanePatch,
 )
 from ._placed import PlacedCurve, source_transform_bounds
@@ -141,6 +142,20 @@ def _affine_curve_coefficients(
         return tuple(curve.first_exact[i] - point[i] for i in range(len(point))), tuple(
             curve.last_exact[i] - curve.first_exact[i] for i in range(len(point))
         )
+    if isinstance(curve, PlaneCylinderSectionPCurve):
+        phase = curve.angle_offset_root
+        if (
+            len(point) != 2
+            or any(value != 0 for value in (*curve.cosine_exact, *curve.sine_exact))
+            or (
+                phase is not None
+                and (phase.cosine_exact != 1 or phase.sine_exact != 0 or phase.turns != 0)
+            )
+        ):
+            return None
+        return tuple(
+            curve.offset_exact[axis] - point[axis] for axis in range(2)
+        ), curve.linear_exact
     if isinstance(curve, BSplineCurve):
         # A clamped degree-one span with equal weights is the exact segment
         # P0 + (t - a) / (b - a) * (P1 - P0) on its knot interval [a, b].

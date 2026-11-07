@@ -7,7 +7,8 @@ from __future__ import annotations
 from fractions import Fraction
 from itertools import pairwise, permutations, product
 from math import ceil, floor, isfinite, ldexp, nextafter, sqrt
-from typing import Any, TYPE_CHECKING
+from types import SimpleNamespace
+from typing import Any, Callable, TYPE_CHECKING
 
 import numpy as np
 from jax.typing import ArrayLike
@@ -36,6 +37,7 @@ from phydrax.meshing._plc_source import _numeric_entity_ids
 
 if TYPE_CHECKING:
     from phydrax._execution_runtime import ExecutionGroup
+    from phydrax.discretization._periodic_cell import PeriodicCell
     from phydrax.meshing.providers._native_periodic import NativePeriodicSource
 
 
@@ -43,6 +45,12 @@ type _PowerSiteSignature = tuple[tuple[int, tuple[int, ...]], ...]
 type _PowerPointSignature = tuple[_PowerSiteSignature, tuple[tuple[int, int], ...]]
 type _PowerVertexKey = tuple[_PowerPointSignature, tuple[int, ...]]
 type _CarrierProof = tuple[tuple[int, tuple[int, int]], ...]
+type _PowerSupportCell = tuple[
+    tuple[Fraction, ...],
+    Fraction,
+    tuple[tuple[Fraction, ...], ...],
+    Fraction,
+]
 
 
 def _convex_power_face_loop(
@@ -265,6 +273,8 @@ def periodic_power_mesh(
                 _,
                 vertex_representatives,
                 vertex_shifts,
+                _,
+                _,
             ) = _polyhedral_quotient_from_power(
                 source,
                 geometry_source_id,
@@ -563,6 +573,13 @@ def _image_radius_neighbor_csr(
     image. Any two cells sharing a power face inside the carrier are therefore
     within ``2 * influence_radius``. Exact dyadic buckets enumerate that radius
     neighborhood without a global image-pair gather.
+
+    Each row lists exactly the other images whose exact squared distance is at
+    most the exact squared diameter, in ascending image order. Bucket blocks
+    evaluate squared distances from correctly rounded binary64 coordinates
+    against thresholds that already include a proved absolute error bound, so
+    a binary64 decision is taken only when it equals the exact decision. Every
+    pair inside that band is decided by exact integer arithmetic.
     """
     owners = np.asarray(image_owners, dtype=np.int64)
     windings = np.asarray(image_windings, dtype=np.int64)
@@ -583,61 +600,152 @@ def _image_radius_neighbor_csr(
     diameter = 2 * Fraction.from_float(float(influence_radius))
     if diameter <= 0:
         raise ValueError("Periodic power neighbor radius must be positive.")
-    coordinates: list[tuple[Fraction, Fraction, Fraction]] = []
-    buckets: dict[tuple[int, int, int], list[int]] = {}
+    exact_coordinates: list[tuple[Fraction, Fraction, Fraction]] = []
+    scale = diameter.denominator.bit_length() - 1
     for image in range(owners.size):
         coordinate = []
         for axis in range(3):
             position = 3 * image + axis
             first, last = map(int, offsets[position : position + 2])
-            coordinate.append(
-                sum(
-                    (
-                        Fraction.from_float(float(value))
-                        for value in components[first:last]
-                    ),
-                    Fraction(0),
-                )
+            value = sum(
+                (
+                    Fraction.from_float(float(component))
+                    for component in components[first:last]
+                ),
+                Fraction(0),
             )
-        point = (coordinate[0], coordinate[1], coordinate[2])
+            coordinate.append(value)
+            scale = max(scale, value.denominator.bit_length() - 1)
+        exact_coordinates.append((coordinate[0], coordinate[1], coordinate[2]))
+
+    # Expansion components and the binary64 radius are dyadic.  One shared
+    # power-of-two denominator preserves every exact comparison while avoiding
+    # Fraction construction and normalization in the exact band decisions.
+    def scaled(value: Fraction) -> int:
+        exponent = value.denominator.bit_length() - 1
+        return value.numerator << (scale - exponent)
+
+    diameter_int = scaled(diameter)
+    diameter_squared = diameter_int * diameter_int
+    coordinates = [
+        (scaled(point[0]), scaled(point[1]), scaled(point[2]))
+        for point in exact_coordinates
+    ]
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+    for image, point in enumerate(coordinates):
         key = (
-            floor(point[0] / diameter),
-            floor(point[1] / diameter),
-            floor(point[2] / diameter),
+            point[0] // diameter_int,
+            point[1] // diameter_int,
+            point[2] // diameter_int,
         )
-        coordinates.append(point)
         buckets.setdefault(key, []).append(image)
 
-    pairs: set[tuple[int, int]] = set()
-    diameter_squared = diameter * diameter
-    neighbor_offsets = tuple(product((-1, 0, 1), repeat=3))
-    for first, point in enumerate(coordinates):
-        bucket = (
-            floor(point[0] / diameter),
-            floor(point[1] / diameter),
-            floor(point[2] / diameter),
+    # Correctly rounded coordinates x^ satisfy |x^ - x| <= u |x| + eta / 2
+    # with u = 2**-53 and eta = 2**-1074.  With A = max |x^|, every coordinate
+    # has error at most e = 2 u A + eta, every rounded difference d^ is within
+    # delta = 2 e + 2 u A of its exact value, and B = 2 A + delta bounds both.
+    # Squaring and two rounded additions then keep the binary64 sum within
+    # 6 B delta + 10 u B**2 + 3 eta of the exact one; the margin below is
+    # larger.  Magnitudes outside the certified range leave every pair to the
+    # exact decision.
+    exact_squared = diameter**2
+    certified = (
+        bool(components.size == 0 or np.max(np.abs(components)) <= 2.0**400)
+        and exact_squared <= 2**900
+    )
+    accept_limit = -np.inf
+    reject_limit = np.inf
+    rounded = np.zeros((owners.size, 3), dtype=np.float64)
+    if certified and owners.size:
+        rounded = np.asarray(
+            [[float(value) for value in point] for point in exact_coordinates],
+            dtype=np.float64,
+        ).reshape((-1, 3))
+        unit = Fraction(1, 2**53)
+        smallest = Fraction(1, 2**1074)
+        largest = Fraction.from_float(float(np.max(np.abs(rounded))))
+        coordinate_error = 2 * unit * largest + smallest
+        difference_error = 2 * coordinate_error + 2 * unit * largest
+        difference_bound = 2 * largest + difference_error
+        sum_error = 2 * (
+            8 * difference_bound * difference_error
+            + 16 * unit * difference_bound**2
+            + 8 * smallest
         )
-        for neighbor_offset in neighbor_offsets:
-            nearby = tuple(bucket[axis] + neighbor_offset[axis] for axis in range(3))
-            for second in buckets.get(nearby, ()):
-                if second <= first:
-                    continue
-                distance_squared = sum(
-                    ((point[axis] - coordinates[second][axis]) ** 2 for axis in range(3)),
-                    Fraction(0),
+        accept_limit = _rounded_toward(exact_squared - sum_error, -np.inf)
+        reject_limit = _rounded_toward(exact_squared + sum_error, np.inf)
+
+    row_blocks: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    counts = np.zeros((owners.size,), dtype=np.int64)
+    neighbor_offsets = tuple(product((-1, 0, 1), repeat=3))
+    block_entries = 1 << 21
+    for bucket, members in buckets.items():
+        rows = np.asarray(members, dtype=np.int64)
+        nearby_members = (
+            buckets.get((bucket[0] + dx, bucket[1] + dy, bucket[2] + dz))
+            for dx, dy, dz in neighbor_offsets
+        )
+        columns = np.sort(
+            np.concatenate(
+                [
+                    np.asarray(values, dtype=np.int64)
+                    for values in nearby_members
+                    if values is not None
+                ]
+            )
+        )
+        column_points = rounded[columns]
+        step = max(1, block_entries // columns.size)
+        for start in range(0, rows.size, step):
+            block = rows[start : start + step]
+            difference = rounded[block, 0][:, None] - column_points[:, 0][None, :]
+            squared = difference * difference
+            difference = rounded[block, 1][:, None] - column_points[:, 1][None, :]
+            squared += difference * difference
+            difference = rounded[block, 2][:, None] - column_points[:, 2][None, :]
+            squared += difference * difference
+            other = block[:, None] != columns[None, :]
+            accepted = (squared <= accept_limit) & other
+            undecided = (squared <= reject_limit) & ~accepted & other
+            for local_row, local_column in zip(*np.nonzero(undecided), strict=True):
+                point = coordinates[int(block[local_row])]
+                candidate = coordinates[int(columns[local_column])]
+                if (
+                    sum((point[axis] - candidate[axis]) ** 2 for axis in range(3))
+                    <= diameter_squared
+                ):
+                    accepted[local_row, local_column] = True
+            block_counts = np.count_nonzero(accepted, axis=1)
+            counts[block] = block_counts
+            row_blocks.append(
+                (
+                    block,
+                    block_counts,
+                    columns[np.nonzero(accepted)[1]].astype(np.int32),
                 )
-                if distance_squared <= diameter_squared:
-                    pairs.add((first, second))
-    if not pairs:
+            )
+    if not np.any(counts):
         raise ValueError(
             "Periodic image radius search found no exact power-neighbor edges."
         )
-    undirected = np.asarray(sorted(pairs), dtype=np.int64).reshape((-1, 2))
-    directed = np.concatenate((undirected, undirected[:, ::-1]), axis=0)
-    directed = directed[np.lexsort((directed[:, 1], directed[:, 0]))]
-    counts = np.bincount(directed[:, 0], minlength=owners.size)
     offsets = np.concatenate(([0], np.cumsum(counts))).astype(np.int64)
-    return offsets, directed[:, 1].astype(np.int32)
+    neighbors = np.empty((int(offsets[-1]),), dtype=np.int32)
+    for block, block_counts, values in row_blocks:
+        within = np.arange(values.size, dtype=np.int64) - np.repeat(
+            np.cumsum(block_counts) - block_counts, block_counts
+        )
+        neighbors[np.repeat(offsets[block], block_counts) + within] = values
+    return offsets, neighbors
+
+
+def _rounded_toward(value: Fraction, direction: float, /) -> float:
+    """Return the nearest binary64 value not beyond ``value`` toward ``direction``."""
+    rounded = float(value)
+    if (direction < 0 and Fraction.from_float(rounded) > value) or (
+        direction > 0 and Fraction.from_float(rounded) < value
+    ):
+        rounded = nextafter(rounded, direction)
+    return rounded
 
 
 def _box_tetrahedra(
@@ -720,8 +828,12 @@ def _base_cells_are_unclipped(
             faces_by_cell[first].append(face)
         if second >= 0:
             faces_by_cell[second].append(face)
+    remote_sites = np.asarray(restricted.face_remote_sites, dtype=np.int64)
     return all(
-        all(owners[face, 0] >= 0 and owners[face, 1] >= 0 for face in faces_by_cell[row])
+        all(
+            (owners[face, 0] >= 0 and owners[face, 1] >= 0) or remote_sites[face] >= 0
+            for face in faces_by_cell[row]
+        )
         for row in cell_rows.values()
     )
 
@@ -752,6 +864,8 @@ def _polyhedral_quotient_from_power(
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    dict[int, int],
+    dict[int, np.ndarray],
 ]:
     points = np.asarray(restricted.vertices, dtype=np.float64)
     offsets = np.asarray(restricted.face_offsets, dtype=np.int64)
@@ -839,6 +953,7 @@ def _polyhedral_quotient_from_power(
         for row in carrier_points
     )
     carrier_bank = np.asarray(restricted.vertex_carriers, dtype=np.int64)
+    witness_bank = np.asarray(restricted.vertex_sites, dtype=np.int64)
     identity_by_vertex: dict[int, _PowerVertexKey] = {}
     exact_point_by_vertex: dict[int, tuple[Fraction, Fraction, Fraction]] = {}
     carrier_proof_by_vertex: dict[int, _CarrierProof] = {}
@@ -851,7 +966,7 @@ def _polyhedral_quotient_from_power(
         start, stop = map(
             int, np.asarray(restricted.vertex_site_offsets)[vertex : vertex + 2]
         )
-        witnesses = np.asarray(restricted.vertex_sites, dtype=np.int64)[start:stop]
+        witnesses = witness_bank[start:stop]
         if witnesses.size == 0 or np.any(
             (witnesses < 0) | (witnesses >= image_owners.size)
         ):
@@ -957,6 +1072,12 @@ def _polyhedral_quotient_from_power(
             if not np.any(image_windings[int(image)])
         )
 
+    normalized_native_faces = {
+        face: _convex_power_face_loop(
+            face_vertices[offsets[face] : offsets[face + 1]], exact_point_by_vertex
+        )
+        for face in {face for row in cell_rows.values() for face in incident[row]}
+    }
     loops_by_site = {
         point_row: tuple(
             _convex_power_face_loop(loop, exact_point_by_vertex) for loop in loops
@@ -983,7 +1104,7 @@ def _polyhedral_quotient_from_power(
     def native_witness(vertex: int, /) -> tuple[object, ...]:
         offsets = np.asarray(restricted.vertex_site_offsets, dtype=np.int64)
         start, stop = map(int, offsets[vertex : vertex + 2])
-        image_rows = np.asarray(restricted.vertex_sites, dtype=np.int64)[start:stop]
+        image_rows = witness_bank[start:stop]
         site_ids = tuple(
             int(point_ids[int(image_owners[int(image)])]) for image in image_rows
         )
@@ -1150,6 +1271,8 @@ def _polyhedral_quotient_from_power(
         vertex_absolute_windings,
         representatives,
         shifts,
+        {vertex: vertex_row_by_key[key] for vertex, key in identity_by_vertex.items()},
+        normalized_native_faces,
     )
 
 
@@ -1463,6 +1586,8 @@ def _owner_local_power_support_exchange(
     source_manifest_id: str,
     axis_name: str,
     /,
+    *,
+    competitor_filter: Callable[[np.ndarray, float], bool] | None = None,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -1644,6 +1769,19 @@ def _owner_local_power_support_exchange(
                     )
     _owner_group_fail_if_any(
         local_error, execution_group, axis_name, "periodic power support merge"
+    )
+    local_error = None
+    if competitor_filter is not None:
+        try:
+            new_records = {
+                identifier: record
+                for identifier, record in new_records.items()
+                if competitor_filter(record[1], record[2])
+            }
+        except Exception as error:
+            local_error = f"{type(error).__name__}: {error}"
+    _owner_group_fail_if_any(
+        local_error, execution_group, axis_name, "exact power competitor exclusion"
     )
     new_ids = np.asarray(sorted(new_records), dtype=np.int64)
     if new_ids.size:
@@ -1946,6 +2084,300 @@ def _owner_local_periodic_site_weights_for_support(
     return result_bits.view(np.float64)
 
 
+def _power_competitor_filter(
+    lattice: np.ndarray,
+    cells: tuple[_PowerSupportCell, ...],
+    /,
+) -> Callable[[np.ndarray, float], bool]:
+    """Exclude a site only when every exact image misses every current cell."""
+    inverse = _exact_lattice_inverse(lattice)
+    exact_lattice = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in lattice
+    )
+
+    def may_compete(point: np.ndarray, weight: float, /) -> bool:
+        candidate = tuple(Fraction.from_float(float(value)) for value in point)
+        candidate_weight = Fraction.from_float(weight)
+        for site, site_weight, vertices, radius in cells:
+            delta = tuple(candidate[axis] - site[axis] for axis in range(3))
+            fractional = tuple(
+                sum(
+                    (delta[axis] * inverse[axis][coordinate] for axis in range(3)),
+                    Fraction(0),
+                )
+                for coordinate in range(3)
+            )
+            axis_radii = tuple(
+                Fraction.from_float(
+                    _upper_sqrt(
+                        radius
+                        * radius
+                        * sum(
+                            (inverse[axis][coordinate] ** 2 for axis in range(3)),
+                            Fraction(0),
+                        )
+                    )
+                )
+                for coordinate in range(3)
+            )
+            winding_ranges = tuple(
+                range(
+                    ceil(-axis_radii[axis] - fractional[axis]),
+                    floor(axis_radii[axis] - fractional[axis]) + 1,
+                )
+                for axis in range(3)
+            )
+            for winding in product(*winding_ranges):
+                displacement = tuple(
+                    delta[axis]
+                    + sum(
+                        (
+                            winding[generator] * exact_lattice[generator][axis]
+                            for generator in range(3)
+                        ),
+                        Fraction(0),
+                    )
+                    for axis in range(3)
+                )
+                distance_squared = sum(
+                    (value * value for value in displacement), Fraction(0)
+                )
+                if distance_squared > radius * radius:
+                    continue
+                constant = distance_squared + site_weight - candidate_weight
+                if any(
+                    constant
+                    - 2
+                    * sum(
+                        (
+                            (vertex[axis] - site[axis]) * displacement[axis]
+                            for axis in range(3)
+                        ),
+                        Fraction(0),
+                    )
+                    <= 0
+                    for vertex in vertices
+                ):
+                    return True
+        return False
+
+    return may_compete
+
+
+def _owner_local_power_candidate_support(
+    domain: PeriodicPointOrbits,
+    source_id: str,
+    source_revision: str,
+    points: np.ndarray,
+    point_ids: np.ndarray,
+    point_owners: np.ndarray,
+    weights: np.ndarray,
+    owned: np.ndarray,
+    weight_max: float,
+    image_owners: np.ndarray,
+    image_windings: np.ndarray,
+    coordinate_offsets: np.ndarray,
+    coordinate_components: np.ndarray,
+    carrier_points: np.ndarray,
+    restricted: meshcore.RestrictedPowerCells,
+    cell_rows: dict[int, int],
+    /,
+) -> tuple[
+    np.ndarray, tuple[_PowerSupportCell, ...], float, Callable[[np.ndarray, float], bool]
+]:
+    """Enclose provisional competitors, reporting the full exclusion radius."""
+    from phydrax.discretization._periodic_topology import _entity_vertex_rows
+    from phydrax.geometry._rational import fraction_up
+
+    resident_ids = set(map(int, point_ids[owned]))
+    cell_sites = np.asarray(restricted.cell_sites, dtype=np.int64)
+    face_cells = np.asarray(restricted.face_cells, dtype=np.int64)
+    owned_cells = {cell for point, cell in cell_rows.items() if owned[point]}
+    remote_sites = np.asarray(restricted.face_remote_sites, dtype=np.int64)
+    if face_cells.ndim != 2 or face_cells.shape[1] != 2:
+        raise ValueError("Native power face ownership must have two columns.")
+    for face in range(face_cells.shape[0]):
+        first, second = face_cells[face, 0], face_cells[face, 1]
+        if int(first) in owned_cells:
+            other = int(second)
+        elif int(second) in owned_cells:
+            other = int(first)
+        else:
+            continue
+        if 0 <= other < cell_sites.size:
+            image = int(cell_sites[other])
+        else:
+            image = int(remote_sites[face])
+            if image < 0:
+                raise ValueError("A provisional owned power face lacks its competitor.")
+        if not 0 <= image < image_owners.size:
+            raise ValueError("A provisional power face has invalid image ancestry.")
+        resident_ids.add(int(point_ids[int(image_owners[image])]))
+
+    proof_cells: list[_PowerSupportCell] = []
+    maximum_required_radius = 0.0
+    if cell_rows:
+        lifted, exact_vertices, *_ = _polyhedral_quotient_from_power(
+            domain,
+            source_id,
+            source_revision,
+            point_ids,
+            point_owners,
+            weights,
+            image_owners,
+            image_windings,
+            coordinate_offsets,
+            coordinate_components,
+            carrier_points,
+            restricted,
+            cell_rows,
+        )
+        cell_vertices = _entity_vertex_rows(lifted)[3]
+        cell_ids = np.asarray(lifted.entity_set(3).entity_ids, dtype=np.int64)
+        source_row = {int(identifier): row for row, identifier in enumerate(point_ids)}
+        for identifier, vertices in zip(cell_ids, cell_vertices, strict=True):
+            row = source_row[int(identifier)]
+            site = tuple(Fraction.from_float(float(value)) for value in points[row])
+            radius_squared = max(
+                sum(
+                    (
+                        (exact_vertices[int(vertex)][axis] - site[axis]) ** 2
+                        for axis in range(3)
+                    ),
+                    Fraction(0),
+                )
+                for vertex in vertices
+            )
+            competitor_squared = (
+                radius_squared
+                - Fraction.from_float(float(weights[row]))
+                + Fraction.from_float(weight_max)
+            )
+            # If a site image beats this cell at x, triangle inequality gives
+            # |competitor-site| <= |x-site| + |x-competitor|.  A convex cell's
+            # maximum squared distance from its site occurs at a vertex.
+            query_radius = fraction_up(
+                Fraction.from_float(_upper_sqrt(radius_squared))
+                + Fraction.from_float(_upper_sqrt(competitor_squared))
+            )
+            maximum_required_radius = max(maximum_required_radius, query_radius)
+            proof_cells.append(
+                (
+                    site,
+                    Fraction.from_float(float(weights[row])),
+                    tuple(tuple(exact_vertices[int(vertex)]) for vertex in vertices),
+                    Fraction.from_float(query_radius),
+                )
+            )
+    return (
+        np.asarray(sorted(resident_ids), dtype=np.int64),
+        tuple(proof_cells),
+        maximum_required_radius,
+        _power_competitor_filter(
+            np.asarray(domain.cell.vectors, dtype=np.float64), tuple(proof_cells)
+        ),
+    )
+
+
+def _power_support_boxes_from_cells(
+    cells: tuple[_PowerSupportCell, ...],
+    origin: np.ndarray,
+    lattice: np.ndarray,
+    query_limit: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    from phydrax.meshing._distribution import _periodic_power_support_boxes
+
+    lower_rows: list[np.ndarray] = []
+    upper_rows: list[np.ndarray] = []
+    for site, _, _, radius in cells:
+        lower, upper = _periodic_power_support_boxes(
+            np.asarray([[float(value) for value in site]], dtype=np.float64),
+            origin,
+            lattice,
+            min(float(radius), query_limit),
+        )
+        lower_rows.append(lower[0])
+        upper_rows.append(upper[0])
+    return (
+        np.asarray(lower_rows, dtype=np.float64).reshape((-1, 3)),
+        np.asarray(upper_rows, dtype=np.float64).reshape((-1, 3)),
+    )
+
+
+def _native_power_face_evidence(
+    cell: PeriodicCell,
+    restricted: meshcore.RestrictedPowerCells,
+    cell_rows: dict[int, int],
+    point_ids: np.ndarray,
+    point_owners: np.ndarray,
+    rank: int,
+    image_owners: np.ndarray,
+    image_windings: np.ndarray,
+    native_vertex_rows: dict[int, int],
+    carrier_tet_count: int,
+    normalized_native_faces: dict[int, np.ndarray],
+    vertex_source_ids: np.ndarray,
+    vertex_absolute_windings: np.ndarray,
+    /,
+) -> tuple[Any, ...]:
+    """Bind each owned native interface to its exact quotient face and neighbor."""
+    from ._native_periodic import _canonical_periodic_face_key
+
+    orders = identification_orders(cell)
+    sites = np.asarray(restricted.cell_sites, dtype=np.int64)
+    sides = np.asarray(restricted.face_cells, dtype=np.int64)
+    remotes = np.asarray(restricted.face_remote_sites, dtype=np.int64)
+    remote_tets = np.asarray(restricted.face_remote_tets, dtype=np.int64)
+    point_by_cell = {int(value): int(key) for key, value in cell_rows.items()}
+    evidence = []
+    if sides.ndim != 2 or sides.shape[1] != 2:
+        raise ValueError("Native power face ownership must have two columns.")
+    for face in range(sides.shape[0]):
+        left, right = sides[face, 0], sides[face, 1]
+        for selected, opposite, direction in (
+            (int(left), int(right), 1),
+            (int(right), int(left), -1),
+        ):
+            point_row = point_by_cell.get(selected)
+            if point_row is None or int(point_owners[point_row]) != rank:
+                continue
+            if opposite >= 0:
+                other_image = int(sites[opposite])
+                remote_tet = -1
+            else:
+                other_image = int(remotes[face])
+                remote_tet = int(remote_tets[face])
+                if other_image < 0 or not 0 <= remote_tet < carrier_tet_count:
+                    raise ValueError(
+                        "Owned periodic power face lacks remote component evidence."
+                    )
+            if not 0 <= other_image < image_owners.size:
+                raise ValueError("Periodic power face has invalid remote image evidence.")
+            other_point = int(image_owners[other_image])
+            local_image = int(sites[selected])
+            loop = normalized_native_faces[face]
+            rows = np.asarray([native_vertex_rows[int(v)] for v in loop], dtype=np.int64)
+            key, orientation = _canonical_periodic_face_key(
+                vertex_source_ids[rows], vertex_absolute_windings[rows], orders
+            )
+            winding = reduce_periodic_exponents(
+                image_windings[other_image] - image_windings[local_image], orders
+            )
+            evidence.append(
+                (
+                    key,
+                    direction * orientation,
+                    int(point_ids[point_row]),
+                    int(point_ids[other_point]),
+                    int(point_owners[other_point]),
+                    tuple(int(value) for value in winding),
+                    remote_tet,
+                )
+            )
+    return tuple(evidence)
+
+
 def _owner_local_periodic_power_candidate(
     source: NativePeriodicSource,
     rank: int,
@@ -2000,6 +2432,14 @@ def _owner_local_periodic_power_candidate(
     if weights is None:
         weights = np.zeros((point_ids.size,), dtype=np.float64)
     owned = point_owners == rank
+    # Rebuild support from authored owned sites even when replay is given a
+    # previously expanded source context.  Retaining its old ghost bank here
+    # would grow the resident-cell query on every reconstruction.
+    points = points[owned]
+    point_ids = point_ids[owned]
+    point_owners = point_owners[owned]
+    weights = weights[owned]
+    owned = np.ones(point_ids.shape, dtype=np.bool_)
     origin = np.asarray(domain.cell.origin, dtype=np.float64)
     lattice = np.ascontiguousarray(np.asarray(domain.cell.vectors, dtype=np.float64))
     owner_bounds, global_lower, global_upper, weight_min, weight_max = (
@@ -2019,11 +2459,12 @@ def _owner_local_periodic_power_candidate(
         + Fraction.from_float(weight_max)
         - Fraction.from_float(weight_min)
     )
+    # This density-scaled first query is only a seed.  The exact candidate
+    # cells below determine every subsequent query and the termination proof.
+    resident_site_ids = point_ids[owned].copy()
+    seed_radius = _outward_scalar(radius / max(1.0, float(np.sqrt(total))))
     support_lower, support_upper = _periodic_power_support_boxes(
-        points[owned],
-        origin,
-        lattice,
-        2.0 * influence_radius,
+        points[owned], origin, lattice, seed_radius
     )
     (
         points,
@@ -2050,17 +2491,6 @@ def _owner_local_periodic_power_candidate(
         source_manifest_id,
         axis_name,
     )
-    # The exact power context is authored over this sorted support bank (owned
-    # and remote support sites); `weights` and image owners index its rows, not
-    # the rank-local authored `domain`.
-    support_domain = PeriodicPointOrbits(domain.cell, points, point_ids)
-    source = NativePeriodicSource(
-        support_domain,
-        source.source_id,
-        source.source_revision,
-        site_weights=weights if weights_present else None,
-        point_owner_ranks=point_owners,
-    )
     dimension = source.ambient_dimension
     inverse = _exact_lattice_inverse(lattice)
     margin = radius
@@ -2074,80 +2504,227 @@ def _owner_local_periodic_power_candidate(
     domain_points = np.zeros((0, dimension), dtype=np.float64)
     domain_tets = np.zeros((0, 4), dtype=np.int32)
     domain_face_facets = np.zeros((0, 4), dtype=np.int32)
+    query_limit = seed_radius
+    # Images, exact coordinates, the radius graph and the carrier are pure
+    # functions of these exact inputs.  A support round that changes only the
+    # resident selection reuses them instead of rebuilding identical banks.
+    prepared_inputs: tuple[object, ...] | None = None
     while True:
-        local_unclipped = True
-        if np.any(owned):
-            carrier_lower = _outward_bound(global_lower - margin, -np.inf)
-            carrier_upper = _outward_bound(global_upper + margin, np.inf)
-            image_owners, image_windings = _power_images(
-                points,
-                point_ids,
-                inverse,
-                carrier_lower,
-                carrier_upper,
-                influence_radius,
-                preferred_owner,
+        resident_site_mask = np.isin(point_ids, resident_site_ids, assume_unique=True)
+        while True:
+            local_unclipped = True
+            local_error = None
+            if np.any(owned):
+                try:
+                    preferred_owner = int(np.argmax(weights))
+                    carrier_lower = _outward_bound(global_lower - margin, -np.inf)
+                    carrier_upper = _outward_bound(global_upper + margin, np.inf)
+                    # Any image active at a point is a nearest copy of its
+                    # own site, so it lies within the lattice covering radius
+                    # regardless of that site's weight.  Thus active images
+                    # at a common point are at most twice that radius apart.
+                    inputs = (
+                        points.dtype.str,
+                        points.shape,
+                        points.tobytes(),
+                        point_ids.dtype.str,
+                        point_ids.tobytes(),
+                        carrier_lower.tobytes(),
+                        carrier_upper.tobytes(),
+                        preferred_owner,
+                    )
+                    if inputs != prepared_inputs:
+                        prepared_inputs = None
+                        image_owners, image_windings = _power_images(
+                            points,
+                            point_ids,
+                            inverse,
+                            carrier_lower,
+                            carrier_upper,
+                            radius,
+                            preferred_owner,
+                        )
+                        coordinate_offsets, coordinate_components = (
+                            _exact_image_coordinates(
+                                points, lattice, image_owners, image_windings
+                            )
+                        )
+                        neighbor_offsets, neighbors = _image_radius_neighbor_csr(
+                            image_owners,
+                            image_windings,
+                            coordinate_offsets,
+                            coordinate_components,
+                            radius,
+                        )
+                        domain_points, domain_tets, domain_face_facets = _box_tetrahedra(
+                            carrier_lower, carrier_upper
+                        )
+                        prepared_inputs = inputs
+                    selected_images = np.asarray(
+                        [
+                            _image_row(image_owners, image_windings, int(row))
+                            for row in np.flatnonzero(resident_site_mask)
+                        ],
+                        dtype=np.int32,
+                    )
+
+                    restricted = meshcore.restricted_power_cells_exact(
+                        points,
+                        weights,
+                        image_owners,
+                        coordinate_offsets,
+                        coordinate_components,
+                        neighbor_offsets,
+                        neighbors,
+                        np.zeros((image_owners.size,), dtype=np.int8),
+                        domain_points,
+                        domain_tets,
+                        np.zeros((domain_tets.shape[0],), dtype=np.int32),
+                        domain_face_facets,
+                        selected_sites=selected_images,
+                    )
+                    cell_sites = np.asarray(restricted.cell_sites, dtype=np.int64)
+                    cell_rows = {}
+                    for point_row in np.flatnonzero(resident_site_mask):
+                        image = _image_row(image_owners, image_windings, int(point_row))
+                        rows = np.flatnonzero(cell_sites == image)
+                        if rows.size > 1:
+                            raise ValueError(
+                                "A periodic power site has multiple disconnected cells."
+                            )
+                        if rows.size:
+                            cell_rows[int(point_row)] = int(rows[0])
+                    local_unclipped = _base_cells_are_unclipped(restricted, cell_rows)
+                except Exception as error:
+                    local_error = f"{type(error).__name__}: {error}"
+            _owner_group_fail_if_any(
+                local_error, execution_group, axis_name, "restricted owner power cells"
             )
-            coordinate_offsets, coordinate_components = _exact_image_coordinates(
-                points, lattice, image_owners, image_windings
+            flags = _owner_group_allgather(
+                np.asarray([local_unclipped], dtype=np.bool_),
+                execution_group,
+                axis_name,
             )
-            neighbor_offsets, neighbors = _image_radius_neighbor_csr(
-                image_owners,
-                image_windings,
-                coordinate_offsets,
-                coordinate_components,
-                influence_radius,
-            )
-            domain_points, domain_tets, domain_face_facets = _box_tetrahedra(
-                carrier_lower, carrier_upper
-            )
+            if np.all(np.asarray(flags, dtype=np.bool_)):
+                break
+            margin = _outward_scalar(margin * 2.0)
+
+        local_error = None
+        next_resident = resident_site_ids
+        proof_cells: tuple[_PowerSupportCell, ...] = ()
+        maximum_required_radius = 0.0
+        competitor_filter = _power_competitor_filter(lattice, ())
+        if cell_rows:
             try:
-                restricted = meshcore.restricted_power_cells_exact(
+                if restricted is None:
+                    raise ValueError("Provisional power cells lack their exact carrier.")
+                (
+                    next_resident,
+                    proof_cells,
+                    maximum_required_radius,
+                    competitor_filter,
+                ) = _owner_local_power_candidate_support(
+                    domain,
+                    source.source_id,
+                    source.source_revision,
                     points,
+                    point_ids,
+                    point_owners,
                     weights,
+                    owned,
+                    weight_max,
                     image_owners,
+                    image_windings,
                     coordinate_offsets,
                     coordinate_components,
-                    neighbor_offsets,
-                    neighbors,
-                    np.zeros((image_owners.size,), dtype=np.int8),
                     domain_points,
-                    domain_tets,
-                    np.zeros((domain_tets.shape[0],), dtype=np.int32),
-                    domain_face_facets,
+                    restricted,
+                    cell_rows,
                 )
-                base_images = {
-                    int(point_row): _image_row(image_owners, image_windings, point_row)
-                    for point_row in range(point_ids.size)
-                }
-                all_cell_rows = _base_image_cell_rows(
-                    restricted, base_images, point_ids.size
-                )
-                cell_rows = {
-                    point_row: all_cell_rows[point_row]
-                    for point_row in range(point_ids.size)
-                    if owned[point_row]
-                }
-                if not cell_rows:
-                    raise ValueError("Owned power sites have no restricted cells.")
-                local_unclipped = _base_cells_are_unclipped(restricted, cell_rows)
             except Exception as error:
-                local_error = str(error)
-            else:
-                local_error = None
-        else:
-            local_error = None
+                local_error = f"{type(error).__name__}: {error}"
         _owner_group_fail_if_any(
-            local_error, execution_group, axis_name, "restricted owner power cells"
+            local_error, execution_group, axis_name, "exact power support bounds"
         )
-        flags = _owner_group_allgather(
-            np.asarray([local_unclipped], dtype=np.bool_),
-            execution_group,
-            axis_name,
-        )
-        if np.all(np.asarray(flags, dtype=np.bool_)):
+        closure_complete = False
+        while True:
+            local_error = None
+            try:
+                support_lower, support_upper = _power_support_boxes_from_cells(
+                    proof_cells, origin, lattice, query_limit
+                )
+            except Exception as error:
+                local_error = f"{type(error).__name__}: {error}"
+                support_lower = np.zeros((0, dimension), dtype=np.float64)
+                support_upper = support_lower.copy()
+            _owner_group_fail_if_any(
+                local_error, execution_group, axis_name, "power support query bounds"
+            )
+            previous_count = point_ids.size
+            (
+                points,
+                point_ids,
+                point_owners,
+                weights,
+                owned,
+                round_ids,
+            ) = _owner_local_power_support_exchange(
+                points,
+                point_ids,
+                point_owners,
+                weights,
+                owned,
+                origin,
+                lattice,
+                support_lower,
+                support_upper,
+                owner_bounds,
+                bucket_ids,
+                bucket_owners,
+                rank,
+                execution_group,
+                source_manifest_id,
+                f"{axis_name}_exact_support",
+                competitor_filter=competitor_filter,
+            )
+            support_round_ids += round_ids
+            changed = point_ids.size != previous_count or not np.array_equal(
+                next_resident, resident_site_ids
+            )
+            resident_site_ids = next_resident
+            changes = _owner_group_allgather(
+                np.asarray([changed], dtype=np.bool_), execution_group, axis_name
+            )
+            complete = query_limit >= maximum_required_radius
+            completion = _owner_group_allgather(
+                np.asarray([complete], dtype=np.bool_), execution_group, axis_name
+            )
+            if np.any(np.asarray(changes, dtype=np.bool_)):
+                break
+            if np.all(np.asarray(completion, dtype=np.bool_)):
+                closure_complete = True
+                break
+            if not complete:
+                from phydrax.geometry._rational import fraction_up
+
+                query_limit = fraction_up(
+                    min(
+                        2 * Fraction.from_float(query_limit),
+                        Fraction.from_float(maximum_required_radius),
+                    )
+                )
+        if closure_complete:
             break
-        margin = _outward_scalar(margin * 2.0)
+
+    # Source context and selected cells bind the same closed support bank.
+    support_domain = PeriodicPointOrbits(domain.cell, points, point_ids)
+    source = NativePeriodicSource(
+        support_domain,
+        source.source_id,
+        source.source_revision,
+        site_weights=weights if weights_present else None,
+        point_owner_ranks=point_owners,
+    )
 
     source_map = None
     geometry = None
@@ -2160,6 +2737,7 @@ def _owner_local_periodic_power_candidate(
     vertex_source_ids = np.zeros((0,), dtype=np.int64)
     vertex_owner_ranks = np.zeros((0,), dtype=np.int32)
     vertex_absolute_windings = np.zeros((0, dimension), dtype=np.int64)
+    native_face_evidence: tuple[Any, ...] = ()
     # Every owner joins the geometry failure collective, including owners
     # without cells; a conditional collective would desynchronize the group.
     local_error = None
@@ -2180,6 +2758,8 @@ def _owner_local_periodic_power_candidate(
                 vertex_absolute_windings,
                 vertex_representatives,
                 vertex_shifts,
+                native_vertex_rows,
+                normalized_native_faces,
             ) = _polyhedral_quotient_from_power(
                 domain,
                 source.source_id,
@@ -2194,6 +2774,21 @@ def _owner_local_periodic_power_candidate(
                 domain_points,
                 restricted,
                 cell_rows,
+            )
+            native_face_evidence = _native_power_face_evidence(
+                domain.cell,
+                restricted,
+                cell_rows,
+                point_ids,
+                point_owners,
+                rank,
+                image_owners,
+                image_windings,
+                native_vertex_rows,
+                domain_tets.shape[0],
+                normalized_native_faces,
+                vertex_source_ids,
+                vertex_absolute_windings,
             )
             carrier_mesh = CellMesh(
                 domain_points,
@@ -2212,18 +2807,46 @@ def _owner_local_periodic_power_candidate(
                 image_windings,
                 weights_present=weights_present,
             )
+            # Retain only witnesses for the selected resident cells.  The native
+            # clipping result also contains cells and vertices for competitor
+            # images; those are transient construction data, not source
+            # authority for this mesh.
+            offsets = np.asarray(restricted.vertex_site_offsets, dtype=np.int64)
+            witness_bank = np.asarray(restricted.vertex_sites, dtype=np.int64)
+            witness_rows = [
+                witness_bank[offsets[row] : offsets[row + 1]]
+                for row in output_vertex_rows
+            ]
+            local_offsets = np.concatenate(
+                (
+                    np.zeros(1, dtype=np.int64),
+                    np.cumsum([row.size for row in witness_rows], dtype=np.int64),
+                )
+            )
+            selected_cells = np.asarray(
+                [cell_rows[row] for row in sorted(cell_rows)], dtype=np.int64
+            )
+            local_restricted = SimpleNamespace(
+                vertices=np.asarray(restricted.vertices)[output_vertex_rows],
+                vertex_site_offsets=local_offsets,
+                vertex_sites=np.concatenate(witness_rows),
+                vertex_carriers=np.asarray(restricted.vertex_carriers)[
+                    output_vertex_rows
+                ],
+                cell_sites=np.asarray(restricted.cell_sites)[selected_cells],
+                cell_regions=np.asarray(restricted.cell_regions)[selected_cells],
+            )
             source_map = ExactPowerCellGeometrySource(
                 np.asarray(exact_image_points, dtype=np.float64),
                 np.asarray(weights[image_owners], dtype=np.float64),
                 carrier_mesh,
-                restricted,
+                local_restricted,
                 source_id=source.source_id,
                 source_revision=source.source_revision,
                 periodic_source_context=context,
                 exact_site_points=exact_image_points,
                 precomputed_exact_vertices=exact_vertex_bank,
                 precomputed_carrier_barycentrics=carrier_barycentric_bank,
-                output_vertex_indices=output_vertex_rows,
             )
             mesh = _bind_power_periodic_topology(
                 lifted,
@@ -2273,6 +2896,7 @@ def _owner_local_periodic_power_candidate(
         "global_weight_bounds": (weight_min, weight_max),
         "influence_radius": influence_radius,
         "carrier_margin": margin,
+        "native_power_face_evidence": native_face_evidence,
     }
     return {
         "candidate": {
@@ -2291,12 +2915,17 @@ def _owner_local_periodic_power_candidate(
         "mesh": mesh,
         "geometry": geometry,
         "source_map": source_map,
+        "native_face_evidence": native_face_evidence,
         "exact_vertex_bank": exact_vertex_bank,
         "vertex_source_ids": vertex_source_ids,
         "vertex_owner_ranks": vertex_owner_ranks,
         "vertex_absolute_windings": vertex_absolute_windings,
         "cell_owner_ranks": (
-            np.full((mesh.entity_set(3).entity_ids.size,), rank, dtype=np.int32)
+            point_owners[
+                np.searchsorted(
+                    point_ids, np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
+                )
+            ].astype(np.int32, copy=False)
             if mesh is not None
             else np.zeros((0,), dtype=np.int32)
         ),
@@ -2336,6 +2965,7 @@ def _owner_local_periodic_power_mesh_data(
         entity_offsets = {degree: np.zeros((1,), dtype=np.int64) for degree in range(4)}
         entity_values = {degree: np.zeros((0,), dtype=np.int32) for degree in range(4)}
         return {
+            "native_face_evidence": power["native_face_evidence"],
             "cell_rows": cell_rows,
             "cell_ids": cell_ids,
             "owned": np.zeros((0,), dtype=np.bool_),
@@ -2663,13 +3293,17 @@ def _owner_local_periodic_power_mesh_data(
             support_upper[row, axis] = fraction_up(
                 max(point[axis] for point in fractional_points)
             )
+    cell_owner_ranks = np.asarray(power["cell_owner_ranks"], dtype=np.int32)
+    if cell_owner_ranks.shape != cell_ids.shape:
+        raise ValueError("Periodic power cell ownership differs from its resident cells.")
     return {
+        "native_face_evidence": power["native_face_evidence"],
         "cell_rows": cell_rows,
         "cell_ids": cell_ids,
-        "owned": np.ones(cell_ids.shape, dtype=np.bool_),
+        "owned": cell_owner_ranks == rank,
         "cell_measures": cell_measures,
         "exact_cell_measures": tuple(exact_cell_measures),
-        "cell_owner_ranks": np.full(cell_ids.shape, rank, dtype=np.int32),
+        "cell_owner_ranks": cell_owner_ranks,
         "support_cell_mask": np.ones(cell_ids.shape, dtype=np.bool_),
         "vertex_valid": combined_vertex_valid,
         "vertex_rows": vertex_rows,

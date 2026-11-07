@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
 
@@ -32,6 +32,7 @@ from ._patches import (
     _validate_surface_source_shadows,
     AbstractCurve,
     AbstractSurfacePatch,
+    CircleCurve,
     CylinderPatch,
     LineCurve,
     PlanePatch,
@@ -41,6 +42,7 @@ from ._patches import (
 )
 from ._placed import PlacedSurface
 from ._trim_helpers import PeriodOffset
+
 
 if TYPE_CHECKING:
     from .._meshing_domain import SourcePreparation
@@ -187,6 +189,35 @@ def _family(surface: AbstractSurfacePatch, /) -> _Family | None:
             and _frame(first, second, axis)
         ):
             return "sphere"
+    elif type(patch) is RevolutionSurface and type(patch.curve) is CircleCurve:
+        # A circular meridian in a plane through the rotation axis gives a
+        # ring torus when its entire circle stays strictly on one radial side.
+        # Check the represented frame exactly; no normalization of the source
+        # axis or approximation of its coefficients is permitted here.
+        profile = patch.curve
+        origin = _represented_vector(patch.axis_origin)
+        axis = _represented_vector(patch.axis_direction)
+        first, second = profile.first_axis_exact, profile.second_axis_exact
+        center = profile.center_exact
+        if origin is None or axis is None or len(center) != 3:
+            return None
+        normal = _exact_cross3(first, second)
+        relative = tuple(center[i] - origin[i] for i in range(3))
+        axial = _exact_dot3(relative, axis)
+        radial = tuple(relative[i] - axial * axis[i] for i in range(3))
+        if (
+            _exact_dot3(axis, axis) == 1
+            and _exact_dot3(first, first) == 1
+            and _exact_dot3(second, second) == 1
+            and _exact_dot3(first, second) == 0
+            and _exact_dot3(axis, normal) == 0
+            and _exact_dot3(relative, normal) == 0
+            and _positive(profile.radius_exact)
+            and _positive(
+                _exact_dot3(radial, radial) - profile.radius_exact * profile.radius_exact
+            )
+        ):
+            return "ring-torus"
     elif type(patch) is RevolutionSurface and type(patch.curve) is LineCurve:
         line = _prepare_revolution_line_profile(patch, patch.curve)
         if (
@@ -210,7 +241,9 @@ def _revolution_plane_pole(surface: AbstractSurfacePatch, /) -> Fraction | None:
     from .._meshing_domain import _PlacedSurfacePatch
 
     while isinstance(surface, (PlacedSurface, _PlacedSurfacePatch)):
-        surface = surface.definition if isinstance(surface, PlacedSurface) else surface.source
+        surface = (
+            surface.definition if isinstance(surface, PlacedSurface) else surface.source
+        )
     if not isinstance(surface, RevolutionSurface):
         return None
     line = _prepare_revolution_line_profile(surface, surface.curve)
@@ -340,7 +373,11 @@ def certify_source_embedding(
         elif family == "revolution-plane":
             root = _revolution_plane_pole(surface)
             low, high = bounds[0][1], bounds[1][1]
-            if root is None or not isinstance(low, Fraction) or not isinstance(high, Fraction):
+            if (
+                root is None
+                or not isinstance(low, Fraction)
+                or not isinstance(high, Fraction)
+            ):
                 return None
             if low < root < high:
                 return None
@@ -421,12 +458,12 @@ class BRepTrimSheetProof:
 
 
 def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof | None:
-    """Prove a cylindrical or exact polar-plane CAD source sheet.
+    """Prove a plane, cylindrical, polar-plane, or ring-torus CAD source sheet.
 
-    The full-turn quotient requires opposite coedge uses of one source edge on
-    the exact constant lines 0 and τ. Root identity with those lines fixes an
-    overhanging curved use's endpoint coordinates; interval derivatives then
-    prove the entire use remains between them. The proof binds this actual
+    A full-turn quotient requires opposite coedge uses of one source edge on
+    the exact constant lines 0 and τ. For an overhanging curved use, exact seam
+    identity, interval monotonicity, and an enclosure of any non-seam endpoint
+    prove that the use stays between the native seam lines. The proof binds this actual
     domain occurrence; it does not identify the trimmed interior, prove a
     separate solver region has the same symbolic full-period domain, or
     establish trim homotopy/partition.
@@ -434,6 +471,7 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
     from .._domain_boundary import (
         _exact_line_junction_box,
         _rooted_patch_chart_endpoints,
+        _rooted_patch_chart_junctions,
         exact_plane_chart,
     )
     from .._meshing_domain import (
@@ -458,7 +496,9 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
             if plane is None or surface.native_period_symbols()[0] != "two_pi":
                 return None
             endpoints = _rooted_patch_chart_endpoints(domain, patch)
-            values = tuple(point[1] for loop in endpoints for edge in loop for point in edge)
+            values = tuple(
+                point[1] for loop in endpoints for edge in loop for point in edge
+            )
             if not values or min(values) == max(values):
                 return None
             low, high = min(values), max(values)
@@ -466,8 +506,12 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
             if root is None:
                 return None
             poles = [
-                edge for loop, sides in zip(domain.patches[patch].loops, endpoints, strict=True)
-                for use, edge in zip(loop, sides, strict=True) if isinstance(use, PatchPoleUse)
+                edge
+                for loop, sides in zip(
+                    domain.patches[patch].loops, endpoints, strict=True
+                )
+                for use, edge in zip(loop, sides, strict=True)
+                if isinstance(use, PatchPoleUse)
             ]
             expected_poles = (root,) if root in (low, high) else ()
             if len(poles) != len(expected_poles) or any(
@@ -475,13 +519,16 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
             ):
                 return None
             embedding = certify_source_embedding(
-                surface, ((Fraction(0), low), (_TAU, high)),
-                deck_axes=(0,), pole_roots=expected_poles,
+                surface,
+                ((Fraction(0), low), (_TAU, high)),
+                deck_axes=(0,),
+                pole_roots=expected_poles,
             )
             if embedding is None:
                 return None
             return BRepTrimSheetProof(domain, domain.domain_id, patch, embedding)
-        if _family(surface) not in ("cylinder", "revolution-cylinder"):
+        family = _family(surface)
+        if family not in ("plane", "cylinder", "revolution-cylinder", "ring-torus"):
             return None
         uses = domain.patches[patch].loops
         coedges = authority.geometry.face_loops[face]
@@ -530,6 +577,15 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
         v_high = max(Fraction.from_float(float(box[1, 1])) for box in boxes.values())
         if v_low == v_high:
             return None
+        if family == "plane":
+            u_low = min(Fraction.from_float(float(box[0, 0])) for box in boxes.values())
+            u_high = max(Fraction.from_float(float(box[1, 0])) for box in boxes.values())
+            embedding = certify_source_embedding(
+                surface, ((u_low, v_low), (u_high, v_high))
+            )
+            if embedding is None:
+                return None
+            return BRepTrimSheetProof(domain, domain.domain_id, patch, embedding)
         seam_pairs = []
         for first, line in lines.items():
             if not _same(line[0], Fraction(0)):
@@ -564,11 +620,15 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
             if line is None or not (_same(line[0], Fraction(0)) or _same(line[0], _TAU)):
                 return None
             a, b = (neighbor, ui) if start else (ui, neighbor)
-            if not _same_brep_trim_endpoint(
-                authority, face, edges[a], edges[b], loop[a], loop[b]
-            ) and _exact_line_junction_box(
-                authority, face, edges[a], edges[b], loop[a], loop[b]
-            ) is None:
+            if (
+                not _same_brep_trim_endpoint(
+                    authority, face, edges[a], edges[b], loop[a], loop[b]
+                )
+                and _exact_line_junction_box(
+                    authority, face, edges[a], edges[b], loop[a], loop[b]
+                )
+                is None
+            ):
                 return None
             return line[0]
 
@@ -590,9 +650,24 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
                         endpoint_seam(li, ui, True),
                         endpoint_seam(li, ui, False),
                     )
-                    if start is None or stop is None or _same(start, stop):
+                    if start is None and stop is None:
                         return None
-                    expected = 1 if _same(start, Fraction(0)) else -1
+                    if start is not None and stop is not None and _same(start, stop):
+                        return None
+                    if start is None or stop is None:
+                        junctions = _rooted_patch_chart_junctions(
+                            domain, patch, preparation
+                        )[li]
+                        opposite = junctions[ui - 1 if start is None else ui]
+                        if opposite.lower[0] < 0 or _sheet_sign(
+                            _difference(opposite.upper[0], _TAU)
+                        ) not in (-1, 0):
+                            return None
+                    expected = (
+                        (1 if _same(start, Fraction(0)) else -1)
+                        if start is not None
+                        else (1 if stop is not None and _same(stop, _TAU) else -1)
+                    )
                     expected *= use.sense * (1 if use.last > use.first else -1)
                     first, last = ranges[(li, ui)]
                     lower, upper = preparation.curve_derivative_bounds(
@@ -703,7 +778,8 @@ def _certify_cad_trim_sheet_validated(
         if native.embedding.family == "revolution-plane":
             if any(
                 not native_v_low <= point[1] <= native_v_high
-                for segment in pieces for point in (segment.start, segment.stop)
+                for segment in pieces
+                for point in (segment.start, segment.stop)
             ):
                 return None
             v_low, v_high = native_v_low, native_v_high

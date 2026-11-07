@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
 import sys
+from fractions import Fraction
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, assert_never, get_args, Literal, TYPE_CHECKING
@@ -14,7 +16,7 @@ import numpy as np
 if TYPE_CHECKING:
     from phydrax.meshing._device_adaptation import OwnerLocalPeriodicAdaptiveResult
 
-type _FalseTransferClaim = Literal["stencil", "measures"]
+_FalseTransferClaim = Literal["stencil", "measures"]
 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -53,6 +55,306 @@ _INPUT_FRACTIONAL_POINTS = np.asarray(
 _INPUT_POINT_IDS = np.asarray((91, 4, 53, 17, 28, 61, 6, 43), dtype=np.int64)
 _INPUT_POINT_OWNERS = np.asarray((0, 1, 0, 1, 0, 1, 0, 1), dtype=np.int32)
 _CELL_BASIS = np.asarray(((1.2, 0.1), (0.35, 1.05)), dtype=np.float64)
+
+
+def _nested_periodic_cone(
+    parent_vertex_ids: tuple[int, int, int],
+    child_vertex_ids: tuple[int, int, int],
+    parent_lift: tuple[tuple[Fraction, Fraction], ...],
+    child_lift: tuple[tuple[Fraction, Fraction], ...],
+    stencil: Any,
+    /,
+) -> tuple[
+    tuple[tuple[Fraction, Fraction, Fraction], ...],
+    tuple[tuple[Fraction, Fraction, Fraction], ...],
+    tuple[tuple[Fraction, Fraction, Fraction, Fraction], ...],
+]:
+    """Build nested cones from exact, consistently lifted periodic triangles.
+
+    The last vertex of each cone is the common apex (0, 0, 1).  Rows of
+    the returned matrix interpolate parent tetrahedron corners to child corners.
+    Requiring the exact stencil action to reproduce the supplied lifted
+    coordinates rejects quotient IDs used with an inconsistent winding.
+    """
+    from phydrax.meshing._lineage import VertexInterpolationStencil
+
+    if not isinstance(stencil, VertexInterpolationStencil):
+        raise TypeError("Nested periodic cones require an exact vertex stencil.")
+    if (
+        len(parent_vertex_ids) != 3
+        or len(child_vertex_ids) != 3
+        or len(set(parent_vertex_ids)) != 3
+        or len(set(child_vertex_ids)) != 3
+        or len(parent_lift) != 3
+        or len(child_lift) != 3
+        or any(len(point) != 2 for point in (*parent_lift, *child_lift))
+        or any(
+            not isinstance(value, Fraction)
+            for point in (*parent_lift, *child_lift)
+            for value in point
+        )
+    ):
+        raise ValueError("Cone triangles require three distinct IDs and exact 2-D lifts.")
+    target_ids = np.asarray(stencil.target_global_ids, dtype=np.int64)
+    source_ids = np.asarray(stencil.source_global_ids, dtype=np.int64)
+    valid = np.asarray(stencil.valid, dtype=np.bool_)
+    target_rows = {int(identifier): row for row, identifier in enumerate(target_ids)}
+    parent_rows = {
+        int(identifier): row for row, identifier in enumerate(parent_vertex_ids)
+    }
+    zero, one = Fraction(0), Fraction(1)
+    weights: list[tuple[Fraction, Fraction, Fraction, Fraction]] = []
+    for identifier, expected_point in zip(child_vertex_ids, child_lift, strict=True):
+        if int(identifier) not in target_rows:
+            raise ValueError("Child vertex is absent from the exact periodic stencil.")
+        row = target_rows[int(identifier)]
+        barycentric = [zero, zero, zero]
+        for source, is_valid, coefficient in zip(
+            source_ids[row], valid[row], stencil.exact_weights[row], strict=True
+        ):
+            if not is_valid or coefficient == 0:
+                continue
+            parent_row = parent_rows.get(int(source))
+            if parent_row is None:
+                raise ValueError("Child stencil references a vertex outside its parent.")
+            barycentric[parent_row] += coefficient
+        if sum(barycentric, zero) != one or any(value < 0 for value in barycentric):
+            raise ValueError("Child vertex is not in the parent triangle.")
+        reconstructed = tuple(
+            sum(
+                (barycentric[index] * parent_lift[index][axis] for index in range(3)),
+                zero,
+            )
+            for axis in range(2)
+        )
+        if reconstructed != expected_point:
+            raise ValueError("Child stencil and exact periodic lift disagree.")
+        weights.append((barycentric[0], barycentric[1], barycentric[2], zero))
+
+    def signed_area(points: tuple[tuple[Fraction, Fraction], ...]) -> Fraction:
+        return (points[1][0] - points[0][0]) * (points[2][1] - points[0][1]) - (
+            points[1][1] - points[0][1]
+        ) * (points[2][0] - points[0][0])
+
+    if signed_area(parent_lift) == 0 or signed_area(child_lift) == 0:
+        raise ValueError("Nested periodic cones require nondegenerate triangles.")
+    apex = (zero, zero, one)
+    parent = tuple((x, y, zero) for x, y in parent_lift) + (apex,)
+    child = tuple((x, y, zero) for x, y in child_lift) + (apex,)
+    return parent, child, (*weights, (zero, zero, zero, one))
+
+
+def _periodic_cone_triangles(view: Any, /) -> dict[int, tuple[Any, Any]]:
+    """Return cell IDs mapped to exact lifted vertex IDs and coordinates."""
+    identifiers = np.asarray(view.cell_ids, dtype=np.int64)
+    if not identifiers.size:
+        return {}
+    exact = view.exact_vertex_coordinates
+    if exact is None or len(view.blocks) != 1 or view.blocks[0].cell_kind != "triangle":
+        raise ValueError("Cone transfer requires exact owner-local triangle geometry.")
+    block = view.blocks[0]
+    vertex_ids = np.asarray(view.vertex_ids, dtype=np.int64)
+    vertices = np.asarray(block.vertices, dtype=np.int64)
+    cell_ids = np.asarray(block.cell_ids, dtype=np.int64)
+    if (
+        vertices.shape != (cell_ids.size, 3)
+        or not np.all(np.asarray(block.vertex_valid, dtype=np.bool_))
+        or len(exact) != vertex_ids.size
+        or np.any(vertices < 0)
+        or np.any(vertices >= vertex_ids.size)
+        or len(set(map(int, cell_ids))) != cell_ids.size
+    ):
+        raise ValueError("Cone transfer found invalid compact triangle rows.")
+    return {
+        int(cell_id): (
+            tuple(int(vertex_ids[row]) for row in rows),
+            tuple(tuple(exact[row]) for row in rows),
+        )
+        for cell_id, rows in zip(cell_ids, vertices, strict=True)
+    }
+
+
+def _transfer_periodic_cone_kinematics(
+    source_local_values: Any, field_layout: Any, adaptive_result: Any, action: Any, /
+) -> np.ndarray:
+    """Transfer discontinuous tetrahedral corner values along exact cell lineage."""
+    from phydrax.meshing._distribution import _owner_group_fail_if_any
+    from phydrax.meshing._lineage import EntityLineageKind
+
+    del field_layout
+    context = action.repartition
+    parent_ids: list[int] = []
+    matrices: list[np.ndarray] = []
+    error = None
+    try:
+        values = np.asarray(source_local_values)
+        if values.ndim != 3 or values.shape[1:] != (4, 3):
+            raise ValueError("Cone kinematic rows must have shape (cells, 4, 3).")
+        target_keys = np.asarray(action.target_ownership.dof_keys, dtype=np.int64)
+        if (
+            target_keys.ndim != 2
+            or target_keys.shape[1] != 3
+            or (
+                target_keys.size
+                and (np.any(target_keys[:, 0] != 2) or np.any(target_keys[:, 2] != 0))
+            )
+        ):
+            raise ValueError("Cone kinematics require owned P0 cell keys.")
+        source_cells = _periodic_cone_triangles(context.source_geometry_view)
+        target_cells = _periodic_cone_triangles(context.target_geometry_view)
+        if adaptive_result is None and target_keys.size:
+            raise ValueError("Nonempty cone transfer requires adaptive lineage.")
+        lineage = None if adaptive_result is None else adaptive_result.lineage
+        stencil = None if adaptive_result is None else adaptive_result.vertex_stencil
+        parents: dict[int, int] = {}
+        if lineage is not None:
+            cells = lineage.entity_lineage(2)
+            for source, target, kind in zip(
+                np.asarray(cells.source_global_ids, dtype=np.int64),
+                np.asarray(cells.target_global_ids, dtype=np.int64),
+                np.asarray(cells.relation_kinds, dtype=np.int32),
+                strict=True,
+            ):
+                if (
+                    int(kind)
+                    not in (
+                        int(EntityLineageKind.PRESERVED),
+                        int(EntityLineageKind.REFINED_FROM),
+                    )
+                    or int(target) in parents
+                ):
+                    raise ValueError("Cone transfer requires one nested parent per cell.")
+                parents[int(target)] = int(source)
+        for key in target_keys:
+            child_id = int(key[1])
+            parent_id = parents[child_id]
+            parent_vertex_ids, parent_lift = source_cells[parent_id]
+            child_vertex_ids, child_lift = target_cells[child_id]
+            _, _, interpolation = _nested_periodic_cone(
+                parent_vertex_ids, child_vertex_ids, parent_lift, child_lift, stencil
+            )
+            parent_ids.append(parent_id)
+            matrices.append(np.asarray(interpolation, dtype=np.float64))
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    _owner_group_fail_if_any(
+        error,
+        context.execution_group,
+        f"{context.axis_name}_cone_preflight",
+        "periodic cone kinematic transfer",
+    )
+    keys = np.zeros((len(parent_ids), 3), dtype=np.int64)
+    keys[:, 0] = 2
+    keys[:, 1] = parent_ids
+    parent_values = np.asarray(
+        action.request_source_rows(keys, axis_name=f"{context.axis_name}_cone_parents")
+    )
+    if not parent_ids:
+        return np.empty((0, 4, 3), dtype=np.asarray(source_local_values).dtype)
+    return np.einsum("nij,njk->nik", np.asarray(matrices), parent_values)
+
+
+def _refine_periodic_cone_materials(materials: Any, lineage: Any, context: Any, /) -> Any:
+    """Restrict constant tetrahedron J2 history to its refined child cones."""
+    from phydrax.equations import MaterialState, MaterialTransaction
+    from phydrax.meshing._distribution import _owner_group_fail_if_any
+    from phydrax.meshing._lineage import EntityLineageKind
+
+    error = None
+    candidate = None
+    try:
+        plan = context.target_material_plan
+        if plan is None or plan.ownership is None:
+            raise ValueError("Cone refinement requires an owned target material plan.")
+        source = {}
+        for state in materials.states:
+            cell_id = state.site_id.cell_id
+            if cell_id is None or cell_id in source:
+                raise ValueError("Cone source sites must identify distinct cells.")
+            source[cell_id] = state
+        parents: dict[int, int] = {}
+        if lineage is not None:
+            cells = lineage.entity_lineage(2)
+            for parent, child, kind in zip(
+                np.asarray(cells.source_global_ids, dtype=np.int64),
+                np.asarray(cells.target_global_ids, dtype=np.int64),
+                np.asarray(cells.relation_kinds, dtype=np.int32),
+                strict=True,
+            ):
+                if (
+                    int(kind)
+                    not in (
+                        int(EntityLineageKind.PRESERVED),
+                        int(EntityLineageKind.REFINED_FROM),
+                    )
+                    or int(child) in parents
+                ):
+                    raise ValueError(
+                        "Cone J2 refinement requires a unique nested parent."
+                    )
+                parents[int(child)] = int(parent)
+        states = []
+        for site in plan.site_ids:
+            if site.cell_id is None:
+                raise ValueError("Cone target sites must identify their cells.")
+            old = source[parents[site.cell_id]]
+            states.append(
+                MaterialState(
+                    site,
+                    old.model_id,
+                    old.committed,
+                    trial=old.trial,
+                    state_version=old.state_version,
+                )
+            )
+        candidate = MaterialTransaction(
+            states, ownership=plan.ownership, owner_rank=plan.owner_rank
+        )
+        plan.validate(candidate)
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    _owner_group_fail_if_any(
+        error,
+        context.execution_group,
+        f"{context.axis_name}_cone_material_refine",
+        "cone material refinement",
+    )
+    if candidate is None:
+        raise ValueError("Cone material refinement produced no transaction.")
+    return candidate
+
+
+def _advance_periodic_cone(
+    vertices: Any,
+    displacement: Any,
+    velocity: Any,
+    acceleration: Any,
+    material_state: Any,
+    time: float,
+    step: int,
+    state_version: int,
+    step_size: float,
+    /,
+    *,
+    pending_increment: Any = None,
+    workset: Any = None,
+) -> Any:
+    """Advance one physical cone with an operation-scoped native FE program."""
+    from .cold_fe_cone_physics import ConePhysicalWorkset
+
+    selected = ConePhysicalWorkset() if workset is None else workset
+    return selected.advance(
+        vertices,
+        displacement,
+        velocity,
+        acceleration,
+        material_state,
+        time,
+        step,
+        state_version,
+        step_size,
+        pending_increment=pending_increment,
+    )
 
 
 def _source_graph_partition_plan(profile: str, /) -> Any:
@@ -1539,7 +1841,11 @@ def _source_composition(
             owner_id="phydrax.solver",
             structure_id=state.materials.layout_id,
             revision_id=state.materials.transaction_id,
-            semantics_id="replicated-material-transaction",
+            semantics_id=(
+                "replicated-material-transaction"
+                if state.materials.ownership is None
+                else "owned-material-transaction"
+            ),
             dependencies=(state_entry.binding("structure"),),
         )
     )
@@ -1548,7 +1854,9 @@ def _source_composition(
 
 def _restore_composition(value: Any, /) -> Any:
     from phydrax._model._structure import FiniteElementAcceptedStateArchiveRecipe
+    from phydrax.equations import MaterialTransaction
     from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import restore_model_archive_value
     from phydrax.meshing.providers._native_periodic import NativePeriodicSource
     from phydrax.solver._finite_element_schedule import (
         FiniteElementAcceptedState,
@@ -1585,6 +1893,10 @@ def _restore_composition(value: Any, /) -> Any:
                 )
             item = FiniteElementRestartManifest.from_stored_fields(item)
             rebuilt_restart = item
+        elif entry.entry_id == "solver/state/materials":
+            if type(item) is not MaterialTransaction:
+                raise TypeError("Owner-local FE material root has the wrong type.")
+            item = restore_model_archive_value(item)
         rebuilt_entries.append(
             CompositionEntry(
                 item,
@@ -2431,6 +2743,14 @@ def _read_coarsen_live_family_state(
             topology_change=True,
             false_claim=false_claim,
         )
+        if before_ids != (
+            moved.state.accepted_id,
+            moved.manifest.manifest_id,
+            moved.rebind_receipt.composition.composition_id,
+        ):
+            raise RuntimeError(
+                f"Rejected {false_claim} transfer changed the accepted composition."
+            )
     coarsened, coarse_prepared = _live_family_field_step(
         reunited,
         coarse,
@@ -2683,6 +3003,52 @@ def _serial_live_family_reference(profile: str, /) -> dict[str, Any]:
     }
 
 
+def _cold_placement_entries(source_composition: Any, manifest: Any, /) -> tuple[Any, Any]:
+    from phydrax.lifecycle import CompositionEntry
+
+    source_root = source_composition.entry("mesh/source")
+    topology_id = manifest.source_topology_id
+    geometry_id = manifest.source_geometry_id
+    if topology_id is None or geometry_id is None:
+        raise RuntimeError(
+            "Current placement manifest lacks topology or geometry identity."
+        )
+    topology = CompositionEntry(
+        manifest,
+        entry_id="mesh/topology",
+        role="topology",
+        owner_id="phydrax.meshing",
+        structure_id=topology_id,
+        revision_id=manifest.manifest_id,
+        semantics_id="cell-mesh",
+        dependencies=(
+            source_root.binding("structure"),
+            source_root.binding("revision"),
+            source_root.binding("semantics"),
+            source_composition.entry("mesh/specification").binding("revision"),
+            source_composition.entry("mesh/adaptation-specification").binding("revision"),
+            source_composition.entry("mesh/source-graph-plan").binding("revision"),
+            source_composition.entry("mesh/target-graph-plan").binding("revision"),
+        ),
+    )
+    geometry = CompositionEntry(
+        manifest,
+        entry_id="mesh/geometry",
+        role="discretization",
+        owner_id="phydrax.meshing",
+        structure_id=geometry_id,
+        revision_id=manifest.manifest_id,
+        semantics_id="compact-owner-local-geometry",
+        dependencies=(
+            topology.binding("structure"),
+            source_root.binding("structure"),
+            source_root.binding("revision"),
+            source_root.binding("semantics"),
+        ),
+    )
+    return topology, geometry
+
+
 def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     import equinox as eqx
     import jax
@@ -2692,7 +3058,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     from phydrax._fingerprint import canonical_fingerprint
     from phydrax.discretization._view_support import OwnerLocalCellGeometry
     from phydrax.graph._partition import GraphPartitionPlan
-    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.lifecycle import Composition
     from phydrax.meshing._assembly import MeshPartManifest
     from phydrax.meshing._contracts import SurfaceMeshingSpec
     from phydrax.meshing._distribution import (
@@ -2722,6 +3088,7 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
             archive_root / f"{profile}-live-rank-{rank}.phx", group, rank, profile
         )
     archive = archive_root / f"{profile}-rank-{rank}.phx"
+    cone_archive = archive_root / f"{profile}-cone-rank-{rank}.phx"
 
     def gather_scalar(value: Any, dtype: Any = np.float64) -> np.ndarray:
         local = np.asarray(value, dtype=dtype)
@@ -3207,6 +3574,74 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
             archive_safe=True,
         )
         write_model_artifact(archive, composition, limits=None)
+        from .cold_fe_cone_writer import write_physical_cone_restart
+
+        cone_manifest, _, _ = write_physical_cone_restart(
+            cone_archive,
+            source_view,
+            source_manifest,
+            source_discretization,
+            source_compiled,
+            source_identities,
+            field_layouts,
+            (source_values, source_content_values),
+            specification,
+            adaptation_specification,
+            source_graph_plan,
+            target_graph_plan,
+            group=group,
+            rank=rank,
+        )
+        from .cold_fe_cone_reader import continue_cone_restart
+
+        cone_live_composition = _source_composition(
+            source_view,
+            source_manifest,
+            cone_manifest,
+            field_layouts,
+            specification,
+            adaptation_specification,
+            source_graph_plan,
+            target_graph_plan,
+        )
+        _, cone_adapted_compiled, cone_adapted_identities, _ = (
+            _compile_owner_local_problem(adaptation_view, group, rank)
+        )
+        _, cone_target_compiled, cone_target_identities, _ = _compile_owner_local_problem(
+            target_view, group, rank
+        )
+        cone_reference = continue_cone_restart(
+            cone_live_composition,
+            cone_manifest,
+            source_view,
+            adaptation_view,
+            target_view,
+            source_compiled,
+            cone_adapted_compiled,
+            cone_target_compiled,
+            source_identities,
+            cone_adapted_identities,
+            cone_target_identities,
+            pre_graph_adaptive_result,
+            target_view.graph_migration_evidence,
+            group,
+            _cold_placement_entries(
+                cone_live_composition,
+                MeshPartManifest.from_part(adaptation_assembly.parts[0]),
+            ),
+            _cold_placement_entries(
+                cone_live_composition,
+                MeshPartManifest.from_part(target_assembly.parts[0]),
+            ),
+            (
+                "mesh/source",
+                "mesh/specification",
+                "mesh/adaptation-specification",
+                "mesh/source-graph-plan",
+                "mesh/target-graph-plan",
+            ),
+            rank=rank,
+        )
         source_placement = gather_rows(
             (
                 int(np.asarray(source_view.owned_cell_ids).size),
@@ -3361,6 +3796,9 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
             "periodic_adaptation_transfer": writer_adaptation,
             "periodic_pre_graph_adaptation_transfer": writer_pre_graph_adaptation,
             "archive_bytes": archive.stat().st_size,
+            "cone_archive_bytes": cone_archive.stat().st_size,
+            "cone_restart_manifest_id": cone_manifest.manifest_id,
+            "cone_uninterrupted": cone_reference,
         }
 
     composition = read_model_artifact(
@@ -3775,51 +4213,9 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         source_graph_plan,
         target_graph_plan,
     )
-    source_root_entry = source_composition.entry("mesh/source")
 
     def placement_entries(manifest: Any, /) -> tuple[Any, Any]:
-        topology_id = manifest.source_topology_id
-        geometry_id = manifest.source_geometry_id
-        if topology_id is None or geometry_id is None:
-            raise RuntimeError(
-                "Current placement manifest lacks exact topology or geometry identity."
-            )
-        topology_entry = CompositionEntry(
-            manifest,
-            entry_id="mesh/topology",
-            role="topology",
-            owner_id="phydrax.meshing",
-            structure_id=topology_id,
-            revision_id=manifest.manifest_id,
-            semantics_id="cell-mesh",
-            dependencies=(
-                source_root_entry.binding("structure"),
-                source_root_entry.binding("revision"),
-                source_root_entry.binding("semantics"),
-                source_composition.entry("mesh/specification").binding("revision"),
-                source_composition.entry("mesh/adaptation-specification").binding(
-                    "revision"
-                ),
-                source_composition.entry("mesh/source-graph-plan").binding("revision"),
-                source_composition.entry("mesh/target-graph-plan").binding("revision"),
-            ),
-        )
-        geometry_entry = CompositionEntry(
-            manifest,
-            entry_id="mesh/geometry",
-            role="discretization",
-            owner_id="phydrax.meshing",
-            structure_id=geometry_id,
-            revision_id=manifest.manifest_id,
-            semantics_id="compact-owner-local-geometry",
-            dependencies=(
-                topology_entry.binding("structure"),
-                source_root_entry.binding("structure"),
-                source_root_entry.binding("revision"),
-                source_root_entry.binding("semantics"),
-            ),
-        )
-        return topology_entry, geometry_entry
+        return _cold_placement_entries(source_composition, manifest)
 
     # The supported FE route mirrors the mesh route: the accepted state adapts on
     # the source placement, then the adapted state repartitions onto the target
@@ -3912,6 +4308,47 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
         "mesh/adaptation-specification",
         "mesh/source-graph-plan",
         "mesh/target-graph-plan",
+    )
+    from .cold_fe_cone_reader import continue_cone_restart
+
+    cone_composition = read_model_artifact(
+        cone_archive,
+        expected_type=Composition,
+        restore=_restore_composition,
+        limits=None,
+    )
+    cone_manifest = cone_composition.entry("solver/restart-manifest").value
+    if not isinstance(cone_manifest, FiniteElementRestartManifest):
+        raise TypeError("Cold cone archive lost its FE restart manifest.")
+    cone_live_composition = _source_composition(
+        source_view,
+        source_manifest,
+        cone_manifest,
+        source_layouts,
+        specification,
+        adaptation_specification,
+        source_graph_plan,
+        target_graph_plan,
+    )
+    cone_evidence = continue_cone_restart(
+        cone_live_composition,
+        cone_manifest,
+        source_view,
+        adaptation_view,
+        target_view,
+        source_compiled,
+        adaptation_compiled,
+        target_compiled,
+        source_identities,
+        adaptation_identities,
+        target_identities,
+        pre_graph_adaptive_result,
+        migration,
+        group,
+        adaptation_reprepared_entries,
+        target_reprepared_entries,
+        retained_mesh_entry_ids,
+        rank=rank,
     )
 
     def adapt(
@@ -4818,6 +5255,8 @@ def _worker(phase: str, archive_root: Path, profile: str, /) -> dict[str, Any]:
     )
     return {
         "phase": phase,
+        "cone_continuation": cone_evidence,
+        "cone_restored_manifest_id": cone_manifest.manifest_id,
         "live_family_archive": live_family_archive,
         "profile_key": profile,
         "rank": rank,
@@ -5017,6 +5456,45 @@ def _launch_ranks(
     return records
 
 
+def _launch_serial_reference(
+    archive_root: Path, environment: dict[str, str], profile: str, /
+) -> dict[str, Any]:
+    """Finish the independent serial oracle before launching another rank group."""
+    result = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "tools.meshing_qualification.scenarios.cold_owner_local",
+            "serial-reference",
+            str(archive_root),
+            profile,
+        ),
+        cwd=str(_REPOSITORY_ROOT),
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=900.0,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Owner-local FE serial reference exited with {result.returncode}:\n"
+            f"{result.stderr}"
+        )
+    lines = [line for line in result.stdout.splitlines() if line.strip().startswith("{")]
+    if not lines:
+        raise RuntimeError("Owner-local FE serial reference returned no JSON evidence.")
+    record = json.loads(lines[-1])
+    if (
+        not isinstance(record, dict)
+        or type(record.get("pid")) is not int
+        or record["pid"] <= 0
+        or record["pid"] == os.getpid()
+    ):
+        raise RuntimeError("Owner-local FE serial reference returned malformed evidence.")
+    return record
+
+
 def _qualify_profile(
     profile_key: str,
     temporary_root: Path,
@@ -5036,7 +5514,7 @@ def _qualify_profile(
     if any(size <= 0 for size in archive_bytes):
         raise RuntimeError(f"{profile_key} producer omitted a rank-local model artifact.")
     reader = _launch_ranks("read", archive_root, environment, profile_key)
-    serial_reference = _serial_live_family_reference(profile_key)
+    serial_reference = _launch_serial_reference(archive_root, environment, profile_key)
     coarsened = _launch_ranks("coarsen", archive_root, environment, profile_key)
     if set(record["pid"] for record in reader).intersection(
         record["pid"] for record in coarsened
@@ -5049,6 +5527,8 @@ def _qualify_profile(
             != serial_reference["coarse_cell_count"]
             or not record["coarsening_committed"]
             or not record["coarsening_refusal_atomic"]
+            or not record["forged_transfer_claims_refused"]
+            or tuple(record["forged_transfer_claims_refused"]) != get_args(_FalseTransferClaim)
             or not record["material_history_rng_clock_preserved"]
         ):
             raise RuntimeError(
@@ -5173,6 +5653,11 @@ def _qualify_profile(
             or restored["source_id"] != source_id
             or written["source_state_id"] != restored["restored_state_id"]
             or written["restart_manifest_id"] != restored["restored_restart_manifest_id"]
+            or written["cone_restart_manifest_id"]
+            != restored["cone_restored_manifest_id"]
+            or written["cone_archive_bytes"] <= 0
+            or written["cone_uninterrupted"]["owned_cell_digests"]
+            != restored["cone_continuation"]["owned_cell_digests"]
             or written["source_manifest_id"] != restored["source_manifest_id"]
             or written["source_geometry_id"] != restored["source_geometry_id"]
             or written["source_topology_id"] != restored["source_topology_id"]
@@ -5384,6 +5869,15 @@ def _qualify_profile(
         "producer_processes_exited_before_reader": True,
         "fresh_processes": True,
         "archive_bytes_by_rank": list(archive_bytes),
+        "physical_cone_continuation_by_rank": [
+            reader_by_rank[rank]["cone_continuation"] for rank in range(3)
+        ],
+        "physical_cone_archive_bytes_by_rank": [
+            writer_by_rank[rank]["cone_archive_bytes"] for rank in range(3)
+        ],
+        "physical_cone_writer_manifest_ids_by_rank": [
+            writer_by_rank[rank]["cone_restart_manifest_id"] for rank in range(3)
+        ],
         "typed_request_roots": {
             "specification_ids_by_writer_rank": [
                 writer_by_rank[rank]["specification_id"] for rank in range(3)
@@ -5637,7 +6131,9 @@ def native_cold_owner_local() -> dict[str, Any]:
     from phydrax import config as phx_config
     from phydrax._config_types import RuntimeConfig
 
-    if jax.process_count() != 1:
+    # Do not initialize an otherwise unused coordinator backend merely to
+    # inspect its size; a distributed caller is already explicitly initialized.
+    if jax.distributed.is_initialized() and jax.process_count() != 1:
         raise RuntimeError(
             "Owner-local FE qualification must launch its own fresh three-process groups."
         )
@@ -5694,9 +6190,10 @@ def native_cold_owner_local() -> dict[str, Any]:
 
 
 if __name__ == "__main__" and len(sys.argv) == 4:
-    print(
-        json.dumps(
-            _worker(sys.argv[1], Path(sys.argv[2]), sys.argv[3]),
-            sort_keys=True,
-        )
-    )
+    phase, archive_root, profile = sys.argv[1:]
+    if phase == "serial-reference":
+        record = _serial_live_family_reference(profile)
+        record["pid"] = os.getpid()
+    else:
+        record = _worker(phase, Path(archive_root), profile)
+    print(json.dumps(record, sort_keys=True))

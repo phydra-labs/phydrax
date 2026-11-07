@@ -194,10 +194,8 @@ def polyhedral_support_issues(
 ) -> tuple[str, ...]:
     """Admit only an explicitly authored PLC and implemented power semantics."""
     issues: list[str] = []
-    if not isinstance(source, NativePolyhedralSource):
-        issues.append(
-            "a NativePolyhedralSource with authored power sites and stable site IDs"
-        )
+    if isinstance(source, NativePlcSource) and specification.periodic_constraints:
+        issues.append("explicitly authored power sites for periodic PLC constraints")
     target = specification.target
     if (
         target.topological_dimension != 3
@@ -831,15 +829,60 @@ def _require_protected_feature_witnesses(
             )
 
 
+def _source_scope_rows(
+    source: NativePlcSource | NativePolyhedralSource,
+    scope: MeshingScope,
+    dimension: int,
+    /,
+) -> tuple[int, ...]:
+    """Resolve declared source identities to the PLC's stored row order."""
+    match dimension:
+        case 2:
+            identifiers = source.complex.facet_ids
+            paths = source.complex.facet_occurrence_paths
+        case 3:
+            identifiers = source.complex.region_ids
+            paths = source.complex.region_occurrence_paths
+        case _:
+            raise MeshingFailure(
+                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                "Polyhedral uniform size controls must scope PLC facets or regions.",
+                provider_code="native_polyhedral_compliance",
+                stage="preparation",
+            )
+    if (
+        scope.entity_kind is not MeshingEntityKind.GEOMETRY
+        or scope.entity_dimension != dimension
+        or (scope.source_id, scope.source_revision)
+        != (source.source_id, source.source_revision)
+        or scope.entity_set_id != source.scope_entity_set_id(dimension)
+    ):
+        raise ValueError(
+            "Polyhedral control scope does not bind its declared PLC source."
+        )
+    selected = {
+        source.source_entity_key_for_scope(dimension, int(identifier))
+        for identifier in np.asarray(scope.entity_ids, dtype=np.int64)
+    }
+    return tuple(
+        row
+        for row, key in enumerate(zip(identifiers, paths, strict=True))
+        if key in selected
+    )
+
+
 def _size_scope_edges(
     construction: PolyhedralConstruction,
+    source: NativePlcSource | NativePolyhedralSource,
     control: UniformSizeControl,
     /,
 ) -> np.ndarray:
     connectivity = construction.mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Polyhedral size compliance requires polyhedral connectivity.")
-    identifiers = np.asarray(control.scope.entity_ids, dtype=np.int64)
+    identifiers = _source_scope_rows(
+        source, control.scope, control.scope.entity_dimension
+    )
     if control.scope.entity_dimension == 2:
         selected_faces = np.flatnonzero(
             np.isin(construction.face_source_facets, identifiers)
@@ -928,6 +971,7 @@ def _sqrt_upper(value: Fraction, /) -> float:
 
 def _polyhedral_compliance(
     construction: PolyhedralConstruction,
+    source: NativePlcSource | NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     /,
 ) -> MeshingComplianceReport:
@@ -955,7 +999,7 @@ def _polyhedral_compliance(
         if not isinstance(control, UniformSizeControl):
             issues.append(f"unsupported_size_control:{control.control_id}")
             continue
-        rows = _size_scope_edges(construction, control)
+        rows = _size_scope_edges(construction, source, control)
         if not rows.size:
             issues.append(f"empty_size_scope:{control.control_id}")
             continue
@@ -1199,7 +1243,8 @@ def _polyhedral_organization(
             )
     for control in specification.patch_controls:
         requested_facets = np.asarray(control.scope.entity_ids, dtype=np.int64)
-        rows = face_ids[np.isin(facets, requested_facets)]
+        source_rows = _source_scope_rows(source, control.scope, 2)
+        rows = face_ids[np.isin(facets, source_rows)]
         if control.required and not rows.size:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
@@ -1477,7 +1522,11 @@ class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
             volume_schedule=self.options.volume_schedule,
             frame_id=self.coordinate_contract.spatial_id,
         )
-        compliance = _polyhedral_compliance(construction, self.specification)
+        return self.publish(construction)
+
+    def publish(self, construction: PolyhedralConstruction, /) -> NativeMeshConstruction:
+        """Bind and publish an already generated restricted-power construction."""
+        compliance = _polyhedral_compliance(construction, self.source, self.specification)
         mapped_source = (
             self.source.mapped_domain is not None
             or self.source.complex.geometry is not None

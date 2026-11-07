@@ -42,7 +42,6 @@ from ._boolean_core import (
     BRepBooleanPolicy,
     BRepBooleanResult,
     entity_occurrence_index,
-    line_chart_coefficients,
     pcurve_periodic_source,
     PeriodicPCurve,
     selected,
@@ -771,12 +770,10 @@ def _native_cylinder_ring_chart(model: BRepModel, face: int) -> bool:
             pcurve = geometry.pcurves[coedge]
             if not isinstance(pcurve, AbstractCurve):
                 continue
-            coefficients = line_chart_coefficients(pcurve)
-            if (
-                coefficients is not None
-                and coefficients[0][0] == 0
-                and coefficients[1] == (Fraction(1), Fraction(0))
-            ):
+            from ._boolean_core import _coedge_affine_axis
+
+            angle = _coedge_affine_axis(pcurve, 0)
+            if angle == (Fraction(0), Fraction(1)):
                 return True
     return False
 

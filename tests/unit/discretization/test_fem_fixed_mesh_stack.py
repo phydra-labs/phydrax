@@ -7,6 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -135,6 +136,73 @@ def test_block_graph_preconditioner_data_and_auxiliary_validity() -> None:
     assert data.diagonal.shape == (4,)
 
 
+def test_accepted_step_rejects_stale_or_different_material_sites() -> None:
+    site = phx.equations.MaterialSiteId("solid:site")
+    material = phx.equations.MaterialTransaction(
+        (phx.equations.MaterialState(site, "law", jnp.asarray([1.0])),)
+    )
+    layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+        transfer_semantics=phx.solver.FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION,
+    )
+    state = phx.solver.FiniteElementAcceptedState(
+        (jnp.asarray([0.0]),),
+        0.0,
+        0,
+        "topology",
+        "prepared",
+        "compiled",
+        field_layouts=(layout,),
+        materials=material,
+    )
+    law = phx.solver.TimeLaw.constant(1.0)
+    valid = material.with_trials({"solid:site": jnp.asarray([2.0])})
+    different_site = phx.equations.MaterialTransaction(
+        (
+            phx.equations.MaterialState(
+                phx.equations.MaterialSiteId("solid:other"), "law", jnp.asarray([1.0])
+            ),
+        )
+    )
+    changed_committed = phx.equations.MaterialTransaction(
+        (phx.equations.MaterialState(site, "law", jnp.asarray([3.0])),)
+    )
+    for candidate in (None, different_site, changed_committed, valid.commit()):
+        schedule = phx.solver.FiniteElementAcceptedStepSchedule(
+            lambda accepted, start, end, time_law, args: (
+                phx.solver.FiniteElementAttemptResult(
+                    accepted.fields, True, materials=candidate
+                )
+            )
+        )
+        with pytest.raises(ValueError, match="committed material"):
+            schedule.advance(state, 1.0, law)
+
+    schedule = phx.solver.FiniteElementAcceptedStepSchedule(
+        lambda accepted, start, end, time_law, args: (
+            phx.solver.FiniteElementAttemptResult(accepted.fields, True, materials=valid)
+        )
+    )
+    advanced, diagnostics = schedule.advance(state, 1.0, law)
+    assert bool(diagnostics.accepted)
+    assert advanced.materials is not None
+    np.testing.assert_array_equal(advanced.materials.states[0].committed, [2.0])
+    assert advanced.materials.states[0].state_version == 1
+
+    rejected_schedule = phx.solver.FiniteElementAcceptedStepSchedule(
+        lambda accepted, start, end, time_law, args: (
+            phx.solver.FiniteElementAttemptResult(accepted.fields, False, materials=valid)
+        )
+    )
+    rolled_back, diagnostics = rejected_schedule.advance(state, 1.0, law)
+    assert not bool(diagnostics.accepted)
+    assert rolled_back is state
+    assert state.materials is not None
+    np.testing.assert_array_equal(state.materials.states[0].committed, [1.0])
+
+
 def test_observation_restart_and_result_roundtrip(tmp_path: Any) -> None:
     space = phx.linalg.ArraySpace((4,))
     observation = phx.equations.fem.CoordinateObservation(
@@ -183,6 +251,97 @@ def test_observation_restart_and_result_roundtrip(tmp_path: Any) -> None:
     phx.solver.write_finite_element_result(result_path, result)
     loaded = phx.solver.read_finite_element_result(result_path)
     assert loaded.result_id == result.result_id
+
+
+@pytest.mark.parametrize("rank", [0, 1])
+def test_owned_material_restart_and_checkpoint_roundtrip(
+    tmp_path: Any, rank: int
+) -> None:
+    site = phx.equations.MaterialSiteId.for_cell_quadrature(
+        10, "barycenter", domain_id="body", quadrature_rule_id="triangle-1"
+    )
+    ownership = phx.equations.MaterialSiteOwnership(((site, 0),), part_count=2)
+    states = (
+        (
+            phx.equations.MaterialState(
+                site, "law", jnp.asarray([3.0]), trial=jnp.asarray([5.0]), state_version=7
+            ),
+        )
+        if rank == 0
+        else ()
+    )
+    materials = phx.equations.MaterialTransaction(
+        states, ownership=ownership, owner_rank=rank
+    )
+    layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+        transfer_semantics=phx.solver.FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION,
+    )
+    fields = (jnp.asarray([1.0]),)
+    accepted = phx.solver.FiniteElementAcceptedState(
+        fields,
+        0.5,
+        3,
+        "topology",
+        "prepared",
+        "compiled",
+        field_layouts=(layout,),
+        materials=materials,
+    )
+    manifest = phx.solver.FiniteElementRestartManifest(accepted)
+    checkpoint = phx.solver.FiniteElementCheckpoint(
+        "prepared", "compiled", 0.5, 3, fields, materials=materials
+    )
+    restart_path = tmp_path / f"restart-{rank}.phx"
+    checkpoint_path = tmp_path / f"checkpoint-{rank}.phx"
+    phx.solver.write_finite_element_restart(restart_path, manifest)
+    phx.solver.write_finite_element_checkpoint(checkpoint_path, checkpoint)
+    restored_restart = phx.solver.read_finite_element_restart(
+        restart_path, field_layouts=(layout,)
+    )
+    restored_checkpoint = phx.solver.read_finite_element_checkpoint(
+        checkpoint_path, prepared_id="prepared", compilation_id="compiled"
+    )
+    assert restored_restart.manifest_id == manifest.manifest_id
+    assert restored_checkpoint.checkpoint_id == checkpoint.checkpoint_id
+    for restored in (restored_restart.state.materials, restored_checkpoint.materials):
+        assert restored is not None
+        assert restored.owner_rank == rank
+        assert restored.ownership is not None
+        assert restored.ownership.ownership_id == ownership.ownership_id
+        restored_site = restored.ownership.site_ids[0]
+        assert (
+            restored_site.domain_id,
+            restored_site.cell_id,
+            restored_site.quadrature_rule_id,
+            restored_site.reference_site_id,
+        ) == ("body", 10, "triangle-1", "barycenter")
+        if rank == 0:
+            assert restored.state(site).state_version == 7
+            np.testing.assert_array_equal(restored.state(site).committed, [3.0])
+            np.testing.assert_array_equal(restored.state(site).trial, [5.0])
+        else:
+            assert restored.states == ()
+
+    for forgery in ("site", "owner"):
+        if forgery == "site":
+            object.__setattr__(site, "cell_id", 11)
+        else:
+            object.__setattr__(ownership, "owners", (1,))
+        phx.solver.write_finite_element_restart(restart_path, manifest)
+        phx.solver.write_finite_element_checkpoint(checkpoint_path, checkpoint)
+        if forgery == "site":
+            object.__setattr__(site, "cell_id", 10)
+        else:
+            object.__setattr__(ownership, "owners", (0,))
+        with pytest.raises(ValueError, match="does not match|ownership"):
+            phx.solver.read_finite_element_restart(restart_path, field_layouts=(layout,))
+        with pytest.raises(ValueError, match="does not match|ownership"):
+            phx.solver.read_finite_element_checkpoint(
+                checkpoint_path, prepared_id="prepared", compilation_id="compiled"
+            )
 
 
 def test_contact_search_and_cut_quadrature_are_deterministic() -> None:

@@ -15,6 +15,7 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from ..geometry._compartments import CompartmentMeshingSource
 from ..geometry._source_identity import source_entity_id
+from ..linalg._exact import determinant_exact
 from ..typing import checked
 from ._plc_source import PiecewiseLinearComplex
 
@@ -245,7 +246,12 @@ def _verify_outer_surface_lattice(
         group_rectangles.append(bounds)
 
     actual_by_plane: dict[tuple[int, int, int], list[tuple[_Point2, ...]]] = {}
-    reflected = np.linalg.det(affine.matrix[:3, :3]) < 0.0
+    reflected = determinant_exact(
+        tuple(
+            tuple(Fraction.from_float(float(value)) for value in row)
+            for row in affine.matrix[:3, :3]
+        )
+    ) < 0
     for block in surface.mesh.blocks:
         if block.cell_kind != "triangle":
             raise ValueError("Outer compartment surface must use triangle cells.")
@@ -343,9 +349,10 @@ def prepare_compartment_plc(
 ) -> CompartmentPlcPreparation:
     """Regenerate oriented exterior/material facets from categorical face incidence.
 
-    Vertex identity comes from doubled source-index lattice keys. Region sides
-    come from categorical voxel adjacency; no extracted mesh row or centroid
-    determines source identity or material ownership.
+    Vertex identity and coordinates come from doubled source-index lattice
+    keys. The image's single affine is applied to the generated domain, not
+    independently rounded into the PLC vertices. Region sides come from
+    categorical voxel adjacency, not extracted mesh rows or centroids.
     """
     if source.outer_geometry is not None:
         raise ValueError(
@@ -361,7 +368,6 @@ def prepare_compartment_plc(
         ]
     ] = []
     region_index = {name: index for index, name in enumerate(region_ids)}
-    reflected = np.linalg.det(source.labels.asset.spatial_affine.matrix[:3, :3]) < 0.0
     outer_faces: list[tuple[int, int, int, tuple[tuple[int, int, int], ...]]] = []
     for index in np.ndindex(code.shape):
         own = int(code[index])
@@ -400,7 +406,7 @@ def prepare_compartment_plc(
                         region_index[second_region],
                         region_index[first_region],
                     )
-                    reverse = (second_region == region_ids[own]) ^ reflected
+                    reverse = second_region == region_ids[own]
                     facet_name = source_entity_id(
                         source.source_id,
                         source.source_revision,
@@ -409,7 +415,7 @@ def prepare_compartment_plc(
                     )
                 else:
                     sides = (-1, own)
-                    reverse = (direction < 0) ^ reflected
+                    reverse = direction < 0
                     outer_key = json.dumps(
                         [source.outer_surface.model_id, region_ids[own]],
                         separators=(",", ":"),
@@ -463,9 +469,7 @@ def prepare_compartment_plc(
         loops.append(loop)
         polygon_facets.append(facet)
 
-    vertices = source.labels.asset.spatial_affine.index_to_world(
-        np.asarray(vertex_keys, dtype=np.float64) * 0.5
-    )
+    vertices = np.asarray(vertex_keys, dtype=np.float64) * 0.5
     vertex_ids = tuple(
         source_entity_id(
             source.source_id,

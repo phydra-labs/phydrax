@@ -5,13 +5,19 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <random>
 #include <utility>
 #include <vector>
+#if !defined(_WIN32)
+#include <csignal>
+#include <sys/resource.h>
+#endif
 
 #include "check.hpp"
 #include "phydrax_meshcore.h"
+#include "scratch_faces.hpp"
 #include "zero_set_admission.hpp"
 
 namespace {
@@ -337,6 +343,78 @@ void remesh_sphere_carrier() {
   PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
                                           triangles.data()) == PHX_MC_OK);
   phx_mc_zero_set_remesh_free(handle);
+  // The compact borrowed-input ABI must produce exactly the same edits,
+  // certificates and ordering as the ordinary int64 entry.
+  std::vector<int32_t> compact(input.triangles.begin(), input.triangles.end());
+  const std::vector<int32_t> original_compact = compact;
+  void* compact_handle = nullptr;
+  std::array<int64_t, 8> compact_counters{};
+  double compact_distance = -1;
+  auto compact_request = request;
+  compact_request.triangles = reinterpret_cast<const int64_t*>(compact.data());
+  compact_request.result = &compact_handle;
+  compact_request.counters = compact_counters.data();
+  compact_request.distance = &compact_distance;
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_OK);
+  PHX_CHECK(compact_handle != nullptr);
+  if (compact_handle != nullptr) {
+    std::array<int64_t, 2> compact_sizes{};
+    PHX_CHECK(phx_mc_zero_set_remesh_sizes(compact_handle, compact_sizes.data()) == PHX_MC_OK);
+    PHX_CHECK(compact_sizes == sizes);
+    std::vector<double> compact_vertices(static_cast<size_t>(3 * compact_sizes[0]));
+    std::vector<int64_t> compact_triangles(static_cast<size_t>(3 * compact_sizes[1]));
+    PHX_CHECK(phx_mc_zero_set_remesh_arrays(compact_handle, compact_sizes[0], compact_sizes[1],
+                                            compact_vertices.data(), compact_triangles.data()) ==
+              PHX_MC_OK);
+    PHX_CHECK(compact_vertices == vertices);
+    PHX_CHECK(compact_triangles == triangles);
+    PHX_CHECK(compact_counters == counters);
+    PHX_CHECK(compact_distance == distance);
+    PHX_CHECK(compact == original_compact);
+    phx_mc_zero_set_remesh_free(compact_handle);
+  }
+  // Admission-limited coarsening is opt-in: it keeps the certified band, may
+  // only remove vertices relative to the ordinary passes, and the flag is a
+  // strict boolean.
+  void* coarse_handle = nullptr;
+  std::array<int64_t, 8> coarse_counters{};
+  double coarse_distance = -1;
+  auto coarse_request = request;
+  coarse_request.result = &coarse_handle;
+  coarse_request.counters = coarse_counters.data();
+  coarse_request.distance = &coarse_distance;
+  coarse_request.admission_limited_coarsening = 1;
+  PHX_CHECK(phx_mc_zero_set_remesh(&coarse_request) == PHX_MC_OK);
+  PHX_CHECK(coarse_handle != nullptr);
+  if (coarse_handle != nullptr) {
+    std::array<int64_t, 2> coarse_sizes{};
+    PHX_CHECK(phx_mc_zero_set_remesh_sizes(coarse_handle, coarse_sizes.data()) == PHX_MC_OK);
+    PHX_CHECK(coarse_sizes[0] <= sizes[0]);
+    PHX_CHECK(coarse_distance >= 0 && coarse_distance <= tolerance);
+    PHX_CHECK(coarse_counters[5] == 1);
+    phx_mc_zero_set_remesh_free(coarse_handle);
+  }
+  coarse_request.admission_limited_coarsening = 2;
+  coarse_handle = nullptr;
+  PHX_CHECK(phx_mc_zero_set_remesh(&coarse_request) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(coarse_handle == nullptr);
+  PHX_CHECK(counters[1] > 0);
+  compact[0] = -1;
+  compact_handle = nullptr;
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(compact_handle == nullptr);
+  compact = original_compact;
+  compact_request.triangles = reinterpret_cast<const int64_t*>(compact.data());
+  std::swap(compact[1], compact[2]);
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(compact_handle == nullptr);
+  compact = original_compact;
+  compact_request.triangles = reinterpret_cast<const int64_t*>(compact.data());
+  auto nonfinite_vertices = input.vertices;
+  nonfinite_vertices[0] = std::numeric_limits<double>::infinity();
+  compact_request.vertices = nonfinite_vertices.data();
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_NONFINITE_INPUT);
+  PHX_CHECK(compact_handle == nullptr);
   // Closed oriented 2-manifold: every directed edge appears once, reversed once.
   std::map<std::pair<int64_t, int64_t>, int> directed;
   for (size_t f = 0; f < triangles.size(); f += 3)
@@ -345,6 +423,30 @@ void remesh_sphere_carrier() {
   for (const auto& [edge, count] : directed)
     manifold = manifold && count == 1 && directed.count({edge.second, edge.first}) == 1;
   PHX_CHECK(manifold);
+  std::vector<double> edge_lengths;
+  for (const auto& item : directed) {
+    const auto& edge = item.first;
+    if (edge.first >= edge.second) continue;
+    const size_t a = static_cast<size_t>(edge.first) * 3;
+    const size_t b = static_cast<size_t>(edge.second) * 3;
+    edge_lengths.push_back(std::hypot(vertices[a] - vertices[b],
+                                      vertices[a + 1] - vertices[b + 1],
+                                      vertices[a + 2] - vertices[b + 2]));
+  }
+  std::sort(edge_lengths.begin(), edge_lengths.end());
+  const auto quantile = [&](double fraction) {
+    const double position = fraction * static_cast<double>(edge_lengths.size() - 1);
+    const size_t lower = static_cast<size_t>(position);
+    const size_t upper = std::min(lower + 1, edge_lengths.size() - 1);
+    return edge_lengths[lower] + (position - static_cast<double>(lower)) *
+                                    (edge_lengths[upper] - edge_lengths[lower]);
+  };
+  PHX_CHECK(!edge_lengths.empty());
+  if (!edge_lengths.empty()) {
+    PHX_CHECK(quantile(0.5) >= 0.15);
+    PHX_CHECK(quantile(0.95) >= 0.15 && quantile(0.95) <= 0.45);
+  }
+  PHX_CHECK(counters[3] > 0);
   PHX_CHECK(signed_volume(vertices, triangles) > 0);
   for (size_t v = 0; v < vertices.size(); v += 3)
     PHX_CHECK(sphere_distance({vertices[v], vertices[v + 1], vertices[v + 2]}) <= distance);
@@ -360,6 +462,126 @@ void remesh_sphere_carrier() {
   PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_zero_set_remesh(nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
+void remesh_edit_parity(int rings, int segments, double tolerance, double edge,
+                        double angle, bool require_split) {
+  const Surface input = uv_sphere(rings, segments);
+  const auto original_vertices = input.vertices;
+  const auto original_faces = input.triangles;
+  const Program value = sphere_value(), gradient = sphere_gradient();
+  std::vector<int32_t> compact(input.triangles.begin(), input.triangles.end());
+  const auto original = compact;
+  std::vector<int32_t> offsets(input.vertices.size() / 3 + 1, 0);
+  for (int32_t vertex : compact) ++offsets[static_cast<size_t>(vertex) + 1];
+  for (size_t i = 1; i < offsets.size(); ++i) offsets[i] += offsets[i - 1];
+  std::vector<int32_t> cursor = offsets;
+  std::vector<int32_t> incidence(compact.size());
+  for (size_t face = 0; face < compact.size() / 3; ++face)
+    for (size_t corner = 0; corner < 3; ++corner) {
+      const size_t vertex = static_cast<size_t>(compact[3 * face + corner]);
+      incidence[static_cast<size_t>(cursor[vertex]++)] = static_cast<int32_t>(face);
+    }
+  const auto original_offsets = offsets;
+  const auto original_incidence = incidence;
+  const int64_t offset_count = static_cast<int64_t>(offsets.size());
+  const int64_t incidence_count = static_cast<int64_t>(incidence.size());
+  void* wide_handle = nullptr;
+  void* compact_handle = nullptr;
+  std::array<int64_t, 8> wide_counts{}, compact_counts{};
+  double wide_distance = -1, compact_distance = -1;
+  phx_mc_zero_set_remesh_request request{
+      input.vertices.data(), static_cast<int64_t>(input.vertices.size() / 3),
+      input.triangles.data(), static_cast<int64_t>(input.triangles.size() / 3),
+      value.view(), gradient.view(), tolerance, tolerance, edge, angle,
+      &wide_handle, wide_counts.data(), &wide_distance};
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_OK);
+  request.triangles = reinterpret_cast<const int64_t*>(compact.data());
+  request.result = &compact_handle;
+  request.counters = compact_counts.data();
+  request.distance = &compact_distance;
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
+                                       incidence.data(), incidence_count) == PHX_MC_OK);
+  PHX_CHECK(wide_handle != nullptr && compact_handle != nullptr);
+  if (wide_handle != nullptr && compact_handle != nullptr) {
+    std::array<int64_t, 2> a{}, b{};
+    PHX_CHECK(phx_mc_zero_set_remesh_sizes(wide_handle, a.data()) == PHX_MC_OK);
+    PHX_CHECK(phx_mc_zero_set_remesh_sizes(compact_handle, b.data()) == PHX_MC_OK);
+    PHX_CHECK(a == b);
+    std::vector<double> av(static_cast<size_t>(3 * a[0])), bv(static_cast<size_t>(3 * b[0]));
+    std::vector<int64_t> af(static_cast<size_t>(3 * a[1])), bf(static_cast<size_t>(3 * b[1]));
+    PHX_CHECK(phx_mc_zero_set_remesh_arrays(wide_handle, a[0], a[1], av.data(), af.data()) ==
+              PHX_MC_OK);
+    PHX_CHECK(phx_mc_zero_set_remesh_arrays(compact_handle, b[0], b[1], bv.data(), bf.data()) ==
+              PHX_MC_OK);
+    PHX_CHECK(av == bv && af == bf);
+    PHX_CHECK(wide_counts == compact_counts && wide_distance == compact_distance);
+    PHX_CHECK(require_split ? wide_counts[0] > 0 : wide_counts[1] > 0);
+    PHX_CHECK(compact == original && input.vertices == original_vertices &&
+              input.triangles == original_faces && offsets == original_offsets &&
+              incidence == original_incidence);
+    PHX_CHECK(signed_volume(av, af) > 0);
+    for (size_t i = 0; i < av.size(); i += 3)
+      PHX_CHECK(sphere_distance({av[i], av[i + 1], av[i + 2]}) <= wide_distance);
+    if (!require_split) {
+      bool moved = false;
+      for (size_t i = 0; i < av.size(); i += 3) {
+        bool original_vertex = false;
+        for (size_t j = 0; j < input.vertices.size(); j += 3)
+          if (av[i] == input.vertices[j] && av[i + 1] == input.vertices[j + 1] &&
+              av[i + 2] == input.vertices[j + 2]) original_vertex = true;
+        moved = moved || !original_vertex;
+      }
+      PHX_CHECK(moved);
+      PHX_CHECK(af.size() < input.triangles.size());
+    }
+  }
+  if (wide_handle != nullptr) phx_mc_zero_set_remesh_free(wide_handle);
+  if (compact_handle != nullptr) phx_mc_zero_set_remesh_free(compact_handle);
+  compact_handle = nullptr;
+  compact_counts.fill(-17);
+  compact_distance = -17;
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count - 1,
+                                       incidence.data(), incidence_count) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(compact_handle == nullptr && compact_counts[0] == -17 && compact_distance == -17);
+  offsets[0] = 1;
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
+                                       incidence.data(), incidence_count) == PHX_MC_INVALID_INPUT);
+  offsets = original_offsets;
+  incidence[0] = -1;
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
+                                       incidence.data(), incidence_count) == PHX_MC_INVALID_INPUT);
+  incidence = original_incidence;
+  const size_t vertex = 0;
+  if (offsets[vertex + 1] - offsets[vertex] >= 2) {
+    incidence[static_cast<size_t>(offsets[vertex] + 1)] = incidence[static_cast<size_t>(offsets[vertex])];
+    PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
+                                         incidence.data(), incidence_count) == PHX_MC_INVALID_INPUT);
+  }
+  incidence = original_incidence;
+  bool membership_checked = false;
+  for (size_t owner = 0; owner + 1 < offsets.size() && !membership_checked; ++owner) {
+    const int32_t begin = offsets[owner], end = offsets[owner + 1];
+    for (int32_t slot = begin; slot < end && !membership_checked; ++slot) {
+      const int32_t lo = slot == begin ? 0 : incidence[static_cast<size_t>(slot - 1)] + 1;
+      const int32_t hi = slot + 1 == end ? static_cast<int32_t>(compact.size() / 3)
+                                         : incidence[static_cast<size_t>(slot + 1)];
+      for (int32_t face = lo; face < hi; ++face) {
+        if (face == incidence[static_cast<size_t>(slot)]) continue;
+        const size_t at = 3 * static_cast<size_t>(face);
+        if (compact[at] == static_cast<int32_t>(owner) ||
+            compact[at + 1] == static_cast<int32_t>(owner) ||
+            compact[at + 2] == static_cast<int32_t>(owner)) continue;
+        incidence[static_cast<size_t>(slot)] = face;
+        PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
+                                             incidence.data(), incidence_count) == PHX_MC_INVALID_INPUT);
+        membership_checked = true;
+        break;
+      }
+    }
+  }
+  PHX_CHECK(membership_checked);
+  PHX_CHECK(compact_handle == nullptr && compact_counts[0] == -17 && compact_distance == -17);
+}
+
 
 // Lens: intersection of the unit balls centered at (0, 0, -+kLensShift),
 // f = max(f1, f2) with f1 = |x - c1|^2 - 1, f2 = |x - c2|^2 - 1. The caps meet on
@@ -500,6 +722,81 @@ void remesh_lens_crease() {
   PHX_CHECK(turn > 100);
   PHX_CHECK(counters[4] == 0);
 }
+void scratch_faces_eviction() {
+  phx::mc::remesh::ScratchFaces scratch;
+  constexpr int32_t count = 1030 * 1024 + 37;
+  for (int32_t i = 0; i < count; ++i) scratch.push({i, -i, i ^ 0x12345});
+  PHX_CHECK(scratch.size() == static_cast<size_t>(count));
+  for (int32_t i = count - 1; i >= 0; --i) {
+    const std::array<int32_t, 3> expected{i, -i, i ^ 0x12345};
+    PHX_CHECK(scratch.get(static_cast<size_t>(i)) == expected);
+  }
+  scratch.clear();
+  PHX_CHECK(scratch.size() == 0);
+  scratch.push({7, 11, 13});
+  const std::array<int32_t, 3> expected{7, 11, 13};
+  PHX_CHECK(scratch.get(0) == expected);
+  phx::mc::remesh::ScratchRows<VertexEvidence, 2> evidence;
+  for (int i = 0; i < 3 * 1024 + 1; ++i) evidence.push({double(i), -double(i)});
+  evidence.set(0, {0.125, 0.25});
+  evidence.set(2048, {3.5, 4.5});
+  PHX_CHECK(evidence.get(0).lower == 0.125 && evidence.get(0).upper == 0.25);
+  PHX_CHECK(evidence.get(2048).lower == 3.5 && evidence.get(2048).upper == 4.5);
+  evidence.pop();
+  evidence.push({7.5, 8.5});
+  PHX_CHECK(evidence.get(3072).lower == 7.5 && evidence.get(3072).upper == 8.5);
+  {
+    phx::mc::remesh::ScratchRows<Point, 2> points;
+    for (int i = 0; i < 3 * 1024 + 1; ++i) points.push({double(i), -double(i), 0.5});
+    const Point replacement{1.25, -2.5, 3.75};
+    points.set(0, replacement);
+    PHX_CHECK(points.get(0) == replacement);
+    PHX_CHECK(points.get(3072) == (Point{3072., -3072., 0.5}));
+  }
+#if !defined(_WIN32)
+  std::FILE* probe_before = std::tmpfile();
+  PHX_CHECK(probe_before != nullptr);
+  const int expected_fd = probe_before == nullptr ? -1 : fileno(probe_before);
+  if (probe_before != nullptr) std::fclose(probe_before);
+  {
+    phx::mc::remesh::ScratchRows<Point, 2> temporary;
+    temporary.push({1., 2., 3.});
+  }
+  std::FILE* probe_after = std::tmpfile();
+  PHX_CHECK(probe_after != nullptr);
+  if (probe_after != nullptr) {
+    PHX_CHECK(fileno(probe_after) == expected_fd);
+    std::fclose(probe_after);
+  }
+  struct rlimit old_limit{};
+  PHX_CHECK(getrlimit(RLIMIT_FSIZE, &old_limit) == 0);
+  struct rlimit limited = old_limit;
+  limited.rlim_cur = 0;
+  const auto old_signal = std::signal(SIGXFSZ, SIG_IGN);
+  PHX_CHECK(setrlimit(RLIMIT_FSIZE, &limited) == 0);
+  bool failed = false;
+  try {
+    phx::mc::remesh::ScratchFaces full;
+    for (int32_t i = 0; i < count; ++i) full.push({i, i, i});
+  } catch (const std::system_error&) {
+    failed = true;
+  }
+  bool points_failed = false;
+  const Point immutable{1., 2., 3.};
+  try {
+    phx::mc::remesh::ScratchRows<Point, 2> full_points;
+    for (int i = 0; i < 3 * 1024 + 1; ++i) full_points.push(immutable);
+  } catch (const std::system_error&) {
+    points_failed = true;
+  }
+  PHX_CHECK(points_failed);
+  PHX_CHECK(immutable == (Point{1., 2., 3.}));
+  PHX_CHECK(setrlimit(RLIMIT_FSIZE, &old_limit) == 0);
+  std::signal(SIGXFSZ, old_signal);
+  PHX_CHECK(failed);
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -507,5 +804,8 @@ int main() {
   torus_cases();
   remesh_sphere_carrier();
   remesh_lens_crease();
+  remesh_edit_parity(5, 12, 0.08, 0.22, 25.0, true);
+  remesh_edit_parity(8, 40, 0.2, 1.0, 25.0, false);
+  scratch_faces_eviction();
   return phx::mc::test::finish("test_zero_set_admission");
 }

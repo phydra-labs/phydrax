@@ -1490,6 +1490,7 @@ class CellMesh(StrictModule, NonTrainableState):
                 value.periodic_topology,
                 lifted,
                 actual_geometry=actual_geometry,
+                actual_mesh=value if actual_geometry is not None else None,
             )
             rebuilt = cls(
                 value.coordinates,

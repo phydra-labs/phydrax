@@ -248,6 +248,63 @@ def test_coincident_conic_endpoint_shadows_require_root_authority() -> None:
         _rooted_patch_chart_junctions(unbound, 0)
 
 
+def test_native_period_and_literal_seam_junction_requires_exact_source() -> None:
+    ocp = pytest.importorskip("OCP.BRepPrimAPI")
+    from phydrax.geometry._domain_boundary import (
+        _exact_line_junction_box,
+        _rooted_patch_chart_junctions,
+    )
+    from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.geometry.brep._intersection import NativePeriodEndpoint
+    from phydrax.interchange import import_occt_shape
+
+    model = import_occt_shape(
+        ocp.BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape(),
+        coordinate_contract=SpatialCoordinateContract.si(),
+    ).model
+    domain = MeshingDomain.from_brep(model)
+    face = domain.source_indices[2][0]
+    uses = domain.patches[0].loops[0]
+    coedges = model.geometry.face_loops[face][0]
+    assert len(_rooted_patch_chart_junctions(domain, 0)[0]) == 4
+    first, second = uses[0], uses[1]
+    first_coedge, second_coedge = coedges[:2]
+    assert _exact_line_junction_box(
+        model, face, first_coedge, second_coedge, first, second
+    ) is not None
+
+    shifted = eqx.tree_at(
+        lambda use: use.pcurve,
+        second,
+        PeriodicPCurve(second.pcurve, model.patches[face], (1, 0)),
+    )
+    assert _exact_line_junction_box(
+        model, face, first_coedge, second_coedge, first, shifted
+    ) is None
+    end = 1 if first.sense > 0 else 0
+    root = model.geometry.coedge_endpoint_roots[first_coedge][end]
+    assert isinstance(root, NativePeriodEndpoint)
+    missing = eqx.tree_at(
+        lambda value: value.geometry.coedge_endpoint_roots[first_coedge][end],
+        model,
+        None,
+    )
+    assert _exact_line_junction_box(
+        missing, face, first_coedge, second_coedge, first, second
+    ) is None
+    wrong = NativePeriodEndpoint(
+        root.curve, root.patch, root.axis, rational=root.rational, turns=1
+    )
+    tampered = eqx.tree_at(
+        lambda value: value.geometry.coedge_endpoint_roots[first_coedge][end],
+        model,
+        wrong,
+    )
+    assert _exact_line_junction_box(
+        tampered, face, first_coedge, second_coedge, first, second
+    ) is None
+
+
 def _rebuild_brep_model(
     model: BRepModel,
     /,

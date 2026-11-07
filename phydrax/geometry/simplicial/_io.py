@@ -218,7 +218,6 @@ def planar_region_from_triangles(
 
     vertices_, faces_ = _canonical_triangle_arrays(vertices, faces)
     coordinates = vertices_[:, :2]
-    # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces_, num_vertices=coordinates.shape[0])
     if topology.num_face_components != 1:
         raise ValueError("Planar mesh must represent one connected polygonal region.")

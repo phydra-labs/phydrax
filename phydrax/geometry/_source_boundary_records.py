@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
 from itertools import groupby
@@ -28,7 +29,11 @@ if TYPE_CHECKING:
     from ..discretization._cell_mesh import CellMesh
     from ..meshing._association import GeometryAssociation
     from ..meshing._plc_source import PiecewiseLinearComplex
-    from .reconstruction._envelope import SurfaceEnvelopeReproduction
+    from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+    from .reconstruction._envelope import (
+        SurfaceEnvelopeMode,
+        SurfaceEnvelopeReproduction,
+    )
 
 
 type SourceBoundSemantics = Literal["certified", "sampled"]
@@ -112,6 +117,11 @@ class SourceBoundaryDistance(StrictModule, NonTrainableState):
         self.semantics = parse(semantics, SourceBoundSemantics, "semantics")
 
 
+# Private producer-to-record ownership transfer; public inputs are always copied.
+_SOURCE_BOUNDARY_SAMPLES_OWNERSHIP = object()
+_SOURCE_BOUNDARY_SAMPLE_BATCH = 16384
+
+
 class SourceBoundarySamples(StrictModule, NonTrainableState):
     """Source representatives with point-error and continuous cover radii."""
 
@@ -132,7 +142,23 @@ class SourceBoundarySamples(StrictModule, NonTrainableState):
         /,
         *,
         complete: bool,
+        _ownership: object = None,
     ) -> None:
+        owned = _ownership is _SOURCE_BOUNDARY_SAMPLES_OWNERSHIP
+        if owned:
+            for array, rank in ((points, 2), (covering_radius, 1), (point_error, 1)):
+                if (
+                    not isinstance(array, np.ndarray)
+                    or array.dtype != np.dtype(np.float64)
+                    or array.ndim != rank
+                    or not array.flags.owndata
+                    or not array.flags.c_contiguous
+                    or array.flags.writeable
+                ):
+                    raise ValueError(
+                        "Owned source boundary sample buffers must be sealed, "
+                        "owning, C-contiguous float64 arrays of the required rank."
+                    )
         scope = Scope()
         values = parse(
             np.asarray(points, dtype=np.float64),
@@ -152,20 +178,28 @@ class SourceBoundarySamples(StrictModule, NonTrainableState):
             "point_error",
             scope=scope,
         )
-        if (
-            not np.all(np.isfinite(values))
-            or np.any(~(radius >= 0.0))
-            or np.any(~(error >= 0.0))
-            or not isinstance(complete, (bool, np.bool_))
-        ):
+        if not isinstance(complete, (bool, np.bool_)):
             raise ValueError(
                 "SourceBoundarySamples requires finite points and nonnegative radii/errors."
             )
-        points_ = np.array(values, copy=True)
-        radius_ = np.array(radius, copy=True)
-        error_ = np.array(error, copy=True)
-        for array in (points_, radius_, error_):
-            array.setflags(write=False)
+        for start in range(0, len(values), _SOURCE_BOUNDARY_SAMPLE_BATCH):
+            stop = min(start + _SOURCE_BOUNDARY_SAMPLE_BATCH, len(values))
+            if (
+                not np.all(np.isfinite(values[start:stop]))
+                or np.any(~(radius[start:stop] >= 0.0))
+                or np.any(~(error[start:stop] >= 0.0))
+            ):
+                raise ValueError(
+                    "SourceBoundarySamples requires finite points and nonnegative radii/errors."
+                )
+        if owned:
+            points_, radius_, error_ = values, radius, error
+        else:
+            points_ = np.array(values, copy=True)
+            radius_ = np.array(radius, copy=True)
+            error_ = np.array(error, copy=True)
+            for array in (points_, radius_, error_):
+                array.setflags(write=False)
         self.points = points_
         self.covering_radius = radius_
         self.point_error = error_
@@ -261,6 +295,54 @@ class SourceBoundaryChartCover(StrictModule, NonTrainableState):
 
 type _RationalToken = tuple[int, int]
 type SourceBoundaryRationalChartBank = tuple[tuple[tuple[_RationalToken, ...], ...], ...]
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class SourceBoundaryImagePullback:
+    """Exact target-face reference subset defined by a physical image polygon."""
+
+    cell_global_id: int
+    local_entity_index: int
+    image_rational_tokens: tuple[tuple[_RationalToken, ...], ...]
+    source_chart_id: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.cell_global_id) is not int
+            or self.cell_global_id < 0
+            or type(self.local_entity_index) is not int
+            or self.local_entity_index < 0
+        ):
+            raise ValueError(
+                "Image pullbacks require a nonnegative target cell and face."
+            )
+        if (
+            not isinstance(self.image_rational_tokens, tuple)
+            or len(self.image_rational_tokens) < 2
+            or any(
+                not isinstance(point, tuple) or len(point) != 3
+                for point in self.image_rational_tokens
+            )
+        ):
+            raise ValueError(
+                "Image pullbacks require an exact physical 3D polygon or segment."
+            )
+        for point in self.image_rational_tokens:
+            for token in point:
+                if (
+                    not isinstance(token, tuple)
+                    or len(token) != 2
+                    or type(token[0]) is not int
+                    or type(token[1]) is not int
+                    or token[1] <= 0
+                    or Fraction(token[0], token[1]).as_integer_ratio() != token
+                ):
+                    raise ValueError("Image pullbacks require canonical rational tokens.")
+        if (
+            canonical_identifier(self.source_chart_id, "source_chart_id")
+            != self.source_chart_id
+        ):
+            raise ValueError("Image pullbacks require a canonical source chart identity.")
 
 
 def rational_chart_tokens(
@@ -380,6 +462,217 @@ def _fractions_from_chart_tokens(
         tuple(Fraction(numerator, denominator) for numerator, denominator in point)
         for point in bank[row]
     )
+
+
+class SourceBoundaryFaceImageWitness(StrictModule, NonTrainableState):
+    """Exact physical overlap pieces with implicit full-target-face pullbacks.
+
+    A row identifies an original source occurrence and an actual target face.
+    Its target support is the inverse image of the exact physical triangle
+    under that face's complete coordinate map; no affine reference simplex or
+    rounded physical shadow is asserted to be that support.
+    """
+
+    mesh_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    source_query_id: str = eqx.field(static=True)
+    cell_global_ids: np.ndarray
+    entity_global_ids: np.ndarray
+    local_entity_indices: np.ndarray
+    source_chart_ids: tuple[str, ...] = eqx.field(static=True)
+    source_entity_ids: tuple[str, ...] = eqx.field(static=True)
+    occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
+    source_region_sides: tuple[tuple[str | None, str | None], ...] = eqx.field(
+        static=True
+    )
+    orientations: np.ndarray
+    image_triangle_rational_tokens: SourceBoundaryRationalChartBank = eqx.field(
+        static=True
+    )
+    witness_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        mesh_id: str,
+        geometry_id: str,
+        topology_id: str,
+        source_id: str,
+        source_revision: str,
+        source_query_id: str,
+        cell_global_ids: ArrayLike,
+        entity_global_ids: ArrayLike,
+        local_entity_indices: ArrayLike,
+        source_chart_ids: tuple[str, ...],
+        source_entity_ids: tuple[str, ...],
+        occurrence_paths: tuple[tuple[str, ...], ...],
+        source_region_sides: tuple[tuple[str | None, str | None], ...],
+        orientations: ArrayLike,
+        image_triangle_rational_tokens: SourceBoundaryRationalChartBank,
+    ) -> None:
+        identities = tuple(
+            canonical_identifier(value, name)
+            for name, value in (
+                ("mesh_id", mesh_id),
+                ("geometry_id", geometry_id),
+                ("topology_id", topology_id),
+                ("source_id", source_id),
+                ("source_revision", source_revision),
+                ("source_query_id", source_query_id),
+            )
+        )
+        raw_banks = tuple(
+            np.asarray(value)
+            for value in (
+                cell_global_ids,
+                entity_global_ids,
+                local_entity_indices,
+                orientations,
+            )
+        )
+        if any(bank.ndim != 1 or bank.dtype.kind not in "iu" for bank in raw_banks):
+            raise TypeError(
+                "Face image incidence and orientation must be integer vectors."
+            )
+        count = raw_banks[0].size
+        if not count or any(bank.size != count for bank in raw_banks):
+            raise ValueError("Face image witness rows must be nonempty and aligned.")
+        if any(
+            np.any(bank < 0) or np.any(bank > np.iinfo(np.int64).max)
+            for bank in raw_banks[:3]
+        ):
+            raise ValueError("Face image incidence IDs must be nonnegative int64 values.")
+        if np.any(~np.isin(raw_banks[3], (-1, 1))):
+            raise ValueError("Face image orientations must be +1 or -1.")
+        charts, entities, paths, sides, tokens = (
+            tuple(source_chart_ids),
+            tuple(source_entity_ids),
+            tuple(occurrence_paths),
+            tuple(source_region_sides),
+            tuple(image_triangle_rational_tokens),
+        )
+        if any(len(bank) != count for bank in (charts, entities, paths, sides, tokens)):
+            raise ValueError("Face image source identities and exact pieces must align.")
+        for row in range(count):
+            if (
+                canonical_identifier(charts[row], "source_chart_id") != charts[row]
+                or canonical_identifier(entities[row], "source_entity_id")
+                != entities[row]
+                or not isinstance(paths[row], tuple)
+                or any(
+                    canonical_identifier(value, "occurrence_path") != value
+                    for value in paths[row]
+                )
+                or not isinstance(sides[row], tuple)
+                or len(sides[row]) != 2
+                or any(
+                    value is not None
+                    and canonical_identifier(value, "region_side") != value
+                    for value in sides[row]
+                )
+                or not isinstance(tokens[row], tuple)
+                or len(tokens[row]) != 3
+            ):
+                raise ValueError(
+                    "Face image source occurrence, sides or triangle are invalid."
+                )
+            SourceBoundaryImagePullback(
+                int(raw_banks[0][row]), int(raw_banks[2][row]), tokens[row], charts[row]
+            )
+            points = _fractions_from_chart_tokens((tokens[row],), 0)
+            first = tuple(points[1][axis] - points[0][axis] for axis in range(3))
+            second = tuple(points[2][axis] - points[0][axis] for axis in range(3))
+            if not any(
+                first[i] * second[j] - first[j] * second[i]
+                for i, j in ((0, 1), (0, 2), (1, 2))
+            ):
+                raise ValueError(
+                    "Face image witness contains a degenerate physical triangle."
+                )
+        order = sorted(
+            range(count),
+            key=lambda row: (
+                int(raw_banks[0][row]),
+                int(raw_banks[2][row]),
+                int(raw_banks[1][row]),
+                charts[row],
+                entities[row],
+                paths[row],
+                tuple(value or "" for value in sides[row]),
+                tokens[row],
+                int(raw_banks[3][row]),
+            ),
+        )
+        keys = tuple(
+            (
+                int(raw_banks[0][row]),
+                int(raw_banks[2][row]),
+                int(raw_banks[1][row]),
+                charts[row],
+                entities[row],
+                paths[row],
+                sides[row],
+                tokens[row],
+                int(raw_banks[3][row]),
+            )
+            for row in order
+        )
+        if len(set(keys)) != len(keys):
+            raise ValueError("Face image witness must not repeat an exact support piece.")
+        banks = tuple(
+            np.asarray(bank[order], dtype=np.int64).copy() for bank in raw_banks
+        )
+        for bank in banks:
+            bank.setflags(write=False)
+        (
+            self.mesh_id,
+            self.geometry_id,
+            self.topology_id,
+            self.source_id,
+            self.source_revision,
+            self.source_query_id,
+        ) = identities
+        (
+            self.cell_global_ids,
+            self.entity_global_ids,
+            self.local_entity_indices,
+            self.orientations,
+        ) = banks
+        self.source_chart_ids = tuple(charts[row] for row in order)
+        self.source_entity_ids = tuple(entities[row] for row in order)
+        self.occurrence_paths = tuple(paths[row] for row in order)
+        self.source_region_sides = tuple(sides[row] for row in order)
+        self.image_triangle_rational_tokens = tuple(tokens[row] for row in order)
+        self.witness_id = canonical_fingerprint(
+            {
+                "kind": "source-boundary-face-image-witness",
+                "operands": identities,
+                "incidence": tuple(array_tree_fingerprint(bank) for bank in banks),
+                "charts": self.source_chart_ids,
+                "entities": self.source_entity_ids,
+                "occurrences": self.occurrence_paths,
+                "region_sides": self.source_region_sides,
+                "image_triangles": self.image_triangle_rational_tokens,
+            }
+        )
+
+    def image_triangle(self, row: int, /) -> tuple[tuple[Fraction, ...], ...]:
+        if isinstance(row, (bool, np.bool_)) or not isinstance(row, (int, np.integer)):
+            raise TypeError("Face image row must be an integer.")
+        if not 0 <= row < len(self.source_chart_ids):
+            raise IndexError("Face image row is out of range.")
+        return _fractions_from_chart_tokens(self.image_triangle_rational_tokens, int(row))
+
+    def require_current(
+        self, mesh: CellMesh, geometry: CellGeometrySpec, source: SourceBoundaryQuery, /
+    ) -> None:
+        """Reprove full face images and source overlap on the current operands."""
+        from ._source_fidelity import validate_source_fidelity_witness
+
+        validate_source_fidelity_witness(mesh, geometry, source, self)
 
 
 class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
@@ -1109,6 +1402,11 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
     produced the envelope; validation trusts it only when it binds exactly the
     witnessed source triangles, controls, and envelope, and otherwise reruns
     the kernel. It is evidence about the bound content, not part of its identity.
+
+    A paired ``derived_source`` and ``derived_witness`` describe a complete
+    chart correspondence from the reproduced envelope to an independently
+    organized target boundary. Validation checks both partitions and bounds
+    their actual geometric displacement before composing the kernel bounds.
     """
 
     mesh_id: str
@@ -1120,6 +1418,7 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
     offset: float = eqx.field(static=True)
     spacing: float = eqx.field(static=True)
     certificate_spacing: float = eqx.field(static=True)
+    envelope_mode: SurfaceEnvelopeMode = eqx.field(static=True)
     bounds: np.ndarray
     envelope_vertices: np.ndarray
     envelope_triangles: np.ndarray
@@ -1127,6 +1426,8 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
     target_facet_global_ids: np.ndarray
     witness_id: str
     reproduction: SurfaceEnvelopeReproduction | None
+    derived_source: PiecewiseLinearBoundarySource | None
+    derived_witness: SourceBoundaryChartWitness | None
 
     def __init__(
         self,
@@ -1140,14 +1441,34 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
         offset: float,
         spacing: float,
         certificate_spacing: float,
+        envelope_mode: SurfaceEnvelopeMode,
         bounds: ConvertibleToArray,
         envelope_vertices: ConvertibleToArray,
         envelope_triangles: ConvertibleToArray,
         target_vertex_global_ids: ConvertibleToArray,
         target_facet_global_ids: ConvertibleToArray,
         reproduction: SurfaceEnvelopeReproduction | None = None,
+        derived_source: PiecewiseLinearBoundarySource | None = None,
+        derived_witness: SourceBoundaryChartWitness | None = None,
     ) -> None:
-        from .reconstruction._envelope import SurfaceEnvelopeReproduction
+        from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+        from .reconstruction._envelope import (
+            parse_envelope_mode,
+            SurfaceEnvelopeReproduction,
+        )
+
+        if (derived_source is None) != (derived_witness is None):
+            raise ValueError(
+                "Derived envelope source and chart witness must be supplied together."
+            )
+        if derived_source is not None and not isinstance(
+            derived_source, PiecewiseLinearBoundarySource
+        ):
+            raise TypeError("derived_source must be a PiecewiseLinearBoundarySource.")
+        if derived_witness is not None and not isinstance(
+            derived_witness, SourceBoundaryChartWitness
+        ):
+            raise TypeError("derived_witness must be a SourceBoundaryChartWitness.")
 
         if reproduction is not None and not isinstance(
             reproduction, SurfaceEnvelopeReproduction
@@ -1171,6 +1492,7 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
             raise ValueError(
                 "Surface envelope offset and spacings must be finite and positive."
             )
+        mode = parse_envelope_mode(envelope_mode)
         bound_values = np.asarray(bounds, dtype=np.float64)
         points = np.asarray(envelope_vertices, dtype=np.float64)
         raw_triangles = np.asarray(envelope_triangles)
@@ -1197,13 +1519,22 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
             or np.any(raw_triangles[:, 0] == raw_triangles[:, 1])
             or np.any(raw_triangles[:, 1] == raw_triangles[:, 2])
             or np.any(raw_triangles[:, 2] == raw_triangles[:, 0])
-            or raw_vertex_ids.shape != (points.shape[0],)
+            or raw_vertex_ids.ndim != 1
+            or raw_vertex_ids.size == 0
             or raw_vertex_ids.dtype.kind not in "iu"
-            or raw_facet_ids.shape != (raw_triangles.shape[0],)
+            or raw_facet_ids.ndim != 1
+            or raw_facet_ids.size == 0
             or raw_facet_ids.dtype.kind not in "iu"
         ):
             raise ValueError(
                 "Surface envelope witness bounds, triangles, or target identities are malformed."
+            )
+        if derived_source is None and (
+            raw_vertex_ids.shape != (points.shape[0],)
+            or raw_facet_ids.shape != (raw_triangles.shape[0],)
+        ):
+            raise ValueError(
+                "Envelope target identities must align with the original envelope."
             )
         if (
             raw_vertex_ids.dtype.kind == "u"
@@ -1238,6 +1569,7 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
         self.mesh_id, self.geometry_id, self.topology_id = identities[:3]
         self.source_id, self.source_revision, self.source_query_id = identities[3:]
         self.offset, self.spacing, self.certificate_spacing = controls
+        self.envelope_mode = mode
         (
             self.bounds,
             self.envelope_vertices,
@@ -1246,11 +1578,14 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
             self.target_facet_global_ids,
         ) = arrays
         self.reproduction = reproduction
+        self.derived_source = derived_source
+        self.derived_witness = derived_witness
         self.witness_id = canonical_fingerprint(
             {
                 "kind": "surface-envelope-distance-witness",
                 "identities": identities,
                 "controls": controls,
+                "envelope_mode": mode,
                 "bounds": array_tree_fingerprint(self.bounds),
                 "envelope": array_tree_fingerprint(
                     (self.envelope_vertices, self.envelope_triangles)
@@ -1258,6 +1593,9 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
                 "target": array_tree_fingerprint(
                     (self.target_vertex_global_ids, self.target_facet_global_ids)
                 ),
+                "derived": None
+                if derived_source is None or derived_witness is None
+                else (derived_source.source_query_id, derived_witness.witness_id),
             }
         )
 
@@ -1445,6 +1783,8 @@ __all__ = [
     "SurfaceEnvelopeDistanceWitness",
     "SourceBoundaryDistanceWitness",
     "SourceBoundaryChartWitness",
+    "SourceBoundaryFaceImageWitness",
+    "SourceBoundaryImagePullback",
     "SourceBoundaryRationalChartBank",
     "SourceBoundaryChartCover",
     "SourceBoundaryPointWitness",

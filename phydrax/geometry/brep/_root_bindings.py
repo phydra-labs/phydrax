@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from fractions import Fraction
 from typing import cast, TYPE_CHECKING, TypeAlias, Union
 
@@ -30,6 +31,7 @@ from .._interval_enclosure import (
     interval_add,
     interval_multiply,
     prepare_interval_function,
+    PreparedIntervalFunction,
 )
 from ._assembly import BRepAffinePlacement
 from ._intersection import (
@@ -466,7 +468,13 @@ def _exact_line_extrusion_box(
 
 
 def _patch_box(
-    patch: AbstractSurfacePatch, lower: np.ndarray, upper: np.ndarray, /
+    patch: AbstractSurfacePatch,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+    *,
+    interval_program: Callable[[AbstractSurfacePatch], PreparedIntervalFunction]
+    | None = None,
 ) -> np.ndarray:
     """Enclose ``patch`` on a UV box.
 
@@ -489,7 +497,9 @@ def _patch_box(
     if isinstance(patch, PlacedSurface):
         from ._placed import _affine_interval_transform
 
-        box = _patch_box(patch.definition, lower, upper)
+        box = _patch_box(
+            patch.definition, lower, upper, interval_program=interval_program
+        )
         lo, hi = _affine_interval_transform(
             patch.affine,
             box[0, :, None],
@@ -524,7 +534,11 @@ def _patch_box(
         raise NotImplementedError(
             "Exact patch coefficients have no registered algebraic interval realization."
         )
-    evaluator = prepare_interval_function(patch.evaluate, 2)
+    evaluator = (
+        prepare_interval_function(patch.evaluate, 2)
+        if interval_program is None
+        else interval_program(patch)
+    )
     lo, hi = evaluator.evaluate(
         np.asarray(lower, dtype=np.float64)[None],
         np.asarray(upper, dtype=np.float64)[None],
@@ -2216,12 +2230,14 @@ class BRepVertexRoot(StrictModule):
                 _exact_conic_uv_endpoint(patch, curve, endpoint)
                 or _exact_bspline_lift_uv_endpoint(self, patch, curve, endpoint)
                 or _exact_revolution_pole_uv_endpoint(self, patch, curve, endpoint)
+                or _exact_revolution_circle_uv_endpoint(self, patch, curve, endpoint)
             )
         if isinstance(endpoint, NativePeriodEndpoint):
             return (
                 _exact_native_period_uv_endpoint(self, patch, curve, endpoint)
                 or _exact_native_cylinder_uv_endpoint(self, patch, curve, endpoint)
                 or _exact_revolution_pole_uv_endpoint(self, patch, curve, endpoint)
+                or _exact_revolution_circle_uv_endpoint(self, patch, curve, endpoint)
             )
         return None
 
@@ -2253,7 +2269,11 @@ class BRepVertexRoot(StrictModule):
                 ),
                 dtype=np.float64,
             )
-        if chart is not None and len(chart) == 5 and chart[0] == "revolution-pole":
+        if (
+            chart is not None
+            and len(chart) == 5
+            and chart[0] in ("revolution-pole", "revolution-root")
+        ):
             from ._patches import _conic_parameter_root_bounds
 
             longitude, cosine, sine, turns = chart[1:]
@@ -2533,6 +2553,98 @@ def _exact_revolution_pole_uv_endpoint(
         root.cosine_exact,
         root.sine_exact,
         root.turns,
+    )
+
+
+def _exact_revolution_circle_uv_endpoint(
+    vertex: BRepVertexRoot,
+    patch: AbstractSurfacePatch,
+    curve: AbstractCurve,
+    endpoint: ConicParameterEndpoint | NativePeriodEndpoint,
+    /,
+) -> tuple[object, ...] | None:
+    """Prove a regular circular-revolution seam endpoint in its exact UV sheet."""
+    from ._boolean_core import (
+        AffinePCurve,
+        chart_add,
+        chart_parts,
+        line_chart_coefficients,
+    )
+    from ._correspondence import _exact_vertex_root_source, _periodic_pcurve_source
+    from ._patches import (
+        _validate_source_shadows,
+        CircleCurve,
+        ConicRootLinePCurve,
+        RevolutionSurface,
+    )
+    from ._trim_helpers import PeriodOffset
+
+    if not isinstance(patch, RevolutionSurface) or not isinstance(
+        patch.curve, CircleCurve
+    ):
+        return None
+    point, _ = _exact_vertex_root_source(vertex)
+    periodic = _periodic_pcurve_source(curve, patch)
+    if point is None or periodic is None:
+        return None
+    source, shifts = periodic
+    try:
+        _validate_source_shadows(curve, set())
+        _validate_source_shadows(patch.curve, set())
+    except (TypeError, ValueError):
+        return None
+    if isinstance(endpoint, NativePeriodEndpoint):
+        if (
+            not isinstance(source, AffinePCurve)
+            or not isinstance(source.curve, ConicRootLinePCurve)
+            or source.matrix != ((Fraction(0), Fraction(1)), (Fraction(1), Fraction(0)))
+            or source.offset != (Fraction(0), Fraction(0))
+            or source.curve.phase_shift_exact != 0
+            or source.curve.height_origin_exact != 0
+            or source.curve.height_direction_exact != 1
+            or endpoint.patch is None
+            or not _same_parameter_source(endpoint.patch, patch)
+            or not _same_parameter_source(endpoint.curve, curve)
+            or endpoint.axis != 0
+            or endpoint.rational != 0
+            or endpoint.turns.denominator != 1
+        ):
+            return None
+        root = source.curve.root
+        longitude = chart_add(
+            endpoint.exact_parameter, PeriodOffset(Fraction(0), Fraction(shifts[0]))
+        )
+        latitude_turns = root.turns + shifts[1]
+    else:
+        chart = line_chart_coefficients(curve)
+        if chart is None:
+            return None
+        origin, direction = chart
+        longitude_parts = chart_parts(origin[0])
+        latitude_parts = chart_parts(origin[1])
+        if (
+            not _same_parameter_source(endpoint.carrier, curve)
+            or not vertex.supports_endpoint(endpoint)
+            or endpoint.parameter_exact is not None
+            or endpoint.point_exact != point
+            or direction != (Fraction(0), Fraction(1))
+            or longitude_parts[0] != 0
+            or longitude_parts[1].denominator != 1
+            or latitude_parts[0] != 0
+            or latitude_parts[1].denominator != 1
+        ):
+            return None
+        root = endpoint.root
+        longitude = origin[0]
+        latitude_turns = root.turns + int(latitude_parts[1])
+    if not _same_parameter_source(root.conic, patch.curve) or root.exact_point() != point:
+        return None
+    return (
+        "revolution-root",
+        longitude,
+        root.cosine_exact,
+        root.sine_exact,
+        latitude_turns,
     )
 
 

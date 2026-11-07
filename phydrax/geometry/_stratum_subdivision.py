@@ -30,6 +30,7 @@ Floats only propose planes and directions; every sign is decided exactly.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import combinations, product
@@ -48,6 +49,7 @@ from ..discretization._coordinate_enclosure import (
     Expression,
 )
 from ..discretization._exact_algebraic_geometry import RadicalElement
+from ..linalg._exact import matmul_exact, symmetric_product_minors_exact
 from ._embedding_cells import EmbeddingCell
 from ._mapped_embedding import (
     monotone_preconditioner,
@@ -65,6 +67,9 @@ _PIECE_KINDS = ("triangle", "simplex:2", *_SIMPLEX_KINDS)
 # Pieces smaller than this fraction of the cell scale are below the binary64
 # resolution of the float guidance; their pair stays unresolved.
 _RESOLUTION = 2.0**-44
+# This limits only retained subdivision results, never the proof traversal.
+# Evicted exact children are deterministically recomputed if needed again.
+_CHILD_CACHE_ENTRIES = 256
 
 
 def _sign(value: ExactScalar, /) -> int:
@@ -103,18 +108,34 @@ class _Piece:
 
 @dataclass
 class StratumSubdivisionCache:
-    """Pieces and Jacobian controls of one embedding proof, keyed by cell.
+    """Reusable exact pieces and Jacobian controls for a bounded pair workset.
 
-    Pieces are keyed by cell, stratum, and reference vertices; Jacobian
-    Bernstein controls by cell and uniform subdivision level (every facet
-    contact of a cell reuses them).
+    Roots are keyed by cell and stratum, children additionally by reference
+    vertices, and Jacobian controls by cell and uniform subdivision level.
+    The child LRU bounds retained subdivision trees without limiting proof work.
     """
 
     roots: dict[tuple[int, tuple[int, ...]], _Piece | None] = field(default_factory=dict)
-    children: dict[
+    geometry: dict[int, tuple[EmbeddingCell, tuple[int, ...], _Controls]] = field(
+        default_factory=dict
+    )
+    children: OrderedDict[
         tuple[int, tuple[int, ...], tuple[_Barycentric, ...]], tuple[_Piece, _Piece]
-    ] = field(default_factory=dict)
+    ] = field(default_factory=OrderedDict)
     jacobian_controls: dict[tuple[int, int], tuple[_Matrix, ...] | None] = field(
+        default_factory=dict
+    )
+    simplex_jacobians: dict[int, tuple[EmbeddingCell, tuple[_Matrix, ...] | None]] = (
+        field(default_factory=dict)
+    )
+    reference_edge_maps: dict[
+        tuple[tuple[tuple[Fraction, ...], ...], int],
+        tuple[_Matrix, _Matrix | None],
+    ] = field(default_factory=dict)
+    corner_affine_inverses: dict[int, tuple[EmbeddingCell, _Matrix | None]] = field(
+        default_factory=dict
+    )
+    fixed_glue_maps: dict[tuple[object, ...], _Matrix | None] = field(
         default_factory=dict
     )
 
@@ -264,6 +285,8 @@ def _root_piece(
     shared_ids: tuple[int, ...],
     residuals: tuple[Expression, ...],
     /,
+    *,
+    cache: StratumSubdivisionCache | None = None,
 ) -> _Piece | None:
     dimension = cell.dimension
     if (
@@ -293,23 +316,84 @@ def _root_piece(
         on != all(on_stratum[slot] for slot in slots) for slots, on in corner_on.items()
     ):
         return None
-    geometry_degree = _degree(cell.coordinates, groups, dimension)
-    if geometry_degree is None:
-        return None
-    geometry = _controls(cell.coordinates, groups, geometry_degree, dimension)
-    if geometry is None:
-        return None
-    composed = tuple(
-        compose_expression(residual, cell.coordinates) for residual in residuals
+    prepared = None if cache is None else cache.geometry.get(id(cell))
+    if prepared is not None and prepared[0] is cell:
+        _, geometry_degree, geometry = prepared
+    else:
+        geometry_degree = _degree(cell.coordinates, groups, dimension)
+        if geometry_degree is None:
+            return None
+        geometry = _controls(cell.coordinates, groups, geometry_degree, dimension)
+        if geometry is None:
+            return None
+        if cache is not None:
+            cache.geometry[id(cell)] = (cell, geometry_degree, geometry)
+    # An affine physical residual commutes with conversion of the geometry
+    # to Bernstein form. This also covers the two planes of a straight edge,
+    # without repeatedly composing the cell's polynomial map.
+    ambient = len(cell.coordinates)
+    zero = (0,) * ambient
+    axes = tuple(
+        tuple(int(index == axis) for index in range(ambient)) for axis in range(ambient)
     )
-    residual_degree = (
-        _degree(composed, groups, dimension) if composed else (1,) * len(groups)
+    affine_rows: list[tuple[ExactScalar, ...]] = []
+    for expression in residuals:
+        if not isinstance(expression, dict) or any(
+            exponent != zero and exponent not in axes for exponent in expression
+        ):
+            break
+        affine_rows.append(
+            (expression.get(zero, Fraction(0)),)
+            + tuple(expression.get(axis, Fraction(0)) for axis in axes)
+        )
+    offsets = (
+        tuple(row[0] for row in affine_rows)
+        if len(affine_rows) == ambient
+        and all(
+            row[1:] == tuple(Fraction(int(index == axis)) for index in range(ambient))
+            for axis, row in enumerate(affine_rows)
+        )
+        else None
     )
-    if residual_degree is None:
-        return None
-    residual = _controls(composed, groups, residual_degree, dimension) if composed else {}
-    if residual is None:
-        return None
+    if offsets is not None:
+        residual_degree = geometry_degree
+        residual = {
+            index: tuple(
+                value + offset for value, offset in zip(vector, offsets, strict=True)
+            )
+            for index, vector in geometry.items()
+        }
+    elif residuals and len(affine_rows) == len(residuals):
+        residual_degree = geometry_degree
+        residual = {
+            index: tuple(
+                row[0]
+                + sum(
+                    (
+                        coefficient * value
+                        for coefficient, value in zip(row[1:], vector, strict=True)
+                        if coefficient
+                    ),
+                    Fraction(0),
+                )
+                for row in affine_rows
+            )
+            for index, vector in geometry.items()
+        }
+    else:
+        composed = tuple(
+            compose_expression(residual, cell.coordinates) for residual in residuals
+        )
+        residual_degree = (
+            _degree(composed, groups, dimension) if composed else (1,) * len(groups)
+        )
+        if residual_degree is None:
+            return None
+        residual = (
+            _controls(composed, groups, residual_degree, dimension) if composed else {}
+        )
+        if residual is None:
+            return None
     vertices = tuple(
         tuple(Fraction(int(slot == vertex)) for slot in slots)
         for slots in _group_slots(groups)
@@ -416,6 +500,7 @@ def _children(
     memo_key = (*key, piece.vertices)
     cached = cache.children.get(memo_key)
     if cached is not None:
+        cache.children.move_to_end(memo_key)
         return cached
     corners = piece.corners
 
@@ -449,6 +534,8 @@ def _children(
     )
     result = _bisect(piece, first, second)
     cache.children[memo_key] = result
+    if len(cache.children) > _CHILD_CACHE_ENTRIES:
+        cache.children.popitem(last=False)
     return result
 
 
@@ -600,7 +687,7 @@ def subdivided_stratum_separation(
     for cell in (first, second):
         key = (cell.global_id, stratum)
         if key not in cache.roots:
-            cache.roots[key] = _root_piece(cell, stratum, residuals)
+            cache.roots[key] = _root_piece(cell, stratum, residuals, cache=cache)
         piece = cache.roots[key]
         if piece is None:
             return None
@@ -661,6 +748,18 @@ def _inverse(matrix: _Matrix, /) -> _Matrix | None:
 
 
 def _product(first: _Matrix, second: _Matrix, /) -> _Matrix:
+    if all(
+        isinstance(value, Fraction)
+        for matrix in (first, second)
+        for row in matrix
+        for value in row
+    ):
+        return matmul_exact(
+            cast(tuple[tuple[Fraction, ...], ...], first),
+            cast(tuple[tuple[Fraction, ...], ...], second),
+        )
+    # Algebraic coefficients retain their exact field arithmetic; the integer
+    # accumulator owns rational matrices only.
     size = len(first)
     return tuple(
         tuple(
@@ -674,8 +773,20 @@ def _product(first: _Matrix, second: _Matrix, /) -> _Matrix:
     )
 
 
-def _positive_definite_symmetric_part(matrix: _Matrix, /) -> bool:
-    """Sylvester's criterion on the leading minors of the symmetric part."""
+def _positive_definite_symmetric_part(*factors: _Matrix) -> bool:
+    """Sylvester's criterion without normalizing intermediate rational products."""
+    if all(
+        isinstance(value, Fraction | int)
+        for matrix in factors
+        for row in matrix
+        for value in row
+    ):
+        rational = cast(tuple[tuple[tuple[Fraction | int, ...], ...], ...], factors)
+        return all(value > 0 for value in symmetric_product_minors_exact(*rational))
+    # Ordered algebraic extensions keep their original exact scalar path.
+    matrix = factors[-1]
+    for factor in reversed(factors[:-1]):
+        matrix = _product(factor, matrix)
     size = len(matrix)
     symmetric = tuple(
         tuple((matrix[row][column] + matrix[column][row]) / 2 for column in range(size))
@@ -743,8 +854,133 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
     )
 
 
+def _cached_reference_edges(
+    points: tuple[tuple[Fraction, ...], ...],
+    origin: int,
+    cache: StratumSubdivisionCache | None,
+    /,
+) -> tuple[_Matrix, _Matrix | None]:
+    key = (points, origin)
+    if cache is not None and key in cache.reference_edge_maps:
+        return cache.reference_edge_maps[key]
+    edges = _edge_matrix(points, origin)
+    prepared = (edges, _inverse(edges))
+    if cache is not None:
+        cache.reference_edge_maps[key] = prepared
+    return prepared
+
+
+def _cached_corner_metric(
+    cell: EmbeddingCell,
+    origin: int,
+    inverse: _Matrix,
+    cache: StratumSubdivisionCache | None,
+    /,
+) -> _Matrix | None:
+    entry = None if cache is None else cache.corner_affine_inverses.get(id(cell))
+    if entry is not None and entry[0] is cell:
+        return entry[1]
+    metric = _inverse(_product(_edge_matrix(cell.corner_images, origin), inverse))
+    if cache is not None:
+        cache.corner_affine_inverses[id(cell)] = (cell, metric)
+    return metric
+
+
+def _cached_simplex_jacobians(
+    cell: EmbeddingCell, cache: StratumSubdivisionCache | None, /
+) -> tuple[_Matrix, ...] | None:
+    if cache is None:
+        return _jacobian_controls(cell)
+    entry = cache.simplex_jacobians.get(id(cell))
+    if entry is None or entry[0] is not cell:
+        entry = (cell, _jacobian_controls(cell))
+        cache.simplex_jacobians[id(cell)] = entry
+    return entry[1]
+
+
+def _fixed_glued_monotone(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    shared: set[int],
+    cache: StratumSubdivisionCache,
+    /,
+) -> bool:
+    """Try the glued-map theorem on a fixed exact convex reference domain."""
+    dimension = first.dimension
+    first_opposite = next(
+        index
+        for index, identifier in enumerate(first.vertex_ids)
+        if identifier not in shared
+    )
+    second_opposite = next(
+        index
+        for index, identifier in enumerate(second.vertex_ids)
+        if identifier not in shared
+    )
+    first_reference = tuple(
+        tuple(Fraction(value) for value in point) for point in first.reference_vertices
+    )
+    second_reference = tuple(
+        tuple(Fraction(value) for value in point) for point in second.reference_vertices
+    )
+    first_edges, first_inverse = _cached_reference_edges(
+        first_reference, first_opposite, cache
+    )
+    _, second_inverse = _cached_reference_edges(second_reference, second_opposite, cache)
+    if first_inverse is None or second_inverse is None:
+        return False
+    metric = _cached_corner_metric(first, first_opposite, first_inverse, cache)
+    if metric is None:
+        return False
+    mapping = tuple(
+        first.vertex_ids.index(identifier) if identifier in shared else -1
+        for identifier in second.vertex_ids
+    )
+    key = (first_reference, second_reference, first_opposite, second_opposite, mapping)
+    if key not in cache.fixed_glue_maps:
+        # All weights are positive and sum to two. The segment joining this
+        # opposite vertex to the first opposite vertex crosses the interior
+        # of the common face, so their glued union is convex.
+        weights = (
+            (Fraction(1), Fraction(1))
+            if dimension == 2
+            else (Fraction(1), Fraction(1, 2), Fraction(1, 2))
+        )
+        displacement = _apply(first_edges, weights)
+        glued = tuple(
+            first_reference[first_opposite][axis] + displacement[axis]
+            for axis in range(dimension)
+        )
+        images = tuple(
+            tuple(
+                first_reference[mapping[column]][row] - glued[row]
+                for column in range(dimension + 1)
+                if column != second_opposite
+            )
+            for row in range(dimension)
+        )
+        cache.fixed_glue_maps[key] = _inverse(_product(images, second_inverse))
+    glue = cache.fixed_glue_maps[key]
+    if glue is None:
+        return False
+    first_controls = _cached_simplex_jacobians(first, cache)
+    second_controls = _cached_simplex_jacobians(second, cache)
+    if first_controls is None or second_controls is None:
+        return False
+    return all(
+        _positive_definite_symmetric_part(metric, control) for control in first_controls
+    ) and all(
+        _positive_definite_symmetric_part(metric, control, glue)
+        for control in second_controls
+    )
+
+
 def _glued_monotone(
-    first: EmbeddingCell, second: EmbeddingCell, shared: set[int], /
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    shared: set[int],
+    cache: StratumSubdivisionCache | None,
+    /,
 ) -> bool:
     dimension = first.dimension
     first_opposite = next(
@@ -763,14 +999,14 @@ def _glued_monotone(
     second_reference = tuple(
         tuple(Fraction(value) for value in point) for point in second.reference_vertices
     )
-    first_edges = _edge_matrix(first_reference, first_opposite)
-    first_inverse = _inverse(first_edges)
-    second_inverse = _inverse(_edge_matrix(second_reference, second_opposite))
+
+    first_edges, first_inverse = _cached_reference_edges(
+        first_reference, first_opposite, cache
+    )
+    _, second_inverse = _cached_reference_edges(second_reference, second_opposite, cache)
     if first_inverse is None or second_inverse is None:
         return False
-    metric = _inverse(
-        _product(_edge_matrix(first.corner_images, first_opposite), first_inverse)
-    )
+    metric = _cached_corner_metric(first, first_opposite, first_inverse, cache)
     if metric is None:
         return False
     # Face weights of the preimage of second's opposite corner under first's
@@ -792,8 +1028,9 @@ def _glued_monotone(
     if not _sign(clipped_total):
         return False
     scaled = tuple(value * total / clipped_total for value in clipped)
+    displacement = _apply(first_edges, scaled)
     glued = tuple(
-        first_reference[first_opposite][axis] + _apply(first_edges, scaled)[axis]
+        first_reference[first_opposite][axis] + displacement[axis]
         for axis in range(dimension)
     )
     reference_by_id = dict(zip(first.vertex_ids, first_reference, strict=True))
@@ -808,8 +1045,9 @@ def _glued_monotone(
     glue = _inverse(_product(images, second_inverse))
     if glue is None:
         return False
-    first_controls = _jacobian_controls(first)
-    second_controls = _jacobian_controls(second)
+
+    first_controls = _cached_simplex_jacobians(first, cache)
+    second_controls = _cached_simplex_jacobians(second, cache)
     if first_controls is None or second_controls is None:
         return False
     glued_controls = (
@@ -817,8 +1055,7 @@ def _glued_monotone(
         *(_product(control, glue) for control in second_controls),
     )
     if all(
-        _positive_definite_symmetric_part(_product(metric, control))
-        for control in glued_controls
+        _positive_definite_symmetric_part(metric, control) for control in glued_controls
     ):
         return True
     # Any constant preconditioner proves monotonicity; search one when the
@@ -845,7 +1082,11 @@ _STANDARD_SIMPLICES = {
 
 
 def glued_face_monotone(
-    first: EmbeddingCell, second: EmbeddingCell, shared_ids: tuple[int, ...], /
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    shared_ids: tuple[int, ...],
+    cache: StratumSubdivisionCache | None = None,
+    /,
 ) -> bool:
     """Prove two facet-sharing full-dimensional simplices meet only in their facet.
 
@@ -854,8 +1095,8 @@ def glued_face_monotone(
     ``phi`` fixing the facet corners and sending the glued cell's opposite
     corner to a point ``P`` across the facet hyperplane whose segment to the
     other opposite corner crosses the closed facet, so the glued reference
-    domain ``D`` is convex (``P`` is the preimage of the opposite corner's image
-    under the corner-affine map ``A``, clipped into that cone). When
+    domain ``D`` is convex. A fixed interior-crossing glue is tried first; the
+    fallback uses the corner-affine inverse image, clipped into that cone. When
     ``A^{-1} DH`` has a positive definite symmetric part at every Bernstein
     control of the glued map's Jacobian on both cells, then
     ``(x - y) . A^{-1}(H(x) - H(y)) > 0`` along every segment of ``D``; ``H`` is
@@ -892,8 +1133,11 @@ def glued_face_monotone(
         for cell in (first, second)
     ):
         return False
-    return _glued_monotone(first, second, shared) or _glued_monotone(
-        second, first, shared
+    workset = cache if cache is not None else StratumSubdivisionCache()
+    return (
+        _fixed_glued_monotone(first, second, shared, workset)
+        or _glued_monotone(first, second, shared, workset)
+        or _glued_monotone(second, first, shared, workset)
     )
 
 
@@ -1126,7 +1370,7 @@ def glued_facet_monotone(
     cache: StratumSubdivisionCache,
     /,
 ) -> bool:
-    """Prove two facet-sharing simplices or prisms meet only in their shared facet.
+    """Prove facet-sharing simplices, prisms or hexahedra meet only in their facet.
 
     An exact affine glue ``phi`` maps the second reference cell onto the far
     side of the shared facet of the first, matching the facet corners by vertex
@@ -1145,7 +1389,7 @@ def glued_facet_monotone(
         or len(shared) < dimension
         or any(
             cell.dimension != dimension
-            or cell.kind not in (*_PIECE_KINDS, "prism")
+            or cell.kind not in (*_PIECE_KINDS, "prism", "hexahedron")
             or cell.pyramid_normalizations is not None
             or len(cell.coordinates) != dimension
             or len(cell.reference_vertices) != len(cell.vertex_ids)

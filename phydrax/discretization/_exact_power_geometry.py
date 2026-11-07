@@ -52,9 +52,7 @@ def _prepare_power_site_bank(
     /,
 ) -> _PreparedPowerSiteBank:
     if not site_points or len(site_points) != len(site_weights):
-        raise ValueError(
-            "Exact power sites and weights must be nonempty aligned banks."
-        )
+        raise ValueError("Exact power sites and weights must be nonempty aligned banks.")
     offsets = tuple(
         _dot(point, point) - weight
         for point, weight in zip(site_points, site_weights, strict=True)
@@ -119,12 +117,8 @@ def _candidate_is_global_minimum(
         for site in equal_sites[1:]
     ):
         return False
-    point_lower = np.asarray(
-        [fraction_down(value) for value in point], dtype=np.float64
-    )
-    point_upper = np.asarray(
-        [fraction_up(value) for value in point], dtype=np.float64
-    )
+    point_lower = np.asarray([fraction_down(value) for value in point], dtype=np.float64)
+    point_upper = np.asarray([fraction_up(value) for value in point], dtype=np.float64)
     anchor_upper = fraction_up(anchor_power)
     active = set(equal_sites)
     for first in range(0, len(bank.site_points), _POWER_SITE_FILTER_CHUNK):
@@ -238,11 +232,7 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
         if not isinstance(periodic_source, PeriodicPointOrbits):
             raise TypeError("periodic_source must be PeriodicPointOrbits.")
         cell = periodic_source.cell
-        if (
-            cell.ambient_dimension != 3
-            or cell.rank != 3
-            or not cell.fully_periodic
-        ):
+        if cell.ambient_dimension != 3 or cell.rank != 3 or not cell.fully_periodic:
             raise ValueError(
                 "Exact periodic power source context requires a full 3-D lattice."
             )
@@ -268,7 +258,9 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
             or np.any(owners_raw < 0)
             or np.any(owners_raw >= point_ids.size)
         ):
-            raise ValueError("Periodic power source/image identity arrays are misaligned.")
+            raise ValueError(
+                "Periodic power source/image identity arrays are misaligned."
+            )
         owners = owners_raw.astype(np.int64, copy=False)
         windings = windings_raw.astype(np.int64, copy=False)
         image_identities = tuple(
@@ -279,20 +271,20 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
             for image in range(owners.size)
         )
         if len(set(image_identities)) != len(image_identities):
-            raise ValueError("Periodic power image owner/winding identities must be unique.")
+            raise ValueError(
+                "Periodic power image owner/winding identities must be unique."
+            )
         exact_points = tuple(_fraction_point(row) for row in points)
         exact_weights = tuple(Fraction.from_float(float(value)) for value in weights)
         exact_lattice = tuple(
-            _fraction_point(row)
-            for row in np.asarray(cell.vectors, dtype=np.float64)
+            _fraction_point(row) for row in np.asarray(cell.vectors, dtype=np.float64)
         )
         exact_image_points = tuple(
             tuple(
                 exact_points[int(owners[image])][axis]
                 + sum(
                     (
-                        int(windings[image, generator])
-                        * exact_lattice[generator][axis]
+                        int(windings[image, generator]) * exact_lattice[generator][axis]
                         for generator in range(3)
                     ),
                     Fraction(0),
@@ -313,7 +305,9 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
             }
         )
         if expected_orbits_id != periodic_source.orbits_id:
-            raise ValueError("Periodic power source identity does not reproduce its orbit bank.")
+            raise ValueError(
+                "Periodic power source identity does not reproduce its orbit bank."
+            )
         identity = canonical_fingerprint(
             {
                 "kind": "exact-periodic-power-source-context",
@@ -368,8 +362,7 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
                 exact_source_points[int(owners[image])][axis]
                 + sum(
                     (
-                        int(windings[image, generator])
-                        * exact_lattice[generator][axis]
+                        int(windings[image, generator]) * exact_lattice[generator][axis]
                         for generator in range(3)
                     ),
                     Fraction(0),
@@ -382,9 +375,7 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
         weights = np.asarray(image_weights, dtype=np.float64)
         if (
             tuple(exact_image_points) != expected_points
-            or not np.array_equal(
-                np.asarray(expected_points, dtype=np.float64), points
-            )
+            or not np.array_equal(np.asarray(expected_points, dtype=np.float64), points)
             or tuple(Fraction.from_float(float(value)) for value in weights)
             != self.exact_image_weights
         ):
@@ -402,9 +393,7 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
             or not np.array_equal(
                 np.asarray(cell.vectors), np.asarray(source_cell.vectors)
             )
-            or not np.array_equal(
-                np.asarray(cell.origin), np.asarray(source_cell.origin)
-            )
+            or not np.array_equal(np.asarray(cell.origin), np.asarray(source_cell.origin))
             or cell.periodic_axes != source_cell.periodic_axes
         ):
             raise ValueError(
@@ -452,7 +441,9 @@ class ExactPeriodicPowerSourceContext(StrictModule, NonTrainableState):
                 np.asarray(renewed.source_weights), np.asarray(value.source_weights)
             )
         ):
-            raise ValueError("Stored periodic power source context does not reproduce its operands.")
+            raise ValueError(
+                "Stored periodic power source context does not reproduce its operands."
+            )
         return renewed
 
 
@@ -462,6 +453,7 @@ def _sub(first: ExactPoint3, second: ExactPoint3, /) -> ExactPoint3:
         first[1] - second[1],
         first[2] - second[2],
     )
+
 
 def _dot(first: ExactPoint3, second: ExactPoint3, /) -> Fraction:
     return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
@@ -475,7 +467,9 @@ def _cross(first: ExactPoint3, second: ExactPoint3, /) -> ExactPoint3:
     )
 
 
-def _plane(points: tuple[ExactPoint3, ExactPoint3, ExactPoint3], /) -> tuple[ExactPoint3, Fraction] | None:
+def _plane(
+    points: tuple[ExactPoint3, ExactPoint3, ExactPoint3], /
+) -> tuple[ExactPoint3, Fraction] | None:
     normal = _cross(_sub(points[1], points[0]), _sub(points[2], points[0]))
     if not any(normal):
         return None
@@ -498,7 +492,9 @@ def _power_plane(
     right = _dot(second, second) - _dot(first, first) - weights[other] + weights[anchor]
     if not any(normal):
         if right:
-            raise ValueError("Equal-site witness has inconsistent represented power values.")
+            raise ValueError(
+                "Equal-site witness has inconsistent represented power values."
+            )
         return None
     return normal, right
 
@@ -545,16 +541,13 @@ def _barycentric(
             if not determinant:
                 continue
             u = (
-                delta[axis_a] * second[axis_b]
-                - delta[axis_b] * second[axis_a]
+                delta[axis_a] * second[axis_b] - delta[axis_b] * second[axis_a]
             ) / determinant
             v = (
-                first[axis_a] * delta[axis_b]
-                - first[axis_b] * delta[axis_a]
+                first[axis_a] * delta[axis_b] - first[axis_b] * delta[axis_a]
             ) / determinant
             if any(
-                point[axis]
-                != carrier[0][axis] + u * first[axis] + v * second[axis]
+                point[axis] != carrier[0][axis] + u * first[axis] + v * second[axis]
                 for axis in range(3)
             ):
                 return None
@@ -657,9 +650,7 @@ def _carrier_planes(
 
 
 def _power_candidate_diagnostic(
-    candidates: dict[
-        ExactPoint3, tuple[Fraction, Fraction, Fraction, Fraction]
-    ],
+    candidates: dict[ExactPoint3, tuple[Fraction, Fraction, Fraction, Fraction]],
     /,
 ) -> str:
     """Format a bounded failure-only exact candidate sample."""
@@ -712,19 +703,23 @@ def _vertex_power_point(
             if (point := _solve_three(selected)) is not None
         )
     for point in candidate_points:
+        if point in exact_candidates:
+            continue
         barycentric = _barycentric(point, carrier)
         if barycentric is None or any(value < 0 for value in barycentric):
-            continue
-        if not _candidate_is_global_minimum(point, equal_sites, prepared_site_bank):
             continue
         if any(
             sum((normal[i] * point[i] for i in range(3)), Fraction(0)) != rhs
             for normal, rhs in power_constraints
         ):
             continue
+        if not _candidate_is_global_minimum(point, equal_sites, prepared_site_bank):
+            continue
         exact_candidates[point] = barycentric
     if not exact_candidates:
-        raise ValueError("Power vertex witness has no exact feasible carrier/power intersection.")
+        raise ValueError(
+            "Power vertex witness has no exact feasible carrier/power intersection."
+        )
     # Exact rational coordinates carry no signed-zero bit; compare values without
     # rewriting the native rounded array.
     rounded_candidates = {
@@ -743,8 +738,7 @@ def _vertex_power_point(
     if len(rounded_candidates) != 1:
         raise ValueError(
             "Power vertex witness must identify exactly one rational carrier/power "
-            "intersection; "
-            + _power_candidate_diagnostic(rounded_candidates)
+            "intersection; " + _power_candidate_diagnostic(rounded_candidates)
         )
     return next(iter(rounded_candidates.items()))
 
@@ -766,7 +760,9 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
     cell_sites: jnp.ndarray
     cell_regions: jnp.ndarray
     exact_vertices: tuple[ExactPoint3, ...] = eqx.field(static=True)
-    carrier_barycentrics: tuple[tuple[Fraction, Fraction, Fraction, Fraction], ...] = eqx.field(static=True)
+    carrier_barycentrics: tuple[tuple[Fraction, Fraction, Fraction, Fraction], ...] = (
+        eqx.field(static=True)
+    )
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     periodic_source_context: ExactPeriodicPowerSourceContext | None
@@ -796,7 +792,10 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
         ]
         | None = None,
     ) -> None:
-        if not isinstance(carrier_mesh, CellMesh) or carrier_mesh.topological_dimension != 3:
+        if (
+            not isinstance(carrier_mesh, CellMesh)
+            or carrier_mesh.topological_dimension != 3
+        ):
             raise TypeError("carrier_mesh must be a three-dimensional CellMesh.")
         if (
             not isinstance(source_id, str)
@@ -804,7 +803,9 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
             or not isinstance(source_revision, str)
             or not source_revision.strip()
         ):
-            raise ValueError("Power source identity and revision must be nonempty strings.")
+            raise ValueError(
+                "Power source identity and revision must be nonempty strings."
+            )
         normalized_source_id = source_id.strip()
         normalized_source_revision = source_revision.strip()
         points = np.asarray(site_points, dtype=np.float64)
@@ -826,7 +827,9 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(points))
             or not np.all(np.isfinite(weights))
         ):
-            raise ValueError("Power source sites, weights, and output vertices must be finite 3-D arrays.")
+            raise ValueError(
+                "Power source sites, weights, and output vertices must be finite 3-D arrays."
+            )
         if (
             offsets.shape != (rounded.shape[0] + 1,)
             or offsets.dtype.kind not in "iu"
@@ -846,7 +849,9 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
             or np.any(cell_sites >= points.shape[0])
             or cell_regions.shape != cell_sites.shape
         ):
-            raise ValueError("Power output site and carrier witness arrays are misaligned.")
+            raise ValueError(
+                "Power output site and carrier witness arrays are misaligned."
+            )
         if exact_site_points is None:
             exact_sites = tuple(_fraction_point(row) for row in points)
         elif (
@@ -859,7 +864,9 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
                 for point in exact_site_points
             )
         ):
-            raise TypeError("Exact power site coordinates must be immutable Fraction triples.")
+            raise TypeError(
+                "Exact power site coordinates must be immutable Fraction triples."
+            )
         else:
             exact_sites = exact_site_points
         if not np.array_equal(np.asarray(exact_sites, dtype=np.float64), points):
@@ -867,9 +874,7 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
                 "Exact power site coordinates do not match their execution shadows."
             )
         if periodic_source_context is not None:
-            if not isinstance(
-                periodic_source_context, ExactPeriodicPowerSourceContext
-            ):
+            if not isinstance(periodic_source_context, ExactPeriodicPowerSourceContext):
                 raise TypeError(
                     "periodic_source_context must be ExactPeriodicPowerSourceContext."
                 )
@@ -891,7 +896,9 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
                     "output_vertex_indices must select unique in-range power vertices."
                 )
         if output_rows.size == 0:
-            raise ValueError("output_vertex_indices must select a nonempty power vertex bank.")
+            raise ValueError(
+                "output_vertex_indices must select a nonempty power vertex bank."
+            )
         if precomputed_exact_vertices is None:
             if precomputed_carrier_barycentrics is not None:
                 raise ValueError(
@@ -927,16 +934,15 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
         for vertex in range(rounded.shape[0]):
             row = sites[offsets[vertex] : offsets[vertex + 1]]
             if np.any(np.diff(row) <= 0):
-                raise ValueError("Equal-power site IDs must be sorted and unique per vertex.")
+                raise ValueError(
+                    "Equal-power site IDs must be sorted and unique per vertex."
+                )
         carrier_mask = carriers >= 0
         carrier_counts = np.sum(carrier_mask, axis=1)
         if (
             np.any(carrier_counts < 1)
             or np.any(carrier_counts > 4)
-            or np.any(
-                carrier_mask
-                != (np.arange(4)[None, :] < carrier_counts[:, None])
-            )
+            or np.any(carrier_mask != (np.arange(4)[None, :] < carrier_counts[:, None]))
             or np.any(carriers[carrier_mask] >= carrier_mesh.coordinates.shape[0])
             or any(
                 np.unique(row[row >= 0]).size != np.count_nonzero(row >= 0)
@@ -947,7 +953,9 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
         carrier_tets: list[np.ndarray] = []
         for block in carrier_mesh.blocks:
             if block.cell_kind not in ("tetrahedron", "simplex:3"):
-                raise ValueError("Power source carrier mesh must contain tetrahedral blocks only.")
+                raise ValueError(
+                    "Power source carrier mesh must contain tetrahedral blocks only."
+                )
             carrier_tets.append(np.asarray(block.vertices, dtype=np.int64))
         tets = np.concatenate(carrier_tets, axis=0)
         if any(int(index) >= carrier_mesh.coordinates.shape[0] for index in tets.flat):
@@ -988,13 +996,12 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
                 carrier_count = len(carrier)
                 if (
                     any(value < 0 for value in weights_in_carrier[:carrier_count])
-                    or sum(
-                        weights_in_carrier[:carrier_count], Fraction(0)
-                    )
-                    != 1
+                    or sum(weights_in_carrier[:carrier_count], Fraction(0)) != 1
                     or any(weights_in_carrier[carrier_count:])
                 ):
-                    raise ValueError("Precomputed power carrier barycentrics are invalid.")
+                    raise ValueError(
+                        "Precomputed power carrier barycentrics are invalid."
+                    )
                 reconstructed = tuple(
                     sum(
                         (
@@ -1092,9 +1099,7 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
         rows = np.asarray(self.output_vertex_indices, dtype=np.int64)
         return np.asarray(self.runtime_vertices)[rows]
 
-    def source_coordinates(
-        self, indices: Any = None, /
-    ) -> CoordinateSourceBank:
+    def source_coordinates(self, indices: Any = None, /) -> CoordinateSourceBank:
         """Return exact Fraction coordinates for selected output vertex rows."""
         if indices is None:
             selected = range(len(self.exact_vertices))
@@ -1103,10 +1108,11 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
             if rows.dtype.kind not in "iu" or rows.ndim != 1:
                 raise TypeError("Power coordinate selection must be an integer vector.")
             if np.any(rows < 0) or np.any(rows >= len(self.exact_vertices)):
-                raise IndexError("Power coordinate selection is outside the source vertex bank.")
+                raise IndexError(
+                    "Power coordinate selection is outside the source vertex bank."
+                )
             selected = rows.astype(np.int64).tolist()
         return tuple(self.exact_vertices[int(index)] for index in selected)
-
 
     def require_periodic_lift(
         self,
@@ -1167,7 +1173,6 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
                     "Exact power source coordinates violate their declared periodic deck action."
                 )
 
-
     def require_periodic_mesh(self, mesh: CellMesh, /) -> None:
         """Require the retained exact power source to bind the mesh quotient."""
         if self.periodic_source_context is None:
@@ -1187,7 +1192,9 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
             carrier_mesh.mesh_id != self.carrier_mesh_id
             or carrier_mesh.topology_id != self.carrier_topology_id
         ):
-            raise ValueError("Exact power source is bound to a different carrier mesh epoch.")
+            raise ValueError(
+                "Exact power source is bound to a different carrier mesh epoch."
+            )
 
     @classmethod
     @checked
@@ -1332,21 +1339,20 @@ class ExactPowerCellGeometrySource(StrictModule, NonTrainableState):
                 for name in array_fields
             )
         ):
-            raise ValueError("Stored exact power geometry source does not reproduce its exact map.")
+            raise ValueError(
+                "Stored exact power geometry source does not reproduce its exact map."
+            )
         if renewed.periodic_source_context is not None:
             if target_periodic_cell is None:
                 raise ValueError(
                     "Periodic exact power restoration requires its target PeriodicCell."
                 )
-            renewed.periodic_source_context.require_periodic_cell(
-                target_periodic_cell
-            )
+            renewed.periodic_source_context.require_periodic_cell(target_periodic_cell)
         elif target_periodic_cell is not None:
             raise ValueError(
                 "A nonperiodic exact power map cannot bind a target PeriodicCell."
             )
         return renewed
-
 
 
 @checked

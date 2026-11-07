@@ -617,6 +617,7 @@ def prepare_native_compartment(
         specification,
         coordinate_contract,
         schedule,
+        affine_source=source if isinstance(source, CompartmentMeshingSource) else None,
     )
     return _PreparedCompartmentRoute(source, preparation, label_field, volume)
 

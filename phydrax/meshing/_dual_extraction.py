@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import final
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,6 +24,7 @@ from ..discretization._cell_complex import (
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
+    certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._coordinate_enclosure import CoordinateSourceBank
@@ -64,6 +65,7 @@ class QuadLayoutObstruction(ValueError):
 class SurfaceCrossField(StrictModule, NonTrainableState):
     """A sparse-solved fourfold tangent field bound to one triangle surface."""
 
+    source: CellMesh
     frames: Array
     angles: Array
     transport_edges: Array
@@ -72,6 +74,7 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
     transport_angles: Array
     feature_rows: Array
     feature_angles: Array
+    guide_angles: Array
     feature_residuals: Array
     field_solve_residual: Array
     field_solve_relative_residual: Array
@@ -81,6 +84,7 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
     singularity_indices: Array
     source_topology_id: str = eqx.field(static=True)
     source_geometry_id: str = eqx.field(static=True)
+    field_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -92,6 +96,7 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
         transport_angles: ConvertibleToArray,
         feature_rows: ConvertibleToArray,
         feature_angles: ConvertibleToArray,
+        guide_angles: ConvertibleToArray,
         feature_residuals: ConvertibleToArray,
         field_solve_residual: ConvertibleToArray,
         field_solve_relative_residual: ConvertibleToArray,
@@ -109,6 +114,7 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
         transport_ = np.asarray(transport_angles, dtype=np.float64)
         rows_ = np.asarray(feature_rows, dtype=np.int32)
         directions_ = np.asarray(feature_angles, dtype=np.float64)
+        guide_angles_ = np.asarray(guide_angles, dtype=np.float64)
         residuals_ = np.asarray(feature_residuals, dtype=np.float64)
         solve_residual_ = np.asarray(field_solve_residual, dtype=np.float64)
         relative_residual_ = np.asarray(field_solve_relative_residual, dtype=np.float64)
@@ -144,6 +150,8 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
             raise ValueError(
                 "Cross-field angles and non-negative patches must cover every triangle."
             )
+        if guide_angles_.shape not in ((0,), (face_count,)):
+            raise ValueError("Cross-field guidance must be empty or cover every triangle.")
         if links_.ndim != 2 or links_.shape[1] != 2:
             raise ValueError("Cross-field transport edges must have shape (links, 2).")
         if transport_.shape != (links_.shape[0],):
@@ -157,10 +165,10 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
         if (
             edges_.ndim != 1
             or np.any(edges_ < 0)
-            or len(set(edges_.tolist())) != edges_.size
+            or np.any(edges_[1:] <= edges_[:-1])
         ):
             raise ValueError(
-                "Cross-field feature edges must be unique non-negative edge rows."
+                "Cross-field feature edges must be sorted unique non-negative edge rows."
             )
         if (
             singular_vertices_.ndim != 1
@@ -185,6 +193,7 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
                     angles_,
                     transport_,
                     directions_,
+                    guide_angles_,
                     residuals_,
                     solve_residual_,
                     relative_residual_,
@@ -213,15 +222,81 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
         self.transport_angles = jnp.asarray(transport_)
         self.feature_rows = jnp.asarray(rows_)
         self.feature_angles = jnp.asarray(directions_)
+        self.guide_angles = jnp.asarray(guide_angles_)
         self.feature_residuals = jnp.asarray(residuals_)
         self.field_solve_residual = jnp.asarray(solve_residual_)
         self.field_solve_relative_residual = jnp.asarray(relative_residual_)
         self.field_energy = jnp.asarray(energy_)
         self.singular_vertices = jnp.asarray(singular_vertices_)
         self.singularity_indices = jnp.asarray(singularity_indices_)
+        self.source = source
         self.field_solver = "scipy.sparse.linalg.spsolve"
         self.source_topology_id = source.topology_id
         self.source_geometry_id = source.geometry_id
+        self.field_id = self._scientific_id()
+
+    def _scientific_id(self, /) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "source-surface-cross-field",
+                "source_mesh": self.source.mesh_id,
+                "source_topology": self.source_topology_id,
+                "source_geometry": self.source_geometry_id,
+                "angles": np.asarray(self.angles),
+                "features": np.asarray(self.feature_edges),
+                "guide_angles": np.asarray(self.guide_angles),
+                "singular_vertices": np.asarray(self.singular_vertices),
+                "singularity_indices": np.asarray(self.singularity_indices),
+            }
+        )
+
+    @classmethod
+    def from_stored_fields(
+        cls: type[SurfaceCrossField], value: SurfaceCrossField, /
+    ) -> SurfaceCrossField:
+        """Restore source inputs and independently repeat the connection solve."""
+        from ._quad_generation import prepare_surface_cross_field
+
+        if type(value) is not cls:
+            raise TypeError("value must be SurfaceCrossField.")
+        source = CellMesh.from_stored_fields(value.source)
+        guide = np.asarray(value.guide_angles)
+        rebuilt = prepare_surface_cross_field(
+            source,
+            feature_edges=value.feature_edges,
+            guide_angles=None if guide.size == 0 else guide,
+        )
+        names = (
+            "frames",
+            "angles",
+            "transport_edges",
+            "patch_ids",
+            "feature_edges",
+            "transport_angles",
+            "feature_rows",
+            "feature_angles",
+            "guide_angles",
+            "feature_residuals",
+            "field_solve_residual",
+            "field_solve_relative_residual",
+            "field_energy",
+            "singular_vertices",
+            "singularity_indices",
+        )
+        if (
+            rebuilt.field_id != value.field_id
+            or rebuilt.source_topology_id != value.source_topology_id
+            or rebuilt.source_geometry_id != value.source_geometry_id
+            or rebuilt.field_solver != value.field_solver
+            or any(
+                not np.array_equal(
+                    np.asarray(getattr(rebuilt, name)), np.asarray(getattr(value, name))
+                )
+                for name in names
+            )
+        ):
+            raise ValueError("Stored source-bound cross field does not reproduce.")
+        return rebuilt
 
 
 @final
@@ -289,6 +364,186 @@ class SurfaceQuadLayout(StrictModule, NonTrainableState):
         self.layout_id = str(layout_id)
 
 
+class SurfaceQuadFieldArchiveRecipe(NamedTuple):
+    """Source and solver inputs needed to reconstruct one field-layout event."""
+
+    source: CellMesh
+    source_geometry: CellGeometrySpec
+    field: SurfaceCrossField
+    paired_edge_rows: Array
+    maximum_field_error: float
+    complete: bool
+    field_id: str
+    layout_id: str
+    event_id: str
+
+
+@final
+class SurfaceQuadFieldEvent(StrictModule, NonTrainableState):
+    """A revalidated source-bound cross field and quad-layout decision."""
+
+    source: CellMesh
+    source_geometry: CellGeometrySpec
+    field: SurfaceCrossField
+    layout: SurfaceQuadLayout
+    maximum_field_error: float = eqx.field(static=True)
+    complete: bool = eqx.field(static=True)
+    event_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source: CellMesh,
+        source_geometry: CellGeometrySpec,
+        field: SurfaceCrossField,
+        layout: SurfaceQuadLayout,
+        /,
+        *,
+        maximum_field_error: float,
+        complete: bool,
+    ) -> None:
+        from ..geometry._mesh_certificates import _same_tree_content
+        from ._quad_generation import prepare_surface_quad_layout
+
+        if type(complete) is not bool:
+            raise TypeError("complete must be bool.")
+        if not isinstance(source_geometry, CellGeometrySpec):
+            raise TypeError("source_geometry must be CellGeometrySpec.")
+        validity = certify_cell_geometry_validity(source_geometry, mesh=source)
+        if validity.invalid_count or validity.unresolved_count:
+            raise ValueError("A quad field event requires certified source geometry.")
+        rebuilt = prepare_surface_quad_layout(
+            source,
+            field,
+            maximum_field_error=maximum_field_error,
+            source_geometry=source_geometry,
+            complete=complete,
+        )
+        if (
+            layout.source_topology_id != source.topology_id
+            or layout.mesh.topology_id != source.topology_id
+            or layout.mesh.geometry_id != source.geometry_id
+            or not _same_tree_content(layout.mesh, source)
+            or layout.layout_id != rebuilt.layout_id
+            or not np.array_equal(layout.parent_offsets, rebuilt.parent_offsets)
+            or not np.array_equal(layout.parent_cells, rebuilt.parent_cells)
+            or not np.array_equal(layout.paired_edge_rows, rebuilt.paired_edge_rows)
+        ):
+            raise ValueError("Quad field event layout does not reproduce from its inputs.")
+        self.source = source
+        self.source_geometry = source_geometry
+        self.field = field
+        self.layout = rebuilt
+        self.maximum_field_error = float(maximum_field_error)
+        self.complete = complete
+        self.event_id = canonical_fingerprint(
+            {
+                "kind": "surface-quad-field-event",
+                "source": source.mesh_id,
+                "source_geometry": cell_geometry_id(source_geometry),
+                "field": field.field_id,
+                "layout": rebuilt.layout_id,
+                "maximum_field_error": self.maximum_field_error,
+                "complete": complete,
+            }
+        )
+
+    def archive_recipe(self, /) -> SurfaceQuadFieldArchiveRecipe:
+        checked = SurfaceQuadFieldEvent(
+            self.source,
+            self.source_geometry,
+            self.field,
+            self.layout,
+            maximum_field_error=self.maximum_field_error,
+            complete=self.complete,
+        )
+        if checked.event_id != self.event_id:
+            raise ValueError("Quad field event no longer matches its scientific identity.")
+        return SurfaceQuadFieldArchiveRecipe(
+            self.source,
+            self.source_geometry,
+            self.field,
+            self.layout.paired_edge_rows,
+            self.maximum_field_error,
+            self.complete,
+            self.field.field_id,
+            self.layout.layout_id,
+            self.event_id,
+        )
+
+    def require_target(self, mesh: CellMesh, geometry: CellGeometrySpec, /) -> None:
+        """Reconstruct this decision's actual target and coordinate map."""
+        from ..geometry._mesh_certificates import _same_tree_content
+        from ._quad_generation import _build_quad_mesh, _compose_quad_source_geometry
+
+        self.archive_recipe()
+        target, supports, offsets, parents, *_ = _build_quad_mesh(
+            self.source, self.layout
+        )
+        if _affine_geometry_matches(self.source, self.source_geometry):
+            target_geometry = CellGeometrySpec.affine(target)
+        else:
+            target, target_geometry = _compose_quad_source_geometry(
+                self.source,
+                target,
+                supports,
+                offsets,
+                parents,
+                self.source_geometry,
+            )
+        if (
+            target.mesh_id != mesh.mesh_id
+            or cell_geometry_id(target_geometry) != cell_geometry_id(geometry)
+            or not _same_tree_content(target, mesh)
+            or not _same_tree_content(target_geometry, geometry)
+        ):
+            raise ValueError(
+                "Quad field event does not reproduce the target mesh and geometry."
+            )
+
+
+def restore_surface_quad_field_event(
+    recipe: SurfaceQuadFieldArchiveRecipe,
+    source: CellMesh,
+    source_geometry: CellGeometrySpec,
+    /,
+) -> SurfaceQuadFieldEvent:
+    """Re-solve the stored scientific inputs; never restore a proof by ID."""
+    from ..geometry._mesh_certificates import _same_tree_content
+    from ._quad_generation import prepare_surface_quad_layout
+
+    if type(recipe) is not SurfaceQuadFieldArchiveRecipe:
+        raise TypeError("recipe must be SurfaceQuadFieldArchiveRecipe.")
+    field = SurfaceCrossField.from_stored_fields(recipe.field)
+    if (
+        field.source.mesh_id != source.mesh_id
+        or not _same_tree_content(field.source, source)
+        or field.field_id != recipe.field_id
+    ):
+        raise ValueError("Stored source-bound cross field does not reproduce.")
+    layout = prepare_surface_quad_layout(
+        source,
+        field,
+        maximum_field_error=recipe.maximum_field_error,
+        source_geometry=source_geometry,
+        complete=recipe.complete,
+    )
+    if layout.layout_id != recipe.layout_id or not np.array_equal(
+        layout.paired_edge_rows, recipe.paired_edge_rows
+    ):
+        raise ValueError("Stored source-bound quad layout does not reproduce.")
+    event = SurfaceQuadFieldEvent(
+        source,
+        source_geometry,
+        field,
+        layout,
+        maximum_field_error=recipe.maximum_field_error,
+        complete=recipe.complete,
+    )
+    if event.event_id != recipe.event_id:
+        raise ValueError("Stored source-bound quad field event does not reproduce.")
+    return event
+
+
 @final
 class DualExtraction(StrictModule, NonTrainableState):
     """Locally valid surface-quad or volume-hex dual candidate with source support."""
@@ -303,6 +558,7 @@ class DualExtraction(StrictModule, NonTrainableState):
     boundary_vertices: Array
     singular_vertices: Array
     cross_field: SurfaceCrossField | None
+    field_event: SurfaceQuadFieldEvent | None
     geometry: CellGeometrySpec | None
     source_geometry: CellGeometrySpec | None
     source_edge_ids: Array
@@ -328,6 +584,7 @@ class DualExtraction(StrictModule, NonTrainableState):
         source_edge_ids: ConvertibleToArray | None = None,
         source_edge_parameter_numerators: ConvertibleToArray | None = None,
         source_edge_parameter_denominators: ConvertibleToArray | None = None,
+        field_event: SurfaceQuadFieldEvent | None = None,
     ) -> None:
         supports = np.asarray(vertex_supports, dtype=np.int64)
         offsets = np.asarray(parent_offsets, dtype=np.int64)
@@ -522,12 +779,26 @@ class DualExtraction(StrictModule, NonTrainableState):
             )
         if singular.ndim != 1 or np.any(singular < 0) or np.any(singular >= valence.size):
             raise ValueError("Dual singular vertices must index target vertices.")
+        from ..geometry._mesh_certificates import _same_tree_content
+
         if cross_field is not None and (
             source.topological_dimension != 2
             or cross_field.source_topology_id != source.topology_id
             or cross_field.source_geometry_id != source.geometry_id
+            or not _same_tree_content(cross_field.source, source)
         ):
             raise ValueError("The cross field must bind the surface extraction source.")
+        if field_event is not None and (
+            cross_field is None
+            or source_geometry is None
+            or field_event.source.mesh_id != source.mesh_id
+            or field_event.field.field_id != cross_field.field_id
+            or cell_geometry_id(field_event.source_geometry) != cell_geometry_id(source_geometry)
+            or not _same_tree_content(field_event.source, source)
+            or not _same_tree_content(field_event.field, cross_field)
+            or not _same_tree_content(field_event.source_geometry, source_geometry)
+        ):
+            raise ValueError("The field event must bind the extraction's source and field.")
         self.mesh = mesh
         self.source = source
         self.vertex_supports = jnp.asarray(supports)
@@ -538,6 +809,7 @@ class DualExtraction(StrictModule, NonTrainableState):
         self.boundary_vertices = jnp.asarray(boundary)
         self.singular_vertices = jnp.asarray(singular)
         self.cross_field = cross_field
+        self.field_event = field_event
         self.geometry = geometry
         self.source_geometry = source_geometry
         self.source_edge_ids = jnp.asarray(edge_source_ids, dtype=jnp.int64)
@@ -695,6 +967,9 @@ __all__ = [
     "QuadLayoutObstruction",
     "SurfaceCrossField",
     "SurfaceQuadLayout",
+    "SurfaceQuadFieldArchiveRecipe",
+    "SurfaceQuadFieldEvent",
+    "restore_surface_quad_field_event",
     "DualExtraction",
     "fresh_vertex_global_ids",
 ]

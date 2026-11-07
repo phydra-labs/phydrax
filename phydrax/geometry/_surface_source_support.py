@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from typing import final, NamedTuple, Protocol, runtime_checkable, TYPE_CHECKING
@@ -16,6 +17,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -54,7 +56,7 @@ from ..discretization._surface_chart_records import (
     SurfaceRootMeshCellBinding,
 )
 from ._domain_boundary import MeshingDomainBoundarySource
-from ._meshing_domain import MeshingDomain, PatchCurveUse, SourcePreparation
+from ._meshing_domain import MeshingDomain, PatchCurveUse, PatchPoleUse, SourcePreparation
 from ._source_boundary_records import (
     SourceBoundaryChartCover,
     SourceBoundaryDistance,
@@ -64,14 +66,40 @@ from ._source_boundary_records import (
 
 
 if TYPE_CHECKING:
+    from .._interpolation._bspline_extraction import RationalBSplineSurfaceSpan
     from ..meshing._association import GeometryAssociation
     from ..meshing._result import CellMeshingResult
-    from .brep._patches import BSplineSurfacePatch
+    from .brep._patches import AbstractCurve, AbstractSurfacePatch, BSplineSurfacePatch
 Corners = tuple[tuple[Fraction, Fraction], ...]
 type _SurfaceChartToken = tuple[int, int]
 type _SurfaceChartPoint = tuple[_SurfaceChartToken, _SurfaceChartToken]
 type _SurfaceChartCell = tuple[_SurfaceChartPoint, ...]
 type _SurfaceChartRationalBank = tuple[_SurfaceChartCell, ...]
+# Exact spans, affine chart line (origin, direction) and span breakpoints of
+# one coedge's normalized parameter on a spline carrier.
+type _SplineCoedgeTrace = tuple[
+    tuple[RationalBSplineSurfaceSpan, ...],
+    tuple[Fraction, Fraction],
+    tuple[Fraction, Fraction],
+    tuple[Fraction, ...],
+]
+# Angle map (u0, du) and the affine (constant, rate) parts of the constant,
+# cosine and sine coefficients of one line-revolution coedge trace.
+type _HarmonicCoedgeTrace = tuple[
+    tuple[Fraction, Fraction],
+    tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]],
+    tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]],
+    tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]],
+]
+
+# Restriction proofs completed in this process, bound to the exact live support,
+# target mesh, geometry and chart witness objects (see prove_native_restrictions).
+_PROVEN_RESTRICTIONS: LiveProofLedger[SurfaceRestrictionRows] = LiveProofLedger()
+# B-Rep curve ancestry replays bound to the exact live charts and tolerance
+# (see validate_cad_curve_ancestry).
+_CAD_CURVE_ANCESTRY: LiveProofLedger[dict[int, tuple[_CadCurveUseBinding, ...]]] = (
+    LiveProofLedger()
+)
 
 
 def _fraction_coordinate(value: object, name: str, /) -> Fraction:
@@ -470,6 +498,18 @@ class SurfaceSourceCellAtlas(Protocol):
     def root_parameter_chart(self, row: int, /) -> Corners: ...
 
 
+class SurfaceTrimRoot(NamedTuple):
+    """One source coedge interval and its exact represented chart chord."""
+
+    patch: int
+    loop: int
+    use: int
+    first: Fraction
+    last: Fraction
+    first_uv: tuple[Fraction, Fraction]
+    last_uv: tuple[Fraction, Fraction]
+
+
 @final
 class SurfaceSourceCharts(StrictModule, NonTrainableState):
     """Canonical source charts, extraction-piece ancestry, associations, and query."""
@@ -484,6 +524,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
     root_parameter_rational_tokens: _SurfaceChartRationalBank = eqx.field(static=True)
     source_root_cell_ids: np.ndarray
     boundary_occurrences: np.ndarray
+    trim_roots: tuple[SurfaceTrimRoot, ...] = eqx.field(static=True)
     source_piece_ids: tuple[tuple[int, ...], ...]
     associations: tuple[GeometryAssociation, ...]
     boundary_source: MeshingDomainBoundarySource
@@ -508,6 +549,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
         source_piece_ids: Sequence[Sequence[int]],
         root_parameter_exact: Sequence[Corners] | None = None,
         boundary_occurrences: ArrayLike | None = None,
+        trim_roots: tuple[SurfaceTrimRoot, ...] = (),
     ) -> None:
         if not isinstance(domain, MeshingDomain):
             raise TypeError("domain must be MeshingDomain.")
@@ -689,6 +731,33 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
             raise ValueError(
                 "SurfaceSourceCharts requires an explicit source-face association for every cell."
             )
+        roots = tuple(trim_roots)
+        if any(
+            type(root) is not SurfaceTrimRoot
+            or any(type(value) is not int or value < 0 for value in root[:3])
+            or not all(isinstance(value, Fraction) for value in (root.first, root.last))
+            or root.first == root.last
+            or min(root.first, root.last) < 0
+            or max(root.first, root.last) > 1
+            or len(root.first_uv) != 2
+            or len(root.last_uv) != 2
+            or not all(
+                isinstance(value, Fraction) for value in (*root.first_uv, *root.last_uv)
+            )
+            or root.patch >= len(domain.patches)
+            or root.loop >= len(domain.patches[root.patch].loops)
+            or root.use >= len(domain.patches[root.patch].loops[root.loop])
+            or not isinstance(
+                domain.patches[root.patch].loops[root.loop][root.use], PatchCurveUse
+            )
+            for root in roots
+        ):
+            raise ValueError(
+                "Surface trim roots must bind exact source coedge intervals."
+            )
+        if len(set(roots)) != len(roots):
+            raise ValueError("Surface trim roots must not repeat.")
+        roots = tuple(sorted(roots))
         domain.require_current(domain.source_id, domain.source_revision)
         parameters = np.array(parameters, copy=True)
         patches = np.array(patches, copy=True)
@@ -707,6 +776,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
         self.root_patches = patches
         self.source_root_cell_ids = source_root_cell_ids_
         self.boundary_occurrences = occurrences
+        self.trim_roots = roots
         self.root_parameter_exact = exact_parameters
         self.root_parameter_rational_tokens = parameter_tokens
         self.source_piece_ids = source_piece_ids_
@@ -785,6 +855,29 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                 "patches": array_tree_fingerprint(self.root_patches),
                 "source_root_cells": array_tree_fingerprint(self.source_root_cell_ids),
                 "boundary_occurrences": array_tree_fingerprint(self.boundary_occurrences),
+                **(
+                    {
+                        "trim_roots": tuple(
+                            (
+                                root.patch,
+                                root.loop,
+                                root.use,
+                                *(
+                                    (value.numerator, value.denominator)
+                                    for value in (
+                                        root.first,
+                                        root.last,
+                                        *root.first_uv,
+                                        *root.last_uv,
+                                    )
+                                ),
+                            )
+                            for root in self.trim_roots
+                        )
+                    }
+                    if self.trim_roots
+                    else {}
+                ),
                 "source_pieces": self.source_piece_ids,
                 "associations": tuple(
                     (
@@ -971,6 +1064,7 @@ def _cad_root_edges(
         raise ValueError("CAD root chart rows do not align with mesh cells.")
     return edge_vertices, {key: tuple(value) for key, value in adjacent.items()}
 
+
 def _cad_plane_seam_side(
     plane: object,
     root: tuple[tuple[Fraction, Fraction], ...],
@@ -983,7 +1077,7 @@ def _cad_plane_seam_side(
     /,
 ) -> bool:
     """Prove the same oriented side of a polar seam after plane transport."""
-    from ._domain_boundary import ExactPlaneChart, _TURN
+    from ._domain_boundary import _TURN, ExactPlaneChart
 
     if not isinstance(plane, ExactPlaneChart) or len(root) != 3 or len(target) != 3:
         return False
@@ -1010,14 +1104,114 @@ def _cad_plane_seam_side(
     ) < 0:
         a, b = b, a
 
-    def cross(p: tuple[Fraction, Fraction], q: tuple[Fraction, Fraction],
-              r: tuple[Fraction, Fraction]) -> Fraction:
+    def cross(
+        p: tuple[Fraction, Fraction],
+        q: tuple[Fraction, Fraction],
+        r: tuple[Fraction, Fraction],
+    ) -> Fraction:
         return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
 
     # On these quarter-turn neighborhoods the revolution-to-plane map is
     # orientation preserving and stays on one side of the seam. The signs
     # compare exact rational determinants, not rounded physical coordinates.
     return cross(first, last, third) * cross(a, b, c) > 0
+
+
+def _harmonic_coedge_trace(
+    surface: AbstractSurfacePatch,
+    pcurve: AbstractCurve,
+    first: float,
+    last: float,
+    /,
+) -> _HarmonicCoedgeTrace | None:
+    """Exact harmonic form of a line-revolution trim side in its parameter ``t``.
+
+    The side runs ``first -> last`` of ``pcurve`` over ``t in [0, 1]``.
+    ``S(u, v) = P0 + v P1 + cos(u) (P2 + v P3) + sin(u) (P4 + v P5)`` on the
+    chart line ``u = u0 + du t + 2 pi k``, ``v = v0 + dv t`` is
+    ``a(t) + cos(u0 + du t) b(t) + sin(u0 + du t) c(t)`` with affine ``a, b,
+    c``: whole native turns ``k`` leave ``cos`` and ``sin`` unchanged exactly,
+    so they are not part of the form.
+    """
+    from ._meshing_domain import _PlacedSurfacePatch
+    from ._source_interpolation import exact_line_revolution_vectors
+    from .brep._correspondence import _periodic_pcurve_source
+    from .brep._intersection_curve import CurveTrimSegment
+    from .brep._source_correspondence import _affine_curve_coefficients
+
+    vectors = exact_line_revolution_vectors(surface)
+    if vectors is None:
+        return None
+    native = surface.source if isinstance(surface, _PlacedSurfacePatch) else surface
+    periodic = _periodic_pcurve_source(pcurve, native)
+    if periodic is None:
+        return None
+    affine = _affine_curve_coefficients(
+        CurveTrimSegment(
+            periodic[0], min(first, last), max(first, last), reversed=first > last
+        ),
+        (Fraction(0), Fraction(0)),
+    )
+    if affine is None:
+        return None
+    (u0, v0), (du, dv) = affine
+    if not (
+        isinstance(u0, Fraction)
+        and isinstance(v0, Fraction)
+        and isinstance(du, Fraction)
+        and isinstance(dv, Fraction)
+    ):
+        return None
+
+    def affine_part(
+        base: tuple[ExactScalar, ...], rate: tuple[ExactScalar, ...], /
+    ) -> tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]]:
+        return (
+            tuple(base[i] + v0 * rate[i] for i in range(3)),
+            tuple(dv * rate[i] for i in range(3)),
+        )
+
+    return (
+        (u0, du),
+        affine_part(vectors[0], vectors[1]),
+        affine_part(vectors[2], vectors[3]),
+        affine_part(vectors[4], vectors[5]),
+    )
+
+
+def _surface_pole_proven(
+    charts: SurfaceSourceCharts, patch: int, use: PatchPoleUse, /
+) -> bool:
+    """Prove the complete represented pole maps to its exact source corner.
+
+    On a line revolution the side's harmonic form collapses to the constant
+    ``a`` for every parameter exactly when its rate and both harmonic
+    coefficients vanish identically.
+    """
+    from .brep._correspondence import _exact_brep_pole_collapse
+
+    lower, upper = charts.domain.source_corner_point_bounds(use.corner)
+    if lower != upper or len(lower) != 3:
+        return False
+    surface = charts.domain.patches[patch].surface
+    harmonic = _harmonic_coedge_trace(surface, use.pcurve, use.first, use.last)
+    if harmonic is not None:
+        _, (constant, rate), cosine, sine = harmonic
+        return constant == lower and all(
+            value == 0 for value in (*rate, *cosine[0], *cosine[1], *sine[0], *sine[1])
+        )
+    return _exact_brep_pole_collapse(
+        None,
+        surface,
+        use.pcurve,
+        min(use.first, use.last),
+        max(use.first, use.last),
+        (lower[0], lower[1], lower[2]),
+        None,
+    )
+
+type _PatchEndpoints = tuple[tuple[tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...], ...]
+
 
 
 def _cad_pole_lens_endpoint(
@@ -1028,6 +1222,8 @@ def _cad_pole_lens_endpoint(
     point: tuple[Fraction, Fraction],
     parameter: Fraction,
     /,
+    *,
+    endpoints_by_patch: dict[int, _PatchEndpoints] | None = None,
 ) -> tuple[Fraction, Fraction]:
     """Represent an authenticated collapsed pole by its coedge junction.
 
@@ -1045,18 +1241,25 @@ def _cad_pole_lens_endpoint(
     use = uses[use_index]
     if not isinstance(use, PatchCurveUse):
         return point
-    endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)[loop]
+    if endpoints_by_patch is None:
+        patch_endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)
+    else:
+        if patch not in endpoints_by_patch:
+            endpoints_by_patch[patch] = _rooted_patch_chart_endpoints(charts.domain, patch)
+        patch_endpoints = endpoints_by_patch[patch]
+    endpoints = patch_endpoints[loop]
     traversal_start = (parameter == 0) == (use.sense > 0)
     junction = endpoints[use_index][0 if traversal_start else 1]
     neighbor = (
-        (use_index - 1) % len(uses)
-        if traversal_start
-        else (use_index + 1) % len(uses)
+        (use_index - 1) % len(uses) if traversal_start else (use_index + 1) % len(uses)
     )
     pole = uses[neighbor]
     if (
         not isinstance(pole, PatchPoleUse)
-        or charts.domain.brep_authority is None
+        or (
+            charts.domain.brep_authority is None
+            and not _surface_pole_proven(charts, patch, pole)
+        )
         or not isinstance(pole.pcurve, (ExactLineCurve, LineCurve))
     ):
         return point
@@ -1084,6 +1287,8 @@ def _cad_curve_use_lens(
     tolerance: Fraction,
     preparation: SourcePreparation,
     /,
+    *,
+    endpoints_by_patch: dict[int, _PatchEndpoints] | None = None,
 ) -> None:
     """Recompute a continuous bound for one named source-coedge restriction."""
     from ._domain_boundary import _curved_trim_lens
@@ -1102,10 +1307,12 @@ def _cad_curve_use_lens(
     else:
         source_first, source_last = fraction_up(exact_first), fraction_down(exact_last)
     first_uv = _cad_pole_lens_endpoint(
-        charts, patch, loop, use_index, first_uv, parameters[0]
+        charts, patch, loop, use_index, first_uv, parameters[0],
+        endpoints_by_patch=endpoints_by_patch,
     )
     last_uv = _cad_pole_lens_endpoint(
-        charts, patch, loop, use_index, last_uv, parameters[1]
+        charts, patch, loop, use_index, last_uv, parameters[1],
+        endpoints_by_patch=endpoints_by_patch,
     )
     lens = _curved_trim_lens(
         use, first_uv, last_uv, source_first, source_last, preparation
@@ -1117,22 +1324,316 @@ def _cad_curve_use_lens(
         raise ValueError("CAD source coedge lacks its declared continuous curve bound.")
 
 
+def _surface_trim_root_index(
+    charts: SurfaceSourceCharts,
+    tolerance: Fraction,
+    preparation: SourcePreparation,
+    /,
+    *,
+    endpoints_by_patch: dict[int, _PatchEndpoints] | None = None,
+) -> dict[tuple[int, int, int], tuple[SurfaceTrimRoot, ...]]:
+    """Reprove source root chords once; descendants use exact affine maps."""
+    grouped: dict[tuple[int, int, int], list[SurfaceTrimRoot]] = {}
+    for root in charts.trim_roots:
+        if root.patch not in charts.boundary_source.patches:
+            continue
+        key = (root.patch, root.loop, root.use)
+        grouped.setdefault(key, []).append(root)
+        _cad_curve_use_lens(
+            charts,
+            root.patch,
+            root.loop,
+            root.use,
+            root.first_uv,
+            root.last_uv,
+            (root.first, root.last),
+            tolerance,
+            preparation,
+            endpoints_by_patch=endpoints_by_patch,
+        )
+    expected = {
+        (patch, loop_index, use_index)
+        for patch in charts.boundary_source.patches
+        for loop_index, loop in enumerate(charts.domain.patches[patch].loops)
+        for use_index, use in enumerate(loop)
+        if isinstance(use, PatchCurveUse)
+    }
+    if set(grouped) != expected:
+        raise ValueError("Surface trim roots must cover every source coedge occurrence.")
+    output: dict[tuple[int, int, int], tuple[SurfaceTrimRoot, ...]] = {}
+    for key, values in grouped.items():
+        ordered = tuple(sorted(values, key=lambda value: min(value.first, value.last)))
+        previous_parameter = Fraction(0)
+        previous_uv = None
+        for root in ordered:
+            if root.first < root.last:
+                first, last, start, stop = (
+                    root.first,
+                    root.last,
+                    root.first_uv,
+                    root.last_uv,
+                )
+            else:
+                first, last, start, stop = (
+                    root.last,
+                    root.first,
+                    root.last_uv,
+                    root.first_uv,
+                )
+            if first != previous_parameter or (
+                previous_uv is not None and start != previous_uv
+            ):
+                raise ValueError(
+                    "Surface trim roots do not form one exact source chart chain."
+                )
+            previous_parameter, previous_uv = last, stop
+        if previous_parameter != 1:
+            raise ValueError(
+                "Surface trim roots do not cover their complete source coedge."
+            )
+        output[key] = ordered
+    return output
+
+
+def _validate_surface_curve_lifts(charts: SurfaceSourceCharts, /) -> None:
+    """Prove all coedge uses lift to the same normalized spatial source curve."""
+    from ._meshing_domain import _prepare_surface_spans
+    from ._source_interpolation import (
+        _exact_rational_surface_chart_breakpoints,
+        exact_surface_coordinate_expressions,
+    )
+    from .brep._correspondence import exact_source_lift
+    from .brep._intersection_curve import CurveTrimSegment, SurfaceRegion
+    from .brep._patches import SurfaceMappedCurve
+    from .brep._source_correspondence import _affine_curve_coefficients
+
+    domain = charts.domain
+
+    def normalized(use: PatchCurveUse, /) -> CurveTrimSegment:
+        return CurveTrimSegment(
+            use.pcurve,
+            min(use.first, use.last),
+            max(use.first, use.last),
+            reversed=use.first > use.last,
+        )
+
+    def polynomial_trace(
+        surface: AbstractSurfacePatch, use: PatchCurveUse, /
+    ) -> tuple[Expression, ...] | None:
+        surface_map = exact_surface_coordinate_expressions(surface)
+        affine = _affine_curve_coefficients(normalized(use), (Fraction(0), Fraction(0)))
+        if surface_map is None or affine is None:
+            return None
+        origin, direction = affine
+        arguments: tuple[Polynomial, ...] = tuple(
+            {(0,): first, (1,): slope}
+            for first, slope in zip(origin, direction, strict=True)
+        )
+        return tuple(compose_expression(value, arguments) for value in surface_map)
+
+    def spline_trace(
+        surface: AbstractSurfacePatch, use: PatchCurveUse, /
+    ) -> _SplineCoedgeTrace | None:
+        """Exact spans, affine chart line and span breakpoints of one coedge."""
+        spans = _prepare_surface_spans(surface)
+        affine = _affine_curve_coefficients(normalized(use), (Fraction(0), Fraction(0)))
+        if spans is None or affine is None:
+            return None
+        (u, v), (du, dv) = affine
+        if not (
+            isinstance(u, Fraction)
+            and isinstance(v, Fraction)
+            and isinstance(du, Fraction)
+            and isinstance(dv, Fraction)
+        ):
+            return None
+        breakpoints = _exact_rational_surface_chart_breakpoints(
+            spans, (u, v), (du, dv), Fraction(0), Fraction(1)
+        )
+        if breakpoints is None:
+            return None
+        return spans.spans, (u, v), (du, dv), breakpoints
+
+    def trace_chart(
+        trace: _SplineCoedgeTrace, parameter: Fraction, /
+    ) -> tuple[Fraction, Fraction]:
+        _, origin, direction, _ = trace
+        return (
+            origin[0] + direction[0] * parameter,
+            origin[1] + direction[1] * parameter,
+        )
+
+    def piece_span(
+        trace: _SplineCoedgeTrace, lower: Fraction, upper: Fraction, /
+    ) -> RationalBSplineSurfaceSpan | None:
+        """A span whose closed box holds the whole chart segment of one piece."""
+        first, last = trace_chart(trace, lower), trace_chart(trace, upper)
+        return next(
+            (
+                span
+                for span in trace[0]
+                if all(
+                    span.parameter_bounds[axis][0] <= min(first[axis], last[axis])
+                    and max(first[axis], last[axis]) <= span.parameter_bounds[axis][1]
+                    for axis in range(2)
+                )
+            ),
+            None,
+        )
+
+    def spline_traces_match(
+        first: _SplineCoedgeTrace, second: _SplineCoedgeTrace, /
+    ) -> bool:
+        """Prove two spline coedge traces are one rational map of their parameter.
+
+        Between merged span breakpoints each trace is ``N(t) / W(t)`` with
+        ``N`` and ``W > 0`` of degree at most its span's ``p + q``, so the
+        difference numerator ``N1 W2 - N2 W1`` has degree at most the sum of
+        both bounds. It vanishes identically once it vanishes at one more
+        distinct exact parameter than that degree.
+        """
+        breakpoints = sorted({*first[3], *second[3]})
+        for lower, upper in zip(breakpoints, breakpoints[1:]):
+            first_span = piece_span(first, lower, upper)
+            second_span = piece_span(second, lower, upper)
+            if first_span is None or second_span is None:
+                return False
+            degree = sum(first_span.degrees) + sum(second_span.degrees)
+            for index in range(degree + 1):
+                parameter = lower + (upper - lower) * Fraction(index, max(degree, 1))
+                if first_span.evaluate_exact(
+                    trace_chart(first, parameter)
+                ) != second_span.evaluate_exact(trace_chart(second, parameter)):
+                    return False
+        return True
+
+    uses: dict[int, list[tuple[int, int, int, PatchCurveUse]]] = {}
+    for patch in charts.boundary_source.patches:
+        for loop_index, loop in enumerate(domain.patches[patch].loops):
+            for use_index, use in enumerate(loop):
+                if isinstance(use, PatchCurveUse):
+                    uses.setdefault(use.curve, []).append(
+                        (patch, loop_index, use_index, use)
+                    )
+    for curve_row, occurrences in uses.items():
+        owner_position = tuple(int(value) for value in domain.curve_owners[curve_row])
+        owner_patch, owner_loop, owner_use = owner_position
+        owner = domain.patches[owner_patch].loops[owner_loop][owner_use]
+        if not isinstance(owner, PatchCurveUse):
+            raise ValueError("Surface curve has no regular source owner.")
+        owner_surface = domain.patches[owner_patch].surface
+        spatial = SurfaceMappedCurve(owner_surface, normalized(owner))
+        owner_trace = polynomial_trace(owner_surface, owner)
+        owner_spline: list[_SplineCoedgeTrace | None] = []
+        for patch, loop_index, use_index, use in occurrences:
+            if (patch, loop_index, use_index) == owner_position:
+                continue
+            surface = domain.patches[patch].surface
+            target_trace = polynomial_trace(surface, use)
+            if (
+                owner_trace is not None
+                and target_trace is not None
+                and all(
+                    expression_equal(first, second)
+                    for first, second in zip(owner_trace, target_trace, strict=True)
+                )
+            ):
+                continue
+            if not owner_spline:
+                owner_spline.append(spline_trace(owner_surface, owner))
+            owner_piecewise = owner_spline[0]
+            target_piecewise = (
+                None if owner_piecewise is None else spline_trace(surface, use)
+            )
+            if (
+                owner_piecewise is not None
+                and target_piecewise is not None
+                and spline_traces_match(owner_piecewise, target_piecewise)
+            ):
+                continue
+            # Equal angle maps and equal affine coefficient vectors give the
+            # same function exactly; this is sufficient, never sampled.
+            owner_harmonic = _harmonic_coedge_trace(
+                owner_surface, owner.pcurve, owner.first, owner.last
+            )
+            if owner_harmonic is not None and owner_harmonic == _harmonic_coedge_trace(
+                surface, use.pcurve, use.first, use.last
+            ):
+                continue
+            box = surface.parameter_domain
+            if box is None:
+                box = np.asarray(
+                    use.pcurve.bounding_box(
+                        min(use.first, use.last), max(use.first, use.last)
+                    ),
+                    dtype=np.float64,
+                )
+                box = np.stack(
+                    (
+                        np.nextafter(box[0], -np.inf),
+                        np.nextafter(box[1], np.inf),
+                    )
+                )
+            if not exact_source_lift(
+                spatial,
+                normalized(use),
+                SurfaceRegion(surface, np.asarray(box)),
+                0.0,
+                1.0,
+            ):
+                raise ValueError(
+                    "Surface coedges lack an exact shared source-curve lift."
+                )
+
+
+def _surface_trim_edge(
+    roots: tuple[SurfaceTrimRoot, ...],
+    parameters: tuple[Fraction, Fraction],
+    points: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+    /,
+) -> bool:
+    """Prove both edge endpoints belong to one exact root-chord restriction."""
+    middle = (parameters[0] + parameters[1]) / 2
+    index = bisect_right(roots, middle, key=lambda root: min(root.first, root.last)) - 1
+    if index < 0:
+        return False
+    root = roots[index]
+    for parameter, point in zip(parameters, points, strict=True):
+        if not min(root.first, root.last) <= parameter <= max(root.first, root.last):
+            return False
+        weight = (parameter - root.first) / (root.last - root.first)
+        if any(
+            first + weight * (last - first) != value
+            for first, last, value in zip(root.first_uv, root.last_uv, point, strict=True)
+        ):
+            return False
+    return True
+
+
 def _validate_cad_curve_chains(
     charts: SurfaceSourceCharts,
     intervals: dict[int, list[tuple[Fraction, Fraction, int, int]]],
     /,
+    *,
+    surface_domain: bool = False,
 ) -> None:
     from ..meshing._association import (
         GeometryAssociationArchiveRecipe,
         GeometryAssociationKind,
+        GeometrySourceEntityRole,
     )
 
     domain, mesh = charts.domain, charts.mesh
     vertex_set = mesh.entity_set(0)
+    kind = (
+        GeometryAssociationKind.SURFACE
+        if surface_domain
+        else GeometryAssociationKind.BREP
+    )
     matches = tuple(
         association
         for association in charts.associations
-        if association.association_kind is GeometryAssociationKind.BREP
+        if association.association_kind is kind
         and association.target_entity_set_id == vertex_set.entity_set_id
     )
     if len(matches) != 1:
@@ -1171,6 +1672,14 @@ def _validate_cad_curve_chains(
             or association.source_entity_ids[row] != expected_id
         ):
             raise ValueError("CAD source curve vertex changes its source occurrence.")
+        if surface_domain:
+            role = (
+                GeometrySourceEntityRole.VERTEX
+                if expected_dimension == 0
+                else GeometrySourceEntityRole.EDGE
+            )
+            if association.source_roles[row] is not role:
+                raise ValueError("Surface source vertex changes its source role.")
 
     for curve, parts in intervals.items():
         ordered = sorted(parts)
@@ -1222,8 +1731,6 @@ def _validate_cad_chart_edge_incidence(
     def same_pole_side(
         patch: int, first: tuple[Fraction, Fraction], last: tuple[Fraction, Fraction]
     ) -> bool:
-        if charts.domain.brep_authority is None:
-            return False
         if patch not in pole_sides:
             endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)
             sides = []
@@ -1235,6 +1742,10 @@ def _validate_cad_chart_edge_incidence(
                         isinstance(use, PatchPoleUse)
                         and isinstance(use.pcurve, (ExactLineCurve, LineCurve))
                         and side == _line_endpoints(use)
+                        and (
+                            charts.domain.brep_authority is not None
+                            or _surface_pole_proven(charts, patch, use)
+                        )
                     ):
                         sides.append(side)
             pole_sides[patch] = tuple(sides)
@@ -1284,9 +1795,7 @@ def _validate_cad_chart_edge_incidence(
                 paired = False
                 if count == 1 and len(uses) == 2 and len(others) == 1:
                     _, _, other_first, other_last = others[0]
-                    other_count = counts[
-                        (patch, frozenset((other_first, other_last)))
-                    ]
+                    other_count = counts[(patch, frozenset((other_first, other_last)))]
                     paired = other_count == 1 and (
                         (
                             first == other_first
@@ -1305,8 +1814,171 @@ def _validate_cad_chart_edge_incidence(
                     )
 
 
-def validate_cad_curve_ancestry(
-    charts: SurfaceSourceCharts, tolerance: float, /
+def _validate_surface_vertex_classes(
+    charts: SurfaceSourceCharts,
+    edges: dict[int, tuple[int, int]],
+    bindings: dict[int, tuple[_CadCurveUseBinding, ...]],
+    adjacent: dict[
+        int,
+        tuple[tuple[int, int, tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...],
+    ],
+    /,
+) -> None:
+    """Prove each generic vertex row from exact incident charts and trim chains."""
+    from ..meshing._association import (
+        GeometryAssociationArchiveRecipe,
+        GeometryAssociationKind,
+        GeometrySourceEntityRole,
+    )
+    from ._domain_boundary import _line_endpoints
+    from .brep._patches import ExactLineCurve, LineCurve
+
+    mesh, domain = charts.mesh, charts.domain
+    vertex_set = mesh.entity_set(0)
+    tables = tuple(
+        value
+        for value in charts.associations
+        if value.association_kind is GeometryAssociationKind.SURFACE
+        and value.target_entity_set_id == vertex_set.entity_set_id
+    )
+    if len(tables) != 1:
+        raise ValueError("Surface root charts require one vertex association.")
+    association = GeometryAssociationArchiveRecipe.from_association(tables[0]).restore()
+    association.validate_target(vertex_set)
+    identifiers = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    target_ids = np.asarray(association.target_global_ids, dtype=np.int64)
+    if set(target_ids.tolist()) != set(identifiers.tolist()):
+        raise ValueError("Surface root vertex association must cover the entire mesh.")
+    by_id = {int(value): row for row, value in enumerate(target_ids)}
+    curve_vertices = {vertex for edge_id in bindings for vertex in edges[edge_id]}
+    curve_charts: dict[int, set[tuple[int, tuple[Fraction, Fraction]]]] = {}
+    curve_parameters: dict[int, set[Fraction]] = {}
+    cell_rows = {value: row for row, value in enumerate(charts.cell_global_ids)}
+    for edge_id, uses in bindings.items():
+        for binding in uses:
+            records = tuple(
+                item for item in adjacent[edge_id] if item[0] == binding.root_cell_id
+            )
+            if len(records) != 1:
+                raise ValueError(
+                    "Surface curve binding has ambiguous root-cell incidence."
+                )
+            _, _, first, last = records[0]
+            patch = int(charts.root_patches[cell_rows[binding.root_cell_id]])
+            for vertex, uv, parameter in zip(
+                edges[edge_id], (first, last), binding.parameters, strict=True
+            ):
+                curve_charts.setdefault(vertex, set()).add((patch, uv))
+                curve_parameters.setdefault(vertex, set()).add(parameter)
+    occurrences: list[list[tuple[int, tuple[Fraction, Fraction]]]] = [
+        [] for _ in range(identifiers.size)
+    ]
+    chart_row = 0
+    for block in mesh.blocks:
+        for vertices in np.asarray(block.vertices, dtype=np.int64):
+            exact = charts.root_parameter_chart(chart_row)
+            patch = int(charts.root_patches[chart_row])
+            for vertex, uv in zip(vertices.tolist(), exact, strict=True):
+                occurrences[int(vertex)].append((patch, uv))
+            chart_row += 1
+    dimensions = np.asarray(association.source_dimensions, dtype=np.int64)
+    indices = np.asarray(association.source_indices, dtype=np.int64)
+    parameters = np.asarray(association.parameters, dtype=np.float64)
+    roles = (
+        GeometrySourceEntityRole.VERTEX,
+        GeometrySourceEntityRole.EDGE,
+        GeometrySourceEntityRole.FACET,
+    )
+    source_rows = tuple(
+        {
+            (int(index), path): row
+            for row, (index, path) in enumerate(
+                zip(
+                    domain.source_indices[dim],
+                    domain.source_occurrences[dim],
+                    strict=True,
+                )
+            )
+        }
+        for dim in range(3)
+    )
+    if any(len(source_rows[dim]) != len(domain.source_indices[dim]) for dim in range(3)):
+        raise ValueError("Surface source occurrences are not unique.")
+    for vertex, identifier in enumerate(identifiers.tolist()):
+        row = by_id[int(identifier)]
+        dimension = int(dimensions[row])
+        if (
+            dimension not in (0, 1, 2)
+            or not association.resolved[row]
+            or association.ambiguous[row]
+            or not occurrences[vertex]
+        ):
+            raise ValueError("Surface vertex has no resolved source-chart class.")
+        source_row = source_rows[dimension].get(
+            (int(indices[row]), association.source_occurrence_paths[row])
+        )
+        if (
+            source_row is None
+            or association.source_roles[row] is not roles[dimension]
+            or association.source_entity_ids[row]
+            != domain.entity_id(dimension, source_row)
+        ):
+            raise ValueError(
+                "Surface vertex changes its authoritative source occurrence."
+            )
+        if dimension == 2:
+            if vertex in curve_vertices or any(
+                patch != source_row
+                or tuple(float(value) for value in uv) != tuple(parameters[row, :2])
+                for patch, uv in occurrences[vertex]
+            ):
+                raise ValueError("Surface vertex changes its exact source chart class.")
+        else:
+
+            def on_proven_pole(patch: int, point: tuple[Fraction, Fraction], /) -> bool:
+                if dimension != 0:
+                    return False
+                for loop in domain.patches[patch].loops:
+                    for use in loop:
+                        if (
+                            not isinstance(use, PatchPoleUse)
+                            or use.corner != source_row
+                            or not isinstance(use.pcurve, (ExactLineCurve, LineCurve))
+                            or not _surface_pole_proven(charts, patch, use)
+                        ):
+                            continue
+                        first, last = _line_endpoints(use)
+                        dx, dy = last[0] - first[0], last[1] - first[1]
+                        px, py = point[0] - first[0], point[1] - first[1]
+                        along = px * dx + py * dy
+                        if px * dy == py * dx and 0 <= along <= dx * dx + dy * dy:
+                            return True
+                return False
+
+            known_charts = curve_charts.get(vertex, set())
+            if any(
+                (patch, uv) not in known_charts and not on_proven_pole(patch, uv)
+                for patch, uv in occurrences[vertex]
+            ):
+                raise ValueError("Surface vertex class lacks an exact source trim chain.")
+            numeric = parameters[row]
+            if dimension == 0:
+                valid_parameter = bool(np.all(np.isnan(numeric)))
+            else:
+                valid_parameter = np.isnan(numeric[1]) and any(
+                    numeric[0] == float(value)
+                    for value in curve_parameters.get(vertex, ())
+                )
+            if not valid_parameter:
+                raise ValueError("Surface vertex changes its proved source parameter.")
+
+
+def _curve_ancestry(
+    charts: SurfaceSourceCharts,
+    tolerance: float,
+    /,
+    *,
+    surface_domain: bool,
 ) -> dict[int, tuple[_CadCurveUseBinding, ...]]:
     """Replay root edge identities, source-curve intervals and coedge occurrences.
 
@@ -1329,7 +2001,14 @@ def validate_cad_curve_ancestry(
         raise ValueError("CAD curve ancestry requires a finite nonnegative tolerance.")
     charts.require_current()
     domain, mesh = charts.domain, charts.mesh
-    if domain.brep_authority is None:
+    if surface_domain:
+        if domain.brep_authority is not None or domain.source_kinds != (
+            "corner",
+            "curve",
+            "surface",
+        ):
+            raise ValueError("Surface curve ancestry requires a non-BRep surface domain.")
+    elif domain.brep_authority is None:
         raise ValueError("CAD curve ancestry requires current BRep authority.")
     edge_set = mesh.entity_set(1)
     associations = tuple(
@@ -1348,6 +2027,8 @@ def validate_cad_curve_ancestry(
     edge_vertices, adjacent = _cad_root_edges(charts)
     if not expected_curves and not associations:
         _validate_cad_chart_edge_incidence(charts, adjacent, set())
+        if surface_domain:
+            _validate_surface_vertex_classes(charts, edge_vertices, {}, adjacent)
         return {}
     if len(associations) != 1:
         raise ValueError("CAD root charts need one complete curve-edge association.")
@@ -1382,7 +2063,13 @@ def validate_cad_curve_ancestry(
     intervals: dict[int, list[tuple[Fraction, Fraction, int, int]]] = {}
     result: dict[int, tuple[_CadCurveUseBinding, ...]] = {}
     preparation = SourcePreparation(domain)
+    endpoints_by_patch: dict[int, _PatchEndpoints] = {}
     bound = Fraction.from_float(float(tolerance))
+    roots = (
+        _surface_trim_root_index(charts, bound, preparation, endpoints_by_patch=endpoints_by_patch)
+        if surface_domain and charts.trim_roots
+        else {}
+    )
     for row, edge_id_value in enumerate(target_ids):
         edge_id = int(edge_id_value)
         source_key = (int(source_indices[row]), association.source_occurrence_paths[row])
@@ -1405,7 +2092,9 @@ def validate_cad_curve_ancestry(
         owner = domain.patches[owner_patch].loops[owner_loop][owner_use]
         if not isinstance(owner, PatchCurveUse):
             raise ValueError("CAD source curve has no regular coedge owner.")
-        sense = int(directions[row]) * (1 if owner.last > owner.first else -1)
+        sense = int(directions[row])
+        if not surface_domain:
+            sense *= 1 if owner.last > owner.first else -1
         start_vertex, stop_vertex = edge_vertices[edge_id]
         if sense < 0:
             start_vertex, stop_vertex = stop_vertex, start_vertex
@@ -1456,22 +2145,28 @@ def validate_cad_curve_ancestry(
                     start, stop = _line_endpoints(selected)
                     constants.extend(
                         (axis, start[axis])
-                        for axis in range(2) if start[axis] == stop[axis]
+                        for axis in range(2)
+                        if start[axis] == stop[axis]
                     )
                 else:
                     line = _constant_chart_line(selected.pcurve, 0)
                     surface = domain.patches[patch].surface
-                    if line is not None and surface.native_period_symbols()[0] == "two_pi":
+                    if (
+                        line is not None
+                        and surface.native_period_symbols()[0] == "two_pi"
+                    ):
                         if _same(line[0], Fraction(0)):
                             constants.append((0, Fraction(0)))
                         elif _same(line[0], _TAU) and surface.periods[0] is not None:
                             constants.append((0, Fraction.from_float(surface.periods[0])))
                 points = (
                     _cad_pole_lens_endpoint(
-                        charts, patch, loop_index, use_index, first_uv, parameters[0]
+                        charts, patch, loop_index, use_index, first_uv, parameters[0],
+                        endpoints_by_patch=endpoints_by_patch,
                     ),
                     _cad_pole_lens_endpoint(
-                        charts, patch, loop_index, use_index, last_uv, parameters[1]
+                        charts, patch, loop_index, use_index, last_uv, parameters[1],
+                        endpoints_by_patch=endpoints_by_patch,
                     ),
                 )
                 for axis, value in constants:
@@ -1479,6 +2174,39 @@ def validate_cad_curve_ancestry(
                         raise ValueError(
                             "CAD root edge changes its authored coedge occurrence."
                         )
+            if surface_domain:
+                if not isinstance(selected, PatchCurveUse):
+                    raise ValueError("Surface coedge is not a regular source curve.")
+                points = (
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, use_index, first_uv, parameters[0],
+                        endpoints_by_patch=endpoints_by_patch,
+                    ),
+                    _cad_pole_lens_endpoint(
+                        charts, patch, loop_index, use_index, last_uv, parameters[1],
+                        endpoints_by_patch=endpoints_by_patch,
+                    ),
+                )
+                if roots:
+                    if not _surface_trim_edge(
+                        roots[(patch, loop_index, use_index)], parameters, points
+                    ):
+                        raise ValueError(
+                            "Surface coedge lacks its exact root interpolation proof."
+                        )
+                else:
+                    from .brep._intersection_curve import exact_curve_parameter_point
+
+                    first = Fraction.from_float(selected.first)
+                    span = Fraction.from_float(selected.last) - first
+                    for point, parameter in zip(points, parameters, strict=True):
+                        exact = exact_curve_parameter_point(
+                            selected.pcurve, first + span * parameter
+                        )
+                        if exact is None or tuple(exact) != point:
+                            raise ValueError(
+                                "Surface coedge endpoint lacks an exact source parameter proof."
+                            )
             _cad_curve_use_lens(
                 charts,
                 patch,
@@ -1489,6 +2217,7 @@ def validate_cad_curve_ancestry(
                 parameters,
                 bound,
                 preparation,
+                endpoints_by_patch=endpoints_by_patch,
             )
             bindings.append(
                 _CadCurveUseBinding(
@@ -1498,9 +2227,80 @@ def validate_cad_curve_ancestry(
         result[edge_id] = tuple(bindings)
     if set(intervals) != expected_curves:
         raise ValueError("CAD root association omits or adds a source curve.")
-    _validate_cad_curve_chains(charts, intervals)
+    _validate_cad_curve_chains(charts, intervals, surface_domain=surface_domain)
     _validate_cad_chart_edge_incidence(charts, adjacent, set(result))
+    if surface_domain:
+        _validate_surface_vertex_classes(charts, edge_vertices, result, adjacent)
     return result
+
+
+def validate_cad_curve_ancestry(
+    charts: SurfaceSourceCharts, tolerance: float, /
+) -> dict[int, tuple[_CadCurveUseBinding, ...]]:
+    """Independently replay B-Rep curve, coedge and root-chart incidence.
+
+    The charts' currency is checked on every call. The replay is reused only
+    for the exact live charts object this process already replayed at this
+    exact tolerance, while its whole content reproduces the fingerprint taken
+    before that replay; any other charts object is replayed in full.
+    """
+    if not isinstance(charts, SurfaceSourceCharts):
+        return _curve_ancestry(charts, tolerance, surface_domain=False)
+    operands, parameters = (charts,), (tolerance,)
+    proved = _CAD_CURVE_ANCESTRY.find(operands, parameters=parameters)
+    if proved is None:
+        fingerprint = live_content_fingerprint(operands)
+        proved = _curve_ancestry(charts, tolerance, surface_domain=False)
+        _CAD_CURVE_ANCESTRY.record(
+            operands, fingerprint, proved, parameters=parameters
+        )
+    else:
+        charts.require_current()
+    return dict(proved)
+
+
+def validate_surface_curve_ancestry(
+    charts: SurfaceSourceCharts, tolerance: float, /
+) -> dict[int, tuple[_CadCurveUseBinding, ...]]:
+    """Reprove surface-domain trim, vertex and curve ancestry.
+
+    A source coedge root records an authored exact parameter interval and a
+    represented chart chord. Continuous source bounds are independently
+    reproved and every descendant edge must be an exact affine restriction of
+    that root. Without roots, endpoints must evaluate exactly on their p-curves.
+    Pole uses require exact complete-interval collapse to the source corner.
+    """
+    from ._source_fidelity import certify_source_fidelity
+
+    if not isinstance(charts, SurfaceSourceCharts):
+        raise TypeError("Surface curve ancestry requires SurfaceSourceCharts.")
+    if not np.isfinite(tolerance) or tolerance < 0:
+        raise ValueError(
+            "Surface curve ancestry requires a finite nonnegative tolerance."
+        )
+    charts.require_current()
+    if charts.domain.brep_authority is not None:
+        raise ValueError("Surface curve ancestry requires a non-BRep surface domain.")
+    _validate_surface_curve_lifts(charts)
+    for patch in charts.boundary_source.patches:
+        for loop in charts.domain.patches[patch].loops:
+            for use in loop:
+                if isinstance(use, PatchPoleUse) and not _surface_pole_proven(
+                    charts, patch, use
+                ):
+                    raise ValueError(
+                        "Surface pole lacks an exact full-interval collapse proof."
+                    )
+    fidelity = certify_source_fidelity(
+        charts.mesh,
+        charts.geometry,
+        charts.boundary_source,
+        tolerance=tolerance,
+        witness=charts.chart_witness,
+    )
+    if fidelity.status != "certified":
+        raise ValueError("Surface root charts lack certified continuous source fidelity.")
+    return _curve_ancestry(charts, tolerance, surface_domain=True)
 
 
 @final
@@ -2010,8 +2810,42 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
         *,
         chart_witness: SurfaceChartWitness | None = None,
     ) -> SurfaceRestrictionRows:
-        """Verify every target whole map is an exact retained root-cell restriction."""
+        """Verify every target whole map is an exact retained root-cell restriction.
+
+        The support's currency is checked on every call. The restriction proof
+        itself is reused only for the exact live support, mesh, geometry and
+        witness objects this process already proved, while their whole content
+        reproduces the fingerprint taken before that proof; any other operand
+        (a copy, a rebuild, a restore, a mutation) is proved again in full.
+        """
         self.require_current()
+        operands = (self, mesh, geometry, chart_witness)
+        proved = _PROVEN_RESTRICTIONS.find(operands)
+        if proved is None:
+            fingerprint = live_content_fingerprint(operands)
+            proved = self._prove_native_restrictions(
+                mesh, geometry, chart_witness=chart_witness
+            )
+            _PROVEN_RESTRICTIONS.record(operands, fingerprint, proved)
+        # Every caller owns its own rows; the recorded rows are never handed out.
+        return proved._replace(
+            cell_ids=proved.cell_ids.copy(),
+            root_cell_ids=proved.root_cell_ids.copy(),
+            root_atlas_cell_ids=proved.root_atlas_cell_ids.copy(),
+            patches=proved.patches.copy(),
+            source_bounds=proved.source_bounds.copy(),
+            coordinate_corner_errors=proved.coordinate_corner_errors.copy(),
+            restriction_deviations=proved.restriction_deviations.copy(),
+        )
+
+    def _prove_native_restrictions(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        /,
+        *,
+        chart_witness: SurfaceChartWitness | None,
+    ) -> SurfaceRestrictionRows:
         root_mesh = self.original.mesh
         root_geometry = self.original.geometry
         root_id_to_row = {
@@ -2218,6 +3052,14 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
         parent_reference_maps = (
             {} if restriction is None else restriction.block_parent_reference_maps
         )
+        # Each root cell's exact coordinate map is formed once per proof and
+        # compared against every target cell restricted from it.
+        root_maps: dict[int, tuple[Expression, ...]] = {}
+        root_vertex_ids = np.asarray(root_mesh.vertex_global_ids, dtype=np.int64)
+        root_block_vertices = tuple(
+            np.asarray(root_block.vertices) for root_block in root_mesh.blocks
+        )
+        target_vertex_ids_bank = np.asarray(mesh.vertex_global_ids)
         for block, element_candidate, route in zip(
             mesh.blocks, target_elements, target_routes, strict=True
         ):
@@ -2363,9 +3205,12 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                             "Restricted coordinate element names a different root basis."
                         )
                 target_local = tuple(target_coefficients[index] for index in dofs)
-                root_coordinates = coordinate_map_expressions(
-                    root_element, root_local, cell_row=root_row
-                )
+                root_coordinates = root_maps.get(parent)
+                if root_coordinates is None:
+                    root_coordinates = coordinate_map_expressions(
+                        root_element, root_local, cell_row=root_row
+                    )
+                    root_maps[parent] = root_coordinates
                 target_coordinates = coordinate_map_expressions(
                     element, target_local, cell_row=row_index
                 )
@@ -2384,14 +3229,9 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                         parent_vertices[block.name][row_index], dtype=np.int64
                     )
                     valid_parent_vertices = parent_vertex_row[parent_vertex_row >= 0]
-                    root_vertices = np.asarray(
-                        root_mesh.vertex_global_ids[
-                            np.asarray(root_mesh.blocks[root_block_index].vertices)[
-                                root_row
-                            ]
-                        ],
-                        dtype=np.int64,
-                    )
+                    root_vertices = root_vertex_ids[
+                        root_block_vertices[root_block_index][root_row]
+                    ]
                     if np.setdiff1d(valid_parent_vertices, root_vertices).size:
                         raise ValueError(
                             "Restriction parent vertex IDs must belong to the declared source root cell."
@@ -2425,10 +3265,7 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                 source_piece_ids.append(self.root_source_cell_ids[root_row_in_bank])
                 patches.append(int(self.root_patches[root_row_in_bank]))
                 target_vertex_ids.append(
-                    tuple(
-                        int(value)
-                        for value in np.asarray(mesh.vertex_global_ids)[target_vertices]
-                    )
+                    tuple(int(value) for value in target_vertex_ids_bank[target_vertices])
                 )
                 reference_corners.append(
                     tuple(

@@ -66,6 +66,7 @@ from ._contracts import MeshingFailure
 from ._lineage import CellMeshTransition, MeshTransitionKind
 from ._metric import MeshMetricField
 from ._native_construction import NativeMeshOrganization
+from ._motion_source import NativePlanarMotionSource, renew_planar_motion_source
 from ._optimization import (
     MeshOptimizationResult,
     MeshQualityObjective,
@@ -73,7 +74,7 @@ from ._optimization import (
     optimize_cell_mesh,
     TargetMatrixOptimizationPlan,
 )
-from ._organization import MeshAttribute
+from ._organization import MeshAttribute, MeshLabel
 from ._quality import evaluate_cell_quality
 from ._result import CellMeshingResult
 from ._scope import MeshingEntityKind, MeshingScope
@@ -482,6 +483,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
     transition: CellMeshTransition | None
     geometry_transition: CellGeometryTransition | None
     material_transition: CellMeshTransition | None
+    source_transition: NativePlanarMotionSource | None
     local_manifold_scope: CellMeshManifoldScope | None
     advance_id: str = eqx.field(static=True)
 
@@ -504,6 +506,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
         adaptation: MeshAdaptationResult | None = None,
         geometry_transition: CellGeometryTransition | None = None,
         material_transition: CellMeshTransition | None = None,
+        source_transition: NativePlanarMotionSource | None = None,
         local_manifold_scope: CellMeshManifoldScope | None = None,
     ) -> None:
         remesh = decision is MeshMotionDecision.REMESH
@@ -684,6 +687,24 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
             raise ValueError(
                 "Motion material transition target differs from unchanged remesh result."
             )
+        if source_transition is not None:
+            if not isinstance(source_transition, NativePlanarMotionSource):
+                raise TypeError("source_transition must be NativePlanarMotionSource or None.")
+            if result is None or geometry_transition is None:
+                raise ValueError("Source transition evidence requires a returned motion result.")
+            NativePlanarMotionSource.from_stored_fields(source_transition)
+            certification = result.certification
+            if (
+                certification is None
+                or certification.inputs.source_revision != source_transition.successor.source_revision
+                or type(certification.inputs.feature_source) is not type(source_transition.successor)
+                or certification.inputs.feature_source.binding_id != source_transition.successor.binding_id
+                or not np.array_equal(
+                    np.asarray(geometry_transition.target_mesh.coordinates),
+                    np.asarray(geometry_transition.source_mesh.coordinates) + source_transition.translation,
+                )
+            ):
+                raise ValueError("Motion result does not bind its successor source and coordinate transition.")
         has_result = result is not None or local_result is not None
         if (decision is MeshMotionDecision.REJECT) != (not has_result):
             raise ValueError("Exactly the rejected advances carry no result.")
@@ -711,6 +732,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
         self.transition = None if adaptation is None else adaptation.transition
         self.geometry_transition = geometry_transition
         self.material_transition = material_transition
+        self.source_transition = source_transition
         self.local_manifold_scope = local_manifold_scope
         self.advance_id = canonical_fingerprint(
             {
@@ -746,6 +768,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
                     if material_transition is None
                     else material_transition.transition_id
                 ),
+                "source_transition": None if source_transition is None else source_transition.transition_id,
                 **(
                     {}
                     if local_manifold_scope is None
@@ -806,6 +829,7 @@ def _motion_target(
     /,
     *,
     prior_transition: CellMeshTransition | None = None,
+    source_transition: NativePlanarMotionSource | None = None,
 ) -> tuple[
     CellMeshingResult | None,
     MeshCertificationReport | None,
@@ -821,11 +845,14 @@ def _motion_target(
     attributes = ()
     transition = None
     material_transition = None
+    associations = source.associations
     try:
         if not _piecewise_linear_geometry(source.mesh, source.geometry):
             raise ValueError(
                 "Fixed-topology motion requires an exact P1 source coordinate map."
             )
+        if source_transition is not None and source.layer_curving_evidence is not None:
+            raise ValueError("Planar source translation cannot transport layer-curving evidence.")
         geometry = CellGeometrySpec.affine(mesh)
         lineage = _identity_lineage(source.mesh, mesh)
         transition = _transition_geometry_record(source, mesh, geometry)
@@ -876,16 +903,39 @@ def _motion_target(
                 lineage,
                 identity_maps,
             )
-        renewed_inputs = _renew_transition_certification_inputs(
-            source,
-            mesh,
-            geometry,
-            lineage,
-            reference_maps=identity_maps,
-            transition=transition,
-        )
-        if renewed_inputs is not None:
-            inputs, validated_witnesses = renewed_inputs
+        if source_transition is None:
+            renewed_inputs = _renew_transition_certification_inputs(
+                source,
+                mesh,
+                geometry,
+                lineage,
+                reference_maps=identity_maps,
+                transition=transition,
+            )
+            if renewed_inputs is not None:
+                inputs, validated_witnesses = renewed_inputs
+        else:
+            inputs, validated_witnesses, associations = renew_planar_motion_source(
+                source, mesh, geometry, source_transition
+            )
+            assert source.certification is not None
+            original_features = source.certification.inputs.protected_features or ()
+            successor_features = inputs.protected_features or ()
+            renamed_features = {
+                f"feature:{old.feature_id}": f"feature:{new.feature_id}"
+                for old in original_features
+                for new in successor_features
+                if old.feature_kind is new.feature_kind
+                and old.maximum_deviation == new.maximum_deviation
+                and old.hard == new.hard
+                and old.scope.entity_dimension == new.scope.entity_dimension
+                and np.array_equal(np.asarray(old.scope.entity_ids), np.asarray(new.scope.entity_ids))
+            }
+            labels = tuple(
+                MeshLabel(renamed_features[label.name], label.scope)
+                if label.name in renamed_features else label
+                for label in labels
+            )
         audit_policy = (
             None if source.certification is None else source.certification.audit_policy
         )
@@ -901,7 +951,7 @@ def _motion_target(
             zones=zones,
             labels=labels,
             attributes=attributes,
-            associations=source.associations,
+            associations=associations,
             surface_source=source.surface_source,
             region_boundary_evidence=boundaries,
             planar_embedding=source.planar_embedding,
@@ -939,7 +989,7 @@ def _motion_target(
                         zones=zones,
                         labels=labels,
                         attributes=attributes,
-                        associations=source.associations,
+                        associations=associations,
                         surface_source=source.surface_source,
                         region_boundary_evidence=boundaries,
                     ),
@@ -1029,6 +1079,7 @@ def advance_mesh_motion(
     remesh_metric: Callable[[CellMeshingResult], MeshMetricField] | None = None,
     numeric_version: str = "mesh-motion",
     prior_transition: CellMeshTransition | None = None,
+    source_transition: NativePlanarMotionSource | None = None,
 ) -> MeshMotionAdvance:
     """Accept, relocate, remesh, or reject one moved coordinate proposal.
 
@@ -1036,6 +1087,9 @@ def advance_mesh_motion(
     optional `prior_transition` must target that exact result; when it carries a
     material declaration or chain, accepted motion returns a source-to-motion
     `material_transition` with a freshly computed Lagrangian map.
+    `source_transition` explicitly authorizes a planar source translation;
+    its predecessor and coordinate map must agree with the accepted source and
+    proposal. Without it, the predecessor source remains fixed.
     `fixed_vertices` (default: every boundary vertex) stay bit-identical during
     relocation. A remesh targets `remesh_metric(candidate)` (default: the
     isotropic metric of the reference cell sizes) on the best valid
@@ -1047,6 +1101,8 @@ def advance_mesh_motion(
         raise TypeError("monitor must be MeshMotionMonitor.")
     if not isinstance(source, CellMeshingResult):
         raise TypeError("source must be CellMeshingResult.")
+    if source_transition is not None and not isinstance(source_transition, NativePlanarMotionSource):
+        raise TypeError("source_transition must be NativePlanarMotionSource or None.")
     if source.mesh.mesh_id != monitor.reference.mesh_id:
         raise ValueError("source must be the certified result of the monitor reference.")
     if prior_transition is not None:
@@ -1087,7 +1143,7 @@ def advance_mesh_motion(
         case MeshMotionDecision.ACCEPT_MOTION:
             mesh = monitor.moved_mesh(coordinates)
             candidate, proof, failure, motion_transition, material_transition = (
-                _motion_target(source, mesh, prior_transition=prior_transition)
+                _motion_target(source, mesh, prior_transition=prior_transition, source_transition=source_transition)
             )
             assessments[0] = _motion_assessment_with_acceptance(
                 assessment,
@@ -1112,6 +1168,7 @@ def advance_mesh_motion(
                 result=candidate,
                 geometry_transition=motion_transition,
                 material_transition=material_transition,
+                source_transition=source_transition,
             )
         case MeshMotionDecision.RELOCATE | MeshMotionDecision.REMESH:
             pass
@@ -1130,7 +1187,7 @@ def advance_mesh_motion(
         )
         candidate, proof, failure, motion_transition, material_transition = (
             _motion_target(
-                source, relocation.result.mesh, prior_transition=prior_transition
+                source, relocation.result.mesh, prior_transition=prior_transition, source_transition=source_transition
             )
         )
         relocated = _motion_assessment_with_acceptance(
@@ -1160,10 +1217,11 @@ def advance_mesh_motion(
                 relocation=relocation,
                 geometry_transition=motion_transition,
                 material_transition=material_transition,
+                source_transition=source_transition,
             )
     elif assessment.certificate is not None and assessment.certificate.all_certified:
         candidate, proof, failure, motion_transition, material_transition = (
-            _motion_target(source, moved, prior_transition=prior_transition)
+            _motion_target(source, moved, prior_transition=prior_transition, source_transition=source_transition)
         )
         assessments[0] = _motion_assessment_with_acceptance(
             assessment,
@@ -1207,6 +1265,7 @@ def advance_mesh_motion(
             remesh_metric=metric,
             geometry_transition=motion_transition,
             material_transition=material_transition,
+            source_transition=source_transition,
         )
     adaptation = _remesh(
         candidate,
@@ -1225,6 +1284,7 @@ def advance_mesh_motion(
         adaptation=adaptation,
         geometry_transition=motion_transition,
         material_transition=material_transition,
+        source_transition=source_transition,
     )
 
 

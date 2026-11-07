@@ -10,6 +10,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import numpy as np
 from jax import Array
@@ -49,21 +50,139 @@ from ._rational import fraction_endpoint, rational_vector
 from ._source_boundary_records import SourceBoundaryChartWitness
 
 
-def _has_torus_source_program(surface: object, /) -> bool:
-    """Whether the exact source program supports this direct or placed torus."""
+if TYPE_CHECKING:
     from ._meshing_domain import _PlacedSurfacePatch
-    from .brep._patches import TorusPatch
+    from .brep._patches import RevolutionSurface
 
-    return isinstance(surface, TorusPatch) or (
-        isinstance(surface, _PlacedSurfacePatch)
-        and isinstance(surface.source, TorusPatch)
+
+def _has_analytic_source_program(surface: object, /) -> bool:
+    """Whether a direct or placed analytic carrier has a source-bound program."""
+    from ._meshing_domain import _PlacedSurfacePatch
+    from .brep._patches import (
+        CircleCurve,
+        CylinderPatch,
+        LineCurve,
+        RevolutionSurface,
+        SpherePatch,
+        TorusPatch,
+    )
+
+    native = surface.source if isinstance(surface, _PlacedSurfacePatch) else surface
+    return isinstance(native, (CylinderPatch, SpherePatch, TorusPatch)) or (
+        isinstance(native, RevolutionSurface)
+        and isinstance(native.curve, (LineCurve, CircleCurve))
     )
 
 
-def _prepare_torus_source_program(
+def _revolution_axis_split(
+    revolution_axis: tuple[ExactScalar, ...], vector: tuple[ExactScalar, ...], /
+) -> tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...], tuple[ExactScalar, ...]]:
+    """Axial, radial and axis-cross parts of ``vector`` about a retained axis."""
+    projection = sum((vector[i] * revolution_axis[i] for i in range(3)), Fraction(0))
+    axial = tuple(projection * revolution_axis[i] for i in range(3))
+    radial = tuple(vector[i] - axial[i] for i in range(3))
+    cross = tuple(
+        revolution_axis[(i + 1) % 3] * radial[(i + 2) % 3]
+        - revolution_axis[(i + 2) % 3] * radial[(i + 1) % 3]
+        for i in range(3)
+    )
+    return axial, radial, cross
+
+
+def _revolution_axis(
+    native: RevolutionSurface, /
+) -> tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]]:
+    # These are the retained source coefficients. The stored normalized
+    # binary axis need not have exactly unit squared length.
+    return (
+        rational_vector(np.asarray(native.axis_origin, dtype=np.float64)),
+        rational_vector(np.asarray(native.axis_direction, dtype=np.float64)),
+    )
+
+
+def _line_revolution_source_vectors(
+    native: RevolutionSurface, /
+) -> tuple[tuple[ExactScalar, ...], ...]:
+    """Exact ``(P0, ..., P5)`` of a line revolution's unplaced source map.
+
+    ``S(u, v) = P0 + v P1 + cos(u) (P2 + v P3) + sin(u) (P4 + v P5)``.
+    """
+    from .brep._patches import _require_exact_numeric_shadow, LineCurve
+
+    curve = native.curve
+    if not isinstance(curve, LineCurve):
+        raise TypeError("A line revolution requires a LineCurve profile.")
+    _require_exact_numeric_shadow(curve.origin, curve.origin_exact, "Line origin")
+    _require_exact_numeric_shadow(
+        curve.direction, curve.direction_exact, "Line direction"
+    )
+    axis_origin, revolution_axis = _revolution_axis(native)
+    relative = tuple(curve.origin_exact[i] - axis_origin[i] for i in range(3))
+    axial, radial, cross = _revolution_axis_split(revolution_axis, relative)
+    axial_rate, radial_rate, cross_rate = _revolution_axis_split(
+        revolution_axis, curve.direction_exact
+    )
+    return (
+        tuple(axis_origin[i] + axial[i] for i in range(3)),
+        axial_rate,
+        radial,
+        radial_rate,
+        cross,
+        cross_rate,
+    )
+
+
+def _placed_source_vectors(
+    surface: _PlacedSurfacePatch,
+    vectors: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> tuple[tuple[ExactScalar, ...], ...]:
+    """Apply an exact placement to a point (first) and direction vectors."""
+    from .brep._patches import _require_exact_numeric_shadow
+
+    matrix = surface.placement.matrix
+    linear = tuple(tuple(matrix[i][j] for j in range(3)) for i in range(3))
+    offset = tuple(matrix[i][3] for i in range(3))
+    _require_exact_numeric_shadow(surface.linear, linear, "Placed source linear")
+    _require_exact_numeric_shadow(surface.offset, offset, "Placed source offset")
+    return tuple(
+        tuple(
+            sum(
+                (linear[i][j] * vector[j] for j in range(3)),
+                offset[i] if index == 0 else Fraction(0),
+            )
+            for i in range(3)
+        )
+        for index, vector in enumerate(vectors)
+    )
+
+
+def exact_line_revolution_vectors(
+    surface: object, /
+) -> tuple[tuple[ExactScalar, ...], ...] | None:
+    """Exact harmonic vectors of a direct or placed line revolution, else ``None``.
+
+    ``S(u, v) = P0 + v P1 + cos(u) (P2 + v P3) + sin(u) (P4 + v P5)`` in
+    the carrier's physical frame.
+    """
+    from ._meshing_domain import _PlacedSurfacePatch
+    from .brep._patches import LineCurve, RevolutionSurface
+
+    native = surface.source if isinstance(surface, _PlacedSurfacePatch) else surface
+    if not isinstance(native, RevolutionSurface) or not isinstance(
+        native.curve, LineCurve
+    ):
+        return None
+    vectors = _line_revolution_source_vectors(native)
+    if isinstance(surface, _PlacedSurfacePatch):
+        return _placed_source_vectors(surface, vectors)
+    return vectors
+
+
+def _prepare_analytic_source_program(
     surface: object, order: int, /
 ) -> PreparedIntervalFunction | None:
-    """Prepare a torus interval program with its exact source coefficients.
+    """Prepare exact-coefficient point or derivative bounds for analytic carriers.
 
     The numeric coefficient vector is only a JAX execution shadow. Its captured
     interval constants enclose the authored exact scalars, including nonbinary
@@ -77,59 +196,97 @@ def _prepare_torus_source_program(
     from .brep._patches import (
         _require_exact_numeric_shadow,
         _validate_surface_source_shadows,
+        CircleCurve,
+        CylinderPatch,
+        LineCurve,
+        RevolutionSurface,
+        SpherePatch,
         TorusPatch,
     )
 
-    if not _has_torus_source_program(surface):
+    native = surface.source if isinstance(surface, _PlacedSurfacePatch) else surface
+    line_revolution = isinstance(native, RevolutionSurface) and isinstance(
+        native.curve, LineCurve
+    )
+    circle_revolution = isinstance(native, RevolutionSurface) and isinstance(
+        native.curve, CircleCurve
+    )
+    if not isinstance(native, (CylinderPatch, SpherePatch, TorusPatch)) and not (
+        line_revolution or circle_revolution
+    ):
         return None
     if order not in (0, 1, 2):
-        raise ValueError("Torus source interval derivative order must be 0, 1, or 2.")
-    if isinstance(surface, _PlacedSurfacePatch):
-        torus = surface.source
-        if not isinstance(torus, TorusPatch):
-            raise TypeError("A placed torus program requires a native torus source.")
-        matrix = surface.placement.matrix
-        linear = tuple(tuple(matrix[i][j] for j in range(3)) for i in range(3))
-        offset = tuple(matrix[i][3] for i in range(3))
-        _require_exact_numeric_shadow(surface.linear, linear, "Placed torus linear")
-        _require_exact_numeric_shadow(surface.offset, offset, "Placed torus offset")
-
-        def transform(
-            vector: tuple[ExactScalar, ...], *, point: bool
-        ) -> tuple[ExactScalar, ...]:
-            return tuple(
-                sum(
-                    (linear[i][j] * vector[j] for j in range(3)),
-                    offset[i] if point else Fraction(0),
-                )
-                for i in range(3)
-            )
-
-        center = transform(torus.center_exact, point=True)
-        first = transform(torus.first_axis_exact, point=False)
-        second = transform(torus.second_axis_exact, point=False)
-        axis = transform(torus.axis_exact, point=False)
-    else:
-        if not isinstance(surface, TorusPatch):
-            return None
-        torus = surface
-        center, first, second, axis = (
-            torus.center_exact,
-            torus.first_axis_exact,
-            torus.second_axis_exact,
-            torus.axis_exact,
+        raise ValueError("Analytic source interval derivative order must be 0, 1, or 2.")
+    radii: tuple[ExactScalar, ...] = ()
+    if line_revolution:
+        vectors = _line_revolution_source_vectors(native)
+    elif circle_revolution:
+        curve = native.curve
+        if not isinstance(curve, CircleCurve):
+            raise RuntimeError("Analytic source classification is inconsistent.")
+        _require_exact_numeric_shadow(curve.center, curve.center_exact, "Circle center")
+        _require_exact_numeric_shadow(
+            curve.first_axis, curve.first_axis_exact, "Circle first axis"
         )
-    _validate_surface_source_shadows(torus)
-    exact = (
-        *center,
-        *first,
-        *second,
-        *axis,
-        torus.major_radius_exact,
-        torus.minor_radius_exact,
-    )
-    if len(exact) != 14:
-        raise ValueError("Torus source coefficients must have their native dimensions.")
+        _require_exact_numeric_shadow(
+            curve.second_axis, curve.second_axis_exact, "Circle second axis"
+        )
+        _require_exact_numeric_shadow(curve.radius, curve.radius_exact, "Circle radius")
+        axis_origin, revolution_axis = _revolution_axis(native)
+        relative = tuple(curve.center_exact[i] - axis_origin[i] for i in range(3))
+        components = (
+            _revolution_axis_split(revolution_axis, relative),
+            _revolution_axis_split(
+                revolution_axis,
+                tuple(curve.radius_exact * value for value in curve.first_axis_exact),
+            ),
+            _revolution_axis_split(
+                revolution_axis,
+                tuple(curve.radius_exact * value for value in curve.second_axis_exact),
+            ),
+        )
+        vectors = (
+            tuple(axis_origin[i] + components[0][0][i] for i in range(3)),
+            components[1][0],
+            components[2][0],
+            components[0][1],
+            components[1][1],
+            components[2][1],
+            components[0][2],
+            components[1][2],
+            components[2][2],
+        )
+    else:
+        match native:
+            case CylinderPatch():
+                origin = native.origin_exact
+                radii = (native.radius_exact,)
+            case TorusPatch():
+                origin = native.center_exact
+                radii = (native.major_radius_exact, native.minor_radius_exact)
+            case SpherePatch():
+                origin = rational_vector(np.asarray(native.center, dtype=np.float64))
+                radii = (Fraction.from_float(float(native.radius)),)
+            case _:
+                raise RuntimeError("Analytic source classification is inconsistent.")
+        if isinstance(native, SpherePatch):
+            vectors = (
+                origin,
+                rational_vector(np.asarray(native.first_axis, dtype=np.float64)),
+                rational_vector(np.asarray(native.second_axis, dtype=np.float64)),
+                rational_vector(np.asarray(native.axis, dtype=np.float64)),
+            )
+        else:
+            vectors = (
+                origin,
+                native.first_axis_exact,
+                native.second_axis_exact,
+                native.axis_exact,
+            )
+        _validate_surface_source_shadows(native)
+    if isinstance(surface, _PlacedSurfacePatch):
+        vectors = _placed_source_vectors(surface, vectors)
+    exact = (*sum(vectors, ()), *radii)
     nominal = np.asarray(tuple(float(value) for value in exact), dtype=np.float64)
     intervals = tuple(coefficient_interval(value, bits=128) for value in exact)
     lower = np.asarray(
@@ -144,10 +301,46 @@ def _prepare_torus_source_program(
 
     def evaluate(uv: Array) -> Array:
         longitude, latitude = uv[0], uv[1]
+        if line_revolution:
+            return (
+                coefficients[:3]
+                + latitude * coefficients[3:6]
+                + (coefficients[6:9] + latitude * coefficients[9:12]) * jnp.cos(longitude)
+                + (coefficients[12:15] + latitude * coefficients[15:18])
+                * jnp.sin(longitude)
+            )
+        if circle_revolution:
+            cos_lat, sin_lat = jnp.cos(latitude), jnp.sin(latitude)
+            axial = (
+                coefficients[:3]
+                + cos_lat * coefficients[3:6]
+                + sin_lat * coefficients[6:9]
+            )
+            radial = (
+                coefficients[9:12]
+                + cos_lat * coefficients[12:15]
+                + sin_lat * coefficients[15:18]
+            )
+            cross = (
+                coefficients[18:21]
+                + cos_lat * coefficients[21:24]
+                + sin_lat * coefficients[24:27]
+            )
+            return axial + jnp.cos(longitude) * radial + jnp.sin(longitude) * cross
         radial = (
             jnp.cos(longitude) * coefficients[3:6]
             + jnp.sin(longitude) * coefficients[6:9]
         )
+        if isinstance(native, CylinderPatch):
+            return (
+                coefficients[:3]
+                + coefficients[12] * radial
+                + latitude * coefficients[9:12]
+            )
+        if isinstance(native, SpherePatch):
+            return coefficients[:3] + coefficients[12] * (
+                jnp.cos(latitude) * radial + jnp.sin(latitude) * coefficients[9:12]
+            )
         return (
             coefficients[:3]
             + (coefficients[12] + coefficients[13] * jnp.cos(latitude)) * radial
@@ -379,6 +572,24 @@ def _exact_surface_map_is_affine(expressions: tuple[Polynomial, ...], /) -> bool
     )
 
 
+def exact_affine_boundary_source(query: MeshingDomainBoundarySource, /) -> bool:
+    """Prove that every selected exact-represented source chart is affine."""
+    if not isinstance(query, MeshingDomainBoundarySource):
+        raise TypeError(
+            "Exact affine source proof requires a MeshingDomainBoundarySource."
+        )
+    query.require_current()
+    if query.domain.accuracy != "exact_represented" or not query.patches:
+        return False
+    for patch in query.patches:
+        expressions = exact_surface_coordinate_expressions(
+            query.domain.patches[patch].surface
+        )
+        if expressions is None or not _exact_surface_map_is_affine(expressions):
+            return False
+    return True
+
+
 def _exact_surface_interpolation_bound(
     expressions: tuple[Polynomial, ...],
     chart: tuple[tuple[Fraction, Fraction], ...],
@@ -573,6 +784,50 @@ def _line_difference_expressions(
         subtract(source_value, target_value)
         for source_value, target_value in zip(source, target, strict=True)
     )
+
+
+def _line_endpoint_bracket_padding(
+    source: ParametricCurveBoundarySource,
+    chart_row: int,
+    first: Fraction,
+    last: Fraction,
+    direction: tuple[ExactScalar, ...],
+    /,
+) -> Fraction:
+    """Bound an uncertain source endpoint's exact line displacement."""
+    low, high = sorted((first, last))
+    parameter_error = max(
+        (
+            max(
+                abs(Fraction.from_float(lower) - shadow),
+                abs(Fraction.from_float(upper) - shadow),
+            )
+            for shadow_float, (lower, upper) in zip(
+                source.parameter_ranges[chart_row],
+                source.endpoint_parameter_bounds[chart_row],
+                strict=True,
+            )
+            for shadow in (Fraction.from_float(shadow_float),)
+            if lower != upper
+            and low <= Fraction.from_float(upper)
+            and high >= Fraction.from_float(lower)
+        ),
+        default=Fraction(0),
+    )
+    if not parameter_error:
+        return Fraction(0)
+    squared = sum(
+        (
+            max(
+                abs(Fraction(coefficient_endpoint(value, upper=False))),
+                abs(Fraction(coefficient_endpoint(value, upper=True))),
+            )
+            ** 2
+            for value in direction
+        ),
+        Fraction(0),
+    )
+    return parameter_error * fraction_sqrt_interval(squared)[1]
 
 
 def _distance_bounds(
@@ -811,6 +1066,11 @@ def certify_parametric_curve_chart(
                         exact_line, source_first, source_last, target
                     )
                     lower, upper = _polynomial_distance_bounds(difference)
+                    padding = _line_endpoint_bracket_padding(
+                        source, chart_row, source_first, source_last, exact_line[1]
+                    )
+                    lower = max(Fraction(0), lower - padding)
+                    upper += padding
                 else:
                     source_lower_parameter = _outward_parameter(
                         min(source_first, source_last), lower=True
@@ -1204,7 +1464,7 @@ def certify_domain_surface_charts(
             if exact_surface is None:
                 spans = preparation.surface_spans(surface)
                 unexpanded_exact_carrier = _has_unexpanded_exact_surface_carrier(surface)
-                if _has_torus_source_program(surface):
+                if _has_analytic_source_program(surface):
                     # Both programs bind the exact coefficient intervals.
                     preparation.derivative_program(surface, 0)
                     preparation.derivative_program(surface, 2)

@@ -73,6 +73,93 @@ def _periodic_cube_tetrahedra() -> tuple[CellMesh, CellGeometrySpec]:
     return mesh, CellGeometrySpec.affine(mesh)
 
 
+def test_periodic_facet_trace_rebuilds_exact_plc_source_witness() -> None:
+    from dataclasses import replace
+
+    from phydrax.discretization._coordinate_enclosure import add
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from phydrax.geometry._embedding_cells import prepare_embedding_cells
+    from phydrax.geometry._global_embedding import _periodic_facet_trace_certificate_id
+
+    existing, _ = _periodic_cube_tetrahedra()
+    topology = existing.periodic_topology
+    assert topology is not None
+    lifted = CellMesh(
+        existing.coordinates,
+        existing.blocks,
+        vertex_global_ids=existing.vertex_global_ids,
+    )
+    points = np.asarray(lifted.coordinates)
+    bank = ExactPlcCellGeometrySource(
+        "exact-periodic-trace",
+        "1",
+        lifted.vertex_global_ids,
+        tuple(tuple(Fraction(float(value)) for value in point) for point in points),
+        vertex_source_entity_ids=(None,) * len(points),
+        vertex_occurrence_paths=((),) * len(points),
+    )
+    witnessed = PeriodicMeshTopology(
+        lifted,
+        topology.cell,
+        topology.vertex_representatives,
+        topology.vertex_shifts,
+        exact_coordinate_source=bank,
+    )
+    mesh = CellMesh(
+        lifted.coordinates,
+        lifted.blocks,
+        vertex_global_ids=lifted.vertex_global_ids,
+        periodic_topology=witnessed,
+    )
+    geometry = CellGeometrySpec.power(mesh, bank)
+    cells = prepare_embedding_cells(mesh, geometry)
+    assert (
+        _periodic_facet_trace_certificate_id(mesh, geometry, cells, witnessed) is not None
+    )
+    # A forged full map retains every corner and both owner IDs. Ownership
+    # labels alone are not a proof that these prepared trace expressions are
+    # the current geometry's expressions.
+    coordinates = cells[0].coordinates
+    forged = replace(
+        cells[0],
+        coordinate_expressions=(
+            add(coordinates[0], {(1, 1, 0): Fraction(1, 7)}),
+            *coordinates[1:],
+        ),
+        affine_offset=None,
+        affine_matrix=None,
+    )
+    assert forged.corner_images == cells[0].corner_images
+    assert forged.owning_mesh_id == cells[0].owning_mesh_id
+    assert forged.owning_geometry_id == cells[0].owning_geometry_id
+    assert (
+        _periodic_facet_trace_certificate_id(
+            mesh, geometry, (forged, *cells[1:]), witnessed
+        )
+        is None
+    )
+    wrong_geometry = CellGeometrySpec.affine(mesh)
+    assert (
+        _periodic_facet_trace_certificate_id(mesh, wrong_geometry, cells, witnessed)
+        is None
+    )
+    other_bank = ExactPlcCellGeometrySource(
+        "another-source",
+        "1",
+        lifted.vertex_global_ids,
+        bank.exact_coordinates,
+        vertex_source_entity_ids=(None,) * len(points),
+        vertex_occurrence_paths=((),) * len(points),
+    )
+    wrong_source_geometry = CellGeometrySpec.power(mesh, other_bank)
+    assert (
+        _periodic_facet_trace_certificate_id(
+            mesh, wrong_source_geometry, cells, witnessed
+        )
+        is None
+    )
+
+
 def _refined_tetrahedra(
     source: CellMesh,
 ) -> tuple[CellMesh, CellGeometrySpec, NestedReferenceWitnesses]:

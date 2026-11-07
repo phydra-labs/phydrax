@@ -31,6 +31,102 @@ _POLICY = phx.meshing.AssociationPropagationPolicy(classification_tolerance=1e-8
 _STATUS = phx.meshing.HighOrderCurvingStatus
 
 
+def test_node_projection_cache_requires_exact_queries_and_source_classes() -> None:
+    from phydrax.geometry.brep._constructors import brep_box
+    from phydrax.meshing._curving import (
+        _node_residuals,
+        _NodeClasses,
+        _NodeProjectionCache,
+    )
+
+    model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    points = np.asarray(model.geometry.vertex_points, dtype=np.float64)[:2].copy()
+    classes = _NodeClasses(
+        np.zeros(2, dtype=np.int64),
+        np.arange(2, dtype=np.int64),
+        np.ones(2, dtype=np.bool_),
+        np.ones(2, dtype=np.bool_),
+        np.ones(2, dtype=np.bool_),
+    )
+    cache = _NodeProjectionCache(projection, classes)
+    first = _node_residuals(projection, points, classes, cache=cache)
+    again = _node_residuals(projection, points, classes, cache=cache)
+    for actual, expected in zip(again, first, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    changed = points.copy()
+    axis = np.flatnonzero(changed[1] != 0.0)[0]
+    changed[1, axis] = np.nextafter(changed[1, axis], np.inf)
+    cached = _node_residuals(projection, changed, classes, cache=cache)
+    direct = _node_residuals(projection, changed, classes)
+    for actual, expected in zip(cached, direct, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    classes.indices[1] = 0
+    changed_class = _node_residuals(projection, changed, classes, cache=cache)
+    fresh_class = _node_residuals(projection, changed, classes)
+    for actual, expected in zip(changed_class, fresh_class, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    other_model = brep_box(
+        (0.25, 0.0, 0.0), (1.25, 1.0, 1.0), coordinate_contract=_CONTRACT
+    )
+    other = phx.geometry.prepare_brep_projection(other_model)
+    isolated = _node_residuals(other, changed, classes, cache=cache)
+    fresh = _node_residuals(other, changed, classes)
+    for actual, expected in zip(isolated, fresh, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+
+def test_curving_evidence_reuses_only_matching_embedding_inputs() -> None:
+    from phydrax.geometry.brep._constructors import brep_box
+    from phydrax.meshing._curving import (
+        _distortion_blocks,
+        _evidence,
+        _local_evidence,
+        _node_classes,
+    )
+
+    model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    points = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
+    mesh = phx.discretization.CellMesh.from_tetrahedra(
+        points, np.asarray(((0, 1, 2, 3),))
+    )
+    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+    policy = phx.meshing.HighOrderCurvingPolicy(degree=2)
+    geometry = _straight_geometry(mesh, policy.degree)
+    classes = _node_classes(mesh, geometry, association, projection)
+    blocks = _distortion_blocks(mesh, geometry, policy.degree)
+    local = _local_evidence(mesh, geometry, classes, projection, blocks, policy)
+    fresh = _evidence(mesh, geometry, classes, projection, blocks, policy, local=local)
+    reused = _evidence(
+        mesh,
+        geometry,
+        classes,
+        projection,
+        blocks,
+        policy,
+        local=local,
+        embedding=fresh.embedding,
+    )
+    assert reused.evidence_id == fresh.evidence_id
+    moved = points.copy()
+    moved[3, 2] = 0.75
+    other_mesh = phx.discretization.CellMesh.from_tetrahedra(
+        moved, np.asarray(((0, 1, 2, 3),))
+    )
+    with pytest.raises(ValueError):
+        _evidence(
+            other_mesh,
+            geometry,
+            classes,
+            projection,
+            blocks,
+            policy,
+            local=local,
+            embedding=fresh.embedding,
+        )
+
+
 def _bound(shape: Any, embedding: Any = None) -> Any:
     model = import_occt_shape(
         shape,
@@ -55,6 +151,66 @@ def _plate_projection() -> Any:
     disk = BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakeWire(circle).Wire()).Face()
     embedding = phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
     return _bound(BRepAlgoAPI_Cut(square, disk).Shape(), embedding)
+
+
+def test_plate_tessellation_retains_native_periodic_edge_parameters() -> None:
+    from phydrax.geometry.brep._intersection import NativePeriodEndpoint
+    from phydrax.geometry.brep._model import BRepModel, BRepTessellation
+
+    model = _plate_projection().model
+    geometry = model.geometry
+    tessellation = model.require_tessellation()
+    dimensions = np.asarray(tessellation.vertex_source_dimensions)
+    indices = np.asarray(tessellation.vertex_source_indices)
+    parameters = np.asarray(tessellation.vertex_parameters)
+    vertices = np.asarray(tessellation.vertices)
+    periodic_edges = [
+        edge
+        for edge, roots in enumerate(geometry.edge_endpoint_roots)
+        if all(isinstance(root, NativePeriodEndpoint) for root in roots)
+    ]
+    assert len(periodic_edges) == 1
+    edge = periodic_edges[0]
+    rows = np.flatnonzero((dimensions == 1) & (indices == edge))
+    assert rows.size > 1
+    lower, upper = np.asarray(geometry.edge_ranges)[edge]
+    assert np.all((parameters[rows, 0] > lower) & (parameters[rows, 0] < upper))
+    curve = geometry.curves[geometry.edge_curves[edge]]
+    np.testing.assert_allclose(
+        np.asarray(curve.evaluate(parameters[rows, 0])), vertices[rows], atol=1e-12
+    )
+
+    forged_parameters = parameters.copy()
+    forged_parameters[rows[0], 0] = np.nextafter(upper, np.inf)
+    forged = BRepTessellation(
+        linear_deflection=tessellation.linear_deflection,
+        angular_deflection=tessellation.angular_deflection,
+        source_revision=tessellation.source_revision,
+        policy_id=tessellation.policy_id,
+        vertices=tessellation.vertices,
+        triangles=tessellation.triangles,
+        face_ids=tessellation.face_ids,
+        parameters=tessellation.parameters,
+        deviation_bounds=tessellation.deviation_bounds,
+        normal_bounds=tessellation.normal_bounds,
+        vertex_source_dimensions=tessellation.vertex_source_dimensions,
+        vertex_source_indices=tessellation.vertex_source_indices,
+        vertex_parameters=forged_parameters,
+        triangle_occurrence_ids=tessellation.triangle_occurrence_ids,
+        vertex_occurrence_ids=tessellation.vertex_occurrence_ids,
+        vertex_global_ids=tessellation.vertex_global_ids,
+        triangle_global_ids=tessellation.triangle_global_ids,
+        source_chart_witness=tessellation.source_chart_witness,
+    )
+    with pytest.raises(ValueError, match="edge parameter lies outside"):
+        BRepModel._validate_tessellation(
+            forged,
+            model.source_revision,
+            geometry,
+            model.patches,
+            np.asarray(model.parameter_bounds),
+            model.orientation,
+        )
 
 
 def _plate_mesh(apex: Any) -> Any:
@@ -530,7 +686,9 @@ def test_unresolved_projection_rolls_back_with_infinite_residual_evidence(
     assert not result.evidence.accepted
     assert np.isposinf(result.evidence.maximum_residual)
     assert result.evidence.source_failure is not None
-    np.testing.assert_array_equal(result.geometry.coordinates, result.straight.coordinates)
+    np.testing.assert_array_equal(
+        result.geometry.coordinates, result.straight.coordinates
+    )
 
 
 def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> None:
@@ -556,6 +714,18 @@ def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> N
     np.testing.assert_array_equal(
         projected.geometry.coordinates, projected.straight.coordinates
     )
+    replayed = phx.meshing.verify_curved_geometry(
+        projected.geometry,
+        mesh,
+        association,
+        projection,
+        policy=phx.meshing.HighOrderCurvingPolicy(
+            degree=2,
+            relaxation_rounds=0,
+            termination=phx.optim.OptimizationTermination(maximum_steps=64),
+        ),
+    )
+    assert replayed.evidence_id == projected.evidence.evidence_id
     # Relaxations cut off by the step budget never replace the straight geometry,
     # even when their candidate would pass the certificate.
     assert capped.status is _STATUS.ROLLED_BACK_NONCONVERGED
@@ -736,3 +906,65 @@ def test_p3_straight_geometry_reuses_reversed_shared_face_nodes() -> None:
     exact_coordinates = geometry.exact_coordinate_bank
     assert exact_coordinates is not None
     assert all(exact_coordinates[row][2] == 0 for row in shared_face_rows[0])
+
+
+@pytest.mark.parametrize("kind", ("tetrahedron", "triangle"))
+@pytest.mark.parametrize(
+    "per_cell", (False, True), ids=("shared-basis", "per-cell-basis")
+)
+def test_sampled_quality_worksets_preserve_original_floating_results(
+    kind: str, per_cell: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jax.numpy as jnp
+
+    from phydrax.meshing import _curving
+
+    points = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
+    if points.shape[1] == 2:
+        points = np.column_stack((points, np.zeros(points.shape[0], dtype=np.float64)))
+    mesh = phx.discretization.CellMesh(
+        points,
+        (
+            phx.discretization.CellBlock(
+                "cells", kind, np.arange(points.shape[0], dtype=np.int64)[None, :]
+            ),
+        ),
+    )
+    geometry = _straight_geometry(mesh, 2)
+    original = _curving._distortion_blocks(mesh, geometry, 2)[0]
+    nodes = geometry.coordinates.shape[0]
+    base = np.asarray(geometry.coordinates).copy()
+    base += 0.001 * np.sin(np.arange(base.size, dtype=np.float64)).reshape(base.shape)
+    coordinates = np.concatenate(
+        tuple(base + np.asarray((row * 0.125, 0.0, 0.0)) for row in range(9))
+    )
+    coordinates[nodes : 2 * nodes, 0] = 0.0
+    coordinates[4 * nodes : 5 * nodes, 0] *= -1.0
+    coordinates[7 * nodes : 8 * nodes, 0] = (
+        1.0e4 * coordinates[7 * nodes : 8 * nodes, 1]
+        + 1.0e-6 * coordinates[7 * nodes : 8 * nodes, 0]
+    )
+    routes = jnp.concatenate(tuple(original.routes + row * nodes for row in range(9)))
+    inverses = jnp.broadcast_to(
+        original.target_inverses, (9, *original.target_inverses.shape[1:])
+    )
+    gradients = original.gradients
+    if per_cell:
+        scales = 1.0 + jnp.arange(9, dtype=jnp.float64) / 32.0
+        gradients = gradients[None, ...] * scales[:, None, None, None]
+        inverses = inverses / (
+            scales[:, None, None, None] ** (2 if original.embedded else 1)
+        )
+    block = _curving._BlockDistortion(
+        routes, gradients, inverses, original.plan, original.embedded, per_cell
+    )
+    values = jnp.asarray(coordinates, dtype=jnp.float64)
+    expected = np.asarray(_curving._sampled_block_quality(block, values))
+    samples = original.gradients.shape[0]
+    monkeypatch.setattr(
+        _curving,
+        "_QUALITY_WORKSET_ENTRIES",
+        4 * samples * values.shape[1] * gradients.shape[-1],
+    )
+    actual = np.asarray(_curving._bounded_sampled_block_quality(block, values))
+    np.testing.assert_array_equal(actual.view(np.uint64), expected.view(np.uint64))

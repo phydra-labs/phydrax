@@ -114,6 +114,10 @@ def core_facet_scope_ids(source: sources_owner.NativeLayerCoreSource, /) -> np.n
             "PLC facet source identity and occurrence banks must cover every facet."
         )
     scope_ids = np.asarray(domain.scope_entity_ids(2), dtype=np.int64)
+    scope_by_key = {
+        domain.source_entity_key_for_scope(2, int(identifier)): int(identifier)
+        for identifier in scope_ids
+    }
     result = np.full((len(identities),), -1, dtype=np.int64)
     for facet, (identity, path) in enumerate(zip(identities, paths, strict=True)):
         if identity is None:
@@ -124,12 +128,11 @@ def core_facet_scope_ids(source: sources_owner.NativeLayerCoreSource, /) -> np.n
             continue
         if path is None:
             raise ValueError("A bound PLC facet must retain its source occurrence path.")
-        slot = domain.resolve_entity_id(2, identity, occurrence_path=path)
-        if slot < 0 or slot >= scope_ids.size:
-            raise ValueError(
-                "A PLC facet resolved outside the retained source-domain inventory."
-            )
-        result[facet] = scope_ids[slot]
+        domain.resolve_entity_id(2, identity, occurrence_path=path)
+        scope_id = scope_by_key.get((identity, tuple(path)))
+        if scope_id is None:
+            raise ValueError("A PLC facet escaped the retained source-domain inventory.")
+        result[facet] = scope_id
     allowed = np.asarray(source.source_boundary_scope.entity_ids, dtype=np.int64)
     if np.setdiff1d(result[result >= 0], allowed).size:
         raise ValueError(
@@ -148,9 +151,28 @@ def _wall_face_sources(source: sources_owner.NativeLayerCoreSource, /) -> dict[i
     wall_face_ids = set(
         np.asarray(layer.source_wall.entity_set(2).entity_ids, dtype=np.int64).tolist()
     )
+    charts = source.source_wall_charts
+    chart_sources: dict[int, int] = {}
+    if charts is not None:
+        charts.require_root(layer.source_wall, charts.geometry)
+        scope_by_key = {
+            charts.domain.source_entity_key_for_scope(2, int(identifier)): int(identifier)
+            for identifier in charts.domain.scope_entity_ids(2)
+        }
+        chart_sources = {
+            int(cell): scope_by_key[(
+                charts.domain.entity_id(2, int(patch)),
+                tuple(charts.domain.source_occurrences[2][int(patch)]),
+            )]
+            for cell, patch in zip(charts.cell_global_ids, charts.root_patches, strict=True)
+        }
     if source.source_boundary_scope is None:
         allowed = set(
-            np.asarray(source.complex.facet_entity_ids, dtype=np.int64).tolist()
+            np.asarray(
+                source.complex.facet_entity_ids
+                if charts is None else charts.domain.scope_entity_ids(2),
+                dtype=np.int64,
+            ).tolist()
         )
     else:
         allowed = set(
@@ -165,12 +187,13 @@ def _wall_face_sources(source: sources_owner.NativeLayerCoreSource, /) -> dict[i
             raise ValueError(
                 "A front-row face is absent from the exact source wall mesh."
             )
-        if identifier not in allowed:
-            if source.source_boundary_scope is None:
+        owner = chart_sources.get(identifier) if charts is not None else identifier
+        if owner is None or owner not in allowed:
+            if source.source_boundary_scope is None and charts is None:
                 continue
             raise ValueError("A source wall face escaped its retained boundary scope.")
-        previous = result.setdefault(identifier, identifier)
-        if previous != identifier:
+        previous = result.setdefault(identifier, owner)
+        if previous != owner:
             raise ValueError("One source wall face has conflicting front-row ancestry.")
     return result
 
@@ -243,8 +266,11 @@ def _prepare_lateral_face_owners(
             cap_edges[key] = cap_edges.get(key, 0) + 1
     boundary_edges = {key for key, count in cap_edges.items() if count == 1}
     edge_owners: dict[tuple[int, int], int] = {}
-    for polygon, owner in zip(mapping[polygons].tolist(), owners.tolist(), strict=True):
-        if owner < 0:
+    cap_polygons = set(np.asarray(source.cap_polygon_ids, dtype=np.int64).tolist())
+    for index, (polygon, owner) in enumerate(
+        zip(mapping[polygons].tolist(), owners.tolist(), strict=True)
+    ):
+        if index in cap_polygons or owner < 0:
             continue
         for first, last in zip(polygon, (*polygon[1:], polygon[0]), strict=True):
             edge = tuple(sorted((first, last)))
@@ -383,6 +409,65 @@ def layer_source_face_ancestry(
     return authored
 
 
+def _conforming_cap_control_keys(
+    source: sources_owner.NativeLayerCoreSource,
+    construction: layer_topology.LayerCoreConstruction,
+    incidents: dict[tuple[int, ...], list[layer_topology.LayerCoreFace]],
+    /,
+) -> tuple[set[int], dict[tuple[int, ...], set[int]]]:
+    """Prove the complete original cap and realized interface have one exact cover."""
+    from fractions import Fraction
+
+    from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from ._layer_core_subdivision import require_overlap_source_provenance
+    from ..geometry._coplanar_overlap import exact_coplanar_triangle_partitions
+
+    carrier = construction.overlap_exact_geometry
+    if not isinstance(carrier, ExactPlcCellGeometrySource):
+        raise ValueError("Conforming cap controls require exact source-bound geometry.")
+    require_overlap_source_provenance(source, construction)
+    polygon_facets = np.asarray(source.complex.polygon_facets, dtype=np.int64)
+    cap_ids = np.asarray(source.cap_polygon_ids, dtype=np.int64)
+    scopes = core_facet_scope_ids(source)
+    selected = {int(scopes[int(polygon_facets[int(row)])]) for row in cap_ids}
+    if not selected or any(value < 0 for value in selected):
+        raise ValueError("Every original cap facet needs its declared source scope.")
+    offsets = np.asarray(source.complex.polygon_offsets, dtype=np.int64)
+    vertices = np.asarray(source.complex.polygon_vertices, dtype=np.int64)
+    source_points = np.asarray(source.complex.vertices, dtype=np.float64)
+    original = []
+    for polygon in cap_ids:
+        row = vertices[offsets[int(polygon)]:offsets[int(polygon) + 1]]
+        if row.shape != (3,):
+            raise ValueError("Conforming cap controls require original triangular facets.")
+        original.append(tuple(
+            tuple(Fraction.from_float(float(value)) for value in source_points[int(vertex)])
+            for vertex in row
+        ))
+    ids = np.sort(np.asarray(construction.mesh.entity_set(3).entity_ids, dtype=np.int64))
+    core = set(np.asarray(construction.core_cell_ids, dtype=np.int64).tolist())
+    keys = []
+    target = []
+    for key, owners in incidents.items():
+        if len(owners) != 2:
+            continue
+        is_core = tuple(int(ids[owner.cell]) in core for owner in owners)
+        if is_core[0] == is_core[1]:
+            continue
+        if len(key) != 3:
+            raise ValueError("Conforming material-contact faces must be triangular.")
+        keys.append(key)
+        target.append(tuple(carrier.exact_coordinates[int(vertex)] for vertex in key))
+    pieces = exact_coplanar_triangle_partitions(tuple(original), tuple(target))
+    owners_by_target: dict[tuple[int, ...], set[int]] = {key: set() for key in keys}
+    source_scopes = [int(scopes[int(polygon_facets[int(row)])]) for row in cap_ids]
+    for piece in pieces:
+        owners_by_target[keys[piece.target_row]].add(source_scopes[piece.source_row])
+    if any(not value for value in owners_by_target.values()):
+        raise ValueError("Every conforming cap face must bind original source facets.")
+    return selected, owners_by_target
+
+
 @checked
 def compose_layer_controls(
     source: sources_owner.NativeLayerCoreSource,
@@ -417,7 +502,7 @@ def compose_layer_controls(
     )
     if not specification.patch_controls:
         return zones, construction.patches
-    authored = layer_source_face_ancestry(source)
+    authored = {} if source.conforming_execution else layer_source_face_ancestry(source)
     cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
     regions = np.asarray(construction.cell_regions, dtype=np.int64)
     if regions.shape != cells.shape:
@@ -430,15 +515,26 @@ def compose_layer_controls(
             strict=True,
         )
     )
+    cap_scope: set[int] = set()
+    cap_owners: dict[tuple[int, ...], set[int]] = {}
+    if source.conforming_execution:
+        cap_scope, cap_owners = _conforming_cap_control_keys(source, construction, incidents)
     patches = list(construction.patches)
     for control in specification.patch_controls:
         selected = set(np.asarray(control.scope.entity_ids, dtype=np.int64).tolist())
-        keys = [
-            key
-            for key, owner in authored.items()
-            if owner in selected and key in incidents
-        ]
-        represented = {authored[key] for key in keys}
+        if source.conforming_execution and selected <= cap_scope:
+            if any(owners & selected and not owners <= selected for owners in cap_owners.values()):
+                raise ValueError("A source patch cuts a realized face and cannot be a whole-face MeshPatch.")
+            keys = [key for key, owners in cap_owners.items() if owners <= selected]
+            represented = set().union(*(cap_owners[key] for key in keys)) if keys else set()
+        else:
+            if source.conforming_execution:
+                authored = layer_source_face_ancestry(source)
+            keys = [
+                key for key, owner in authored.items()
+                if owner in selected and key in incidents
+            ]
+            represented = {authored[key] for key in keys}
         if control.required and represented != selected:
             raise ValueError(
                 "A required source patch lost a declared wall or remaining PLC facet."
@@ -539,6 +635,139 @@ def wall_layer_control(
     )
 
 
+def _mapped_wall_source_cells(
+    source: sources_owner.NativeLayerCoreSource, /
+) -> tuple[
+    sources_owner.NativePlcSource | sources_owner.NativeMappedHexSource,
+    dict[int, list[int]],
+]:
+    """Bind original wall cells to full-source facets by explicit root IDs."""
+    from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+
+    query = source.fidelity_source
+    domain = source.mapped_domain
+    if not isinstance(query, MappedReferenceBoundarySource) or domain is None:
+        raise ValueError("Mapped wall controls require their original mapped boundary query.")
+    authority = query.authority
+    if not isinstance(
+        authority, (sources_owner.NativePlcSource, sources_owner.NativeMappedHexSource)
+    ):
+        raise TypeError("Mapped wall controls require their original full PLC authority.")
+    query.require_current()
+    sources_owner._mapped_layer_core_facet_relation(source, authority)
+    relation = authority.root_relation
+    root_ids = domain.reference_domain_vertex_root_ids
+    if relation is None or root_ids is None:
+        raise ValueError("Mapped wall controls require declared source-root vertex ancestry.")
+    complex_ = authority.complex
+    polygon_offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    polygon_vertices = np.asarray(complex_.polygon_vertices, dtype=np.int64)
+    polygon_facets = np.asarray(complex_.polygon_facets, dtype=np.int64)
+    full_roots = np.asarray(relation.vertex_root_global_ids, dtype=np.int64)
+    facet_entities = np.asarray(complex_.facet_entity_ids, dtype=np.int64)
+    selected_keys = set(query.selected_source_keys(2))
+    facet_by_triangle: dict[tuple[int, ...], int] = {}
+    for row, facet_value in enumerate(polygon_facets):
+        facet = int(facet_value)
+        key = (complex_.facet_ids[facet], complex_.facet_occurrence_paths[facet])
+        if key not in selected_keys:
+            continue
+        vertices = polygon_vertices[polygon_offsets[row] : polygon_offsets[row + 1]]
+        if vertices.size != 3:
+            raise ValueError("Mapped source wall facets must be triangles.")
+        triangle = tuple(sorted(int(value) for value in full_roots[vertices]))
+        if triangle in facet_by_triangle:
+            raise ValueError("Mapped source wall has ambiguous full-source facets.")
+        facet_by_triangle[triangle] = int(facet_entities[facet])
+    wall = source.layers.source_wall
+    wall_rows = np.asarray(source.layers.wall_vertices, dtype=np.int64)
+    if wall_rows.shape != (wall.coordinates.shape[0],):
+        raise ValueError("Mapped wall source ancestry does not cover wall vertices.")
+    domain_roots = np.asarray(root_ids, dtype=np.int64)
+    result: dict[int, list[int]] = {}
+    for block in wall.blocks:
+        if block.cell_kind != "triangle":
+            raise ValueError("Mapped source wall controls require triangular wall cells.")
+        for identifier, vertices in zip(block.global_ids, block.vertices, strict=True):
+            mapped = wall_rows[np.asarray(vertices, dtype=np.int64)]
+            if np.any(mapped < 0) or np.any(mapped >= domain_roots.size):
+                continue
+            triangle = tuple(sorted(int(value) for value in domain_roots[mapped]))
+            facet = facet_by_triangle.get(triangle)
+            if facet is None:
+                raise ValueError("A source wall cell lacks its exact full-source facet.")
+            result.setdefault(facet, []).append(int(identifier))
+    if not result:
+        raise ValueError("Mapped source contains no bound wall cells.")
+    return authority, result
+
+
+def mapped_wall_source_scope(
+    source: sources_owner.NativeLayerCoreSource, /
+) -> MeshingScope:
+    """Return the full-source face scope exactly represented by the layer wall."""
+    authority, cells = _mapped_wall_source_cells(source)
+    return MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        authority.scope_entity_set_id(2),
+        np.asarray(sorted(cells), dtype=np.int64),
+    )
+
+
+def _mapped_wall_layer_control(
+    source: sources_owner.NativeLayerCoreSource, control: BoundaryLayerControl, /
+) -> BoundaryLayerControl:
+    authority, cells = _mapped_wall_source_cells(source)
+    scope = control.wall_scope
+    volume = control.volume_scope
+    if (
+        control.route is not BoundaryLayerRoute.ADVANCING
+        or scope.entity_kind is not MeshingEntityKind.GEOMETRY
+        or scope.entity_dimension != 2
+        or (scope.source_id, scope.source_revision) != (source.source_id, source.source_revision)
+        or scope.entity_set_id != authority.scope_entity_set_id(2)
+    ):
+        raise ValueError("Mapped wall control must bind the original full-source faces.")
+    if (
+        volume is None
+        or volume.entity_set_id != source.scope_entity_set_id(3)
+        or not np.array_equal(
+            np.sort(np.asarray(volume.entity_ids, dtype=np.int64)),
+            np.sort(np.asarray(source.region_entity_ids, dtype=np.int64)[
+                np.unique(np.asarray(source.layer_regions, dtype=np.int64))
+            ]),
+        )
+    ):
+        raise ValueError("Mapped wall control must bind its actual layer material regions.")
+    selected_ids = np.asarray(scope.entity_ids, dtype=np.int64).tolist()
+    if not selected_ids or any(int(identifier) not in cells for identifier in selected_ids):
+        raise ValueError("Mapped wall scope selects faces outside the authored layer wall.")
+    selected = np.asarray(
+        sorted(cell for identifier in selected_ids for cell in cells[int(identifier)]),
+        dtype=np.int64,
+    )
+    wall = source.layers.source_wall
+    return BoundaryLayerControl(
+        MeshingScope(
+            wall.mesh_id, wall.numeric_version, MeshingEntityKind.MESH, 2,
+            wall.entity_set(2).entity_set_id, selected,
+        ),
+        control.schedule,
+        route=BoundaryLayerRoute.ADVANCING,
+        collision=control.collision,
+        corner=control.corner,
+        feature_angle=control.feature_angle,
+        minimum_thickness_fraction=control.minimum_thickness_fraction,
+        growth_rate_bounds=control.growth_rate_bounds,
+        maximum_corner_stretch=control.maximum_corner_stretch,
+        smoothing_iterations=control.smoothing_iterations,
+        core_maximum_size=control.core_maximum_size,
+    )
+
+
 @checked
 def realized_layer_control(
     source: sources_owner.NativeLayerCoreSource, control: BoundaryLayerControl, /
@@ -546,8 +775,10 @@ def realized_layer_control(
     """Return the mesh-scoped control an accepted layer realization must carry."""
     if control.wall_scope.entity_kind is MeshingEntityKind.MESH:
         return control
-    charts = source.source_surface_charts
+    charts = source.source_wall_charts
     if charts is None:
+        if source.mapped_domain is not None:
+            return _mapped_wall_layer_control(source, control)
         raise ValueError(
             "Source-face layer controls require the retained charted layer wall."
         )
@@ -560,6 +791,7 @@ __all__ = [
     "core_facet_scope_ids",
     "layer_control_issues",
     "layer_source_face_ancestry",
+    "mapped_wall_source_scope",
     "realized_layer_control",
     "wall_layer_control",
 ]

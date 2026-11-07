@@ -10,6 +10,13 @@ python examples/native_brep_workflow.py
 
 The native qualification package separates executable cases by source and consumer contract. Its default corpus includes curve-provider acceptance, rational/analytic B-Rep surface and solid routes, labeled-image material generation, mapped reference geometry, periodic quotient construction, P1 transfer, common refinement/remap, native bisection, predicates/triangulation, and native certified boundary layers. The `native-cold-fe-fv-continuation` case covers fresh-process restoration of the source, accepted mesh, and physical field; FE solves in writer and reader; native bisection with conservative/linear field-transfer checks; and a separate-process FV runtime-state restore followed by an accepted Euler-step continuation. T-spline CAD-to-IGA includes local refinement and a PDE residual oracle. Every case fails on an unmet oracle, missing certification, wrong provider identity, or unavailable native prerequisite; native requirements are not converted into skips.
 
+The T-spline case uses a nonuniformly weighted, non-tensor source. It checks
+nonconstant field prolongation and unchanged distant cells, compares fixed-route
+JVP/VJP actions with finite differences, and solves a manufactured surface
+Poisson problem on the actual rational map. Its archive reader starts only after
+the producer exits and continues the restored analysis. Exact STEP/IGES export
+of the unsupported multi-piece source must refuse rather than approximate it.
+
 ```sh
 python -m tools.meshing_qualification --scenario native-corpus
 python -m tools.meshing_qualification --scenario native-brep-workflow
@@ -18,6 +25,77 @@ python -m tools.meshing_qualification --scenario native-cold-fe-fv-continuation
 python -m tools.meshing_qualification --scenario native-tspline-cad-analysis
 python tools/check_native_dependency_isolation.py --python 3.13 --all-native
 ```
+
+The isolation driver requires `uv` and CPython 3.13. It builds both wheels
+with isolated build dependencies unless both wheel paths are supplied. To
+retain the matched artifacts from one frozen source tree for reuse:
+
+```sh
+uv build --wheel --python .venv-cad/bin/python3.13 --out-dir .tmp/matched-phydrax .
+uv build --wheel --python .venv-cad/bin/python3.13 --out-dir .tmp/matched-meshcore native/meshcore
+.venv-cad/bin/python3.13 tools/check_native_dependency_isolation.py \
+  --python .venv-cad/bin/python3.13 \
+  --wheel .tmp/matched-phydrax/phydrax-*.whl \
+  --meshcore-wheel .tmp/matched-meshcore/phydrax_meshcore-*.whl --all-native
+```
+
+Use fresh output directories containing exactly one wheel each. The driver
+creates a fresh environment, installs the wheels there, and copies only the
+qualification runner outside the checkout. The NIST STEP input is embedded in
+the CAD profile source and SHA-256 checked before use; historical fixture paths
+in provenance records are not runtime file dependencies. A source-tree run
+or a missing-provider result is not an installed native qualification pass.
+
+When both `native-distributed-lifecycle` and
+`native-cold-fe-fv-continuation` are selected, the combined workflow executes
+the distributed FE restart once. Both report entries retain that invocation's
+actual component evidence. A missing or failed component remains a failure;
+no prior-run result or cached acceptance replaces execution.
+
+Use `phydrax.interchange.save_brep_archive(model, path)` and
+`phydrax.interchange.load_brep_archive(path)` for native B-Rep persistence.
+The archive retains registered source geometry, exact identity, realization,
+and T-spline refinement structure; loading reconstructs the native objects
+through their owning validation. Native persistence is distinct from STEP or
+IGES exchange: a source unsupported by an exact external codec is refused,
+not silently replaced by a tessellation.
+
+Native source constructors are available from `phydrax.meshing.providers`,
+including `NativeCurveSource`, `NativePlanarSource`, `NativePlcSource`,
+`NativeImplicitSource`, `NativeStructuredSource`, `NativeSweepSource`,
+`NativeMappedHexSource`, `NativeLayerCoreSource`, and `NativePolyhedralSource`.
+Each retains its source-specific geometry and identity contract; selecting a
+source type does not authorize an unsupported meshing route.
+Author domain and curve-boundary inputs through `phydrax.geometry.MeshingDomain`
+and `ParametricCurveBoundarySource`. `phydrax.meshing` exposes
+`PiecewiseLinearComplex`, `TransfiniteBlock`, `TransfiniteCurveControl`,
+`BlockInterfaceControl`, `NativeVolumeSchedule`, and `NativePolyhedralSchedule`
+for the corresponding source and execution controls.
+
+The image-material qualification interprets labels as occupied voxel cells in
+declared XYZ index order, with the index-to-world affine mapping voxel centers
+to SI world coordinates. Its independent interface oracle checks oriented
+voxel-face coverage and material adjacency, including reflected and sheared
+affines; a successful mesh alone does not establish that coverage.
+The categorical PLC is prepared in index space and bound to one explicitly
+declared invertible affine, rather than treating independently rounded world
+corners as exactly coplanar. Its region and oriented boundary evidence follows
+that same map, including orientation reversal for reflections. Native volume
+recovery and quality controls use the physical metric; seeds, sizes and
+deviation tolerances remain in world coordinates.
+The internal native PLC recovery and tetrahedral state accept the same 3-by-3
+index-to-world linear metric; source planes remain in index coordinates while
+protection and deviation bounds are physical.
+Cold restoration reconstructs the original categorical authority and
+recertifies the retained accepted mesh against its affine domain, source-point
+and boundary-chart evidence; stored certification is not itself proof.
+
+The envelope qualification independently bounds the continuous distance from
+the authored input triangles to the actual output surface triangles. Only
+vertices used by output facets contribute to that surface; isolated points are
+not evidence. An upper bound exceeding the requested deviation is inconclusive,
+not an acceptance, and reverse-direction samples are diagnostics rather than a
+continuous proof.
 
 The installed isolation gate first verifies that the base Phydrax wheel refuses a native mesh without meshcore, then installs the matching native wheel and runs the positive qualification package from a temporary copy outside the source checkout. Scenario inputs are constructed in code rather than loaded from checkout fixtures; cached bytecode is excluded, and both Phydrax and meshcore must resolve from installed wheel artifacts. Optional geometry-engine imports are rejected. With `--all-native`, returned scenario names must match the canonical native registry exactly: absent, extra, failed, missing-dependency, or skipped results fail the gate. Matching wheels are built when neither `--wheel` nor `--meshcore-wheel` is supplied; prebuilt artifacts must be supplied together and have matching release versions.
 
@@ -99,10 +177,12 @@ Run `python examples/native_sketch_continuation.py` for the complete witnessed
 dimension edit and archive-restoration workflow.
 
 Run `python tools/sketch_preparation_benchmarks.py --counts 4 8 16` only
-without competing benchmarks. It records growing axis-constraint and
-distance-triangulated cluster scenarios, with preparation, Jacobian work, solve
-time, traced retained host memory, and prepared array bytes separately. The
-measurements are observations, not correctness or speed claims.
+without competing benchmarks. It compares constructive and unreduced native
+solves on the same growing axis-constraint and distance-triangulated cluster
+scenarios, checking the full residual and independent geometric references.
+Preparation, standalone Jacobian work, inclusive solve time, traced retained
+host memory, and prepared array bytes are separate observations. Inclusive
+solve time is not an isolated compilation measurement; no speedup is assumed.
 
 Exact radical normalization uses a deterministic 64-bit primality decision for
 word-sized prime residues, including residues left after removing small factors.
@@ -141,6 +221,13 @@ local spline spans when the source dependencies and occurrence inventory match;
 placed spans and world-dependent proofs are constructed anew. Unknown or
 changed local dependencies take the cold path.
 
+Exact prepared placed-spline spans also supply normal bounds for nonbinary
+placements when they cover the requested source cell. Unsupported unexpanded
+non-spline sources still refuse that proof route. Curve bounds intersect the
+positive-weight control hull only for intervals proved inside the authoritative
+exact knot domain; outward-rounded endpoints and exterior continuations do not
+inherit that convex-hull premise.
+
 The geometry realization benchmark includes repeated spline-backed assembly
 motion and records local span extraction and reuse separately from placement,
 world tessellation and proof, contact search, interface coupling and total
@@ -175,6 +262,18 @@ perpendicular cylinders, preserve coupled source-defined branches even when
 the curves are non-rational. Face-cell construction retains their source
 occurrence lineage.
 
+Native `locate_solids` accepts row-aligned `solid_indices` together with
+`occurrence_paths` to query one exact solid/occurrence pair per point. An empty
+path with a selected solid means that solid's unplaced definition frame, not
+every assembly instance. Omitting `solid_indices` retains ordinary aggregate
+location. This scoped option is native-specific; it is not an OCCT capability.
+
+Distance enclosures remain useful when a nearest point is unresolved. Such a
+result does not supply a valid point or frame merely because its lower bound is
+positive. Classification selects the lowest-dimensional proved entity within
+the requested radius; unresolved candidates at that dimension or below still
+block a decision unless their source bounds prove them outside that radius.
+
 Fully covered exact equal-radius perpendicular cylinders are either proved
 disjoint by normal separation or returned as typed singular unresolved regions.
 
@@ -199,6 +298,23 @@ faces are proved to meet only on it.
 Cylinder axes retain their authored axial parameter rate; a scaled or reversed
 axis is not silently normalized. Plane sections keep the corresponding source
 height coordinate, and exact conic radii include the spatial axis norm.
+
+Exact-source interval programs cover direct cylinders and revolutions of
+`LineCurve` profiles, including their affine placements, point values,
+Jacobians, and Hessians. Line profiles retain rational and radical coefficients.
+For `RevolutionSurface`, the stored axis and origin values are the represented
+source coefficients: the program neither reconstructs discarded input precision
+nor assumes that a numerically normalized axis has exactly unit squared length.
+Other profile families require their own admitted source program.
+
+Native torus volume integration uses a source-bound analytic longitude
+primitive and certified one-dimensional boundary integration. Exact frame
+coefficients, their determinant, radii, orientation, and directed angular
+intervals enter the enclosure; the frame need not be orthonormal. This avoids
+building a two-dimensional strip lattice for the same Green integral.
+External-source seam repair remains an explicit new source revision, not an
+implicit import modification or a relaxation of the volume tolerance.
+
 Implicit intersection p-curves supply their certified point and derivative
 enclosures to trim isolation and replay instead of interval-tracing the numerical
 root solver. A conic angular witness fixes a chart angle, not a spatial height;
@@ -501,6 +617,16 @@ For an exact straight cylinder, the Green strip's angular integral is analytic;
 the remaining source p-curve integral is interval-enclosed on individual
 certified intersection charts, retaining the requested volume accuracy.
 
+Source-shell admissibility also requires independent source-face pair proofs,
+not just a positive signed volume. A plane/cylinder full-turn boundary is
+accepted only with native-period endpoints and exact lifts on both occurrences.
+Coaxial tangent cylinder/torus and annular plane/torus contacts require the
+complete shared circle, including contiguous conic-root intervals and opposed
+oriented uses; the planar trim must exclude the other torus section. Exact
+radial separation handles disjoint coaxial carriers. These proofs bind the
+current source revision and refuse unresolved or incomplete boundary coverage.
+They do not certify a volume mesh or finite-element continuation.
+
 STEP retains shared conic basis references as one curve-bank definition and
 exports a shared bank row as one referenced conic. Independently authored
 coincident circles remain distinct. A closed chain on that same definition,
@@ -586,3 +712,8 @@ Curved cases use analytic integrals with independently bounded constants. These
 references supplement, rather than replace, source fidelity, embedding, region
 ownership, and coverage proofs. Each unresolved operation remains a failed case;
 it is not omitted or relabeled as a successful reference.
+
+Plane–cylinder and plane–plane implicit boundary curves are integrated one
+certified chart at a time. Root-owned endpoint incidence does not erase the
+gap to a binary64 endpoint representative: source derivative bounds and the
+root's parameter enclosure bound that realization error explicitly.

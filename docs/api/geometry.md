@@ -79,11 +79,42 @@ and quotient incidence is oriented as a physical cell chain. A periodic subdomai
 may have a physical boundary without being a full fundamental-domain cover.
 Nonlinear contacts without an applicable continuous proof remain `unresolved`.
 
+Polyhedral cells may share a straight segment represented by several declared
+edges. Contact is accepted on that segment only after proving that the edges
+form a complete, nonoverlapping collinear chain connected by the declared
+vertex IDs. Coincident but distinct vertices or disconnected edge pieces do not
+authorize contact on their convex hull.
+
 For polynomial maps on convex reference cells, exact center-Jacobian
 preconditioning and positive-definite Bernstein controls can prove mapped-cell
 injectivity. Shared curved edges and quadrilateral facets use exact restriction
 traces and opposite-side polynomial signs; curved facets may use an exact
 implicit relation. A missing exact sign or trace proof remains unresolved.
+Facet-sharing polynomial hexahedra can also use the glued-facet monotonicity
+proof. Exact shared traces and an exact affine reference glue are required; the
+two glued reference cells must form a convex union. A single preconditioner must
+make the symmetric part of every enclosed Jacobian positive definite, with all
+signs checked exactly. The resulting strict monotonicity proves that their
+physical images meet only on the shared facet, which need not be planar. The
+geometry embedding owner checks these premises independently of source ancestry;
+similar cell shapes or matching corners do not establish a common physical map.
+The extension adds hexahedra to the existing per-pair facet proof: it retains the
+same bounded reference-facet enumeration and Jacobian-control work per pair,
+not an additional all-cells scan. Inconclusive premises remain unresolved.
+
+The contact owner may also represent a polynomial volume cell by a
+planar-faced solid, but only after proving injectivity of the complete physical
+map and proving that every complete face trace has exactly its planar corner
+polygon as image. The exact closed-face/star decomposition must succeed, and
+shared traces are still compared on the original maps. This is not a
+corner-only planarity theorem or a claim of common source parenthood. The new
+preparation performs a per-cell, per-face exact planarity screen followed by
+the existing map/trace and star proofs for eligible cells. Before this route,
+all mapped volume pairs used curved-map separation; after it, proved
+planar-faced cells reuse exact tetrahedral contact filtering. The existing BVH
+still enumerates every candidate; filtering now expands piece pairs in bounded
+cell-pair windows rather than retaining a full BVH block's expanded work.
+Nonplanar or undecided cells retain the curved-map route.
 
 For a nonperiodic three-dimensional complex, the exact global-degree route may
 close unresolved pairwise contacts only when every exterior facet trace is
@@ -232,6 +263,20 @@ Float-only producers canonically bind the represented binary64 rationals.
 The identity-bearing fields are target_reference_rational_tokens and
 source_parameter_rational_tokens; cold archive replay retains both banks rather
 than rebuilding them from rounded arrays.
+
+`SourceBoundaryFaceImageWitness` instead represents exact physical overlap
+pieces of a proved target-face image. `SourceBoundaryImagePullback` denotes the
+inverse image of one physical polygon or segment through the complete bound
+target map; it is not an affine reference triangle. Independent replay proves
+the whole face image, source and target coverage, occurrence-qualified source
+identity, and oriented source sides. Distinct authored strata remain separate
+even when coplanar. Target material assignments require the current domain and
+cell-region evidence in addition to the image witness.
+
+::: phydrax.geometry.SourceBoundaryFaceImageWitness
+
+::: phydrax.geometry.SourceBoundaryImagePullback
+
 SurfaceChartWitness.root_mesh_cell_bindings stores one optional typed root binding per chart row, with root_geometry_id, root_topology_id, and the actual root_cell_global_id. A None entry is valid only for a chart with no root CellMesh lineage (for example, a direct analytic BRep chart without a root map); root restriction consumers require a non-None binding and validate it against the actual root owner. source_root_cell_ids and source_piece_ids remain source-atlas and extraction-piece identities, never substitutes for root mesh cell IDs.
 
 Adaptive implicit P1–P3 boundary charts are certified only when source-authored smoothness, interval Hessian/gradient bounds, unique normal-line IFT roots, positive whole-chart Jacobian and injectivity, orientation, complete scaffold-triangle ancestry, and two-directed physical distance bounds all revalidate. Missing continuous root or distance premises remain unresolved; boundary samples alone do not imply coverage.
@@ -242,6 +287,12 @@ for its complete zero-set scope. The witness keeps source ID and revision as
 separate binding fields and uses empty occurrence paths; a raw source ID is not
 a substitute for the entity key.
 
+Implicit witness admission scans the complete retained root and triangle banks
+in bounded worksets while retaining lookup entries only for requested chart
+ancestry. Worksets do not limit the source or skip late duplicate keys.
+Scaffold-carrier witnesses still require complete one-to-one triangle coverage;
+remeshed carriers retain the separate source-coverage and boundary-degree proof.
+
 An implicit wall or interface witness may cover every source scaffold
 triangle while proving fidelity only on its actual target entities. The
 target extent is rederived from retained entity IDs and cell/facet incidence;
@@ -251,7 +302,9 @@ coverage remains an independent premise.
 
 MappedReferenceBoundarySource consumes a current native mapped-source authority,
 including NativeMappedHexSource and NativePlcSource with its exact PLC-to-root
-relation; root charts admit homogeneous tetrahedral and hexahedral meshes.
+relation; root charts admit homogeneous tetrahedral, hexahedral, and prism
+meshes, retaining triangular and quadrilateral prism faces in their actual
+canonical face loops.
 MappedReferenceDomain requires the physical output
 `SpatialCoordinateContract`; mapped queries expose that exact domain-owned
 object and bind its `spatial_id` into query identity. Reference-domain
@@ -744,6 +797,16 @@ lowest-dimensional source entity within the requested tolerance;
 with line trims include closest points on their trim boundaries, including when
 the untrimmed plane projection lies outside the parameter bounds.
 
+Analytic cone, cylinder, sphere, and torus frames use bounded query batches;
+occurrence transforms and singular/non-isolated statuses remain per query.
+For a torus whose trim classification is undecided at a periodic seam, an
+actual coedge point can establish a `SEAM` result: its exact curve-to-surface
+lift must be proved, and its distance upper bound must lie within the declared
+`ambiguity_tolerance` of the whole-carrier minimum lower bound. The result
+retains both bounds. This does not snap a UV parameter, infer a complete period,
+or repair an imported source gap; missing lift or distance evidence remains
+unresolved.
+
 `BRepProjectionStatus` distinguishes unique points, seams, ambiguous choices,
 non-isolated minima, failed queries, and unresolved source mathematics.
 Unsupported trim or carrier queries remain `UNRESOLVED`; they do not substitute
@@ -1139,6 +1202,20 @@ Material-side/entity/region/occurrence and frame identities are bound in the
 deformation and map identities. Gaps, positive-volume double coverage,
 inverted or singular maps, stale coverage, unmatched material sides, and
 foreign roots refuse; no missing measure is normalized away.
+
+Coverage ancestry and the authored material reference are distinct. When a
+mapped endpoint's coordinate bank does not retain its intermediate parent,
+pass the actual `(parent_mesh, parent_geometry)` as `chart_parent` to
+`declare_material_reference`, `MaterialReferenceDeclaration.revalidate`, or
+`material_source_map_from_cell_association`. Deformation and overlap preparation
+and revalidation accept `source_chart_parent` and `target_chart_parent`; absent
+explicit inputs, they use their existing material-reference or common-root
+owners. Those owners must be the immediate parent required by the coverage
+proof, not merely a compatible material reference. `VolumeMaterialMap.revalidate`
+also accepts `root_chart_parent` for revalidating the reference declaration.
+These are operation-local proof inputs, not retained history graphs. The
+coverage owner independently proves both chart partitions and the complete
+physical maps; missing or foreign parents refuse.
 
 The map's field actions deliberately keep their measures distinct:
 `apply_material_extensive` partitions cell-integrated content by common

@@ -95,7 +95,7 @@ constraint = phx.discretization.dirichlet_constraint(space, "u")
 form = phx.equations.FiniteElementForm("native-cold-unit-box-harmonic", "u", (phx.equations.DiffusionAction("u", 1.0),))
 problem = phx.equations.compile_finite_element_problem(form, space, constraint=constraint, dirichlet_values=lambda points: 1.0 + 2.0 * points[..., 0] - points[..., 1] + 0.5 * points[..., 2])
 operator, rhs = problem.linear_system()
-solved = phx.linalg.solve(operator, rhs)
+solved = phx.linalg.solve(operator, rhs, policy=phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU()))
 field_values = jnp.asarray(problem.expand(solved.value))
 expected_values = 1.0 + 2.0 * np.asarray(result.mesh.coordinates)[:, 0] - np.asarray(result.mesh.coordinates)[:, 1] + 0.5 * np.asarray(result.mesh.coordinates)[:, 2]
 writer_fe_error = float(np.max(np.abs(np.asarray(field_values) - expected_values), initial=0.0))
@@ -135,39 +135,21 @@ from phydrax.geometry.brep._model import BRepModel
 from phydrax.interchange._cad_archive import load_brep_archive
 from phydrax.lifecycle import Composition, CompositionEntry
 from phydrax.meshing._adaptation import MarkedMeshAdaptation, MeshAdaptationPolicy, MeshAdaptationRoute, execute_mesh_adaptation, prepare_mesh_adaptation
-from phydrax.meshing._canonical import certify_cell_mesh
-from phydrax.meshing._model_codec import read_model_artifact
-from phydrax.meshing._organization import RegionBoundaryEvidence
+from phydrax.meshing._model_codec import read_model_artifact, restore_model_archive_value
 from phydrax.meshing._result import CellMeshingResult
 from phydrax._model._structure import FiniteElementAcceptedStateArchiveRecipe
 from phydrax.solver._finite_element_schedule import FiniteElementAcceptedFieldLayout, FiniteElementAcceptedState
 def _rebuild_result(raw):
     if not isinstance(raw, CellMeshingResult) or raw.certification is None:
         raise TypeError("Cold composition lost its accepted CellMeshingResult.")
-    mesh = raw.mesh
-    region_boundaries = tuple(
-        RegionBoundaryEvidence(
-            mesh,
-            item.source_scope,
-            item.source_region_id,
-            item.control_id,
-            item.material_id,
-            item.role,
-            item.boundary_label,
-            item.patch_sides,
-            source_occurrence_path=item.source_occurrence_path,
-        )
-        for item in raw.region_boundary_evidence
-    )
-    recomputed = certify_cell_mesh(mesh, raw.coordinate_contract, geometry=raw.geometry, audit_policy=raw.certification.audit_policy, boundary=raw.boundary, certification_inputs=raw.certification.inputs, patches=raw.patches, zones=raw.zones, labels=raw.labels, attributes=raw.attributes, associations=raw.associations, surface_source=raw.surface_source, region_boundary_evidence=region_boundaries, planar_embedding=raw.planar_embedding)
-    if recomputed.certification is None:
-        raise RuntimeError("Cold result revalidation dropped computed certification.")
-    recomputed.audit.require_passed()
-    recomputed.certification.require_passed()
-    recomputed.certification.revalidate(mesh, raw.geometry)
-    if recomputed.audit.report_id != raw.audit.report_id or recomputed.certification.report_id != raw.certification.report_id:
+    rebuilt = restore_model_archive_value(raw)
+    if not isinstance(rebuilt, CellMeshingResult) or rebuilt.certification is None:
+        raise TypeError("Cold result restoration lost its certified mesh.")
+    rebuilt.audit.require_passed()
+    rebuilt.certification.require_passed()
+    rebuilt.certification.revalidate(rebuilt.mesh, rebuilt.geometry)
+    if rebuilt.audit.report_id != raw.audit.report_id or rebuilt.certification.report_id != raw.certification.report_id:
         raise RuntimeError("Cold result reconstruction changed its computed audit/certification identity.")
-    rebuilt = CellMeshingResult(mesh, raw.geometry, raw.coordinate_contract, recomputed.audit, raw.quality, raw.compliance, raw.trace, raw.provider, raw.runtime, raw.derivative_mode, raw.provenance, boundary=raw.boundary, patches=raw.patches, zones=raw.zones, labels=raw.labels, attributes=raw.attributes, associations=raw.associations, adapter_reports=raw.adapter_reports, surface_source=raw.surface_source, region_boundary_evidence=region_boundaries, planar_embedding=raw.planar_embedding, certification=recomputed.certification)
     if rebuilt.result_id != raw.result_id:
         raise RuntimeError("Cold result reconstruction changed accepted result identity.")
     return rebuilt
@@ -222,7 +204,7 @@ def _solve_affine(result):
     form = phx.equations.FiniteElementForm("native-cold-unit-box-harmonic", "u", (phx.equations.DiffusionAction("u", 1.0),))
     problem = phx.equations.compile_finite_element_problem(form, space, constraint=constraint, dirichlet_values=lambda points: _linear(points))
     operator, rhs = problem.linear_system()
-    solved = phx.linalg.solve(operator, rhs)
+    solved = phx.linalg.solve(operator, rhs, policy=phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU()))
     values = np.asarray(problem.expand(solved.value), dtype=np.float64)
     coordinates = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
     expected = _linear(coordinates)
@@ -230,14 +212,15 @@ def _solve_affine(result):
     residual = float(jnp.linalg.norm(problem.residual(solved.value)))
     rhs_norm = float(jnp.linalg.norm(rhs))
     if not bool(jnp.all(solved.successful)) or error > 2.0e-9 or residual > 2.0e-9 * max(1.0, rhs_norm):
-        raise RuntimeError("Cold-process FE reanalysis failed its independent affine/residual oracle.")
+        raise RuntimeError(f"Cold-process FE reanalysis failed its independent affine/residual oracle: {{error=}}, {{residual=}}, {{rhs_norm=}}, successful={{np.asarray(solved.successful)}}.")
     return values, error, residual
 restored_solution, restored_fe_error, restored_fe_residual = _solve_affine(restored)
 if not np.allclose(restored_solution, source_values, rtol=0.0, atol=2.0e-9):
     raise RuntimeError("Cold FE continuation changed the archived accepted solution.")
 if restored_fe_error > 2.0e-9 or restored_fe_residual > 2.0e-9:
     raise RuntimeError("Cold restored FE solve failed its exact physical oracle.")
-prepared = prepare_mesh_adaptation(restored, MarkedMeshAdaptation(np.asarray(restored.mesh.blocks[0].global_ids[:1], dtype=np.int64)), policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION))
+transfer = phx.meshing.BRepAssociationTransfer(phx.geometry.prepare_brep_projection(restored_model))
+prepared = prepare_mesh_adaptation(restored, MarkedMeshAdaptation(np.asarray(restored.mesh.blocks[0].global_ids[:1], dtype=np.int64)), policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION, association_transfer=transfer))
 adaptation = execute_mesh_adaptation(prepared)
 target = adaptation.target
 transition = adaptation.transition
