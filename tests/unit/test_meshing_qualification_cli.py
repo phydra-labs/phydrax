@@ -71,7 +71,9 @@ def test_family_checkpoint_survives_later_profile_failure(
 
     monkeypatch.setattr(native_family_matrix, "_profile_ids", lambda: ("first", "second"))
 
-    def run_profile(profile_id: str, *, checkpoint: object) -> dict[str, object]:
+    def run_profile(
+        profile_id: str, *, checkpoint: object, capture_result: object
+    ) -> dict[str, object]:
         if profile_id == "second":
             raise RuntimeError("later profile interrupted")
         return {"profile_id": profile_id, "status": "passed"}
