@@ -315,3 +315,62 @@ def test_exact_orientation_certifies_the_sliver(unit_tetrahedron: Any) -> None:
     assert result.status is TetraIntersectionStatus.DISJOINT
     assert not result.evidence.predicate_uncertain
     assert result.evidence.predicate_mode is PredicateMode.EXACT
+
+
+# A unit-sized tetrahedron at offset 2**30 and its exact translate by
+# (3/4)(FAR[1] - FAR[2]).  In barycentric coordinates of FAR the overlap is
+# lambda_1 >= 3/4: the homothet of FAR at FAR[1] with ratio 1/4, of exact volume
+# vol(FAR)/64.  The rounded face residuals at this offset exceed the coordinate
+# tolerance, so the floating-point vertex enumeration constructs no vertex.
+FAR = _hex_rows(
+    (
+        ("0x1.262802e44c000p+30", "0x1.f7082049c4000p+30", "0x1.66d1a1b140000p+30"),
+        ("0x1.262802e2c0000p+30", "0x1.f7082046a0000p+30", "0x1.66d1a1b084000p+30"),
+        ("0x1.262802e3e8000p+30", "0x1.f708204668000p+30", "0x1.66d1a1b070000p+30"),
+        ("0x1.262802e50c000p+30", "0x1.f708204748000p+30", "0x1.66d1a1b190000p+30"),
+    )
+)
+FAR_TRANSLATED = FAR + 0.75 * (FAR[1] - FAR[2])
+
+
+def _assert_far_translate_is_exact() -> None:
+    for row in range(4):
+        for axis in range(3):
+            assert Fraction(float(FAR_TRANSLATED[row, axis])) == Fraction(
+                float(FAR[row, axis])
+            ) + Fraction(3, 4) * (
+                Fraction(float(FAR[1, axis])) - Fraction(float(FAR[2, axis]))
+            )
+
+
+def test_far_corner_overlap_is_certified_instead_of_disjoint() -> None:
+    _assert_far_translate_is_exact()
+    exact = _exact_tetrahedron_volume(FAR) / 64
+
+    result = intersect_tetrahedra(FAR, FAR_TRANSLATED, volume_only=True)
+
+    assert result.status is TetraIntersectionStatus.SUCCESS
+    assert abs(Fraction(result.volume) - exact) <= Fraction(result.evidence.volume_error)
+
+
+def test_far_corner_overlap_lost_by_the_constructed_topology_fails_closed() -> None:
+    _assert_far_translate_is_exact()
+
+    result = intersect_tetrahedra(FAR, FAR_TRANSLATED)
+
+    assert result.status is TetraIntersectionStatus.UNCERTAIN_PREDICATE
+    assert result.evidence.predicate_uncertain
+
+
+def test_gap_below_the_coordinate_tolerance_is_disjoint(unit_tetrahedron: Any) -> None:
+    other = unit_tetrahedron + np.asarray((1.0 + 2.0**-40, 0.0, 0.0))
+    # The plane x = 1 + 2**-41 separates the closed tetrahedra exactly.
+    assert max(Fraction(float(value)) for value in unit_tetrahedron[:, 0]) < min(
+        Fraction(float(value)) for value in other[:, 0]
+    )
+
+    result = intersect_tetrahedra(unit_tetrahedron, other)
+
+    assert result.status is TetraIntersectionStatus.DISJOINT
+    assert result.volume == 0.0
+    assert result.vertices.shape == (0, 3)
