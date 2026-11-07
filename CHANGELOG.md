@@ -761,6 +761,9 @@
   the stripped form of identifiers and refused records whose YAML ends in
   whitespace, as YAML documents do; it now applies the source admission rule
   (text that is not blank).
+- `read_safetensors_tensors` refuses a tensor extent above
+  `max_tensor_elements` as exceeding the tensor limits, as it refuses an
+  element or byte count above them, rather than as malformed extents.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile

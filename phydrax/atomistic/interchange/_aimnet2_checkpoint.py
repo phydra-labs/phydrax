@@ -812,12 +812,15 @@ def read_safetensors_tensors(
             not isinstance(shape, list)
             or len(shape) > rank
             or any(type(extent) is not int or extent < 0 for extent in shape)
-            or any(extent > limits.max_tensor_elements for extent in shape)
             or not isinstance(offsets, list)
             or len(offsets) != 2
             or any(type(offset) is not int or offset < 0 for offset in offsets)
         ):
             raise _refuse(f"safetensors entry {name!r} has malformed extents.")
+        # An extent above the element limit is a limit refusal, checked before the
+        # extent product is formed.
+        if any(extent > limits.max_tensor_elements for extent in shape):
+            raise _refuse(f"safetensors tensor {name!r} exceeds the tensor limits.")
         elements = math.prod(shape)
         size = elements * dtype.itemsize
         if elements > limits.max_tensor_elements or size > limits.max_tensor_bytes:
