@@ -258,3 +258,28 @@ def test_other_ellipse_parameters_keep_declared_gap_closure(
         _ellipse(first, last), DxfImportPolicy(maximum_junction_gap=1e-14)
     )
     assert [loss.category for loss in imported.report.losses] == ["transformed"]
+
+
+def test_full_ellipse_and_circle_round_trip_as_closed_carriers() -> None:
+    policy = DxfImportPolicy()
+    source = decode_dxf_bytes(_ellipse(0.0, _TWO_PI), policy)
+    restored = decode_dxf_bytes(
+        encode_dxf(source.profile, coordinate_unit=MILLIMETER), policy
+    )
+    assert restored.report.losses == ()
+    assert restored.profile.endpoint_gap_bounds is None
+    (segment,) = restored.profile.outer.segments
+    (original,) = source.profile.outer.segments
+    assert restored.profile.outer.vertices == ((2.0, 0.0),)
+    assert isinstance(segment, ProfileCurveUse)
+    assert isinstance(original, ProfileCurveUse)
+    assert (segment.first, segment.last) == (0.0, _TWO_PI)
+    assert segment.curve.identity_payload() == original.curve.identity_payload()
+    circle = decode_dxf_bytes(
+        _drawing("0\nCIRCLE\n10\n1.0\n20\n2.0\n30\n0.0\n40\n3.0\n"), policy
+    )
+    circle_restored = decode_dxf_bytes(
+        encode_dxf(circle.profile, coordinate_unit=MILLIMETER), policy
+    )
+    assert circle_restored.report.losses == ()
+    assert circle_restored.profile.outer == circle.profile.outer

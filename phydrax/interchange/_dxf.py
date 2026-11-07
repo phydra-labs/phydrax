@@ -1229,6 +1229,8 @@ def _write_conic_use(segment: ProfileCurveUse) -> str:
         ]
     else:
         major, ratio = _ellipse_encoding(curve)
+        # A full turn is written as the DXF full-ellipse convention 0 .. fl(2 pi).
+        full_turn = first == 0.0 and last == 2 * math.pi
         groups = [
             (0, "ELLIPSE"),
             (10, float(center[0])),
@@ -1236,8 +1238,8 @@ def _write_conic_use(segment: ProfileCurveUse) -> str:
             (11, float(major[0])),
             (21, float(major[1])),
             (40, ratio),
-            (41, first % (2 * math.pi)),
-            (42, last % (2 * math.pi)),
+            (41, 0.0 if full_turn else first % (2 * math.pi)),
+            (42, last if full_turn else last % (2 * math.pi)),
         ]
     entity_name = groups[0][1]
     if not isinstance(entity_name, str):
