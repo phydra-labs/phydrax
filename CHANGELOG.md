@@ -1090,6 +1090,9 @@
   mode transposed it, so gradients and pullbacks through an invalid result
   silently returned zeros; the transpose now applies the same check to the
   cotangent. Primal values and valid derivatives are unchanged.
+- UMA slab reductions (`case_reduce`) keep the dtype of the summed values:
+  per-case `species_counts` stay int32 with 64-bit JAX enabled, matching the
+  owner partials and `case_atom_counts`, instead of widening to int64.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
